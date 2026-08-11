@@ -1,370 +1,111 @@
-# Terminal Handover: plasma-auto-tiler
+# Terminal Succession Handover: plasma-auto-tiler
 
-Status: living resumption snapshot, last updated 2026-08-12 after one bounded
-manual registration/readiness lifecycle validation. Treat every prior Lead/Worker session as terminal,
-failed, or completed; never resume one. A fresh Orchestrator or Lead should
-read only this file plus the artifacts it links to reconstruct full context.
+Status: terminal handover for a fresh Orchestrator. All prior Lead and Worker
+sessions are terminal; do not resume them. This handover supersedes older
+session instructions and historical verification figures.
 
-## Process and Authority
+## Process and Protection
 
-| Role | Effective agent/model | Context |
+| Role | Configured agent | Context |
 |---|---|---:|
-| Orchestrator | top-level, model varies by session | 150000 |
-| Lead | configured `lead-openai` | 150000 |
+| Orchestrator | top-level session | 150000 |
+| Lead | `lead-openai` | 150000 |
 | Worker | `worker` | 150000 |
 
-- Exactly one subagent may be active at a time across the hierarchy.
-- Provisional ceilings are approximately 20 Orchestrator dispatches, three Lead
-  packages or 50 Lead calls, and 30 Worker calls, with proportional caps for
-  smaller briefs. A threshold is terminal succession, not a reason to continue.
-- Autonomous mode is active. The user is unavailable for manual tests until
-  further notice and authorizes automated tests in the current KWin/Plasma
-  session. Do not prompt for manual interaction. Large architecture or
-  product-goal changes remain user-reserved; sensible small reversible choices
-  are delegated.
-- Any live or system mutation must retain exact ownership, preflight,
-  fail-fast, and cleanup safeguards. Broad automation authorization does not
-  authorize broad cleanup or state ownership.
-- Before any live KWin/Plasma work, read the authoritative
-  [live-testing guide](live-kwin-testing.md). It does not grant live-mutation
-  authorization.
+- Exactly one subagent may be active across the hierarchy. Approximately 20
+  Orchestrator dispatches is a terminal succession boundary.
+- Do not push or amend commits. Stage explicit paths only.
+- `test-output` is user-provided untracked evidence. Leave it untouched and
+  uncommitted.
+- `Project Technical Report and Implementation Plan.md` is protected untracked
+  user content. Leave it untouched and uncommitted.
+- `docs/principles.md` and `docs/decisions.md` are absent by design. Do not
+  create governance artifacts.
+- No live KWin/Plasma mutation occurred in this package. Before any future live
+  work, read `docs/live-kwin-testing.md`; it does not grant mutation authority.
 
-## Product Direction
+## Current Repository Evidence
 
-North star: integrated all-in-one KDE Plasma bspwm/Hyprland/COSMIC-class
-experience, including dynamic workspaces, multi-output, range of tiling modes,
-rounded corners, active-window highlight, keyboard navigation/management, and
-coherent full tiling-WM essentials.
+- Baseline before this handover commit: `eb3adb5af5bb669eb66ee46846e15d87fc0a56ed`
+  (`Add guarded Custom Tile reset foundation`).
+- Static verification at that baseline passed: `npm run typecheck`, `npm run
+  build`, and `npm run test` from `kwin/`.
+- The full test command reported 393 passing tests in 47 suites and 202 passing
+  lifecycle checks, with zero failures.
+- Ignored generated `kwin/contents/code/main.js` SHA-256 after that build:
+  `7855a7f8c415b6b6ee578b5c783c32784fce42e4b7a44fd6938447e1e389057f`.
+  Never edit generated JavaScript manually.
+- Authored production code is strict TypeScript; the generated ES2017 IIFE is
+  the KWin payload. Toolchain dependencies remain managed by `devenv.nix` and
+  `kwin/package.json`; do not install dependencies ad hoc.
 
-Multiple KDE components may form one product. Do not revive native C++/Rust
-merely for performance.
+## Accepted Product Direction and Capabilities
 
-## Repository and Toolchain
+- The user explicitly approved automatic product ownership of managed
+  workspace/output topology and chose ratio-free `dwindle` as the default.
+  For scopes managed by this enabled plugin, this supersedes the old parked
+  question of whether authored layouts may be replaced. Do not list that
+  product choice as pending.
+- The current project catalog has 27 atomic actions: insertion, focus, move,
+  focused-leaf columns/rows/balanced-grid/dwindle presets, detach, attach, and
+  scope fill. It includes direct `Meta+Arrow` focus aliases and
+  `Meta+Shift+Arrow` move aliases, as well as the H/J/K/L variants.
+- `822db26` (`Fix adjacent tile focus selection`) accepts the source correction
+  that touching facing edges are zero-distance directional neighbors; overlap
+  and diagonal-only candidates remain rejected. It is not live callback proof.
+- `dd3a9e3` (`Add project arrow shortcut aliases`) is accepted. The user
+  explicitly authorized clearing only Krohnkite's eight conflicting direct
+  Meta-arrow and Meta+Shift-arrow sequences. Those sequences were cleared
+  exactly; nonconflicting Krohnkite settings were preserved, and Krohnkite
+  remains disabled and unloaded.
+- The plugin's guarded shortcut catalog registers all 27 actions atomically.
+  Persisted KGlobalAccel records do not prove loaded callbacks.
+- Static capabilities include guarded focus/move-to-empty, focused-leaf preset
+  application, selected-overlay tracking and assignment-only reflow, guarded
+  attach/detach, scope fill, and `dwindle`. None establishes live structural or
+  callback behavior.
 
-- Initial commits establish the project history. Stage explicit paths and commit
-  after every future major change; do not rely on a dirty worktree as a baseline.
-- `devenv.nix` supplies Node 24.18.1 and npm 11.16.0. Development dependencies
-  are pinned in `kwin/package.json`: `@types/node@26.2.0`,
-  `esbuild@0.28.2`, and `typescript@7.0.2`; the project lockfile is present.
-  Do not install dependencies globally or ad hoc. System/toolchain changes
-  belong in `devenv.nix` and require a user session restart before use.
-- Authored production code is strict TypeScript. KWin receives only the
-  generated ES2017 non-module IIFE. KWin declarations are a narrow local subset
-  pinned to KWin 6.7.3 commit
-  `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
-  JavaScript.
-- Current ignored generated `kwin/contents/code/main.js` SHA-256 is
-  `527381ea05b2277dff39716d6804e884df4cef52c46cc7e7704582660e246ff7`.
-  The current source typechecks and has 389 tests across 46 suites plus 194
-  lifecycle shell checks. This is static evidence only; no current runtime
-  acceptance follows.
+## Reset Boundary
 
-## Active Custom Tile Slice
+- `eb3adb5` is source-safe only; it does not wire automatic lifecycle ownership.
+- Pinned KWin `CustomTile.remove()` is void, can mutate promotion and occupancy,
+  and uses `deleteLater`. The reset code guards unmanagement before removal,
+  preserves the original root identity, and requires a fresh decoded smaller
+  root after each remove.
+- Live QJSEngine invocation, removal/promotion behavior, root identity, and
+  fresh-root decoding remain unaccepted. Do not infer them from static tests.
 
-- [Custom Tile vertical slice](changes/custom-tile-vertical-slice/) remains P1
-  active. `unit-01` and `unit-02` are accepted. `unit-03` source is statically
-  complete but its structural/runtime behavior is unaccepted and gated by
-  `unit-05`. `unit-05` remains unaccepted and its live validation is parked
-  after the final `attempt-25` infrastructure stop (see below). Do not claim
-  runtime acceptance from static tests.
-- `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
-  registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all twenty-seven registrations must succeed; success logs
-  `shortcut-registered` before `startup-handlers-ready`; false disables once
-  with `disabled:shortcut-registration-failed` and returns inertly.
-- Current insertion actions are: `plasma-auto-tiler-insert-left` / `Insert next
-  window left of focused leaf` / `Meta+Alt+Left`; `plasma-auto-tiler-insert-right`
-  / `Insert next window right of focused leaf` / `Meta+Alt+Right`;
-  `plasma-auto-tiler-insert-up` / `Insert next window up of focused leaf` /
-  `Meta+Alt+Up`; and `plasma-auto-tiler-insert-down` / `Insert next window down
-  of focused leaf` / `Meta+Alt+Down`. Current focus actions are:
-  `plasma-auto-tiler-focus-left` /
-  `Focus window left` / `Meta+H`; `plasma-auto-tiler-focus-down` / `Focus
-  window down` / `Meta+J`; `plasma-auto-tiler-focus-up` / `Focus window up` /
-  `Meta+K`; and `plasma-auto-tiler-focus-right` / `Focus window right` /
-  `Meta+Alt+Ctrl+L`. Active Session Management owns `Meta+L`, so that requested
-  focus binding remains deferred.
-- Move actions use the same directional geometry: `plasma-auto-tiler-move-left`
-  / `Move window left` / `Meta+Shift+H`; `plasma-auto-tiler-move-down` /
-  `Move window down` / `Meta+Shift+J`; `plasma-auto-tiler-move-up` / `Move
-  window up` / `Meta+Shift+K`; and `plasma-auto-tiler-move-right` / `Move
-  window right` / `Meta+Shift+L`. Separate project-owned aliases are
-  `plasma-auto-tiler-focus-{left,down,up,right}-arrow` / `Focus window
-  <direction> (arrow)` / `Meta+Left/Down/Up/Right`; and
-  `plasma-auto-tiler-move-{left,down,up,right}-arrow` / `Move window
-  <direction> (arrow)` / `Meta+Shift+Left/Down/Up/Right`.
-  Focused-leaf presets are
-  `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
-  `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
-  `Meta+Alt+2`; `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
-  grid in focused leaf` / `Meta+Alt+3`; and `plasma-auto-tiler-apply-dwindle` /
-  `Apply dwindle in focused leaf` / `Meta+Alt+4`; `plasma-auto-tiler-detach` /
-  `Detach window from tile` / `Meta+Shift+Space`; `plasma-auto-tiler-attach` /
-  `Attach window to available tile` / `Meta+Alt+Shift+Space`; and
-  `plasma-auto-tiler-fill-scope` / `Fill available tiles with windows` /
-  `Meta+Alt+Return`. All twenty-seven registrations
-  share the aggregate false-result gate. A move targets only an empty non-layout leaf,
-  revalidates active/source/target state before one tile assignment, and relies
-  on decode-derived occupancy after success; it does not swap. Attach requires an
-  active eligible floating window in exact scope, selects only the first empty
-  authored non-layout Custom Tile leaf in decoded traversal, revalidates active,
-  source, target, and root before one assignment, and checks the association
-  postcondition. It neither reflows selected overlays nor calls topology APIs.
-  Scope fill is a static-only unaccepted addition: the active normal eligible
-  window anchors the exact scope whether tiled or floating, fills only empty
-  authored non-layout Custom Tile leaves in decoded traversal order with
-  eligible unassigned exact-scope windows gathered from the proven
-  `windowList()` collection (anchor first), builds the complete bounded
-  `min(leaves, candidates)` plan before writes, and revalidates anchor, root,
-  candidate, and target immediately before every guarded `window.tile` write,
-  stopping fail-fast with fixed private diagnostics that never claim rollback.
-- Shortcut records persist in KGlobalAccel after the script unloads and do not
-  prove callbacks are live. The manual launcher reports startup only after
-  same-KWin-PID ordered `shortcut-registered` and `startup-handlers-ready`
-  diagnostics, with no `disabled:` diagnostic. It preserves exact shortcut
-  ownership and does not unregister records.
-- Focus is a narrow write seam through `Workspace.activeWindow`, after exact
-  output-object and desktop-ID scope checks. It filters only occupied,
-  non-layout leaves whose occupants are eligible and in scope, so nearer empty
-  or ineligible leaves are skipped. Target occupants are revalidated before the
-  focus write. Diagnostics are fixed private payloads; no titles, app IDs,
-  geometry, scope identity, or caught-error text is emitted.
-- `unit-16` corrects directional ranking for touching Custom Tile siblings:
-  facing-edge equality is a valid zero-distance neighbor, while overlap and
-  diagonal-only candidates remain rejected. This was the source cause of the
-  delivered `focus-rejected:no-neighbor` callbacks in the supplied diagnostics.
-  The correction is static-only; movement remains move-to-empty and does not
-  swap occupied leaves.
-- Strict decoders and guards fail inert at non-split KWin/Qt boundaries. Pure
-  topology, hit testing, directional focus, binary blueprints, and blueprint
-  split-instruction compilation are KWin-independent. The guarded blueprint
-  executor uses compiled paths and local identity mappings only; its injected
-  KWin seam maps orientations and decodes exactly two CustomTile children.
-  `CustomTile.split()` remains structurally risky because it mutates before
-  JavaScript can decode its result.
-- Reset foundation: pinned KWin 6.7.3 `CustomTile::remove()` is Q_INVOKABLE but
-  void. It removes a child, can recursively promote/remove a non-root
-  single-child layout, re-picks still-managed occupants by geometry, and calls
-  `deleteLater()`. `kwin/src/topology-reset.ts` is pure and source-safe: it
-  requires every decoded occupant to unmanage before any removal, preserves the
-  original root identity, and requires a fresh decoded root with fewer tiles
-  after every remove. It reports only `pre-mutation-rejection` or
-  `reset-may-have-mutated` on failure. It is not connected to automatic
-  lifecycle ownership until a dedicated live contract validates QJSEngine
-  invocation, removal/promotion and fresh list decoding; no reset is currently
-  performed by the plugin.
-- Focused-leaf preset application gathers an explicit active-first scoped
-  occupant list, retaining the remaining decoded leaf traversal order. It uses
-  the catalog and executor only on the active leaf, performs guarded ordinal
-  assignments with fresh identity/scope checks, and retains surrounding authored
-  topology. Split and assignment failures are fail-fast and private; no rollback
-  or reflow is claimed.
-- Detach uses the pinned writable `Window.tile` compatibility property only for
-  an active eligible window in a non-layout Custom Tile. It revalidates the same
-  association before one `null` write and decodes the null postcondition where
-  feasible; assignment and postcondition failures are private and do not claim
-  rollback. Pinned source confirms the null setter path calls `unmanage` and
-  restores floating geometry, but this remains static evidence only.
-- Deferred desktop-scope retries retain a cancellation identity and re-check it
-  before acting, so a timeout queued before `windowRemoved` is inert after its
-  entry is cancelled. Armed insertion retains only source and target wrapper
-  identity until cleared; either removal clears it. Duplicate removals are
-  inert. Static tests also prove workspace signals and action callbacks remain
-  inert after aggregate shortcut-registration failure. No live KWin claim is
-  made.
-- `unit-12` (accepted static correction 2026-08-12) adds
-  minimal explicit ephemeral selected-overlay state recorded only after a
-  user-applied focused-leaf preset succeeds entirely, keyed by exact
-  current desktop/output scope and atomically replaced only by a later
-  same-scope success. It records preset identity, the overlay root and ordinal
-  leaf tile references, and the scope only - never titles, app IDs, geometry,
-  or persisted data. The narrow `readSelectedOverlay(scope)` seam verifies
-  scope match, overlay-root reachability beneath the current Custom Tile root,
-  and intact ordinal leaf realization, discarding structural drift inertly
-  with one fixed `selected-overlay-invalidated` diagnostic. Window removal does
-  not discard structurally valid state. It prepares a later bounded
-  assignment-only reflow only; no automatic reflow or persistence exists.
-  Typecheck/build/test pass with 293 tests across 40 suites and 49 lifecycle
-  shell checks; bundle SHA-256 `fb956315...`.
-- `unit-13` (accepted static correction 2026-08-12) consumes only current valid
-  selected overlays after lifecycle additions, removals, and successful detach.
-  It builds an ordinal assignment plan before guarded `window.tile` writes,
-  compacts eligible in-scope occupants, validates each source and target again
-  immediately before writing, and stops fail-fast without rollback. Full overlays
-  fall through to generic placement; scope-loss removal is inert unless the
-  removed wrapper still identifies an overlay. No topology, ratio, persistence,
-  or authored-layout mutation occurs. Static typecheck/build/test pass with 314
-  tests across 42 suites and 49 lifecycle shell checks; no live action occurred.
-- `unit-15` (accepted static correction 2026-08-12) adds the guarded attach
-  action above. Read-only KGlobalAccel reconciliation found no unrelated active
-  owner for `Meta+Alt+Shift+Space`; all 17 project records match source defaults.
-  Typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks
-  pass. The plugin is currently unloaded; persisted records and historical
-  readiness diagnostics are not callback or window-runtime evidence.
-- `unit-01/attempt-01` (accepted static 2026-08-12) adds the `dwindle` topology
-  preset through the same focused-leaf application path. It is topology only:
-  one occupant maps to the unsplit ordinal-zero leaf; N > 1 builds a recursive
-  chain whose left child is the next ordinal leaf and whose right child recurses
-  the remainder, with orientations alternating from a horizontal root. No
-  ratios, resize logic, equal-geometry/master claim, or persistence is
-  introduced. The pure builder is `buildDwindleBlueprint`; the catalog kind,
-  `buildPreset` diagnostics, and selected-overlay recording flow through the
-  unchanged `applyPreset` path. The exact action is
-  `plasma-auto-tiler-apply-dwindle` / `Apply dwindle in focused leaf` /
-  `Meta+Alt+4`; a read-only conflict scan found no unrelated active owner for
-  that chord. Typecheck, build, and the full test and lifecycle suites pass;
-  no live action or mutation occurred.
+## Accepted Live Boundary
 
-## Live Evidence and Parked Automation
+- Accepted live evidence is limited to registration/readiness and matching
+  shortcut records. The plugin is unloaded after that evidence.
+- Focus edge-touch behavior, direct-arrow callback delivery, reset,
+  automatic ownership, structural presets, and attach/detach runtime behavior
+  remain unaccepted.
+- Do not revive the prior large supervisor harness. Do not treat persisted
+  records, historical diagnostics, or static results as callback evidence.
 
-- 2026-08-12 project-owned arrow aliases: the plugin has 27 persistent shortcut
-  records after one bounded `start -> status -> stop` lifecycle sequence and is
-  unloaded. Eight aliases retain the direct Meta arrow and Meta+Shift arrow
-  defaults through the existing guarded focus/move callbacks. Exact Krohnkite
-  active sequences were cleared only for `KrohnkiteFocusLeft` `[285212690]`,
-  `KrohnkiteFocusDown` `[285212693]`, `KrohnkiteFocusUp` `[285212691]`,
-  `KrohnkiteFocusRight` `[285212692]`, `KrohnkiteShiftLeft` `[318767122]`,
-  `KrohnkiteShiftDown` `[318767125]`, `KrohnkiteShiftUp` `[318767123]`, and
-  `KrohnkiteShiftRight` `[318767124]`, each now `[]`. All nonconflicting
-  Krohnkite sequences and records remained untouched, Krohnkite remains
-  disabled/unloaded, and no non-Krohnkite record, tiling group, callback,
-  window, or topology action occurred.
-  Postflight read-only reconciliation reports 27 matched project records and no
-  unrelated desired-arrow owner. Persisted records do not prove callback liveness.
-- 2026-08-12 guarded detach/attach callback preflight: stopped before lifecycle
-  start, test-window launch, action invocation, or cleanup because exact
-  active-window ownership could not be proven. The plugin was unloaded,
-  Krohnkite was disabled/unloaded, and read-only status found the exact project
-  shortcut records matched; those persisted records and historical readiness
-  diagnostics do not prove callback delivery. KWin's available read-only D-Bus
-  surface provides neither active-window identity nor activation, so launching
-  a client would require forbidden active-window inference. No live resource,
-  tile, topology, desktop, shortcut, or Krohnkite mutation occurred. Static
-  typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks
-  passed.
-- 2026-08-12 registration/readiness lifecycle: one fresh Lead, after read-only
-  preflight and one Worker preflight, ran exactly `scripts/start-test.sh start`,
-  `status`, then `stop` against KWin PID 2517. Preflight showed the exact plugin
-  unloaded, unambiguous `kwin` ownership, and Krohnkite disabled/unloaded. Start
-  built the current bundle, loaded Script0, and reported readiness; status found
-  13 exact project records; stop reported the exact plugin unloaded and the
-  final `isScriptLoaded` envelope was false. No callback, key, window, desktop,
-  tile, or Krohnkite action occurred. The latest same-PID diagnostics are one
-  `shortcut-registered` then one `startup-handlers-ready` for the aggregate
-  13-action registration gate, with no `disabled:shortcut-registration-failed`.
-  Historical same-PID totals are 12 and 14 respectively and are not current
-  liveness evidence. The historical `kwin_scripting` warning remains unrelated
-  to this attempt.
-- KGlobalAccel postflight has all 13 exact action IDs under `kwin`; its tuple
-  default sequence is empty for each. Active sequences are `Meta+Alt+Right`
-  (insert-right), `Meta+Alt+H/J/K/L` (focus left/down/up/right),
-  `Meta+Alt+Shift+H/J/K/L` (move left/down/up/right), `Meta+Shift+Space`
-  (detach), and `Meta+Alt+1/2/3` (columns/rows/balanced-grid). Thus insert,
-  detach, and presets match source defaults; four focus and four move records
-  retain older active assignments. `detach` was absent preflight and was
-  registered by this lifecycle. All persisted records remain after unload by
-  design and prove neither current load nor callback delivery.
-- `unit-05` remains unaccepted. The current bundle is
-  `913a41c2452dd63ee87f43edaf2e0f71fb6ef6a727b12c74901928c31072205a`;
-  current static verification is typecheck, build, 388 tests across 46 suites,
-  and 194 lifecycle shell checks. The pending singleton-occupant fallback
-  remains unaccepted for the `keyboard-rejected:target-occupancy-validity`
-  boundary.
-- Reusable live infrastructure remains proven: the nonce-owned `systemd-run
-  --user` supervisor, strict all-component KGlobalAccel collector, atomic
-  load-ID parse plus `Script<ID>` introspection, and `_PID`-scoped `--user`
-  journal capture. Cursor display prefixes must be stripped, and heartbeat
-  coverage must continue through read-only diagnosis until triggering cleanup.
-- `unit-05/attempt-18` live-proved Client A's
-  `window-added-eligible` and `automatic-placement-managed` path on bundle
-  `e76e...`. Client B reached `keyboard-invoked`, then fail-fast rejected at
-  `keyboard-rejected:target-occupancy-validity`; Client C was not attempted.
-  This is partial journey evidence, not unit-05 acceptance.
-- `unit-05/attempt-20` received a valid load envelope but its jq
-  predicate-precedence bug rejected it before `run()`. Its dedicated 10-second
-  heartbeat wrote 28 advances and exact owned-resource cleanup completed, but
-  retained postflight `kwinrc` evidence differs from preflight. Do not claim
-  byte-identical configuration restoration for this attempt; the capture order
-  cannot now explain the discrepancy.
-- A failed-clean attempt proves restoration only, never registration, callback,
-  or structural capability. Resume only under fresh authorization and the
-  [live-testing guide](live-kwin-testing.md).
-- Krohnkite remains disabled and unloaded. Preserve the ten unrelated stale
-  tiling groups and their values; they are not cleanup targets.
-- Do not build a bespoke harness mountain or repeat a live launch within one
-  authorization.
-- Manual-only journeys (titlebar drag split, Esc cancellation) remain entirely
-  untested and require a future interactive session. QV4/QJSEngine sequential
-  marshalling and wrapper identity remain hypotheses outside the live-accepted
-  Client A path.
+## Exact Next Package
 
-## Completed Static Changes
+1. Obtain a scope that is explicitly owned or isolateable, then perform one
+   bounded live contract validation of `CustomTile.remove()` removal/promotion,
+   original-root identity, and fresh decoding, with exact preflight, cleanup,
+   and stop conditions.
+2. A current persistent user scope must not be structurally reset autonomously
+   merely to prove that contract. Automatic product behavior approval is not
+   destructive-test ownership or isolation authorization.
+3. Only if that contract is accepted, wire session-local startup/add/remove
+   managed-scope `dwindle` ownership, intentional detach exclusions, and valid
+   selected-overlay precedence. Keep the work bounded and do not revive the old
+   large supervisor harness.
 
-- [Keyboard navigation vertical slice](changes/archive/2026-08-11-keyboard-navigation-vertical-slice/)
-  is archived with static units accepted. It delivered the four exact focus
-  actions above, geometry-only neighbor selection, guarded focus assignment,
-  and static review. KWin focus assignment, QList marshalling, shortcut
-  registration, and Custom Tile runtime behavior remain deferred.
-- [Keyboard window movement](changes/archive/2026-08-11-keyboard-window-movement/)
-  is archived with static acceptance. It adds guarded move-to-empty actions
-  using the focus directional ranking, a single KWin tile assignment, and
-  decode-derived post-move occupancy. Live KWin assignment remains deferred.
-- [Binary layout blueprints](changes/archive/2026-08-11-binary-layout-blueprints/)
-  is archived and accepted. It provides a pure balanced immutable binary
-  topology with deterministic ordinal leaves and caller-selected orientation.
-  Runtime realization, geometry/ratios, and a preset catalog are deferred.
-- [Blueprint split instructions](changes/archive/2026-08-11-blueprint-split-instructions/)
-  is archived and accepted. It compiles accepted binary topology to immutable
-  pre-order split instructions and ordinal-ordered root/left/right leaf paths.
-  KWin execution remains deferred.
-- [Topology preset catalog](changes/archive/2026-08-11-topology-preset-catalog/)
-  is archived and accepted. `buildPreset` returns compiled instructions with
-  stable ordinal mappings for columns (horizontal), rows (vertical), and
-  balanced-grid (horizontal root alternating by depth). It remains topology
-  only; it makes no geometry or ratio claim.
-- [Focused-leaf preset application](changes/archive/2026-08-11-focused-leaf-preset-application/)
-  is archived and statically accepted. It adds the three exact preset actions,
-  explicit occupant realization, and private fail-fast diagnostics. Runtime
-  `CustomTile.split()` and tile-assignment behavior remain deferred.
+## Parked Items
 
-## Review and Governance Record
-
-- Repeated Worker results were host-unknown, malformed, empty, over cap, or
-  role-invalid. Never trust a report without Lead inspection of actual files
-  and evidence. One substantive review found the focus implementation could
-  select nearer empty/ineligible leaves; the accepted code now filters them.
-  The final compliant keyboard review accepted the static scope, and the
-  blueprint review was compliant. Two unauthorized `.orig` backups were
-  removed exactly.
-- `docs/principles.md` is absent. `docs/decisions.md` is absent and remains
-  user-owned if created; do not create or edit either governance artifact. The
-  large report is untouched. Do not commit unless explicitly asked.
-
-## Acceptance Boundaries and Risks
-
-- Static acceptance proves TypeScript behavior, generated-IIFE controls, and
-  automated vectors only. It does not prove KWin QJSEngine parsing beyond the
-  ES2017 regression check, `CustomTile.split()` results, drag/Esc behavior, or
-  retained-empty placement in a live session. KGlobalAccel registration is
-  live-proven. QList/QV4 marshalling is not generally live-proven: the deferred
-  desktop-scope experiment observed a decode failure, while attempt 18 later
-  accepted Client A. The current functional blocker is Client B target
-  occupancy, not general client eligibility.
-- Current scope deliberately excludes dynamic-workspace lifecycle, stable
-  multi-output identity/hotplug, persistence, broader layout realization and ratios,
-  broader tiling modes, effects/decorations, packaging, and performance claims.
-- The active JS baseline and structural-feasibility changes remain P1; sustained
-  workload validation remains paused. The blocked nested-KWin and unsafe live
-  harness paths stay parked.
-
-## Next Session
-
-1. The old jq load-response parser gate is obsolete: the corrected strict load
-   parser accepted the retained valid envelope and rejected malformed vectors
-   (`unit-05/attempt-21`). Unit-05 live validation is parked after the final
-   `attempt-25` infrastructure stop; no live journey resumes without fresh
-   user authorization.
-2. Stop at the first missing/rejecting required diagnostic. Client C, drag, and
-   Esc remain outside that initial retry unless separately authorized.
-3. Retain exact ownership/fail-fast cleanup. Treat attempt-20's configuration
-   restoration as evidence-ambiguous, not a baseline-preservation claim.
+- Live reset validation is parked pending an explicitly owned/isolateable scope
+  and its specific mutation authorization; it is not authorized on a persistent
+  user scope by the product decision alone.
+- Manual drag split and Esc-cancellation journeys remain untested pending a
+  future interactive session.
+- Dynamic-workspace lifecycle outside the accepted managed-scope direction,
+  multi-output hotplug identity, persistence, ratios, broader layout modes,
+  effects, packaging, and performance claims remain outside the current slice.
