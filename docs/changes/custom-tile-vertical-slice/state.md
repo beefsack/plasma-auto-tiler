@@ -23,6 +23,12 @@
   match source defaults. Typecheck, build, 339 tests across 43 suites, and 192
   lifecycle shell checks pass. The plugin is unloaded; no callback or window
   behavior is claimed.
+- Live callback preflight (2026-08-12): stopped before `start`, test-window
+  launch, detach, or attach. The plugin was unloaded and Krohnkite remained
+  disabled/unloaded, but available read-only KWin interfaces cannot identify or
+  activate an exact owned normal window or verify it equals `activeWindow`.
+  Persisted project shortcut records and historical readiness diagnostics remain
+  non-callback evidence. No live resource or topology mutation occurred.
 - Previous package: `unit-14/attempt-01` is accepted. Keyboard insertion now
   arms one exact eligible source and direction, then puts the next eligible
   unassigned in-scope window on the requested left/right/up/down side after

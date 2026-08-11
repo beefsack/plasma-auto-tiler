@@ -172,6 +172,17 @@ merely for performance.
 
 ## Live Evidence and Parked Automation
 
+- 2026-08-12 guarded detach/attach callback preflight: stopped before lifecycle
+  start, test-window launch, action invocation, or cleanup because exact
+  active-window ownership could not be proven. The plugin was unloaded,
+  Krohnkite was disabled/unloaded, and read-only status found the exact project
+  shortcut records matched; those persisted records and historical readiness
+  diagnostics do not prove callback delivery. KWin's available read-only D-Bus
+  surface provides neither active-window identity nor activation, so launching
+  a client would require forbidden active-window inference. No live resource,
+  tile, topology, desktop, shortcut, or Krohnkite mutation occurred. Static
+  typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks
+  passed.
 - 2026-08-12 registration/readiness lifecycle: one fresh Lead, after read-only
   preflight and one Worker preflight, ran exactly `scripts/start-test.sh start`,
   `status`, then `stop` against KWin PID 2517. Preflight showed the exact plugin
