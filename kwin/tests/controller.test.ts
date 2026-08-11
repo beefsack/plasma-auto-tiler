@@ -633,16 +633,16 @@ describe("TileController ordinary placement and boundaries", () => {
 
 describe("TileController keyboard focus", () => {
     const focusActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
-        ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+Alt+H"],
-        ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+Alt+J"],
-        ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+Alt+Ctrl+K"],
+        ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+H"],
+        ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+J"],
+        ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+K"],
         ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+Ctrl+L"],
     ];
     const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
-        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Alt+Shift+H"],
-        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Alt+Shift+J"],
-        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Alt+Shift+K"],
-        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Alt+Shift+L"],
+        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Shift+H"],
+        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Shift+J"],
+        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Shift+K"],
+        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Shift+L"],
     ];
     const presetActions: ReadonlyArray<readonly [string, string, string]> = [
         ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
@@ -650,7 +650,9 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
     ];
 
-    it("registers the insertion, four focus, four move, and three preset exact actions in order", () => {
+    const actionCount = 1 + focusActions.length + moveActions.length + presetActions.length;
+
+    it("registers the exact current action catalog in order", () => {
         const { harness } = setup();
         assert.deepEqual(
             harness.shortcuts.map(({ name, text, sequence }) => [name, text, sequence]),
@@ -663,15 +665,15 @@ describe("TileController keyboard focus", () => {
         );
     });
 
-    it("disables for every aggregate registration failure and keeps all twelve callbacks inert", () => {
-        for (let failedIndex = 0; failedIndex < 12; failedIndex += 1) {
+    it("disables for every aggregate registration failure and keeps every catalog callback inert", () => {
+        for (let failedIndex = 0; failedIndex < actionCount; failedIndex += 1) {
             const harness = new Harness();
-            for (let index = 0; index < 12; index += 1) {
+            for (let index = 0; index < actionCount; index += 1) {
                 harness.shortcutResults.push(index !== failedIndex);
             }
             const controller = new TileController(harness.environment());
             controller.start();
-            assert.equal(harness.shortcuts.length, 12);
+            assert.equal(harness.shortcuts.length, actionCount);
             assert.equal(controller.isEnabled, false);
             assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
@@ -870,10 +872,10 @@ describe("TileController keyboard focus", () => {
 
 describe("TileController keyboard move", () => {
     const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
-        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Alt+Shift+H"],
-        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Alt+Shift+J"],
-        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Alt+Shift+K"],
-        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Alt+Shift+L"],
+        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Shift+H"],
+        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Shift+J"],
+        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Shift+K"],
+        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Shift+L"],
     ];
 
     it("maps every move guard to its first fixed private reason", () => {

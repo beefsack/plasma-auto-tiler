@@ -37,6 +37,11 @@ In scope:
   workspace/output behavior.
 - A separately authorized, minimal runtime smoke after static and unit evidence
   is accepted.
+- Directional focus uses `Meta+H`, `Meta+J`, and `Meta+K`; directional
+  move-to-empty uses `Meta+Shift+H/J/K/L`. The requested arrow vocabulary is
+  excluded when another active KGlobalAccel owner holds it. Focus-right retains
+  its safe `Meta+Alt+Ctrl+L` fallback while active Session Management owns
+  `Meta+L`.
 
 Constraints:
 

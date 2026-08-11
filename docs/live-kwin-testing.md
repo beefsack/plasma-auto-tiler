@@ -178,7 +178,7 @@ unloading the script do not roll back Custom Tile changes it already made.
   defect then causes real residue requiring separately authorized recovery.
    Startup diagnostics are supplementary for invocation and window journeys
    when a valid load ID and introspected script object, successful `run()`, the
-   exact five-action fail-closed collector, no same-PID `kwin_scripting`
+   exact current project-action fail-closed collector, no same-PID `kwin_scripting`
    evaluation error, and valid supervisor/heartbeat/ownership manifests are
    independently established. Verify product outcomes from authoritative live
    state; an empty diagnostic capture is not a startup failure.

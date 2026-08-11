@@ -362,19 +362,19 @@ export class TileController {
             const leftRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-left",
                 "Focus window left",
-                "Meta+Alt+H",
+                "Meta+H",
                 () => this.focusNeighbor("left"),
             );
             const downRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-down",
                 "Focus window down",
-                "Meta+Alt+J",
+                "Meta+J",
                 () => this.focusNeighbor("down"),
             );
             const upRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-up",
                 "Focus window up",
-                "Meta+Alt+Ctrl+K",
+                "Meta+K",
                 () => this.focusNeighbor("up"),
             );
             const rightRegistered = this.environment.registerShortcut(
@@ -386,25 +386,25 @@ export class TileController {
             const moveLeftRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-move-left",
                 "Move window left",
-                "Meta+Alt+Shift+H",
+                "Meta+Shift+H",
                 () => this.moveActiveWindow("left"),
             );
             const moveDownRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-move-down",
                 "Move window down",
-                "Meta+Alt+Shift+J",
+                "Meta+Shift+J",
                 () => this.moveActiveWindow("down"),
             );
             const moveUpRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-move-up",
                 "Move window up",
-                "Meta+Alt+Shift+K",
+                "Meta+Shift+K",
                 () => this.moveActiveWindow("up"),
             );
             const moveRightRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-move-right",
                 "Move window right",
-                "Meta+Alt+Shift+L",
+                "Meta+Shift+L",
                 () => this.moveActiveWindow("right"),
             );
             const columnsRegistered = this.environment.registerShortcut(

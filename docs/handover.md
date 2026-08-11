@@ -73,15 +73,18 @@ merely for performance.
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current actions are: `plasma-auto-tiler-insert-right` / `Insert next window
   right of focused leaf` / `Meta+Alt+Right`; `plasma-auto-tiler-focus-left` /
-  `Focus window left` / `Meta+Alt+H`; `plasma-auto-tiler-focus-down` / `Focus
-  window down` / `Meta+Alt+J`; `plasma-auto-tiler-focus-up` / `Focus window up`
-  / `Meta+Alt+Ctrl+K`; and `plasma-auto-tiler-focus-right` / `Focus window right`
-  / `Meta+Alt+Ctrl+L`.
+  `Focus window left` / `Meta+H`; `plasma-auto-tiler-focus-down` / `Focus
+  window down` / `Meta+J`; `plasma-auto-tiler-focus-up` / `Focus window up` /
+  `Meta+K`; and `plasma-auto-tiler-focus-right` / `Focus window right` /
+  `Meta+Alt+Ctrl+L`. Active Session Management owns `Meta+L`, so that requested
+  focus binding remains deferred.
 - Move actions use the same directional geometry: `plasma-auto-tiler-move-left`
-  / `Move window left` / `Meta+Alt+Shift+H`; `plasma-auto-tiler-move-down` /
-  `Move window down` / `Meta+Alt+Shift+J`; `plasma-auto-tiler-move-up` /
-  `Move window up` / `Meta+Alt+Shift+K`; and `plasma-auto-tiler-move-right` /
-  `Move window right` / `Meta+Alt+Shift+L`. Focused-leaf presets are
+  / `Move window left` / `Meta+Shift+H`; `plasma-auto-tiler-move-down` /
+  `Move window down` / `Meta+Shift+J`; `plasma-auto-tiler-move-up` / `Move
+  window up` / `Meta+Shift+K`; and `plasma-auto-tiler-move-right` / `Move
+  window right` / `Meta+Shift+L`. Active Krohnkite actions own every requested
+  `Meta+Arrow` and `Meta+Shift+Arrow` variant, so arrows remain deferred.
+  Focused-leaf presets are
   `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
   `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
