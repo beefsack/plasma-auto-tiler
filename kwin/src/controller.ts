@@ -130,6 +130,14 @@ interface ReflowWrite {
     readonly target: TileCapability;
 }
 
+// One guarded `window.tile` assignment produced by explicit scope fill. The
+// full bounded plan is built before any write, then each entry revalidates
+// before its own write and stops fail-fast on the first failure.
+interface FillWrite {
+    readonly window: WindowCapability;
+    readonly target: TileCapability;
+}
+
 // Outcome of a bounded assignment-only selected-overlay reflow. Fixed private
 // diagnostics map to distinct no-op/no-capacity, success, and failure/partial
 // states; no-selection is silent and never claims a reflow happened.
@@ -558,6 +566,12 @@ export class TileController {
                 "Meta+Alt+Shift+Space",
                 () => this.attachActiveWindow(),
             );
+            const fillScopeRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-fill-scope",
+                "Fill available tiles with windows",
+                "Meta+Alt+Return",
+                () => this.fillScope(),
+            );
             const columnsRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-apply-columns",
                 "Apply columns in focused leaf",
@@ -591,6 +605,7 @@ export class TileController {
                 !moveRightRegistered ||
                 !detachRegistered ||
                 !attachRegistered ||
+                !fillScopeRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
                 !gridRegistered
@@ -1042,6 +1057,182 @@ export class TileController {
             return false;
         }
         const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        return (
+            freshTarget !== null &&
+            !freshTarget.leaf.isLayout &&
+            isCustomTile(freshTarget.decoded.tile) &&
+            freshTarget.windows.length === 0
+        );
+    }
+
+    // Explicit assignment-only scope fill: the active normal eligible window
+    // anchors the exact desktop/output scope whether it is tiled or floating.
+    // Only existing empty authored Custom Tile leaves are filled, in
+    // deterministic decoded traversal order, with eligible unassigned windows
+    // from the proven windowList collection. No topology mutation, no
+    // compaction or reflow, and no selected-overlay record is created.
+    fillScope(): void {
+        this.gate.run(() => {
+            this.diagnostic("fill-invoked");
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("fill-rejected:no-active-window");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("fill-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("fill-rejected:active-window-eligibility");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`fill-rejected:${reason}`);
+            });
+            if (topology === null) {
+                return;
+            }
+            const leaves = this.emptyAuthoredLeaves(topology);
+            if (leaves.length === 0) {
+                this.diagnostic("fill-inert:no-leaves");
+                return;
+            }
+            const candidates = this.fillCandidates(scope, active);
+            if (candidates === null) {
+                this.diagnostic("fill-rejected:window-list-decode");
+                return;
+            }
+            if (candidates.length === 0) {
+                this.diagnostic("fill-inert:no-candidates");
+                return;
+            }
+            const count = Math.min(leaves.length, candidates.length);
+            const plan: FillWrite[] = [];
+            for (let index = 0; index < count; index += 1) {
+                const candidate = candidates[index];
+                const leaf = leaves[index];
+                if (candidate === undefined || leaf === undefined) {
+                    this.diagnostic("fill-rejected:preflight");
+                    return;
+                }
+                plan.push({ window: candidate, target: leaf.decoded.tile });
+            }
+            let writes = 0;
+            for (const entry of plan) {
+                if (!this.fillAssignmentRevalidates(scope, active, entry.window, entry.target)) {
+                    this.diagnostic(
+                        writes === 0 ? "fill-rejected:assignment-stale" : "fill-partial:assignment-stale",
+                    );
+                    return;
+                }
+                let assigned = false;
+                try {
+                    assigned = assignWindowToTile(entry.window, entry.target);
+                } catch (error) {
+                    void error;
+                    this.diagnostic(
+                        writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed",
+                    );
+                    return;
+                }
+                if (!assigned) {
+                    this.diagnostic(
+                        writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed",
+                    );
+                    return;
+                }
+                if (!isWindow(entry.window) || entry.window.tile !== entry.target) {
+                    this.diagnostic(
+                        writes === 0 ? "fill-failed:postcondition" : "fill-partial:postcondition",
+                    );
+                    return;
+                }
+                writes += 1;
+            }
+            this.diagnostic("fill-completed");
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Empty authored non-layout Custom Tile leaves in the exact decoded
+    // traversal order. Layout tiles, occupied leaves, and generic (non-Custom)
+    // tiles are skipped; valid selected-overlay leaves are ordinary authored
+    // leaves and participate through the same traversal.
+    private emptyAuthoredLeaves(topology: readonly OperationLeaf[]): readonly OperationLeaf[] {
+        const leaves: OperationLeaf[] = [];
+        for (const entry of topology) {
+            if (
+                entry.leaf.isLayout ||
+                !isCustomTile(entry.decoded.tile) ||
+                entry.windows.length !== 0
+            ) {
+                continue;
+            }
+            leaves.push(entry);
+        }
+        return leaves;
+    }
+
+    // Eligible unassigned exact-scope windows from the proven all-window
+    // collection, in collection order. The active window is anchored first only
+    // when it is itself present in that collection and eligible and unassigned;
+    // a distinct active wrapper that is not in the collection is never injected
+    // as a candidate.
+    private fillCandidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+    ): readonly WindowCapability[] | null {
+        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+            return null;
+        }
+        this.decodedBoundary("workspace-window-list");
+        const candidates: WindowCapability[] = [];
+        for (const window of windows.value) {
+            if (windowInScope(window, scope) && window.tile === null) {
+                candidates.push(window);
+            }
+        }
+        const anchorIndex = windowIndex(candidates, active);
+        if (anchorIndex >= 0) {
+            const anchor = candidates[anchorIndex];
+            if (anchor !== undefined) {
+                candidates.splice(anchorIndex, 1);
+                candidates.unshift(anchor);
+            }
+        }
+        return Object.freeze(candidates);
+    }
+
+    // Active identity, exact scope, eligibility, candidate identity/eligibility/
+    // scope/still-unassigned state, and target reachability/non-layout/emptiness
+    // are all re-derived immediately before every guarded write, so any change
+    // between planning and the write stops the fill without claiming rollback.
+    private fillAssignmentRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        candidate: WindowCapability,
+        target: TileCapability,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope) ||
+            !windowInScope(candidate, freshScope) ||
+            candidate.tile !== null
+        ) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshTarget = operationLeafForTile(topology, target);
         return (
             freshTarget !== null &&
             !freshTarget.leaf.isLayout &&

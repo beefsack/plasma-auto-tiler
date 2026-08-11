@@ -94,8 +94,10 @@ merely for performance.
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
   `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
   grid in focused leaf` / `Meta+Alt+3`; `plasma-auto-tiler-detach` / `Detach
-  window from tile` / `Meta+Shift+Space`; and `plasma-auto-tiler-attach` /
-  `Attach window to available tile` / `Meta+Alt+Shift+Space`. All seventeen registrations
+  window from tile` / `Meta+Shift+Space`; `plasma-auto-tiler-attach` /
+  `Attach window to available tile` / `Meta+Alt+Shift+Space`; and
+  `plasma-auto-tiler-fill-scope` / `Fill available tiles with windows` /
+  `Meta+Alt+Return`. All eighteen registrations
   share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap. Attach requires an
@@ -103,6 +105,14 @@ merely for performance.
   authored non-layout Custom Tile leaf in decoded traversal, revalidates active,
   source, target, and root before one assignment, and checks the association
   postcondition. It neither reflows selected overlays nor calls topology APIs.
+  Scope fill is a static-only unaccepted addition: the active normal eligible
+  window anchors the exact scope whether tiled or floating, fills only empty
+  authored non-layout Custom Tile leaves in decoded traversal order with
+  eligible unassigned exact-scope windows gathered from the proven
+  `windowList()` collection (anchor first), builds the complete bounded
+  `min(leaves, candidates)` plan before writes, and revalidates anchor, root,
+  candidate, and target immediately before every guarded `window.tile` write,
+  stopping fail-fast with fixed private diagnostics that never claim rollback.
 - Shortcut records persist in KGlobalAccel after the script unloads and do not
   prove callbacks are live. The manual launcher reports startup only after
   same-KWin-PID ordered `shortcut-registered` and `startup-handlers-ready`
