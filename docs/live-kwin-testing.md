@@ -83,15 +83,33 @@ exit status, missing error, or visual appearance is never feature evidence.
 
 ## Manual Start Launcher
 
-`scripts/start-test.sh` is a manual convenience launcher only: it builds the
-bundle, loads and runs the script through the `/Scripting` D-Bus interface,
-then confirms ordered same-KWin-PID `shortcut-registered` and
-`startup-handlers-ready` diagnostics with no `disabled:` diagnostic before it
-reports success. It prints the exact `stop`/`unloadScript` commands for later
-manual cleanup. It is not a harness and never substitutes for the validation
-ladder above. Running it is a live KWin mutation and still requires one
-explicit, bounded authorization under the Safety Boundary. Stopping and
-unloading the script do not roll back Custom Tile changes it already made.
+`scripts/start-test.sh` is a manual lifecycle convenience interface only, with
+strict subcommand parsing. It is not a harness and never substitutes for the
+validation ladder above.
+
+- `scripts/start-test.sh start` builds the bundle, loads and runs the script
+  through the `/Scripting` D-Bus interface, then waits within a bounded window
+  for ordered same-KWin-PID `shortcut-registered` and `startup-handlers-ready`
+  diagnostics with no `disabled:` diagnostic before it reports success. The
+  pre-load journal cursor and `_PID` filter prevent old/unrelated diagnostics
+  from being accepted; a disabled diagnostic fails immediately. Running it is a
+  live KWin mutation and still requires one explicit, bounded authorization
+  under the Safety Boundary.
+- `scripts/start-test.sh status` is read-only. It reports the exact plugin load
+  state from `isScriptLoaded`, labels controller running/callback delivery as
+  unproven, reports whether this KWin process's journal has readiness evidence,
+  and lists every persisted project action
+  record discovered through the strict all-component KGlobalAccel collector
+  (`allComponents` plus `allShortcutInfos("default")`, exact eight-field
+  tuples, filtered to exact project action IDs). Persisted records and journal
+  history are evidence only: neither proves a live callback. Journal transport
+  and JSON failures fail closed rather than reporting missing evidence.
+- `scripts/start-test.sh stop` unloads only `plasma-auto-tiler-kwin` through
+  the exact `unloadScript` reply contract, verifies it is no longer loaded,
+  and is idempotent when it is already unloaded. It never unregisters broadly:
+  persisted project KGlobalAccel records are reported read-only and left
+  untouched. Stopping and unloading the script do not roll back Custom Tile
+  changes it already made.
 
 ## KGlobalAccel and Collector
 
