@@ -285,6 +285,18 @@ export function detachWindowFromTile(window: WindowCapability): boolean {
     }
 }
 
+// The attach half of the same pinned writable `Window.tile` contract: writing
+// a tile dispatches to `setTileCompatibility(tile)`. Assignment-only overlay
+// reflow uses exactly these guarded writes and never structural tile methods.
+export function assignWindowToTile(window: WindowCapability, tile: TileCapability): boolean {
+    try {
+        return Reflect.set(window, "tile", tile) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
 export function splitCustomTile(tile: CustomTileCapability, direction: number): unknown {
     const method = read(tile, "split");
     if (!method.ok || !isMethod(method.value)) {

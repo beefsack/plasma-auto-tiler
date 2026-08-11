@@ -144,6 +144,15 @@ merely for performance.
   assignment-only reflow only; no automatic reflow or persistence exists.
   Typecheck/build/test pass with 293 tests across 40 suites and 49 lifecycle
   shell checks; bundle SHA-256 `fb956315...`.
+- `unit-13` (accepted static correction 2026-08-12) consumes only current valid
+  selected overlays after lifecycle additions, removals, and successful detach.
+  It builds an ordinal assignment plan before guarded `window.tile` writes,
+  compacts eligible in-scope occupants, validates each source and target again
+  immediately before writing, and stops fail-fast without rollback. Full overlays
+  fall through to generic placement; scope-loss removal is inert unless the
+  removed wrapper still identifies an overlay. No topology, ratio, persistence,
+  or authored-layout mutation occurs. Static typecheck/build/test pass with 314
+  tests across 42 suites and 49 lifecycle shell checks; no live action occurred.
 
 ## Live Evidence and Parked Automation
 

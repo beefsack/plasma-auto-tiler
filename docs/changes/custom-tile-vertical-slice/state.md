@@ -13,6 +13,11 @@
   reconciliation verified that no foundation implementation can be accepted.
   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
   action is authorized.
+- Current package: `unit-13/attempt-01` is accepted static-only,
+  assignment-only lifecycle reflow for a current valid explicitly selected
+  overlay. It preserves topology, authored layouts, ratios, and persistence;
+  no live KWin/Plasma action occurred. Typecheck, build, 314 tests across 42
+  suites, and 49 lifecycle shell checks pass.
 - Execution controls: first search suitable upstream or official KWin/KDE
   TypeScript types during implementation. TypeScript is the only authored
   production language; KWin executes generated bundled JavaScript. No `any`,

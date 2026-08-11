@@ -5,6 +5,7 @@ import {
     FeatureGate,
     MAX_SEQUENTIAL_LENGTH,
     TransientState,
+    assignWindowToTile,
     decodeSequential,
     detachWindowFromTile,
     isCustomTile,
@@ -258,6 +259,81 @@ describe("detachWindowFromTile", () => {
         });
         assert.equal(detachWindowFromTile(window), false);
         assert.equal(window.tile, tileValue);
+    });
+});
+
+describe("assignWindowToTile", () => {
+    function windowOn(tileValue: object | null): {
+        normalWindow: boolean;
+        managed: boolean;
+        resizeable: boolean;
+        appletPopup: boolean;
+        desktops: readonly unknown[];
+        output: typeof OUTPUT;
+        tile: object | null;
+        frameGeometry: typeof RECT;
+        move: boolean;
+        resize: boolean;
+    } {
+        return {
+            normalWindow: true,
+            managed: true,
+            resizeable: true,
+            appletPopup: false,
+            desktops: [],
+            output: OUTPUT,
+            tile: tileValue,
+            frameGeometry: RECT,
+            move: false,
+            resize: false,
+        };
+    }
+
+    it("assigns a writable tile association with one guarded write", () => {
+        const source = { kind: "source" };
+        const target = tile();
+        const window = windowOn(source);
+        let assigned: object | null = source;
+        let writes = 0;
+        Object.defineProperty(window, "tile", {
+            configurable: true,
+            get: () => assigned,
+            set: (value: object | null) => {
+                writes += 1;
+                assigned = value;
+            },
+        });
+        assert.equal(assignWindowToTile(window, target), true);
+        assert.equal(window.tile, target);
+        assert.equal(writes, 1);
+    });
+
+    it("reports false and leaves a non-writable association unchanged", () => {
+        const source = { kind: "source" };
+        const target = tile();
+        const window = windowOn(source);
+        Object.defineProperty(window, "tile", {
+            configurable: true,
+            value: source,
+            writable: false,
+        });
+        assert.equal(assignWindowToTile(window, target), false);
+        assert.equal(window.tile, source);
+    });
+
+    it("contains a throwing tile setter and reports false without leaking the error", () => {
+        const source = { kind: "source" };
+        const target = tile();
+        const window = windowOn(source);
+        Object.defineProperty(window, "tile", {
+            configurable: true,
+            get: () => source,
+            set: () => {
+                throw new Error("private-window-title");
+            },
+        });
+        assert.equal(assignWindowToTile(window, target), false);
+        assert.equal(window.tile, source);
     });
 });
 

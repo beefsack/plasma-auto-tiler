@@ -2,6 +2,7 @@ import {
     FeatureGate,
     MAX_SEQUENTIAL_LENGTH,
     TransientState,
+    assignWindowToTile,
     decodeSequential,
     detachWindowFromTile,
     hasWindowInteractionSignals,
@@ -118,6 +119,26 @@ interface ActiveDrag {
     readonly originTile: CustomTileCapability;
     readonly originGeometry: RectCapability;
 }
+
+// One guarded `window.tile` assignment produced by reflow planning. `source`
+// is the occupant's current tile at plan time (null only for an untiled
+// addition candidate); `target` is the exact ordinal overlay leaf.
+interface ReflowWrite {
+    readonly window: WindowCapability;
+    readonly source: TileCapability | null;
+    readonly target: TileCapability;
+}
+
+// Outcome of a bounded assignment-only selected-overlay reflow. Fixed private
+// diagnostics map to distinct no-op/no-capacity, success, and failure/partial
+// states; no-selection is silent and never claims a reflow happened.
+type ReflowOutcome =
+    | { readonly kind: "no-selection" }
+    | { readonly kind: "no-op" }
+    | { readonly kind: "no-capacity" }
+    | { readonly kind: "completed"; readonly writes: number }
+    | { readonly kind: "rejected"; readonly reason: string }
+    | { readonly kind: "partial"; readonly reason: string; readonly writes: number };
 
 function windowInScope(window: unknown, scope: CurrentScope): window is WindowCapability {
     if (!isWindow(window)) {
@@ -376,6 +397,12 @@ export class TileController {
     private readonly decodedBoundaries = new Set<BoundaryKind>();
     private readonly onceDiagnostics = new Set<string>();
     private readonly selectedOverlays = new Map<OutputCapability, Map<string, SelectedOverlay>>();
+    // Windows removed since the last reflow read of their scope. Removal can
+    // arrive while KWin still lists the window in its tile's window array;
+    // this bounded identity guard keeps the reflow from ever reassigning a
+    // removed window. Entries for settled (array-absent) windows are never
+    // consulted and the set is capped so it cannot grow unboundedly.
+    private readonly removedOccupants = new Set<WindowCapability>();
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -835,6 +862,7 @@ export class TileController {
                 return;
             }
             this.diagnostic("detach-completed");
+            this.reflowAfterDetach(scope, originTile);
         }, (reason) => this.disabled(reason));
     }
 
@@ -994,6 +1022,228 @@ export class TileController {
         return true;
     }
 
+    // Entry point for a bounded assignment-only selected-overlay reflow after
+    // a lifecycle change. Emits one fixed private diagnostic per distinct
+    // outcome; "no-selection" stays silent so unrelated removals or additions
+    // never claim a reflow. `candidate` supplies a newly added eligible window
+    // that may fill the first trailing leaf only when the overlay has capacity.
+    private runReflow(scope: CurrentScope, candidate?: WindowCapability): ReflowOutcome {
+        const outcome = this.reflowSelectedOverlay(scope, candidate);
+        switch (outcome.kind) {
+            case "no-op":
+                this.diagnostic("reflow-noop");
+                break;
+            case "no-capacity":
+                this.diagnostic("reflow-no-capacity");
+                break;
+            case "completed":
+                this.diagnostic("reflow-completed");
+                break;
+            case "rejected":
+                this.diagnostic(`reflow-rejected:${outcome.reason}`);
+                break;
+            case "partial":
+                this.diagnostic(`reflow-partial:${outcome.reason}`);
+                break;
+            case "no-selection":
+                break;
+        }
+        return outcome;
+    }
+
+    private reflowSelectedOverlay(
+        scope: CurrentScope,
+        candidate?: WindowCapability,
+    ): ReflowOutcome {
+        const overlay = this.readSelectedOverlay(scope);
+        if (overlay === null) {
+            return { kind: "no-selection" };
+        }
+        if (overlay.leaves.length === 0) {
+            return { kind: "rejected", reason: "topology-decode" };
+        }
+        // Deterministic occupants: ordinal leaf traversal only, omitting
+        // windows that left the overlay, left scope, or were removed, and
+        // preserving the current traversal order. Active-first ordering is
+        // never rerun after a lifecycle event.
+        const occupants: WindowCapability[] = [];
+        const seen = new Set<WindowCapability>();
+        for (const leaf of overlay.leaves) {
+            const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+            if (!windows.ok) {
+                return { kind: "rejected", reason: "topology-decode" };
+            }
+            for (const window of windows.value) {
+                if (seen.has(window)) {
+                    return { kind: "rejected", reason: "occupancy-validity" };
+                }
+                if (window.tile !== leaf || this.removedOccupants.has(window)) {
+                    continue;
+                }
+                if (!windowInScope(window, scope)) {
+                    return { kind: "rejected", reason: "occupancy-validity" };
+                }
+                seen.add(window);
+                occupants.push(window);
+            }
+        }
+        if (candidate !== undefined) {
+            if (
+                !windowInScope(candidate, scope) ||
+                candidate.tile !== null ||
+                seen.has(candidate) ||
+                this.removedOccupants.has(candidate)
+            ) {
+                return { kind: "rejected", reason: "candidate-eligibility" };
+            }
+            if (occupants.length >= overlay.leaves.length) {
+                return { kind: "no-capacity" };
+            }
+            occupants.push(candidate);
+        }
+        if (occupants.length > overlay.leaves.length) {
+            return { kind: "rejected", reason: "capacity" };
+        }
+        // Build the complete assignment plan before any write, compacting
+        // occupants to ordinal leaves and skipping already-correct entries.
+        const plan: ReflowWrite[] = [];
+        for (let index = 0; index < occupants.length; index += 1) {
+            const occupant = occupants[index];
+            const target = overlay.leaves[index];
+            if (occupant === undefined || target === undefined) {
+                return { kind: "rejected", reason: "capacity" };
+            }
+            if (occupant.tile === target) {
+                continue;
+            }
+            const source = occupant.tile;
+            if (source !== null && !isTile(source)) {
+                return { kind: "rejected", reason: "source-validity" };
+            }
+            plan.push({ window: occupant, source, target });
+        }
+        if (plan.length === 0) {
+            return { kind: "no-op" };
+        }
+        let writes = 0;
+        for (const entry of plan) {
+            if (!this.reflowAssignmentRevalidates(scope, entry.window, entry.source, entry.target)) {
+                return writes === 0
+                    ? { kind: "rejected", reason: "assignment-stale" }
+                    : { kind: "partial", reason: "assignment-stale", writes };
+            }
+            let assigned = false;
+            try {
+                assigned = assignWindowToTile(entry.window, entry.target);
+            } catch (error) {
+                void error;
+                return writes === 0
+                    ? { kind: "rejected", reason: "assignment-failed" }
+                    : { kind: "partial", reason: "assignment-failed", writes };
+            }
+            if (!assigned) {
+                return writes === 0
+                    ? { kind: "rejected", reason: "assignment-failed" }
+                    : { kind: "partial", reason: "assignment-failed", writes };
+            }
+            writes += 1;
+        }
+        return { kind: "completed", writes };
+    }
+
+    // Re-derives identity, scope, current source, and target availability
+    // immediately before each guarded write, so any change between planning
+    // and the write stops the reflow without claiming rollback.
+    private reflowAssignmentRevalidates(
+        scope: CurrentScope,
+        window: WindowCapability,
+        source: TileCapability | null,
+        target: TileCapability,
+    ): boolean {
+        if (!windowInScope(window, scope)) {
+            return false;
+        }
+        if (window.tile !== source) {
+            return false;
+        }
+        const overlay = this.readSelectedOverlay(scope);
+        if (overlay === null) {
+            return false;
+        }
+        return overlay.leaves.includes(target) && this.reflowTargetIsAvailable(target);
+    }
+
+    private reflowTargetIsAvailable(target: TileCapability): boolean {
+        const windows = decodeSequential(target.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+            return false;
+        }
+        for (const occupant of windows.value) {
+            if (!this.removedOccupants.has(occupant) && occupant.tile === target) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private reflowAfterRemoval(window: WindowCapability): void {
+        this.noteRemovedOccupant(window);
+        const scope = this.scopeForWindow(window);
+        if (scope === null) {
+            // Without a decoded scope, act only on an overlay that still
+            // identifies this exact wrapper. A settled removal with no such
+            // association is inert rather than writing an unrelated scope.
+            this.reflowSelectedScopesContaining(window);
+            return;
+        }
+        if (this.selectedOverlays.get(scope.output)?.get(scope.desktop.id) === undefined) {
+            return;
+        }
+        this.runReflow(scope);
+    }
+
+    private reflowAfterDetach(scope: CurrentScope, origin: TileCapability): void {
+        const overlay = this.readSelectedOverlay(scope);
+        if (overlay !== null && overlay.leaves.includes(origin)) {
+            this.runReflow(scope);
+        }
+    }
+
+    private reflowSelectedScopesContaining(window: WindowCapability): void {
+        for (const byDesktop of this.selectedOverlays.values()) {
+            for (const overlay of byDesktop.values()) {
+                const current = this.readSelectedOverlay(overlay.scope);
+                if (current === null) {
+                    continue;
+                }
+                for (const leaf of current.leaves) {
+                    const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+                    if (windows.ok && windows.value.includes(window)) {
+                        this.runReflow(current.scope);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    private noteRemovedOccupant(window: WindowCapability): void {
+        if (this.removedOccupants.size >= MAX_SEQUENTIAL_LENGTH) {
+            const stale = this.removedOccupants.values().next().value;
+            if (stale !== undefined) {
+                this.removedOccupants.delete(stale);
+            }
+        }
+        this.removedOccupants.add(window);
+    }
+
+    private refillOrPlaceAutomatically(window: WindowCapability, scope: CurrentScope): void {
+        const outcome = this.runReflow(scope, window);
+        if (outcome.kind === "no-selection" || outcome.kind === "no-capacity") {
+            this.placeAutomatically(window, scope);
+        }
+    }
+
     // This returns the explicit realization input rather than tying executor
     // use to discovery, allowing future strategies to choose occupants first.
     private presetOccupants(
@@ -1142,6 +1392,7 @@ export class TileController {
             if (isWindow(window)) {
                 this.detachInteractiveWindow(window);
                 this.cancelDeferredEligibility(window);
+                this.reflowAfterRemoval(window);
             }
         }, (reason) => this.disabled(reason));
     }
@@ -1163,7 +1414,7 @@ export class TileController {
                     return;
                 }
                 this.onceDiagnostic("window-added-eligible");
-                this.placeAutomatically(window, scope);
+                this.refillOrPlaceAutomatically(window, scope);
                 return;
             }
             try {
@@ -1213,7 +1464,7 @@ export class TileController {
                 return;
             }
             this.onceDiagnostic("window-added-eligible-deferred");
-            this.placeAutomatically(window, freshScope);
+            this.refillOrPlaceAutomatically(window, freshScope);
         }, (reason) => this.disabled(reason));
     }
 
