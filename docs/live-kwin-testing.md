@@ -104,6 +104,18 @@ validation ladder above.
   tuples, filtered to exact project action IDs). Persisted records and journal
   history are evidence only: neither proves a live callback. Journal transport
   and JSON failures fail closed rather than reporting missing evidence.
+- `scripts/start-test.sh diagnostics` is read-only. It reads only the current
+  KWin PID's `journalctl --user` journal and reports the ordered project
+  diagnostics for the latest same-PID controller-startup epoch (an ordered
+  `shortcut-registered` then `startup-handlers-ready` pair), labeled current or
+  historical by the current `isScriptLoaded` state. It matches the fixed
+  `plasma-auto-tiler:` prefix regardless of journal category, excludes
+  PID-mismatched and unrelated records, and labels (never presents as proof)
+  empty/malformed journals, PID mismatch, an absent or incomplete startup
+  epoch, or a disabled controller. It lists exact `-invoked`,
+  `-rejected:`/`-failed:`, and success tokens only where that token proves the
+  stage; persisted shortcut records are never callback evidence. It never uses
+  `journalctl --system`.
 - `scripts/start-test.sh stop` unloads only `plasma-auto-tiler-kwin` through
   the exact `unloadScript` reply contract, verifies it is no longer loaded,
   and is idempotent when it is already unloaded. It never unregisters broadly:

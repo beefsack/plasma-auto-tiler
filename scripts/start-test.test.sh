@@ -21,7 +21,19 @@ trap cleanup EXIT
 make_fake_tools() {
   mkdir -p "$FAKE_BIN/bin"
   printf '%s\n' '#!/usr/bin/env bash' 'exit 0' > "$FAKE_BIN/bin/npm"
-  printf '%s\n' '#!/usr/bin/env bash' 'printf "%s\\n" "2517 /nix/store/kwin-6.7.3/bin/kwin_wayland --wayland-fd 7 --socket wayland-0"' > "$FAKE_BIN/bin/pgrep"
+  cat > "$FAKE_BIN/bin/pgrep" <<'EOF'
+#!/usr/bin/env bash
+state="${FAKE_STATE_DIR:?}"
+count=0
+[[ -f "$state/pgrep-count" ]] && count="$(cat "$state/pgrep-count")"
+count=$((count + 1))
+printf '%s\n' "$count" > "$state/pgrep-count"
+pid=2517
+if [[ "$count" -gt 1 && -f "$state/pgrep-next-pid" ]]; then
+  pid="$(cat "$state/pgrep-next-pid")"
+fi
+printf '%s /nix/store/kwin-6.7.3/bin/kwin_wayland --wayland-fd 7 --socket wayland-0\n' "$pid"
+EOF
   printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$*" == *"--show-cursor"* ]]; then' '  cat "$FAKE_JOURNAL_CURSOR"' 'else' '  cat "$FAKE_JOURNAL_READ"' 'fi' > "$FAKE_BIN/bin/journalctl"
   cat > "$FAKE_BIN/bin/busctl" <<'EOF'
 #!/usr/bin/env bash
@@ -328,7 +340,143 @@ run_script stop
 check_exit 1
 assert_contains "unexpected isScriptLoaded reply"
 
-# start/status/stop must never mutate shortcut records
+# diagnostics: loaded current epoch with invoked/rejected/success tokens
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-invoked:columns"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-rejected:source-occupancy-validity"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "plugin: plasma-auto-tiler-kwin"
+assert_contains "loaded: loaded"
+assert_contains "kwin pid: 2517"
+assert_contains "epoch (latest same-KWin-PID controller startup): current (plugin loaded)"
+assert_contains "readiness: reached"
+assert_contains "controller disabled: no"
+assert_contains "callback invocation tokens (prove callback delivery):"
+assert_contains "plasma-auto-tiler:preset-invoked:columns"
+assert_contains "rejection tokens (prove callback reached a rejecting guard):"
+assert_contains "plasma-auto-tiler:preset-rejected:source-occupancy-validity"
+assert_contains "success tokens (prove the completed/successful stage):"
+assert_contains "plasma-auto-tiler:preset-applied:columns"
+assert_contains "do not prove callbacks"
+assert_contains "not a current-liveness proof"
+
+# diagnostics: unloaded evidence is labeled historical, never current
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}'
+run_script diagnostics
+check_exit 0
+assert_contains "loaded: not-loaded"
+assert_contains "epoch (latest same-KWin-PID controller startup): historical (plugin unloaded)"
+assert_contains "plasma-auto-tiler:preset-applied:columns"
+assert_not_contains "current (plugin loaded)"
+
+# diagnostics: multiple starts selects only the latest epoch
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:move-completed"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "plasma-auto-tiler:move-completed"
+assert_not_contains "plasma-auto-tiler:preset-applied:columns"
+
+# diagnostics: PID-mismatched journal records are excluded, never blended
+setup_state '-- cursor: cursor-1' '{"_PID":"9999","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
+{"_PID":"9999","MESSAGE":"plasma-auto-tiler:preset-applied:rows"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "unknown (no journal records match KWin pid 2517"
+assert_not_contains "plasma-auto-tiler:preset-applied:"
+
+# diagnostics: mixed-PID journal keeps only the current KWin pid evidence
+setup_state '-- cursor: cursor-1' '{"_PID":"9999","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:rows"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "plasma-auto-tiler:preset-applied:rows"
+assert_not_contains "plasma-auto-tiler:preset-applied:columns"
+
+# diagnostics: disabled startup is labeled disabled without a readiness claim
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "epoch (latest same-KWin-PID controller startup): disabled"
+assert_contains "readiness: not-reached"
+assert_contains "controller disabled: yes"
+assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
+assert_not_contains "readiness: reached"
+
+# diagnostics: empty journal is labeled unknown, never presented as evidence
+setup_state '-- cursor: cursor-1' ""
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "unknown (no journal records for this KWin pid)"
+assert_not_contains "preset-applied"
+
+# diagnostics: malformed journal fails closed
+setup_state '-- cursor: cursor-1' 'not json'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 1
+assert_contains "could not parse the KWin diagnostics journal"
+
+# diagnostics: matches the fixed prefix regardless of journal category
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_wayland","PRIORITY":"7","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_wayland","PRIORITY":"7","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","PRIORITY":"4","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
+{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","PRIORITY":"4","MESSAGE":"plasma-auto-tiler:keyboard-completed"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "plasma-auto-tiler:preset-applied:columns"
+assert_contains "plasma-auto-tiler:keyboard-completed"
+assert_contains "readiness: reached"
+
+# diagnostics: unrelated journal messages are never reported
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"kwin_scripting: something unrelated"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"Failed to load something"}
+{"_PID":"2517","MESSAGE":"Krohnkite: next layout"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "plasma-auto-tiler:shortcut-registered"
+assert_not_contains "something unrelated"
+assert_not_contains "Failed to load"
+assert_not_contains "Krohnkite"
+
+# diagnostics: a KWin PID change during the journal read invalidates the epoch
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
+printf 'true\n' > "$WORK/state/loaded"
+printf '9999\n' > "$WORK/state/pgrep-next-pid"
+run_script diagnostics
+check_exit 0
+assert_contains "unknown (KWin PID changed during journal read)"
+assert_not_contains "startup-handlers-ready"
+
+# diagnostics: strict parsing rejects extra arguments
+setup_state '-- cursor: cursor-1' ""
+run_script diagnostics extra
+check_exit 1
+assert_contains "takes no arguments"
+
+# start/status/stop/diagnostics must never mutate shortcut records
 assert_no_setshortcut_calls
 
 # reconcile-shortcuts: read-only report on stale records never mutates

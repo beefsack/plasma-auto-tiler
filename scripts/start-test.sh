@@ -86,6 +86,17 @@ journal_lines_valid='all(.[]; type == "object")'
 readiness_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | index("plasma-auto-tiler:shortcut-registered")) as $registered | ($messages | index("plasma-auto-tiler:startup-handlers-ready")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($registered != null and $ready != null and $registered < $ready and ($disabled | not))'
 readiness_evidence_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | (($messages | any(. == "plasma-auto-tiler:shortcut-registered")) and ($messages | any(. == "plasma-auto-tiler:startup-handlers-ready")))'
 disabled_seen_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] | any(startswith("plasma-auto-tiler:disabled:"))'
+# Slurp-mode diagnostics summary over journalctl JSON-lines (already validated
+# as objects). Keeps only records whose _PID equals the current KWin pid,
+# extracts the ordered project messages, and locates the ordered
+# controller-startup tokens. Output is one JSON object with matching-record
+# presence, messages, and the final indexes of each startup/disabled token.
+diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string"))) | map(.MESSAGE) | map(select(startswith("plasma-auto-tiler:")))) as $messages | {kept: (map(select((._PID? // "") == $pid)) | length), messages: $messages, lastShortcut: (($messages | indices("plasma-auto-tiler:shortcut-registered")) | .[-1]?), lastReady: (($messages | indices("plasma-auto-tiler:startup-handlers-ready")) | .[-1]?), lastDisabledStart: (($messages | to_entries | map(select(.value == "plasma-auto-tiler:disabled:shortcut-registration-failed")) | .[-1]?.key)), lastDisabledAny: (($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key))}'
+# Classifies the ordered project messages of one epoch window (from $start)
+# into exact proof tokens: -invoked (callback delivery), -rejected:/-failed:
+# (callback reached a rejecting/failing guard), and success tokens (preset
+# applied, completed, armed, managed, or a no-op reflow).
+diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|reflow)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
 
 # Bounded deterministic readiness wait: fixed attempt count and fixed delay.
 READINESS_ATTEMPTS=30
@@ -104,6 +115,10 @@ Commands:
   status   report the exact plugin load state, controller readiness
            evidence, and persisted KGlobalAccel action records
   stop     unload the exact plugin and report any persisted action records
+  diagnostics
+           report the latest same-KWin-PID controller-startup epoch's
+           ordered project diagnostics, labeled current or historical by
+           the current load state; read-only, never mutates
   reconcile-shortcuts
            report persisted project shortcut records whose active
            sequence differs from the source-default expected sequence;
@@ -120,6 +135,7 @@ start mutates live KWin state and still requires explicit authorization.
 start never mutates shortcut records; only reconcile-shortcuts --apply does.
 stop/unload does not roll back Custom Tile changes the script already made.
 KGlobalAccel records persist after unload and do not prove live callbacks.
+status, diagnostics, and reconcile-shortcuts are read-only.
 EOF
 }
 
@@ -415,6 +431,153 @@ cmd_status() {
   print_records "$records"
   report_shortcut_drift "$records"
   echo "note: KGlobalAccel records persist after unload and do not prove live callbacks."
+  echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
+  echo "diagnostics: run '$0 diagnostics' for the latest same-KWin-PID controller-startup diagnostic evidence."
+}
+
+cmd_diagnostics() {
+  require_tools busctl jq journalctl pgrep
+  read_plugin_id
+
+  local loaded
+  loaded="$(plugin_loaded_word)"
+
+  local pid
+  pid="$(find_kwin_pid 2>/dev/null || true)"
+
+  echo "plugin: $PLUGIN_ID"
+  echo "loaded: $loaded"
+  if [[ -z "$pid" ]]; then
+    echo "kwin pid: unavailable (no single KWin process identified)"
+    echo "controller running/callbacks: not proven"
+    echo "diagnostics epoch (latest same-KWin-PID controller startup): unknown (no single KWin process identified)"
+    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
+    echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
+    return 0
+  fi
+  echo "kwin pid: $pid"
+
+  local journal_out
+  journal_out="$(journalctl --user --quiet --no-pager "_PID=$pid" -o json)" || {
+    echo "error: could not read the KWin diagnostics journal" >&2
+    exit 1
+  }
+  if [[ -z "$journal_out" ]]; then
+    echo "controller running/callbacks: not proven"
+    echo "diagnostics epoch (latest same-KWin-PID controller startup): unknown (no journal records for this KWin pid)"
+    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
+    echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
+    return 0
+  fi
+  if ! jq -s -e "$journal_lines_valid" <<<"$journal_out" >/dev/null 2>&1; then
+    echo "error: could not parse the KWin diagnostics journal" >&2
+    exit 1
+  fi
+
+  local after_pid
+  after_pid="$(find_kwin_pid 2>/dev/null || true)"
+  if [[ "$after_pid" != "$pid" ]]; then
+    echo "controller running/callbacks: not proven"
+    echo "diagnostics epoch (latest same-KWin-PID controller startup): unknown (KWin PID changed during journal read)"
+    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
+    echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
+    return 0
+  fi
+
+  local summary
+  summary="$(jq -s -c --arg pid "$pid" "$diagnostics_summary" <<<"$journal_out")" || {
+    echo "error: could not summarize the KWin diagnostics journal" >&2
+    exit 1
+  }
+
+  local kept count last_shortcut last_ready last_disabled_start last_disabled_any
+  kept="$(jq -r '.kept' <<<"$summary")"
+  count="$(jq -r '.messages | length' <<<"$summary")"
+  last_shortcut="$(jq -r '.lastShortcut // -1' <<<"$summary")"
+  last_ready="$(jq -r '.lastReady // -1' <<<"$summary")"
+  last_disabled_start="$(jq -r '.lastDisabledStart // -1' <<<"$summary")"
+  last_disabled_any="$(jq -r '.lastDisabledAny // -1' <<<"$summary")"
+
+  # The latest startup token is the later of the last successful-start token
+  # (shortcut-registered) and the last disabled-start token
+  # (disabled:shortcut-registration-failed); the epoch window begins there.
+  local latest_start latest_start_msg start_index
+  latest_start="$last_shortcut"
+  latest_start_msg="shortcut-registered"
+  if [[ "$last_disabled_start" -gt "$latest_start" ]]; then
+    latest_start="$last_disabled_start"
+    latest_start_msg="disabled:shortcut-registration-failed"
+  fi
+  start_index=-1
+
+  local epoch_label readiness_label disabled_label
+  epoch_label="unknown"
+  readiness_label="unknown"
+  disabled_label="unknown"
+
+  if [[ "$count" -eq 0 ]]; then
+    if [[ "$kept" -eq 0 ]]; then
+      epoch_label="unknown (no journal records match KWin pid $pid; PID-mismatched records excluded)"
+    else
+      epoch_label="unknown (no project diagnostics for KWin pid $pid)"
+    fi
+  elif [[ "$latest_start" -lt 0 ]]; then
+    if [[ "$last_disabled_any" -ge 0 ]]; then
+      epoch_label="disabled"
+      readiness_label="unknown"
+      disabled_label="yes"
+      start_index="$last_disabled_any"
+    else
+      epoch_label="unknown (no controller-startup epoch observed)"
+    fi
+  elif [[ "$latest_start_msg" == "disabled:shortcut-registration-failed" ]]; then
+    epoch_label="disabled (latest startup disabled)"
+    readiness_label="not-reached"
+    disabled_label="yes"
+    start_index="$latest_start"
+  elif [[ "$last_ready" -gt "$latest_start" ]]; then
+    if [[ "$loaded" == "not-loaded" ]]; then
+      epoch_label="historical (plugin unloaded)"
+    else
+      epoch_label="current (plugin loaded)"
+    fi
+    readiness_label="reached"
+    if [[ "$last_disabled_any" -gt "$latest_start" ]]; then
+      disabled_label="yes"
+    else
+      disabled_label="no"
+    fi
+    start_index="$latest_start"
+  else
+    epoch_label="incomplete (startup-handlers-ready not observed)"
+    readiness_label="unknown"
+    disabled_label="no"
+    start_index="$latest_start"
+  fi
+
+  echo "controller running/callbacks: not proven by journal evidence alone"
+  echo "diagnostics epoch (latest same-KWin-PID controller startup): $epoch_label"
+  echo "  readiness: $readiness_label"
+  echo "  controller disabled: $disabled_label"
+
+  if [[ "$start_index" -ge 0 ]]; then
+    local classified
+    classified="$(jq -c --argjson start "$start_index" "$diagnostics_classify" <<<"$summary")" || {
+      echo "error: could not classify the KWin diagnostics journal" >&2
+      exit 1
+    }
+    echo "  callback invocation tokens (prove callback delivery):"
+    jq -r '.invoked[]' <<<"$classified" | sed 's/^/    /'
+    echo "  rejection tokens (prove callback reached a rejecting guard):"
+    jq -r '.rejected[]' <<<"$classified" | sed 's/^/    /'
+    echo "  success tokens (prove the completed/successful stage):"
+    jq -r '.success[]' <<<"$classified" | sed 's/^/    /'
+    echo "  ordered diagnostics:"
+    jq -r '.epoch[]' <<<"$classified" | sed 's/^/    /'
+  fi
+
+  echo "note: callback invocation/rejection is proven only by the exact diagnostic tokens listed above."
+  echo "note: persisted shortcut records do not prove callbacks; only a matching diagnostic token proves callback delivery."
   echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
 }
 
@@ -726,7 +889,7 @@ cmd_reconcile_shortcuts() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (start, status, stop, or reconcile-shortcuts)" >&2
+  echo "error: missing command (start, status, stop, diagnostics, or reconcile-shortcuts)" >&2
   usage >&2
   exit 1
 fi
@@ -760,6 +923,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_stop
+    ;;
+  diagnostics)
+    if [[ $# -ne 1 ]]; then
+      echo "error: 'diagnostics' takes no arguments" >&2
+      exit 1
+    fi
+    cmd_diagnostics
     ;;
   reconcile-shortcuts)
     if [[ $# -gt 2 ]]; then
