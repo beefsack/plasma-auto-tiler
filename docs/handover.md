@@ -1,7 +1,7 @@
 # Terminal Handover: plasma-auto-tiler
 
-Status: living resumption snapshot, last updated 2026-08-11 after
-`unit-05/attempt-20`. Treat every prior Lead/Worker session as terminal,
+Status: living resumption snapshot, last updated 2026-08-11 after focused-leaf
+preset application. Treat every prior Lead/Worker session as terminal,
 failed, or completed; never resume one. A fresh Orchestrator or Lead should
 read only this file plus the artifacts it links to reconstruct full context.
 
@@ -54,8 +54,8 @@ merely for performance.
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
 - Current `kwin/contents/code/main.js` SHA-256 is
-  `18b05f2232ebccc81cf667f22fa595956184b350ba2b62da6401489c98dd1a92`.
-   The current source typechecks and has 259 tests across 36 suites. This is
+  `733b8b7e55df1848d7c5608e580bb466f9b4d556e0fae273331eaddacb425594`.
+  The current source typechecks and has 265 tests across 37 suites. This is
   static evidence only; no current runtime acceptance follows.
 
 ## Active Custom Tile Slice
@@ -68,7 +68,7 @@ merely for performance.
   from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all nine registrations must succeed; success logs
+  source-pinned boolean gate: all twelve registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current actions are: `plasma-auto-tiler-insert-right` / `Insert next window
@@ -81,7 +81,11 @@ merely for performance.
   / `Move window left` / `Meta+Alt+Shift+H`; `plasma-auto-tiler-move-down` /
   `Move window down` / `Meta+Alt+Shift+J`; `plasma-auto-tiler-move-up` /
   `Move window up` / `Meta+Alt+Shift+K`; and `plasma-auto-tiler-move-right` /
-  `Move window right` / `Meta+Alt+Shift+L`. All nine registrations share the
+  `Move window right` / `Meta+Alt+Shift+L`. Focused-leaf presets are
+  `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
+  `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
+  `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
+  grid in focused leaf` / `Meta+Alt+3`. All twelve registrations share the
   aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap.
@@ -98,6 +102,12 @@ merely for performance.
   KWin seam maps orientations and decodes exactly two CustomTile children.
   `CustomTile.split()` remains structurally risky because it mutates before
   JavaScript can decode its result.
+- Focused-leaf preset application gathers an explicit active-first scoped
+  occupant list, retaining the remaining decoded leaf traversal order. It uses
+  the catalog and executor only on the active leaf, performs guarded ordinal
+  assignments with fresh identity/scope checks, and retains surrounding authored
+  topology. Split and assignment failures are fail-fast and private; no rollback
+  or reflow is claimed.
 
 ## Live Evidence and Parked Automation
 
@@ -157,6 +167,10 @@ merely for performance.
   stable ordinal mappings for columns (horizontal), rows (vertical), and
   balanced-grid (horizontal root alternating by depth). It remains topology
   only; it makes no geometry or ratio claim.
+- [Focused-leaf preset application](changes/archive/2026-08-11-focused-leaf-preset-application/)
+  is archived and statically accepted. It adds the three exact preset actions,
+  explicit occupant realization, and private fail-fast diagnostics. Runtime
+  `CustomTile.split()` and tile-assignment behavior remain deferred.
 
 ## Review and Governance Record
 
@@ -182,7 +196,7 @@ merely for performance.
   accepted Client A. The current functional blocker is Client B target
   occupancy, not general client eligibility.
 - Current scope deliberately excludes dynamic-workspace lifecycle, stable
-  multi-output identity/hotplug, persistence, layout realization and ratios,
+  multi-output identity/hotplug, persistence, broader layout realization and ratios,
   broader tiling modes, effects/decorations, packaging, and performance claims.
 - The active JS baseline and structural-feasibility changes remain P1; sustained
   workload validation remains paused. The blocked nested-KWin and unsafe live

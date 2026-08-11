@@ -309,6 +309,78 @@ function moveSetup(direction: "left" | "down" | "up" | "right"): {
     };
 }
 
+function presetSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly source: TestTile;
+    readonly active: TestWindow;
+    readonly early: TestTile;
+    readonly late: TestTile;
+    readonly earlyWindow: TestWindow;
+    readonly lateWindow: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const source = tile();
+    const early = tile({ x: 200, y: 0, width: 100, height: 100 });
+    const late = tile({ x: 300, y: 0, width: 100, height: 100 });
+    const active = window({ tile: source });
+    const earlyWindow = window({ tile: early });
+    const lateWindow = window({ tile: late });
+    source.windows = [active];
+    early.windows = [earlyWindow];
+    late.windows = [lateWindow];
+    root.tiles = [early, source, late];
+    harness.root = root;
+    harness.active = active;
+    harness.windows = [active, earlyWindow, lateWindow];
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, source, active, early, late, earlyWindow, lateWindow };
+}
+
+function configureThreeOccupantPreset(state: ReturnType<typeof presetSetup>): {
+    readonly directions: number[];
+    readonly managed: unknown[];
+    readonly left: TestTile;
+    readonly middle: TestTile;
+    readonly right: TestTile;
+} {
+    const directions: number[] = [];
+    const managed: unknown[] = [];
+    const manage = (target: TestTile) => (value: unknown): boolean => {
+        managed.push(value);
+        const subject = value as TestWindow;
+        if (subject.tile !== state.source && subject.tile !== null) {
+            (subject.tile as TestTile).windows = [];
+        }
+        subject.tile = target;
+        target.windows = [subject];
+        return true;
+    };
+    const left = tile({ x: 0, y: 0, width: 33, height: 100 });
+    const middle = tile({ x: 33, y: 0, width: 33, height: 100 });
+    const right = tile({ x: 66, y: 0, width: 34, height: 100 });
+    left.manage = manage(left);
+    middle.manage = manage(middle);
+    right.manage = manage(right);
+    const branch = tile({ x: 33, y: 0, width: 67, height: 100 }, true);
+    branch.split = (direction) => {
+        directions.push(direction);
+        branch.tiles = [middle, right];
+        return [middle, right];
+    };
+    state.source.split = (direction) => {
+        directions.push(direction);
+        state.source.isLayout = true;
+        state.source.windows = [];
+        state.source.tiles = [left, branch];
+        return [left, branch];
+    };
+    return { directions, managed, left, middle, right };
+}
+
 function invokeShortcut(harness: Harness, name: string): void {
     const shortcut = harness.shortcuts.find((entry) => entry.name === name);
     if (shortcut === undefined) {
@@ -572,8 +644,13 @@ describe("TileController keyboard focus", () => {
         ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Alt+Shift+K"],
         ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Alt+Shift+L"],
     ];
+    const presetActions: ReadonlyArray<readonly [string, string, string]> = [
+        ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
+        ["plasma-auto-tiler-apply-rows", "Apply rows in focused leaf", "Meta+Alt+2"],
+        ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
+    ];
 
-    it("registers the insertion, four focus, and four move exact actions in order", () => {
+    it("registers the insertion, four focus, four move, and three preset exact actions in order", () => {
         const { harness } = setup();
         assert.deepEqual(
             harness.shortcuts.map(({ name, text, sequence }) => [name, text, sequence]),
@@ -581,19 +658,20 @@ describe("TileController keyboard focus", () => {
                 ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
                 ...focusActions.map(([, name, text, sequence]) => [name, text, sequence]),
                 ...moveActions.map(([, name, text, sequence]) => [name, text, sequence]),
+                ...presetActions,
             ],
         );
     });
 
-    it("disables for every aggregate registration failure and keeps all nine callbacks inert", () => {
-        for (let failedIndex = 0; failedIndex < 9; failedIndex += 1) {
+    it("disables for every aggregate registration failure and keeps all twelve callbacks inert", () => {
+        for (let failedIndex = 0; failedIndex < 12; failedIndex += 1) {
             const harness = new Harness();
-            for (let index = 0; index < 9; index += 1) {
+            for (let index = 0; index < 12; index += 1) {
                 harness.shortcutResults.push(index !== failedIndex);
             }
             const controller = new TileController(harness.environment());
             controller.start();
-            assert.equal(harness.shortcuts.length, 9);
+            assert.equal(harness.shortcuts.length, 12);
             assert.equal(controller.isEnabled, false);
             assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
@@ -601,6 +679,9 @@ describe("TileController keyboard focus", () => {
             const baseline = harness.logs.length;
             invokeShortcut(harness, "plasma-auto-tiler-insert-right");
             for (const [, name] of [...focusActions, ...moveActions]) {
+                invokeShortcut(harness, name);
+            }
+            for (const [name] of presetActions) {
                 invokeShortcut(harness, name);
             }
             assert.equal(harness.logs.length, baseline);
@@ -1123,6 +1204,166 @@ describe("TileController keyboard move", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
         assert.equal(state.controller.isEnabled, true);
         assert.equal(manages, 1);
+    });
+});
+
+describe("TileController focused-leaf presets", () => {
+    const presetActions: ReadonlyArray<readonly [string, readonly number[]]> = [
+        ["plasma-auto-tiler-apply-columns", [1, 1]],
+        ["plasma-auto-tiler-apply-rows", [2, 2]],
+        ["plasma-auto-tiler-apply-balanced-grid", [1, 2]],
+    ];
+
+    it("uses each selected preset only inside the focused leaf and assigns ordinal leaves active first", () => {
+        for (const [action, directions] of presetActions) {
+            const state = presetSetup();
+            const realized = configureThreeOccupantPreset(state);
+            let rootSplits = 0;
+            state.root.split = () => {
+                rootSplits += 1;
+                return [];
+            };
+            const outside = state.root.tiles;
+
+            invokeShortcut(state.harness, action);
+
+            assert.deepEqual(realized.directions, directions);
+            assert.deepEqual(realized.managed, [state.active, state.lateWindow, state.earlyWindow]);
+            assert.equal(rootSplits, 0);
+            assert.equal(state.root.tiles, outside);
+            assert.equal((state.root.tiles as TestTile[])[0], state.early);
+            assert.equal((state.root.tiles as TestTile[])[2], state.late);
+            assert.equal(state.active.tile, realized.left);
+            assert.equal(state.lateWindow.tile, realized.middle);
+            assert.equal(state.earlyWindow.tile, realized.right);
+            assert.deepEqual(
+                state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:preset-")),
+                [`plasma-auto-tiler:preset-invoked:${action.replace("plasma-auto-tiler-apply-", "")}`, `plasma-auto-tiler:preset-applied:${action.replace("plasma-auto-tiler-apply-", "")}`],
+            );
+        }
+    });
+
+    it("accepts a singleton preset without splitting and still uses the guarded assignment seam", () => {
+        const state = presetSetup();
+        state.root.tiles = [state.source];
+        let splits = 0;
+        let manages = 0;
+        state.source.split = () => {
+            splits += 1;
+            return [];
+        };
+        state.source.manage = (value) => {
+            manages += 1;
+            assert.equal(value, state.active);
+            return true;
+        };
+
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+
+        assert.equal(splits, 0);
+        assert.equal(manages, 1);
+        assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 1);
+    });
+
+    it("does not cache occupancy after application, so automatic placement sees vacated surrounding leaves", () => {
+        const state = presetSetup();
+        configureThreeOccupantPreset(state);
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        const managed: unknown[] = [];
+        state.early.manage = (value) => {
+            managed.push(value);
+            return true;
+        };
+
+        const incoming = window();
+        state.harness.emitAdded(incoming);
+
+        assert.deepEqual(managed, [incoming]);
+        assert.equal(countEvent(state.harness.logs, "automatic-placement-managed"), 1);
+    });
+
+    it("rejects malformed source, duplicate or ineligible occupants, and preflight scope drift before splitting", () => {
+        const cases: ReadonlyArray<(state: ReturnType<typeof presetSetup>) => void> = [
+            (state) => {
+                state.source.windows = [state.active, window({ tile: state.source })];
+            },
+            (state) => {
+                state.late.windows = [state.active];
+            },
+            (state) => {
+                state.lateWindow.normalWindow = false;
+            },
+            (state) => {
+                Object.defineProperty(state.harness, "root", {
+                    configurable: true,
+                    get: () => {
+                        state.active.output = null;
+                        return state.root;
+                    },
+                });
+            },
+        ];
+        for (const configure of cases) {
+            const state = presetSetup();
+            let splits = 0;
+            state.source.split = () => {
+                splits += 1;
+                return [];
+            };
+            configure(state);
+
+            invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+
+            assert.equal(splits, 0);
+            assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 0);
+        }
+    });
+
+    it("stops after a possibly-mutated split failure without assigning occupants", () => {
+        const state = presetSetup();
+        let manages = 0;
+        state.source.split = () => {
+            state.source.isLayout = true;
+            return [null, null];
+        };
+        state.early.manage = () => {
+            manages += 1;
+            return true;
+        };
+        state.late.manage = () => {
+            manages += 1;
+            return true;
+        };
+
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+
+        assert.equal(manages, 0);
+        assert.equal(countEvent(state.harness.logs, "preset-failed:split-mutation-possible"), 1);
+        assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 0);
+    });
+
+    it("stops later assignments after a fixed private assignment failure", () => {
+        const state = presetSetup();
+        const realized = configureThreeOccupantPreset(state);
+        let laterManages = 0;
+        realized.middle.manage = () => {
+            throw new Error("private-window-title");
+        };
+        realized.right.manage = () => {
+            laterManages += 1;
+            return true;
+        };
+
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+
+        assert.equal(laterManages, 0);
+        assert.equal(countEvent(state.harness.logs, "preset-failed:assignment-failed:later"), 1);
+        assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 0);
+        for (const entry of state.harness.logs) {
+            assert.equal(entry.includes("private-window-title"), false);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
     });
 });
 

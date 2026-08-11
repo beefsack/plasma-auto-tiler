@@ -23,6 +23,8 @@ import {
     type WindowInteractionSignals,
     type WindowScopeSignals,
 } from "./boundary";
+import { customTileSplitSeam } from "./custom-tile-split";
+import { executeBlueprintInstructions } from "./layout-executor";
 import {
     findNeighborLeaf,
     pickTargetLeaf,
@@ -34,6 +36,7 @@ import {
     type Scope,
     type WindowRef,
 } from "./logic";
+import { buildPreset, type PresetKind } from "./preset-catalog";
 
 const MAX_TILES = MAX_SEQUENTIAL_LENGTH;
 const HORIZONTAL_LAYOUT_DIRECTION = 1;
@@ -157,7 +160,7 @@ function decodeLeaves(
         decodedBoundary("tile-children");
         for (const child of children.value) {
             if (visited.has(child)) {
-                continue;
+                return null;
             }
             if (visited.size >= MAX_TILES) {
                 return null;
@@ -232,6 +235,11 @@ interface TargetOccupant {
     readonly usesActiveWrapper: boolean;
 }
 
+interface PresetOccupant {
+    readonly window: WindowCapability;
+    readonly originTile: TileCapability;
+}
+
 function targetOccupantForActive(target: OperationLeaf, active: WindowCapability): TargetOccupant | null {
     if (windowIndex(target.windows, active) >= 0) {
         return { window: active, usesActiveWrapper: true };
@@ -243,6 +251,10 @@ function targetOccupantForActive(target: OperationLeaf, active: WindowCapability
     }
     const occupant = target.windows[0];
     return occupant === undefined ? null : { window: occupant, usesActiveWrapper: false };
+}
+
+function ordinalClass(ordinal: number): "first" | "later" {
+    return ordinal === 0 ? "first" : "later";
 }
 
 function orderedChildren(
@@ -395,6 +407,24 @@ export class TileController {
                 "Meta+Alt+Shift+L",
                 () => this.moveActiveWindow("right"),
             );
+            const columnsRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-apply-columns",
+                "Apply columns in focused leaf",
+                "Meta+Alt+1",
+                () => this.applyPreset("columns"),
+            );
+            const rowsRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-apply-rows",
+                "Apply rows in focused leaf",
+                "Meta+Alt+2",
+                () => this.applyPreset("rows"),
+            );
+            const gridRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-apply-balanced-grid",
+                "Apply balanced grid in focused leaf",
+                "Meta+Alt+3",
+                () => this.applyPreset("balanced-grid"),
+            );
             if (
                 !insertionRegistered ||
                 !leftRegistered ||
@@ -404,7 +434,10 @@ export class TileController {
                 !moveLeftRegistered ||
                 !moveDownRegistered ||
                 !moveUpRegistered ||
-                !moveRightRegistered
+                !moveRightRegistered ||
+                !columnsRegistered ||
+                !rowsRegistered ||
+                !gridRegistered
             ) {
                 this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
                 return;
@@ -638,6 +671,154 @@ export class TileController {
             }
             this.diagnostic("move-completed");
         }, (reason) => this.disabled(reason));
+    }
+
+    private applyPreset(kind: PresetKind): void {
+        this.gate.run(() => {
+            this.diagnostic(`preset-invoked:${kind}`);
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("preset-rejected:no-active-window");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("preset-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("preset-rejected:active-window-eligibility");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`preset-rejected:${reason}`);
+            });
+            if (topology === null || active.tile === null || !isCustomTile(active.tile)) {
+                if (topology !== null) {
+                    this.diagnostic("preset-rejected:active-tile-association");
+                }
+                return;
+            }
+            const source = operationLeafForTile(topology, active.tile);
+            if (
+                source === null ||
+                source.leaf.isLayout ||
+                source.windows.length !== 1 ||
+                !isCustomTile(source.decoded.tile)
+            ) {
+                this.diagnostic("preset-rejected:source-occupancy-validity");
+                return;
+            }
+            const occupants = this.presetOccupants(topology, source, active, scope);
+            if (occupants === null) {
+                this.diagnostic("preset-rejected:occupancy-validity");
+                return;
+            }
+            const compiled = buildPreset(kind, occupants.length);
+            if (!compiled.ok) {
+                this.diagnostic("preset-rejected:compile-failed");
+                return;
+            }
+            const execution = executeBlueprintInstructions(compiled.value, source.decoded.tile, customTileSplitSeam);
+            if (!execution.ok) {
+                this.diagnostic(
+                    execution.mutationPossible
+                        ? "preset-failed:split-mutation-possible"
+                        : "preset-failed:split-no-mutation",
+                );
+                return;
+            }
+            if (execution.leaves.length !== occupants.length) {
+                this.diagnostic("preset-failed:split-mutation-possible");
+                return;
+            }
+            for (let ordinal = 0; ordinal < occupants.length; ordinal += 1) {
+                const occupant = occupants[ordinal];
+                const leaf = execution.leaves[ordinal];
+                if (occupant === undefined || leaf === undefined) {
+                    this.diagnostic("preset-failed:assignment-stale:later");
+                    return;
+                }
+                const stage = ordinalClass(ordinal);
+                if (!this.presetAssignmentRevalidates(scope, active, occupant)) {
+                    this.diagnostic(`preset-failed:assignment-stale:${stage}`);
+                    return;
+                }
+                try {
+                    if (!manageTile(leaf, occupant.window)) {
+                        this.diagnostic(`preset-failed:assignment-failed:${stage}`);
+                        return;
+                    }
+                } catch (error) {
+                    void error;
+                    this.diagnostic(`preset-failed:assignment-failed:${stage}`);
+                    return;
+                }
+            }
+            this.diagnostic(`preset-applied:${kind}`);
+        }, (reason) => this.disabled(reason));
+    }
+
+    // This returns the explicit realization input rather than tying executor
+    // use to discovery, allowing future strategies to choose occupants first.
+    private presetOccupants(
+        topology: readonly OperationLeaf[],
+        source: OperationLeaf,
+        active: WindowCapability,
+        scope: CurrentScope,
+    ): readonly PresetOccupant[] | null {
+        const sourceOccupant = targetOccupantForActive(source, active);
+        if (sourceOccupant === null) {
+            return null;
+        }
+        const seenLeaves = new Set<TileCapability>();
+        const seenWindows = new Set<WindowCapability>();
+        const ordered: PresetOccupant[] = [];
+        for (const entry of topology) {
+            if (entry.leaf.isLayout || seenLeaves.has(entry.decoded.tile)) {
+                return null;
+            }
+            seenLeaves.add(entry.decoded.tile);
+            for (const window of entry.windows) {
+                if (
+                    !windowInScope(window, scope) ||
+                    window.tile !== entry.decoded.tile ||
+                    seenWindows.has(window)
+                ) {
+                    return null;
+                }
+                seenWindows.add(window);
+                ordered.push({ window, originTile: entry.decoded.tile });
+            }
+        }
+        if (!seenWindows.has(sourceOccupant.window)) {
+            return null;
+        }
+        const occupants: PresetOccupant[] = [{ window: sourceOccupant.window, originTile: source.decoded.tile }];
+        for (const occupant of ordered) {
+            if (occupant.window !== sourceOccupant.window) {
+                occupants.push(occupant);
+            }
+        }
+        return Object.freeze(occupants);
+    }
+
+    private presetAssignmentRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        occupant: PresetOccupant,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        return (
+            freshScope !== null &&
+            sameScope(freshScope.scope, scope.scope) &&
+            windowInScope(active, freshScope) &&
+            windowInScope(occupant.window, freshScope) &&
+            occupant.window.tile === occupant.originTile
+        );
     }
 
     // Active scope, source association, and target emptiness are re-derived
