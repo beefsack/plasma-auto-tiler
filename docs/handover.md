@@ -1,7 +1,7 @@
 # Terminal Handover: plasma-auto-tiler
 
-Status: living resumption snapshot, last updated 2026-08-11 after focused-leaf
-preset application. Treat every prior Lead/Worker session as terminal,
+Status: living resumption snapshot, last updated 2026-08-12 after one bounded
+manual registration/readiness lifecycle validation. Treat every prior Lead/Worker session as terminal,
 failed, or completed; never resume one. A fresh Orchestrator or Lead should
 read only this file plus the artifacts it links to reconstruct full context.
 
@@ -156,10 +156,33 @@ merely for performance.
 
 ## Live Evidence and Parked Automation
 
-- `unit-05` remains unaccepted. The current bundle is `18b05f22...`, with a
-  pending singleton-occupant fallback aimed at
-  `keyboard-rejected:target-occupancy-validity`; it has static typecheck and
-  161-test evidence only.
+- 2026-08-12 registration/readiness lifecycle: one fresh Lead, after read-only
+  preflight and one Worker preflight, ran exactly `scripts/start-test.sh start`,
+  `status`, then `stop` against KWin PID 2517. Preflight showed the exact plugin
+  unloaded, unambiguous `kwin` ownership, and Krohnkite disabled/unloaded. Start
+  built the current bundle, loaded Script0, and reported readiness; status found
+  13 exact project records; stop reported the exact plugin unloaded and the
+  final `isScriptLoaded` envelope was false. No callback, key, window, desktop,
+  tile, or Krohnkite action occurred. The latest same-PID diagnostics are one
+  `shortcut-registered` then one `startup-handlers-ready` for the aggregate
+  13-action registration gate, with no `disabled:shortcut-registration-failed`.
+  Historical same-PID totals are 12 and 14 respectively and are not current
+  liveness evidence. The historical `kwin_scripting` warning remains unrelated
+  to this attempt.
+- KGlobalAccel postflight has all 13 exact action IDs under `kwin`; its tuple
+  default sequence is empty for each. Active sequences are `Meta+Alt+Right`
+  (insert-right), `Meta+Alt+H/J/K/L` (focus left/down/up/right),
+  `Meta+Alt+Shift+H/J/K/L` (move left/down/up/right), `Meta+Shift+Space`
+  (detach), and `Meta+Alt+1/2/3` (columns/rows/balanced-grid). Thus insert,
+  detach, and presets match source defaults; four focus and four move records
+  retain older active assignments. `detach` was absent preflight and was
+  registered by this lifecycle. All persisted records remain after unload by
+  design and prove neither current load nor callback delivery.
+- `unit-05` remains unaccepted. The current bundle is
+  `f80b019573e0b7709f229b94c4efa4c52da287067a0592a081000f0c56d4d973`;
+  current static verification is typecheck, build, 314 tests across 42 suites,
+  and 49 lifecycle shell checks. The pending singleton-occupant fallback remains
+  unaccepted for the `keyboard-rejected:target-occupancy-validity` boundary.
 - Reusable live infrastructure remains proven: the nonce-owned `systemd-run
   --user` supervisor, strict all-component KGlobalAccel collector, atomic
   load-ID parse plus `Script<ID>` introspection, and `_PID`-scoped `--user`
