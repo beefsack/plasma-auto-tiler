@@ -1,0 +1,20 @@
+{
+  "name": "plasma-auto-tiler-kwin",
+  "version": "0.1.0",
+  "private": true,
+  "description": "KWin scripting component for Plasma Auto Tiler. Development-only toolchain; KWin executes only the generated non-module bundle.",
+  "type": "commonjs",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "build": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js",
+    "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && node --test \"dist/tests/**/*.test.js\""
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "@types/node": "26.2.0",
+    "esbuild": "0.28.2",
+    "typescript": "7.0.2"
+  }
+}

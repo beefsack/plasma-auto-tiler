@@ -1,0 +1,12 @@
+{
+  "KPackageStructure": "KWin/Script",
+  "KPlugin": {
+    "Id": "plasma-auto-tiler-kwin",
+    "Name": "Plasma Auto Tiler",
+    "Description": "Guarded Custom Tile automation for KWin.",
+    "EnabledByDefault": false,
+    "License": "GPL-2.0-or-later",
+    "Icon": "preferences-system-windows"
+  },
+  "X-Plasma-API": "javascript"
+}

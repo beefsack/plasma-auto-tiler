@@ -1,0 +1,26 @@
+# Devenv
+.devenv*
+devenv.local.nix
+devenv.local.yaml
+
+# direnv
+.direnv
+
+# pre-commit
+.pre-commit-config.yaml
+
+
+# Added by cargo
+
+/target
+
+# Added by the kwin TypeScript package
+
+/kwin/node_modules
+/kwin/contents/code/main.js
+/kwin/dist
+
+# Local live-validation evidence
+
+/docs/changes/**/results/
+/docs/changes/custom-tile-vertical-slice/log.md
