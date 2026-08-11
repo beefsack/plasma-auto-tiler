@@ -54,8 +54,8 @@ merely for performance.
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
 - Current ignored generated `kwin/contents/code/main.js` SHA-256 is
-  `913a41c2452dd63ee87f43edaf2e0f71fb6ef6a727b12c74901928c31072205a`.
-  The current source typechecks and has 388 tests across 46 suites plus 194
+  `527381ea05b2277dff39716d6804e884df4cef52c46cc7e7704582660e246ff7`.
+  The current source typechecks and has 389 tests across 46 suites plus 194
   lifecycle shell checks. This is static evidence only; no current runtime
   acceptance follows.
 
@@ -126,6 +126,12 @@ merely for performance.
   or ineligible leaves are skipped. Target occupants are revalidated before the
   focus write. Diagnostics are fixed private payloads; no titles, app IDs,
   geometry, scope identity, or caught-error text is emitted.
+- `unit-16` corrects directional ranking for touching Custom Tile siblings:
+  facing-edge equality is a valid zero-distance neighbor, while overlap and
+  diagonal-only candidates remain rejected. This was the source cause of the
+  delivered `focus-rejected:no-neighbor` callbacks in the supplied diagnostics.
+  The correction is static-only; movement remains move-to-empty and does not
+  swap occupied leaves.
 - Strict decoders and guards fail inert at non-split KWin/Qt boundaries. Pure
   topology, hit testing, directional focus, binary blueprints, and blueprint
   split-instruction compilation are KWin-independent. The guarded blueprint

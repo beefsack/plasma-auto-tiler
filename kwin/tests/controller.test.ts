@@ -1187,6 +1187,18 @@ describe("TileController keyboard focus", () => {
         }
     });
 
+    it("focuses an occupied neighbor whose leaf touches the focused leaf edge", () => {
+        const state = focusSetup("right");
+        state.neighbor.relativeGeometry = { x: 100, y: 0, width: 100, height: 100 };
+        state.neighbor.absoluteGeometry = state.neighbor.relativeGeometry;
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.deepEqual(state.harness.activeWrites, [state.neighborWindow]);
+        assert.deepEqual(
+            state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:focus-")),
+            ["plasma-auto-tiler:focus-invoked"],
+        );
+    });
+
     it("uses the nearest selector target and remains deterministic on repeats", () => {
         const state = focusSetup("right");
         const farther = tile({ x: 400, y: 0, width: 100, height: 100 });

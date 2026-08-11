@@ -44,6 +44,7 @@ retains persistent topology; stable multi-output identity remains deferred.
 | unit-13 | Accepted static correction 2026-08-12 | Consume only currently valid explicitly selected-overlay state for bounded automatic lifecycle reflow after relevant eligible additions, removals, and successful detaches. Build a complete assignment plan from current ordinal leaves and eligible in-scope occupants, compacting without topology mutation; validate state, scope, capacity, occupant eligibility, and source/target assumptions before planning and immediately before each guarded `window.tile` write; stop on first failure without rollback claim. A full overlay must fall through to the existing generic automatic-placement behavior. | unit-12 | controller lifecycle handlers and focused controller tests | No | Focused vectors cover removal and detach compaction, eligible addition/capacity fallback, stale state, no-op and ordering, scoped/external eligibility rejection, multiple scopes including scope-loss inertness, preflight and mid-write failure, and absence of structural calls. `npm --prefix kwin run typecheck`, `npm --prefix kwin run build`, and `npm --prefix kwin test` pass with 314 tests across 42 suites and 49 lifecycle shell checks. |
 | unit-14 | Accepted static correction 2026-08-12 | Generalize guarded keyboard insertion to individually conflict-free `Meta+Alt+Left/Right/Up/Down` actions. Re-arming atomically replaces source and direction; the next eligible unassigned in-scope window revalidates source, target, scope, occupancy, and split result before one directional split and source-first child assignments. | unit-13 | controller, pure logic, focused tests, lifecycle action catalog | No | Exact conflict inspection found Left, Up, and Down active-owner-free; all 16 registrations passed their aggregate gate. Typecheck, build, 325 tests across 42 suites, and 137 lifecycle shell checks passed. One registration-only `start -> status -> stop` sequence confirmed 16 exact records without callback or topology mutation. |
 | unit-15 | Accepted static correction 2026-08-12 | Add a guarded active-window attach action as the assignment-only inverse of detach. It selects only the first empty authored non-layout Custom Tile leaf in decoded traversal order, then revalidates active/source/target/root immediately before one pinned writable `window.tile` assignment and decodes the association postcondition. It makes no topology or occupant change. `plasma-auto-tiler-attach` registers `Meta+Alt+Shift+Space` only after an exact read-only KGlobalAccel scan found no unrelated active conflict. | unit-14 | controller, boundary/declarations, action catalog, focused controller/boundary/lifecycle tests, docs | No | Typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks pass. Read-only reconciliation reports 17 matched actions with zero drift, missing records, ownership errors, and unrelated target conflicts. A fresh callback preflight stopped before start or window launch because no available read-only seam can prove that KWin's active window is the exact owned test window before either mutation. Plugin status is unloaded; no callback or window/topology behavior is claimed. |
+| unit-16 | Accepted static focus correction 2026-08-12 | Correct directional neighbor selection so a non-overlapping leaf that touches the focused leaf's facing edge is eligible at distance zero. | unit-15 | Pure directional geometry and focused controller tests | No | The supplied diagnostics prove two delivered focus callbacks rejected only at `focus-rejected:no-neighbor`; adjacent occupied-leaf vectors now select and write the target. Typecheck, build, 389 tests across 46 suites, and 194 lifecycle shell checks pass. |
 
 Only the Lead mutates plans and state. Semantic unit IDs are stable; execution
 slices use `unit-<n>/attempt-<n>`.
@@ -86,6 +87,7 @@ accepted; no production behavior was added.
 | Removal bookkeeping | unit-11 cancellation-identity and source/target wrapper bookkeeping, with forced queued-callback, armed-source-removal, duplicate-removal, and registration/signal-gating vectors |
 | Selected-overlay lifecycle reflow | unit-13 focused controller vectors plus typecheck, build, full suite, and lifecycle shell checks |
 | Guarded active-window attach | unit-15 focused controller/boundary/lifecycle vectors plus typecheck, build, full suite, and lifecycle shell checks |
+| Adjacent-leaf directional focus | unit-16 exact edge-touch selector and controller focus-write vectors, plus typecheck, build, and full suite |
 | Separately authorized runtime behavior only | unit-05 exact authorization and mandatory-gate record; no delivery, enablement, or runtime capability claim beforehand |
 
 ## Residual Risks
@@ -116,6 +118,7 @@ accepted; no production behavior was added.
 - [x] unit-12 Selected-overlay state (accepted 2026-08-12)
 - [x] unit-13 Selected-overlay lifecycle assignment-only reflow (static correction, 2026-08-12)
 - [x] unit-15 Guarded active-window attach action (static correction, 2026-08-12)
+- [x] unit-16 Adjacent-leaf directional focus correction (static correction, 2026-08-12)
 - `unit-05/attempt-07` aborted before bundle load when the exact-owned supervisor
    did not detach from the command runner; its completed cleanup restored the
    reviewed baseline. No registration/discovery evidence was obtained.
@@ -231,6 +234,8 @@ accepted; no production behavior was added.
   eligible journey. Full detail: log.md, 2026-08-11 attempt-16 entry.
 
 ## Pending User Decisions
+
+- Should the plugin replace KWin's default/authored layout across an entire workspace by default, or only generate topology after an explicit, detectable opt-in ownership action while preserving all other authored layout ownership?
 
 - Resolved by `unit-05/attempt-13`: the corrected `--user`-scope capture
   contract (fixed-prefix `plasma-auto-tiler:` success diagnostics plus

@@ -195,7 +195,7 @@ function neighborDistance(
 ): number | null {
     switch (direction) {
         case "left":
-            if (candidate.x + candidate.width >= current.x) {
+            if (candidate.x + candidate.width > current.x) {
                 return null;
             }
             if (!intervalsOverlap(current.y, current.y + current.height, candidate.y, candidate.y + candidate.height)) {
@@ -203,7 +203,7 @@ function neighborDistance(
             }
             return current.x - (candidate.x + candidate.width);
         case "right":
-            if (candidate.x <= current.x + current.width) {
+            if (candidate.x < current.x + current.width) {
                 return null;
             }
             if (!intervalsOverlap(current.y, current.y + current.height, candidate.y, candidate.y + candidate.height)) {
@@ -211,7 +211,7 @@ function neighborDistance(
             }
             return candidate.x - (current.x + current.width);
         case "up":
-            if (candidate.y + candidate.height >= current.y) {
+            if (candidate.y + candidate.height > current.y) {
                 return null;
             }
             if (!intervalsOverlap(current.x, current.x + current.width, candidate.x, candidate.x + candidate.width)) {
@@ -219,7 +219,7 @@ function neighborDistance(
             }
             return current.y - (candidate.y + candidate.height);
         case "down":
-            if (candidate.y <= current.y + current.height) {
+            if (candidate.y < current.y + current.height) {
                 return null;
             }
             if (!intervalsOverlap(current.x, current.x + current.width, candidate.x, candidate.x + candidate.width)) {

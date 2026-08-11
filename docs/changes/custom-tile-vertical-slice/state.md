@@ -13,7 +13,14 @@
   reconciliation verified that no foundation implementation can be accepted.
   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
   action is authorized.
-- Current package: `unit-15/attempt-01` is accepted static correction. The
+- Current package: `unit-16/attempt-01` is accepted static focus correction.
+  The user-provided same-PID diagnostics prove delivered focus callbacks reached
+  only `focus-rejected:no-neighbor`. The cause was the pure directional selector
+  rejecting exactly edge-touching leaves, although Custom Tile sibling leaves
+  meet at that edge. It now accepts a non-overlapping touching leaf at distance
+  zero; focused controller and pure selector vectors pass. Movement remains an
+  intentional move-to-empty action, not a swap. No live action occurred.
+- Previous package: `unit-15/attempt-01` is accepted static correction. The
   active eligible floating window can receive at most one pinned `window.tile`
   write into the deterministic first empty authored non-layout Custom Tile leaf
   after fresh source, target, root, eligibility, and exact scope revalidation.

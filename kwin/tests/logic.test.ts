@@ -259,15 +259,15 @@ describe("findNeighborLeaf: directional neighbor selection", () => {
         assert.equal(findNeighborLeaf(leaves, CURRENT, "down")?.id, "down");
     });
 
-    it("rejects edge-touch and diagonal-only candidates", () => {
+    it("accepts edge-touching neighbors and rejects diagonal-only candidates", () => {
         const edgeRight = leaf("edge-right", { x: 100, y: 0, width: 100, height: 100 }, [window("w")]);
-        assert.equal(findNeighborLeaf([CURRENT, edgeRight], CURRENT, "right"), null);
+        assert.equal(findNeighborLeaf([CURRENT, edgeRight], CURRENT, "right"), edgeRight);
         const edgeLeft = leaf("edge-left", { x: -100, y: 0, width: 100, height: 100 }, [window("w")]);
-        assert.equal(findNeighborLeaf([CURRENT, edgeLeft], CURRENT, "left"), null);
+        assert.equal(findNeighborLeaf([CURRENT, edgeLeft], CURRENT, "left"), edgeLeft);
         const edgeUp = leaf("edge-up", { x: 0, y: -100, width: 100, height: 100 }, [window("w")]);
-        assert.equal(findNeighborLeaf([CURRENT, edgeUp], CURRENT, "up"), null);
+        assert.equal(findNeighborLeaf([CURRENT, edgeUp], CURRENT, "up"), edgeUp);
         const edgeDown = leaf("edge-down", { x: 0, y: 100, width: 100, height: 100 }, [window("w")]);
-        assert.equal(findNeighborLeaf([CURRENT, edgeDown], CURRENT, "down"), null);
+        assert.equal(findNeighborLeaf([CURRENT, edgeDown], CURRENT, "down"), edgeDown);
 
         const perpTouch = leaf("perp-touch", { x: 200, y: 100, width: 100, height: 100 }, [window("w")]);
         assert.equal(findNeighborLeaf([CURRENT, perpTouch], CURRENT, "right"), null);
