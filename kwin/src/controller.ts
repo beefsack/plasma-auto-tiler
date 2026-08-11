@@ -76,10 +76,20 @@ export interface ControllerEnvironment {
     readonly log: (message: string) => void;
 }
 
-interface CurrentScope {
+export interface CurrentScope {
     readonly scope: Scope;
     readonly output: OutputCapability;
     readonly desktop: VirtualDesktopCapability;
+}
+
+// Explicit ephemeral selected-overlay record for a future bounded
+// assignment-only reflow. It carries only in-memory identity and preset/scope
+// requirements: no titles, app IDs, geometry, or persisted data.
+export interface SelectedOverlay {
+    readonly scope: CurrentScope;
+    readonly preset: PresetKind;
+    readonly root: TileCapability;
+    readonly leaves: readonly TileCapability[];
 }
 
 interface DecodedLeaf {
@@ -180,6 +190,67 @@ function decodeLeaves(
         }
     }
     return leaves;
+}
+
+// Walk every tile reachable beneath a root with strict acyclic bounded
+// decoding. Returns null on any structural defect, otherwise all tiles.
+function decodeTileTree(root: TileCapability): readonly TileCapability[] | null {
+    const pending: TileCapability[] = [root];
+    const visited = new Set<object>([root]);
+    const tiles: TileCapability[] = [root];
+    while (pending.length > 0) {
+        const tile = pending.pop();
+        if (tile === undefined) {
+            return null;
+        }
+        const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+        if (!children.ok) {
+            return null;
+        }
+        for (const child of children.value) {
+            if (visited.has(child)) {
+                return null;
+            }
+            if (visited.size >= MAX_TILES) {
+                return null;
+            }
+            visited.add(child);
+            tiles.push(child);
+            pending.push(child);
+        }
+    }
+    return tiles;
+}
+
+// Pre-order left-to-right realization of a preset overlay root, mirroring the
+// executor's decoded split children. A non-layout root realizes to itself; a
+// layout root must decode to exactly two custom-tile children per level, so any
+// manual split, removal, or reorder of the overlay subtree returns null.
+function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | null {
+    if (!isCustomTile(root)) {
+        return null;
+    }
+    if (!root.isLayout) {
+        return [root];
+    }
+    const children = decodeSequential(root.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+    if (!children.ok || children.value.length !== 2) {
+        return null;
+    }
+    const left = children.value[0];
+    const right = children.value[1];
+    if (left === undefined || right === undefined) {
+        return null;
+    }
+    const leftLeaves = collectPresetLeaves(left);
+    if (leftLeaves === null) {
+        return null;
+    }
+    const rightLeaves = collectPresetLeaves(right);
+    if (rightLeaves === null) {
+        return null;
+    }
+    return [...leftLeaves, ...rightLeaves];
 }
 
 function makeOperationLeaves(leaves: readonly DecodedLeaf[]): readonly OperationLeaf[] {
@@ -304,6 +375,7 @@ export class TileController {
     private readonly deferredEligibility = new Map<WindowCapability, () => void>();
     private readonly decodedBoundaries = new Set<BoundaryKind>();
     private readonly onceDiagnostics = new Set<string>();
+    private readonly selectedOverlays = new Map<OutputCapability, Map<string, SelectedOverlay>>();
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -317,6 +389,25 @@ export class TileController {
 
     get hasActiveDrag(): boolean {
         return this.drag.current !== undefined;
+    }
+
+    // Narrow read/self-validation seam for a future bounded assignment-only
+    // reflow. The overlay for the exact scope is returned only when its
+    // recorded root and ordinal leaves remain intact beneath the same current
+    // Custom Tile root. Structural drift is discarded inertly with one fixed
+    // private diagnostic; reading never mutates topology or assignments.
+    readSelectedOverlay(scope: CurrentScope): SelectedOverlay | null {
+        const byDesktop = this.selectedOverlays.get(scope.output);
+        const overlay = byDesktop?.get(scope.desktop.id);
+        if (overlay === undefined) {
+            return null;
+        }
+        if (!this.selectedOverlayValid(overlay)) {
+            byDesktop?.delete(scope.desktop.id);
+            this.diagnostic("selected-overlay-invalidated");
+            return null;
+        }
+        return overlay;
     }
 
     private diagnostic(event: string): void {
@@ -860,8 +951,47 @@ export class TileController {
                     return;
                 }
             }
+            this.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
             this.diagnostic(`preset-applied:${kind}`);
         }, (reason) => this.disabled(reason));
+    }
+
+    // Record the selected overlay only after the whole preset realization
+    // succeeded, keyed by the exact current desktop/output scope. A later
+    // successful application on the same scope atomically replaces it.
+    private recordSelectedOverlay(
+        scope: CurrentScope,
+        preset: PresetKind,
+        root: TileCapability,
+        leaves: readonly TileCapability[],
+    ): void {
+        let byDesktop = this.selectedOverlays.get(scope.output);
+        if (byDesktop === undefined) {
+            byDesktop = new Map<string, SelectedOverlay>();
+            this.selectedOverlays.set(scope.output, byDesktop);
+        }
+        byDesktop.set(scope.desktop.id, { scope, preset, root, leaves });
+    }
+
+    private selectedOverlayValid(overlay: SelectedOverlay): boolean {
+        const root = this.environment.rootTile(overlay.scope.output, overlay.scope.desktop);
+        if (!isCustomTile(root)) {
+            return false;
+        }
+        const tiles = decodeTileTree(root);
+        if (tiles === null || !tiles.some((tile) => tile === overlay.root)) {
+            return false;
+        }
+        const realized = collectPresetLeaves(overlay.root);
+        if (realized === null || realized.length !== overlay.leaves.length) {
+            return false;
+        }
+        for (let index = 0; index < realized.length; index += 1) {
+            if (realized[index] !== overlay.leaves[index]) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // This returns the explicit realization input rather than tying executor

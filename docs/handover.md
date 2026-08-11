@@ -130,6 +130,20 @@ merely for performance.
   inert. Static tests also prove workspace signals and action callbacks remain
   inert after aggregate shortcut-registration failure. No live KWin claim is
   made.
+- `unit-12` (accepted static correction 2026-08-12) adds
+  minimal explicit ephemeral selected-overlay state recorded only after a
+  user-applied focused-leaf preset succeeds entirely, keyed by exact
+  current desktop/output scope and atomically replaced only by a later
+  same-scope success. It records preset identity, the overlay root and ordinal
+  leaf tile references, and the scope only - never titles, app IDs, geometry,
+  or persisted data. The narrow `readSelectedOverlay(scope)` seam verifies
+  scope match, overlay-root reachability beneath the current Custom Tile root,
+  and intact ordinal leaf realization, discarding structural drift inertly
+  with one fixed `selected-overlay-invalidated` diagnostic. Window removal does
+  not discard structurally valid state. It prepares a later bounded
+  assignment-only reflow only; no automatic reflow or persistence exists.
+  Typecheck/build/test pass with 293 tests across 40 suites and 49 lifecycle
+  shell checks; bundle SHA-256 `fb956315...`.
 
 ## Live Evidence and Parked Automation
 
