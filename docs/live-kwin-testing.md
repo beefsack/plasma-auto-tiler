@@ -110,6 +110,30 @@ validation ladder above.
   persisted project KGlobalAccel records are reported read-only and left
   untouched. Stopping and unloading the script do not roll back Custom Tile
   changes it already made.
+- `scripts/start-test.sh reconcile-shortcuts` is read-only. It first proves
+  the running KGlobalAccel exposes exactly
+  `org.kde.KGlobalAccel.setShortcutKeys asa(ai)u -> a(ai)` by introspection,
+  then reports, per project action, whether its persisted active sequence
+  equals the expected source-default sequence, and counts any missing records
+  and any unrelated records (non-project, any component) that already claim an
+  expected target sequence. It never mutates.
+- `scripts/start-test.sh reconcile-shortcuts --apply` is the only command that
+  mutates shortcut records and still requires explicit authorization. It
+  applies the expected source-default active sequence through
+  `setShortcutKeys` only after the read-only gates pass: the exact setter
+  contract above, no missing project record, and zero unrelated conflicts for
+  the target sequences. It writes each mismatched record once (one
+  `setShortcutKeys` call per action with the four-element actionId and flags
+  `SetPresent|NoAutoloading`), verifies each reply confirms the expected key,
+  then re-reads the records and reports exact before/after assignments plus
+  every deferred record; any deferred or unverified record is a hard failure.
+  `start`, `status`, and `stop` never mutate shortcut records.
+- KGlobalAccelD 6.7.3 (pinned source, sha256
+  `cd940d21bb050d6ee689d5962d31292c52f31cfa9211ea789dbed4ff05022f1d`)
+  defines the setter flags `SetPresent=2`, `NoAutoloading=4`, `IsDefault=8`;
+  `NoAutoloading` forces a change on a non-fresh registered action, and the
+  daemon persists through `scheduleWriteSettings()`.
+
 
 ## KGlobalAccel and Collector
 

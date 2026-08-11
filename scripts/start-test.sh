@@ -40,6 +40,34 @@ PROJECT_ACTIONS=(
 )
 PROJECT_ACTIONS_JSON=""
 
+# Expected source-default active sequence per project action, in the Qt
+# integer encoding KGlobalAccel exposes through the allShortcutInfos active
+# field and accepts through setShortcutKeys (modifier bits OR key code).
+# Provenance: TileController.start() registerShortcut defaults in
+# kwin/src/controller.ts, encoded with the pinned Qt 6 KeyboardModifier bits
+# (Shift 0x02000000, Control 0x04000000, Alt 0x08000000, Meta 0x10000000) and
+# verified against the live collector on 2026-08-12.
+declare -A EXPECTED_SEQUENCES=(
+  [plasma-auto-tiler-insert-right]="419430420"
+  [plasma-auto-tiler-focus-left]="268435528"
+  [plasma-auto-tiler-focus-down]="268435530"
+  [plasma-auto-tiler-focus-up]="268435531"
+  [plasma-auto-tiler-focus-right]="469762124"
+  [plasma-auto-tiler-move-left]="301989960"
+  [plasma-auto-tiler-move-down]="301989962"
+  [plasma-auto-tiler-move-up]="301989963"
+  [plasma-auto-tiler-move-right]="301989964"
+  [plasma-auto-tiler-detach]="301989920"
+  [plasma-auto-tiler-apply-columns]="402653233"
+  [plasma-auto-tiler-apply-rows]="402653234"
+  [plasma-auto-tiler-apply-balanced-grid]="402653235"
+)
+
+# KGlobalAccelD::SetShortcutFlag values (pinned kglobalacceld 6.7.3 source):
+# SetPresent=2, NoAutoloading=4, IsDefault=8. A user-style active assignment
+# on an existing record forces the change with SetPresent|NoAutoloading = 6.
+KG_SET_SHORTCUT_FLAGS=6
+
 # Strict JSON envelope predicates (jq).
 isloaded_valid='((keys | sort) == ["data","type"]) and (.type == "b") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "boolean")'
 load_valid='((keys | sort) == ["data","type"]) and (.type == "i") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and ((.data[0] >= 0) and (.data[0] <= 2147483647))'
@@ -70,10 +98,20 @@ Commands:
   status   report the exact plugin load state, controller readiness
            evidence, and persisted KGlobalAccel action records
   stop     unload the exact plugin and report any persisted action records
+  reconcile-shortcuts
+           report persisted project shortcut records whose active
+           sequence differs from the source-default expected sequence;
+           read-only, never mutates
+  reconcile-shortcuts --apply
+           write the expected active sequence to each mismatched project
+           record through org.kde.KGlobalAccel.setShortcutKeys, but only
+           after a read-only preflight proves the exact setter contract,
+           target ownership, and absence of unrelated conflicts
 
   --help   show this help and exit
 
 start mutates live KWin state and still requires explicit authorization.
+start never mutates shortcut records; only reconcile-shortcuts --apply does.
 stop/unload does not roll back Custom Tile changes the script already made.
 KGlobalAccel records persist after unload and do not prove live callbacks.
 EOF
@@ -383,8 +421,185 @@ cmd_stop() {
   echo "note: stopping/unloading does not roll back Custom Tile topology changes the script already made."
 }
 
+# Prints one TSV line per unrelated KGlobalAccel record (any component) whose
+# active sequence matches any of the given actions' expected sequences.
+# Fail-closed exactly like the collector: malformed envelopes are an error,
+# never zero matches.
+collect_unrelated_target_conflicts() {
+  local -a targets=()
+  local action
+  for action in "$@"; do
+    targets+=("${EXPECTED_SEQUENCES[$action]}")
+  done
+  if [[ "${#targets[@]}" -eq 0 ]]; then
+    return 0
+  fi
+  local targets_json
+  targets_json="$(printf '%s\n' "${targets[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0)) | map(tonumber)')" || return 1
+  local comps
+  comps="$(busctl $BUS_SCOPE --json=short call "$KG_DEST" "$KG_PATH" "$KG_IFACE" allComponents)" || {
+    echo "error: KGlobalAccel allComponents call failed: $comps" >&2
+    return 1
+  }
+  if ! jq -e "$components_valid" <<<"$comps" >/dev/null 2>&1; then
+    echo "error: unexpected allComponents reply: $comps" >&2
+    return 1
+  fi
+  local comp infos
+  while IFS= read -r comp; do
+    infos="$(busctl $BUS_SCOPE --json=short call "$KG_DEST" "$comp" "$KG_COMP_IFACE" allShortcutInfos s default)" || {
+      echo "error: allShortcutInfos call failed for $comp: $infos" >&2
+      return 1
+    }
+    if ! jq -e "$shortcut_infos_valid" <<<"$infos" >/dev/null 2>&1; then
+      echo "error: unexpected allShortcutInfos reply for $comp" >&2
+      return 1
+    fi
+    jq -r --argjson targets "$targets_json" --argjson actions "$PROJECT_ACTIONS_JSON" \
+      '.data[0][] | select((.[0] as $id | $actions | index($id)) == null) | select(any(.[6][]; . as $active | ($targets | index($active)) != null)) | [.[2], .[0], .[1], (.[6] | join(","))] | @tsv' \
+      <<<"$infos" || return 1
+  done < <(jq -r '.data[0][]' <<<"$comps")
+}
+
+# Narrow explicit shortcut reconciliation. Read-only by default; --apply
+# writes the expected source-default active sequence to each mismatched
+# project record through the exact setter contract after read-only gates.
+cmd_reconcile_shortcuts() {
+  require_tools busctl jq
+  local mode="${1:-}"
+  if [[ -n "$mode" && "$mode" != "--apply" ]]; then
+    echo "error: unknown reconcile-shortcuts argument '$mode' (expected --apply or nothing)" >&2
+    exit 1
+  fi
+
+  # Read-only preflight: the running KGlobalAccel must expose the exact
+  # setter contract (method name, D-Bus signature, and result type).
+  local introspect_out
+  introspect_out="$(busctl $BUS_SCOPE --json=short introspect "$KG_DEST" "$KG_PATH")" || {
+    echo "error: could not introspect $KG_DEST $KG_PATH" >&2
+    exit 1
+  }
+  if ! jq -e 'any(.[]; ((.type == "method") and (.name == ".setShortcutKeys") and (.signature == "asa(ai)u") and (.result_value == "a(ai)")))' <<<"$introspect_out" >/dev/null 2>&1; then
+    echo "error: KGlobalAccel setShortcutKeys is absent or does not expose exactly asa(ai)u -> a(ai)" >&2
+    exit 1
+  fi
+
+  ensure_actions_json
+
+  local records comp action label active default
+  records="$(collect_project_action_records)" || exit 1
+  declare -A RECORD_COMP=() RECORD_LABEL=() RECORD_ACTIVE=()
+  while IFS=$'\t' read -r comp action label active default; do
+    RECORD_COMP["$action"]="$comp"
+    RECORD_LABEL["$action"]="$label"
+    RECORD_ACTIVE["$action"]="$active"
+  done <<<"$records"
+
+  local -a mismatch_actions=()
+  local matched=0 mismatched=0 missing=0 expected
+  for action in "${PROJECT_ACTIONS[@]}"; do
+    expected="${EXPECTED_SEQUENCES[$action]}"
+    if [[ ! "${RECORD_ACTIVE[$action]+x}" ]]; then
+      missing=$((missing + 1))
+      echo "  missing: action \"$action\" has no persisted record"
+      continue
+    fi
+    if [[ "${RECORD_ACTIVE[$action]}" == "$expected" ]]; then
+      matched=$((matched + 1))
+    else
+      mismatched=$((mismatched + 1))
+      mismatch_actions+=("$action")
+    fi
+  done
+
+  local conflicts
+  conflicts="$(collect_unrelated_target_conflicts "${mismatch_actions[@]}")" || exit 1
+
+  if [[ -z "$mode" ]]; then
+    echo "reconcile-shortcuts: read-only report (no mutation)"
+    echo "  setter contract: org.kde.KGlobalAccel.setShortcutKeys asa(ai)u -> a(ai) (introspection-proven)"
+    echo "  matched: $matched"
+    echo "  mismatched: $mismatched"
+    for action in "${mismatch_actions[@]}"; do
+      echo "    action \"$action\" active \"${RECORD_ACTIVE[$action]}\" expected \"${EXPECTED_SEQUENCES[$action]}\""
+    done
+    echo "  missing: $missing"
+    echo "  unrelated target conflicts: $(count_records "$conflicts")"
+    print_records "$conflicts"
+    echo "  note: run 'reconcile-shortcuts --apply' to write the expected active sequences."
+    echo "  note: normal 'start' never mutates shortcut records."
+    return 0
+  fi
+
+  # --apply gates: target ownership and unrelated-conflict absence.
+  if [[ "$missing" -gt 0 ]]; then
+    echo "error: refusing to apply with $missing missing project action record(s); cannot reconcile unregistered actions" >&2
+    exit 1
+  fi
+  if [[ -n "$conflicts" ]]; then
+    echo "error: refusing to apply; expected target sequences are claimed by unrelated records:" >&2
+    print_records "$conflicts" >&2
+    exit 1
+  fi
+  if [[ "$mismatched" -eq 0 ]]; then
+    echo "reconcile-shortcuts --apply: all project action records already match expected source defaults; nothing to write"
+    return 0
+  fi
+
+  echo "reconcile-shortcuts --apply: preflight passed (exact setter contract, target ownership, no unrelated conflicts)"
+  echo "  before:"
+  for action in "${mismatch_actions[@]}"; do
+    echo "    action \"$action\" active \"${RECORD_ACTIVE[$action]}\" expected \"${EXPECTED_SEQUENCES[$action]}\""
+  done
+
+  local deferred=0 touched=0 reply
+  echo "  writing:"
+  for action in "${mismatch_actions[@]}"; do
+    expected="${EXPECTED_SEQUENCES[$action]}"
+    comp="${RECORD_COMP[$action]}"
+    label="${RECORD_LABEL[$action]}"
+    reply="$(busctl $BUS_SCOPE --json=short call "$KG_DEST" "$KG_PATH" "$KG_IFACE" setShortcutKeys "asa(ai)u" 4 "$comp" "$action" "KWin" "$label" 1 4 "$expected" 0 0 0 "$KG_SET_SHORTCUT_FLAGS")" || {
+      echo "    deferred: setShortcutKeys call failed for action \"$action\": $reply" >&2
+      deferred=$((deferred + 1))
+      continue
+    }
+    if ! jq -e --argjson expected "$expected" '(.type == "a(ai)") and ((.data | type) == "array") and ((.data | flatten | index($expected)) != null)' <<<"$reply" >/dev/null 2>&1; then
+      echo "    deferred: setShortcutKeys reply for action \"$action\" did not confirm expected key: $reply" >&2
+      deferred=$((deferred + 1))
+      continue
+    fi
+    echo "    action \"$action\" -> \"$expected\""
+    touched=$((touched + 1))
+  done
+
+  local after after_active ok_count=0 bad_count=0
+  after="$(collect_project_action_records)" || exit 1
+  declare -A AFTER_ACTIVE=()
+  while IFS=$'\t' read -r comp action label active default; do
+    AFTER_ACTIVE["$action"]="$active"
+  done <<<"$after"
+  echo "  after:"
+  for action in "${mismatch_actions[@]}"; do
+    after_active="${AFTER_ACTIVE[$action]:-}"
+    expected="${EXPECTED_SEQUENCES[$action]}"
+    if [[ "$after_active" == "$expected" ]]; then
+      ok_count=$((ok_count + 1))
+      echo "    action \"$action\" active \"$after_active\" (verified)"
+    else
+      bad_count=$((bad_count + 1))
+      echo "    action \"$action\" active \"$after_active\" (expected \"$expected\"; not verified)" >&2
+    fi
+  done
+
+  echo "reconcile-shortcuts --apply: touched $touched, deferred $deferred, verified $ok_count, unverified $bad_count"
+  if [[ "$deferred" -gt 0 || "$bad_count" -gt 0 ]]; then
+    echo "error: reconciliation incomplete; see deferred/unverified lines above" >&2
+    exit 1
+  fi
+}
+
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (start, status, or stop)" >&2
+  echo "error: missing command (start, status, stop, or reconcile-shortcuts)" >&2
   usage >&2
   exit 1
 fi
@@ -418,6 +633,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_stop
+    ;;
+  reconcile-shortcuts)
+    if [[ $# -gt 2 ]]; then
+      echo "error: 'reconcile-shortcuts' takes at most one argument (--apply)" >&2
+      exit 1
+    fi
+    cmd_reconcile_shortcuts "${2:-}"
     ;;
   *)
     echo "error: unknown command '$1'" >&2
