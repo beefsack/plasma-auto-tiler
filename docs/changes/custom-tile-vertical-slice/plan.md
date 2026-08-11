@@ -1,0 +1,264 @@
+# Plan: Custom Tile Vertical Slice
+
+Ownership and approval:
+- Owner: Lead (`lead-openai`)
+- Change class: Standard.
+- Status: Approved by the user on 2026-08-10.
+- Governing scope: [specification](spec.md); current execution status: [state](state.md); checkpoints: [log](log.md).
+- Cross-change boundary: the active [integrated-plasma-structural-feasibility change](../integrated-plasma-structural-feasibility/) supplies accepted structural discovery only. Its unsafe live harness and nested-KWin path remain blocked. This change owns any useful runtime discovery through unit-05 only, under separate authorization.
+
+## Technical Approach
+
+Establish a strict development-only TypeScript foundation and defensible KWin
+type provenance before writing behavior. Keep topology and hit testing pure and
+fully testable, then add the smallest guarded adapter and generated bundle.
+Unit-03 may produce conditionally unvalidated production adapter source, but
+static evidence cannot establish fail-inert behavior for `CustomTile.split()`:
+it mutates before JavaScript can decode its return. All non-split boundaries
+must fail inert through strict decoders and guards. Unit-05 is the mandatory
+first live structural invocation and acceptance gate for unit-03 behavior; no
+delivery, enablement, or runtime capability claim precedes its fresh user
+authorization and passing evidence.
+
+Current-workspace/output adapter state uses session-local exact `Output` object
+identity plus virtual-desktop ID. It clears pending state on output removal,
+replacement, or scope change, and does not survive restart or hotplug. KWin
+retains persistent topology; stable multi-output identity remains deferred.
+
+## Work Units
+
+| ID | Status | Objective | Depends on | File or subsystem scope | Invasive? | Verification |
+|---|---|---|---|---|---|---|
+| unit-01 | Accepted 2026-08-10 | Establish the development-only Node/TypeScript build and test foundation. First search high-quality upstream or official KWin/KDE TypeScript types during implementation, record suitability and provenance, and use them if suitable. If no suitable type source exists, record that evidence and define only the narrow source-pinned local subset needed. Enforce strict controls: no `any`, unchecked casts, non-null assertions, or manual generated-JS edits. `devenv.nix` now declares `nodejs_24`; stop before assuming the toolchain is available until the user restarts the session. | none | Toolchain, TypeScript configuration, type provenance, build/test scripts, generated-artifact policy | No | After restart, strict build and test commands must pass; provenance records upstream search or justified local-subset fallback; package metadata must prove tools are development-only; generated bundle must be reproducible. |
+| unit-02 | Accepted 2026-08-10 | Implement pure deterministic topology and hit-test logic with executable vectors. Cover keyboard insertion to the right of the focused occupied leaf; four directional regions over a different occupied leaf; central 50% no-op; horizontal diagonal-tie precedence; cancellation origin restoration without target mutation; retained empty origin after successful drag; and ordinary placement into a retained empty leaf without restructuring. | unit-01 | Pure TypeScript topology, hit testing, vectors, and tests | No | Tests run without KWin/Qt and assert each journey plus current-workspace/output-independent invariants. |
+| unit-03 | Statically complete 2026-08-10; structurally gated by unit-05 | Add conditionally unvalidated KWin adapter source and generated bundle. Keep authored production code TypeScript-only, guard every KWin/Qt boundary value with strict decoders, fail inert for every non-split boundary, limit behavior to the current workspace/output, and regenerate rather than hand-edit JavaScript. Do not claim fail-inert structural behavior: `CustomTile.split()` mutates before its JavaScript result can be decoded. | unit-01, unit-02 | KWin adapter, bundle entry point, generated JavaScript artifact | No | Strict build regenerates the bundle; static checks demonstrate guarded non-split handling and generated-artifact provenance. Unit-03 structural behavior remains unaccepted until unit-05 passes. |
+| unit-04 | Accepted 2026-08-11 | Perform static and unit safety review of the completed slice. Check strict TypeScript controls, runtime guards, type-provenance evidence, generated-artifact policy, package dependency boundaries, scope exclusions, all executable tests, and the minimal production observability required to attribute the separately authorized smoke. | unit-01, unit-02, unit-03 | Static checks, unit tests, build output, review evidence | No | The registration-result observability correction typechecks, builds, passes 83 tests, and satisfies generated-bundle, metadata, privacy, ASCII, and whitespace checks. Fresh `unit-04/attempt-07` independent review found no defect; Lead inspected its cited source, tests, declaration, and generated ES2017 IIFE evidence. |
+| unit-05 | Partially live-proven, unaccepted; live validation parked after final `attempt-25` infrastructure stop | Run the mandatory first live structural invocation and acceptance gate for unit-03 only after preflight blockers are resolved. It must establish the guarded Qt sequential-container boundaries, `windowAdded` readiness, Esc finish behavior, and the first `CustomTile.split()` result before any delivery, enablement, or runtime capability claim. It must not install or enable anything beyond the exact authorization, broaden scope, or reuse the feasibility change's blocked harness/nested path. | unit-04, unit-03, separate fresh user authorization | Authorized live KWin smoke only | Yes, separately authorized | `unit-05/attempt-18` live-proved Client A eligibility and automatic placement, then Client B rejected at `keyboard-rejected:target-occupancy-validity`; Client C and manual journeys were not attempted. Final `attempt-25` prevalidated a detached heartbeat, but its newly launched supervisor exited normally before its required ready marker and before any KWin mutation. Live validation is parked; Unit-03 structural behavior remains unaccepted and no runtime capability result is claimed. |
+| unit-06 | Accepted 2026-08-11 | Bounded, source-only observability correction: split the single combined `window-added-rejected:eligibility-or-scope` diagnostic in `handleWindowAdded()` (`kwin/src/controller.ts`) into six mutually exclusive, exhaustive sub-codes, mirroring the existing `keyboard-rejected:*` design, with no change to accept/reject behavior for any window and no addition of private payload data. Purpose: let a future live smoke (`unit-05/attempt-16`) pinpoint exactly which condition rejected `unit-05/attempt-15`'s test client. | unit-04, unit-05/attempt-15 evidence | `kwin/src/controller.ts` (`handleWindowAdded`, new private `windowAddedRejection` helper), `kwin/tests/controller.test.ts` | No | Strict typecheck/build/test pass (141/141 tests, 23 suites, up from 140/23); regenerated bundle SHA-256 `d0a3ae1d50863806ee05033802213a7680fa38243696c218605c105a6a140adb` (from baseline `866b594b922e46862c9113c6e0bb7ac601d855df6bd428037787a29d28841422`); Lead independently re-ran typecheck/build/test and read the changed source before accepting; independent review Worker separately confirmed no behavior change, exhaustiveness/mutual distinguishability, exactly-one-code-per-rejection, payload privacy, and no generated-file hand-editing. |
+
+Only the Lead mutates plans and state. Semantic unit IDs are stable; execution
+slices use `unit-<n>/attempt-<n>`.
+
+## Generated-Artifact Policy
+
+- TypeScript is the only authored production language for the KWin component.
+- KWin executes generated bundled JavaScript only.
+- Generated JavaScript is produced by the recorded build and is never manually
+  edited.
+- Development tools remain build/test dependencies only and are not runtime
+  product dependencies.
+
+## Restart Checkpoint
+
+`unit-01/attempt-01` prepared strict TypeScript manifests, placeholders, the
+Node built-in test route, output ignore policy, and the `nodejs_24`
+`devenv.nix` declaration. Its tentative `kwin-api@6.7.1` selection was rejected
+by the independent `unit-01/attempt-02` type-quality gate. The documented
+narrow, source-pinned KWin 6.7.3 local subset is required instead.
+
+`unit-01/attempt-04` accepted the narrow local declaration recovery, and
+`unit-01/attempt-05` generated the pinned lockfile through the project package
+manager. The declared typecheck, build, and test commands passed after one
+manifest-only correction to the explicit Node test-runner path. The unit is
+accepted; no production behavior was added.
+
+## Acceptance-Criterion Evidence
+
+| Acceptance criterion | Evidence |
+|---|---|
+| Strict toolchain, type provenance, and generated bundle policy | unit-01 provenance record, strict configuration, package metadata, and reproducible build evidence |
+| Deterministic topology and hit testing | unit-02 executable vectors and tests |
+| Guarded current-workspace/output adapter | unit-03 adapter and regenerated bundle evidence; unit-05 mandatory structural acceptance gate |
+| Static and unit safety controls | unit-04 review record, strict checks, build, tests, and fixed-payload production-observability timing/privacy evidence |
+| Separately authorized runtime behavior only | unit-05 exact authorization and mandatory-gate record; no delivery, enablement, or runtime capability claim beforehand |
+
+## Residual Risks
+
+- Suitable official TypeScript types may not exist or may not cover the narrow
+  KWin/Qt boundary, requiring a source-pinned local subset.
+- The KWin Custom Tile surface may require runtime discovery that static/unit
+  evidence cannot establish. In particular, `CustomTile.split()` mutates before
+  JavaScript can decode its result; unit-05 is its mandatory first-live gate and
+  requires separate authorization.
+- The slice deliberately does not establish multi-output, hotplug, persistence,
+  broader layout, performance, or product-packaging behavior.
+- No installed same-Qt QJSEngine parser is available for static acceptance. The
+  ES2017 generated-syntax regression removes the observed ES2019 optional-catch
+  incompatibility but cannot establish full runtime parser or API compatibility.
+
+## Progress
+
+- [x] unit-01 Toolchain/type provenance and strict foundation (static correction, install, and checks)
+- [x] unit-02 Pure deterministic logic and executable vectors
+- [ ] unit-03 Guarded KWin adapter and generated bundle (statically complete; unit-05 gated)
+- [x] unit-04 Static/unit safety review (registration-result observability reaccepted 2026-08-11)
+- [ ] unit-05 Separately authorized runtime smoke
+- [x] unit-06 Fine-grained `window-added-rejected:*` sub-code observability correction
+- `unit-05/attempt-07` aborted before bundle load when the exact-owned supervisor
+   did not detach from the command runner; its completed cleanup restored the
+   reviewed baseline. No registration/discovery evidence was obtained.
+- `unit-05/attempt-08` registered all five actions and reached ordered readiness,
+  but its all-component checkpoint parser was invalid; it failed-clean and did
+  not establish the required t+0/t+1/t+5 registration evidence.
+- `unit-05/attempt-09` validated the corrected collector read-only, then aborted
+  before load because its two owned capture processes did not survive the command
+  runner. The supervisor cleanup made unconditional targeted unregister calls
+  despite no attempt action registering, a scope defect; postflight restored the
+  exact absent-action baseline. No runtime acceptance is established.
+- `unit-05/attempt-10` failed-clean before load after its detached supervisor
+  reached ready/start but the foreground supervisor gate returned unexpectedly.
+  It used no journal follower or capture process. Empty ownership manifests
+  caused zero unload and unregister calls; postflight restored the exact baseline.
+- `unit-05/attempt-11` passed the corrected supervisor gate but failed-clean
+  before ScriptN run when its unretained `loadScript` JSON result did not satisfy
+  the foreground load-ID parser. Exact loaded-state recovery recorded and
+  unloaded only the plugin; no action registered or ran.
+- `unit-05/attempt-12` retained and strictly parsed the load response, ran only
+  the returned object, then stopped at the empty required journal-diagnostic
+  gate. The plugin unloaded, but five project shortcuts persisted without a
+  validated action manifest; exact-manifest cleanup forbade unrecorded
+  unregister calls. This is an unclean failed attempt, not runtime acceptance.
+- `unit-05/attempt-12` recovery reconciliation found, read-only, that a prior
+  cancelled dispatch had already removed all five persisted actions/config keys
+  and restored the exact pre-attempt-12 `kglobalshortcutsrc` baseline; zero
+  further `unregister` calls were needed or issued. This does not change unit-05
+  or unit-03 acceptance status.
+- `unit-05/attempt-13` (Lead-direct, registration/discovery-only, non-interactive,
+  no Worker) proved the corrected `--user`-scope journal-capture path end to end
+  with a true-positive `logger` marker before it gated anything, then ran the
+  full preflight/load/registration/readiness/cleanup/postflight cycle cleanly.
+  Preflight matched the exact recorded baseline (bundle
+  `866b594b922e46862c9113c6e0bb7ac601d855df6bd428037787a29d28841422`, both
+  Pings, PID 2517, Krohnkite/all known scripts unloaded, five actions/keys
+  absent, 19/322 collector baseline, desktop/output/former-group/13-group
+  tiling/non-project-shortcut fingerprints unchanged). The raw `loadScript(ss)`
+  response `{"type":"i","data":[0]}` was atomically retained before a
+  fail-closed parse, `/Scripting/Script0` was introspected before any method
+  call, and only that object's `run()` was invoked. The after-cursor `--user`
+  read (fixed cursor immediately before load, one bounded synchronous read
+  after `run()`) captured the required ordered diagnostics
+  `boundary-decoded:workspace-window-list` -> `shortcut-registered` ->
+  `startup-handlers-ready` with strictly increasing timestamps, no `disabled`
+  event, and independently zero `QT_CATEGORY=kwin_scripting` records. Plugin
+  ownership was recorded immediately after confirmed load; action ownership was
+  recorded immediately once the collector confirmed all five exact records
+  under `kwin/default` (t+0 and t+1 snapshots each showed exactly one
+  source-consistent record per action, no duplicate/unknown project record).
+  No action invocation, client, desktop, or tiling/config edit occurred, per
+  this attempt's exact scope. The detached supervisor's own 120-second
+  failsafe (not a foreground signal, which was never sent) fired legitimate
+  exact-manifest cleanup at real elapsed time before the intended t+5
+  readiness snapshot, unloading only the recorded plugin and unregistering
+  only the five recorded actions (all results `true`); the t+5 snapshot
+  therefore correctly shows post-cleanup absence rather than a third
+  live-persistence confirmation. Postflight at t+0/t+1/t+5 confirmed all
+  invariants exactly restored (bundle/PID/Pings/Krohnkite/scripts/config-keys/
+  `kglobalshortcutsrc`/`kwinrc`/desktop-output/former-group/13-group-tiling
+  fingerprints unchanged, owned unit `not-found/inactive/dead` `MainPID=0`, no
+  owned process or path residue). This is a successful registration/discovery
+  capture-contract validation, not unit-05 structural acceptance: no client,
+  keyboard, drag, split, or retained-empty-placement journey was attempted.
+  Unit-03 structural behavior and unit-05 remain unaccepted pending a future
+  `unit-05/attempt-14` window journey under separate authorization, which
+  should also give the foreground process an explicit early-trigger path
+  (e.g. a signal/marker file) rather than relying solely on the supervisor's
+  120-second failsafe, since real inter-step elapsed time can approach that
+  bound.
+- `unit-05/attempt-14` crashed before it began any live mutation (session
+  crash, not a KWin/host failure). Package-1 read-only reconciliation found
+  it had created only its own empty nonce runtime directory, with zero
+  journal trace of any `systemd-run` launch; that directory was removed as
+  the sole cleanup action. No residue, invariant drift, or open surprise
+  remained. Full detail: log.md, 2026-08-11 crash-reconciliation entry.
+- `unit-05/attempt-15` (Lead-direct, non-interactive, standing authorization,
+  new heartbeat/early-trigger supervisor contract) proved the corrected
+  supervisor design end to end, created and switched to a temporary desktop,
+  loaded/ran the bundle with ordered startup diagnostics and all five
+  actions confirmed, then launched Wayland-native test client A. A's
+  `windowAdded` was observed but rejected as `window-added-rejected:
+  eligibility-or-scope` instead of `window-added-eligible` - the first live
+  observation of this gate ever reached. The attempt stopped fail-fast
+  before any keyboard invocation, second/third client, or split, and cleaned
+  up exactly and byte-identically to the recorded baseline. Neither journey 1
+  (keyboard insertion) nor journey 4 (automatic placement) is proven. Full
+  detail and source-grounded diagnosis: log.md, 2026-08-11 attempt-15 entry.
+- A dispatch of the `unit-05/attempt-16` package was aborted mid-run by a
+  host quota interruption; its detached supervisor kept running unattended
+  and its own automatic cleanup correctly removed the plugin/actions/
+  client/desktop but left one stale `[Tiling]` group behind (a real
+  interrupt-path hazard, now recorded in the live-testing guide). This was
+  attributed read-only, treated per Orchestrator ruling as a tenth
+  unowned/never-cleaned stale group exactly like the pre-existing nine, and
+  the postflight baseline was rebaselined to the observed 14-group/
+  `kwinrc` SHA-256 `cc624ba8763531610c42fe3b62b54c3192ee796314da9997dde2c6056f7141ab`
+  state. The aborted dispatch's own diagnostic capture (`window-added-
+  rejected:desktop-scope-mismatch`) was unreported/host-unknown and not used
+  as evidence.
+- `unit-05/attempt-16` (fresh dispatch, one Worker plus one same-scope
+  correction, Lead independently re-verified every claim) cleanly captured
+  and independently confirmed the exact rejection sub-code:
+  `window-added-rejected:desktop-scope-mismatch`. Per the accepted `unit-06`
+  helper's fixed evaluation order, this rules out `scope-unavailable`/
+  `not-normal-window`/`not-managed`/`not-resizeable`/`applet-popup` and
+  narrows the cause to the window's decoded `desktops` value not containing
+  the live current desktop id. Restoration was byte-identical to the
+  rebaselined 14-group state; the attempt's own transient tiling-group entry
+  was positively detected and deleted by exact UUID without adding an
+  eleventh stale group. Neither journey 1 (keyboard insertion) nor journey 4
+  (automatic placement) is proven; this is a diagnostic pinpointing, not an
+  eligible journey. Full detail: log.md, 2026-08-11 attempt-16 entry.
+
+## Pending User Decisions
+
+- Resolved by `unit-05/attempt-13`: the corrected `--user`-scope capture
+  contract (fixed-prefix `plasma-auto-tiler:` success diagnostics plus
+  independent same-PID `kwin_scripting` error check) is now proven end to end
+  against a true positive and against a live successful load/run.
+- Resolved by `unit-05/attempt-15`: the heartbeat-plus-early-trigger
+  supervisor contract (120s heartbeat-stale bound, up to 900s terminal bound,
+  explicit trigger file) is proven end to end, including exact-manifest
+  idempotent cleanup covering plugin, actions, client process group, desktop
+  restore/removal, and tiling keys.
+- Resolved by `unit-06`: the recommended fine-grained `window-added-rejected:*`
+  sub-codes now exist (`scope-unavailable`, `not-normal-window`, `not-managed`,
+  `not-resizeable`, `applet-popup`, `desktop-scope-mismatch`), statically and
+  unit-reviewed and accepted, with no behavior change.
+- Resolved by `unit-05/attempt-16`: the exact sub-code is
+  `desktop-scope-mismatch`, cleanly captured and independently verified,
+  narrowing the cause to the window's `desktops` value at `windowAdded` time.
+- `unit-05/attempt-17` (2026-08-11, one-package implement-build-live-validate
+  unit, no new spec/change directory): implemented bounded deferred
+  `desktop-scope-mismatch` re-evaluation (one 50ms `QTimer`-backed retry via a
+  new `ControllerEnvironment.scheduleOnce`, cancelled on window removal, every
+  other rejection sub-code still immediate/terminal); bundle SHA-256
+  `b02a53d9eecafd6dbbf14bf4ef04d74f388a0a2e6428af28cf37a5d610f5fde5`, 144/144
+  tests/23 suites. Live: client A's `window-added-deferred:decode-failed` ->
+  `window-added-reevaluated:decode-failed` -> `window-added-rejected-
+  deferred:desktop-scope-mismatch`, bounded/inert/no leak/no crash as
+  designed, but disproving the settling-race hypothesis for this window
+  (`window.desktops` fails to decode at all, both immediately and at
+  +50ms, not merely "decodes but omits the current desktop id"). Journeys
+  B/C not attempted (client A never became eligible). Cleanup byte-identical
+  to the `cc624ba8...`/14-group baseline, independently re-verified by the
+  Lead. Full detail: log.md, 2026-08-11 attempt-17 entry.
+- `unit-05/attempt-20` stopped failed-clean before `run()` because its strict
+  load-result runner predicate rejected its own valid response. The source
+  correction is statically verified but A/B/C remain unattempted. A fresh
+  attempt must correct and prevalidate that predicate, retain the exact plugin
+  manifest before any parser-failure cleanup path can race, and record the
+   temporary desktop's tiling UUID immediately after creation.
+- Package 5 parser prevalidation accepted the retained valid `loadScript`
+  envelope and rejected eight malformed/false-positive vectors. Three
+  pre-mutation harness failures then prevented a product run: the first used a
+  `rg` pattern without `--`, the second PID-filtered a non-KWin logger marker,
+  and the third failed fresh-desktop ID extraction before writing its cleanup
+  manifest. The exact third temporary desktop and tiling key were recovered and
+  both config files byte-matched preflight. No A/B/C or fallback result exists.
+- `unit-05/attempt-24` stopped before bundle load: an exact fresh desktop was
+  recorded and switched, but no owned tiling group existed to manifest. The
+  detached supervisor restored the four-desktop, 14-group baseline. Its writer
+  had stopped when the timeout-bound launch command ended, so no retry occurred.
+- `unit-05/attempt-25` was the final live attempt. Its independent heartbeat
+  writer advanced before and during the supervisor launch, but the supervisor
+  exited normally without a ready marker. No desktop, plugin, action, client,
+  load/run, or journal mutation followed; live validation is parked.
