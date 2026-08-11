@@ -313,10 +313,11 @@ validation ladder above.
 ## Current Boundary and Resumption
 
 - The nonce-owned supervisor, corrected `--user` cursor capture, collector, and
-  load-ID contract remain reusable operational contracts. The current bundle is
-  `513e45d5...`; source typecheck and 147 tests across 23 suites passed. The
-  singleton-occupant fallback for the Client B target-occupancy suspicion is
-  static-only and has not been live-accepted.
+  load-ID contract remain reusable operational contracts. The current ignored
+  generated bundle is `913a41c2...`; source typecheck and 388 tests across 46
+  suites plus 194 lifecycle shell checks passed. The singleton-occupant fallback
+  for the Client B target-occupancy suspicion is static-only and has not been
+  live-accepted.
 - `unit-05/attempt-18` proved Client A acceptance and automatic placement with
   bundle `e76e...`. Its Client B result is a real functional boundary:
   `keyboard-invoked` reached `keyboard-rejected:target-occupancy-validity`.
@@ -325,14 +326,12 @@ validation ladder above.
   it does not establish a general QV4/QJSEngine marshalling conclusion.
 - `unit-05/attempt-20` failed-clean before `run()` because a valid load response
   was rejected by jq operator precedence. Its dedicated 10-second heartbeat
-  writer advanced 28 times and owned-resource cleanup completed. Retained
-  postflight `kwinrc` evidence differs from preflight, so do not claim
-  byte-identical configuration restoration for that attempt without new
-  evidence. No Client A/B/C result or new diagnostic was obtained.
-- Resume only under fresh live authorization: correct and true-positive-test the
-  parser predicate, retain ownership before its failure cleanup can race, then
-  rerun the bounded Client B gate. Manual drag and Esc remain untested and need
-  a future interactive session.
+  writer advanced 28 times and owned-resource cleanup completed. The strict
+  load parser was corrected at `unit-05/attempt-21`; `attempt-25` was the final
+  live attempt and live validation is now parked. Retained postflight `kwinrc`
+  evidence differs from preflight, so do not claim byte-identical configuration
+  restoration for that attempt without new evidence.
+- Manual drag and Esc remain untested and need a future interactive session.
 
 ## Agent Discipline
 

@@ -53,22 +53,23 @@ merely for performance.
   pinned to KWin 6.7.3 commit
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
-- Current `kwin/contents/code/main.js` SHA-256 is
-  `c0b5e0d5a45fb13691bb5e0dccd48c0df298eefe817dc16caf1d05ecd744b27e`.
-  The current source typechecks and has 279 tests across 39 suites. This is
-  static evidence only; no current runtime acceptance follows.
+- Current ignored generated `kwin/contents/code/main.js` SHA-256 is
+  `913a41c2452dd63ee87f43edaf2e0f71fb6ef6a727b12c74901928c31072205a`.
+  The current source typechecks and has 388 tests across 46 suites plus 194
+  lifecycle shell checks. This is static evidence only; no current runtime
+  acceptance follows.
 
 ## Active Custom Tile Slice
 
 - [Custom Tile vertical slice](changes/custom-tile-vertical-slice/) remains P1
   active. `unit-01` and `unit-02` are accepted. `unit-03` source is statically
   complete but its structural/runtime behavior is unaccepted and gated by
-  `unit-05`. `unit-05` remains unaccepted (most recently failed-clean before
-  `run()` at `unit-05/attempt-20`; see below). Do not claim runtime acceptance
-  from static tests.
+  `unit-05`. `unit-05` remains unaccepted and its live validation is parked
+  after the final `attempt-25` infrastructure stop (see below). Do not claim
+  runtime acceptance from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all seventeen registrations must succeed; success logs
+  source-pinned boolean gate: all nineteen registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current insertion actions are: `plasma-auto-tiler-insert-left` / `Insert next
@@ -230,10 +231,11 @@ merely for performance.
   registered by this lifecycle. All persisted records remain after unload by
   design and prove neither current load nor callback delivery.
 - `unit-05` remains unaccepted. The current bundle is
-  `f80b019573e0b7709f229b94c4efa4c52da287067a0592a081000f0c56d4d973`;
-  current static verification is typecheck, build, 314 tests across 42 suites,
-  and 49 lifecycle shell checks. The pending singleton-occupant fallback remains
-  unaccepted for the `keyboard-rejected:target-occupancy-validity` boundary.
+  `913a41c2452dd63ee87f43edaf2e0f71fb6ef6a727b12c74901928c31072205a`;
+  current static verification is typecheck, build, 388 tests across 46 suites,
+  and 194 lifecycle shell checks. The pending singleton-occupant fallback
+  remains unaccepted for the `keyboard-rejected:target-occupancy-validity`
+  boundary.
 - Reusable live infrastructure remains proven: the nonce-owned `systemd-run
   --user` supervisor, strict all-component KGlobalAccel collector, atomic
   load-ID parse plus `Script<ID>` introspection, and `_PID`-scoped `--user`
@@ -323,13 +325,12 @@ merely for performance.
 
 ## Next Session
 
-1. Package 5 resumes at the failed harness gate: correct and prevalidate the
-   jq load-response predicate against the exact valid envelope, retaining the
-   plugin manifest before parser-failure cleanup can race.
-2. Under fresh live authorization, rerun the bounded Client B gate with the
-   current `513e45d5...` bundle and the dedicated heartbeat writer. Confirm the
-   parser before `run()`, then test Client B only after Client A acceptance.
-3. Stop at the first missing/rejecting required diagnostic. Client C, drag, and
+1. The old jq load-response parser gate is obsolete: the corrected strict load
+   parser accepted the retained valid envelope and rejected malformed vectors
+   (`unit-05/attempt-21`). Unit-05 live validation is parked after the final
+   `attempt-25` infrastructure stop; no live journey resumes without fresh
+   user authorization.
+2. Stop at the first missing/rejecting required diagnostic. Client C, drag, and
    Esc remain outside that initial retry unless separately authorized.
-4. Retain exact ownership/fail-fast cleanup. Treat attempt-20's configuration
+3. Retain exact ownership/fail-fast cleanup. Treat attempt-20's configuration
    restoration as evidence-ambiguous, not a baseline-preservation claim.
