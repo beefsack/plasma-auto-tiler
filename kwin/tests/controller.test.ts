@@ -635,8 +635,8 @@ describe("TileController keyboard focus", () => {
     const focusActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+Alt+H"],
         ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+Alt+J"],
-        ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+Alt+K"],
-        ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+L"],
+        ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+Alt+Ctrl+K"],
+        ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+Ctrl+L"],
     ];
     const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Alt+Shift+H"],

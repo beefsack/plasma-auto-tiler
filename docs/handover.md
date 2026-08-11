@@ -75,8 +75,8 @@ merely for performance.
   right of focused leaf` / `Meta+Alt+Right`; `plasma-auto-tiler-focus-left` /
   `Focus window left` / `Meta+Alt+H`; `plasma-auto-tiler-focus-down` / `Focus
   window down` / `Meta+Alt+J`; `plasma-auto-tiler-focus-up` / `Focus window up`
-  / `Meta+Alt+K`; and `plasma-auto-tiler-focus-right` / `Focus window right` /
-  `Meta+Alt+L`.
+  / `Meta+Alt+Ctrl+K`; and `plasma-auto-tiler-focus-right` / `Focus window right`
+  / `Meta+Alt+Ctrl+L`.
 - Move actions use the same directional geometry: `plasma-auto-tiler-move-left`
   / `Move window left` / `Meta+Alt+Shift+H`; `plasma-auto-tiler-move-down` /
   `Move window down` / `Meta+Alt+Shift+J`; `plasma-auto-tiler-move-up` /
@@ -89,6 +89,11 @@ merely for performance.
   aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap.
+- Shortcut records persist in KGlobalAccel after the script unloads and do not
+  prove callbacks are live. The manual launcher reports startup only after
+  same-KWin-PID ordered `shortcut-registered` and `startup-handlers-ready`
+  diagnostics, with no `disabled:` diagnostic. It preserves exact shortcut
+  ownership and does not unregister records.
 - Focus is a narrow write seam through `Workspace.activeWindow`, after exact
   output-object and desktop-ID scope checks. It filters only occupied,
   non-layout leaves whose occupants are eligible and in scope, so nearer empty

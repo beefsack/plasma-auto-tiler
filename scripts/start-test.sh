@@ -13,10 +13,13 @@ BUS_SCRIPTING_IFACE="org.kde.kwin.Scripting"
 BUS_SCRIPT_IFACE="org.kde.kwin.Script"
 
 SCRIPT_ID=""
+KWIN_PID=""
+JOURNAL_CURSOR=""
 
 isloaded_valid='((((keys | sort) == ["data","type"]) and (.type == "b")) and (((.data | type) == "array") and (((.data | length) == 1) and ((.data[0] | type) == "boolean"))))'
 load_valid='((((keys | sort) == ["data","type"]) and (.type == "i")) and (((.data | type) == "array") and (((.data | length) == 1) and (((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and ((.data[0] >= 0) and (.data[0] <= 2147483647))))))'
 script_iface_valid='any(.[]; ((.type == "interface") and (.name == "org.kde.kwin.Script")))'
+readiness_valid='[inputs | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | index("plasma-auto-tiler:shortcut-registered")) as $registered | ($messages | index("plasma-auto-tiler:startup-handlers-ready")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($registered != null and $ready != null and $registered < $ready and ($disabled | not))'
 
 usage() {
   cat <<'EOF'
@@ -37,7 +40,7 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
   exit 0
 fi
 
-for tool in npm busctl jq; do
+for tool in npm busctl jq journalctl pgrep; do
   if ! command -v "$tool" >/dev/null 2>&1; then
     echo "error: required tool '$tool' not found in PATH" >&2
     exit 1
@@ -71,6 +74,23 @@ cleanup_after_load() {
   exit 1
 }
 
+find_kwin_pid() {
+  local pid command candidate=""
+  while IFS=' ' read -r pid command; do
+    if [[ "$command" != *" --wayland-fd "* ]]; then
+      continue
+    fi
+    if [[ -n "$candidate" ]]; then
+      return 1
+    fi
+    candidate="$pid"
+  done < <(pgrep -a kwin_wayland)
+  if [[ -z "$candidate" ]]; then
+    return 1
+  fi
+  printf '%s\n' "$candidate"
+}
+
 is_loaded_out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE isScriptLoaded s "$PLUGIN_ID")" || {
   echo "error: isScriptLoaded call failed: $is_loaded_out" >&2
   exit 1
@@ -85,6 +105,21 @@ if [[ "$(jq -r '.data[0]' <<<"$is_loaded_out")" == "true" ]]; then
   echo "error: plugin '$PLUGIN_ID' is already loaded; refusing to load again" >&2
   echo "unload it first:" >&2
   echo "  busctl --user call $BUS_DEST $BUS_PATH $BUS_SCRIPTING_IFACE unloadScript s '$PLUGIN_ID'" >&2
+  exit 1
+fi
+
+KWIN_PID="$(find_kwin_pid)" || {
+  echo "error: could not identify one KWin process for readiness diagnostics" >&2
+  exit 1
+}
+
+journal_cursor_out="$(journalctl --user --quiet --show-cursor -n 1)" || {
+  echo "error: could not capture the pre-load journal cursor" >&2
+  exit 1
+}
+JOURNAL_CURSOR="${journal_cursor_out##*-- cursor: }"
+if [[ -z "$JOURNAL_CURSOR" || "$JOURNAL_CURSOR" == "$journal_cursor_out" ]]; then
+  echo "error: journal cursor output did not contain an opaque cursor token" >&2
   exit 1
 fi
 
@@ -112,7 +147,16 @@ if ! busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$SCRIPT_OBJ" $BUS_SCRIPT_I
   cleanup_after_load "run() failed on $SCRIPT_OBJ"
 fi
 
-echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; run() returned successfully"
+# KWin's console output can reach the user journal just after run() returns.
+sleep 0.1
+journal_out="$(journalctl --user --quiet --no-pager --after-cursor="$JOURNAL_CURSOR" "_PID=$KWIN_PID" -o json)" || {
+  cleanup_after_load "could not read KWin readiness diagnostics"
+}
+if ! jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null; then
+  cleanup_after_load "controller readiness was not confirmed by KWin diagnostics"
+fi
+
+echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; controller readiness confirmed"
 echo
 echo "stop it:"
 echo "  busctl --user call $BUS_DEST $SCRIPT_OBJ $BUS_SCRIPT_IFACE stop"

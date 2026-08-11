@@ -80,6 +80,10 @@ Non-goals:
       all KWin/Qt boundary values at runtime.
 - [ ] Static and unit review finds no prohibited TypeScript escape hatches,
       generated-artifact edits, or unguarded boundary assumptions.
+- [ ] The manual launcher reports successful startup only after the fixed
+      shortcut-registration and handler-readiness diagnostics confirm an
+      enabled controller; this is not shortcut callback or broader runtime
+      capability acceptance.
 - [ ] No runtime smoke occurs without separate fresh authorization; any future
       smoke remains limited to this slice and does not unpark the feasibility
       change's blocked live path.

@@ -374,13 +374,13 @@ export class TileController {
             const upRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-up",
                 "Focus window up",
-                "Meta+Alt+K",
+                "Meta+Alt+Ctrl+K",
                 () => this.focusNeighbor("up"),
             );
             const rightRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-right",
                 "Focus window right",
-                "Meta+Alt+L",
+                "Meta+Alt+Ctrl+L",
                 () => this.focusNeighbor("right"),
             );
             const moveLeftRegistered = this.environment.registerShortcut(
