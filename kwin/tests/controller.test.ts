@@ -1020,11 +1020,23 @@ describe("TileController keyboard focus", () => {
         ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+K"],
         ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+Ctrl+L"],
     ];
+    const focusArrowActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
+        ["left", "plasma-auto-tiler-focus-left-arrow", "Focus window left (arrow)", "Meta+Left"],
+        ["down", "plasma-auto-tiler-focus-down-arrow", "Focus window down (arrow)", "Meta+Down"],
+        ["up", "plasma-auto-tiler-focus-up-arrow", "Focus window up (arrow)", "Meta+Up"],
+        ["right", "plasma-auto-tiler-focus-right-arrow", "Focus window right (arrow)", "Meta+Right"],
+    ];
     const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Shift+H"],
         ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Shift+J"],
         ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Shift+K"],
         ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Shift+L"],
+    ];
+    const moveArrowActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
+        ["left", "plasma-auto-tiler-move-left-arrow", "Move window left (arrow)", "Meta+Shift+Left"],
+        ["down", "plasma-auto-tiler-move-down-arrow", "Move window down (arrow)", "Meta+Shift+Down"],
+        ["up", "plasma-auto-tiler-move-up-arrow", "Move window up (arrow)", "Meta+Shift+Up"],
+        ["right", "plasma-auto-tiler-move-right-arrow", "Move window right (arrow)", "Meta+Shift+Right"],
     ];
     const presetActions: ReadonlyArray<readonly [string, string, string]> = [
         ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
@@ -1036,7 +1048,9 @@ describe("TileController keyboard focus", () => {
     const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
         ...insertActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ...focusActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
+        ...focusArrowActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ...moveActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
+        ...moveArrowActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
         ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
         ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
@@ -1068,7 +1082,7 @@ describe("TileController keyboard focus", () => {
             for (const [, name] of insertActions) {
                 invokeShortcut(harness, name);
             }
-            for (const [, name] of [...focusActions, ...moveActions]) {
+            for (const [, name] of [...focusActions, ...focusArrowActions, ...moveActions, ...moveArrowActions]) {
                 invokeShortcut(harness, name);
             }
             invokeShortcut(harness, "plasma-auto-tiler-detach");
@@ -1167,7 +1181,7 @@ describe("TileController keyboard focus", () => {
     });
 
     it("focuses the exact eligible directional target without mutating topology or associations", () => {
-        for (const [direction, name] of focusActions) {
+        for (const [direction, name] of [...focusActions, ...focusArrowActions]) {
             const state = focusSetup(direction);
             const rootTiles = state.root.tiles;
             const focusedWindows = state.focusedTile.windows;
@@ -1284,6 +1298,12 @@ describe("TileController keyboard move", () => {
         ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Shift+K"],
         ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Shift+L"],
     ];
+    const moveArrowActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
+        ["left", "plasma-auto-tiler-move-left-arrow", "Move window left (arrow)", "Meta+Shift+Left"],
+        ["down", "plasma-auto-tiler-move-down-arrow", "Move window down (arrow)", "Meta+Shift+Down"],
+        ["up", "plasma-auto-tiler-move-up-arrow", "Move window up (arrow)", "Meta+Shift+Up"],
+        ["right", "plasma-auto-tiler-move-right-arrow", "Move window right (arrow)", "Meta+Shift+Right"],
+    ];
 
     it("maps every move guard to its first fixed private reason", () => {
         const cases: ReadonlyArray<{
@@ -1372,7 +1392,7 @@ describe("TileController keyboard move", () => {
     });
 
     it("moves the active window to the directional empty leaf with exactly one assignment", () => {
-        for (const [direction, name] of moveActions) {
+        for (const [direction, name] of [...moveActions, ...moveArrowActions]) {
             const state = moveSetup(direction);
             let manages = 0;
             state.target.manage = (value) => {
@@ -4171,7 +4191,7 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 19-action all-or-nothing catalog", () => {
+    it("registers the exact 27-action all-or-nothing catalog", () => {
         const { harness } = setup();
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [
@@ -4183,17 +4203,25 @@ describe("TileController shortcut registration", () => {
             "plasma-auto-tiler-detach",
             "plasma-auto-tiler-fill-scope",
             "plasma-auto-tiler-focus-down",
+            "plasma-auto-tiler-focus-down-arrow",
             "plasma-auto-tiler-focus-left",
+            "plasma-auto-tiler-focus-left-arrow",
             "plasma-auto-tiler-focus-right",
+            "plasma-auto-tiler-focus-right-arrow",
             "plasma-auto-tiler-focus-up",
+            "plasma-auto-tiler-focus-up-arrow",
             "plasma-auto-tiler-insert-down",
             "plasma-auto-tiler-insert-left",
             "plasma-auto-tiler-insert-right",
             "plasma-auto-tiler-insert-up",
             "plasma-auto-tiler-move-down",
+            "plasma-auto-tiler-move-down-arrow",
             "plasma-auto-tiler-move-left",
+            "plasma-auto-tiler-move-left-arrow",
             "plasma-auto-tiler-move-right",
+            "plasma-auto-tiler-move-right-arrow",
             "plasma-auto-tiler-move-up",
+            "plasma-auto-tiler-move-up-arrow",
         ]);
     });
 

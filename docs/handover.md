@@ -69,7 +69,7 @@ merely for performance.
   runtime acceptance from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all nineteen registrations must succeed; success logs
+  source-pinned boolean gate: all twenty-seven registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current insertion actions are: `plasma-auto-tiler-insert-left` / `Insert next
@@ -88,8 +88,11 @@ merely for performance.
   / `Move window left` / `Meta+Shift+H`; `plasma-auto-tiler-move-down` /
   `Move window down` / `Meta+Shift+J`; `plasma-auto-tiler-move-up` / `Move
   window up` / `Meta+Shift+K`; and `plasma-auto-tiler-move-right` / `Move
-  window right` / `Meta+Shift+L`. Active Krohnkite actions own every requested
-  `Meta+Arrow` and `Meta+Shift+Arrow` variant, so arrows remain deferred.
+  window right` / `Meta+Shift+L`. Separate project-owned aliases are
+  `plasma-auto-tiler-focus-{left,down,up,right}-arrow` / `Focus window
+  <direction> (arrow)` / `Meta+Left/Down/Up/Right`; and
+  `plasma-auto-tiler-move-{left,down,up,right}-arrow` / `Move window
+  <direction> (arrow)` / `Meta+Shift+Left/Down/Up/Right`.
   Focused-leaf presets are
   `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
@@ -99,7 +102,7 @@ merely for performance.
   `Detach window from tile` / `Meta+Shift+Space`; `plasma-auto-tiler-attach` /
   `Attach window to available tile` / `Meta+Alt+Shift+Space`; and
   `plasma-auto-tiler-fill-scope` / `Fill available tiles with windows` /
-  `Meta+Alt+Return`. All nineteen registrations
+  `Meta+Alt+Return`. All twenty-seven registrations
   share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap. Attach requires an
@@ -203,6 +206,20 @@ merely for performance.
 
 ## Live Evidence and Parked Automation
 
+- 2026-08-12 project-owned arrow aliases: the plugin has 27 persistent shortcut
+  records after one bounded `start -> status -> stop` lifecycle sequence and is
+  unloaded. Eight aliases retain the direct Meta arrow and Meta+Shift arrow
+  defaults through the existing guarded focus/move callbacks. Exact Krohnkite
+  active sequences were cleared only for `KrohnkiteFocusLeft` `[285212690]`,
+  `KrohnkiteFocusDown` `[285212693]`, `KrohnkiteFocusUp` `[285212691]`,
+  `KrohnkiteFocusRight` `[285212692]`, `KrohnkiteShiftLeft` `[318767122]`,
+  `KrohnkiteShiftDown` `[318767125]`, `KrohnkiteShiftUp` `[318767123]`, and
+  `KrohnkiteShiftRight` `[318767124]`, each now `[]`. All nonconflicting
+  Krohnkite sequences and records remained untouched, Krohnkite remains
+  disabled/unloaded, and no non-Krohnkite record, tiling group, callback,
+  window, or topology action occurred.
+  Postflight read-only reconciliation reports 27 matched project records and no
+  unrelated desired-arrow owner. Persisted records do not prove callback liveness.
 - 2026-08-12 guarded detach/attach callback preflight: stopped before lifecycle
   start, test-window launch, action invocation, or cleanup because exact
   active-window ownership could not be proven. The plugin was unloaded,

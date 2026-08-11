@@ -148,6 +148,13 @@ validation ladder above.
   defines the setter flags `SetPresent=2`, `NoAutoloading=4`, `IsDefault=8`;
   `NoAutoloading` forces a change on a non-fresh registered action, and the
   daemon persists through `scheduleWriteSettings()`.
+- An authorized release of a conflicting disabled plugin's active shortcut must
+  first collect all components and exact action records. Snapshot each touched
+  action's full active sequence list, clear only the exact conflicting sequence
+  with the introspection-proven setter and `SetPresent|NoAutoloading`, and
+  re-read the action after each write. On a setter or verification failure,
+  restore only already-touched actions to their snapshots and stop. Never
+  unregister records, alter another sequence, or clear a non-plugin owner.
 
 
 ## KGlobalAccel and Collector

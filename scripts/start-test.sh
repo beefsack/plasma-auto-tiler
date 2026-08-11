@@ -32,10 +32,18 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-focus-down
   plasma-auto-tiler-focus-up
   plasma-auto-tiler-focus-right
+  plasma-auto-tiler-focus-left-arrow
+  plasma-auto-tiler-focus-down-arrow
+  plasma-auto-tiler-focus-up-arrow
+  plasma-auto-tiler-focus-right-arrow
   plasma-auto-tiler-move-left
   plasma-auto-tiler-move-down
   plasma-auto-tiler-move-up
   plasma-auto-tiler-move-right
+  plasma-auto-tiler-move-left-arrow
+  plasma-auto-tiler-move-down-arrow
+  plasma-auto-tiler-move-up-arrow
+  plasma-auto-tiler-move-right-arrow
   plasma-auto-tiler-detach
   plasma-auto-tiler-attach
   plasma-auto-tiler-fill-scope
@@ -62,10 +70,18 @@ declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-focus-down]="268435530"
   [plasma-auto-tiler-focus-up]="268435531"
   [plasma-auto-tiler-focus-right]="469762124"
+  [plasma-auto-tiler-focus-left-arrow]="285212690"
+  [plasma-auto-tiler-focus-down-arrow]="285212693"
+  [plasma-auto-tiler-focus-up-arrow]="285212691"
+  [plasma-auto-tiler-focus-right-arrow]="285212692"
   [plasma-auto-tiler-move-left]="301989960"
   [plasma-auto-tiler-move-down]="301989962"
   [plasma-auto-tiler-move-up]="301989963"
   [plasma-auto-tiler-move-right]="301989964"
+  [plasma-auto-tiler-move-left-arrow]="318767122"
+  [plasma-auto-tiler-move-down-arrow]="318767125"
+  [plasma-auto-tiler-move-up-arrow]="318767123"
+  [plasma-auto-tiler-move-right-arrow]="318767124"
   [plasma-auto-tiler-detach]="301989920"
   [plasma-auto-tiler-attach]="436207648"
   [plasma-auto-tiler-fill-scope]="419430404"

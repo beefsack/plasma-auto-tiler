@@ -530,6 +530,30 @@ export class TileController {
                 "Meta+Alt+Ctrl+L",
                 () => this.focusNeighbor("right"),
             );
+            const focusLeftArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-focus-left-arrow",
+                "Focus window left (arrow)",
+                "Meta+Left",
+                () => this.focusNeighbor("left"),
+            );
+            const focusDownArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-focus-down-arrow",
+                "Focus window down (arrow)",
+                "Meta+Down",
+                () => this.focusNeighbor("down"),
+            );
+            const focusUpArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-focus-up-arrow",
+                "Focus window up (arrow)",
+                "Meta+Up",
+                () => this.focusNeighbor("up"),
+            );
+            const focusRightArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-focus-right-arrow",
+                "Focus window right (arrow)",
+                "Meta+Right",
+                () => this.focusNeighbor("right"),
+            );
             const moveLeftRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-move-left",
                 "Move window left",
@@ -552,6 +576,30 @@ export class TileController {
                 "plasma-auto-tiler-move-right",
                 "Move window right",
                 "Meta+Shift+L",
+                () => this.moveActiveWindow("right"),
+            );
+            const moveLeftArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-left-arrow",
+                "Move window left (arrow)",
+                "Meta+Shift+Left",
+                () => this.moveActiveWindow("left"),
+            );
+            const moveDownArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-down-arrow",
+                "Move window down (arrow)",
+                "Meta+Shift+Down",
+                () => this.moveActiveWindow("down"),
+            );
+            const moveUpArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-up-arrow",
+                "Move window up (arrow)",
+                "Meta+Shift+Up",
+                () => this.moveActiveWindow("up"),
+            );
+            const moveRightArrowRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-right-arrow",
+                "Move window right (arrow)",
+                "Meta+Shift+Right",
                 () => this.moveActiveWindow("right"),
             );
             const detachRegistered = this.environment.registerShortcut(
@@ -605,10 +653,18 @@ export class TileController {
                 !downRegistered ||
                 !upRegistered ||
                 !rightRegistered ||
+                !focusLeftArrowRegistered ||
+                !focusDownArrowRegistered ||
+                !focusUpArrowRegistered ||
+                !focusRightArrowRegistered ||
                 !moveLeftRegistered ||
                 !moveDownRegistered ||
                 !moveUpRegistered ||
                 !moveRightRegistered ||
+                !moveLeftArrowRegistered ||
+                !moveDownArrowRegistered ||
+                !moveUpArrowRegistered ||
+                !moveRightArrowRegistered ||
                 !detachRegistered ||
                 !attachRegistered ||
                 !fillScopeRegistered ||

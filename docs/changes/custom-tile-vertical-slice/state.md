@@ -20,6 +20,19 @@
   meet at that edge. It now accepts a non-overlapping touching leaf at distance
   zero; focused controller and pure selector vectors pass. Movement remains an
   intentional move-to-empty action, not a swap. No live action occurred.
+- Current package: `unit-17/attempt-01` is accepted source and registration
+  correction. The controller registers eight separate project-owned arrow alias
+  actions, preserving the original H/J/K focus actions, focus-right fallback,
+  and H/J/K/L move actions while routing aliases through the same guarded
+  callbacks. The expanded 27-action gate remains all-or-nothing. Exact
+  KGlobalAccel preflight found Krohnkite disabled and unloaded; only its eight
+  desired-arrow active sequences were cleared after individual snapshots and
+  verification. No records were unregistered and every other Krohnkite sequence
+  remained untouched. One authorized `start -> status -> stop` registered all
+  27 records and restored the initially unloaded project-plugin state. Read-only
+  postflight reports 27 matching project assignments and zero unrelated target
+  conflicts. No callback, window, key, desktop, tile, topology, or tiling-group
+  action occurred.
 - Previous package: `unit-15/attempt-01` is accepted static correction. The
   active eligible floating window can receive at most one pinned `window.tile`
   write into the deterministic first empty authored non-layout Custom Tile leaf
