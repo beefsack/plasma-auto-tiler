@@ -3,6 +3,7 @@ set -uo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPT="$REPO_ROOT/scripts/start-test.sh"
+CONTROLLER="$REPO_ROOT/kwin/src/controller.ts"
 FAKE_BIN="$(mktemp -d)"
 WORK="$(mktemp -d)"
 OUTPUT="$(mktemp)"
@@ -59,19 +60,46 @@ case "$*" in
       printf '{"type":"i","data":[7]}\n'
     fi ;;
   *setShortcutKeys*)
+    args=("$@")
+    action_index=-1
+    for index in "${!args[@]}"; do
+      if [[ "${args[$index]}" == "plasma-auto-tiler-"* ]]; then
+        action_index="$index"
+        break
+      fi
+    done
+    action="${args[$action_index]}"
+    outer_count="${args[$((action_index + 3))]}"
+    call_count=0
+    [[ -f "$state/setshortcut-count" ]] && call_count="$(cat "$state/setshortcut-count")"
+    call_count=$((call_count + 1))
+    printf '%s\n' "$call_count" > "$state/setshortcut-count"
+    key="${args[$((action_index + 5))]:-empty}"
+    printf '%s %s\n' "$action" "$key" >> "${FAKE_CALL_LOG:?}"
+    fails=false
     if [[ -f "$state/setshortcut-fails" ]]; then
-      printf '{"type":"a(ai)","data":[[]]}\n'
-    else
-      set -- $*
-      action="${11}"
-      key="${@: -5:1}"
-      printf '%s %s\n' "$action" "$key" >> "${FAKE_CALL_LOG:?}"
+      fails=true
+    elif [[ -f "$state/setshortcut-fails-on" && "$call_count" -eq "$(cat "$state/setshortcut-fails-on")" ]]; then
+      fails=true
+    elif [[ -f "$state/setshortcut-fails-after" && "$call_count" -gt "$(cat "$state/setshortcut-fails-after")" ]]; then
+      fails=true
+    fi
+    if [[ "$fails" == false ]]; then
+      if [[ "$outer_count" == 0 ]]; then
+        keys='[]'
+        key=empty
+      else
+        key="${args[$((action_index + 5))]}"
+        keys="[$key]"
+      fi
       if [[ -f "$state/shortcuts" ]]; then
-        jq --arg a "$action" --argjson k "$key" \
-          '(.data[0] | map(if .[0] == $a then .[6] = [$k] else . end)) as $rows | {type:"a(ssssssaiai)", data:[$rows]}' \
+        jq --arg a "$action" --argjson k "$keys" \
+          '(.data[0] | map(if .[0] == $a then .[6] = $k else . end)) as $rows | {type:"a(ssssssaiai)", data:[$rows]}' \
           "$state/shortcuts" > "$state/shortcuts.tmp" && mv "$state/shortcuts.tmp" "$state/shortcuts"
       fi
       printf '{"type":"a(ai)","data":[[[[%s,0,0,0]]]]}\n' "$key"
+    else
+      printf '{"type":"a(ai)","data":[[]]}\n'
     fi ;;
   *org.kde.kwin.Script\ run)
     printf 'ok\n' ;;
@@ -83,7 +111,11 @@ case "$*" in
     fi ;;
   *allShortcutInfos*)
     if [[ -f "$state/shortcuts" ]]; then
-      cat "$state/shortcuts"
+      if [[ -f "$state/wrong-owner" ]]; then
+        jq '(.data[0] | map(if .[0] | startswith("plasma-auto-tiler-") then .[2] = "not-kwin" else . end)) as $rows | {type:"a(ssssssaiai)", data:[$rows]}' "$state/shortcuts"
+      else
+        cat "$state/shortcuts"
+      fi
     else
       printf '{"type":"a(ssssssaiai)","data":[[]]}\n'
     fi ;;
@@ -148,6 +180,16 @@ assert_not_contains() {
 assert_no_setshortcut_calls() {
   if [[ -s "$WORK/setshortcut.log" ]]; then
     echo "FAIL: unexpected setShortcutKeys calls made" >&2
+    cat "$WORK/setshortcut.log" >&2
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+}
+
+assert_only_project_setshortcut_calls() {
+  if grep -Ev '^plasma-auto-tiler-' "$WORK/setshortcut.log" >/dev/null 2>&1; then
+    echo "FAIL: setter called for an unrelated action" >&2
     cat "$WORK/setshortcut.log" >&2
     FAIL=$((FAIL + 1))
   else
@@ -225,6 +267,8 @@ assert_contains "plasma-auto-tiler-detach"
 assert_contains "active \"402653256\""
 assert_not_contains "KrohnkiteNextLayout"
 assert_contains "do not prove live callbacks"
+assert_contains "shortcut assignments: matched 2, drift 2, missing 9"
+assert_contains "persisted shortcut assignments drift from controller source"
 
 # status: malformed allComponents reply fails closed (never zero matches)
 setup_state '-- cursor: cursor-1' ""
@@ -328,7 +372,7 @@ check_exit 0
 assert_contains "reconcile-shortcuts --apply: preflight passed"
 assert_contains "before:"
 assert_contains 'action "plasma-auto-tiler-focus-left" active "402653256" expected "268435528"'
-assert_contains "touched 8, deferred 0, verified 8, unverified 0"
+assert_contains "touched 8, verified 8, unverified 0"
 assert_contains 'action "plasma-auto-tiler-focus-left" active "268435528" (verified)'
 assert_contains 'action "plasma-auto-tiler-move-right" active "301989964" (verified)'
 grep -Fq "plasma-auto-tiler-focus-left 268435528" "$WORK/setshortcut.log" || {
@@ -349,6 +393,7 @@ if [[ "$(wc -l < "$WORK/setshortcut.log")" -ne 8 ]]; then
 else
   PASS=$((PASS + 1))
 fi
+assert_only_project_setshortcut_calls
 CALL_BASELINE="$(wc -l < "$WORK/setshortcut.log")"
 
 # reconcile-shortcuts: read-only report surfaces unrelated conflicts for targets
@@ -411,20 +456,64 @@ else
   PASS=$((PASS + 1))
 fi
 
-# reconcile-shortcuts --apply: malformed setter reply defers the write and fails closed
+# reconcile-shortcuts --apply: exact kwin ownership is required before writing
+setup_state '-- cursor: cursor-1' ""
+printf '%s' "$RECONCILE_MISMATCH_RECORDS" > "$WORK/state/shortcuts"
+touch "$WORK/state/wrong-owner"
+CALL_BASELINE="$(wc -l < "$WORK/setshortcut.log")"
+run_script reconcile-shortcuts --apply
+check_exit 1
+assert_contains 'action "plasma-auto-tiler-focus-left" is under component "not-kwin", expected "kwin"'
+assert_contains "refusing to apply with 13 project ownership error"
+if [[ "$(wc -l < "$WORK/setshortcut.log")" -ne "$CALL_BASELINE" ]]; then
+  echo "FAIL: wrong-owner apply still wrote shortcut records" >&2
+  FAIL=$((FAIL + 1))
+else
+  PASS=$((PASS + 1))
+fi
+
+# reconcile-shortcuts --apply: malformed setter reply fails closed and restores the touched record
 setup_state '-- cursor: cursor-1' ""
 printf '%s' "$RECONCILE_MISMATCH_RECORDS" > "$WORK/state/shortcuts"
 touch "$WORK/state/setshortcut-fails"
 run_script reconcile-shortcuts --apply
 check_exit 1
 assert_contains "did not confirm expected key"
-assert_contains "touched 0, deferred 8, verified 0, unverified 8"
-assert_contains "reconciliation incomplete"
+assert_contains "rollback: restoring 1 touched project assignment"
+assert_contains "rollback: verified exact restoration of 1 touched project assignment"
+
+# reconcile-shortcuts --apply: a partial setter failure restores only touched project records exactly
+setup_state '-- cursor: cursor-1' ""
+printf '%s' "$RECONCILE_MISMATCH_RECORDS" > "$WORK/state/shortcuts"
+touch "$WORK/state/setshortcut-fails-on"
+printf '2\n' > "$WORK/state/setshortcut-fails-on"
+run_script reconcile-shortcuts --apply
+check_exit 1
+assert_contains 'setShortcutKeys reply for action "plasma-auto-tiler-focus-down"'
+assert_contains "rollback: verified exact restoration of 2 touched project assignment"
+if ! jq -e --argjson before "$RECONCILE_MISMATCH_RECORDS" '. == $before' "$WORK/state/shortcuts" >/dev/null; then
+  echo "FAIL: partial failure did not restore the exact original project assignments" >&2
+  FAIL=$((FAIL + 1))
+else
+  PASS=$((PASS + 1))
+fi
+assert_only_project_setshortcut_calls
+
+# reconcile-shortcuts --apply: rollback failure is explicit and leaves no unrelated setter calls
+setup_state '-- cursor: cursor-1' ""
+printf '%s' "$RECONCILE_MISMATCH_RECORDS" > "$WORK/state/shortcuts"
+printf '2\n' > "$WORK/state/setshortcut-fails-after"
+run_script reconcile-shortcuts --apply
+check_exit 1
+assert_contains "rollback: restoration was not fully verified"
+assert_contains 'rollback unverified: action "plasma-auto-tiler-focus-left"'
+assert_only_project_setshortcut_calls
 
 # reconcile-shortcuts: missing setter contract fails closed without mutation
 setup_state '-- cursor: cursor-1' ""
 printf '%s' "$RECONCILE_MISMATCH_RECORDS" > "$WORK/state/shortcuts"
 touch "$WORK/state/introspect-no-setter"
+CALL_BASELINE="$(wc -l < "$WORK/setshortcut.log")"
 run_script reconcile-shortcuts
 check_exit 1
 assert_contains "setShortcutKeys is absent"
@@ -434,6 +523,33 @@ if [[ "$(wc -l < "$WORK/setshortcut.log")" -ne "$CALL_BASELINE" ]]; then
 else
   PASS=$((PASS + 1))
 fi
+
+# The lifecycle catalog must exactly cover the controller registrations/default strings.
+while IFS=$'\t' read -r action sequence shortcut; do
+  if ! grep -Fq "[$action]=\"$sequence\"" "$SCRIPT"; then
+    echo "FAIL: lifecycle catalog lacks $action=$sequence" >&2
+    FAIL=$((FAIL + 1))
+  elif ! grep -A3 -F "\"$action\"" "$CONTROLLER" | grep -Fq "\"$shortcut\""; then
+    echo "FAIL: controller registration lacks $action=$shortcut" >&2
+    FAIL=$((FAIL + 1))
+  else
+    PASS=$((PASS + 1))
+  fi
+done <<'EOF'
+plasma-auto-tiler-insert-right	419430420	Meta+Alt+Right
+plasma-auto-tiler-focus-left	268435528	Meta+H
+plasma-auto-tiler-focus-down	268435530	Meta+J
+plasma-auto-tiler-focus-up	268435531	Meta+K
+plasma-auto-tiler-focus-right	469762124	Meta+Alt+Ctrl+L
+plasma-auto-tiler-move-left	301989960	Meta+Shift+H
+plasma-auto-tiler-move-down	301989962	Meta+Shift+J
+plasma-auto-tiler-move-up	301989963	Meta+Shift+K
+plasma-auto-tiler-move-right	301989964	Meta+Shift+L
+plasma-auto-tiler-detach	301989920	Meta+Shift+Space
+plasma-auto-tiler-apply-columns	402653233	Meta+Alt+1
+plasma-auto-tiler-apply-rows	402653234	Meta+Alt+2
+plasma-auto-tiler-apply-balanced-grid	402653235	Meta+Alt+3
+EOF
 
 # reconcile-shortcuts: unknown argument fails closed
 setup_state '-- cursor: cursor-1' ""

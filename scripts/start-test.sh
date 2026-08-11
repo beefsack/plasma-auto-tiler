@@ -242,6 +242,33 @@ count_records() {
   printf '%s\n' "$records" | awk 'NF { n++ } END { print n+0 }'
 }
 
+report_shortcut_drift() {
+  local records="$1"
+  local comp action label active default expected
+  local -A active_by_action=()
+  while IFS=$'\t' read -r comp action label active default; do
+    [[ -z "$action" ]] && continue
+    active_by_action["$action"]="$active"
+  done <<<"$records"
+
+  local matched=0 mismatched=0 missing=0
+  for action in "${PROJECT_ACTIONS[@]}"; do
+    expected="${EXPECTED_SEQUENCES[$action]}"
+    if [[ ! "${active_by_action[$action]+x}" ]]; then
+      missing=$((missing + 1))
+    elif [[ "${active_by_action[$action]}" == "$expected" ]]; then
+      matched=$((matched + 1))
+    else
+      mismatched=$((mismatched + 1))
+      echo "  drift: action \"$action\" active \"${active_by_action[$action]}\" expected \"$expected\""
+    fi
+  done
+  echo "shortcut assignments: matched $matched, drift $mismatched, missing $missing"
+  if [[ "$mismatched" -gt 0 || "$missing" -gt 0 ]]; then
+    echo "note: persisted shortcut assignments drift from controller source; run '$0 reconcile-shortcuts' to inspect."
+  fi
+}
+
 cmd_start() {
   require_tools npm busctl jq journalctl pgrep
   read_plugin_id
@@ -332,6 +359,7 @@ cmd_start() {
       echo "inspect it:"
       echo "  $0 status"
       echo
+      echo "shortcut assignments: not checked; controller readiness does not prove requested keys are active."
       echo "note: stopping/unloading does not roll back Custom Tile changes the script already made."
       return 0
     fi
@@ -379,6 +407,7 @@ cmd_status() {
   count="$(count_records "$records")"
   echo "project action records (KGlobalAccel): $count"
   print_records "$records"
+  report_shortcut_drift "$records"
   echo "note: KGlobalAccel records persist after unload and do not prove live callbacks."
   echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
 }
@@ -461,6 +490,37 @@ collect_unrelated_target_conflicts() {
   done < <(jq -r '.data[0][]' <<<"$comps")
 }
 
+# Calls the exact setter contract. keys_json is the QSet<QKeySequence> D-Bus
+# value, represented as an array of integer arrays.
+set_shortcut_keys() {
+  local comp="$1" action="$2" label="$3" keys_json="$4" flags="$5"
+  if ! jq -e 'type == "array" and all(.[]; type == "array" and all(.[]; type == "number" and floor == .))' <<<"$keys_json" >/dev/null 2>&1; then
+    return 1
+  fi
+  local -a key_args=()
+  mapfile -t key_args < <(jq -r '([length] + (map([length] + .) | add // []))[]' <<<"$keys_json")
+  busctl $BUS_SCOPE --json=short call "$KG_DEST" "$KG_PATH" "$KG_IFACE" setShortcutKeys "asa(ai)u" \
+    4 "$comp" "$action" "KWin" "$label" "${key_args[@]}" "$flags"
+}
+
+# allShortcutInfos exposes one active integer sequence per project action.
+# Re-wrap that exact captured sequence as the setter's QSet<QKeySequence>.
+captured_sequence_to_keys_json() {
+  local sequence="$1"
+  if [[ -z "$sequence" ]]; then
+    printf '[]\n'
+    return 0
+  fi
+  jq -cn --arg sequence "$sequence" '[$sequence | split(",") | map(tonumber)]'
+}
+
+setter_reply_confirms() {
+  local reply="$1" expected="$2"
+  jq -e --argjson expected "$expected" \
+    '(.type == "a(ai)") and ((.data | type) == "array") and ((.data | flatten | index($expected)) != null)' \
+    <<<"$reply" >/dev/null 2>&1
+}
+
 # Narrow explicit shortcut reconciliation. Read-only by default; --apply
 # writes the expected source-default active sequence to each mismatched
 # project record through the exact setter contract after read-only gates.
@@ -488,8 +548,15 @@ cmd_reconcile_shortcuts() {
 
   local records comp action label active default
   records="$(collect_project_action_records)" || exit 1
-  declare -A RECORD_COMP=() RECORD_LABEL=() RECORD_ACTIVE=()
+  declare -A RECORD_COMP=() RECORD_LABEL=() RECORD_ACTIVE=() RECORD_COUNT=()
+  local ownership_errors=0
   while IFS=$'\t' read -r comp action label active default; do
+    [[ -z "$action" ]] && continue
+    RECORD_COUNT["$action"]=$(( ${RECORD_COUNT[$action]:-0} + 1 ))
+    if [[ "$comp" != "kwin" ]]; then
+      ownership_errors=$((ownership_errors + 1))
+      echo "  ownership error: action \"$action\" is under component \"$comp\", expected \"kwin\""
+    fi
     RECORD_COMP["$action"]="$comp"
     RECORD_LABEL["$action"]="$label"
     RECORD_ACTIVE["$action"]="$active"
@@ -510,10 +577,14 @@ cmd_reconcile_shortcuts() {
       mismatched=$((mismatched + 1))
       mismatch_actions+=("$action")
     fi
+    if [[ "${RECORD_COUNT[$action]}" -ne 1 ]]; then
+      ownership_errors=$((ownership_errors + 1))
+      echo "  ownership error: action \"$action\" has ${RECORD_COUNT[$action]} project records, expected exactly one under \"kwin\""
+    fi
   done
 
   local conflicts
-  conflicts="$(collect_unrelated_target_conflicts "${mismatch_actions[@]}")" || exit 1
+  conflicts="$(collect_unrelated_target_conflicts "${PROJECT_ACTIONS[@]}")" || exit 1
 
   if [[ -z "$mode" ]]; then
     echo "reconcile-shortcuts: read-only report (no mutation)"
@@ -524,6 +595,7 @@ cmd_reconcile_shortcuts() {
       echo "    action \"$action\" active \"${RECORD_ACTIVE[$action]}\" expected \"${EXPECTED_SEQUENCES[$action]}\""
     done
     echo "  missing: $missing"
+    echo "  ownership errors: $ownership_errors"
     echo "  unrelated target conflicts: $(count_records "$conflicts")"
     print_records "$conflicts"
     echo "  note: run 'reconcile-shortcuts --apply' to write the expected active sequences."
@@ -534,6 +606,10 @@ cmd_reconcile_shortcuts() {
   # --apply gates: target ownership and unrelated-conflict absence.
   if [[ "$missing" -gt 0 ]]; then
     echo "error: refusing to apply with $missing missing project action record(s); cannot reconcile unregistered actions" >&2
+    exit 1
+  fi
+  if [[ "$ownership_errors" -gt 0 ]]; then
+    echo "error: refusing to apply with $ownership_errors project ownership error(s); expected exactly one kwin record per action" >&2
     exit 1
   fi
   if [[ -n "$conflicts" ]]; then
@@ -552,50 +628,95 @@ cmd_reconcile_shortcuts() {
     echo "    action \"$action\" active \"${RECORD_ACTIVE[$action]}\" expected \"${EXPECTED_SEQUENCES[$action]}\""
   done
 
-  local deferred=0 touched=0 reply
+  local -a touched_actions=()
+  local touched=0 reply keys_json failure=""
   echo "  writing:"
   for action in "${mismatch_actions[@]}"; do
     expected="${EXPECTED_SEQUENCES[$action]}"
     comp="${RECORD_COMP[$action]}"
     label="${RECORD_LABEL[$action]}"
-    reply="$(busctl $BUS_SCOPE --json=short call "$KG_DEST" "$KG_PATH" "$KG_IFACE" setShortcutKeys "asa(ai)u" 4 "$comp" "$action" "KWin" "$label" 1 4 "$expected" 0 0 0 "$KG_SET_SHORTCUT_FLAGS")" || {
-      echo "    deferred: setShortcutKeys call failed for action \"$action\": $reply" >&2
-      deferred=$((deferred + 1))
-      continue
-    }
-    if ! jq -e --argjson expected "$expected" '(.type == "a(ai)") and ((.data | type) == "array") and ((.data | flatten | index($expected)) != null)' <<<"$reply" >/dev/null 2>&1; then
-      echo "    deferred: setShortcutKeys reply for action \"$action\" did not confirm expected key: $reply" >&2
-      deferred=$((deferred + 1))
-      continue
+    keys_json="[[${expected},0,0,0]]"
+    # Record before the call because a transport or reply failure can still
+    # leave the daemon changed.
+    touched_actions+=("$action")
+    touched=$((touched + 1))
+    if ! reply="$(set_shortcut_keys "$comp" "$action" "$label" "$keys_json" "$KG_SET_SHORTCUT_FLAGS")"; then
+      failure="setShortcutKeys call failed for action \"$action\": $reply"
+      break
+    fi
+    if ! setter_reply_confirms "$reply" "$expected"; then
+      failure="setShortcutKeys reply for action \"$action\" did not confirm expected key: $reply"
+      break
     fi
     echo "    action \"$action\" -> \"$expected\""
-    touched=$((touched + 1))
   done
 
   local after after_active ok_count=0 bad_count=0
-  after="$(collect_project_action_records)" || exit 1
+  if [[ -z "$failure" ]]; then
+    after="$(collect_project_action_records)" || failure="could not collect project records for post-write verification"
+  fi
   declare -A AFTER_ACTIVE=()
-  while IFS=$'\t' read -r comp action label active default; do
-    AFTER_ACTIVE["$action"]="$active"
-  done <<<"$after"
-  echo "  after:"
-  for action in "${mismatch_actions[@]}"; do
-    after_active="${AFTER_ACTIVE[$action]:-}"
-    expected="${EXPECTED_SEQUENCES[$action]}"
-    if [[ "$after_active" == "$expected" ]]; then
-      ok_count=$((ok_count + 1))
-      echo "    action \"$action\" active \"$after_active\" (verified)"
-    else
-      bad_count=$((bad_count + 1))
-      echo "    action \"$action\" active \"$after_active\" (expected \"$expected\"; not verified)" >&2
+  if [[ -z "$failure" ]]; then
+    while IFS=$'\t' read -r comp action label active default; do
+      [[ -z "$action" ]] && continue
+      AFTER_ACTIVE["$action"]="$active"
+    done <<<"$after"
+    echo "  after:"
+    for action in "${mismatch_actions[@]}"; do
+      after_active="${AFTER_ACTIVE[$action]:-}"
+      expected="${EXPECTED_SEQUENCES[$action]}"
+      if [[ "$after_active" == "$expected" ]]; then
+        ok_count=$((ok_count + 1))
+        echo "    action \"$action\" active \"$after_active\" (verified)"
+      else
+        bad_count=$((bad_count + 1))
+        echo "    action \"$action\" active \"$after_active\" (expected \"$expected\"; not verified)" >&2
+      fi
+    done
+    if [[ "$bad_count" -gt 0 ]]; then
+      failure="$bad_count post-write project assignment(s) did not verify"
     fi
-  done
+  fi
 
-  echo "reconcile-shortcuts --apply: touched $touched, deferred $deferred, verified $ok_count, unverified $bad_count"
-  if [[ "$deferred" -gt 0 || "$bad_count" -gt 0 ]]; then
-    echo "error: reconciliation incomplete; see deferred/unverified lines above" >&2
+  if [[ -n "$failure" ]]; then
+    echo "error: reconciliation failed: $failure" >&2
+    echo "rollback: restoring $touched touched project assignment(s)" >&2
+    local restore_failed=0 restore_reply restore_keys restored
+    for action in "${touched_actions[@]}"; do
+      if ! restore_keys="$(captured_sequence_to_keys_json "${RECORD_ACTIVE[$action]}")"; then
+        restore_failed=1
+        echo "  rollback failed: could not encode captured assignment for action \"$action\"" >&2
+        continue
+      fi
+      if ! restore_reply="$(set_shortcut_keys "${RECORD_COMP[$action]}" "$action" "${RECORD_LABEL[$action]}" "$restore_keys" "$KG_SET_SHORTCUT_FLAGS")"; then
+        restore_failed=1
+        echo "  rollback failed: setShortcutKeys call for action \"$action\": $restore_reply" >&2
+      fi
+    done
+    if restored="$(collect_project_action_records)"; then
+      declare -A RESTORED_ACTIVE=()
+      while IFS=$'\t' read -r comp action label active default; do
+        [[ -z "$action" ]] && continue
+        RESTORED_ACTIVE["$action"]="$active"
+      done <<<"$restored"
+      for action in "${touched_actions[@]}"; do
+        if [[ "${RESTORED_ACTIVE[$action]:-}" != "${RECORD_ACTIVE[$action]}" ]]; then
+          restore_failed=1
+          echo "  rollback unverified: action \"$action\" active \"${RESTORED_ACTIVE[$action]:-}\" expected captured \"${RECORD_ACTIVE[$action]}\"" >&2
+        fi
+      done
+    else
+      restore_failed=1
+      echo "  rollback unverified: could not re-read project assignments" >&2
+    fi
+    if [[ "$restore_failed" -eq 0 ]]; then
+      echo "rollback: verified exact restoration of $touched touched project assignment(s)" >&2
+    else
+      echo "rollback: restoration was not fully verified" >&2
+    fi
     exit 1
   fi
+  echo "reconcile-shortcuts --apply: touched $touched, verified $ok_count, unverified $bad_count"
 }
 
 if [[ $# -eq 0 ]]; then

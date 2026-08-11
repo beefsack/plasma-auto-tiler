@@ -126,7 +126,10 @@ validation ladder above.
   `setShortcutKeys` call per action with the four-element actionId and flags
   `SetPresent|NoAutoloading`), verifies each reply confirms the expected key,
   then re-reads the records and reports exact before/after assignments plus
-  every deferred record; any deferred or unverified record is a hard failure.
+  every deferred record; any setter failure, malformed reply, or verification
+  mismatch stops further writes, best-effort restores only the exact captured
+  assignments of actions already touched, and reports whether that restoration
+  was verified. Any such condition is a hard failure.
   `start`, `status`, and `stop` never mutate shortcut records.
 - KGlobalAccelD 6.7.3 (pinned source, sha256
   `cd940d21bb050d6ee689d5962d31292c52f31cfa9211ea789dbed4ff05022f1d`)
