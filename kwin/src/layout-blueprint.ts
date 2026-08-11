@@ -32,26 +32,47 @@ function reject(
     return { ok: false, reason: { kind, message } };
 }
 
-// Deterministic balanced generator. Every interior node divides its count into
-// floor(left)/ceil(right) halves and carries the caller-selected orientation.
-// Repeated calls with equivalent inputs return structurally equal blueprints.
+// A branch's orientation resolved from its depth in the tree. The root branch
+// sits at depth zero and each child branch one depth deeper.
+export type OrientationAtDepth = (depth: number) => Orientation;
+
+// Deterministic balanced generator with a constant caller-selected
+// orientation. Every interior node divides its count into floor(left)/
+// ceil(right) halves and carries the same orientation. Repeated calls with
+// equivalent inputs return structurally equal blueprints.
 export function buildBlueprint(count: number, orientation: Orientation): Result<Blueprint> {
+    return buildBlueprintByDepth(count, () => orientation);
+}
+
+// Deterministic balanced generator with a depth-resolved orientation, for
+// presets that alternate orientation at each level. The split shape and
+// validation match buildBlueprint; only the branch orientation varies by depth.
+export function buildBlueprintByDepth(
+    count: number,
+    orientationAtDepth: OrientationAtDepth,
+): Result<Blueprint> {
     if (!Number.isInteger(count) || count <= 0) {
         return reject(
             "invalid-leaf-count",
             "leaf count must be a positive integer",
         );
     }
-    return { ok: true, value: buildNode(count, orientation, 0) };
+    return { ok: true, value: buildNode(count, orientationAtDepth, 0, 0) };
 }
 
-function buildNode(count: number, orientation: Orientation, startOrdinal: number): Blueprint {
+function buildNode(
+    count: number,
+    orientationAtDepth: OrientationAtDepth,
+    startOrdinal: number,
+    depth: number,
+): Blueprint {
     if (count === 1) {
         return { kind: "leaf", ordinal: startOrdinal };
     }
     const leftCount = Math.floor(count / 2);
     const rightCount = count - leftCount;
-    const left = buildNode(leftCount, orientation, startOrdinal);
-    const right = buildNode(rightCount, orientation, startOrdinal + leftCount);
+    const orientation = orientationAtDepth(depth);
+    const left = buildNode(leftCount, orientationAtDepth, startOrdinal, depth + 1);
+    const right = buildNode(rightCount, orientationAtDepth, startOrdinal + leftCount, depth + 1);
     return { kind: "branch", orientation, left, right };
 }

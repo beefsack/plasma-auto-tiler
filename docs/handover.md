@@ -55,7 +55,7 @@ merely for performance.
   JavaScript.
 - Current `kwin/contents/code/main.js` SHA-256 is
   `513e45d5c13c7eeba5ee4267577be657dc66f59928469e3ab6bb16766741d9da`.
-   The current source typechecks and has 161 tests across 26 suites. This is
+   The current source typechecks and has 246 tests across 35 suites. This is
   static evidence only; no current runtime acceptance follows.
 
 ## Active Custom Tile Slice
@@ -140,6 +140,11 @@ merely for performance.
   is archived and accepted. It compiles accepted binary topology to immutable
   pre-order split instructions and ordinal-ordered root/left/right leaf paths.
   KWin execution remains deferred.
+- [Topology preset catalog](changes/archive/2026-08-11-topology-preset-catalog/)
+  is archived and accepted. `buildPreset` returns compiled instructions with
+  stable ordinal mappings for columns (horizontal), rows (vertical), and
+  balanced-grid (horizontal root alternating by depth). It remains topology
+  only; it makes no geometry or ratio claim.
 
 ## Review and Governance Record
 

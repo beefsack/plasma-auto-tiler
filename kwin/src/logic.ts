@@ -72,7 +72,8 @@ export type RejectionKind =
     | "no-target"
     | "cross-scope"
     | "invalid-leaf-count"
-    | "invalid-blueprint";
+    | "invalid-blueprint"
+    | "invalid-preset-kind";
 
 export interface Rejection {
     readonly kind: RejectionKind;
