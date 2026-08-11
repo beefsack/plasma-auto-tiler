@@ -123,7 +123,7 @@ assert_not_contains() {
   fi
 }
 
-TEST_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["KrohnkiteNextLayout","Krohnkite: Next Layout","kwin","KWin","default","Default Context",[268435548],[]]]]}'
+TEST_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["KrohnkiteNextLayout","Krohnkite: Next Layout","kwin","KWin","default","Default Context",[268435548],[]]]]}'
 READY_JOURNAL='{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}
 {"MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
 
@@ -180,8 +180,9 @@ assert_contains "plugin: plasma-auto-tiler-kwin"
 assert_contains "loaded: not-loaded"
 assert_contains "controller running/callbacks: not proven"
 assert_contains "controller readiness diagnostics (same-KWin-PID journal evidence): observed"
-assert_contains "project action records (KGlobalAccel): 3"
+assert_contains "project action records (KGlobalAccel): 4"
 assert_contains "plasma-auto-tiler-focus-left"
+assert_contains "plasma-auto-tiler-detach"
 assert_contains "active \"402653256\""
 assert_not_contains "KrohnkiteNextLayout"
 assert_contains "do not prove live callbacks"
@@ -214,7 +215,7 @@ printf '%s' "$TEST_RECORDS" > "$WORK/state/shortcuts"
 run_script stop
 check_exit 0
 assert_contains "stop: plugin 'plasma-auto-tiler-kwin' unloaded"
-assert_contains "project action records still registered in KGlobalAccel: 3"
+assert_contains "project action records still registered in KGlobalAccel: 4"
 assert_contains "does not roll back"
 assert_contains "do not prove live callbacks"
 grep -Fq "false" "$WORK/state/loaded" || {

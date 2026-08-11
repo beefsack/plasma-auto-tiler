@@ -33,6 +33,7 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-move-down
   plasma-auto-tiler-move-up
   plasma-auto-tiler-move-right
+  plasma-auto-tiler-detach
   plasma-auto-tiler-apply-columns
   plasma-auto-tiler-apply-rows
   plasma-auto-tiler-apply-balanced-grid

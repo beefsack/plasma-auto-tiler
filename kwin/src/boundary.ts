@@ -271,6 +271,20 @@ export function manageTile(tile: TileCapability, window: WindowCapability): bool
     return Reflect.apply(method.value, tile, [window]) === true;
 }
 
+// Source-pinned window.h:595: `Q_PROPERTY(KWin::Tile *tile READ requestedTile
+// WRITE setTileCompatibility NOTIFY tileChanged)`. Writing null dispatches to
+// setTileCompatibility(nullptr), which unmanages the window from its requested
+// tile and returns it to floating. This is the detach half of the same
+// compatibility contract whose attach half is `tile.manage(window)`.
+export function detachWindowFromTile(window: WindowCapability): boolean {
+    try {
+        return Reflect.set(window, "tile", null);
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
 export function splitCustomTile(tile: CustomTileCapability, direction: number): unknown {
     const method = read(tile, "split");
     if (!method.ok || !isMethod(method.value)) {

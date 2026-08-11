@@ -54,8 +54,8 @@ merely for performance.
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
 - Current `kwin/contents/code/main.js` SHA-256 is
-  `733b8b7e55df1848d7c5608e580bb466f9b4d556e0fae273331eaddacb425594`.
-  The current source typechecks and has 265 tests across 37 suites. This is
+  `36661daacc6319f7154411c7356ee1895d4e07715a1617579fab81c83325dabd`.
+  The current source typechecks and has 276 tests across 39 suites. This is
   static evidence only; no current runtime acceptance follows.
 
 ## Active Custom Tile Slice
@@ -68,7 +68,7 @@ merely for performance.
   from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all twelve registrations must succeed; success logs
+  source-pinned boolean gate: all thirteen registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current actions are: `plasma-auto-tiler-insert-right` / `Insert next window
@@ -88,8 +88,9 @@ merely for performance.
   `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
   `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
-  grid in focused leaf` / `Meta+Alt+3`. All twelve registrations share the
-  aggregate false-result gate. A move targets only an empty non-layout leaf,
+  grid in focused leaf` / `Meta+Alt+3`; and `plasma-auto-tiler-detach` /
+  `Detach window from tile` / `Meta+Shift+Space`. All thirteen registrations
+  share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap.
 - Shortcut records persist in KGlobalAccel after the script unloads and do not
@@ -116,6 +117,12 @@ merely for performance.
   assignments with fresh identity/scope checks, and retains surrounding authored
   topology. Split and assignment failures are fail-fast and private; no rollback
   or reflow is claimed.
+- Detach uses the pinned writable `Window.tile` compatibility property only for
+  an active eligible window in a non-layout Custom Tile. It revalidates the same
+  association before one `null` write and decodes the null postcondition where
+  feasible; assignment and postcondition failures are private and do not claim
+  rollback. Pinned source confirms the null setter path calls `unmanage` and
+  restores floating geometry, but this remains static evidence only.
 
 ## Live Evidence and Parked Automation
 

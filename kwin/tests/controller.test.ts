@@ -650,30 +650,31 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
     ];
 
-    const actionCount = 1 + focusActions.length + moveActions.length + presetActions.length;
+    const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
+        ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
+        ...focusActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
+        ...moveActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
+        ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
+        ...presetActions,
+    ];
 
     it("registers the exact current action catalog in order", () => {
         const { harness } = setup();
         assert.deepEqual(
             harness.shortcuts.map(({ name, text, sequence }) => [name, text, sequence]),
-            [
-                ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
-                ...focusActions.map(([, name, text, sequence]) => [name, text, sequence]),
-                ...moveActions.map(([, name, text, sequence]) => [name, text, sequence]),
-                ...presetActions,
-            ],
+            actionCatalog,
         );
     });
 
     it("disables for every aggregate registration failure and keeps every catalog callback inert", () => {
-        for (let failedIndex = 0; failedIndex < actionCount; failedIndex += 1) {
+        for (let failedIndex = 0; failedIndex < actionCatalog.length; failedIndex += 1) {
             const harness = new Harness();
-            for (let index = 0; index < actionCount; index += 1) {
+            for (let index = 0; index < actionCatalog.length; index += 1) {
                 harness.shortcutResults.push(index !== failedIndex);
             }
             const controller = new TileController(harness.environment());
             controller.start();
-            assert.equal(harness.shortcuts.length, actionCount);
+            assert.equal(harness.shortcuts.length, actionCatalog.length);
             assert.equal(controller.isEnabled, false);
             assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
@@ -683,6 +684,7 @@ describe("TileController keyboard focus", () => {
             for (const [, name] of [...focusActions, ...moveActions]) {
                 invokeShortcut(harness, name);
             }
+            invokeShortcut(harness, "plasma-auto-tiler-detach");
             for (const [name] of presetActions) {
                 invokeShortcut(harness, name);
             }
@@ -1206,6 +1208,210 @@ describe("TileController keyboard move", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
         assert.equal(state.controller.isEnabled, true);
         assert.equal(manages, 1);
+    });
+});
+
+describe("TileController tile detach", () => {
+    it("invokes the registered callback and detaches the active window with one guarded write", () => {
+        const { harness, controller, target, focused } = setup();
+        const registered = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-detach");
+        assert.notEqual(registered, undefined);
+        const baseline = harness.logs.length;
+        registered?.handler();
+        assert.equal(controller.isEnabled, true);
+        assert.equal(focused.tile, null);
+        assert.deepEqual(target.windows, [focused]);
+        assert.deepEqual(harness.activeWrites, []);
+        assert.deepEqual(
+            harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-completed"],
+        );
+        for (const entry of harness.logs.slice(baseline)) {
+            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("maps every detach guard to its first fixed private reason with no write", () => {
+        const cases: ReadonlyArray<{
+            readonly reason: string;
+            readonly configure: (state: ReturnType<typeof setup>) => void;
+        }> = [
+            {
+                reason: "detach-rejected:no-active-window",
+                configure: (state) => {
+                    state.harness.active = null;
+                },
+            },
+            {
+                reason: "detach-rejected:desktop-output-scope",
+                configure: (state) => {
+                    state.harness.currentDesktop = null;
+                },
+            },
+            {
+                reason: "detach-rejected:active-window-eligibility",
+                configure: (state) => {
+                    state.focused.resizeable = false;
+                },
+            },
+            {
+                reason: "detach-rejected:root-lookup",
+                configure: (state) => {
+                    state.harness.root = null;
+                },
+            },
+            {
+                reason: "detach-rejected:topology-decode",
+                configure: (state) => {
+                    state.root.tiles = { length: 1 };
+                },
+            },
+            {
+                reason: "detach-rejected:no-tile",
+                configure: (state) => {
+                    state.focused.tile = null;
+                },
+            },
+            {
+                reason: "detach-rejected:active-tile-association",
+                configure: (state) => {
+                    state.focused.tile = { ...state.target, split: undefined };
+                },
+            },
+            {
+                reason: "detach-rejected:layout-tile",
+                configure: (state) => {
+                    state.focused.tile = state.root;
+                },
+            },
+            {
+                reason: "detach-rejected:occupancy-validity",
+                configure: (state) => {
+                    state.target.windows = [];
+                },
+            },
+        ];
+        for (const testCase of cases) {
+            const state = setup();
+            const baseline = state.harness.logs.length;
+            testCase.configure(state);
+            invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+            assert.equal(countEvent(state.harness.logs, "detach-completed"), 0);
+            assert.deepEqual(state.harness.activeWrites, []);
+            assert.deepEqual(
+                state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+                ["plasma-auto-tiler:detach-invoked", `plasma-auto-tiler:${testCase.reason}`],
+            );
+        }
+    });
+
+    it("rejects a tile that leaves the topology immediately before the write", () => {
+        const state = setup();
+        let rootReads = 0;
+        const decoyRoot = tile(RECT, true);
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                rootReads += 1;
+                return rootReads === 1 ? state.root : decoyRoot;
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.focused.tile, state.target);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects when the active window changes immediately before the write", () => {
+        const state = setup();
+        let activeReads = 0;
+        const replacement = window();
+        Object.defineProperty(state.harness, "active", {
+            configurable: true,
+            get: () => {
+                activeReads += 1;
+                return activeReads === 1 ? state.focused : replacement;
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.focused.tile, state.target);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-rejected:assignment-stale"],
+        );
+    });
+
+    it("reports a false detach write with no state change and keeps the controller enabled", () => {
+        const state = setup();
+        Object.defineProperty(state.focused, "tile", {
+            configurable: true,
+            value: state.target,
+            writable: false,
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.focused.tile, state.target);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-rejected:assignment-failed"],
+        );
+    });
+
+    it("contains a throwing detach write with a fixed diagnostic and no leaked error", () => {
+        const state = setup();
+        Object.defineProperty(state.focused, "tile", {
+            configurable: true,
+            get: () => state.target,
+            set: () => {
+                throw new Error("private-window-title");
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-rejected:assignment-failed"],
+        );
+        for (const entry of state.harness.logs.slice(baseline)) {
+            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
+            assert.equal(entry.includes("private-window-title"), false);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("reports a postcondition failure when the write succeeds but the association persists", () => {
+        const state = setup();
+        Object.defineProperty(state.focused, "tile", {
+            configurable: true,
+            get: () => state.target,
+            set: () => {
+                // Setter runs without error but the association is unchanged.
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:detach")),
+            ["plasma-auto-tiler:detach-invoked", "plasma-auto-tiler:detach-failed:postcondition"],
+        );
+    });
+
+    it("contains detach diagnostic sink failures without changing the detach result", () => {
+        const state = setup();
+        state.harness.throwOnLog = true;
+        invokeShortcut(state.harness, "plasma-auto-tiler-detach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.focused.tile, null);
     });
 });
 

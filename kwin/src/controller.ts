@@ -3,6 +3,7 @@ import {
     MAX_SEQUENTIAL_LENGTH,
     TransientState,
     decodeSequential,
+    detachWindowFromTile,
     hasWindowInteractionSignals,
     hasWindowScopeSignals,
     isCustomTile,
@@ -407,6 +408,12 @@ export class TileController {
                 "Meta+Shift+L",
                 () => this.moveActiveWindow("right"),
             );
+            const detachRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-detach",
+                "Detach window from tile",
+                "Meta+Shift+Space",
+                () => this.detachActiveWindow(),
+            );
             const columnsRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-apply-columns",
                 "Apply columns in focused leaf",
@@ -435,6 +442,7 @@ export class TileController {
                 !moveDownRegistered ||
                 !moveUpRegistered ||
                 !moveRightRegistered ||
+                !detachRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
                 !gridRegistered
@@ -671,6 +679,102 @@ export class TileController {
             }
             this.diagnostic("move-completed");
         }, (reason) => this.disabled(reason));
+    }
+
+    detachActiveWindow(): void {
+        this.gate.run(() => {
+            this.diagnostic("detach-invoked");
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("detach-rejected:no-active-window");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("detach-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("detach-rejected:active-window-eligibility");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`detach-rejected:${reason}`);
+            });
+            if (topology === null) {
+                return;
+            }
+            if (active.tile === null) {
+                this.diagnostic("detach-rejected:no-tile");
+                return;
+            }
+            if (!isCustomTile(active.tile)) {
+                this.diagnostic("detach-rejected:active-tile-association");
+                return;
+            }
+            if (active.tile.isLayout) {
+                this.diagnostic("detach-rejected:layout-tile");
+                return;
+            }
+            const origin = operationLeafForTile(topology, active.tile);
+            if (origin === null || windowIndex(origin.windows, active) < 0) {
+                this.diagnostic("detach-rejected:occupancy-validity");
+                return;
+            }
+            const originTile = active.tile;
+            if (!this.detachRevalidates(scope, active, originTile)) {
+                this.diagnostic("detach-rejected:assignment-stale");
+                return;
+            }
+            let detached = false;
+            try {
+                detached = detachWindowFromTile(active);
+            } catch (error) {
+                void error;
+                this.diagnostic("detach-rejected:assignment-failed");
+                return;
+            }
+            if (!detached) {
+                this.diagnostic("detach-rejected:assignment-failed");
+                return;
+            }
+            if (active.tile !== null) {
+                this.diagnostic("detach-failed:postcondition");
+                return;
+            }
+            this.diagnostic("detach-completed");
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Active window identity, scope, eligibility, and the exact tile
+    // association are all re-derived immediately before the single detach
+    // write, so any change between selection and the write rejects without a
+    // write.
+    private detachRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        originTile: TileCapability,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope)
+        ) {
+            return false;
+        }
+        if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshOrigin = operationLeafForTile(topology, originTile);
+        return freshOrigin !== null && windowIndex(freshOrigin.windows, active) >= 0;
     }
 
     private applyPreset(kind: PresetKind): void {

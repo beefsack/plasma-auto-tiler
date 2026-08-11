@@ -42,6 +42,11 @@ In scope:
   excluded when another active KGlobalAccel owner holds it. Focus-right retains
   its safe `Meta+Alt+Ctrl+L` fallback while active Session Management owns
   `Meta+L`.
+- Active-window detach uses `plasma-auto-tiler-detach` on `Meta+Shift+Space`.
+  It is inert unless the active eligible window is assigned to a non-layout
+  Custom Tile, then performs one guarded `window.tile = null` compatibility
+  write with an immediately revalidated association. It does not claim rollback
+  or live runtime acceptance.
 
 Constraints:
 
@@ -89,6 +94,9 @@ Non-goals:
       shortcut-registration and handler-readiness diagnostics confirm an
       enabled controller; this is not shortcut callback or broader runtime
       capability acceptance.
+- [ ] The detach action uses the pinned KWin writable `Window.tile` contract,
+      rejects every unsafe association before its single write, and has focused
+      static tests for registration, guards, write failures, and postcondition.
 - [ ] No runtime smoke occurs without separate fresh authorization; any future
       smoke remains limited to this slice and does not unpark the feasibility
       change's blocked live path.

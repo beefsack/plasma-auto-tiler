@@ -94,7 +94,12 @@ interface Window {
     // QList<VirtualDesktop *> has no established JavaScript marshalling contract.
     readonly desktops: unknown;
     readonly output: Output | null;
-    readonly tile: Tile | null;
+    // Writable: src/window.h at pinned v6.7.3 declares
+    //     Q_PROPERTY(KWin::Tile *tile READ requestedTile WRITE
+    //     setTileCompatibility NOTIFY tileChanged)
+    // Assigning null detaches the window from its requested tile (unmanage)
+    // and returns it to floating.
+    tile: Tile | null;
     readonly frameGeometry: Rect;
     // src/window.h exposes QML `move` / `resize`, backed by
     // isInteractiveMove() / isInteractiveResize(). Move and resize are
