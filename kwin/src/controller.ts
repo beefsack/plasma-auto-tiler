@@ -371,7 +371,41 @@ export class TileController {
                 "Meta+Alt+L",
                 () => this.focusNeighbor("right"),
             );
-            if (!insertionRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered) {
+            const moveLeftRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-left",
+                "Move window left",
+                "Meta+Alt+Shift+H",
+                () => this.moveActiveWindow("left"),
+            );
+            const moveDownRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-down",
+                "Move window down",
+                "Meta+Alt+Shift+J",
+                () => this.moveActiveWindow("down"),
+            );
+            const moveUpRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-up",
+                "Move window up",
+                "Meta+Alt+Shift+K",
+                () => this.moveActiveWindow("up"),
+            );
+            const moveRightRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-move-right",
+                "Move window right",
+                "Meta+Alt+Shift+L",
+                () => this.moveActiveWindow("right"),
+            );
+            if (
+                !insertionRegistered ||
+                !leftRegistered ||
+                !downRegistered ||
+                !upRegistered ||
+                !rightRegistered ||
+                !moveLeftRegistered ||
+                !moveDownRegistered ||
+                !moveUpRegistered ||
+                !moveRightRegistered
+            ) {
                 this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
                 return;
             }
@@ -381,8 +415,8 @@ export class TileController {
     }
 
     armKeyboardInsertion(): void {
-        this.diagnostic("keyboard-invoked");
         this.gate.run(() => {
+            this.diagnostic("keyboard-invoked");
             const hadPending = this.pending.current !== undefined;
             this.clearPending();
             if (hadPending) {
@@ -516,6 +550,145 @@ export class TileController {
             }
             this.environment.setActiveWindow(targetWindow);
         }, (reason) => this.disabled(reason));
+    }
+
+    private moveActiveWindow(direction: Direction): void {
+        this.gate.run(() => {
+            this.diagnostic("move-invoked");
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("move-rejected:no-active-window");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("move-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("move-rejected:active-window-eligibility");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`move-rejected:${reason}`);
+            });
+            if (topology === null) {
+                return;
+            }
+            if (active.tile === null || !isTile(active.tile)) {
+                this.diagnostic("move-rejected:active-tile-association");
+                return;
+            }
+            const source = operationLeafForTile(topology, active.tile);
+            if (
+                source === null ||
+                source.leaf.isLayout ||
+                source.windows.length !== 1 ||
+                windowIndex(source.windows, active) < 0 ||
+                topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1
+            ) {
+                this.diagnostic("move-rejected:source-occupancy-validity");
+                return;
+            }
+            for (const occupant of source.windows) {
+                if (!windowInScope(occupant, scope)) {
+                    this.diagnostic("move-rejected:source-occupancy-validity");
+                    return;
+                }
+            }
+            const candidates = topology
+                .filter(
+                    (entry) =>
+                        !entry.leaf.isLayout &&
+                        entry.windows.length === 0 &&
+                        entry.leaf !== source.leaf,
+                )
+                .map((entry) => entry.leaf);
+            const targetLeaf = findNeighborLeaf(candidates, source.leaf, direction);
+            if (targetLeaf === null) {
+                this.diagnostic("move-rejected:no-target");
+                return;
+            }
+            let target: OperationLeaf | null = null;
+            for (const entry of topology) {
+                if (entry.leaf === targetLeaf) {
+                    target = entry;
+                    break;
+                }
+            }
+            if (target === null || target.leaf.isLayout || target.windows.length !== 0) {
+                this.diagnostic("move-rejected:target-occupancy-validity");
+                return;
+            }
+            if (!this.moveAssignmentRevalidates(scope, active, source, target, direction)) {
+                this.diagnostic("move-rejected:assignment-stale");
+                return;
+            }
+            let assigned = false;
+            try {
+                assigned = manageTile(target.decoded.tile, active);
+            } catch (error) {
+                void error;
+                this.diagnostic("move-rejected:assignment-failed");
+                return;
+            }
+            if (!assigned) {
+                this.diagnostic("move-rejected:assignment-failed");
+                return;
+            }
+            this.diagnostic("move-completed");
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Active scope, source association, and target emptiness are re-derived
+    // immediately before the single tile assignment, so any change between
+    // selection and the write rejects without a write.
+    private moveAssignmentRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        source: OperationLeaf,
+        target: OperationLeaf,
+        direction: Direction,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope)
+        ) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null || active.tile === null || !isTile(active.tile)) {
+            return false;
+        }
+        const freshSource = operationLeafForTile(topology, active.tile);
+        if (
+            freshSource === null ||
+            freshSource.decoded.tile !== source.decoded.tile ||
+            freshSource.leaf.isLayout ||
+            freshSource.windows.length !== 1 ||
+            windowIndex(freshSource.windows, active) < 0 ||
+            topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1
+        ) {
+            return false;
+        }
+        const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        if (
+            freshTarget === null ||
+            freshTarget.leaf.isLayout ||
+            freshTarget.windows.length !== 0
+        ) {
+            return false;
+        }
+        const freshCandidates = topology
+            .filter((entry) => !entry.leaf.isLayout && entry.windows.length === 0)
+            .map((entry) => entry.leaf);
+        const freshTargetLeaf = findNeighborLeaf(freshCandidates, freshSource.leaf, direction);
+        return freshTargetLeaf === freshTarget.leaf;
     }
 
     private clearPending(): void {

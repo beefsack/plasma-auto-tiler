@@ -280,6 +280,35 @@ function focusSetup(direction: "left" | "down" | "up" | "right"): {
     };
 }
 
+function moveSetup(direction: "left" | "down" | "up" | "right"): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly focused: TestWindow;
+    readonly focusedTile: TestTile;
+    readonly target: TestTile;
+} {
+    const state = setup();
+    const geometry =
+        direction === "left"
+            ? { x: -200, y: 0, width: 100, height: 100 }
+            : direction === "right"
+              ? { x: 200, y: 0, width: 100, height: 100 }
+              : direction === "up"
+                ? { x: 0, y: -200, width: 100, height: 100 }
+                : { x: 0, y: 200, width: 100, height: 100 };
+    const target = tile(geometry);
+    state.root.tiles = [state.target, target];
+    return {
+        harness: state.harness,
+        controller: state.controller,
+        root: state.root,
+        focused: state.focused,
+        focusedTile: state.target,
+        target,
+    };
+}
+
 function invokeShortcut(harness: Harness, name: string): void {
     const shortcut = harness.shortcuts.find((entry) => entry.name === name);
     if (shortcut === undefined) {
@@ -537,33 +566,41 @@ describe("TileController keyboard focus", () => {
         ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+Alt+K"],
         ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+L"],
     ];
+    const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
+        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Alt+Shift+H"],
+        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Alt+Shift+J"],
+        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Alt+Shift+K"],
+        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Alt+Shift+L"],
+    ];
 
-    it("registers the insertion and four exact focus actions in order", () => {
+    it("registers the insertion, four focus, and four move exact actions in order", () => {
         const { harness } = setup();
         assert.deepEqual(
             harness.shortcuts.map(({ name, text, sequence }) => [name, text, sequence]),
             [
                 ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
                 ...focusActions.map(([, name, text, sequence]) => [name, text, sequence]),
+                ...moveActions.map(([, name, text, sequence]) => [name, text, sequence]),
             ],
         );
     });
 
-    it("disables for every aggregate registration failure and keeps focus callbacks inert", () => {
-        for (let failedIndex = 0; failedIndex < 5; failedIndex += 1) {
+    it("disables for every aggregate registration failure and keeps all nine callbacks inert", () => {
+        for (let failedIndex = 0; failedIndex < 9; failedIndex += 1) {
             const harness = new Harness();
-            for (let index = 0; index < 5; index += 1) {
+            for (let index = 0; index < 9; index += 1) {
                 harness.shortcutResults.push(index !== failedIndex);
             }
             const controller = new TileController(harness.environment());
             controller.start();
-            assert.equal(harness.shortcuts.length, 5);
+            assert.equal(harness.shortcuts.length, 9);
             assert.equal(controller.isEnabled, false);
             assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
             assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
             const baseline = harness.logs.length;
-            for (const [, name] of focusActions) {
+            invokeShortcut(harness, "plasma-auto-tiler-insert-right");
+            for (const [, name] of [...focusActions, ...moveActions]) {
                 invokeShortcut(harness, name);
             }
             assert.equal(harness.logs.length, baseline);
@@ -747,6 +784,345 @@ describe("TileController keyboard focus", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
         assert.equal(state.controller.isEnabled, true);
         assert.deepEqual(state.harness.activeWrites, [state.neighborWindow]);
+    });
+});
+
+describe("TileController keyboard move", () => {
+    const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
+        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Alt+Shift+H"],
+        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Alt+Shift+J"],
+        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Alt+Shift+K"],
+        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Alt+Shift+L"],
+    ];
+
+    it("maps every move guard to its first fixed private reason", () => {
+        const cases: ReadonlyArray<{
+            readonly reason: string;
+            readonly configure: (state: ReturnType<typeof moveSetup>) => void;
+        }> = [
+            {
+                reason: "move-rejected:no-active-window",
+                configure: (state) => {
+                    state.harness.active = null;
+                },
+            },
+            {
+                reason: "move-rejected:desktop-output-scope",
+                configure: (state) => {
+                    state.harness.currentDesktop = null;
+                },
+            },
+            {
+                reason: "move-rejected:active-window-eligibility",
+                configure: (state) => {
+                    state.focused.resizeable = false;
+                },
+            },
+            {
+                reason: "move-rejected:root-lookup",
+                configure: (state) => {
+                    state.harness.root = null;
+                },
+            },
+            {
+                reason: "move-rejected:topology-decode",
+                configure: (state) => {
+                    state.root.tiles = { length: 1 };
+                },
+            },
+            {
+                reason: "move-rejected:active-tile-association",
+                configure: (state) => {
+                    state.focused.tile = null;
+                },
+            },
+            {
+                reason: "move-rejected:source-occupancy-validity",
+                configure: (state) => {
+                    state.focusedTile.windows = [];
+                },
+            },
+            {
+                reason: "move-rejected:source-occupancy-validity",
+                configure: (state) => {
+                    state.focusedTile.isLayout = true;
+                },
+            },
+            {
+                reason: "move-rejected:no-target",
+                configure: (state) => {
+                    state.root.tiles = [state.focusedTile];
+                },
+            },
+            {
+                reason: "move-rejected:no-target",
+                configure: (state) => {
+                    state.root.tiles = [state.focusedTile, tile({ x: 200, y: 0, width: 100, height: 100 }, true)];
+                },
+            },
+            {
+                reason: "move-rejected:no-target",
+                configure: (state) => {
+                    const occupied = tile({ x: 200, y: 0, width: 100, height: 100 });
+                    occupied.windows = [window({ tile: occupied })];
+                    state.root.tiles = [state.focusedTile, occupied];
+                },
+            },
+        ];
+        for (const testCase of cases) {
+            const state = moveSetup("right");
+            const baseline = state.harness.logs.length;
+            testCase.configure(state);
+            invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+            assert.deepEqual(
+                state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+                ["plasma-auto-tiler:move-invoked", `plasma-auto-tiler:${testCase.reason}`],
+            );
+        }
+    });
+
+    it("moves the active window to the directional empty leaf with exactly one assignment", () => {
+        for (const [direction, name] of moveActions) {
+            const state = moveSetup(direction);
+            let manages = 0;
+            state.target.manage = (value) => {
+                manages += 1;
+                assert.equal(value, state.focused);
+                state.focusedTile.windows = [];
+                state.focused.tile = state.target;
+                state.target.windows = [value];
+                return true;
+            };
+            invokeShortcut(state.harness, name);
+            assert.equal(manages, 1);
+            assert.equal(state.focused.tile, state.target);
+            assert.deepEqual(state.focusedTile.windows, []);
+            assert.deepEqual(state.target.windows, [state.focused]);
+            assert.deepEqual(
+                state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+                ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-completed"],
+            );
+        }
+    });
+
+    it("selects the nearest empty non-layout leaf and breaks equal distances deterministically", () => {
+        const state = moveSetup("right");
+        const farther = tile({ x: 400, y: 0, width: 100, height: 100 });
+        const tied = tile({ x: 200, y: -10, width: 100, height: 100 });
+        state.root.tiles = [state.focusedTile, farther, tied, state.target];
+        const managed: TestTile[] = [];
+        const track = (tile: TestTile) => () => {
+            managed.push(tile);
+            return true;
+        };
+        state.target.manage = track(state.target);
+        tied.manage = track(tied);
+        farther.manage = () => false;
+        for (let index = 0; index < 3; index += 1) {
+            invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        }
+        assert.deepEqual(managed, [tied, tied, tied]);
+    });
+
+    it("skips nearer empty-ineligible layout leaves for a farther empty target", () => {
+        const state = moveSetup("right");
+        const layout = tile({ x: 150, y: 0, width: 100, height: 100 }, true);
+        state.root.tiles = [state.focusedTile, layout, state.target];
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 1);
+    });
+
+    it("rejects stale source, target, or scope immediately before the assignment", () => {
+        const state = moveSetup("right");
+        let rootReads = 0;
+        const originalRoot = state.root;
+        const decoyRoot = tile(RECT, true);
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                rootReads += 1;
+                return rootReads === 1 ? originalRoot : decoyRoot;
+            },
+        });
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 0);
+        assert.equal(state.focused.tile, state.focusedTile);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects a source that would remain occupied after the move", () => {
+        const state = moveSetup("right");
+        state.focusedTile.windows = [state.focused, window({ tile: state.focusedTile })];
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 0);
+        assert.deepEqual(
+            state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:source-occupancy-validity"],
+        );
+    });
+
+    it("rejects a target that loses nearest directional eligibility before the assignment", () => {
+        const state = moveSetup("right");
+        let rootReads = 0;
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                rootReads += 1;
+                if (rootReads === 2) {
+                    state.target.absoluteGeometry = { x: -200, y: 0, width: 100, height: 100 };
+                }
+                return state.root;
+            },
+        });
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 0);
+        assert.deepEqual(
+            state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects a target that becomes occupied before the assignment", () => {
+        const state = moveSetup("right");
+        let rootReads = 0;
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                rootReads += 1;
+                if (rootReads === 2) {
+                    state.target.windows = [window({ tile: state.target })];
+                }
+                return state.root;
+            },
+        });
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 0);
+        assert.deepEqual(
+            state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects when the active window changes before the assignment", () => {
+        const state = moveSetup("right");
+        let activeReads = 0;
+        const replacement = window({ tile: state.focusedTile });
+        Object.defineProperty(state.harness, "active", {
+            configurable: true,
+            get: () => {
+                activeReads += 1;
+                return activeReads === 1 ? state.focused : replacement;
+            },
+        });
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(manages, 0);
+        assert.deepEqual(
+            state.harness.logs.filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-stale"],
+        );
+    });
+
+    it("writes nothing and keeps the controller enabled when the assignment reports failure", () => {
+        const state = moveSetup("right");
+        state.target.manage = () => false;
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.focused.tile, state.focusedTile);
+        assert.deepEqual(state.focusedTile.windows, [state.focused]);
+        assert.deepEqual(state.target.windows, []);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-failed"],
+        );
+    });
+
+    it("contains an assignment throw with a fixed diagnostic and no write", () => {
+        const state = moveSetup("right");
+        state.target.manage = () => {
+            throw new Error("private-window-title");
+        };
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.focused.tile, state.focusedTile);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:move-rejected:assignment-failed"],
+        );
+        for (const entry of state.harness.logs.slice(baseline)) {
+            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
+            assert.equal(entry.includes("private-window-title"), false);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("reconciles occupancy so later automatic placement sees the source empty and target occupied", () => {
+        const state = moveSetup("right");
+        state.target.manage = (value) => {
+            state.focusedTile.windows = [];
+            state.focused.tile = state.target;
+            state.target.windows = [value];
+            return true;
+        };
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        const managed: unknown[] = [];
+        state.focusedTile.manage = (value) => {
+            managed.push(value);
+            return true;
+        };
+        const incoming = window();
+        state.harness.emitAdded(incoming);
+        assert.deepEqual(managed, [incoming]);
+        assert.equal(countEvent(state.harness.logs, "automatic-placement-managed"), 1);
+    });
+
+    it("contains move diagnostic sink failures without changing the move result", () => {
+        const state = moveSetup("right");
+        let manages = 0;
+        state.target.manage = () => {
+            manages += 1;
+            return true;
+        };
+        state.harness.throwOnLog = true;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(manages, 1);
     });
 });
 

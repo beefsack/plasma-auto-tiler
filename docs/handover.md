@@ -54,8 +54,8 @@ merely for performance.
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
 - Current `kwin/contents/code/main.js` SHA-256 is
-  `513e45d5c13c7eeba5ee4267577be657dc66f59928469e3ab6bb16766741d9da`.
-   The current source typechecks and has 246 tests across 35 suites. This is
+  `18b05f2232ebccc81cf667f22fa595956184b350ba2b62da6401489c98dd1a92`.
+   The current source typechecks and has 259 tests across 36 suites. This is
   static evidence only; no current runtime acceptance follows.
 
 ## Active Custom Tile Slice
@@ -67,8 +67,8 @@ merely for performance.
   `run()` at `unit-05/attempt-20`; see below). Do not claim runtime acceptance
   from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
-  registration correction. `registerShortcut` has the source-pinned boolean
-  gate: all five registrations must succeed; success logs
+  registration correction. The current `registerShortcut` path has the
+  source-pinned boolean gate: all nine registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current actions are: `plasma-auto-tiler-insert-right` / `Insert next window
@@ -77,6 +77,14 @@ merely for performance.
   window down` / `Meta+Alt+J`; `plasma-auto-tiler-focus-up` / `Focus window up`
   / `Meta+Alt+K`; and `plasma-auto-tiler-focus-right` / `Focus window right` /
   `Meta+Alt+L`.
+- Move actions use the same directional geometry: `plasma-auto-tiler-move-left`
+  / `Move window left` / `Meta+Alt+Shift+H`; `plasma-auto-tiler-move-down` /
+  `Move window down` / `Meta+Alt+Shift+J`; `plasma-auto-tiler-move-up` /
+  `Move window up` / `Meta+Alt+Shift+K`; and `plasma-auto-tiler-move-right` /
+  `Move window right` / `Meta+Alt+Shift+L`. All nine registrations share the
+  aggregate false-result gate. A move targets only an empty non-layout leaf,
+  revalidates active/source/target state before one tile assignment, and relies
+  on decode-derived occupancy after success; it does not swap.
 - Focus is a narrow write seam through `Workspace.activeWindow`, after exact
   output-object and desktop-ID scope checks. It filters only occupied,
   non-layout leaves whose occupants are eligible and in scope, so nearer empty
@@ -93,7 +101,7 @@ merely for performance.
 
 ## Live Evidence and Parked Automation
 
-- `unit-05` remains unaccepted. The current bundle is `513e45d5...`, with a
+- `unit-05` remains unaccepted. The current bundle is `18b05f22...`, with a
   pending singleton-occupant fallback aimed at
   `keyboard-rejected:target-occupancy-validity`; it has static typecheck and
   161-test evidence only.
@@ -132,6 +140,10 @@ merely for performance.
   actions above, geometry-only neighbor selection, guarded focus assignment,
   and static review. KWin focus assignment, QList marshalling, shortcut
   registration, and Custom Tile runtime behavior remain deferred.
+- [Keyboard window movement](changes/archive/2026-08-11-keyboard-window-movement/)
+  is archived with static acceptance. It adds guarded move-to-empty actions
+  using the focus directional ranking, a single KWin tile assignment, and
+  decode-derived post-move occupancy. Live KWin assignment remains deferred.
 - [Binary layout blueprints](changes/archive/2026-08-11-binary-layout-blueprints/)
   is archived and accepted. It provides a pure balanced immutable binary
   topology with deterministic ordinal leaves and caller-selected orientation.
