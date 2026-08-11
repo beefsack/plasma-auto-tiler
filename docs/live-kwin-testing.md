@@ -81,6 +81,16 @@ exit status, missing error, or visual appearance is never feature evidence.
 - Run only the returned script object. Never guess `Script0`, call global
   `Scripting.start`, or use KPackage as a test path.
 
+## Manual Start Launcher
+
+`scripts/start-test.sh` is a manual convenience launcher only: it builds the
+bundle, loads and runs the script through the `/Scripting` D-Bus interface,
+and prints the exact `stop`/`unloadScript` commands for later manual cleanup.
+It is not a harness and never substitutes for the validation ladder above.
+Running it is a live KWin mutation and still requires one explicit, bounded
+authorization under the Safety Boundary. Stopping and unloading the script do
+not roll back Custom Tile changes it already made.
+
 ## KGlobalAccel and Collector
 
 - `registerShortcut` returns `bool`. Registration readiness exists only after
