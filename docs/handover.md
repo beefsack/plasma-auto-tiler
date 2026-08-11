@@ -142,6 +142,17 @@ merely for performance.
   KWin seam maps orientations and decodes exactly two CustomTile children.
   `CustomTile.split()` remains structurally risky because it mutates before
   JavaScript can decode its result.
+- Reset foundation: pinned KWin 6.7.3 `CustomTile::remove()` is Q_INVOKABLE but
+  void. It removes a child, can recursively promote/remove a non-root
+  single-child layout, re-picks still-managed occupants by geometry, and calls
+  `deleteLater()`. `kwin/src/topology-reset.ts` is pure and source-safe: it
+  requires every decoded occupant to unmanage before any removal, preserves the
+  original root identity, and requires a fresh decoded root with fewer tiles
+  after every remove. It reports only `pre-mutation-rejection` or
+  `reset-may-have-mutated` on failure. It is not connected to automatic
+  lifecycle ownership until a dedicated live contract validates QJSEngine
+  invocation, removal/promotion and fresh list decoding; no reset is currently
+  performed by the plugin.
 - Focused-leaf preset application gathers an explicit active-first scoped
   occupant list, retaining the remaining decoded leaf traversal order. It uses
   the catalog and executor only on the active leaf, performs guarded ordinal

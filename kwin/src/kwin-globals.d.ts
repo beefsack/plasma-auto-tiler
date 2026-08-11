@@ -150,6 +150,9 @@ interface CustomTile extends Tile {
     readonly layoutModified: Signal;
     // QList<CustomTile *> requires runtime decoding before use.
     split(direction: LayoutDirection): unknown;
+    // src/tiles/customtile.h: `Q_INVOKABLE void remove()`. The void return is
+    // not an acknowledgement: callers must verify the root topology afterwards.
+    remove(): void;
 }
 
 // Opaque tile model exposed by RootTile; no scripting-exposed members exist.

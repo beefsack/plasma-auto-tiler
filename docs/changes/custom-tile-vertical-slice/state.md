@@ -13,7 +13,8 @@
   reconciliation verified that no foundation implementation can be accepted.
   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
   action is authorized.
-- Current package: `unit-16/attempt-01` is accepted static focus correction.
+- Current package: `unit-18/attempt-01` is a static-only guarded reset foundation. Pinned KWin 6.7.3 exposes `CustomTile::remove()` as `Q_INVOKABLE void`; it first removes the child, may recursively promote/remove a single-child non-root layout, evacuates any remaining occupants by geometry, and ends with `deleteLater()`. The controller therefore must not invoke it until a dedicated runtime contract proves QJSEngine invocation plus fresh root decoding across those transitions. The new pure seam requires complete unmanage-before-remove preflight, re-decodes the same root after every void removal, demands strictly fewer reachable tiles as its only postcondition, preserves root identity, and reports pre-mutation rejection versus reset-may-have-mutated. It is intentionally not wired to lifecycle ownership, so no persistent topology mutation is introduced by this static package.
+- Previous package: `unit-16/attempt-01` is accepted static focus correction.
   The user-provided same-PID diagnostics prove delivered focus callbacks reached
   only `focus-rejected:no-neighbor`. The cause was the pure directional selector
   rejecting exactly edge-touching leaves, although Custom Tile sibling leaves

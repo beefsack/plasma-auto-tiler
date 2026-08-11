@@ -253,6 +253,7 @@ export function isTile(value: unknown): value is TileCapability {
 export interface CustomTileCapability extends TileCapability {
     readonly layoutDirection: number;
     readonly split: unknown;
+    readonly remove?: unknown;
 }
 
 export function isCustomTile(value: unknown): value is CustomTileCapability {
@@ -303,6 +304,23 @@ export function splitCustomTile(tile: CustomTileCapability, direction: number): 
         throw new Error("CustomTile split capability changed before invocation");
     }
     return Reflect.apply(method.value, tile, [direction]);
+}
+
+// Pinned KWin 6.7.3 `CustomTile::remove()` is Q_INVOKABLE but returns void.
+// Its caller must re-decode the root immediately afterwards; a successful call
+// is only mutation-possible, never a successful reset acknowledgement.
+export function removeCustomTile(tile: CustomTileCapability): boolean {
+    const method = read(tile, "remove");
+    if (!method.ok || !isMethod(method.value)) {
+        return false;
+    }
+    try {
+        Reflect.apply(method.value, tile, []);
+        return true;
+    } catch (error) {
+        void error;
+        return false;
+    }
 }
 
 export interface BoundaryScope {
