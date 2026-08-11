@@ -11,7 +11,7 @@ import {
     type BlueprintInstructions,
     type BlueprintPath,
 } from "../src/layout-instructions";
-import { buildBlueprint, buildBlueprintByDepth, type Orientation } from "../src/layout-blueprint";
+import { buildBlueprint, buildBlueprintByDepth, buildDwindleBlueprint, type Orientation } from "../src/layout-blueprint";
 import { type Result } from "../src/logic";
 
 function expectOk<T>(result: Result<T>): T {
@@ -159,6 +159,182 @@ describe("buildPreset: matches the compiled blueprint generator output", () => {
             expectOk(compileBlueprintInstructions(blueprint)),
         );
     });
+    it("dwindle equals the dwindle chain blueprint compilation", () => {
+        assert.deepEqual(
+            expectOk(buildPreset("dwindle", 7)),
+            expectOk(compileBlueprintInstructions(expectOk(buildDwindleBlueprint(7)))),
+        );
+    });
+});
+
+// Exact dwindle compiled instructions for counts 1 through 6: pre-order chain
+// splits whose orientations alternate from a horizontal root, and ordinal leaf
+// paths that follow the right-spine chain.
+const DWINDLE_INSTRUCTIONS: Array<[number, BlueprintInstructions]> = [
+    [1, { splits: [], leafPaths: [{ ordinal: 0, path: ["root"] }] }],
+    [
+        2,
+        {
+            splits: [
+                {
+                    targetPath: ["root"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "left"],
+                    rightPath: ["root", "right"],
+                },
+            ],
+            leafPaths: [
+                { ordinal: 0, path: ["root", "left"] },
+                { ordinal: 1, path: ["root", "right"] },
+            ],
+        },
+    ],
+    [
+        3,
+        {
+            splits: [
+                {
+                    targetPath: ["root"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "left"],
+                    rightPath: ["root", "right"],
+                },
+                {
+                    targetPath: ["root", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "left"],
+                    rightPath: ["root", "right", "right"],
+                },
+            ],
+            leafPaths: [
+                { ordinal: 0, path: ["root", "left"] },
+                { ordinal: 1, path: ["root", "right", "left"] },
+                { ordinal: 2, path: ["root", "right", "right"] },
+            ],
+        },
+    ],
+    [
+        4,
+        {
+            splits: [
+                {
+                    targetPath: ["root"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "left"],
+                    rightPath: ["root", "right"],
+                },
+                {
+                    targetPath: ["root", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "left"],
+                    rightPath: ["root", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right"],
+                },
+            ],
+            leafPaths: [
+                { ordinal: 0, path: ["root", "left"] },
+                { ordinal: 1, path: ["root", "right", "left"] },
+                { ordinal: 2, path: ["root", "right", "right", "left"] },
+                { ordinal: 3, path: ["root", "right", "right", "right"] },
+            ],
+        },
+    ],
+    [
+        5,
+        {
+            splits: [
+                {
+                    targetPath: ["root"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "left"],
+                    rightPath: ["root", "right"],
+                },
+                {
+                    targetPath: ["root", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "left"],
+                    rightPath: ["root", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right", "right"],
+                },
+            ],
+            leafPaths: [
+                { ordinal: 0, path: ["root", "left"] },
+                { ordinal: 1, path: ["root", "right", "left"] },
+                { ordinal: 2, path: ["root", "right", "right", "left"] },
+                { ordinal: 3, path: ["root", "right", "right", "right", "left"] },
+                { ordinal: 4, path: ["root", "right", "right", "right", "right"] },
+            ],
+        },
+    ],
+    [
+        6,
+        {
+            splits: [
+                {
+                    targetPath: ["root"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "left"],
+                    rightPath: ["root", "right"],
+                },
+                {
+                    targetPath: ["root", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "left"],
+                    rightPath: ["root", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right", "right"],
+                    orientation: "vertical",
+                    leftPath: ["root", "right", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right", "right"],
+                },
+                {
+                    targetPath: ["root", "right", "right", "right", "right"],
+                    orientation: "horizontal",
+                    leftPath: ["root", "right", "right", "right", "right", "left"],
+                    rightPath: ["root", "right", "right", "right", "right", "right"],
+                },
+            ],
+            leafPaths: [
+                { ordinal: 0, path: ["root", "left"] },
+                { ordinal: 1, path: ["root", "right", "left"] },
+                { ordinal: 2, path: ["root", "right", "right", "left"] },
+                { ordinal: 3, path: ["root", "right", "right", "right", "left"] },
+                { ordinal: 4, path: ["root", "right", "right", "right", "right", "left"] },
+                { ordinal: 5, path: ["root", "right", "right", "right", "right", "right"] },
+            ],
+        },
+    ],
+];
+
+describe("buildPreset: dwindle compiles exact pre-order chain instructions for counts 1 through 6", () => {
+    for (const [count, expected] of DWINDLE_INSTRUCTIONS) {
+        it(`compiles the exact dwindle instructions for ${count} leaves`, () => {
+            assert.deepEqual(expectOk(buildPreset("dwindle", count)), expected);
+        });
+    }
 });
 
 describe("buildPreset: deterministic, immutable, and free of shared aliases", () => {

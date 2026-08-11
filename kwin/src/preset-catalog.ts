@@ -3,7 +3,7 @@
 // requested leaf count. No KWin or Qt types are referenced and nothing is
 // executed. Project "horizontal" maps to KWin Horizontal and "vertical" to
 // KWin Vertical per the pinned declaration and existing split seam.
-import { buildBlueprintByDepth, type OrientationAtDepth } from "./layout-blueprint";
+import { buildBlueprintByDepth, buildDwindleBlueprint, type OrientationAtDepth } from "./layout-blueprint";
 import {
     compileBlueprintInstructions,
     type BlueprintInstructions,
@@ -11,9 +11,14 @@ import {
 import { type Rejection, type Result } from "./logic";
 
 // Closed preset catalog: only these kinds are accepted at runtime.
-export type PresetKind = "columns" | "rows" | "balanced-grid";
+export type PresetKind = "columns" | "rows" | "balanced-grid" | "dwindle";
 
-export const PRESET_KINDS: readonly PresetKind[] = Object.freeze(["columns", "rows", "balanced-grid"]);
+export const PRESET_KINDS: readonly PresetKind[] = Object.freeze([
+    "columns",
+    "rows",
+    "balanced-grid",
+    "dwindle",
+]);
 
 function reject(
     kind: Rejection["kind"],
@@ -28,7 +33,10 @@ function isPresetKind(value: unknown): value is PresetKind {
 
 // columns: horizontal at every branch. rows: vertical at every branch.
 // balanced-grid: horizontal root alternating orientation at each depth.
-function presetOrientation(kind: PresetKind): OrientationAtDepth {
+// dwindle: a non-balanced alternating chain compiled through its own builder.
+type PresetOrientationKind = Exclude<PresetKind, "dwindle">;
+
+function presetOrientation(kind: PresetOrientationKind): OrientationAtDepth {
     switch (kind) {
         case "columns":
             return () => "horizontal";
@@ -58,13 +66,16 @@ export function buildPreset(kind: PresetKind, count: number): Result<BlueprintIn
     if (!isPresetKind(kind)) {
         return reject(
             "invalid-preset-kind",
-            "preset kind must be columns, rows, or balanced-grid",
+            "preset kind must be columns, rows, balanced-grid, or dwindle",
         );
     }
     if (!Number.isSafeInteger(count) || count <= 0) {
         return reject("invalid-leaf-count", "leaf count must be a positive safe integer");
     }
-    const blueprint = buildBlueprintByDepth(count, presetOrientation(kind));
+    const blueprint =
+        kind === "dwindle"
+            ? buildDwindleBlueprint(count)
+            : buildBlueprintByDepth(count, presetOrientation(kind));
     if (!blueprint.ok) {
         return blueprint;
     }

@@ -590,6 +590,12 @@ export class TileController {
                 "Meta+Alt+3",
                 () => this.applyPreset("balanced-grid"),
             );
+            const dwindleRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-apply-dwindle",
+                "Apply dwindle in focused leaf",
+                "Meta+Alt+4",
+                () => this.applyPreset("dwindle"),
+            );
             if (
                 !insertionRegistered ||
                 !insertionLeftRegistered ||
@@ -608,7 +614,8 @@ export class TileController {
                 !fillScopeRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
-                !gridRegistered
+                !gridRegistered ||
+                !dwindleRegistered
             ) {
                 this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
                 return;

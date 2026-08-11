@@ -92,12 +92,13 @@ merely for performance.
   Focused-leaf presets are
   `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
-  `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
-  grid in focused leaf` / `Meta+Alt+3`; `plasma-auto-tiler-detach` / `Detach
-  window from tile` / `Meta+Shift+Space`; `plasma-auto-tiler-attach` /
+  `Meta+Alt+2`; `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
+  grid in focused leaf` / `Meta+Alt+3`; and `plasma-auto-tiler-apply-dwindle` /
+  `Apply dwindle in focused leaf` / `Meta+Alt+4`; `plasma-auto-tiler-detach` /
+  `Detach window from tile` / `Meta+Shift+Space`; `plasma-auto-tiler-attach` /
   `Attach window to available tile` / `Meta+Alt+Shift+Space`; and
   `plasma-auto-tiler-fill-scope` / `Fill available tiles with windows` /
-  `Meta+Alt+Return`. All eighteen registrations
+  `Meta+Alt+Return`. All nineteen registrations
   share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap. Attach requires an
@@ -179,6 +180,19 @@ merely for performance.
   Typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks
   pass. The plugin is currently unloaded; persisted records and historical
   readiness diagnostics are not callback or window-runtime evidence.
+- `unit-01/attempt-01` (accepted static 2026-08-12) adds the `dwindle` topology
+  preset through the same focused-leaf application path. It is topology only:
+  one occupant maps to the unsplit ordinal-zero leaf; N > 1 builds a recursive
+  chain whose left child is the next ordinal leaf and whose right child recurses
+  the remainder, with orientations alternating from a horizontal root. No
+  ratios, resize logic, equal-geometry/master claim, or persistence is
+  introduced. The pure builder is `buildDwindleBlueprint`; the catalog kind,
+  `buildPreset` diagnostics, and selected-overlay recording flow through the
+  unchanged `applyPreset` path. The exact action is
+  `plasma-auto-tiler-apply-dwindle` / `Apply dwindle in focused leaf` /
+  `Meta+Alt+4`; a read-only conflict scan found no unrelated active owner for
+  that chord. Typecheck, build, and the full test and lifecycle suites pass;
+  no live action or mutation occurred.
 
 ## Live Evidence and Parked Automation
 

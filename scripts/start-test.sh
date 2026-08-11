@@ -42,6 +42,7 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-apply-columns
   plasma-auto-tiler-apply-rows
   plasma-auto-tiler-apply-balanced-grid
+  plasma-auto-tiler-apply-dwindle
 )
 PROJECT_ACTIONS_JSON=""
 
@@ -71,6 +72,7 @@ declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-apply-columns]="402653233"
   [plasma-auto-tiler-apply-rows]="402653234"
   [plasma-auto-tiler-apply-balanced-grid]="402653235"
+  [plasma-auto-tiler-apply-dwindle]="402653236"
 )
 
 # KGlobalAccelD::SetShortcutFlag values (pinned kglobalacceld 6.7.3 source):

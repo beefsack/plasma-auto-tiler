@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
     buildBlueprint,
+    buildDwindleBlueprint,
     type Blueprint,
     type Orientation,
 } from "../src/layout-blueprint";
@@ -119,4 +120,142 @@ describe("buildBlueprint: invalid counts reject through the Result/Rejection pat
             });
         }
     }
+});
+
+// Exact dwindle chain shapes for counts 1 through 6. Each branch's left child
+// is the next ordinal leaf; the right child recurses the remainder with the
+// orientation alternating from a horizontal root.
+const DWINDLE_BLUEPRINTS: Array<[number, Blueprint]> = [
+    [1, { kind: "leaf", ordinal: 0 }],
+    [
+        2,
+        {
+            kind: "branch",
+            orientation: "horizontal",
+            left: { kind: "leaf", ordinal: 0 },
+            right: { kind: "leaf", ordinal: 1 },
+        },
+    ],
+    [
+        3,
+        {
+            kind: "branch",
+            orientation: "horizontal",
+            left: { kind: "leaf", ordinal: 0 },
+            right: {
+                kind: "branch",
+                orientation: "vertical",
+                left: { kind: "leaf", ordinal: 1 },
+                right: { kind: "leaf", ordinal: 2 },
+            },
+        },
+    ],
+    [
+        4,
+        {
+            kind: "branch",
+            orientation: "horizontal",
+            left: { kind: "leaf", ordinal: 0 },
+            right: {
+                kind: "branch",
+                orientation: "vertical",
+                left: { kind: "leaf", ordinal: 1 },
+                right: {
+                    kind: "branch",
+                    orientation: "horizontal",
+                    left: { kind: "leaf", ordinal: 2 },
+                    right: { kind: "leaf", ordinal: 3 },
+                },
+            },
+        },
+    ],
+    [
+        5,
+        {
+            kind: "branch",
+            orientation: "horizontal",
+            left: { kind: "leaf", ordinal: 0 },
+            right: {
+                kind: "branch",
+                orientation: "vertical",
+                left: { kind: "leaf", ordinal: 1 },
+                right: {
+                    kind: "branch",
+                    orientation: "horizontal",
+                    left: { kind: "leaf", ordinal: 2 },
+                    right: {
+                        kind: "branch",
+                        orientation: "vertical",
+                        left: { kind: "leaf", ordinal: 3 },
+                        right: { kind: "leaf", ordinal: 4 },
+                    },
+                },
+            },
+        },
+    ],
+    [
+        6,
+        {
+            kind: "branch",
+            orientation: "horizontal",
+            left: { kind: "leaf", ordinal: 0 },
+            right: {
+                kind: "branch",
+                orientation: "vertical",
+                left: { kind: "leaf", ordinal: 1 },
+                right: {
+                    kind: "branch",
+                    orientation: "horizontal",
+                    left: { kind: "leaf", ordinal: 2 },
+                    right: {
+                        kind: "branch",
+                        orientation: "vertical",
+                        left: { kind: "leaf", ordinal: 3 },
+                        right: {
+                            kind: "branch",
+                            orientation: "horizontal",
+                            left: { kind: "leaf", ordinal: 4 },
+                            right: { kind: "leaf", ordinal: 5 },
+                        },
+                    },
+                },
+            },
+        },
+    ],
+];
+
+describe("buildDwindleBlueprint: exact alternating chain topology for counts 1 through 6", () => {
+    for (const [count, expected] of DWINDLE_BLUEPRINTS) {
+        it(`builds the exact dwindle tree for ${count} leaves`, () => {
+            assert.deepEqual(expectOk(buildDwindleBlueprint(count)), expected);
+        });
+    }
+
+    it("is deterministic and never returns a partial plan on rejection", () => {
+        const count = 6;
+        const first = expectOk(buildDwindleBlueprint(count));
+        const second = expectOk(buildDwindleBlueprint(count));
+        assert.notEqual(first, second);
+        assert.deepEqual(first, second);
+        const rejected = buildDwindleBlueprint(0);
+        assert.ok(!rejected.ok);
+        if (rejected.ok) {
+            throw new Error("expected rejection");
+        }
+        assert.equal(rejected.reason.kind, "invalid-leaf-count");
+    });
+
+    it("rejects the same invalid counts as the balanced generator", () => {
+        for (const [count, label] of [
+            [0, "zero"],
+            [-1, "negative"],
+            [1.5, "fractional"],
+            [Number.NaN, "NaN"],
+            [Number.POSITIVE_INFINITY, "positive infinity"],
+        ] as Array<[number, string]>) {
+            it(`rejects ${label} leaf count ${String(count)}`, () => {
+                expectRejection(buildDwindleBlueprint(count), "invalid-leaf-count");
+            });
+        }
+    });
 });

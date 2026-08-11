@@ -1,5 +1,5 @@
 // Pure immutable binary split topology for the Custom Tile vertical slice.
-// A blueprint describes structure only: a balanced binary tree of a positive
+// A blueprint describes structure only: an immutable binary tree of a positive
 // number of leaves, each carrying a deterministic traversal ordinal. No KWin
 // or Qt types are referenced, no geometry or ratio is expressed, and no
 // execution instruction is emitted. Inputs and outputs are never mutated.
@@ -74,5 +74,30 @@ function buildNode(
     const orientation = orientationAtDepth(depth);
     const left = buildNode(leftCount, orientationAtDepth, startOrdinal, depth + 1);
     const right = buildNode(rightCount, orientationAtDepth, startOrdinal + leftCount, depth + 1);
+    return { kind: "branch", orientation, left, right };
+}
+
+// Deterministic dwindle chain generator: a recursive chain where each branch's
+// left child is the next ordinal leaf and the right child recurses the
+// remaining count. Orientations alternate from a horizontal root at depth
+// zero. Repeated calls with equivalent inputs return structurally equal
+// blueprints.
+export function buildDwindleBlueprint(count: number): Result<Blueprint> {
+    if (!Number.isInteger(count) || count <= 0) {
+        return reject(
+            "invalid-leaf-count",
+            "leaf count must be a positive integer",
+        );
+    }
+    return { ok: true, value: buildDwindleNode(count, 0, 0) };
+}
+
+function buildDwindleNode(count: number, startOrdinal: number, depth: number): Blueprint {
+    if (count === 1) {
+        return { kind: "leaf", ordinal: startOrdinal };
+    }
+    const orientation: Orientation = depth % 2 === 0 ? "horizontal" : "vertical";
+    const left: Blueprint = { kind: "leaf", ordinal: startOrdinal };
+    const right = buildDwindleNode(count - 1, startOrdinal + 1, depth + 1);
     return { kind: "branch", orientation, left, right };
 }

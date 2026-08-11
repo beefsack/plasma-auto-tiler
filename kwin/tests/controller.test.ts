@@ -1030,6 +1030,7 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
         ["plasma-auto-tiler-apply-rows", "Apply rows in focused leaf", "Meta+Alt+2"],
         ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
+        ["plasma-auto-tiler-apply-dwindle", "Apply dwindle in focused leaf", "Meta+Alt+4"],
     ];
 
     const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
@@ -2578,6 +2579,7 @@ describe("TileController focused-leaf presets", () => {
         ["plasma-auto-tiler-apply-columns", [1, 1]],
         ["plasma-auto-tiler-apply-rows", [2, 2]],
         ["plasma-auto-tiler-apply-balanced-grid", [1, 2]],
+        ["plasma-auto-tiler-apply-dwindle", [1, 2]],
     ];
 
     it("uses each selected preset only inside the focused leaf and assigns ordinal leaves active first", () => {
@@ -2678,10 +2680,10 @@ describe("TileController focused-leaf presets", () => {
             };
             configure(state);
 
-            invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+            invokeShortcut(state.harness, "plasma-auto-tiler-apply-dwindle");
 
             assert.equal(splits, 0);
-            assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 0);
+            assert.equal(countEvent(state.harness.logs, "preset-applied:dwindle"), 0);
         }
     });
 
@@ -2701,7 +2703,7 @@ describe("TileController focused-leaf presets", () => {
             return true;
         };
 
-        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-dwindle");
 
         assert.equal(manages, 0);
         assert.equal(countEvent(state.harness.logs, "preset-failed:split-mutation-possible"), 1);
@@ -2737,16 +2739,16 @@ describe("TileController selected overlay state", () => {
     it("records the selected overlay only after every occupant assignment succeeds", () => {
         const state = presetSetup();
         const realized = configureThreeOccupantPreset(state);
-        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-dwindle");
 
         const overlay = state.controller.readSelectedOverlay(currentScopeFor(state.active));
         assert.ok(overlay !== null);
-        assert.equal(overlay.preset, "columns");
+        assert.equal(overlay.preset, "dwindle");
         assert.equal(overlay.root, state.source);
         assert.deepEqual(overlay.leaves, [realized.left, realized.middle, realized.right]);
         assert.equal(overlay.scope.scope.output, OUTPUT);
         assert.equal(overlay.scope.scope.desktopId, "desktop-1");
-        assert.equal(countEvent(state.harness.logs, "preset-applied:columns"), 1);
+        assert.equal(countEvent(state.harness.logs, "preset-applied:dwindle"), 1);
         assert.equal(countEvent(state.harness.logs, "selected-overlay-invalidated"), 0);
     });
 
@@ -3010,9 +3012,11 @@ describe("TileController selected overlay state", () => {
     it("discards inertly with one fixed diagnostic when the workspace root no longer yields the overlay", () => {
         const state = presetSetup();
         configureThreeOccupantPreset(state);
-        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-dwindle");
         const scope = currentScopeFor(state.active);
-        assert.ok(state.controller.readSelectedOverlay(scope) !== null);
+        const overlay = state.controller.readSelectedOverlay(scope);
+        assert.ok(overlay !== null);
+        assert.equal(overlay.preset, "dwindle");
 
         state.harness.root = null;
         assert.equal(state.controller.readSelectedOverlay(scope), null);
@@ -3129,9 +3133,11 @@ describe("TileController selected overlay reflow", () => {
     it("compacts occupants into ordinal leaves after a removal leaves a hole", () => {
         const state = presetSetup();
         const realized = configureThreeOccupantPreset(state);
-        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-dwindle");
         const scope = currentScopeFor(state.active);
-        assert.ok(state.controller.readSelectedOverlay(scope) !== null);
+        const overlay = state.controller.readSelectedOverlay(scope);
+        assert.ok(overlay !== null);
+        assert.equal(overlay.preset, "dwindle");
 
         // After the preset, ordinal leaves hold [active, lateWindow, earlyWindow].
         realized.middle.windows = [];
@@ -4153,12 +4159,13 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 18-action all-or-nothing catalog", () => {
+    it("registers the exact 19-action all-or-nothing catalog", () => {
         const { harness } = setup();
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [
             "plasma-auto-tiler-apply-balanced-grid",
             "plasma-auto-tiler-apply-columns",
+            "plasma-auto-tiler-apply-dwindle",
             "plasma-auto-tiler-apply-rows",
             "plasma-auto-tiler-attach",
             "plasma-auto-tiler-detach",
