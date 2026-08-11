@@ -76,6 +76,7 @@ function keyRequest(overrides: Partial<KeyboardRequest>): KeyboardRequest {
     const focusedLeaf = leaf("focused", RECT_100, [window("win-focused")]);
     return {
         scope: SCOPE_1,
+        direction: "right",
         focusedLeaf,
         focusedWindow: window("win-focused"),
         incoming: window("win-incoming"),
@@ -330,15 +331,34 @@ describe("findNeighborLeaf: directional neighbor selection", () => {
     });
 });
 
-describe("planKeyboardInsertion: right-only placement", () => {
+describe("planKeyboardInsertion: directional placement", () => {
     it("places the incoming window right of the focused occupied target", () => {
         const plan = expectOk(planKeyboardInsertion(keyRequest({})));
-        assert.equal(plan.kind, "keyboard-right");
+        assert.equal(plan.kind, "keyboard-insertion");
+        assert.equal(plan.direction, "right");
         assert.equal(plan.targetWindow.id, "win-focused");
         assert.equal(plan.incoming.id, "win-incoming");
         assert.equal(plan.targetSide, "left");
         assert.equal(plan.incomingSide, "right");
         assert.equal(plan.targetLeaf.id, "focused");
+    });
+
+    it("maps every direction to the requested incoming side and opposite target side", () => {
+        const cases: readonly [Direction, Direction, Direction][] = [
+            ["left", "left", "right"],
+            ["right", "right", "left"],
+            ["up", "up", "down"],
+            ["down", "down", "up"],
+        ];
+        for (const [direction, incomingSide, targetSide] of cases) {
+            const plan = expectOk(planKeyboardInsertion(keyRequest({ direction })));
+            assert.equal(plan.kind, "keyboard-insertion");
+            assert.equal(plan.direction, direction);
+            assert.equal(plan.incomingSide, incomingSide);
+            assert.equal(plan.targetSide, targetSide);
+            assert.equal(plan.targetWindow.id, "win-focused");
+            assert.equal(plan.incoming.id, "win-incoming");
+        }
     });
 
     it("rejects when the focused leaf is empty", () => {
@@ -678,13 +698,14 @@ describe("identity, eligibility, and immutability", () => {
         const keyboard = expectOk(
             planKeyboardInsertion({
                 scope: SCOPE_1,
+                direction: "right",
                 focusedLeaf: focusLeaf,
                 focusedWindow: window("win-focused"),
                 incoming: window("win-incoming"),
                 record: null,
             }),
         );
-        assert.equal(keyboard.kind, "keyboard-right");
+        assert.equal(keyboard.kind, "keyboard-insertion");
         assert.equal(keyboard.targetLeaf, focusLeaf);
         assert.equal(focusLeaf.windows.length, 1);
         assert.ok(!("rebuild" in keyboard));

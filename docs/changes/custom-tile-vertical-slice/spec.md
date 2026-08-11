@@ -47,6 +47,12 @@ In scope:
   Custom Tile, then performs one guarded `window.tile = null` compatibility
   write with an immediately revalidated association. It does not claim rollback
   or live runtime acceptance.
+- Keyboard insertion arms exactly one eligible focused non-layout leaf and uses
+  `Meta+Alt+Left/Right/Up/Down` when each exact KGlobalAccel chord is
+  conflict-free. The next eligible unassigned in-scope window splits that exact
+  leaf horizontally for left/right or vertically for up/down, with the new
+  window on the requested side. Split results and both assignments are guarded;
+  a post-split assignment failure stops without a rollback claim.
 - Window removal clears controller-owned deferred placement and armed keyboard
   insertion state by ephemeral wrapper identity, so queued stale work cannot
   later place a removed window or split for a removed source or target.

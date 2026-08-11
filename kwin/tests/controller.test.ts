@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import { TileController, type ControllerEnvironment, type CurrentScope } from "../src/controller";
+import { DIRECTIONS, type Direction } from "../src/logic";
 
 const RECT = { x: 0, y: 0, width: 100, height: 100 };
 const OUTPUT = {
@@ -424,14 +425,14 @@ describe("TileController keyboard insertion", () => {
             splits += 1;
             return [];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         assert.equal(controller.hasPendingKeyboard, true);
         assert.equal(splits, 0);
 
         const rejected = setup();
         rejected.harness.active = window({ resizeable: false, tile: rejected.target });
         rejected.target.windows = [rejected.harness.active];
-        rejected.controller.armKeyboardInsertion();
+        rejected.controller.armKeyboardInsertion("right");
         assert.equal(rejected.controller.hasPendingKeyboard, false);
         assert.equal(splits, 0);
     });
@@ -455,7 +456,7 @@ describe("TileController keyboard insertion", () => {
             return [right, left];
         };
         const incoming = window();
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(incoming);
         assert.equal(splits, 1);
         assert.deepEqual(managed, [focused, incoming]);
@@ -482,7 +483,7 @@ describe("TileController keyboard insertion", () => {
         };
 
         const incoming = window();
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(incoming);
 
         assert.deepEqual(managed, [occupant, incoming]);
@@ -497,7 +498,7 @@ describe("TileController keyboard insertion", () => {
             splits += 1;
             return [];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.active = null;
         harness.emitAdded(window());
 
@@ -513,7 +514,7 @@ describe("TileController keyboard insertion", () => {
             target.isLayout = true;
             return [];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         harness.emitAdded(window());
         assert.equal(splits, 1);
@@ -530,7 +531,7 @@ describe("TileController keyboard insertion", () => {
             target.isLayout = true;
             return [null, null];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         harness.emitAdded(window());
         assert.equal(splits, 1);
@@ -548,7 +549,7 @@ describe("TileController keyboard insertion", () => {
             return true;
         });
         target.split = () => [left, right];
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         assert.equal(incomingManages, 0);
         assert.equal(controller.hasPendingKeyboard, false);
@@ -562,17 +563,17 @@ describe("TileController keyboard insertion", () => {
             splits += 1;
             return [];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         if (harness.screensChanged !== undefined) {
             harness.screensChanged();
         }
         harness.emitAdded(window());
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         if (harness.desktopChanged !== undefined) {
             harness.desktopChanged();
         }
         harness.emitAdded(window());
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         focused.outputChanged.emit();
         harness.emitAdded(window());
         assert.equal(controller.hasPendingKeyboard, false);
@@ -588,7 +589,7 @@ describe("TileController keyboard insertion", () => {
             splits += 1;
             return [];
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         assert.equal(controller.hasPendingKeyboard, true);
         assert.equal(countEvent(harness.logs, "keyboard-armed:target-occupant-wrapper"), 1);
 
@@ -605,13 +606,249 @@ describe("TileController keyboard insertion", () => {
         const { harness, controller, target } = setup();
         const occupant = window({ tile: target });
         target.windows = [occupant];
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitRemoved(harness.active);
         harness.emitRemoved(harness.active);
         harness.emitRemoved(occupant);
         assert.equal(controller.hasPendingKeyboard, false);
         assert.equal(occupant.outputChanged.subscriberCount, 0);
         assert.equal(controller.isEnabled, true);
+    });
+
+    it("registers the four directional insertion actions with exact metadata and per-direction arm callbacks", () => {
+        const { harness } = setup();
+        const expected: readonly [string, string, string][] = [
+            ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
+            ["plasma-auto-tiler-insert-left", "Insert next window left of focused leaf", "Meta+Alt+Left"],
+            ["plasma-auto-tiler-insert-up", "Insert next window up of focused leaf", "Meta+Alt+Up"],
+            ["plasma-auto-tiler-insert-down", "Insert next window down of focused leaf", "Meta+Alt+Down"],
+        ];
+        for (const [name, text, sequence] of expected) {
+            const registered = harness.shortcuts.find((entry) => entry.name === name);
+            assert.ok(registered !== undefined, `missing registration ${name}`);
+            assert.equal(registered.text, text);
+            assert.equal(registered.sequence, sequence);
+            assert.equal(typeof registered.handler, "function");
+        }
+    });
+
+    it("maps every direction to the correct split orientation and child assignment", () => {
+        const cases: readonly { direction: Direction; splitDirection: number }[] = [
+            { direction: "right", splitDirection: 1 },
+            { direction: "left", splitDirection: 1 },
+            { direction: "up", splitDirection: 2 },
+            { direction: "down", splitDirection: 2 },
+        ];
+        for (const { direction, splitDirection } of cases) {
+            const { harness, controller, target, focused } = setup();
+            const splits: number[] = [];
+            const managed: Array<[TestTile, unknown]> = [];
+            const axis = direction === "left" || direction === "right" ? "x" : "y";
+            const first = tile({ x: 0, y: 0, width: 50, height: 50 });
+            const second = tile({
+                x: axis === "x" ? 50 : 0,
+                y: axis === "x" ? 0 : 50,
+                width: 50,
+                height: 50,
+            });
+            const manage = (leaf: TestTile) => (value: unknown): boolean => {
+                managed.push([leaf, value]);
+                return true;
+            };
+            first.manage = manage(first);
+            second.manage = manage(second);
+            target.split = (directionArg) => {
+                splits.push(directionArg);
+                target.isLayout = true;
+                target.tiles = [first, second];
+                return [second, first];
+            };
+            invokeShortcut(harness, `plasma-auto-tiler-insert-${direction}`);
+            const incoming = window();
+            harness.emitAdded(incoming);
+            assert.equal(controller.hasPendingKeyboard, false);
+            assert.deepEqual(splits, [splitDirection]);
+            // The revalidated source occupant is assigned first to the child
+            // opposite the requested side; the incoming window lands on the
+            // requested side second.
+            const expected: Array<[TestTile, unknown]> =
+                direction === "right" || direction === "down"
+                    ? [[first, focused], [second, incoming]]
+                    : [[second, focused], [first, incoming]];
+            assert.deepEqual(managed, expected);
+            assert.equal(countEvent(harness.logs, "keyboard-completed"), 1);
+            assert.equal(countEvent(harness.logs, "keyboard-failed:first-assignment"), 0);
+            assert.equal(countEvent(harness.logs, "keyboard-failed:second-assignment"), 0);
+        }
+    });
+
+    it("re-arming atomically replaces the recorded source and direction", () => {
+        const { harness, controller, target } = setup();
+        const other = window({ tile: target });
+        target.windows = [harness.active, other];
+        const splits: number[] = [];
+        const managed: Array<[TestTile, unknown]> = [];
+        const first = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const second = tile({ x: 0, y: 50, width: 100, height: 50 });
+        const manage = (leaf: TestTile) => (value: unknown): boolean => {
+            managed.push([leaf, value]);
+            return true;
+        };
+        first.manage = manage(first);
+        second.manage = manage(second);
+        target.split = (directionArg) => {
+            splits.push(directionArg);
+            target.isLayout = true;
+            target.tiles = [first, second];
+            return [first, second];
+        };
+        controller.armKeyboardInsertion("left");
+        harness.active = other;
+        controller.armKeyboardInsertion("up");
+        assert.equal(countEvent(harness.logs, "keyboard-pending-replaced"), 1);
+        assert.equal(controller.hasPendingKeyboard, true);
+        const incoming = window();
+        harness.emitAdded(incoming);
+        // The latest arm (up) wins: vertical split, re-armed source occupant
+        // kept in the bottom child, incoming placed on top.
+        assert.deepEqual(splits, [2]);
+        assert.deepEqual(managed, [[second, other], [first, incoming]]);
+        assert.equal(countEvent(harness.logs, "keyboard-completed"), 1);
+    });
+
+    it("clears an armed insertion when the source or target window is removed in every direction", () => {
+        for (const direction of DIRECTIONS) {
+            const { harness, controller } = setup();
+            controller.armKeyboardInsertion(direction);
+            assert.equal(controller.hasPendingKeyboard, true);
+            harness.emitRemoved(harness.active);
+            assert.equal(controller.hasPendingKeyboard, false);
+            assert.equal(controller.isEnabled, true);
+
+            const targetSetup = setup();
+            const occupant = window({ tile: targetSetup.target });
+            targetSetup.target.windows = [occupant];
+            targetSetup.controller.armKeyboardInsertion(direction);
+            assert.equal(targetSetup.controller.hasPendingKeyboard, true);
+            targetSetup.harness.emitRemoved(occupant);
+            assert.equal(targetSetup.controller.hasPendingKeyboard, false);
+            assert.equal(occupant.outputChanged.subscriberCount, 0);
+            assert.equal(targetSetup.controller.isEnabled, true);
+        }
+    });
+
+    it("revalidates target occupancy and scope immediately before a pending split", () => {
+        const { harness, controller, target } = setup();
+        const occupant = window({ tile: target });
+        target.windows = [occupant];
+        const splits: number[] = [];
+        target.split = (directionArg) => {
+            splits.push(directionArg);
+            return [];
+        };
+        controller.armKeyboardInsertion("right");
+        occupant.output = { ...OUTPUT, name: "screen-2" };
+        harness.emitAdded(window());
+        assert.equal(splits.length, 0);
+        assert.equal(controller.hasPendingKeyboard, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("reports a fixed first-assignment diagnostic and stops without claiming rollback", () => {
+        for (const direction of DIRECTIONS) {
+            const { harness, controller, target } = setup();
+            const axis = direction === "left" || direction === "right" ? "x" : "y";
+            const first = tile({ x: 0, y: 0, width: 50, height: 50 });
+            const second = tile({
+                x: axis === "x" ? 50 : 0,
+                y: axis === "x" ? 0 : 50,
+                width: 50,
+                height: 50,
+            });
+            const occupantChild = direction === "left" || direction === "up" ? second : first;
+            const incomingChild = occupantChild === first ? second : first;
+            let incomingManages = 0;
+            occupantChild.manage = () => false;
+            incomingChild.manage = () => {
+                incomingManages += 1;
+                return true;
+            };
+            target.split = () => {
+                target.isLayout = true;
+                target.tiles = [first, second];
+                return [first, second];
+            };
+            controller.armKeyboardInsertion(direction);
+            harness.emitAdded(window());
+            assert.equal(countEvent(harness.logs, "keyboard-failed:first-assignment"), 1);
+            assert.equal(incomingManages, 0);
+            assert.equal(controller.hasPendingKeyboard, false);
+            assert.equal(controller.isEnabled, true);
+            assert.equal(harness.logs.some((entry) => entry.includes("rollback")), false);
+        }
+    });
+
+    it("reports a fixed second-assignment diagnostic after the source succeeds", () => {
+        const { harness, controller, target, focused } = setup();
+        const managed: unknown[] = [];
+        const first = tile({ x: 0, y: 0, width: 50, height: 100 }, false, (value) => {
+            managed.push(value);
+            return true;
+        });
+        const second = tile({ x: 50, y: 0, width: 50, height: 100 }, false, () => false);
+        target.split = () => {
+            target.isLayout = true;
+            target.tiles = [first, second];
+            return [first, second];
+        };
+        controller.armKeyboardInsertion("right");
+        harness.emitAdded(window());
+        assert.deepEqual(managed, [focused]);
+        assert.equal(countEvent(harness.logs, "keyboard-failed:second-assignment"), 1);
+        assert.equal(countEvent(harness.logs, "keyboard-completed"), 0);
+        assert.equal(controller.hasPendingKeyboard, false);
+        assert.equal(controller.isEnabled, true);
+        assert.equal(harness.logs.some((entry) => entry.includes("rollback")), false);
+    });
+
+    it("keeps armed insertion independent of selected-overlay state", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const source = tile();
+        const insertTarget = tile({ x: 200, y: 0, width: 100, height: 100 });
+        const active = window({ tile: source });
+        source.windows = [active];
+        root.tiles = [source, insertTarget];
+        harness.root = root;
+        harness.active = active;
+        harness.windows = [active];
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        invokeShortcut(harness, "plasma-auto-tiler-apply-columns");
+        assert.equal(countEvent(harness.logs, "preset-applied:columns"), 1);
+        const scope = currentScopeFor(active);
+        assert.ok(controller.readSelectedOverlay(scope) !== null);
+
+        const insertWindow = window({ tile: insertTarget });
+        insertTarget.windows = [insertWindow];
+        harness.active = insertWindow;
+        const first = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const second = tile({ x: 50, y: 0, width: 50, height: 100 });
+        insertTarget.split = () => {
+            insertTarget.isLayout = true;
+            insertTarget.tiles = [first, second];
+            return [first, second];
+        };
+        controller.armKeyboardInsertion("right");
+        harness.emitAdded(window());
+        assert.equal(countEvent(harness.logs, "keyboard-completed"), 1);
+        assert.equal(countEvent(harness.logs, "reflow-completed"), 0);
+        assert.equal(countEvent(harness.logs, "selected-overlay-invalidated"), 0);
+        const overlay = controller.readSelectedOverlay(scope);
+        assert.ok(overlay !== null);
+        assert.equal(overlay.root, source);
+        assert.deepEqual(overlay.leaves, [source]);
     });
 });
 
@@ -684,7 +921,7 @@ describe("TileController ordinary placement and boundaries", () => {
         target.split = () => {
             throw "split";
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         harness.emitAdded(window());
         assert.equal(controller.isEnabled, false);
@@ -694,6 +931,12 @@ describe("TileController ordinary placement and boundaries", () => {
 });
 
 describe("TileController keyboard focus", () => {
+    const insertActions: ReadonlyArray<readonly ["right" | "left" | "up" | "down", string, string, string]> = [
+        ["right", "plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
+        ["left", "plasma-auto-tiler-insert-left", "Insert next window left of focused leaf", "Meta+Alt+Left"],
+        ["up", "plasma-auto-tiler-insert-up", "Insert next window up of focused leaf", "Meta+Alt+Up"],
+        ["down", "plasma-auto-tiler-insert-down", "Insert next window down of focused leaf", "Meta+Alt+Down"],
+    ];
     const focusActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+H"],
         ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+J"],
@@ -713,7 +956,7 @@ describe("TileController keyboard focus", () => {
     ];
 
     const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
-        ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
+        ...insertActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ...focusActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ...moveActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
@@ -742,7 +985,9 @@ describe("TileController keyboard focus", () => {
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
             assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
             const baseline = harness.logs.length;
-            invokeShortcut(harness, "plasma-auto-tiler-insert-right");
+            for (const [, name] of insertActions) {
+                invokeShortcut(harness, name);
+            }
             for (const [, name] of [...focusActions, ...moveActions]) {
                 invokeShortcut(harness, name);
             }
@@ -2714,7 +2959,7 @@ describe("TileController production diagnostics", () => {
             const state = setup();
             const baseline = state.harness.logs.length;
             testCase.configure(state);
-            state.controller.armKeyboardInsertion();
+            state.controller.armKeyboardInsertion("right");
             const diagnostics = state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:keyboard-"));
             assert.deepEqual(diagnostics, ["plasma-auto-tiler:keyboard-invoked", `plasma-auto-tiler:${testCase.reason}`]);
         }
@@ -2723,8 +2968,8 @@ describe("TileController production diagnostics", () => {
     it("reports pending replacement without changing the existing successful arm", () => {
         const { harness, controller } = setup();
         const baseline = harness.logs.length;
-        controller.armKeyboardInsertion();
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
+        controller.armKeyboardInsertion("right");
         assert.equal(controller.hasPendingKeyboard, true);
         const diagnostics = harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:keyboard-"));
         assert.deepEqual(diagnostics, [
@@ -2935,8 +3180,8 @@ describe("TileController production diagnostics", () => {
             target.tiles = [left, right];
             return [left, right];
         };
-        controller.armKeyboardInsertion();
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
 
         assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 1);
@@ -3008,7 +3253,7 @@ describe("TileController production diagnostics", () => {
         target.split = () => {
             throw new Error("private-window-title");
         };
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         harness.emitAdded(window());
         assert.equal(countEvent(harness.logs, "disabled:exception"), 1);
@@ -3023,7 +3268,7 @@ describe("TileController production diagnostics", () => {
     it("contains sink failures without changing an eligible operation", () => {
         const { harness, controller } = setup();
         harness.throwOnLog = true;
-        controller.armKeyboardInsertion();
+        controller.armKeyboardInsertion("right");
         assert.equal(controller.isEnabled, true);
         assert.equal(controller.hasPendingKeyboard, true);
     });
@@ -3058,6 +3303,46 @@ describe("TileController shortcut registration", () => {
             assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
             assert.equal(entry.includes("screen-1"), false);
             assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("registers the exact 16-action all-or-nothing catalog", () => {
+        const { harness } = setup();
+        const names = harness.shortcuts.map((entry) => entry.name).sort();
+        assert.deepEqual(names, [
+            "plasma-auto-tiler-apply-balanced-grid",
+            "plasma-auto-tiler-apply-columns",
+            "plasma-auto-tiler-apply-rows",
+            "plasma-auto-tiler-detach",
+            "plasma-auto-tiler-focus-down",
+            "plasma-auto-tiler-focus-left",
+            "plasma-auto-tiler-focus-right",
+            "plasma-auto-tiler-focus-up",
+            "plasma-auto-tiler-insert-down",
+            "plasma-auto-tiler-insert-left",
+            "plasma-auto-tiler-insert-right",
+            "plasma-auto-tiler-insert-up",
+            "plasma-auto-tiler-move-down",
+            "plasma-auto-tiler-move-left",
+            "plasma-auto-tiler-move-right",
+            "plasma-auto-tiler-move-up",
+        ]);
+    });
+
+    it("disables atomically when any single new directional insertion registration fails", () => {
+        // 1-based registration positions of the three added insert actions.
+        for (const failIndex of [2, 3, 4]) {
+            const harness = new Harness();
+            for (let index = 1; index < failIndex; index += 1) {
+                harness.shortcutResults.push(true);
+            }
+            harness.shortcutResults.push(false);
+            const controller = new TileController(harness.environment());
+            controller.start();
+            assert.equal(controller.isEnabled, false);
+            assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
+            assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
+            assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
         }
     });
 

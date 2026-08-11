@@ -68,11 +68,16 @@ merely for performance.
   from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all thirteen registrations must succeed; success logs
+  source-pinned boolean gate: all sixteen registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
-- Current actions are: `plasma-auto-tiler-insert-right` / `Insert next window
-  right of focused leaf` / `Meta+Alt+Right`; `plasma-auto-tiler-focus-left` /
+- Current insertion actions are: `plasma-auto-tiler-insert-left` / `Insert next
+  window left of focused leaf` / `Meta+Alt+Left`; `plasma-auto-tiler-insert-right`
+  / `Insert next window right of focused leaf` / `Meta+Alt+Right`;
+  `plasma-auto-tiler-insert-up` / `Insert next window up of focused leaf` /
+  `Meta+Alt+Up`; and `plasma-auto-tiler-insert-down` / `Insert next window down
+  of focused leaf` / `Meta+Alt+Down`. Current focus actions are:
+  `plasma-auto-tiler-focus-left` /
   `Focus window left` / `Meta+H`; `plasma-auto-tiler-focus-down` / `Focus
   window down` / `Meta+J`; `plasma-auto-tiler-focus-up` / `Focus window up` /
   `Meta+K`; and `plasma-auto-tiler-focus-right` / `Focus window right` /
@@ -89,7 +94,7 @@ merely for performance.
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
   `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
   grid in focused leaf` / `Meta+Alt+3`; and `plasma-auto-tiler-detach` /
-  `Detach window from tile` / `Meta+Shift+Space`. All thirteen registrations
+  `Detach window from tile` / `Meta+Shift+Space`. All sixteen registrations
   share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
   on decode-derived occupancy after success; it does not swap.

@@ -110,6 +110,7 @@ interface PendingKeyboard {
     readonly sourceWindow: WindowCapability;
     readonly targetWindow: WindowCapability;
     readonly targetTile: TileCapability;
+    readonly direction: Direction;
     readonly disconnect: () => void;
 }
 
@@ -477,7 +478,25 @@ export class TileController {
                 "plasma-auto-tiler-insert-right",
                 "Insert next window right of focused leaf",
                 "Meta+Alt+Right",
-                () => this.armKeyboardInsertion(),
+                () => this.armKeyboardInsertion("right"),
+            );
+            const insertionLeftRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-insert-left",
+                "Insert next window left of focused leaf",
+                "Meta+Alt+Left",
+                () => this.armKeyboardInsertion("left"),
+            );
+            const insertionUpRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-insert-up",
+                "Insert next window up of focused leaf",
+                "Meta+Alt+Up",
+                () => this.armKeyboardInsertion("up"),
+            );
+            const insertionDownRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-insert-down",
+                "Insert next window down of focused leaf",
+                "Meta+Alt+Down",
+                () => this.armKeyboardInsertion("down"),
             );
             const leftRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-focus-left",
@@ -553,6 +572,9 @@ export class TileController {
             );
             if (
                 !insertionRegistered ||
+                !insertionLeftRegistered ||
+                !insertionUpRegistered ||
+                !insertionDownRegistered ||
                 !leftRegistered ||
                 !downRegistered ||
                 !upRegistered ||
@@ -574,7 +596,11 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    armKeyboardInsertion(): void {
+    // Each directional insertion action arms exactly one pending insertion from
+    // the active eligible in-scope occupant of the focused non-layout leaf. A
+    // re-arm atomically replaces the source and the recorded direction, so a
+    // later arm always supersedes an earlier one.
+    armKeyboardInsertion(direction: Direction): void {
         this.gate.run(() => {
             this.diagnostic("keyboard-invoked");
             const hadPending = this.pending.current !== undefined;
@@ -622,7 +648,14 @@ export class TileController {
                 return;
             }
             const disconnect = this.environment.onPendingTargetChanged(targetOccupant.window, () => this.clearPending());
-            this.pending.set({ scope, sourceWindow: active, targetWindow: targetOccupant.window, targetTile: active.tile, disconnect });
+            this.pending.set({
+                scope,
+                sourceWindow: active,
+                targetWindow: targetOccupant.window,
+                targetTile: active.tile,
+                direction,
+                disconnect,
+            });
             if (!targetOccupant.usesActiveWrapper) {
                 this.diagnostic("keyboard-armed:target-occupant-wrapper");
             }
@@ -1787,6 +1820,7 @@ export class TileController {
         }
         const plan = planKeyboardInsertion({
             scope: scope.scope,
+            direction: pending.direction,
             focusedLeaf: target.leaf,
             focusedWindow: focused,
             incoming: { id: "incoming", normal: window.normalWindow, managed: window.managed },
@@ -1795,24 +1829,38 @@ export class TileController {
         if (!plan.ok) {
             return;
         }
-        const split = splitCustomTile(target.decoded.tile, HORIZONTAL_LAYOUT_DIRECTION);
+        // Left/right split horizontally, up/down vertically. The requested
+        // side receives the incoming window; the focused occupant keeps the
+        // opposite child.
+        const split = splitCustomTile(target.decoded.tile, splitDirection(pending.direction));
         const decoded = decodeSequential(split, isCustomTile, 2);
         if (!decoded.ok) {
             this.gate.disable("keyboard-split-result-invalid", (reason) => this.disabled(reason));
             return;
         }
         this.decodedBoundary("split-result");
-        const children = orderedChildren(decoded.value, "x");
+        const axis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
+        const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
         if (children === null) {
             this.gate.disable("keyboard-split-child-selection-failed", (reason) => this.disabled(reason));
             return;
         }
-        const left = children[0];
-        const right = children[1];
-        if (!manageTile(left, pending.targetWindow)) {
+        const first = children[0];
+        const second = children[1];
+        // Smallest source-proven child ordering: the revalidated source
+        // occupant is assigned to its child first, then the incoming window is
+        // placed on the requested side. The split has already mutated topology,
+        // so a first-assignment stop leaves the split mutated with nothing
+        // reassigned and a second-assignment stop leaves the source correctly
+        // tiled in its new half; no rollback is claimed either way.
+        const occupantChild = pending.direction === "left" || pending.direction === "up" ? second : first;
+        const incomingChild = occupantChild === first ? second : first;
+        if (!manageTile(occupantChild, pending.targetWindow)) {
+            this.diagnostic("keyboard-failed:first-assignment");
             return;
         }
-        if (!manageTile(right, window)) {
+        if (!manageTile(incomingChild, window)) {
+            this.diagnostic("keyboard-failed:second-assignment");
             return;
         }
         this.diagnostic("keyboard-completed");

@@ -25,6 +25,9 @@ JOURNAL_CURSOR=""
 # The exact project action IDs this lifecycle interface owns.
 PROJECT_ACTIONS=(
   plasma-auto-tiler-insert-right
+  plasma-auto-tiler-insert-left
+  plasma-auto-tiler-insert-up
+  plasma-auto-tiler-insert-down
   plasma-auto-tiler-focus-left
   plasma-auto-tiler-focus-down
   plasma-auto-tiler-focus-up
@@ -49,6 +52,9 @@ PROJECT_ACTIONS_JSON=""
 # verified against the live collector on 2026-08-12.
 declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-insert-right]="419430420"
+  [plasma-auto-tiler-insert-left]="419430418"
+  [plasma-auto-tiler-insert-up]="419430419"
+  [plasma-auto-tiler-insert-down]="419430421"
   [plasma-auto-tiler-focus-left]="268435528"
   [plasma-auto-tiler-focus-down]="268435530"
   [plasma-auto-tiler-focus-up]="268435531"

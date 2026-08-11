@@ -13,20 +13,23 @@
   reconciliation verified that no foundation implementation can be accepted.
   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
   action is authorized.
-- Current package: `unit-13/attempt-01` is accepted static-only,
-  assignment-only lifecycle reflow for a current valid explicitly selected
-  overlay. It preserves topology, authored layouts, ratios, and persistence;
-  no live KWin/Plasma action occurred. Typecheck, build, 314 tests across 42
-  suites, and 49 lifecycle shell checks pass.
+- Current package: `unit-14/attempt-01` is accepted. Keyboard insertion now
+  arms one exact eligible source and direction, then puts the next eligible
+  unassigned in-scope window on the requested left/right/up/down side after
+  guarded revalidation and a single split. Source-first assignment minimizes
+  partiality: failed first assignment leaves only the split mutation, while a
+  failed second assignment retains the source in its assigned child; neither
+  path claims rollback. Typecheck, build, 325 tests across 42 suites, and 137
+  lifecycle shell checks pass.
 - Lifecycle evidence (2026-08-12): one explicitly authorized registration-only
   `scripts/start-test.sh start -> status -> stop` sequence succeeded on KWin
   PID 2517 after exact-plugin ownership preflight. Start reported Script0 and
-  ordered aggregate registration/readiness; status found all 13 action records;
+  ordered aggregate registration/readiness; status found all 16 action records;
   stop verified the exact plugin unloaded. No action callback, synthetic key,
   window, desktop, tile, or Krohnkite mutation occurred. The resulting persisted
   `kwin` records have empty KGlobalAccel defaults; eight older focus/move active
   assignments conflict with current source defaults, while the newly persisted
-  detach record and five other active assignments match. This is lifecycle
+  detach record and eight other active assignments match. This is lifecycle
   readiness evidence only, not callback or structural-runtime acceptance.
 - Execution controls: first search suitable upstream or official KWin/KDE
   TypeScript types during implementation. TypeScript is the only authored

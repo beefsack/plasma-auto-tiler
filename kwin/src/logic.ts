@@ -277,6 +277,7 @@ export interface KeyboardRecord {
 
 export interface KeyboardRequest {
     readonly scope: Scope;
+    readonly direction: Direction;
     readonly focusedLeaf: Leaf;
     readonly focusedWindow: WindowRef;
     readonly incoming: WindowRef;
@@ -284,18 +285,33 @@ export interface KeyboardRequest {
 }
 
 export interface KeyboardPlan {
-    readonly kind: "keyboard-right";
+    readonly kind: "keyboard-insertion";
     readonly scope: Scope;
+    readonly direction: Direction;
     readonly targetLeaf: Leaf;
     readonly targetWindow: WindowRef;
     readonly incoming: WindowRef;
-    readonly targetSide: "left";
-    readonly incomingSide: "right";
+    readonly targetSide: Direction;
+    readonly incomingSide: Direction;
 }
 
-// Keyboard insertion is right-only: the focused occupied target stays on the
-// left and the next eligible window is placed on the right. A stale or
-// mismatched recorded focus rejects safely.
+function oppositeDirection(direction: Direction): Direction {
+    switch (direction) {
+        case "left":
+            return "right";
+        case "right":
+            return "left";
+        case "up":
+            return "down";
+        case "down":
+            return "up";
+    }
+}
+
+// The new window appears on the requested side and the focused occupied target
+// keeps the opposite child; left/right split horizontally and up/down
+// vertically. The adapter maps these sides to concrete split children. A stale
+// or mismatched recorded focus rejects safely.
 export function planKeyboardInsertion(request: KeyboardRequest): Result<KeyboardPlan> {
     if (!isValidRect(request.focusedLeaf.geometry)) {
         return reject("invalid-geometry", "focused leaf geometry must be positive and finite");
@@ -335,13 +351,14 @@ export function planKeyboardInsertion(request: KeyboardRequest): Result<Keyboard
     return {
         ok: true,
         value: {
-            kind: "keyboard-right",
+            kind: "keyboard-insertion",
             scope: request.scope,
+            direction: request.direction,
             targetLeaf: request.focusedLeaf,
             targetWindow: request.focusedWindow,
             incoming: request.incoming,
-            targetSide: "left",
-            incomingSide: "right",
+            targetSide: oppositeDirection(request.direction),
+            incomingSide: request.direction,
         },
     };
 }
