@@ -96,6 +96,7 @@ interface OperationLeaf {
 
 interface PendingKeyboard {
     readonly scope: CurrentScope;
+    readonly sourceWindow: WindowCapability;
     readonly targetWindow: WindowCapability;
     readonly targetTile: TileCapability;
     readonly disconnect: () => void;
@@ -503,7 +504,7 @@ export class TileController {
                 return;
             }
             const disconnect = this.environment.onPendingTargetChanged(targetOccupant.window, () => this.clearPending());
-            this.pending.set({ scope, targetWindow: targetOccupant.window, targetTile: active.tile, disconnect });
+            this.pending.set({ scope, sourceWindow: active, targetWindow: targetOccupant.window, targetTile: active.tile, disconnect });
             if (!targetOccupant.usesActiveWrapper) {
                 this.diagnostic("keyboard-armed:target-occupant-wrapper");
             }
@@ -999,7 +1000,10 @@ export class TileController {
     private handleWindowRemoved(window: unknown): void {
         this.gate.run(() => {
             const pending = this.pending.current;
-            if (pending !== undefined && pending.targetWindow === window) {
+            if (
+                pending !== undefined &&
+                (pending.sourceWindow === window || pending.targetWindow === window)
+            ) {
                 this.clearPending();
             }
             if (this.drag.current?.window === window) {
@@ -1053,6 +1057,13 @@ export class TileController {
         }
         this.onceDiagnostic(`window-added-deferred:${desktopScopeCheck(window, scope)}`);
         const cancel = this.environment.scheduleOnce(DESKTOP_SCOPE_REEVALUATION_DELAY_MS, () => {
+            // The entry can already be gone: `handleWindowRemoved` cancels and
+            // deletes it, or a later defer superseded it. Only this exact
+            // pending operation may act, so an already-cancelled callback that
+            // fires anyway is inert and cannot place a removed window.
+            if (this.deferredEligibility.get(window) !== cancel) {
+                return;
+            }
             this.deferredEligibility.delete(window);
             this.reevaluateDesktopScope(window, scope);
         });

@@ -224,6 +224,16 @@ class Harness {
         }
         entry.callback();
     }
+
+    // Mirrors a QTimer timeout already queued before stop(): the cancel flag
+    // is ignored so the callback is genuinely invoked after cancellation.
+    fireScheduledForced(index: number): void {
+        const entry = this.scheduled[index];
+        if (entry === undefined) {
+            return;
+        }
+        entry.callback();
+    }
 }
 
 function setup(): {
@@ -551,6 +561,41 @@ describe("TileController keyboard insertion", () => {
         assert.equal(controller.hasPendingKeyboard, false);
         assert.equal(splits, 0);
     });
+
+    it("clears an armed insertion when the source active window is removed even when the target occupant is a distinct wrapper", () => {
+        const { harness, controller, target } = setup();
+        const occupant = window({ tile: target });
+        target.windows = [occupant];
+        let splits = 0;
+        target.split = () => {
+            splits += 1;
+            return [];
+        };
+        controller.armKeyboardInsertion();
+        assert.equal(controller.hasPendingKeyboard, true);
+        assert.equal(countEvent(harness.logs, "keyboard-armed:target-occupant-wrapper"), 1);
+
+        harness.emitRemoved(harness.active);
+        harness.emitAdded(window());
+
+        assert.equal(controller.hasPendingKeyboard, false);
+        assert.equal(occupant.outputChanged.subscriberCount, 0);
+        assert.equal(splits, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("tolerates duplicate removal notifications without lingering pending state", () => {
+        const { harness, controller, target } = setup();
+        const occupant = window({ tile: target });
+        target.windows = [occupant];
+        controller.armKeyboardInsertion();
+        harness.emitRemoved(harness.active);
+        harness.emitRemoved(harness.active);
+        harness.emitRemoved(occupant);
+        assert.equal(controller.hasPendingKeyboard, false);
+        assert.equal(occupant.outputChanged.subscriberCount, 0);
+        assert.equal(controller.isEnabled, true);
+    });
 });
 
 describe("TileController ordinary placement and boundaries", () => {
@@ -688,6 +733,10 @@ describe("TileController keyboard focus", () => {
             for (const [name] of presetActions) {
                 invokeShortcut(harness, name);
             }
+            harness.emitAdded(window());
+            harness.emitRemoved(window());
+            harness.screensChanged?.();
+            harness.desktopChanged?.();
             assert.equal(harness.logs.length, baseline);
             assert.deepEqual(harness.activeWrites, []);
             assert.equal(controller.hasPendingKeyboard, false);
@@ -2055,6 +2104,33 @@ describe("TileController production diagnostics", () => {
         harness.fireScheduled(0);
         assert.equal(managed.length, 0);
         assert.equal(countEvent(harness.logs, "window-added-eligible-deferred"), 0);
+        assert.equal(countEvent(harness.logs, "window-added-rejected-deferred:desktop-scope-mismatch"), 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("is inert when an already-cancelled deferred callback is forced to fire after removal, even once desktops settle", () => {
+        const { harness, controller, root } = setup();
+        const managed: unknown[] = [];
+        const empty = tile(RECT, false, (value) => {
+            managed.push(value);
+            return true;
+        });
+        root.tiles = [empty];
+        const incoming = window({ desktops: [] });
+        harness.emitAdded(incoming);
+        assert.equal(harness.scheduled.length, 1);
+
+        harness.emitRemoved(incoming);
+        assert.equal(harness.scheduled[0]?.cancelled, true);
+
+        // Simulate a timeout already queued before removal: it fires even
+        // though the entry was cancelled, with desktops settled into scope.
+        // The callback must be inert rather than placing the removed window.
+        incoming.desktops = [DESKTOP];
+        harness.fireScheduledForced(0);
+        assert.equal(managed.length, 0);
+        assert.equal(countEvent(harness.logs, "window-added-eligible-deferred"), 0);
+        assert.equal(countEvent(harness.logs, "window-added-reevaluated:match"), 0);
         assert.equal(countEvent(harness.logs, "window-added-rejected-deferred:desktop-scope-mismatch"), 0);
         assert.equal(controller.isEnabled, true);
     });

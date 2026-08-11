@@ -47,6 +47,9 @@ In scope:
   Custom Tile, then performs one guarded `window.tile = null` compatibility
   write with an immediately revalidated association. It does not claim rollback
   or live runtime acceptance.
+- Window removal clears controller-owned deferred placement and armed keyboard
+  insertion state by ephemeral wrapper identity, so queued stale work cannot
+  later place a removed window or split for a removed source or target.
 
 Constraints:
 
@@ -97,6 +100,9 @@ Non-goals:
 - [ ] The detach action uses the pinned KWin writable `Window.tile` contract,
       rejects every unsafe association before its single write, and has focused
       static tests for registration, guards, write failures, and postcondition.
+- [ ] Removal notifications make deferred placement and armed insertion inert
+      for removed windows, with focused static tests for queued callbacks,
+      source/target removal, duplicate notifications, and failed registration.
 - [ ] No runtime smoke occurs without separate fresh authorization; any future
       smoke remains limited to this slice and does not unpark the feasibility
       change's blocked live path.

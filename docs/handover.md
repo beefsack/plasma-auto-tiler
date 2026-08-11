@@ -54,8 +54,8 @@ merely for performance.
   `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Never manually edit generated
   JavaScript.
 - Current `kwin/contents/code/main.js` SHA-256 is
-  `36661daacc6319f7154411c7356ee1895d4e07715a1617579fab81c83325dabd`.
-  The current source typechecks and has 276 tests across 39 suites. This is
+  `c0b5e0d5a45fb13691bb5e0dccd48c0df298eefe817dc16caf1d05ecd744b27e`.
+  The current source typechecks and has 279 tests across 39 suites. This is
   static evidence only; no current runtime acceptance follows.
 
 ## Active Custom Tile Slice
@@ -123,6 +123,13 @@ merely for performance.
   feasible; assignment and postcondition failures are private and do not claim
   rollback. Pinned source confirms the null setter path calls `unmanage` and
   restores floating geometry, but this remains static evidence only.
+- Deferred desktop-scope retries retain a cancellation identity and re-check it
+  before acting, so a timeout queued before `windowRemoved` is inert after its
+  entry is cancelled. Armed insertion retains only source and target wrapper
+  identity until cleared; either removal clears it. Duplicate removals are
+  inert. Static tests also prove workspace signals and action callbacks remain
+  inert after aggregate shortcut-registration failure. No live KWin claim is
+  made.
 
 ## Live Evidence and Parked Automation
 
