@@ -68,7 +68,7 @@ merely for performance.
   from static tests.
 - `unit-04` is accepted after `unit-04/attempt-07` independently reviewed the
   registration correction. The current `registerShortcut` path has the
-  source-pinned boolean gate: all sixteen registrations must succeed; success logs
+  source-pinned boolean gate: all seventeen registrations must succeed; success logs
   `shortcut-registered` before `startup-handlers-ready`; false disables once
   with `disabled:shortcut-registration-failed` and returns inertly.
 - Current insertion actions are: `plasma-auto-tiler-insert-left` / `Insert next
@@ -93,11 +93,16 @@ merely for performance.
   `plasma-auto-tiler-apply-columns` / `Apply columns in focused leaf` /
   `Meta+Alt+1`; `plasma-auto-tiler-apply-rows` / `Apply rows in focused leaf` /
   `Meta+Alt+2`; and `plasma-auto-tiler-apply-balanced-grid` / `Apply balanced
-  grid in focused leaf` / `Meta+Alt+3`; and `plasma-auto-tiler-detach` /
-  `Detach window from tile` / `Meta+Shift+Space`. All sixteen registrations
+  grid in focused leaf` / `Meta+Alt+3`; `plasma-auto-tiler-detach` / `Detach
+  window from tile` / `Meta+Shift+Space`; and `plasma-auto-tiler-attach` /
+  `Attach window to available tile` / `Meta+Alt+Shift+Space`. All seventeen registrations
   share the aggregate false-result gate. A move targets only an empty non-layout leaf,
   revalidates active/source/target state before one tile assignment, and relies
-  on decode-derived occupancy after success; it does not swap.
+  on decode-derived occupancy after success; it does not swap. Attach requires an
+  active eligible floating window in exact scope, selects only the first empty
+  authored non-layout Custom Tile leaf in decoded traversal, revalidates active,
+  source, target, and root before one assignment, and checks the association
+  postcondition. It neither reflows selected overlays nor calls topology APIs.
 - Shortcut records persist in KGlobalAccel after the script unloads and do not
   prove callbacks are live. The manual launcher reports startup only after
   same-KWin-PID ordered `shortcut-registered` and `startup-handlers-ready`
@@ -158,6 +163,12 @@ merely for performance.
   removed wrapper still identifies an overlay. No topology, ratio, persistence,
   or authored-layout mutation occurs. Static typecheck/build/test pass with 314
   tests across 42 suites and 49 lifecycle shell checks; no live action occurred.
+- `unit-15` (accepted static correction 2026-08-12) adds the guarded attach
+  action above. Read-only KGlobalAccel reconciliation found no unrelated active
+  owner for `Meta+Alt+Shift+Space`; all 17 project records match source defaults.
+  Typecheck, build, 339 tests across 43 suites, and 192 lifecycle shell checks
+  pass. The plugin is currently unloaded; persisted records and historical
+  readiness diagnostics are not callback or window-runtime evidence.
 
 ## Live Evidence and Parked Automation
 

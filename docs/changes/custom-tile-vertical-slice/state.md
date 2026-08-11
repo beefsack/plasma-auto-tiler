@@ -13,7 +13,17 @@
   reconciliation verified that no foundation implementation can be accepted.
   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
   action is authorized.
-- Current package: `unit-14/attempt-01` is accepted. Keyboard insertion now
+- Current package: `unit-15/attempt-01` is accepted static correction. The
+  active eligible floating window can receive at most one pinned `window.tile`
+  write into the deterministic first empty authored non-layout Custom Tile leaf
+  after fresh source, target, root, eligibility, and exact scope revalidation.
+  It neither compacts selected overlays nor mutates topology or another
+  occupant. Read-only KGlobalAccel reconciliation found the requested
+  `Meta+Alt+Shift+Space` unclaimed by unrelated active records; all 17 records
+  match source defaults. Typecheck, build, 339 tests across 43 suites, and 192
+  lifecycle shell checks pass. The plugin is unloaded; no callback or window
+  behavior is claimed.
+- Previous package: `unit-14/attempt-01` is accepted. Keyboard insertion now
   arms one exact eligible source and direction, then puts the next eligible
   unassigned in-scope window on the requested left/right/up/down side after
   guarded revalidation and a single split. Source-first assignment minimizes

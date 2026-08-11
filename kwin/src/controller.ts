@@ -552,6 +552,12 @@ export class TileController {
                 "Meta+Shift+Space",
                 () => this.detachActiveWindow(),
             );
+            const attachRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-attach",
+                "Attach window to available tile",
+                "Meta+Alt+Shift+Space",
+                () => this.attachActiveWindow(),
+            );
             const columnsRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-apply-columns",
                 "Apply columns in focused leaf",
@@ -584,6 +590,7 @@ export class TileController {
                 !moveUpRegistered ||
                 !moveRightRegistered ||
                 !detachRegistered ||
+                !attachRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
                 !gridRegistered
@@ -928,6 +935,119 @@ export class TileController {
         }
         const freshOrigin = operationLeafForTile(topology, originTile);
         return freshOrigin !== null && windowIndex(freshOrigin.windows, active) >= 0;
+    }
+
+    // Assignment-only inverse of detach: one guarded `window.tile = target`
+    // write for the active eligible floating window into the deterministic
+    // first available empty non-layout leaf of the exact scope. Never changes
+    // topology or another occupant.
+    attachActiveWindow(): void {
+        this.gate.run(() => {
+            this.diagnostic("attach-invoked");
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("attach-rejected:no-active-window");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("attach-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("attach-rejected:active-window-eligibility");
+                return;
+            }
+            if (active.tile !== null) {
+                this.diagnostic("attach-rejected:already-assigned");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`attach-rejected:${reason}`);
+            });
+            if (topology === null) {
+                return;
+            }
+            const target = this.firstEmptyLeaf(topology);
+            if (target === null) {
+                this.diagnostic("attach-rejected:no-available-tile");
+                return;
+            }
+            if (!this.attachRevalidates(scope, active, target)) {
+                this.diagnostic("attach-rejected:assignment-stale");
+                return;
+            }
+            let assigned = false;
+            try {
+                assigned = assignWindowToTile(active, target.decoded.tile);
+            } catch (error) {
+                void error;
+                this.diagnostic("attach-rejected:assignment-failed");
+                return;
+            }
+            if (!assigned) {
+                this.diagnostic("attach-rejected:assignment-failed");
+                return;
+            }
+            if (active.tile !== target.decoded.tile) {
+                this.diagnostic("attach-failed:postcondition");
+                return;
+            }
+            this.diagnostic("attach-completed");
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Deterministic first available empty non-layout leaf in the exact decoded
+    // traversal order. Layout and occupied leaves are skipped; valid explicitly
+    // selected overlay leaves are ordinary authored tree leaves and participate
+    // through the same traversal.
+    private firstEmptyLeaf(topology: readonly OperationLeaf[]): OperationLeaf | null {
+        for (const entry of topology) {
+            if (
+                entry.leaf.isLayout ||
+                !isCustomTile(entry.decoded.tile) ||
+                entry.windows.length !== 0
+            ) {
+                continue;
+            }
+            return entry;
+        }
+        return null;
+    }
+
+    // Active identity, scope, eligibility, unassigned source, exact
+    // output/desktop root, target reachability, non-layout status, and
+    // emptiness are all re-derived immediately before the single attach write.
+    private attachRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        target: OperationLeaf,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope)
+        ) {
+            return false;
+        }
+        if (active.tile !== null) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        return (
+            freshTarget !== null &&
+            !freshTarget.leaf.isLayout &&
+            isCustomTile(freshTarget.decoded.tile) &&
+            freshTarget.windows.length === 0
+        );
     }
 
     private applyPreset(kind: PresetKind): void {

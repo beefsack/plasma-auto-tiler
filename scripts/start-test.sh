@@ -37,6 +37,7 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-move-up
   plasma-auto-tiler-move-right
   plasma-auto-tiler-detach
+  plasma-auto-tiler-attach
   plasma-auto-tiler-apply-columns
   plasma-auto-tiler-apply-rows
   plasma-auto-tiler-apply-balanced-grid
@@ -64,6 +65,7 @@ declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-move-up]="301989963"
   [plasma-auto-tiler-move-right]="301989964"
   [plasma-auto-tiler-detach]="301989920"
+  [plasma-auto-tiler-attach]="436207648"
   [plasma-auto-tiler-apply-columns]="402653233"
   [plasma-auto-tiler-apply-rows]="402653234"
   [plasma-auto-tiler-apply-balanced-grid]="402653235"
@@ -96,7 +98,7 @@ diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type
 # into exact proof tokens: -invoked (callback delivery), -rejected:/-failed:
 # (callback reached a rejecting/failing guard), and success tokens (preset
 # applied, completed, armed, managed, or a no-op reflow).
-diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|reflow)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
+diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach|attach)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|attach|reflow)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
 
 # Bounded deterministic readiness wait: fixed attempt count and fixed delay.
 READINESS_ATTEMPTS=30

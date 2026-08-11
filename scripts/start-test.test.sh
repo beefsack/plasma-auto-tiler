@@ -216,9 +216,9 @@ READY_JOURNAL='{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}
 # Eight project records carrying stale Meta+Alt assignments, plus eight records
 # that already match the source defaults. Active field is the first integer
 # array, default field the second.
-RECONCILE_MISMATCH_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[402653258],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[402653259],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[402653260],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[436207688],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[436207690],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[436207692],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]]]]}'
+RECONCILE_MISMATCH_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[402653258],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[402653259],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[402653260],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[436207688],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[436207690],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[436207692],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-attach","Attach window to available tile","kwin","KWin","default","Default Context",[436207648],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]]]]}'
 
-RECONCILE_MATCHED_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[268435528],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[268435530],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[268435531],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[469762124],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[301989960],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[301989962],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[301989963],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[301989964],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]]]]}'
+RECONCILE_MATCHED_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[268435528],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[268435530],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[268435531],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[469762124],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[301989960],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[301989962],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[301989963],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[301989964],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-attach","Attach window to available tile","kwin","KWin","default","Default Context",[436207648],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]]]]}'
 
 make_fake_tools
 
@@ -279,7 +279,7 @@ assert_contains "plasma-auto-tiler-detach"
 assert_contains "active \"402653256\""
 assert_not_contains "KrohnkiteNextLayout"
 assert_contains "do not prove live callbacks"
-assert_contains "shortcut assignments: matched 5, drift 2, missing 9"
+assert_contains "shortcut assignments: matched 5, drift 2, missing 10"
 assert_contains "persisted shortcut assignments drift from controller source"
 
 # status: malformed allComponents reply fails closed (never zero matches)
@@ -486,7 +486,7 @@ run_script reconcile-shortcuts
 check_exit 0
 assert_contains "reconcile-shortcuts: read-only report (no mutation)"
 assert_contains "setShortcutKeys asa(ai)u -> a(ai)"
-assert_contains "matched: 8"
+assert_contains "matched: 9"
 assert_contains "mismatched: 8"
 assert_contains 'action "plasma-auto-tiler-focus-left" active "402653256" expected "268435528"'
 assert_contains 'action "plasma-auto-tiler-focus-right" active "402653260" expected "469762124"'
@@ -500,7 +500,7 @@ setup_state '-- cursor: cursor-1' ""
 printf '%s' "$RECONCILE_MATCHED_RECORDS" > "$WORK/state/shortcuts"
 run_script reconcile-shortcuts
 check_exit 0
-assert_contains "matched: 16"
+assert_contains "matched: 17"
 assert_contains "mismatched: 0"
 assert_no_setshortcut_calls
 
@@ -612,7 +612,7 @@ CALL_BASELINE="$(wc -l < "$WORK/setshortcut.log")"
 run_script reconcile-shortcuts --apply
 check_exit 1
 assert_contains 'action "plasma-auto-tiler-focus-left" is under component "not-kwin", expected "kwin"'
-assert_contains "refusing to apply with 16 project ownership error"
+assert_contains "refusing to apply with 17 project ownership error"
 if [[ "$(wc -l < "$WORK/setshortcut.log")" -ne "$CALL_BASELINE" ]]; then
   echo "FAIL: wrong-owner apply still wrote shortcut records" >&2
   FAIL=$((FAIL + 1))
@@ -697,6 +697,7 @@ plasma-auto-tiler-move-down	301989962	Meta+Shift+J
 plasma-auto-tiler-move-up	301989963	Meta+Shift+K
 plasma-auto-tiler-move-right	301989964	Meta+Shift+L
 plasma-auto-tiler-detach	301989920	Meta+Shift+Space
+plasma-auto-tiler-attach	436207648	Meta+Alt+Shift+Space
 plasma-auto-tiler-apply-columns	402653233	Meta+Alt+1
 plasma-auto-tiler-apply-rows	402653234	Meta+Alt+2
 plasma-auto-tiler-apply-balanced-grid	402653235	Meta+Alt+3

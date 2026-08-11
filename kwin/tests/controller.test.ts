@@ -397,6 +397,38 @@ function configureThreeOccupantPreset(
     return { directions, managed, left, middle, right, branch };
 }
 
+// Floating active window with an occupied leaf, a layout branch, and an
+// empty leaf beneath the exact scope root. `root.tiles` ordering is chosen so
+// the decoded traversal reaches the layout branch and occupied leaf before the
+// empty leaf, proving deterministic skipping.
+function attachSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly empty: TestTile;
+    readonly occupied: TestTile;
+    readonly layout: TestTile;
+    readonly active: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const layout = tile(RECT, true);
+    const occupied = tile();
+    const occupiedWindow = window({ tile: occupied });
+    occupied.windows = [occupiedWindow];
+    const empty = tile();
+    const active = window();
+    // LIFO traversal reaches layout (skipped), then occupied (skipped), then
+    // empty (selected), proving deterministic first-empty selection.
+    root.tiles = [empty, occupied, layout];
+    harness.root = root;
+    harness.active = active;
+    harness.windows = [occupiedWindow, active];
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, empty, occupied, layout, active };
+}
+
 function currentScopeFor(active: TestWindow): CurrentScope {
     const output = active.output;
     if (output === null) {
@@ -960,6 +992,7 @@ describe("TileController keyboard focus", () => {
         ...focusActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ...moveActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
         ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
+        ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
         ...presetActions,
     ];
 
@@ -992,6 +1025,7 @@ describe("TileController keyboard focus", () => {
                 invokeShortcut(harness, name);
             }
             invokeShortcut(harness, "plasma-auto-tiler-detach");
+            invokeShortcut(harness, "plasma-auto-tiler-attach");
             for (const [name] of presetActions) {
                 invokeShortcut(harness, name);
             }
@@ -1723,6 +1757,346 @@ describe("TileController tile detach", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-detach");
         assert.equal(state.controller.isEnabled, true);
         assert.equal(state.focused.tile, null);
+    });
+});
+
+describe("TileController tile attach", () => {
+    it("invokes the registered callback and attaches the active window with one guarded write", () => {
+        const state = attachSetup();
+        const registered = state.harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-attach");
+        assert.notEqual(registered, undefined);
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(state.active, writes);
+        const baseline = state.harness.logs.length;
+        registered?.handler();
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.active.tile, state.empty);
+        assert.deepEqual(state.empty.windows, [state.active]);
+        assert.deepEqual(writes, [{ window: state.active, target: state.empty }]);
+        assert.deepEqual(state.harness.activeWrites, []);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-completed"],
+        );
+        for (const entry of state.harness.logs.slice(baseline)) {
+            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("maps every attach precondition guard to its first fixed private reason with no write", () => {
+        const cases: ReadonlyArray<{
+            readonly reason: string;
+            readonly configure: (state: ReturnType<typeof attachSetup>) => void;
+        }> = [
+            {
+                reason: "attach-rejected:no-active-window",
+                configure: (state) => {
+                    state.harness.active = null;
+                },
+            },
+            {
+                reason: "attach-rejected:desktop-output-scope",
+                configure: (state) => {
+                    state.harness.currentDesktop = null;
+                },
+            },
+            {
+                reason: "attach-rejected:active-window-eligibility",
+                configure: (state) => {
+                    state.active.resizeable = false;
+                },
+            },
+            {
+                reason: "attach-rejected:already-assigned",
+                configure: (state) => {
+                    state.active.tile = state.occupied;
+                },
+            },
+            {
+                reason: "attach-rejected:root-lookup",
+                configure: (state) => {
+                    state.harness.root = null;
+                },
+            },
+            {
+                reason: "attach-rejected:topology-decode",
+                configure: (state) => {
+                    state.root.tiles = { length: 1 };
+                },
+            },
+            {
+                reason: "attach-rejected:no-available-tile",
+                configure: (state) => {
+                    state.empty.windows = [window({ tile: state.empty })];
+                },
+            },
+        ];
+        for (const testCase of cases) {
+            const state = attachSetup();
+            const baseline = state.harness.logs.length;
+            testCase.configure(state);
+            const beforeTile = state.active.tile;
+            invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+            assert.equal(countEvent(state.harness.logs, "attach-completed"), 0);
+            assert.equal(state.active.tile, beforeTile);
+            assert.deepEqual(state.harness.activeWrites, []);
+            assert.deepEqual(
+                state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+                ["plasma-auto-tiler:attach-invoked", `plasma-auto-tiler:${testCase.reason}`],
+            );
+        }
+    });
+
+    it("selects the deterministic first empty non-layout leaf, skipping layout and occupied leaves", () => {
+        const state = attachSetup();
+        const secondEmpty = tile();
+        // LIFO decoded traversal order: layout (skipped), occupied (skipped),
+        // empty (selected), secondEmpty (not reached). Proves deterministic
+        // first-empty selection skipping layout and occupied leaves.
+        state.root.tiles = [secondEmpty, state.empty, state.occupied, state.layout];
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.active.tile, state.empty);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-completed"],
+        );
+    });
+
+    it("skips an empty non-Custom Tile leaf", () => {
+        const state = attachSetup();
+        const foreign = tile();
+        const { layoutDirection: ignoredDirection, split: ignoredSplit, ...nonCustom } = foreign;
+        void ignoredDirection;
+        void ignoredSplit;
+        // LIFO traversal reaches the generic Tile first, but attach must use
+        // only an authored Custom Tile leaf.
+        state.root.tiles = [state.empty, nonCustom];
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.active.tile, state.empty);
+    });
+
+    it("rejects when the target leaf leaves the topology immediately before the write", () => {
+        const state = attachSetup();
+        let rootReads = 0;
+        const decoyRoot = tile(RECT, true);
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                rootReads += 1;
+                return rootReads === 1 ? state.root : decoyRoot;
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.active.tile, null);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects when the active window changes immediately before the write", () => {
+        const state = attachSetup();
+        let activeReads = 0;
+        const replacement = window();
+        Object.defineProperty(state.harness, "active", {
+            configurable: true,
+            get: () => {
+                activeReads += 1;
+                return activeReads === 1 ? state.active : replacement;
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.active.tile, null);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects when the exact scope changes immediately before the write", () => {
+        const state = attachSetup();
+        let desktopReads = 0;
+        Object.defineProperty(state.harness, "currentDesktop", {
+            configurable: true,
+            get: () => {
+                desktopReads += 1;
+                return desktopReads === 1 ? DESKTOP : { id: "desktop-2" };
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.active.tile, null);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-stale"],
+        );
+    });
+
+    it("rejects when the source becomes assigned immediately before the write", () => {
+        const state = attachSetup();
+        let activeReads = 0;
+        let sourceAssigned = false;
+        Object.defineProperty(state.harness, "active", {
+            configurable: true,
+            get: () => {
+                activeReads += 1;
+                // The revalidation re-reads the active window identity; from
+                // that point the source tile is treated as newly assigned, so
+                // the direct tile guard immediately before the write rejects.
+                if (activeReads >= 2) {
+                    sourceAssigned = true;
+                }
+                return state.active;
+            },
+            set: (next) => {
+                void next;
+            },
+        });
+        Object.defineProperty(state.active, "tile", {
+            configurable: true,
+            get: () => (sourceAssigned ? state.empty : null),
+            set: (next: object | null) => {
+                void next;
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-stale"],
+        );
+    });
+
+    it("reports a false attach write with no state change and keeps the controller enabled", () => {
+        const state = attachSetup();
+        Object.defineProperty(state.active, "tile", {
+            configurable: true,
+            value: null,
+            writable: false,
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.active.tile, null);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-failed"],
+        );
+    });
+
+    it("contains a throwing attach write with a fixed diagnostic and no leaked error", () => {
+        const state = attachSetup();
+        Object.defineProperty(state.active, "tile", {
+            configurable: true,
+            get: () => null,
+            set: () => {
+                throw new Error("private-window-title");
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-rejected:assignment-failed"],
+        );
+        for (const entry of state.harness.logs.slice(baseline)) {
+            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
+            assert.equal(entry.includes("private-window-title"), false);
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("reports a postcondition failure when the write succeeds but the association is absent", () => {
+        const state = attachSetup();
+        Object.defineProperty(state.active, "tile", {
+            configurable: true,
+            get: () => null,
+            set: () => {
+                // Setter runs without error but the association is unchanged.
+            },
+        });
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.deepEqual(
+            state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:attach")),
+            ["plasma-auto-tiler:attach-invoked", "plasma-auto-tiler:attach-failed:postcondition"],
+        );
+    });
+
+    it("makes no structural topology call and never manages another occupant", () => {
+        const state = attachSetup();
+        let splits = 0;
+        let unmanages = 0;
+        let manages = 0;
+        state.empty.split = () => {
+            splits += 1;
+            return [];
+        };
+        state.occupied.split = () => {
+            splits += 1;
+            return [];
+        };
+        state.layout.split = () => {
+            splits += 1;
+            return [];
+        };
+        const structural = (leaf: TestTile, kind: "manage" | "unmanage") => {
+            const original = leaf[kind];
+            leaf[kind] = (value: unknown) => {
+                if (kind === "manage") {
+                    manages += 1;
+                } else {
+                    unmanages += 1;
+                }
+                return original(value);
+            };
+        };
+        structural(state.empty, "manage");
+        structural(state.empty, "unmanage");
+        structural(state.occupied, "manage");
+        structural(state.occupied, "unmanage");
+        structural(state.layout, "manage");
+        structural(state.layout, "unmanage");
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(splits, 0);
+        assert.equal(unmanages, 0);
+        assert.equal(manages, 0);
+    });
+
+    it("never compacts or invalidates a valid selected overlay for the same scope", () => {
+        const state = presetSetup();
+        configureThreeOccupantPreset(state);
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        assert.ok(state.controller.readSelectedOverlay(currentScopeFor(state.active)) !== null);
+        const floating = window();
+        state.harness.active = floating;
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(countEvent(state.harness.logs, "attach-completed"), 1);
+        assert.equal(countEvent(state.harness.logs, "reflow-completed"), 0);
+        assert.equal(countEvent(state.harness.logs, "selected-overlay-invalidated"), 0);
+        assert.ok(state.controller.readSelectedOverlay(currentScopeFor(state.active)) !== null);
+        for (const entry of state.harness.logs.slice(baseline)) {
+            assert.equal(entry.includes("screen-1"), false);
+            assert.equal(entry.includes("desktop-1"), false);
+        }
+    });
+
+    it("contains attach diagnostic sink failures without changing the attach result", () => {
+        const state = attachSetup();
+        state.harness.throwOnLog = true;
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
+        assert.equal(state.controller.isEnabled, true);
+        assert.equal(state.active.tile, state.empty);
     });
 });
 
@@ -3306,13 +3680,14 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 16-action all-or-nothing catalog", () => {
+    it("registers the exact 17-action all-or-nothing catalog", () => {
         const { harness } = setup();
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [
             "plasma-auto-tiler-apply-balanced-grid",
             "plasma-auto-tiler-apply-columns",
             "plasma-auto-tiler-apply-rows",
+            "plasma-auto-tiler-attach",
             "plasma-auto-tiler-detach",
             "plasma-auto-tiler-focus-down",
             "plasma-auto-tiler-focus-left",

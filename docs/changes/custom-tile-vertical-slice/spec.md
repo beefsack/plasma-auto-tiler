@@ -47,6 +47,14 @@ In scope:
   Custom Tile, then performs one guarded `window.tile = null` compatibility
   write with an immediately revalidated association. It does not claim rollback
   or live runtime acceptance.
+- Active-window attach uses `plasma-auto-tiler-attach` on
+  `Meta+Alt+Shift+Space` only when an exact read-only KGlobalAccel scan finds no
+  unrelated active conflict. It is inert unless the active eligible window is
+  floating in the exact current workspace/output scope and a deterministic
+  first empty non-layout authored Custom Tile leaf is available in that scope.
+  It revalidates every association immediately before at most one
+  `window.tile = target` compatibility write, never changes topology or another
+  occupant, and does not claim rollback or live runtime acceptance.
 - Keyboard insertion arms exactly one eligible focused non-layout leaf and uses
   `Meta+Alt+Left/Right/Up/Down` when each exact KGlobalAccel chord is
   conflict-free. The next eligible unassigned in-scope window splits that exact
@@ -110,6 +118,10 @@ Non-goals:
 - [ ] The detach action uses the pinned KWin writable `Window.tile` contract,
       rejects every unsafe association before its single write, and has focused
       static tests for registration, guards, write failures, and postcondition.
+- [x] The attach action uses the same pinned writable `Window.tile` contract,
+      rejects every unsafe source, scope, and target association before its
+      single write, and has focused static tests for registration, deterministic
+      empty-leaf selection, revalidation, write failures, and postcondition.
 - [ ] Removal notifications make deferred placement and armed insertion inert
       for removed windows, with focused static tests for queued callbacks,
       source/target removal, duplicate notifications, and failed registration.
