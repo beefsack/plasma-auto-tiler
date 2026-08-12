@@ -4,6 +4,36 @@
   approved by the user on 2026-08-10.
 - Artifact map: [specification](spec.md), [plan](plan.md), and append-only
   [log](log.md).
+- Unit-23/attempt-02 nested removal validation (2026-08-12) partially live-proved
+  production removal rebuild using the freshly built bundle
+  `88844452edad62203419a5510870041a2e883f03d8c79db21c78b75df02d3657`.
+  In a private nested compositor, 4 -> 3 and 3 -> 2 removals each observed
+  `removed-obs tile=set`, then `ownership-remove-deferred`,
+  `ownership-remove-collapsed`, `ownership-pending`,
+  `ownership-collapsed`, and `ownership-taken`; fresh trees were respectively
+  `H[A,V[C,D]]` and `H[C,D]`, with every survivor tiled exactly once. This
+  proves the `callDBus` deferred-collapse correction fires only after KWin
+  evacuates the removed leaf. The driver stopped when its rect-based D locator
+  missed center x=479 by one pixel. Cleanup-phase closes emitted deferred and
+  collapsed diagnostics without rebuild or inert marking, but no authoritative
+  N=1/N=0 snapshots exist; those cases and detached-window close remain
+  unknown. No product defect was observed. Host KWin PID 460069 and its start
+  time were unchanged; the nested compositor and all four tracked client PIDs
+  were cleaned up. See the append-only log for timing and retained evidence.
+- Unit-19/attempt-04 accepted isolated nested-compositor re-entry evidence
+  (2026-08-12): host KWin PID 460069 was unchanged before and after every run.
+  Legal synchronous batches, re-resolving the root and freshly decoding after
+  every call, completed without crash and matched one-call-per-dispatch final
+  shapes and geometries: three splits yielded the same nested tree, and three
+  removals yielded root widths `176/320/160 -> 480/160 -> 640`. A stale removed
+  wrapper touched only after a fresh-dispatch, signal-driven event-loop re-entry
+  remained a non-null object; `layoutDirection`, `absoluteGeometry`, and `tiles`
+  reads returned `undefined`, while `pick(0,0)` threw and was caught. Future
+  ownership may batch homogeneous legal operations synchronously, but must
+  discard every stale handle, re-resolve/decode the root after each call, never
+  mix remove then split in one armed run, and never use a timer as a deletion
+  barrier. Intermediate tile geometry was script-observable between deferred
+  dispatches; client-visible geometry and animation behavior remain unknown.
 - Lead succession: current role is Lead (`lead-openai`, `openai/gpt-5.6-terra`)
   under the Orchestrator. This state file is the multi-Lead continuity record.
 - Current major unit / attempt: `unit-03` remains planned and unaccepted.
@@ -11,8 +41,48 @@
   implementation attempt. `unit-03/attempt-02` returned host-unknown with no
   report, changes, generated package output, or command evidence; Lead host
   reconciliation verified that no foundation implementation can be accepted.
-  `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
-  action is authorized.
+   `unit-02/attempt-01` remains accepted pure deterministic logic. No runtime
+   action is authorized.
+- Unit-20/attempt-01 accepted static correction (2026-08-12): existing move
+  actions now rank every non-layout directional leaf before choosing behavior.
+  The nearest empty leaf retains guarded move-to-empty; the nearest leaf with
+  exactly one eligible in-scope occupant uses an active-source-first swap.
+  Pinned KWin 6.7.3 `Window::setTileCompatibility` invokes `Tile::manage`,
+  whose evacuate-then-add behavior leaves no single-write double listing but
+  creates a transient destination double occupancy between the two writes.
+  Both writes revalidate active and occupant identities, leaf associations,
+  exact scope, and fresh decoded root. On second-write or final-postcondition
+  failure, one fresh-root-gated best-effort source restoration is attempted and
+  reported verified or unverified; no rollback is claimed. The selected-overlay
+  ordinal leaves remain valid because no topology changes. This package deleted
+  the crashed remove-contract probe artifacts and recorded the crash-class
+  structural prohibitions in `docs/live-kwin-testing.md` and `docs/handover.md`.
+  Static verification passed: typecheck, build, 407 tests across 48 suites,
+  and 248 lifecycle shell checks. No live KWin action occurred; live assignment
+  behavior remains unaccepted. Post-crash read-only reconciliation found KWin
+  PID 460069, the project plugin and Krohnkite unloaded, Krohnkite disabled,
+  four desktops, 14 tiling groups, and the current desktop's persisted
+  horizontal five-leaf layout present; no project-owned state required restore.
+- Unit-19/attempt-02 direct live preflight (2026-08-12): the lifecycle decoder
+  now strictly accepts the real `{"type":"a(uss)","data":[[position,id,name],...]}`
+  envelope and mocked lifecycle checks pass. The runner also established the
+  current-desktop property is the scalar `{"type":"s","data":"..."}`
+  envelope, not an array. Three nonce-owned create/read/remove scopes each
+  passed desktop ownership validation, then stopped before switching, loading a
+  script, launching a client, splitting, or removing because the new desktop
+  had zero persisted `[Tiling]` group headers one second after creation. The
+  existing-desktop header decoder independently matched the current live
+  desktop. Each exact cleanup restored the original four-desktop/current,
+  14-group, unloaded-plugin/Krohnkite state and `kwinrc` SHA-256
+  `cc624ba8763531610c42fe3b62b54c3192ee796314da9997dde2c6056f7141ab`.
+  Thus all seven `remove()` contract answers, stale-reference behavior, and
+  config convergence are `not-observed` (zero split/remove calls); no collapse
+  algorithm is runtime-safe to wire. The source-safe proposal remains: retain
+  the original root, freshly decode after each exposed void removal, remove a
+  decoded non-root empty leaf at a time, and stop on any non-decreasing count
+  or identity mismatch. It must not be implemented against live state until
+  the scratch materialization contradiction is resolved.
+- Unit-19/attempt-01 live remove-contract preflight (2026-08-12): one malformed read-only Worker report was discarded and not retried. Direct reconciliation matched `6461ff2`, KWin PID 2517, four current desktops, one output, unloaded project plugin/Krohnkite, 14 existing tiling groups, and `kwinrc` SHA-256 `cc624ba8763531610c42fe3b62b54c3192ee796314da9997dde2c6056f7141ab`. The direct probe bundle typechecked and built, but its temporary-desktop ownership parser incorrectly expected `data[0]` for the actual `busctl --json=short` `a(uss)` response. `createDesktop` had already created exact desktop `16485e55-8622-47c9-b4d3-dfca0bdbedb8`; direct reconciliation proved it was still on the original desktop and that the new desktop already had default `tiles={"layoutDirection":"horizontal","tiles":[{"width":0.25},{"width":0.5},{"width":0.25}]}` and `padding=4`. Per the stop-on-surprise rule, no switch, load/run, window launch, split, remove, or retry occurred. Cleanup removed only that desktop and its exact two nested keys, verified their group absent, restored the original current desktop, and restored the exact `kwinrc` hash. The temporary diagnostic source and entry replacement were removed. No live evidence answers any `remove()` contract question; source-only expectations remain unaccepted.
 - Current package: `unit-18/attempt-01` is a static-only guarded reset foundation. Pinned KWin 6.7.3 exposes `CustomTile::remove()` as `Q_INVOKABLE void`; it first removes the child, may recursively promote/remove a single-child non-root layout, evacuates any remaining occupants by geometry, and ends with `deleteLater()`. The controller therefore must not invoke it until a dedicated runtime contract proves QJSEngine invocation plus fresh root decoding across those transitions. The new pure seam requires complete unmanage-before-remove preflight, re-decodes the same root after every void removal, demands strictly fewer reachable tiles as its only postcondition, preserves root identity, and reports pre-mutation rejection versus reset-may-have-mutated. It is intentionally not wired to lifecycle ownership, so no persistent topology mutation is introduced by this static package.
 - Previous package: `unit-16/attempt-01` is accepted static focus correction.
   The user-provided same-PID diagnostics prove delivered focus callbacks reached
@@ -1579,3 +1649,131 @@
   14 groups, Krohnkite unloaded, and zero project actions. The singleton
   fallback remains unaccepted. This is the final live attempt; live validation
   is parked while product development continues.
+- Tiling config realization investigation (2026-08-12, read-only Worker
+  package, no live mutation; pinned KWin v6.7.3 commit
+  `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`, source at `/tmp/opencode/kwin`).
+  Evidence per required question, all citations at that commit:
+  1. Keying/hierarchy: groups are `[Tiling][<virtual-desktop UUID>][<output
+     uuid>]` with `tiles` (JSON) and `padding` (qreal). `TileManager::
+     readSettings` (`src/tiles/tilemanager.cpp:288-340`) falls back from global
+     `[Tiling] padding` to the desktop/output group keyed by `desk->id()` and
+     `m_output->uuid()`; `saveSettings` (`:390-405`) writes per-desktop/output
+     and `cg.sync()`. Output identity is the backend UUID
+     (`src/core/output.cpp:534-537`, `src/core/backendoutput.cpp:234-237`,
+     set from the Wayland output protocol `props->uuid`,
+     `src/backends/wayland/wayland_output.cpp:382`), not a name or config hash.
+     Plasma 6.3 legacy fallback is UUIDv5 of `name:eisaId:model:serial` under
+     the kwin URL namespace (`tilemanager.cpp:277-286`). No activity dimension.
+     Host: 14 groups, all on output uuid `76d3106d-dc9a-4ca1-8d56-ccbe99dd7837`
+     (eDP-1). Live desktops from `[Desktops]` Id_1..Id_4 = `392a73ad-0fff-4b48-
+     bb91-1b67eb82bc49`, `83e443a3-b84a-417c-b5d1-02199836953d`, `ec13f70f-b5c2-
+     4e37-a245-74fc2747b849`, `41cee7be-cc76-41df-b128-cd5be29aff62`; the other
+     ten group UUIDs (`6cc363e5-...`, `8fbad258-...`, `a07ad867-...`,
+     `bef1dc0d-...`, `d09fd3db-...`, `e92f2386-...`, `eca64bc9-...`,
+     `ed0e4bb5-...`, `f5c9cf45-...`, `facd1dc9-...`) are stale desktops absent
+     from `[Desktops]`. D-Bus confirms `org.kde.KWin.VirtualDesktopManager`
+     `count=4`, `current=392a73ad-0fff-4b48-bb91-1b67eb82bc49`.
+     createDesktop materialization contradiction RESOLVED: `desktopAdded`
+     -> `addDesktop` builds a default 3-column tree; its `layoutModified`
+     emissions start the 2000ms `m_saveTimer` (`tilemanager.cpp:61-76`, default
+     setup `:300-321`), so `saveSettings` persists default `tiles`/`padding`
+     ~2s after creation. The three "no group one second after createDesktop"
+     scopes read before the timer fired; the `unit-05/attempt-16` leak (120s+
+     later) confirms the write. A temporary-desktop cleanup must therefore
+     delete the exact group once it has existed >2s.
+  2. JSON schema: no version field. Root:
+     `{"layoutDirection":"horizontal|vertical|floating","tiles":[...]}`; layout
+     object `tiles` arrays nest; leaves carry `width` (horizontal parent),
+     `height` (vertical parent), or `x`,`y`,`width`,`height` (floating).
+     Serializer `tileToJSon` (`tilemanager.cpp:342-388`); parser
+     `parseTilingJSon` (`:197-275`) clamps to available area/minimum size,
+     ignores single-item arrays, and stretches the last child to fill
+     (`:264-271`). `padding` is a separate group key in output pixels, half
+     between tiles and full at screen edges (`Tile::windowGeometry`,
+     `src/tiles/tile.cpp:171-182`). Real host example (current desktop
+     `392a73ad-0fff-4b48-bb91-1b67eb82bc49`):
+     `tiles={"layoutDirection":"horizontal","tiles":[{"width":0.25},{"width":0.15000000000000002},{"width":0.15000000000000002},{"width":0.25},{"width":0.25}]}`
+     and `padding=4`. (`0.15000000000000002` is Qt's double JSON serialization,
+     not a config error.)
+  3. Load class/lifecycle: `TileManager` per `LogicalOutput`, created on
+     outputAdd (`src/workspace.cpp:1428-1433`); constructor reads settings for
+     every desktop and on `desktopAdded` (`tilemanager.cpp:57-96`). No
+     KConfigWatcher in `src/tiles/`; `Workspace::reconfigure()`/`slotReconfigure`
+     (`src/workspace.cpp:998-1037`) reparses kwinrc, updates Options, emits
+     `configChanged`, reloads rules, but never calls `readSettings`. Tiling
+     config reloads only at TileManager construction (compositor start / output
+     add) and desktop add. Never automatic for external edits.
+  4. D-Bus reread: none. `org.kde.KWin.reconfigure()` (no-reply,
+     `src/org.kde.KWin.xml:5-7`, `src/dbusinterface.cpp:64-66`) and the inbound
+     `reloadConfig` signal (`dbusinterface.cpp:48-49` ->
+     `Workspace::slotReloadConfig` -> `reconfigure`, `workspace.cpp:993-1001`)
+     both debounce 200ms into `slotReconfigure`; neither re-reads tiling.
+     Disruptive side effects of `reconfigure()`: reparseConfiguration, Options
+     update, full window-rules reload/re-evaluation, user-actions-menu discard
+     (`workspace.cpp:1014-1026`).
+  5. Assignment behavior: KWin persists no window-tile associations, and
+     `readSettings` runs when no windows exist, so a config replacement has no
+     in-flight assignment. On runtime structural change, occupants redistribute
+     by geometry center: `CustomTile::remove` re-picks each residual window into
+     the remaining tree (`src/tiles/customtile.cpp:334-340`); `Tile::insertChild`
+     into a layout that held windows does the same (`src/tiles/tile.cpp:471-492`);
+     `Tile::~Tile` evacuates likewise (`tile.cpp:37-67`). `RootTile::pick`
+     (`customtile.cpp:460-483`) selects the nearest non-layout leaf by center
+     distance with containment preference; a center in no leaf yields `null` ->
+     window unmanaged with retained geometry (association dropped/undefined).
+     `Tile::manage` evacuates the window from every other tile across all
+     outputs for the desktop before adding (`tile.cpp:377-425`, single-owner).
+     Active-window geometry follows the tree:
+     `setRelativeGeometry` -> `windowGeometryChanged` -> `w->moveResize`
+     (`tile.cpp:140-145`).
+  6. Outbound IPC: `Script.callDBus(service, path, interface, method, arg1..9,
+     callback?)` - async session-bus call, up to 9 args converted via
+     `toVariant`, reply only through a trailing callable
+     (`src/scripting/scripting.h:115-125`, `src/scripting/scripting.cpp:301-374`).
+     Usable from a KWin/Script plugin.
+  7. Scripting config access: `Script::readConfig(key, default)` reads
+     `AbstractScript::config()` = the `[Script-<pluginName>]` group of kwinrc
+     (`scripting.cpp:296-299`, `:119-123`). Arbitrary kwinrc groups are not
+     reachable and there is no write path on `Script` (`writeConfig` exists only
+     on `ScriptedEffect`, `src/scripting/scriptedeffect.h:121`).
+  8. Supported D-Bus API to set layouts: none. Live introspection of
+     `org.kde.KWin` matches only `src/org.kde.KWin.xml`; no tiling method.
+     `/Layouts` on the session bus is `org.kde.KeyboardLayouts`. Layouts are set
+     only via raw `[Tiling]` kwinrc (read at startup), scripting structural
+     calls, or the interactive tileseditor effect mutating the live tree (KWin
+     persists it via the 2s save timer).
+  Verdict: viable only as cold-start persistence, not for automatic product
+  realization. `[Tiling]` is construction-time only; no supported runtime
+  reload exists, and the running manager can overwrite an external write on
+  its next 2s save. Restarting KWin after every add/remove is visibly
+  disruptive. The scripted live apply is crash-class (unit-18/19).
+  Architecture proposal (minimum maintainable dwindle managed scope): external
+  writer replaces exactly the `[Tiling][<managedDesktopId>][<outputUuid>]` group
+  (dwindle binary-tree `tiles` JSON + `padding`), backing up the prior group for
+  rollback; non-clobber selection touches only the exact managed desktop/output
+  key, never `[Tiling]` global `padding` and never other/stale groups. No
+  KWin-script trigger or reload request needed: KWin realizes the group at
+  TileManager construction; the plugin's existing guarded assignment operates on
+  that tree after restart. Post-restart assignment is by the plugin's
+  `window.tile`/`tile.manage` placement (static unit-10..20); restart is the
+  whole-visible latency; failure falls back to KWin's default 3-column setup on
+  parse error (`tilemanager.cpp:323-329`). Runtime/system deps: none beyond the
+  existing Node dev toolchain (no `devenv.nix` change unless the user chooses a
+  non-Node helper runtime, which then needs the session-restart rule).
+  First bounded future package, if cold-start-only support remains useful:
+  unit-21 - dev-only, schema-pinned dwindle `[Tiling]` generator/validator and
+  exact group-selection tests (pure, no KWin). It must not claim runtime
+  reload or automatic adaptation. A dynamic product needs upstream KWin reload
+  support or a separately-safe supported structural API.
+  User decisions needed: (a) helper language/runtime/packaging for the writer;
+  (b) whether a separately-authorized future live package may test
+  restart-realization of a written group; (c) stale `[Tiling]` groups remain
+  untouchable.
+  Verification status (2026-08-12): `npm --prefix kwin run typecheck` pass;
+  `npm --prefix kwin run build` pass (115.1kb ES2017 IIFE); `npm --prefix kwin
+  test` 407 pass / 48 suites / 0 fail; `bash scripts/start-test.test.sh` 248
+  pass / 0 fail (exit 0). No commit, no stage, no live mutation. Residual
+  risks: restart-realization is source-evidenced, not live-proven (restart not
+  authorized); live `split()`/`remove()` behavior remains unaccepted
+  (unit-05/18/19 parked); any future scripted live apply re-clobbers external
+  config via the 2s save timer.

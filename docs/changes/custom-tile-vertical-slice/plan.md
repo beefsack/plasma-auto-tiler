@@ -47,6 +47,8 @@ retains persistent topology; stable multi-output identity remains deferred.
 | unit-16 | Accepted static focus correction 2026-08-12 | Correct directional neighbor selection so a non-overlapping leaf that touches the focused leaf's facing edge is eligible at distance zero. | unit-15 | Pure directional geometry and focused controller tests | No | The supplied diagnostics prove two delivered focus callbacks rejected only at `focus-rejected:no-neighbor`; adjacent occupied-leaf vectors now select and write the target. Typecheck, build, 389 tests across 46 suites, and 194 lifecycle shell checks pass. |
 | unit-17 | Accepted source and registration correction 2026-08-12 | Add separate project-owned focus and move arrow alias actions because KWin registers one source default per action. Keep H/J/K/L actions and all guarded callbacks unchanged; expand the all-or-nothing catalog and lifecycle reconciliation. Clear only exact active Krohnkite desired-arrow sequences after snapshotting and verifying each action, never deleting records or changing nonconflicting sequences. | unit-16 | Controller shortcut catalog, lifecycle reconciler/tests, exact KGlobalAccel records, live guide | Yes, explicitly authorized | The 27-action catalog has eight aliases. Typecheck, build, 389 tests across 46 suites, and 202 lifecycle shell checks pass. One `start -> status -> stop` lifecycle confirmed all 27 records; read-only reconciliation then confirmed 27 matched, zero drift/missing/ownership errors/unrelated conflicts after the exact Krohnkite sequence clears. |
 | unit-18 | Static-only source-safe foundation 2026-08-12 | Establish whether exposed scripting writes can reset arbitrary Custom Tile topology without guessing. Model a guarded collapse that preflights every decoded occupant, unmanages before removal, preserves the original root identity, and requires fresh decoded postconditions after every void removal. Do not wire lifecycle ownership or run live structural mutation until the runtime remove/promotion/list contract is proven. | unit-17, pinned KWin source | No | Pinned `customtile.h` exposes `Q_INVOKABLE void remove()`; `customtile.cpp` removes the child, can recursively remove/promote a non-root single-child layout, re-picks residual occupants, and ends in `deleteLater()`. Pure fakes cover three-leaf/nested/singleton trees, root preservation, unmanage rejection, throwing/no-op remove, and mutation-possible reporting. |
+| unit-19 | Accepted nested-compositor contract probe 2026-08-12 | Obtain the live QJSEngine `CustomTile.remove()` contract on a nonce-owned desktop: synchrony, promotion, root identity, complete collapse, occupant handling, stale references, and immediate versus deferred removal sequencing. | unit-18, fresh authorization | Authorized nested-KWin mutation | Isolated KWin 6.7.3 evidence: removing one child of a two-child layout collapses that layout in place to a leaf (`tiles 2 -> 0`), retaining its parent region; removing a root child shrinks root children `3 -> 2` and redistributes geometry while retaining root direction/geometry; root `remove()` is a no-op. Fresh-script reads immediately observed the consistent post-removal shape. Root identity was stable through `workspace.rootTile(output, desktop)`, while `tilingForScreen(output)` was not a usable root accessor. In-run stale reads did not crash, but post-event-loop stale-child safety and sibling object identity remain unknown. |
+| unit-20 | Accepted static correction 2026-08-12 | Extend existing directional move actions so the nearest ranked non-layout leaf moves an active eligible in-scope window when empty, or swaps it with exactly one eligible in-scope occupant when occupied. Revalidate identities, scope, root, leaf associations, and postconditions around at most two guarded `window.tile` writes; after a second-write failure, make one guarded best-effort source restoration without claiming rollback. | unit-17, pinned KWin source | No | Pinned KWin 6.7.3 `Window::setTileCompatibility` and `Tile::manage` establish evacuate-then-add assignment behavior. Focused vectors cover all directions, empty/occupied ranking, eligibility, occupancy, stale revalidation, write failures/restoration, no topology calls, and selected-overlay coherence. Typecheck, build, 407 tests across 48 suites, and 248 lifecycle shell checks pass. |
 
 Only the Lead mutates plans and state. Semantic unit IDs are stable; execution
 slices use `unit-<n>/attempt-<n>`.
@@ -91,6 +93,7 @@ accepted; no production behavior was added.
 | Guarded active-window attach | unit-15 focused controller/boundary/lifecycle vectors plus typecheck, build, full suite, and lifecycle shell checks |
 | Adjacent-leaf directional focus | unit-16 exact edge-touch selector and controller focus-write vectors, plus typecheck, build, and full suite |
 | Project-owned arrow aliases | unit-17 exact metadata/default/callback and all-or-nothing vectors, lifecycle catalog source-sync checks, exact KGlobalAccel snapshot/clear/postflight evidence |
+| Guarded directional occupied-target swap | unit-20 pinned assignment source evidence; focused ranking, occupancy, identity, write-failure/restoration, topology-absence, and overlay-coherence vectors; typecheck, build, full suite, and lifecycle checks |
 | Separately authorized runtime behavior only | unit-05 exact authorization and mandatory-gate record; no delivery, enablement, or runtime capability claim beforehand |
 
 ## Residual Risks
@@ -106,6 +109,9 @@ accepted; no production behavior was added.
 - No installed same-Qt QJSEngine parser is available for static acceptance. The
   ES2017 generated-syntax regression removes the observed ES2019 optional-catch
   incompatibility but cannot establish full runtime parser or API compatibility.
+- The guarded swap is static-only. Live QJSEngine tile-list and writable
+  `window.tile` behavior remain unaccepted, including the pinned transient
+  double-occupancy interval between its two assignment writes.
 
 ## Progress
 
@@ -123,6 +129,8 @@ accepted; no production behavior was added.
 - [x] unit-15 Guarded active-window attach action (static correction, 2026-08-12)
 - [x] unit-16 Adjacent-leaf directional focus correction (static correction, 2026-08-12)
 - [x] unit-18 Guarded Custom Tile reset foundation (static-only, 2026-08-12)
+- [x] unit-19 Nested-compositor `CustomTile.remove()` contract probe (2026-08-12)
+- [x] unit-20 Guarded directional occupied-target swap (static-only, 2026-08-12)
 - `unit-05/attempt-07` aborted before bundle load when the exact-owned supervisor
    did not detach from the command runner; its completed cleanup restored the
    reviewed baseline. No registration/discovery evidence was obtained.
@@ -239,7 +247,7 @@ accepted; no production behavior was added.
 
 ## Pending User Decisions
 
-- Resolved by user direction 2026-08-12: automatic session-local ownership is approved when the plugin is enabled, using ratio-free dwindle topology. Implementation remains blocked only on the dedicated runtime proof for `CustomTile.remove()` collapse semantics; no static package may perform a live reset.
+- Resolved by user direction and isolated nested-KWin `unit-19` evidence 2026-08-12: automatic session-local ownership is approved when the plugin is enabled, using ratio-free dwindle topology. For a homogeneous legal batch (splits only or removals only), synchronous re-entry is preferred: discard child handles and re-resolve/decode the root after every structural call. Do not mix removal and split in one run, retain/touch stale handles, or use a timer as a deletion barrier. The evidence is limited to the nested compositor and has no client-visible animation result.
 
 - Resolved by `unit-05/attempt-13`: the corrected `--user`-scope capture
   contract (fixed-prefix `plasma-auto-tiler:` success diagnostics plus
@@ -293,3 +301,58 @@ accepted; no production behavior was added.
   writer advanced before and during the supervisor launch, but the supervisor
   exited normally without a ready marker. No desktop, plugin, action, client,
   load/run, or journal mutation followed; live validation is parked.
+
+## Tiling Config Realization Investigation (2026-08-12, Worker)
+
+Findings (pinned KWin v6.7.3 commit `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`;
+read-only host inspection; no live mutation):
+
+- `[Tiling]` groups are `[Tiling][<desktop UUID>][<output uuid>]` with `tiles`
+  JSON and `padding`; no activity dimension. Read once per output's
+  `TileManager` construction and per `desktopAdded`
+  (`src/tiles/tilemanager.cpp:57-96,288-340`), created at outputAdd
+  (`src/workspace.cpp:1428-1433`). No runtime or `reconfigure()` reload; no
+  KConfigWatcher in `src/tiles/`.
+- JSON schema has no version field: root is `{"layoutDirection",
+  "tiles":[...]}`, leaves carry `width` (horizontal parent), `height`
+  (vertical), or `x/y/width/height` (floating); nesting via recursive `tiles`
+  arrays (`tilemanager.cpp:197-275,342-388`).
+- D-Bus: `org.kde.KWin.reconfigure()` (no-reply) and the inbound
+  `reloadConfig` signal both funnel to `Workspace::reconfigure()`
+  (`src/org.kde.KWin.xml:5-7`, `src/dbusinterface.cpp:48-49,64-66`,
+  `src/workspace.cpp:993-1037`), which never re-reads tiling. No D-Bus API
+  rereads or sets tiling layouts.
+- Script IPC: `Script.callDBus(service, path, interface, method, ...args,
+  callback?)`, async session-bus, up to 9 args, reply via trailing callable
+  (`src/scripting/scripting.h:115-125`, `src/scripting/scripting.cpp:301-374`).
+  Config access is read-only `readConfig` over the `[Script-<pluginName>]`
+  group only (`scripting.cpp:296-299,119-123`); no `writeConfig` on `Script`.
+- createDesktop materialization contradiction RESOLVED: the default-setup tree
+  mutations emit `layoutModified`, starting the 2000ms `m_saveTimer`, so KWin
+  persists a default `[Tiling]` group ~2s after desktop creation
+  (`tilemanager.cpp:61-76,300-321,390-405`). The "no group one second after
+  createDesktop" scopes read before the save timer fired.
+
+Viability verdict: viable only as cold-start persistence, not as automatic
+product realization. `[Tiling]` is realized only when a `TileManager` is
+constructed (compositor/output/desktop creation), not after a runtime config
+write or `reconfigure()`. A running manager can also overwrite the external
+change on its next 2s save. Restarting KWin for each addition/removal is
+visibly disruptive; the scripted structural path remains crash-class
+(unit-18/19).
+
+First bounded future package, if cold-start-only support remains useful:
+unit-21 - a dev-only, schema-pinned dwindle `[Tiling]` generator/validator and
+exact group-selection tests (pure, no KWin). It must not claim runtime reload
+or automatic adaptation. A dynamic product needs upstream KWin reload support
+or a separately-safe supported structural API.
+
+User decisions needed: helper language/runtime/packaging for the writer
+(default: existing dev-only Node toolchain; any other runtime needs a
+`devenv.nix` update plus session restart); whether a separately-authorized
+future live package may test restart-realization of a written group; stale
+`[Tiling]` groups remain untouchable.
+
+Verification status (2026-08-12): typecheck pass; build pass (115.1kb ES2017
+IIFE); test 407 pass / 48 suites / 0 fail; `start-test.test.sh` 248 pass /
+0 fail (exit 0). No commit, no stage, no live mutation.

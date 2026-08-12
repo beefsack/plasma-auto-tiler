@@ -60,10 +60,12 @@ session instructions and historical verification figures.
   remains disabled and unloaded.
 - The plugin's guarded shortcut catalog registers all 27 actions atomically.
   Persisted KGlobalAccel records do not prove loaded callbacks.
-- Static capabilities include guarded focus/move-to-empty, focused-leaf preset
-  application, selected-overlay tracking and assignment-only reflow, guarded
-  attach/detach, scope fill, and `dwindle`. None establishes live structural or
-  callback behavior.
+- Static capabilities include guarded focus/move-to-empty, guarded directional
+  occupied-target window swap (the nearest ranked non-layout leaf's occupancy
+  decides move-to-empty versus swap), focused-leaf preset application,
+  selected-overlay tracking and assignment-only reflow, guarded attach/detach,
+  scope fill, and `dwindle`. None establishes live structural or callback
+  behavior.
 
 ## Reset Boundary
 
@@ -74,6 +76,73 @@ session instructions and historical verification figures.
   root after each remove.
 - Live QJSEngine invocation, removal/promotion behavior, root identity, and
   fresh-root decoding remain unaccepted. Do not infer them from static tests.
+- A 2026-08-12 direct contract-probe preflight created one nonce-owned desktop
+  but stopped before switching it, loading a script, launching a test window,
+  or calling `split()`/`remove()`: its strict desktop parser expected an extra
+  JSON array level and rejected the actual valid `a(uss)` envelope. Reconciliation
+  also established that `createDesktop` immediately materializes that desktop's
+  default `tiles` and `padding` values. The exact desktop was removed and only
+  its two exact keys were deleted; the original four-desktop current selection
+  and `kwinrc` SHA-256 `cc624ba8763531610c42fe3b62b54c3192ee796314da9997dde2c6056f7141ab`
+  were restored. This is restoration evidence, not any `remove()` contract
+  evidence.
+- A later `unit-19` reconciliation corrected the desktop enumeration decoder
+  and proved the current-desktop scalar envelope is `{"type":"s","data":"..."}`.
+  Three separate nonce-owned create/read/remove preflights then stopped before
+  switch, script load, client launch, split, or remove: none had a new
+  `[Tiling]` group on disk one second after `createDesktop`, despite the earlier
+  materialization observation. Each cleanup restored the four-desktop/14-group
+  baseline and `kwinrc` SHA-256
+  `cc624ba8763531610c42fe3b62b54c3192ee796314da9997dde2c6056f7141ab`. This
+  contradiction is a scope-integrity blocker, not `remove()` evidence.
+
+## Remove-Contract Probe Crash and Directional Swap
+
+- A live remove-contract probe on the current persistent scope crashed KWin
+  with the exact stack `QTimer::timeout -> JS callback -> KWin::CustomTile::split
+  -> KWin::TileModel::beginInsertTile -> QAbstractItemModel::beginInsertRows`.
+  Mechanism: `split()` on a tile tree already changed by a prior `remove()`; the
+  earlier remove recursively promoted a single-child layout and
+  `deleteLater()`ed the detached tiles (`customtile.cpp:273-343`), so the later
+  split ran against model rows that no longer matched the live tree
+  (`customtile.cpp:40-50` -> `scripting/tilemodel.cpp:123-138`). The fixed 3000
+  ms timer was incorrectly treated as a `deleteLater` settle barrier; a timer
+  cannot observe deferred deletion. The probe artifacts were deleted:
+  `scripts/run-current-remove-contract-probe.sh`,
+  `scripts/run-remove-contract-probe.sh`, `kwin/src/remove-contract-probe.ts`,
+  and the generated `kwin/contents/code/remove-contract-probe.js` and
+  `remove-contract-current-scope-probe.js`.
+- Durable prohibitions from the crash: never `remove()` then `split()` in one
+  run; never use a fixed-timer `deleteLater` barrier; always re-resolve every
+  tile handle including root after removal; one structural call per dispatch
+  then stop; never run a structural probe in a persistent user scope. A
+  scripted collapse (repeated `remove()`) can also crash the compositor and may
+  expose an upstream KWin defect; it is crash-class, never cleanup-class.
+- Whether `createDesktop` immediately materializes `[Tiling]` groups remains an
+  unresolved contradiction (one preflight observed default `tiles`/`padding`;
+  three later scopes found no persisted group one second after `createDesktop`).
+  Treat neither observation as settled; do not perform another structural
+  mutation until it is resolved.
+- Pinned KWin 6.7.3 source evidence for the guarded directional swap: writing
+  `window.tile = X` dispatches to `Window::setTileCompatibility`
+  (`src/window.cpp:3803-3814`), which calls `X->manage(this)` then
+  `previousTile->unmanage(this)`. `Tile::manage` (`src/tiles/tile.cpp:377-425`)
+  first evacuates the window from its previous tile (removing it from every
+  descendant of the desktop root/quick root across all outputs), then `add`s it
+  to the target tile, so a single write never leaves the window doubly listed.
+  Across the two swap writes the first-moved window's destination leaf
+  transiently holds both windows (the pinned double-occupancy window), lasting
+  only between the two synchronous writes with no event-loop yield. The
+  untiled-stranding interval is zero for in-scope windows on the current
+  desktop because both leaves are `isActive()` (tile.cpp:74-77), so `requestTile`
+  always targets a real tile; the ordering that moves the active source first
+  was chosen because a failed second write then leaves the source in the
+  intended directional leaf and a single best-effort restoration returns both
+  windows to their original leaves. A swap is at most two guarded `window.tile`
+  writes, one more for best-effort restoration after a second-write failure;
+  the selected-overlay record stores only ordinal leaf tiles and stays valid
+  because a swap never changes the tile tree.
+
 
 ## Accepted Live Boundary
 
@@ -87,13 +156,15 @@ session instructions and historical verification figures.
 
 ## Exact Next Package
 
-1. Obtain a scope that is explicitly owned or isolateable, then perform one
-   bounded live contract validation of `CustomTile.remove()` removal/promotion,
-   original-root identity, and fresh decoding, with exact preflight, cleanup,
-   and stop conditions.
-2. A current persistent user scope must not be structurally reset autonomously
-   merely to prove that contract. Automatic product behavior approval is not
-   destructive-test ownership or isolation authorization.
+1. Reconcile why this KWin session has no persisted scratch `[Tiling]` group
+   after `createDesktop`, contrary to the prior observation, without treating a
+   switch-created group as an immediate-create result. Preserve the exact
+   create/read/remove cleanup boundary and do not retry structural mutation
+   until that scope-integrity contradiction is resolved.
+2. Only then, on one owned scope, prove `CustomTile.remove()` synchrony,
+   promotion, root identity, complete collapse, occupant handling, stale
+   references, and immediate versus deferred removal sequencing using
+   count-only diagnostics.
 3. Only if that contract is accepted, wire session-local startup/add/remove
    managed-scope `dwindle` ownership, intentional detach exclusions, and valid
    selected-overlay precedence. Keep the work bounded and do not revive the old
@@ -109,3 +180,38 @@ session instructions and historical verification figures.
 - Dynamic-workspace lifecycle outside the accepted managed-scope direction,
   multi-output hotplug identity, persistence, ratios, broader layout modes,
   effects, packaging, and performance claims remain outside the current slice.
+
+## Current Findings: kwinrc Tiling Config Realization (2026-08-12)
+
+Read-only investigation, no live mutation, pinned KWin v6.7.3 commit
+`45ec9a6d0ed312a803ff5658a2a3e61f221566c6`. Verdict: viable only as
+cold-start persistence, not automatic runtime realization.
+
+- `[Tiling]` groups are `[Tiling][<desktop UUID>][<output uuid>]` with `tiles`
+  JSON + `padding`; no activity dimension. Read once per output's `TileManager`
+  construction and per `desktopAdded` (`src/tiles/tilemanager.cpp:57-96,288-340`),
+  created at outputAdd (`src/workspace.cpp:1428-1433`). No reload exists:
+  `Workspace::reconfigure()` (`src/workspace.cpp:998-1037`) and the D-Bus
+  `reconfigure`/`reloadConfig` paths (`src/org.kde.KWin.xml:5-7`,
+  `src/dbusinterface.cpp:48-49,64-66`) never re-read tiling; no KConfigWatcher
+  in `src/tiles/`. No KDE D-Bus API sets layouts.
+- JSON has no version field; leaves use `width`/`height`/`x,y,width,height` by
+  parent direction. createDesktop materialization contradiction resolved: the
+  default-setup `layoutModified` emissions start the 2000ms save timer, so KWin
+  persists the default `[Tiling]` group ~2s after desktop creation
+  (`tilemanager.cpp:61-76,300-321,390-405`); the "one second" reads were too
+  early.
+- Script IPC is `Script.callDBus(...)` (async session bus, 9 args, trailing
+  callback; `src/scripting/scripting.h:115-125`, `scripting.cpp:301-374`).
+  Config access is read-only `readConfig` over `[Script-<pluginName>]` only
+  (`scripting.cpp:296-299,119-123`); no `writeConfig` on `Script`.
+- Proposal if cold-start-only support remains useful: unit-21 - dev-only,
+  schema-pinned dwindle `[Tiling]` generator/validator + exact non-clobber
+  group-selection tests. It cannot provide automatic adaptation: no supported
+  reload exists and KWin can overwrite a live external edit on its 2s save.
+  User must choose helper runtime/packaging and whether a separately-authorized
+  live package may test the restart path. Stale groups remain untouchable.
+- Full evidence: `docs/changes/custom-tile-vertical-slice/state.md` (Tiling
+  Config Realization Evidence entry) and `plan.md`. Verification 2026-08-12:
+  typecheck/build pass, 407 tests / 48 suites, 248 lifecycle checks pass. No
+  commit, no stage, no live mutation.
