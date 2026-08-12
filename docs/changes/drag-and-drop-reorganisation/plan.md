@@ -18,8 +18,8 @@ window below.
 | Unit | Scope | Evidence | Status |
 | --- | --- | --- | --- |
 | unit-01 | Record approved Stage 1 specification and implementation plan. | Reviewed committed documentation. | Complete |
-| unit-02 | Add finish-only Shift-overlap planning, split recovery, and deferred origin collapse using existing ownership machinery. | Focused logic and controller tests; typecheck, build, and test commands. | Pending |
-| unit-03 | Independently review the implementation diff and verification evidence; commit accepted code. | Review findings and Git commit. | Pending |
+| unit-02 | Add finish-only Shift-overlap planning, split recovery, and deferred origin collapse using existing ownership machinery. | Focused logic and controller tests; typecheck, build, and test commands. | Complete |
+| unit-03 | Independently review the implementation diff and verification evidence; commit accepted code. | Review found no confirmed defect; static suite passed. | Complete |
 
 ## Acceptance Evidence Map
 

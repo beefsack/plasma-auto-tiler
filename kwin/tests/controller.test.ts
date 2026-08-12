@@ -4059,6 +4059,80 @@ function dragSetup(): {
     return { harness, controller, root, origin, target, dragged, targetWindow };
 }
 
+// Owned dwindle(3) scope realizing H[term1, V[term2, term3]], with the drop
+// target term1 split-ready and the vacated origin term2 removable. The scope is
+// adopted unchanged on start (ownership-taken, no yields), so a later native
+// Shift drop models the accepted three-window example.
+function nativeDropSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly term1: TestTile;
+    readonly right: TestTile;
+    readonly term2: TestTile;
+    readonly term3: TestTile;
+    readonly top: TestTile;
+    readonly bottom: TestTile;
+    readonly term1Win: TestWindow;
+    readonly term2Win: TestWindow;
+    readonly term3Win: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const term1 = tile({ x: 0, y: 0, width: 100, height: 100 });
+    const right = tile({ x: 100, y: 0, width: 100, height: 100 }, true);
+    right.layoutDirection = 2;
+    const term2 = tile({ x: 100, y: 0, width: 100, height: 50 });
+    const term3 = tile({ x: 100, y: 50, width: 100, height: 50 });
+    const term1Win = window({ tile: term1 });
+    const term2Win = window({ tile: term2 });
+    const term3Win = window({ tile: term3 });
+    term1.windows = [term1Win];
+    term2.windows = [term2Win];
+    term3.windows = [term3Win];
+    root.tiles = [term1, right];
+    right.tiles = [term2, term3];
+    harness.root = root;
+    harness.active = term1Win;
+    harness.windows = [term1Win, term2Win, term3Win];
+    const writes: Array<{ window: TestWindow; target: object | null }> = [];
+    attachTileWriter(term1Win, writes);
+    attachTileWriter(term2Win, writes);
+    attachTileWriter(term3Win, writes);
+    const manage = (leaf: TestTile) => (value: unknown): boolean => {
+        (value as TestWindow).tile = leaf;
+        return true;
+    };
+    const top = tile({ x: 0, y: 0, width: 100, height: 50 });
+    const bottom = tile({ x: 0, y: 50, width: 100, height: 50 });
+    top.manage = manage(top);
+    bottom.manage = manage(bottom);
+    term1.split = (direction) => {
+        term1.isLayout = true;
+        term1.layoutDirection = direction;
+        term1.windows = [];
+        term1.tiles = [top, bottom];
+        return [top, bottom];
+    };
+    term2.manage = manage(term2);
+    term2.remove = () => {
+        right.tiles = (right.tiles as TestTile[]).filter((entry) => entry !== term2);
+        // KWin promotes a single-child layout after a tile removal: the vacated
+        // V-wrapper disappears and term3 becomes the root's direct right child,
+        // realizing the whole accepted tree H[V[term1, term2], term3].
+        if ((right.tiles as TestTile[]).length === 1) {
+            const sole = (right.tiles as TestTile[])[0];
+            if (sole !== undefined) {
+                root.tiles = (root.tiles as TestTile[]).map((entry) => (entry === right ? sole : entry));
+            }
+        }
+        return true;
+    };
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, term1, right, term2, term3, top, bottom, term1Win, term2Win, term3Win };
+}
+
 function startDrag(dragged: TestWindow): void {
     dragged.move = true;
     dragged.resize = false;
@@ -4278,6 +4352,90 @@ describe("TileController interactive drag", () => {
         assert.equal(controller.hasActiveDrag, false);
         assert.equal(controller.isEnabled, false);
         assert.equal(countEvent(harness.logs, "disabled:exception"), 1);
+    });
+
+    it("resolves a native Shift-drop overlap into a position-directed split and defers the origin collapse", () => {
+        const { harness, controller, root, term1, right, term2, term3, top, bottom, term1Win, term2Win, term3Win } =
+            nativeDropSetup();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        startDrag(term2Win);
+        // Model the native finish: KWin manages term2 into term1 and vacates
+        // term2 before interactiveMoveResizeFinished fires.
+        term2Win.frameGeometry = movedGeometry();
+        term2Win.tile = term1;
+        harness.cursor = { x: 50, y: 75 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        // Finish-only: the position-directed split happens in this dispatch and
+        // no removal runs yet.
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 0);
+        assert.equal(term1Win.tile, top);
+        assert.equal(term2Win.tile, bottom);
+        assert.deepEqual(top.windows, [term1Win]);
+        assert.deepEqual(bottom.windows, [term2Win]);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.deepEqual(right.tiles, [term2, term3]);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(controller.hasActiveDrag, false);
+
+        // After the one-shot yield the empty origin collapses and KWin
+        // promotes the single-child V-wrapper, leaving the whole accepted tree
+        // H[V[term1, term2], term3] with term3 as the root's direct right
+        // child. The mirrored chain is a valid dwindle(3) ordering, so no
+        // unwanted reconstruction is queued.
+        harness.flushNextYield();
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.deepEqual(root.tiles, [term1, term3]);
+        assert.equal(term1.isLayout, true);
+        assert.equal(term1.layoutDirection, 2);
+        assert.deepEqual(term1.tiles, [top, bottom]);
+        assert.deepEqual(top.windows, [term1Win]);
+        assert.deepEqual(bottom.windows, [term2Win]);
+        assert.deepEqual(term3.windows, [term3Win]);
+        assert.equal(term1Win.tile, top);
+        assert.equal(term2Win.tile, bottom);
+        assert.equal(term3Win.tile, term3);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("defaults a central-zone native Shift drop to a vertical split with the occupant above", () => {
+        const { harness, controller, term1, top, bottom, term1Win, term2Win } = nativeDropSetup();
+
+        startDrag(term2Win);
+        term2Win.frameGeometry = movedGeometry();
+        term2Win.tile = term1;
+        harness.cursor = { x: 50, y: 50 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(term1.layoutDirection, 2);
+        assert.equal(term1Win.tile, top);
+        assert.equal(term2Win.tile, bottom);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("restores the origin when the native drop target is not exactly dragged plus one occupant", () => {
+        const { harness, controller, term1, term2, term1Win, term2Win } = nativeDropSetup();
+        const extra = window({ tile: term1 });
+
+        startDrag(term2Win);
+        term2Win.frameGeometry = movedGeometry();
+        term2Win.tile = term1;
+        term1.windows = [term1Win, term2Win, extra];
+        harness.cursor = { x: 50, y: 75 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(term2Win.tile, term2);
+        assert.equal((term1.windows as TestWindow[]).includes(term2Win), false);
+        assert.equal(controller.isEnabled, true);
     });
 });
 

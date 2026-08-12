@@ -12,11 +12,13 @@ import {
     planAutomaticPlacement,
     planCancellation,
     planDragPlacement,
+    planDropOverlap,
     planKeyboardInsertion,
     sameScope,
     type AutomaticRequest,
     type Direction,
     type DragRequest,
+    type DropOverlapRequest,
     type KeyboardRequest,
     type Leaf,
     type OriginRecord,
@@ -93,6 +95,20 @@ function dragRequest(overrides: Partial<DragRequest>): DragRequest {
         originLeaf,
         draggedWindow: window("win-dragged"),
         targetLeaf,
+        pointer: { x: 290, y: 50 },
+        record: null,
+        ...overrides,
+    };
+}
+
+function overlapRequest(overrides: Partial<DropOverlapRequest>): DropOverlapRequest {
+    const originLeaf = leaf("origin", RECT_100, []);
+    const targetLeaf = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]);
+    return {
+        scope: SCOPE_1,
+        originLeaf,
+        targetLeaf,
+        draggedWindow: window("win-dragged"),
         pointer: { x: 290, y: 50 },
         record: null,
         ...overrides,
@@ -552,6 +568,95 @@ describe("planDragPlacement: directional placement and origin retention", () => 
         expectRejection(
             planDragPlacement(dragRequest({ pointer: { x: Number.NaN, y: 50 } })),
             "invalid-numbers",
+        );
+    });
+});
+
+describe("planDropOverlap: native Shift-drop overlap recovery", () => {
+    it("plans each directional region with the dragged window on the selected side", () => {
+        const cases: ReadonlyArray<[Point, Direction]> = [
+            [{ x: 290, y: 50 }, "right"],
+            [{ x: 210, y: 50 }, "left"],
+            [{ x: 250, y: 10 }, "up"],
+            [{ x: 250, y: 90 }, "down"],
+        ];
+        for (const [pointer, direction] of cases) {
+            const plan = expectOk(planDropOverlap(overlapRequest({ pointer })));
+            assert.equal(plan.kind, "drop-overlap");
+            assert.equal(plan.direction, direction);
+            assert.equal(plan.selectedWindow.id, "win-dragged");
+            assert.equal(plan.oppositeWindow.id, "win-occupant");
+        }
+    });
+
+    it("defaults the central dead zone to a vertical split with the occupant above", () => {
+        const plan = expectOk(planDropOverlap(overlapRequest({ pointer: { x: 250, y: 50 } })));
+        assert.equal(plan.kind, "drop-overlap");
+        assert.equal(plan.direction, "down");
+    });
+
+    it("rejects a target that is the origin, a layout, or not exactly dragged plus one occupant", () => {
+        const sameLeaf = leaf("origin", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: sameLeaf })), "same-leaf");
+        const layout = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")], true);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: layout })), "ineligible-target");
+        const single = leaf("target", RECT_RIGHT, [window("win-dragged")]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: single })), "invalid-leaf-count");
+        const triple = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant"), window("win-extra")]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: triple })), "invalid-leaf-count");
+        const duplicated = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-dragged")]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: duplicated })), "mismatched-state");
+        const missing = leaf("target", RECT_RIGHT, [window("win-occupant"), window("win-extra")]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: missing })), "mismatched-state");
+    });
+
+    it("rejects an ineligible occupant, an ineligible dragged window, and a non-vacated origin", () => {
+        const ineligibleTarget = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant", false)]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: ineligibleTarget })), "ineligible-target");
+        expectRejection(
+            planDropOverlap(overlapRequest({ draggedWindow: window("win-dragged", false) })),
+            "ineligible-window",
+        );
+        const occupiedOrigin = leaf("origin", RECT_100, [window("win-dragged")]);
+        expectRejection(planDropOverlap(overlapRequest({ originLeaf: occupiedOrigin })), "mismatched-state");
+    });
+
+    it("rejects stale and cross-scope records, invalid geometry, and invalid pointer numbers", () => {
+        const staleLeaf: OriginRecord = {
+            scope: SCOPE_1,
+            originLeafId: "other-leaf",
+            windowId: "win-dragged",
+            geometry: RECT_100,
+        };
+        expectRejection(planDropOverlap(overlapRequest({ record: staleLeaf })), "stale-state");
+        const staleWindow: OriginRecord = {
+            scope: SCOPE_1,
+            originLeafId: "origin",
+            windowId: "old-window",
+            geometry: RECT_100,
+        };
+        expectRejection(planDropOverlap(overlapRequest({ record: staleWindow })), "stale-state");
+        const crossScope: OriginRecord = {
+            scope: SCOPE_2,
+            originLeafId: "origin",
+            windowId: "win-dragged",
+            geometry: RECT_100,
+        };
+        expectRejection(planDropOverlap(overlapRequest({ record: crossScope })), "cross-scope");
+        const badOrigin = leaf("origin", { x: 0, y: 0, width: 0, height: 100 }, []);
+        expectRejection(planDropOverlap(overlapRequest({ originLeaf: badOrigin })), "invalid-geometry");
+        const badTarget = leaf("target", { x: 0, y: 0, width: Number.NaN, height: 100 }, [
+            window("win-dragged"),
+            window("win-occupant"),
+        ]);
+        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: badTarget })), "invalid-geometry");
+        expectRejection(
+            planDropOverlap(overlapRequest({ pointer: { x: Number.NaN, y: 50 } })),
+            "invalid-numbers",
+        );
+        expectRejection(
+            planDropOverlap(overlapRequest({ pointer: { x: 300, y: 50 } })),
+            "pointer-outside",
         );
     });
 });

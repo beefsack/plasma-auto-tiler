@@ -470,6 +470,100 @@ export function planDragPlacement(request: DragRequest): Result<DragPlan> {
     };
 }
 
+export interface DropOverlapRequest {
+    readonly scope: Scope;
+    readonly originLeaf: Leaf;
+    readonly targetLeaf: Leaf;
+    readonly draggedWindow: WindowRef;
+    readonly pointer: Point;
+    readonly record: OriginRecord | null;
+}
+
+export type DropOverlapPlan = {
+    readonly kind: "drop-overlap";
+    readonly scope: Scope;
+    readonly direction: Direction;
+    readonly originLeaf: Leaf;
+    readonly targetLeaf: Leaf;
+    readonly selectedWindow: WindowRef;
+    readonly oppositeWindow: WindowRef;
+};
+
+// Native Shift custom-tile drop: KWin has already managed the dragged window
+// into the drop target, which now holds it plus exactly one other eligible
+// occupant, and the vacated origin leaf no longer lists it. This plans only the
+// position-directed split of the target leaf; the origin collapse is a
+// separate deferred phase. The central 50% dead zone defaults to a vertical
+// split with the original occupant above and the dragged window below, so the
+// plan always carries a direction.
+export function planDropOverlap(request: DropOverlapRequest): Result<DropOverlapPlan> {
+    if (!isValidPoint(request.pointer)) {
+        return reject("invalid-numbers", "pointer coordinates must be finite");
+    }
+    if (!isValidRect(request.originLeaf.geometry)) {
+        return reject("invalid-geometry", "origin leaf geometry must be positive and finite");
+    }
+    if (!isValidRect(request.targetLeaf.geometry)) {
+        return reject("invalid-geometry", "target leaf geometry must be positive and finite");
+    }
+    if (request.originLeaf.id === request.targetLeaf.id) {
+        return reject("same-leaf", "origin and target leaf are the same");
+    }
+    if (request.targetLeaf.isLayout) {
+        return reject("ineligible-target", "target leaf must not be a layout container");
+    }
+    if (request.targetLeaf.windows.length !== 2) {
+        return reject("invalid-leaf-count", "native drop target must hold the dragged window and exactly one occupant");
+    }
+    if (request.targetLeaf.windows.some((window) => !isEligibleWindow(window))) {
+        return reject("ineligible-target", "target leaf contains an ineligible window");
+    }
+    if (!request.targetLeaf.windows.some((window) => window.id === request.draggedWindow.id)) {
+        return reject("mismatched-state", "dragged window is not associated with the target leaf");
+    }
+    if (request.targetLeaf.windows.filter((window) => window.id !== request.draggedWindow.id).length !== 1) {
+        return reject("mismatched-state", "target leaf must hold exactly one occupant besides the dragged window");
+    }
+    if (!isEligibleWindow(request.draggedWindow)) {
+        return reject("ineligible-window", "dragged window is not eligible");
+    }
+    if (request.originLeaf.windows.some((window) => window.id === request.draggedWindow.id)) {
+        return reject("mismatched-state", "dragged window must have vacated the origin leaf");
+    }
+    if (request.record !== null) {
+        if (!sameScope(request.record.scope, request.scope)) {
+            return reject("cross-scope", "recorded scope differs from the current scope");
+        }
+        if (request.record.originLeafId !== request.originLeaf.id) {
+            return reject("stale-state", "recorded origin leaf no longer matches the origin leaf");
+        }
+        if (request.record.windowId !== request.draggedWindow.id) {
+            return reject("stale-state", "recorded window no longer matches the dragged window");
+        }
+    }
+    const classified = classifyDirection(request.pointer, request.targetLeaf.geometry);
+    if (!classified.ok) {
+        return classified;
+    }
+    const direction = classified.value.kind === "center" ? "down" : classified.value.direction;
+    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
+    if (oppositeWindow === undefined) {
+        return reject("mismatched-state", "target leaf must hold exactly one occupant besides the dragged window");
+    }
+    return {
+        ok: true,
+        value: {
+            kind: "drop-overlap",
+            scope: request.scope,
+            direction,
+            originLeaf: request.originLeaf,
+            targetLeaf: request.targetLeaf,
+            selectedWindow: request.draggedWindow,
+            oppositeWindow,
+        },
+    };
+}
+
 export interface CancellationRequest {
     readonly scope: Scope;
     readonly record: OriginRecord | null;

@@ -35,9 +35,11 @@ import {
     pickTargetLeaf,
     planAutomaticPlacement,
     planDragPlacement,
+    planDropOverlap,
     planKeyboardInsertion,
     type Leaf,
     type Direction,
+    type Point,
     type Scope,
     type WindowRef,
 } from "./logic";
@@ -2425,8 +2427,17 @@ export class TileController {
             return;
         }
         const origin = operationLeafForTile(topology, drag.originTile);
-        if (origin === null || origin.leaf.isLayout || windowIndex(origin.windows, drag.window) < 0) {
+        if (origin === null || origin.leaf.isLayout) {
             this.restoreOrigin(drag);
+            return;
+        }
+        if (windowIndex(origin.windows, drag.window) < 0) {
+            // Native Shift custom-tile drop: KWin has already managed the
+            // dragged window into the drop target and the origin leaf no
+            // longer lists it. Recover the resulting two-window overlap on
+            // finish by splitting the target and deferring the empty origin's
+            // collapse to the established one-shot yield.
+            this.recoverNativeDropOverlap(drag, scope, topology, origin, cursor);
             return;
         }
         const targetLeaf = pickTargetLeaf(topology.map((entry) => entry.leaf), cursor);
@@ -2478,7 +2489,106 @@ export class TileController {
             this.restoreOrigin(drag);
             return;
         }
-        const direction = plan.value.direction;
+        if (!this.splitDropTarget(target, targetWindow, drag, plan.value.direction)) {
+            return;
+        }
+        this.diagnostic("drag-split-completed");
+    }
+
+    // The OperationLeaf of a native Shift-drop target, or null unless the
+    // dragged window's current tile is a non-layout custom-tile leaf holding
+    // exactly the dragged window plus one other eligible in-scope occupant,
+    // with the dragged window appearing in no other leaf.
+    private nativeDropTarget(
+        drag: ActiveDrag,
+        scope: CurrentScope,
+        topology: readonly OperationLeaf[],
+    ): OperationLeaf | null {
+        if (drag.window.tile === drag.originTile || !isCustomTile(drag.window.tile) || drag.window.tile.isLayout) {
+            return null;
+        }
+        const target = operationLeafForTile(topology, drag.window.tile);
+        if (target === null || target.leaf.isLayout || !isCustomTile(target.decoded.tile)) {
+            return null;
+        }
+        if (windowIndex(target.windows, drag.window) < 0 || target.windows.length !== 2) {
+            return null;
+        }
+        if (topology.filter((entry) => windowIndex(entry.windows, drag.window) >= 0).length !== 1) {
+            return null;
+        }
+        const occupant = target.windows.find((window) => window !== drag.window);
+        if (occupant === undefined || !windowInScope(occupant, scope)) {
+            return null;
+        }
+        return target;
+    }
+
+    // Finish-only recovery of a native Shift custom-tile drop. The split is
+    // planned from the final pointer position through the pure planner; only
+    // split/manage operations run in this dispatch, then the empty origin's
+    // collapse is deferred to the established one-shot event-loop yield so the
+    // removal is separated from this split dispatch. The deferred settle
+    // re-resolves the scope root and window membership fresh exactly as the
+    // removal pipeline does.
+    private recoverNativeDropOverlap(
+        drag: ActiveDrag,
+        scope: CurrentScope,
+        topology: readonly OperationLeaf[],
+        origin: OperationLeaf,
+        cursor: Point,
+    ): void {
+        const target = this.nativeDropTarget(drag, scope, topology);
+        if (target === null) {
+            this.restoreOrigin(drag);
+            return;
+        }
+        const occupant = target.windows.find((window) => window !== drag.window);
+        const draggedIndex = windowIndex(target.windows, drag.window);
+        const draggedRef = draggedIndex >= 0 ? target.refs[draggedIndex] : undefined;
+        if (occupant === undefined || draggedRef === undefined || !windowInScope(occupant, scope)) {
+            this.restoreOrigin(drag);
+            return;
+        }
+        const plan = planDropOverlap({
+            scope: scope.scope,
+            originLeaf: origin.leaf,
+            targetLeaf: target.leaf,
+            draggedWindow: draggedRef,
+            pointer: cursor,
+            record: {
+                scope: scope.scope,
+                originLeafId: origin.leaf.id,
+                windowId: draggedRef.id,
+                geometry: drag.originGeometry,
+            },
+        });
+        if (!plan.ok || plan.value.kind !== "drop-overlap") {
+            this.restoreOrigin(drag);
+            return;
+        }
+        if (!this.splitDropTarget(target, occupant, drag, plan.value.direction)) {
+            return;
+        }
+        this.diagnostic("drag-overlap-split-completed");
+        this.deferRemovalCollapse(drag.window, scope, drag.originTile);
+    }
+
+    // Split a drop target leaf into the direction-derived children and manage
+    // the original occupant onto the opposite child and the dragged window
+    // onto the selected child. Shared by the classic drag path and the native
+    // Shift-drop recovery. A malformed split result or a failed manage
+    // disables the gate, matching the established drag contract.
+    private splitDropTarget(
+        target: OperationLeaf,
+        occupant: WindowCapability,
+        drag: ActiveDrag,
+        direction: Direction,
+    ): boolean {
+        if (!isCustomTile(target.decoded.tile)) {
+            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
+            return false;
+        }
         const split = splitCustomTile(target.decoded.tile, splitDirection(direction));
         const decoded = decodeSequential(split, isCustomTile, 2);
         if (decoded.ok) {
@@ -2488,19 +2598,19 @@ export class TileController {
         const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
         if (children === null) {
             this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return;
+            return false;
         }
         const first = children[0];
         const second = children[1];
         const selected = direction === "left" || direction === "up" ? first : second;
         const opposite = selected === first ? second : first;
-        const targetManaged = manageTile(opposite, targetWindow);
-        const draggedManaged = targetManaged && manageTile(selected, drag.window);
-        if (!targetManaged || !draggedManaged) {
+        const occupantManaged = manageTile(opposite, occupant);
+        const draggedManaged = occupantManaged && manageTile(selected, drag.window);
+        if (!occupantManaged || !draggedManaged) {
             this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
-            return;
+            return false;
         }
-        this.diagnostic("drag-split-completed");
+        return true;
     }
 
     private scopeForWindow(window: unknown): CurrentScope | null {
