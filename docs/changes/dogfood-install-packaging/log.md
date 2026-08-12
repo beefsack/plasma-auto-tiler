@@ -23,3 +23,11 @@ speculation.
 - Files / commit: `scripts/dogfood-install.sh`
 - Verification: `bash -n scripts/dogfood-install.sh` passed; Worker reports injected temporary-root checks covering build/copy, exact uninstall, enable/disable command construction, read-only status, and missing-tool errors.
 - Notes: The interface has no host mutation in its verification path and does not modify `devenv.nix`.
+
+## 2026-08-12
+
+- Role / unit: Lead / unit-02 / attempt-01
+- Result: Accepted after isolated shell-test review.
+- Files / commit: `scripts/dogfood-install.test.sh`
+- Verification: `bash -n scripts/dogfood-install.test.sh` and `bash scripts/dogfood-install.test.sh` passed with 108 assertions; all KWin tools are injected fake executables and every root is under `mktemp`.
+- Notes: Tests cover successful and failed install paths, exact uninstall scope, enable/disable/reconfigure construction, read-only status, strict parsing, and all missing-tool errors.

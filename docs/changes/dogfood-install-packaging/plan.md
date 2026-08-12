@@ -29,7 +29,7 @@ slices use `unit-<n>/attempt-<n>`.
 
 - [x] unit-01 investigation: config key and reconfigure mechanism verified.
 - [x] unit-01 implementation: management script and runtime tool checks.
-- [ ] unit-02 isolated shell coverage.
+- [x] unit-02 isolated shell coverage.
 - [ ] unit-03 README and static verification.
 
 ## Pending User Decisions
