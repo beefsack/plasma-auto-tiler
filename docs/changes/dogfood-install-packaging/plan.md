@@ -30,7 +30,7 @@ slices use `unit-<n>/attempt-<n>`.
 - [x] unit-01 investigation: config key and reconfigure mechanism verified.
 - [x] unit-01 implementation: management script and runtime tool checks.
 - [x] unit-02 isolated shell coverage.
-- [ ] unit-03 README and static verification.
+- [x] unit-03 README and static verification.
 
 ## Pending User Decisions
 
@@ -38,13 +38,13 @@ slices use `unit-<n>/attempt-<n>`.
 
 ## Acceptance-Criterion Evidence
 
-| Acceptance criterion | Evidence |
-|---|---|
-| Install and uninstall package path | Isolated test assertions for build invocation, copied package layout, and exact removal path. |
-| Enable, disable, and status behavior | Fake `kwriteconfig6`, `kreadconfig6`, and `qdbus` logs plus isolated config assertions. |
-| README quickstart and ownership disclosure | Lead review of `README.md` against the specified catalog and session-effect wording. |
-| Throwaway-root prevalidation | Shell test uses `mktemp`, fake XDG roots, fake KWin tools, and verifies no host interaction. |
-| Runtime prerequisites and static baseline | Isolated missing-tool assertions, README prerequisite review, and the specified typecheck, build, JavaScript, and shell test commands. |
+| Acceptance criterion | Reproducible command | Result |
+|---|---|---|
+| Install and uninstall package path | `bash scripts/dogfood-install.test.sh` | 108 passes, 0 failures (unit-03/attempt-02). |
+| Enable, disable, and status behavior | `bash scripts/dogfood-install.test.sh` | 108 passes, 0 failures (unit-03/attempt-02). |
+| README quickstart and ownership disclosure | Compare `README.md` against `scripts/dogfood-install.sh` and the `registerShortcut` calls in `kwin/src/controller.ts` | Corrected in unit-03/attempt-01: every shown command, the plugin id and destination, the prerequisite wording, the shortcut identifiers and sequences, and the session-effect wording were cross-checked against the script, metadata, controller registrations, and devenv prerequisites; this is source-verification only, not test coverage or live-host validation. |
+| Throwaway-root prevalidation | `bash scripts/dogfood-install.test.sh` | 108 passes, 0 failures (unit-03/attempt-02). |
+| Runtime prerequisites and static baseline | `bash scripts/dogfood-install.test.sh` (missing-tool cases); `bash -n scripts/dogfood-install.sh`; `npm --prefix kwin run typecheck`; `npm --prefix kwin run build`; `npm --prefix kwin test`; `bash scripts/start-test.test.sh` | Missing-tool cases pass within the 108 shell-test assertions (unit-02); script syntax passes at unit-01; `npm --prefix kwin run typecheck` exit 0 with both `tsconfig.json` and `tsconfig.test.json`; `npm --prefix kwin run build` exit 0 generating a 154.5kb `contents/code/main.js` in 9ms; `npm --prefix kwin test` exit 0 with 430 tests across 49 suites (430 pass, 0 fail, 0 cancelled, 0 skipped, 0 todo) and its included start-test run 248 passes, 0 failures; `bash scripts/start-test.test.sh` 248 passes, 0 failures. |
 
 ## Residual Risks
 
@@ -56,4 +56,7 @@ slices use `unit-<n>/attempt-<n>`.
 
 ## Final Outcome
 
-- Implementation in progress.
+- All work units (unit-01 through unit-03) are implemented and the full static
+  verification set passes with the results recorded above.
+- The change is not yet archived; acceptance and completion remain the Lead's
+  decision.
