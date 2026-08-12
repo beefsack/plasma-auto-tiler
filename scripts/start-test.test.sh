@@ -131,6 +131,14 @@ case "$*" in
     else
       printf '{"type":"a(ssssssaiai)","data":[[]]}\n'
     fi ;;
+  *desktops*)
+    if [[ -f "$state/desktops-fail" ]]; then
+      exit 1
+    elif [[ -f "$state/desktops" ]]; then
+      cat "$state/desktops"
+    else
+      printf '{"type":"a(uss)","data":[[1,"desktop-1","Desktop 1"],[2,"desktop-2","Desktop 2"]]}\n'
+    fi ;;
   *)
     exit 1 ;;
 esac
@@ -492,7 +500,136 @@ run_script diagnostics extra
 check_exit 1
 assert_contains "takes no arguments"
 
-# start/status/stop/diagnostics must never mutate shortcut records
+# desktops: strict decode of the real a(uss) envelope reports every row in order
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[0,"desktop-0","Desktop 0"],[1,"desktop-1","Desktop 1"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 0
+assert_contains "virtual desktops: 2"
+assert_contains "desktop-0"
+assert_contains "desktop-1"
+assert_contains "Desktop 0"
+assert_contains "Desktop 1"
+assert_contains "never mutates"
+assert_no_setshortcut_calls
+
+# desktops: the live envelope decodes without an extra data[0] level
+setup_state '-- cursor: cursor-1' ""
+run_script desktops
+check_exit 0
+assert_contains "virtual desktops: 2"
+assert_contains "desktop-1"
+assert_contains "desktop-2"
+assert_no_setshortcut_calls
+
+# desktops: unexpected envelope keys fail closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[],"extra":1}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: wrong envelope type fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(sss)","data":[["a","b","c"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: non-array data fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":"nope"}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: the extra data[0] array level that broke the prior probe fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[[1,"desktop-1","Desktop 1"]]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: non-integral position fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1.5,"desktop-1","Desktop 1"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: negative position fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[-1,"desktop-1","Desktop 1"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: non-number position fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1,"desktop-1","D1"],[2,5,"D2"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: empty id fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1,"","Desktop 1"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: empty name fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1,"desktop-1",""]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: malformed tuple arity fails closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[["desktop-1","Desktop 1"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: duplicate positions fail closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1,"desktop-1","D1"],[1,"desktop-2","D2"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: duplicate ids fail closed
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[[1,"desktop-1","D1"],[2,"desktop-1","D2"]]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 1
+assert_contains "unexpected desktops reply"
+
+# desktops: an empty valid enumeration still decodes
+setup_state '-- cursor: cursor-1' ""
+printf '%s\n' '{"type":"a(uss)","data":[]}' > "$WORK/state/desktops"
+run_script desktops
+check_exit 0
+assert_contains "virtual desktops: 0"
+assert_no_setshortcut_calls
+
+# desktops: transport failure fails closed
+setup_state '-- cursor: cursor-1' ""
+touch "$WORK/state/desktops-fail"
+run_script desktops
+check_exit 1
+assert_contains "desktops call failed"
+assert_no_setshortcut_calls
+
+# desktops: strict parsing rejects extra arguments
+setup_state '-- cursor: cursor-1' ""
+run_script desktops extra
+check_exit 1
+assert_contains "takes no arguments"
+assert_no_setshortcut_calls
+
+# start/status/stop/diagnostics/desktops must never mutate shortcut records
 assert_no_setshortcut_calls
 
 # reconcile-shortcuts: read-only report on stale records never mutates

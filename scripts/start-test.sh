@@ -12,6 +12,9 @@ BUS_PATH="/Scripting"
 BUS_SCRIPTING_IFACE="org.kde.kwin.Scripting"
 BUS_SCRIPT_IFACE="org.kde.kwin.Script"
 
+VDSK_PATH="/VirtualDesktopManager"
+VDSK_IFACE="org.kde.KWin.VirtualDesktopManager"
+
 KG_DEST="org.kde.kglobalaccel"
 KG_PATH="/kglobalaccel"
 KG_IFACE="org.kde.KGlobalAccel"
@@ -103,6 +106,7 @@ script_iface_valid='any(.[]; ((.type == "interface") and (.name == "org.kde.kwin
 unload_valid="$isloaded_valid"
 components_valid='((keys | sort) == ["data","type"]) and (.type == "ao") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "array") and (all(.data[0][]; (. | type) == "string"))'
 shortcut_infos_valid='((keys | sort) == ["data","type"]) and (.type == "a(ssssssaiai)") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "array") and (all(.data[0][]; ((. | length) == 8) and ((.[0] | type) == "string") and ((.[1] | type) == "string") and ((.[2] | type) == "string") and ((.[3] | type) == "string") and ((.[4] | type) == "string") and ((.[5] | type) == "string") and ((.[6] | type) == "array") and (all(.[6][]; (. | type) == "number")) and ((.[7] | type) == "array") and (all(.[7][]; (. | type) == "number"))))'
+desktops_valid='((keys | sort) == ["data","type"]) and (.type == "a(uss)") and ((.data | type) == "array") and (all(.data[]; ((. | type) == "array") and ((. | length) == 3) and ((.[0] | type) == "number") and ((.[0] | floor) == .[0]) and (.[0] >= 0) and ((.[1] | type) == "string") and ((.[1] | length) > 0) and ((.[2] | type) == "string") and ((.[2] | length) > 0))) and ((.data | map(.[0])) as $positions | ($positions | unique | length) == ($positions | length)) and ((.data | map(.[1])) as $ids | ($ids | unique | length) == ($ids | length))'
 # Slurp-mode predicates (jq -s) over journalctl JSON-lines output.
 journal_lines_valid='all(.[]; type == "object")'
 readiness_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | index("plasma-auto-tiler:shortcut-registered")) as $registered | ($messages | index("plasma-auto-tiler:startup-handlers-ready")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($registered != null and $ready != null and $registered < $ready and ($disabled | not))'
@@ -141,6 +145,10 @@ Commands:
            report the latest same-KWin-PID controller-startup epoch's
            ordered project diagnostics, labeled current or historical by
            the current load state; read-only, never mutates
+  desktops
+           read the exact VirtualDesktopManager desktops envelope through
+           busctl and report the strictly decoded position/id/name rows;
+           read-only, never mutates
   reconcile-shortcuts
            report persisted project shortcut records whose active
            sequence differs from the source-default expected sequence;
@@ -157,7 +165,7 @@ start mutates live KWin state and still requires explicit authorization.
 start never mutates shortcut records; only reconcile-shortcuts --apply does.
 stop/unload does not roll back Custom Tile changes the script already made.
 KGlobalAccel records persist after unload and do not prove live callbacks.
-status, diagnostics, and reconcile-shortcuts are read-only.
+status, diagnostics, desktops, and reconcile-shortcuts are read-only.
 EOF
 }
 
@@ -603,6 +611,22 @@ cmd_diagnostics() {
   echo "note: journal diagnostics are historical evidence for this KWin process, not a current-liveness proof."
 }
 
+cmd_desktops() {
+  require_tools busctl jq
+  local out
+  out="$(busctl $BUS_SCOPE --json=short get-property "$BUS_DEST" "$VDSK_PATH" "$VDSK_IFACE" desktops)" || {
+    echo "error: VirtualDesktopManager desktops call failed: $out" >&2
+    exit 1
+  }
+  if ! jq -e "$desktops_valid" <<<"$out" >/dev/null 2>&1; then
+    echo "error: unexpected desktops reply (expected a strict {\"type\":\"a(uss)\",\"data\":[[position,id,name],...]} envelope): $out" >&2
+    exit 1
+  fi
+  echo "virtual desktops: $(jq -r '.data | length' <<<"$out")"
+  jq -r '.data[] | [.[0], .[1], .[2]] | @tsv' <<<"$out" | sed 's/^/  /'
+  echo "note: desktops is a read-only strict decode of the live VirtualDesktopManager envelope; it never mutates."
+}
+
 cmd_stop() {
   require_tools busctl jq
   read_plugin_id
@@ -911,7 +935,7 @@ cmd_reconcile_shortcuts() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (start, status, stop, diagnostics, or reconcile-shortcuts)" >&2
+  echo "error: missing command (start, status, stop, diagnostics, desktops, or reconcile-shortcuts)" >&2
   usage >&2
   exit 1
 fi
@@ -952,6 +976,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_diagnostics
+    ;;
+  desktops)
+    if [[ $# -ne 1 ]]; then
+      echo "error: 'desktops' takes no arguments" >&2
+      exit 1
+    fi
+    cmd_desktops
     ;;
   reconcile-shortcuts)
     if [[ $# -gt 2 ]]; then
