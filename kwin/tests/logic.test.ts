@@ -12,13 +12,14 @@ import {
     planAutomaticPlacement,
     planCancellation,
     planDragPlacement,
-    planDropOverlap,
+    planGeometryDrop,
     planKeyboardInsertion,
+    rectCenter,
     sameScope,
     type AutomaticRequest,
     type Direction,
     type DragRequest,
-    type DropOverlapRequest,
+    type GeometryDropRequest,
     type KeyboardRequest,
     type Leaf,
     type OriginRecord,
@@ -101,15 +102,15 @@ function dragRequest(overrides: Partial<DragRequest>): DragRequest {
     };
 }
 
-function overlapRequest(overrides: Partial<DropOverlapRequest>): DropOverlapRequest {
+function geometryDropRequest(overrides: Partial<GeometryDropRequest>): GeometryDropRequest {
     const originLeaf = leaf("origin", RECT_100, []);
-    const targetLeaf = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]);
+    const targetLeaf = leaf("target", RECT_RIGHT, [window("win-occupant")]);
     return {
         scope: SCOPE_1,
         originLeaf,
         targetLeaf,
         draggedWindow: window("win-dragged"),
-        pointer: { x: 290, y: 50 },
+        finalGeometry: { x: 200, y: 50, width: 100, height: 50 },
         record: null,
         ...overrides,
     };
@@ -572,17 +573,17 @@ describe("planDragPlacement: directional placement and origin retention", () => 
     });
 });
 
-describe("planDropOverlap: native Shift-drop overlap recovery", () => {
+describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
     it("plans each directional region with the dragged window on the selected side", () => {
-        const cases: ReadonlyArray<[Point, Direction]> = [
-            [{ x: 290, y: 50 }, "right"],
-            [{ x: 210, y: 50 }, "left"],
-            [{ x: 250, y: 10 }, "up"],
-            [{ x: 250, y: 90 }, "down"],
+        const cases: ReadonlyArray<[Rect, Direction]> = [
+            [{ x: 250, y: 0, width: 50, height: 100 }, "right"],
+            [{ x: 200, y: 0, width: 50, height: 100 }, "left"],
+            [{ x: 200, y: 0, width: 100, height: 50 }, "up"],
+            [{ x: 200, y: 50, width: 100, height: 50 }, "down"],
         ];
-        for (const [pointer, direction] of cases) {
-            const plan = expectOk(planDropOverlap(overlapRequest({ pointer })));
-            assert.equal(plan.kind, "drop-overlap");
+        for (const [finalGeometry, direction] of cases) {
+            const plan = expectOk(planGeometryDrop(geometryDropRequest({ finalGeometry })));
+            assert.equal(plan.kind, "geometry-drop");
             assert.equal(plan.direction, direction);
             assert.equal(plan.selectedWindow.id, "win-dragged");
             assert.equal(plan.oppositeWindow.id, "win-occupant");
@@ -590,74 +591,120 @@ describe("planDropOverlap: native Shift-drop overlap recovery", () => {
     });
 
     it("defaults the central dead zone to a vertical split with the occupant above", () => {
-        const plan = expectOk(planDropOverlap(overlapRequest({ pointer: { x: 250, y: 50 } })));
-        assert.equal(plan.kind, "drop-overlap");
+        const plan = expectOk(
+            planGeometryDrop(geometryDropRequest({ finalGeometry: { x: 200, y: 25, width: 100, height: 50 } })),
+        );
+        assert.equal(plan.kind, "geometry-drop");
         assert.equal(plan.direction, "down");
     });
 
-    it("rejects a target that is the origin, a layout, or not exactly dragged plus one occupant", () => {
-        const sameLeaf = leaf("origin", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: sameLeaf })), "same-leaf");
-        const layout = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")], true);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: layout })), "ineligible-target");
-        const single = leaf("target", RECT_RIGHT, [window("win-dragged")]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: single })), "invalid-leaf-count");
-        const triple = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant"), window("win-extra")]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: triple })), "invalid-leaf-count");
-        const duplicated = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-dragged")]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: duplicated })), "mismatched-state");
-        const missing = leaf("target", RECT_RIGHT, [window("win-occupant"), window("win-extra")]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: missing })), "mismatched-state");
+    it("rejects a target that is the origin, a layout, or has no single occupant", () => {
+        const sameLeaf = leaf("origin", RECT_RIGHT, [window("win-occupant")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: sameLeaf })), "same-leaf");
+        const layout = leaf("target", RECT_RIGHT, [window("win-occupant")], true);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: layout })), "ineligible-target");
+        const empty = leaf("target", RECT_RIGHT, []);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: empty })), "invalid-leaf-count");
+        const triple = leaf("target", RECT_RIGHT, [window("win-occupant"), window("win-extra"), window("win-other")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: triple })), "invalid-leaf-count");
+        const draggedPlusTwo = leaf("target", RECT_RIGHT, [
+            window("win-dragged"),
+            window("win-occupant"),
+            window("win-extra"),
+        ]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: draggedPlusTwo })), "invalid-leaf-count");
+        const withDraggedOnly = leaf("target", RECT_RIGHT, [window("win-dragged")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: withDraggedOnly })), "invalid-leaf-count");
+        const duplicatedDragged = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-dragged")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: duplicatedDragged })), "mismatched-state");
     });
 
-    it("rejects an ineligible occupant, an ineligible dragged window, and a non-vacated origin", () => {
-        const ineligibleTarget = leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant", false)]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: ineligibleTarget })), "ineligible-target");
+    it("plans the same direction for a floating plain target and a native Shift target", () => {
+        const plain = geometryDropRequest({});
+        const shift = geometryDropRequest({
+            targetLeaf: leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]),
+        });
+        const plainPlan = expectOk(planGeometryDrop(plain));
+        const shiftPlan = expectOk(planGeometryDrop(shift));
+        assert.equal(plainPlan.direction, shiftPlan.direction);
+        assert.equal(plainPlan.oppositeWindow.id, "win-occupant");
+        assert.equal(shiftPlan.oppositeWindow.id, "win-occupant");
+        assert.equal(plainPlan.selectedWindow.id, "win-dragged");
+        assert.equal(shiftPlan.selectedWindow.id, "win-dragged");
+    });
+
+    it("rejects an ineligible occupant and an ineligible dragged window", () => {
+        const ineligibleTarget = leaf("target", RECT_RIGHT, [window("win-occupant", false)]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: ineligibleTarget })), "ineligible-target");
         expectRejection(
-            planDropOverlap(overlapRequest({ draggedWindow: window("win-dragged", false) })),
+            planGeometryDrop(geometryDropRequest({ draggedWindow: window("win-dragged", false) })),
             "ineligible-window",
         );
-        const occupiedOrigin = leaf("origin", RECT_100, [window("win-dragged")]);
-        expectRejection(planDropOverlap(overlapRequest({ originLeaf: occupiedOrigin })), "mismatched-state");
     });
 
-    it("rejects stale and cross-scope records, invalid geometry, and invalid pointer numbers", () => {
+    it("plans the same direction for a vacated and an origin-associated drop", () => {
+        const vacated = geometryDropRequest({});
+        const associated = geometryDropRequest({
+            originLeaf: leaf("origin", RECT_100, [window("win-dragged")]),
+        });
+        const vacatedPlan = expectOk(planGeometryDrop(vacated));
+        const associatedPlan = expectOk(planGeometryDrop(associated));
+        assert.equal(vacatedPlan.direction, associatedPlan.direction);
+        assert.equal(vacatedPlan.oppositeWindow.id, "win-occupant");
+        assert.equal(associatedPlan.oppositeWindow.id, "win-occupant");
+        assert.equal(associatedPlan.selectedWindow.id, "win-dragged");
+    });
+
+    it("rejects a duplicated dragged window in the origin leaf and a two-window target without the dragged window", () => {
+        const duplicatedOrigin = leaf("origin", RECT_100, [window("win-dragged"), window("win-dragged")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ originLeaf: duplicatedOrigin })), "mismatched-state");
+        const twoOccupants = leaf("target", RECT_RIGHT, [window("win-occupant"), window("win-extra")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: twoOccupants })), "invalid-leaf-count");
+    });
+
+    it("rejects stale and cross-scope records, invalid geometry, and invalid final geometry", () => {
         const staleLeaf: OriginRecord = {
             scope: SCOPE_1,
             originLeafId: "other-leaf",
             windowId: "win-dragged",
             geometry: RECT_100,
         };
-        expectRejection(planDropOverlap(overlapRequest({ record: staleLeaf })), "stale-state");
+        expectRejection(planGeometryDrop(geometryDropRequest({ record: staleLeaf })), "stale-state");
         const staleWindow: OriginRecord = {
             scope: SCOPE_1,
             originLeafId: "origin",
             windowId: "old-window",
             geometry: RECT_100,
         };
-        expectRejection(planDropOverlap(overlapRequest({ record: staleWindow })), "stale-state");
+        expectRejection(planGeometryDrop(geometryDropRequest({ record: staleWindow })), "stale-state");
         const crossScope: OriginRecord = {
             scope: SCOPE_2,
             originLeafId: "origin",
             windowId: "win-dragged",
             geometry: RECT_100,
         };
-        expectRejection(planDropOverlap(overlapRequest({ record: crossScope })), "cross-scope");
+        expectRejection(planGeometryDrop(geometryDropRequest({ record: crossScope })), "cross-scope");
         const badOrigin = leaf("origin", { x: 0, y: 0, width: 0, height: 100 }, []);
-        expectRejection(planDropOverlap(overlapRequest({ originLeaf: badOrigin })), "invalid-geometry");
-        const badTarget = leaf("target", { x: 0, y: 0, width: Number.NaN, height: 100 }, [
-            window("win-dragged"),
-            window("win-occupant"),
-        ]);
-        expectRejection(planDropOverlap(overlapRequest({ targetLeaf: badTarget })), "invalid-geometry");
+        expectRejection(planGeometryDrop(geometryDropRequest({ originLeaf: badOrigin })), "invalid-geometry");
+        const badTarget = leaf("target", { x: 200, y: 0, width: Number.NaN, height: 100 }, [window("win-occupant")]);
+        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: badTarget })), "invalid-geometry");
         expectRejection(
-            planDropOverlap(overlapRequest({ pointer: { x: Number.NaN, y: 50 } })),
-            "invalid-numbers",
+            planGeometryDrop(geometryDropRequest({ finalGeometry: { x: 0, y: 0, width: 0, height: 100 } })),
+            "invalid-geometry",
         );
         expectRejection(
-            planDropOverlap(overlapRequest({ pointer: { x: 300, y: 50 } })),
+            planGeometryDrop(
+                geometryDropRequest({ finalGeometry: { x: 400, y: 0, width: 100, height: 100 } }),
+            ),
             "pointer-outside",
         );
+    });
+
+    it("computes a rect center and rejects non-positive rects", () => {
+        assert.deepEqual(rectCenter(RECT_100), { x: 50, y: 50 });
+        assert.deepEqual(rectCenter({ x: 200, y: 10, width: 100, height: 60 }), { x: 250, y: 40 });
+        assert.equal(rectCenter({ x: 0, y: 0, width: 0, height: 100 }), null);
+        assert.equal(rectCenter({ x: 0, y: 0, width: Number.NaN, height: 100 }), null);
     });
 });
 

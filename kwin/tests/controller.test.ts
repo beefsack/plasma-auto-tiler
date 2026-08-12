@@ -4209,7 +4209,9 @@ describe("TileController interactive drag", () => {
     it("rejects stale, same, empty, multiple, ineligible, invalid, and cross-scope targets before split", () => {
         const cases: ReadonlyArray<(state: ReturnType<typeof dragSetup>) => void> = [
             (state) => {
-                state.harness.cursor = { x: 50, y: 50 };
+                // The final frame center sits over the origin, so no occupied
+                // leaf resolves and the drop restores.
+                state.dragged.frameGeometry = { x: 10, y: 10, width: 100, height: 100 };
             },
             (state) => {
                 state.target.windows = [];
@@ -4239,10 +4241,11 @@ describe("TileController interactive drag", () => {
                 splits += 1;
                 return [];
             };
-            state.harness.cursor = { x: 290, y: 50 };
             startDrag(state.dragged);
             state.dragged.tile = null;
-            state.dragged.frameGeometry = movedGeometry();
+            // Final frame center over the target so the geometry-derived target
+            // resolves and the planner's own validation decides the bail.
+            state.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
             configure(state);
             state.dragged.interactiveMoveResizeFinished.emit();
             assert.equal(splits, 0);
@@ -4253,14 +4256,16 @@ describe("TileController interactive drag", () => {
     });
 
     it("maps all directions to geometric children, retaining the origin leaf", () => {
-        const cases: ReadonlyArray<[typeof RECT, number, unknown[]]> = [
-            [{ x: 210, y: 50, width: 1, height: 1 }, 1, []],
-            [{ x: 290, y: 50, width: 1, height: 1 }, 1, []],
-            [{ x: 250, y: 10, width: 1, height: 1 }, 2, []],
-            [{ x: 250, y: 90, width: 1, height: 1 }, 2, []],
+        // Final frame centers inside the four target-leaf regions decide the
+        // split axis from geometry alone; the cursor plays no part.
+        const cases: ReadonlyArray<[typeof RECT, number]> = [
+            [{ x: 160, y: 0, width: 100, height: 100 }, 1],
+            [{ x: 240, y: 0, width: 100, height: 100 }, 1],
+            [{ x: 200, y: 0, width: 100, height: 20 }, 2],
+            [{ x: 200, y: 80, width: 100, height: 20 }, 2],
         ];
-        for (const [cursorRect, expectedDirection] of cases) {
-            const { harness, origin, target, dragged, targetWindow } = dragSetup();
+        for (const [finalGeometry, expectedDirection] of cases) {
+            const { origin, target, dragged, targetWindow } = dragSetup();
             const managed: unknown[] = [];
             const first = tile(
                 expectedDirection === 1
@@ -4289,9 +4294,8 @@ describe("TileController interactive drag", () => {
                 target.tiles = [first, second];
                 return [second, first];
             };
-            harness.cursor = { x: cursorRect.x, y: cursorRect.y };
             startDrag(dragged);
-            dragged.frameGeometry = movedGeometry();
+            dragged.frameGeometry = finalGeometry;
             dragged.interactiveMoveResizeFinished.emit();
             assert.equal(direction, expectedDirection);
             assert.equal(managed[0], targetWindow);
@@ -4303,9 +4307,8 @@ describe("TileController interactive drag", () => {
     it("disables structural drag once for malformed split output or post-split manage failure", () => {
         const malformed = dragSetup();
         malformed.target.split = () => [];
-        malformed.harness.cursor = { x: 290, y: 50 };
         startDrag(malformed.dragged);
-        malformed.dragged.frameGeometry = movedGeometry();
+        malformed.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         malformed.dragged.interactiveMoveResizeFinished.emit();
         assert.equal(malformed.controller.isEnabled, false);
         assert.equal(countEvent(malformed.harness.logs, "disabled:drag-split-result-invalid"), 1);
@@ -4314,9 +4317,8 @@ describe("TileController interactive drag", () => {
         const first = tile({ x: 200, y: 0, width: 50, height: 100 }, false, () => false);
         const second = tile({ x: 250, y: 0, width: 50, height: 100 });
         failedManage.target.split = () => [first, second];
-        failedManage.harness.cursor = { x: 290, y: 50 };
         startDrag(failedManage.dragged);
-        failedManage.dragged.frameGeometry = movedGeometry();
+        failedManage.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         failedManage.dragged.interactiveMoveResizeFinished.emit();
         assert.equal(failedManage.controller.isEnabled, false);
         assert.equal(countEvent(failedManage.harness.logs, "disabled:drag-manage-failed"), 1);
@@ -4345,9 +4347,8 @@ describe("TileController interactive drag", () => {
         target.split = () => {
             throw "split";
         };
-        harness.cursor = { x: 290, y: 50 };
         startDrag(dragged);
-        dragged.frameGeometry = movedGeometry();
+        dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         dragged.interactiveMoveResizeFinished.emit();
         assert.equal(controller.hasActiveDrag, false);
         assert.equal(controller.isEnabled, false);
@@ -4436,6 +4437,255 @@ describe("TileController interactive drag", () => {
         assert.equal(term2Win.tile, term2);
         assert.equal((term1.windows as TestWindow[]).includes(term2Win), false);
         assert.equal(controller.isEnabled, true);
+    });
+
+    it("reflows a plain drop from the final frame geometry into the accepted three-window example", () => {
+        const { harness, controller, root, term1, right, term2, term3, top, bottom, term1Win, term2Win, term3Win } =
+            nativeDropSetup();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        startDrag(term2Win);
+        // Model a plain drop: KWin floats the dragged window (no custom tile
+        // is applied without Shift) at the final drop geometry, and the origin
+        // leaf no longer lists it.
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        // The drag-hook entry log fires before any decision, then the geometry
+        // target resolves and the shared reflow split runs with the origin
+        // collapse deferred, exactly like the native Shift path.
+        assert.equal(countEvent(harness.logs, "drag-finished"), 1);
+        assert.equal(countEvent(harness.logs, "drag-geometry-target"), 1);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 0);
+        assert.equal(term1Win.tile, top);
+        assert.equal(term2Win.tile, bottom);
+        assert.deepEqual(top.windows, [term1Win]);
+        assert.deepEqual(bottom.windows, [term2Win]);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.deepEqual(right.tiles, [term2, term3]);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(controller.hasActiveDrag, false);
+
+        // After the one-shot yield the empty origin collapses and KWin
+        // promotes the single-child V-wrapper, leaving the whole accepted tree
+        // H[V[term1, term2], term3].
+        harness.flushNextYield();
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.deepEqual(root.tiles, [term1, term3]);
+        assert.equal(term1.isLayout, true);
+        assert.equal(term1.layoutDirection, 2);
+        assert.deepEqual(term1.tiles, [top, bottom]);
+        assert.deepEqual(top.windows, [term1Win]);
+        assert.deepEqual(bottom.windows, [term2Win]);
+        assert.deepEqual(term3.windows, [term3Win]);
+        assert.equal(term1Win.tile, top);
+        assert.equal(term2Win.tile, bottom);
+        assert.equal(term3Win.tile, term3);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("converges a plain drop and a native Shift drop on the same reflow", () => {
+        const plain = nativeDropSetup();
+        startDrag(plain.term2Win);
+        plain.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        plain.term2Win.tile = null;
+        plain.term2Win.interactiveMoveResizeFinished.emit();
+        plain.harness.flushNextYield();
+
+        const shift = nativeDropSetup();
+        startDrag(shift.term2Win);
+        shift.term2Win.frameGeometry = movedGeometry();
+        shift.term2Win.tile = shift.term1;
+        shift.harness.cursor = { x: 50, y: 75 };
+        shift.term2Win.interactiveMoveResizeFinished.emit();
+        shift.harness.flushNextYield();
+
+        // Identical final tree shape and occupant mapping for both modifiers.
+        assert.deepEqual(plain.root.tiles, [plain.term1, plain.term3]);
+        assert.deepEqual(shift.root.tiles, [shift.term1, shift.term3]);
+        assert.equal(plain.term1.isLayout, true);
+        assert.equal(shift.term1.isLayout, true);
+        assert.equal(plain.term1.layoutDirection, shift.term1.layoutDirection);
+        assert.deepEqual(plain.term1.tiles, [plain.top, plain.bottom]);
+        assert.deepEqual(shift.term1.tiles, [shift.top, shift.bottom]);
+        assert.equal(plain.term1Win.tile, plain.top);
+        assert.equal(shift.term1Win.tile, shift.top);
+        assert.equal(plain.term2Win.tile, plain.bottom);
+        assert.equal(shift.term2Win.tile, shift.bottom);
+        assert.deepEqual(plain.term3.windows, [plain.term3Win]);
+        assert.deepEqual(shift.term3.windows, [shift.term3Win]);
+    });
+
+    it("converges a vacated plain drop and a lagged origin-associated plain drop on the same reflow", () => {
+        const vacated = nativeDropSetup();
+        startDrag(vacated.term2Win);
+        vacated.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        vacated.term2Win.tile = null;
+        vacated.term2Win.interactiveMoveResizeFinished.emit();
+        vacated.harness.flushNextYield();
+
+        const lagged = nativeDropSetup();
+        startDrag(lagged.term2Win);
+        // KWin unmanage lags the finish hook: the window is floated (tile null)
+        // but the origin leaf still lists it, and the cursor sits over term3.
+        // The final frame center targets term1, so the reflow must match the
+        // vacated drop exactly.
+        lagged.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        lagged.term2Win.tile = null;
+        lagged.term2.windows = [lagged.term2Win];
+        lagged.harness.cursor = { x: 150, y: 75 };
+        lagged.term2Win.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(lagged.harness.logs, "drag-geometry-target"), 1);
+        assert.equal(countEvent(lagged.harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(lagged.harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(lagged.term1Win.tile, lagged.top);
+        assert.equal(lagged.term2Win.tile, lagged.bottom);
+        // KWin evacuates the lagged origin list, then the deferred one-shot
+        // yield collapses the origin to the same accepted tree.
+        lagged.term2.windows = [];
+        lagged.harness.flushNextYield();
+        assert.equal(countEvent(lagged.harness.logs, "ownership-remove-collapsed"), 1);
+
+        assert.deepEqual(vacated.root.tiles, [vacated.term1, vacated.term3]);
+        assert.deepEqual(lagged.root.tiles, [lagged.term1, lagged.term3]);
+        assert.equal(vacated.term1.isLayout, true);
+        assert.equal(lagged.term1.isLayout, true);
+        assert.equal(vacated.term1.layoutDirection, lagged.term1.layoutDirection);
+        assert.deepEqual(vacated.term1.tiles, [vacated.top, vacated.bottom]);
+        assert.deepEqual(lagged.term1.tiles, [lagged.top, lagged.bottom]);
+        assert.equal(vacated.term1Win.tile, vacated.top);
+        assert.equal(lagged.term1Win.tile, lagged.top);
+        assert.equal(vacated.term2Win.tile, vacated.bottom);
+        assert.equal(lagged.term2Win.tile, lagged.bottom);
+        assert.deepEqual(vacated.term3.windows, [vacated.term3Win]);
+        assert.deepEqual(lagged.term3.windows, [lagged.term3Win]);
+    });
+
+    it("derives the split direction from final geometry, ignoring a cursor that would otherwise differ, for plain and Shift alike", () => {
+        for (const mode of ["plain", "shift"] as const) {
+            const state = nativeDropSetup();
+            startDrag(state.term2Win);
+            // Final frame center sits in the lower half of term1, so the
+            // geometry decision is a vertical split; the cursor over the upper
+            // half would otherwise classify "up".
+            state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+            state.harness.cursor = { x: 50, y: 25 };
+            state.term2Win.tile = mode === "shift" ? state.term1 : null;
+            state.term2Win.interactiveMoveResizeFinished.emit();
+            state.harness.flushNextYield();
+
+            assert.equal(countEvent(state.harness.logs, "drag-geometry-target"), 1);
+            assert.equal(state.term1.layoutDirection, 2);
+            assert.equal(state.term1Win.tile, state.top);
+            assert.equal(state.term2Win.tile, state.bottom);
+            assert.deepEqual(state.root.tiles, [state.term1, state.term3]);
+            assert.equal(state.controller.isEnabled, true);
+        }
+    });
+
+    it("derives the drop target from final geometry, ignoring a cursor over another leaf, for plain and Shift alike", () => {
+        for (const mode of ["plain", "shift"] as const) {
+            const state = nativeDropSetup();
+            startDrag(state.term2Win);
+            // Final frame center sits over term1, so term1 is the target; the
+            // cursor over term3 would otherwise target term3.
+            state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+            state.harness.cursor = { x: 150, y: 75 };
+            state.term2Win.tile = mode === "shift" ? state.term1 : null;
+            state.term2Win.interactiveMoveResizeFinished.emit();
+            state.harness.flushNextYield();
+
+            assert.equal(countEvent(state.harness.logs, "drag-geometry-target"), 1);
+            assert.equal(countEvent(state.harness.logs, "drag-bail:no-geometry-target"), 0);
+            assert.equal(state.term1.layoutDirection, 2);
+            assert.equal(state.term1Win.tile, state.top);
+            assert.equal(state.term2Win.tile, state.bottom);
+            assert.deepEqual(state.term3.windows, [state.term3Win]);
+            assert.deepEqual(state.root.tiles, [state.term1, state.term3]);
+            assert.equal(state.controller.isEnabled, true);
+        }
+    });
+
+    it("bails when native overlap state contradicts the geometry-derived target", () => {
+        const { harness, controller, term1, term2, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        // KWin managed the dragged window into term1, but the final frame
+        // geometry center sits over term3: inconsistent state, never reflow.
+        term2Win.tile = term1;
+        term2Win.frameGeometry = { x: 100, y: 50, width: 100, height: 50 };
+        harness.cursor = { x: 50, y: 75 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-finished"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:geometry-native-mismatch"), 1);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(term2Win.tile, term2);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("logs a geometry-target bail and restores the origin when no occupied leaf sits under the final frame center", () => {
+        const { harness, controller, term2, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        // Dropped back over the vacated origin leaf, which is now empty: no
+        // occupied target can resolve, so the drop bails and restores.
+        term2Win.frameGeometry = { x: 100, y: 0, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-finished"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:no-geometry-target"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(term2Win.tile, term2);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("emits the drag-finished hook entry log before every finish decision and bail", () => {
+        const cases: ReadonlyArray<{
+            readonly outcome: string;
+            readonly prepare: (state: ReturnType<typeof nativeDropSetup>) => void;
+        }> = [
+            {
+                outcome: "drag-geometry-target",
+                prepare: (state) => {
+                    state.term2Win.tile = null;
+                    state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+                },
+            },
+            {
+                outcome: "drag-bail:no-geometry-target",
+                prepare: (state) => {
+                    state.term2Win.tile = null;
+                    state.term2Win.frameGeometry = { x: 100, y: 0, width: 100, height: 50 };
+                },
+            },
+            {
+                outcome: "drag-geometry-target",
+                prepare: (state) => {
+                    state.term2Win.tile = state.term1;
+                    state.harness.cursor = { x: 50, y: 75 };
+                },
+            },
+        ];
+        for (const testCase of cases) {
+            const state = nativeDropSetup();
+            startDrag(state.term2Win);
+            testCase.prepare(state);
+            state.term2Win.interactiveMoveResizeFinished.emit();
+            const entry = "plasma-auto-tiler:drag-finished";
+            const outcome = `plasma-auto-tiler:${testCase.outcome}`;
+            assert.ok(state.harness.logs.includes(entry));
+            assert.ok(state.harness.logs.indexOf(entry) < state.harness.logs.indexOf(outcome));
+        }
     });
 });
 
@@ -4767,15 +5017,14 @@ describe("TileController production diagnostics", () => {
         const completed = dragSetup();
         const first = tile({ x: 200, y: 0, width: 50, height: 100 }, false, () => true);
         const second = tile({ x: 250, y: 0, width: 50, height: 100 }, false, () => {
-            assert.equal(countEvent(completed.harness.logs, "drag-split-completed"), 0);
+            assert.equal(countEvent(completed.harness.logs, "drag-overlap-split-completed"), 0);
             return true;
         });
         completed.target.split = () => [first, second];
-        completed.harness.cursor = { x: 290, y: 50 };
         startDrag(completed.dragged);
-        completed.dragged.frameGeometry = movedGeometry();
+        completed.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         completed.dragged.interactiveMoveResizeFinished.emit();
-        assert.equal(countEvent(completed.harness.logs, "drag-split-completed"), 1);
+        assert.equal(countEvent(completed.harness.logs, "drag-overlap-split-completed"), 1);
     });
 
     it("emits fixed private-safe ignored-window and disable diagnostics", () => {

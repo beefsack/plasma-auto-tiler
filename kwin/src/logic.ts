@@ -236,6 +236,16 @@ function intervalsOverlap(aStart: number, aEnd: number, bStart: number, bEnd: nu
     return aStart < bEnd && bStart < aEnd;
 }
 
+// The center point of a positive finite rect, or null when the rect is not
+// positive and finite. Used to anchor a plain drag's final frame geometry to a
+// tile-tree leaf.
+export function rectCenter(rect: Rect): Point | null {
+    if (!isValidRect(rect)) {
+        return null;
+    }
+    return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
 // Normalized pointer fraction relative to a positive finite rect. The pointer
 // must be inside the half-open rect; a fraction of exactly 1 on either axis is
 // outside.
@@ -470,17 +480,17 @@ export function planDragPlacement(request: DragRequest): Result<DragPlan> {
     };
 }
 
-export interface DropOverlapRequest {
+export interface GeometryDropRequest {
     readonly scope: Scope;
     readonly originLeaf: Leaf;
     readonly targetLeaf: Leaf;
     readonly draggedWindow: WindowRef;
-    readonly pointer: Point;
+    readonly finalGeometry: Rect;
     readonly record: OriginRecord | null;
 }
 
-export type DropOverlapPlan = {
-    readonly kind: "drop-overlap";
+export type GeometryDropPlan = {
+    readonly kind: "geometry-drop";
     readonly scope: Scope;
     readonly direction: Direction;
     readonly originLeaf: Leaf;
@@ -489,16 +499,20 @@ export type DropOverlapPlan = {
     readonly oppositeWindow: WindowRef;
 };
 
-// Native Shift custom-tile drop: KWin has already managed the dragged window
-// into the drop target, which now holds it plus exactly one other eligible
-// occupant, and the vacated origin leaf no longer lists it. This plans only the
-// position-directed split of the target leaf; the origin collapse is a
-// separate deferred phase. The central 50% dead zone defaults to a vertical
-// split with the original occupant above and the dragged window below, so the
-// plan always carries a direction.
-export function planDropOverlap(request: DropOverlapRequest): Result<DropOverlapPlan> {
-    if (!isValidPoint(request.pointer)) {
-        return reject("invalid-numbers", "pointer coordinates must be finite");
+// Plain (no-modifier) drop finish: KWin has floated the dragged window at the
+// drop point and no custom tile was applied, so the target is derived from the
+// dragged window's final frame geometry against the tile tree instead of any
+// native tile assignment. The origin leaf may or may not still list the dragged
+// window: KWin's unmanage can lag the finish hook, and both states must plan.
+// The same plan is authoritative for a native Shift drop, whose target leaf
+// already holds the dragged window plus one occupant, so all drop kinds
+// converge on one reflow. This plans only the position-directed split of the
+// target leaf; the origin collapse is a separate deferred phase. The central
+// 50% dead zone defaults to a vertical split with the original occupant above
+// and the dragged window below.
+export function planGeometryDrop(request: GeometryDropRequest): Result<GeometryDropPlan> {
+    if (!isValidRect(request.finalGeometry)) {
+        return reject("invalid-geometry", "final geometry must be positive and finite");
     }
     if (!isValidRect(request.originLeaf.geometry)) {
         return reject("invalid-geometry", "origin leaf geometry must be positive and finite");
@@ -512,23 +526,30 @@ export function planDropOverlap(request: DropOverlapRequest): Result<DropOverlap
     if (request.targetLeaf.isLayout) {
         return reject("ineligible-target", "target leaf must not be a layout container");
     }
-    if (request.targetLeaf.windows.length !== 2) {
-        return reject("invalid-leaf-count", "native drop target must hold the dragged window and exactly one occupant");
+    if (request.targetLeaf.windows.length > 2) {
+        return reject("invalid-leaf-count", "geometry drop target must hold the dragged window plus at most one occupant");
+    }
+    if (
+        request.targetLeaf.windows.length === 2 &&
+        !request.targetLeaf.windows.some((window) => window.id === request.draggedWindow.id)
+    ) {
+        return reject("invalid-leaf-count", "a two-window target must hold the dragged window plus one occupant");
+    }
+    if (request.targetLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
+        return reject("mismatched-state", "dragged window must appear at most once in the target leaf");
     }
     if (request.targetLeaf.windows.some((window) => !isEligibleWindow(window))) {
         return reject("ineligible-target", "target leaf contains an ineligible window");
     }
-    if (!request.targetLeaf.windows.some((window) => window.id === request.draggedWindow.id)) {
-        return reject("mismatched-state", "dragged window is not associated with the target leaf");
-    }
-    if (request.targetLeaf.windows.filter((window) => window.id !== request.draggedWindow.id).length !== 1) {
-        return reject("mismatched-state", "target leaf must hold exactly one occupant besides the dragged window");
-    }
     if (!isEligibleWindow(request.draggedWindow)) {
         return reject("ineligible-window", "dragged window is not eligible");
     }
-    if (request.originLeaf.windows.some((window) => window.id === request.draggedWindow.id)) {
-        return reject("mismatched-state", "dragged window must have vacated the origin leaf");
+    if (request.originLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
+        return reject("mismatched-state", "dragged window must appear at most once in the origin leaf");
+    }
+    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
+    if (oppositeWindow === undefined) {
+        return reject("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
     }
     if (request.record !== null) {
         if (!sameScope(request.record.scope, request.scope)) {
@@ -541,19 +562,19 @@ export function planDropOverlap(request: DropOverlapRequest): Result<DropOverlap
             return reject("stale-state", "recorded window no longer matches the dragged window");
         }
     }
-    const classified = classifyDirection(request.pointer, request.targetLeaf.geometry);
+    const center = rectCenter(request.finalGeometry);
+    if (center === null) {
+        return reject("invalid-geometry", "final geometry center must be finite");
+    }
+    const classified = classifyDirection(center, request.targetLeaf.geometry);
     if (!classified.ok) {
         return classified;
     }
     const direction = classified.value.kind === "center" ? "down" : classified.value.direction;
-    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
-    if (oppositeWindow === undefined) {
-        return reject("mismatched-state", "target leaf must hold exactly one occupant besides the dragged window");
-    }
     return {
         ok: true,
         value: {
-            kind: "drop-overlap",
+            kind: "geometry-drop",
             scope: request.scope,
             direction,
             originLeaf: request.originLeaf,
