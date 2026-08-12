@@ -51,6 +51,9 @@ bounded, explicit authorization.
   land only under the per-run directory and are cleaned with it.
 - `scripts/nested-kwin-spike.sh WORKDIR` is the minimal isolated launcher
   implementing this contract (kwin binary overridable via `KWIN_BIN`).
+- `dbus-run-session` isolates the session bus, not the filesystem. An early
+  unisolated nested run wrote host configuration, so the private XDG homes are
+  mandatory rather than optional hygiene.
 - Empirical isolation acceptance: record the exact SHA-256 and nanosecond
   mtime of the host `~/.config/kwinrc` immediately before and immediately
   after one bounded nested run held long enough for the TileManager
@@ -355,16 +358,17 @@ Durable prohibitions:
 - Never `remove()` then `split()` in one run.
 - Never use a fixed-timer `deleteLater` settle barrier.
 - Always re-resolve every tile handle, including the root, after any removal.
-- One structural call per dispatch, then stop.
+- Run only homogeneous structural batches and freshly decode the root after
+  every structural call.
 - Never run a structural probe in a persistent user scope.
 - A scripted collapse (repeated `remove()`) can also crash the compositor and
   may expose an upstream KWin defect; treat collapse as crash-class, never as a
   cleanup-class operation.
-- Whether `createDesktop` immediately materializes a `[Tiling]` group remains
-  an unresolved contradiction: one preflight observed default `tiles`/`padding`
-  on a fresh desktop, while three later create/read/remove scopes found no
-  persisted group one second after `createDesktop`. Scope-integrity work must
-  not treat either observation as settled.
+- `createDesktop` persistence timing is resolved: default-tree
+  `layoutModified` starts TileManager's 2000 ms save timer
+  (`tilemanager.cpp:61-76,300-321,390-405`). The one-second reads occurred
+  before persistence; once the exact group has existed for more than two
+  seconds, owned-desktop cleanup must delete that exact group.
 
 ## Attempt Lessons
 

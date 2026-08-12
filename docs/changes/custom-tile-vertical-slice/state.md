@@ -1761,10 +1761,11 @@
   existing Node dev toolchain (no `devenv.nix` change unless the user chooses a
   non-Node helper runtime, which then needs the session-restart rule).
   First bounded future package, if cold-start-only support remains useful:
-  unit-21 - dev-only, schema-pinned dwindle `[Tiling]` generator/validator and
-  exact group-selection tests (pure, no KWin). It must not claim runtime
-  reload or automatic adaptation. A dynamic product needs upstream KWin reload
-  support or a separately-safe supported structural API.
+  a fresh-ID dev-only, schema-pinned dwindle `[Tiling]` generator/validator and
+  exact group-selection tests (pure, no KWin). `unit-21` is already consumed by
+  yield-primitive/dwindle-ownership work. It must not claim runtime reload or
+  automatic adaptation. A dynamic product needs upstream KWin reload support
+  or a separately-safe supported structural API.
   User decisions needed: (a) helper language/runtime/packaging for the writer;
   (b) whether a separately-authorized future live package may test
   restart-realization of a written group; (c) stale `[Tiling]` groups remain
