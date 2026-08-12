@@ -20,6 +20,46 @@ bounded, explicit authorization.
   authorized scope. Stop immediately on any ownership, parser, diagnostic, or
   baseline surprise. Do not retry a live launch within that authorization.
 
+## Nested Compositor Config Isolation
+
+- Any nested `kwin_wayland` invocation used for validation must run in a fully
+  private, fresh XDG environment so it can never read or write the user's KDE
+  configuration. It needs private `XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
+  `XDG_CACHE_HOME`, `XDG_STATE_HOME`, `XDG_RUNTIME_DIR`, and `KDEHOME`, all
+  scoped to a per-run directory created under the attempt's own evidence tree.
+  The runtime directory must be owned by the calling user with mode `0700`;
+  unsafe runtime-dir ownership/mode can make the compositor crash or refuse to
+  start.
+- Scope every XDG variable to the nested child only; never leak them into the
+  harness or host environment. Launch via a private `dbus-run-session` and
+  preserve the proven recipe otherwise: `--socket nested-kwin-spike --width
+  640 --height 480 --no-global-shortcuts --no-kactivities --no-lockscreen`,
+  never `--windowed`.
+- A private `XDG_RUNTIME_DIR` is required for isolation but breaks the nested
+  compositor's Wayland-backend connection to the host compositor, because a
+  relative display name resolves under `XDG_RUNTIME_DIR`. Export the parent
+  display as the absolute path `/run/user/<uid>/wayland-0` and pass it through
+  `--wayland-display "$WAYLAND_DISPLAY"`. VALIDATED at unit-02/attempt-02
+  (see `/tmp/opencode/pat-u19-a03/u27a02`): the pre-correction recipe failed
+  at unit-02/attempt-01 (`/tmp/opencode/pat-u19-a03/u27a01`), while the
+  corrected run left host `~/.config/kwinrc` SHA-256 and nanosecond mtime
+  unchanged after a 3+ second nested run that wrote its own fresh private
+  `kwinrc`.
+- Never launch the nested compositor against the host `XDG_RUNTIME_DIR`
+  (`/run/user/<uid>`) and never pre-delete or clean host runtime socket files.
+  With a private runtime dir, the `nested-kwin-spike` socket and any locks
+  land only under the per-run directory and are cleaned with it.
+- `scripts/nested-kwin-spike.sh WORKDIR` is the minimal isolated launcher
+  implementing this contract (kwin binary overridable via `KWIN_BIN`).
+- Empirical isolation acceptance: record the exact SHA-256 and nanosecond
+  mtime of the host `~/.config/kwinrc` immediately before and immediately
+  after one bounded nested run held long enough for the TileManager
+  persistence timer (at least 2 seconds). Acceptance requires the host hash
+  AND mtime to be unchanged, plus read-only inspection showing the nested run
+  wrote/used its private config copy (a fresh `kwinrc` under the private
+  config dir). Any host state change is a hard failure: stop immediately,
+  report, and do not retry the live launch within that authorization.
+
 ## Validation Ladder
 
 Run layers in order. Passing one layer never implies a later layer.
@@ -293,6 +333,39 @@ validation ladder above.
   when it is unique; supervisor cleanup must delete those exact keys even if a
   later gate stops before Client A.
 
+## Remove-Contract Probe Crash Post-mortem
+
+A live `CustomTile.remove()` contract probe on the current persistent scope
+crashed KWin with the exact stack:
+
+    QTimer::timeout -> JS callback -> KWin::CustomTile::split
+    -> KWin::TileModel::beginInsertTile -> QAbstractItemModel::beginInsertRows
+
+Mechanism: the probe ran `split()` on a tile tree already changed by a prior
+`remove()`. The earlier `remove()` recursively promoted a single-child layout
+and `deleteLater()`ed the detached tiles (`customtile.cpp:273-343`), so the
+later `split()` executed on tiles whose parent chain and model rows no longer
+matched the live tree; `createChildAt` -> `beginInsertTile`
+(`customtile.cpp:40-50`, `scripting/tilemodel.cpp:123-138`) then drove
+`beginInsertRows` into an inconsistent model state and crashed. The fixed 3000
+ms start timer was incorrectly treated as a `deleteLater` settle barrier; a
+timer cannot observe deferred deletion.
+
+Durable prohibitions:
+- Never `remove()` then `split()` in one run.
+- Never use a fixed-timer `deleteLater` settle barrier.
+- Always re-resolve every tile handle, including the root, after any removal.
+- One structural call per dispatch, then stop.
+- Never run a structural probe in a persistent user scope.
+- A scripted collapse (repeated `remove()`) can also crash the compositor and
+  may expose an upstream KWin defect; treat collapse as crash-class, never as a
+  cleanup-class operation.
+- Whether `createDesktop` immediately materializes a `[Tiling]` group remains
+  an unresolved contradiction: one preflight observed default `tiles`/`padding`
+  on a fresh desktop, while three later create/read/remove scopes found no
+  persisted group one second after `createDesktop`. Scope-integrity work must
+  not treat either observation as settled.
+
 ## Attempt Lessons
 
 | Observation | Durable rule |
@@ -316,6 +389,7 @@ validation ladder above.
 | `--show-cursor` output was used verbatim as an `--after-cursor` token | Strip the `-- cursor: ` display prefix and validate the stripped token with a true-positive marker before live gating. |
 | Heartbeat lapsed during post-mutation read-only diagnosis in `unit-05/attempt-18` | Keep heartbeat ownership active through trigger writing and completion, or use a dedicated bounded writer; stale-heartbeat cleanup is correct but can preempt evidence collection. |
 | `loadScript` returned a valid envelope but the harness rejected it in `unit-05/attempt-20` | Parenthesize and prevalidate jq predicates for the exact strict envelope. A parser failure before `run()` is failed-clean only, even when cleanup succeeds. |
+| Remove-contract probe crashed KWin with `QTimer::timeout -> JS callback -> CustomTile::split -> TileModel::beginInsertTile -> QAbstractItemModel::beginInsertRows` | A `split()` on a tile tree already changed by a prior `remove()`; the fixed 3000 ms timer was not a `deleteLater` settle barrier. Never `remove()` then `split()` in one run; never fixed-timer `deleteLater` barrier; always re-resolve every tile handle including root after removal; one structural call per dispatch; never a structural probe in a persistent user scope. |
 
 ## Current Boundary and Resumption
 
