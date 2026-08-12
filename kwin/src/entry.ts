@@ -53,6 +53,28 @@ const controller = new TileController({
             window.tileChanged.disconnect(handler);
         };
     },
+    // Named one-shot event-loop yield for dwindle reconstruction deferral,
+    // implemented with the proven callDBus async callback seam. ListNames on
+    // the session bus dispatches its callback exactly once on a real later
+    // event-loop turn, after pending DeferredDelete processing, and never
+    // synchronously. It holds no timer and relies on no signal. Returns false
+    // only when arming the D-Bus call throws, which must fail the owning scope
+    // closed rather than strand it.
+    yieldOnce: (callback) => {
+        try {
+            callDBus(
+                "org.freedesktop.DBus",
+                "/org/freedesktop/DBus",
+                "org.freedesktop.DBus",
+                "ListNames",
+                callback,
+            );
+            return true;
+        } catch (error) {
+            void error;
+            return false;
+        }
+    },
     scheduleOnce: (delayMs, callback) => {
         const timer = new QTimer();
         timer.interval = delayMs;

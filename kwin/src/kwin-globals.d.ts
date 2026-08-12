@@ -22,6 +22,23 @@ declare function registerShortcut(
     callback: () => void,
 ): boolean;
 
+// src/scripting/scripting.h:
+//     Q_INVOKABLE void callDBus(const QString &service, const QString &path,
+//                               const QString &interface, const QString &method,
+//                               const QJSValue &arg1..arg9)
+// Installed as a script global by src/scripting/scripting.cpp:237-251. The
+// trailing argument may be a callable callback, invoked exactly once with the
+// D-Bus reply arguments on a later event-loop turn (scripting.cpp:301-374); an
+// error reply logs and never invokes the callback. Used here only as a
+// guaranteed one-shot event-loop yield (ListNames), never for data transport.
+declare function callDBus(
+    service: string,
+    path: string,
+    dbusInterface: string,
+    method: string,
+    ...args: readonly unknown[]
+): void;
+
 // src/scripting/scripting.cpp installs QJSEngine::ConsoleExtension before
 // evaluating the generated script.
 interface Console {

@@ -14,6 +14,7 @@ import {
     isVirtualDesktop,
     isWindow,
     manageTile,
+    removeCustomTile,
     sameScope,
     splitCustomTile,
     type CustomTileCapability,
@@ -26,7 +27,9 @@ import {
     type WindowScopeSignals,
 } from "./boundary";
 import { customTileSplitSeam } from "./custom-tile-split";
+import { buildDwindleBlueprint, type Blueprint, type Orientation } from "./layout-blueprint";
 import { executeBlueprintInstructions } from "./layout-executor";
+import { type BlueprintPath } from "./layout-instructions";
 import {
     findNeighborLeaf,
     pickTargetLeaf,
@@ -39,6 +42,12 @@ import {
     type WindowRef,
 } from "./logic";
 import { buildPreset, type PresetKind } from "./preset-catalog";
+import {
+    collapseToRootLeaf,
+    type ResetSeam,
+    type ResetSnapshot,
+    type ResetTile,
+} from "./topology-reset";
 
 const MAX_TILES = MAX_SEQUENTIAL_LENGTH;
 const HORIZONTAL_LAYOUT_DIRECTION = 1;
@@ -49,6 +58,13 @@ const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
 // bounded re-evaluation gives it a chance to settle before being treated as
 // permanently out of scope.
 const DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
+// Bounded re-drive budget per pending reconstruction phase. A lifecycle event
+// while a reconstruction is pending re-arms that phase's one-shot yield so a
+// single lost callDBus reply cannot strand a collapsed scope. A bound is still
+// required: if every ListNames reply is lost, unlimited re-arms would leave a
+// collapsed awaiting-split scope retrying forever instead of reaching the
+// session-local inert state.
+const MAX_YIELD_REARM_PER_PHASE = 2;
 
 type BoundaryKind = "workspace-window-list" | "tile-children" | "tile-occupancy" | "split-result";
 
@@ -72,6 +88,13 @@ export interface ControllerEnvironment {
         invalidated: () => void,
     ) => () => void;
     readonly onPendingTargetChanged: (window: WindowScopeSignals, handler: () => void) => () => void;
+    // Named one-shot event-loop yield used to defer dwindle reconstruction
+    // between the removals-only collapse and the splits-only rebuild. Returns
+    // whether the yield was armed: a false return means the caller must fail
+    // closed rather than strand. The callback is guaranteed to fire at most
+    // once per successful arm on a real later event-loop turn, never
+    // synchronously, and holds no timer and relies on no signal.
+    readonly yieldOnce: (callback: () => void) => boolean;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly registerShortcut: (name: string, text: string, sequence: string, handler: () => void) => boolean;
     readonly log: (message: string) => void;
@@ -91,6 +114,34 @@ export interface SelectedOverlay {
     readonly preset: PresetKind;
     readonly root: TileCapability;
     readonly leaves: readonly TileCapability[];
+}
+
+// Session-local managed-scope ownership record for automatic ratio-free
+// dwindle. A scope becomes managed by the controller takeover on start or
+// scope change and stays owned for the session unless it becomes inert: a
+// failed or damaged scope is never retried in that session. No identity
+// survives restart or hotplug.
+export interface ManagedScope {
+    readonly scope: CurrentScope;
+    readonly inert: boolean;
+}
+
+// A deferred dwindle reconstruction awaiting its one-shot event-loop yield.
+// Phase one collapses the owned scope to a single leaf in a synchronous
+// removals-only dispatch; phase two rebuilds the ratio-free dwindle blueprint
+// in a later dispatch. No tile handle is retained; every callback re-resolves
+// the scope root and window membership fresh. The phase doubles as the
+// per-pending arm bookkeeping: each armed yield is bound to the phase it was
+// armed for, so a stale or duplicate callback for an already-advanced phase is
+// inert. `rearmCount` counts how many times the current phase's yield has been
+// re-armed by lifecycle events; it resets to zero when the phase advances, so
+// each phase gets its own bounded re-drive budget.
+export type RebuildPhase = "awaiting-collapse" | "awaiting-split";
+
+export interface PendingRebuild {
+    readonly scope: CurrentScope;
+    phase: RebuildPhase;
+    rearmCount: number;
 }
 
 interface DecodedLeaf {
@@ -252,6 +303,51 @@ function decodeTileTree(root: TileCapability): readonly TileCapability[] | null 
     return tiles;
 }
 
+// A usable leaf of a dwindle-owned scope, per the coherent leaf/occupancy
+// model: a non-layout tile, or a layout root with zero children (a collapsed
+// scope root is itself the sole usable leaf). Interior layout tiles with one
+// or more children are never usable.
+interface UsableLeaf {
+    readonly tile: TileCapability;
+    readonly windows: readonly WindowCapability[];
+}
+
+// Walk the scope tree and return its usable leaves in decoded order with their
+// decoded occupancy. Returns null on any structural decode failure, matching
+// decodeTileTree's strictness.
+function decodeUsableLeaves(root: TileCapability): readonly UsableLeaf[] | null {
+    const tiles = decodeTileTree(root);
+    if (tiles === null) {
+        return null;
+    }
+    const leaves: UsableLeaf[] = [];
+    for (const tile of tiles) {
+        if (!tile.isLayout) {
+            const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+            if (!windows.ok) {
+                return null;
+            }
+            leaves.push({ tile, windows: windows.value });
+            continue;
+        }
+        if (tile !== root) {
+            continue;
+        }
+        const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+        if (!children.ok) {
+            return null;
+        }
+        if (children.value.length === 0) {
+            const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+            if (!windows.ok) {
+                return null;
+            }
+            leaves.push({ tile, windows: windows.value });
+        }
+    }
+    return leaves;
+}
+
 // Pre-order left-to-right realization of a preset overlay root, mirroring the
 // executor's decoded split children. A non-layout root realizes to itself; a
 // layout root must decode to exactly two custom-tile children per level, so any
@@ -397,6 +493,42 @@ function splitDirection(direction: Direction): number {
         : VERTICAL_LAYOUT_DIRECTION;
 }
 
+function layoutDirectionFor(orientation: Orientation): number {
+    return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
+}
+
+// Structural dwindle-shape match: a live custom-tile subtree must realize the
+// blueprint node with orientation alternating from a horizontal root at depth
+// zero. The two children are accepted in either decoded order because the
+// executor's "left"/"right" path mapping follows the split-return order.
+function dwindleNodeMatches(tile: CustomTileCapability, node: Blueprint, depth: number): boolean {
+    if (node.kind === "leaf") {
+        return !tile.isLayout;
+    }
+    if (!tile.isLayout) {
+        return false;
+    }
+    const expected = depth % 2 === 0 ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
+    if (tile.layoutDirection !== expected) {
+        return false;
+    }
+    const children = decodeSequential(tile.tiles, isCustomTile, 2);
+    if (!children.ok || children.value.length !== 2) {
+        return false;
+    }
+    const first = children.value[0];
+    const second = children.value[1];
+    if (first === undefined || second === undefined) {
+        return false;
+    }
+    return (
+        (dwindleNodeMatches(first, node.left, depth + 1) &&
+            dwindleNodeMatches(second, node.right, depth + 1)) ||
+        (dwindleNodeMatches(first, node.right, depth + 1) &&
+            dwindleNodeMatches(second, node.left, depth + 1))
+    );
+}
+
 export class TileController {
     private readonly gate = new FeatureGate();
     private readonly pending = new TransientState<PendingKeyboard>();
@@ -412,6 +544,18 @@ export class TileController {
     // removed window. Entries for settled (array-absent) windows are never
     // consulted and the set is capped so it cannot grow unboundedly.
     private readonly removedOccupants = new Set<WindowCapability>();
+    // Per-output/per-desktop session-local managed-scope ownership for
+    // automatic ratio-free dwindle. A scope is managed only when it holds
+    // owned windows; a failed or damaged scope is recorded inert for the
+    // session and never retried.
+    private readonly managedScopes = new Map<OutputCapability, Map<string, ManagedScope>>();
+    // Deferred dwindle reconstructions awaiting their one-shot event-loop
+    // yields between the removals-only collapse and the splits-only rebuild.
+    private readonly pendingRebuilds = new Map<OutputCapability, Map<string, PendingRebuild>>();
+    // Explicitly detached windows (the detach action writes `window.tile` to
+    // null) are excluded from the owned population and the dwindle rebuild.
+    // Bounded like removedOccupants so it cannot grow without limit.
+    private readonly detachedWindows = new Set<WindowCapability>();
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -678,6 +822,7 @@ export class TileController {
             }
             this.diagnostic("shortcut-registered");
             this.diagnostic("startup-handlers-ready");
+            this.engageCurrentScope();
         }, (reason) => this.disabled(reason));
     }
 
@@ -878,7 +1023,6 @@ export class TileController {
                 .filter(
                     (entry) =>
                         !entry.leaf.isLayout &&
-                        entry.windows.length === 0 &&
                         entry.leaf !== source.leaf,
                 )
                 .map((entry) => entry.leaf);
@@ -894,28 +1038,259 @@ export class TileController {
                     break;
                 }
             }
-            if (target === null || target.leaf.isLayout || target.windows.length !== 0) {
+            if (target === null || target.leaf.isLayout) {
                 this.diagnostic("move-rejected:target-occupancy-validity");
                 return;
             }
-            if (!this.moveAssignmentRevalidates(scope, active, source, target, direction)) {
-                this.diagnostic("move-rejected:assignment-stale");
+            if (target.windows.length === 0) {
+                if (!this.moveAssignmentRevalidates(scope, active, source, target, direction)) {
+                    this.diagnostic("move-rejected:assignment-stale");
+                    return;
+                }
+                let assigned = false;
+                try {
+                    assigned = manageTile(target.decoded.tile, active);
+                } catch (error) {
+                    void error;
+                    this.diagnostic("move-rejected:assignment-failed");
+                    return;
+                }
+                if (!assigned) {
+                    this.diagnostic("move-rejected:assignment-failed");
+                    return;
+                }
+                this.diagnostic("move-completed");
                 return;
             }
-            let assigned = false;
-            try {
-                assigned = manageTile(target.decoded.tile, active);
-            } catch (error) {
-                void error;
-                this.diagnostic("move-rejected:assignment-failed");
-                return;
-            }
-            if (!assigned) {
-                this.diagnostic("move-rejected:assignment-failed");
-                return;
-            }
-            this.diagnostic("move-completed");
+            this.swapToOccupiedTarget(scope, active, source, target, direction);
         }, (reason) => this.disabled(reason));
+    }
+
+    // Directional occupied-target swap: when the nearest ranked non-layout
+    // directional leaf is occupied, its exactly-one eligible in-scope occupant
+    // swaps with the active source. Two guarded `window.tile` writes each
+    // revalidate immediately before the write, decode their postcondition, and
+    // stop at the first failure. On a failed second write a single best-effort
+    // restoration returns the source to its original leaf; no rollback is
+    // claimed in any other path. Assignment-only: no topology method is ever
+    // called.
+    private swapToOccupiedTarget(
+        scope: CurrentScope,
+        active: WindowCapability,
+        source: OperationLeaf,
+        target: OperationLeaf,
+        direction: Direction,
+    ): void {
+        this.diagnostic("move-swap-invoked");
+        if (target.leaf.isLayout || target.windows.length !== 1) {
+            this.diagnostic("move-rejected:swap-occupancy-validity");
+            return;
+        }
+        const occupant = target.windows[0];
+        if (occupant === undefined || !windowInScope(occupant, scope)) {
+            this.diagnostic("move-rejected:swap-occupant-ineligible");
+            return;
+        }
+        if (!this.swapRevalidates(scope, active, occupant, source, target, direction, "before-first")) {
+            this.diagnostic("move-swap-rejected:stale");
+            return;
+        }
+        let firstAssigned = false;
+        try {
+            firstAssigned = assignWindowToTile(active, target.decoded.tile);
+        } catch (error) {
+            void error;
+        }
+        if (!firstAssigned) {
+            this.diagnostic("move-swap-failed:first-write");
+            return;
+        }
+        if (!this.swapRevalidates(scope, active, occupant, source, target, direction, "before-second")) {
+            this.swapSecondWriteFailed(scope, active, source);
+            return;
+        }
+        let secondAssigned = false;
+        try {
+            secondAssigned = assignWindowToTile(occupant, source.decoded.tile);
+        } catch (error) {
+            void error;
+        }
+        if (!secondAssigned) {
+            this.swapSecondWriteFailed(scope, active, source);
+            return;
+        }
+        if (!this.swapDecodesFinal(scope, active, occupant, source, target)) {
+            this.swapSecondWriteFailed(scope, active, source);
+            return;
+        }
+        this.diagnostic("move-swap-completed");
+    }
+
+    // Re-derives active identity, exact scope/root, both occupant associations,
+    // and both leaf realizations immediately before a guarded swap write. The
+    // expected leaf contents depend on the phase: before the first write the
+    // source leaf holds only the active window and the target leaf only the
+    // occupant; before the second write the source leaf is empty and the target
+    // leaf briefly holds both (the pinned setTileCompatibility contract
+    // evacuates-then-adds, so the destination leaf transiently double-occupies).
+    private swapRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        occupant: WindowCapability,
+        source: OperationLeaf,
+        target: OperationLeaf,
+        direction: Direction,
+        phase: "before-first" | "before-second",
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope) ||
+            !windowInScope(occupant, freshScope)
+        ) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (
+            topology === null ||
+            active.tile === null ||
+            !isTile(active.tile) ||
+            occupant.tile === null ||
+            !isTile(occupant.tile) ||
+            occupant.tile !== target.decoded.tile
+        ) {
+            return false;
+        }
+        const expectedActiveTile = phase === "before-first" ? source.decoded.tile : target.decoded.tile;
+        if (active.tile !== expectedActiveTile) {
+            return false;
+        }
+        const freshSource = operationLeafForTile(topology, source.decoded.tile);
+        const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
+            return false;
+        }
+        if (phase === "before-first") {
+            if (freshSource.windows.length !== 1 || windowIndex(freshSource.windows, active) < 0) {
+                return false;
+            }
+            if (freshTarget.windows.length !== 1 || windowIndex(freshTarget.windows, occupant) < 0) {
+                return false;
+            }
+        } else {
+            if (freshSource.windows.length !== 0) {
+                return false;
+            }
+            if (
+                freshTarget.windows.length !== 2 ||
+                windowIndex(freshTarget.windows, active) < 0 ||
+                windowIndex(freshTarget.windows, occupant) < 0
+            ) {
+                return false;
+            }
+        }
+        if (
+            active === occupant ||
+            topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1 ||
+            topology.filter((entry) => windowIndex(entry.windows, occupant) >= 0).length !== 1
+        ) {
+            return false;
+        }
+        if (phase === "before-first") {
+            const freshCandidates = topology
+                .filter(
+                    (entry) => !entry.leaf.isLayout && entry.leaf !== freshSource.leaf,
+                )
+                .map((entry) => entry.leaf);
+            return findNeighborLeaf(freshCandidates, freshSource.leaf, direction) === freshTarget.leaf;
+        }
+        return true;
+    }
+
+    // Fresh decoded final postcondition: the occupant occupies the original
+    // source leaf and the active source the target leaf, each leaf holding
+    // exactly one window. No topology method is called.
+    private swapDecodesFinal(
+        scope: CurrentScope,
+        active: WindowCapability,
+        occupant: WindowCapability,
+        source: OperationLeaf,
+        target: OperationLeaf,
+    ): boolean {
+        const topology = this.topologyForScope(scope);
+        if (topology === null || active.tile !== target.decoded.tile || occupant.tile !== source.decoded.tile) {
+            return false;
+        }
+        const freshSource = operationLeafForTile(topology, source.decoded.tile);
+        const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
+            return false;
+        }
+        return (
+            freshSource.windows.length === 1 &&
+            windowIndex(freshSource.windows, occupant) >= 0 &&
+            freshTarget.windows.length === 1 &&
+            windowIndex(freshTarget.windows, active) >= 0
+        );
+    }
+
+    // Second-write failure leaves the source in the target leaf (possible
+    // stranded window): report the fixed diagnostic, then attempt exactly one
+    // best-effort restoration of the source to its original leaf and report the
+    // verified outcome. No rollback claim beyond that single guarded write.
+    private swapSecondWriteFailed(scope: CurrentScope, active: WindowCapability, source: OperationLeaf): void {
+        this.diagnostic("move-swap-failed:second-write");
+        const restored = this.restoreSwapFirst(scope, active, source);
+        if (restored && active.tile === source.decoded.tile) {
+            this.diagnostic("move-swap-restored:verified");
+        } else {
+            this.diagnostic("move-swap-restored:unverified");
+        }
+    }
+
+    // One guarded best-effort write returning the active source to its original
+    // leaf after a failed second swap write. Active identity, exact scope,
+    // fresh root/topology, original source leaf reachability/non-layout status,
+    // and the active window's own association with an in-scope non-layout
+    // decoded leaf are all re-derived first; any failure skips the write.
+    private restoreSwapFirst(scope: CurrentScope, active: WindowCapability, source: OperationLeaf): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (
+            freshScope === null ||
+            !sameScope(freshScope.scope, scope.scope) ||
+            !windowInScope(active, freshScope)
+        ) {
+            return false;
+        }
+        if (active.tile === null || !isTile(active.tile)) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshSource = operationLeafForTile(topology, source.decoded.tile);
+        if (freshSource === null || freshSource.leaf.isLayout) {
+            return false;
+        }
+        const freshActive = operationLeafForTile(topology, active.tile);
+        if (freshActive === null || freshActive.leaf.isLayout || windowIndex(freshActive.windows, active) < 0) {
+            return false;
+        }
+        let restored = false;
+        try {
+            restored = assignWindowToTile(active, source.decoded.tile);
+        } catch (error) {
+            void error;
+        }
+        return restored;
     }
 
     detachActiveWindow(): void {
@@ -980,6 +1355,7 @@ export class TileController {
                 return;
             }
             this.diagnostic("detach-completed");
+            this.recordDetached(active);
             this.reflowAfterDetach(scope, originTile);
         }, (reason) => this.disabled(reason));
     }
@@ -1072,6 +1448,7 @@ export class TileController {
                 return;
             }
             this.diagnostic("attach-completed");
+            this.detachedWindows.delete(active);
         }, (reason) => this.disabled(reason));
     }
 
@@ -1781,6 +2158,7 @@ export class TileController {
             this.clearPending();
             this.clearDrag();
             this.attachExistingInteractiveWindows();
+            this.engageCurrentScope();
         }, (reason) => this.disabled(reason));
     }
 
@@ -1799,7 +2177,9 @@ export class TileController {
             if (isWindow(window)) {
                 this.detachInteractiveWindow(window);
                 this.cancelDeferredEligibility(window);
+                this.detachedWindows.delete(window);
                 this.reflowAfterRemoval(window);
+                this.dwindleMaybeRemove(window);
             }
         }, (reason) => this.disabled(reason));
     }
@@ -1821,7 +2201,7 @@ export class TileController {
                     return;
                 }
                 this.onceDiagnostic("window-added-eligible");
-                this.refillOrPlaceAutomatically(window, scope);
+                this.placeEligibleAdded(window, scope);
                 return;
             }
             try {
@@ -1871,7 +2251,7 @@ export class TileController {
                 return;
             }
             this.onceDiagnostic("window-added-eligible-deferred");
-            this.refillOrPlaceAutomatically(window, freshScope);
+            this.placeEligibleAdded(window, freshScope);
         }, (reason) => this.disabled(reason));
     }
 
@@ -2240,10 +2620,13 @@ export class TileController {
         this.diagnostic("keyboard-completed");
     }
 
-    private placeAutomatically(window: WindowCapability, scope: CurrentScope): void {
+    // Returns whether the window was assigned. Managed-scope dwindle ownership
+    // reuses this deterministic empty-leaf placement so a full owned tree keeps
+    // the same guarded assignment and diagnostic as generic automatic placement.
+    private placeAutomatically(window: WindowCapability, scope: CurrentScope): boolean {
         const topology = this.topologyForScope(scope);
         if (topology === null) {
-            return;
+            return false;
         }
         const plan = planAutomaticPlacement({
             scope: scope.scope,
@@ -2251,15 +2634,834 @@ export class TileController {
             leaves: topology.map((entry) => entry.leaf),
         });
         if (!plan.ok) {
-            return;
+            return false;
         }
         for (const entry of topology) {
             if (entry.leaf === plan.value.leaf) {
                 if (manageTile(entry.decoded.tile, window)) {
                     this.diagnostic("automatic-placement-managed");
+                    return true;
                 }
-                return;
+                return false;
             }
         }
+        return false;
+    }
+
+    // ---- Automatic session-local managed-scope dwindle ownership ----
+
+    // Re-anchor ownership to the current scope after controller start or a
+    // screens/current-desktop change. The anchor is the active eligible
+    // in-scope window, else the first eligible in-scope window in the proven
+    // window collection. A scope with no owned windows is never managed.
+    private engageCurrentScope(): void {
+        const anchor = this.ownershipAnchor();
+        if (anchor === null) {
+            return;
+        }
+        const scope = this.scopeForWindow(anchor);
+        if (scope === null) {
+            return;
+        }
+        this.ensureManaged(scope);
+    }
+
+    private ownershipAnchor(): WindowCapability | null {
+        const active = this.environment.activeWindow();
+        if (isWindow(active)) {
+            const scope = this.scopeForWindow(active);
+            if (scope !== null && windowInScope(active, scope)) {
+                return active;
+            }
+        }
+        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+            return null;
+        }
+        this.decodedBoundary("workspace-window-list");
+        for (const window of windows.value) {
+            const scope = this.scopeForWindow(window);
+            if (scope !== null && windowInScope(window, scope)) {
+                return window;
+            }
+        }
+        return null;
+    }
+
+    private managedRecord(scope: CurrentScope): ManagedScope | null {
+        return this.managedScopes.get(scope.output)?.get(scope.desktop.id) ?? null;
+    }
+
+    private isOwned(scope: CurrentScope): boolean {
+        const record = this.managedRecord(scope);
+        return record !== null && !record.inert;
+    }
+
+    private isInert(scope: CurrentScope): boolean {
+        const record = this.managedRecord(scope);
+        return record !== null && record.inert;
+    }
+
+    private setManaged(scope: CurrentScope): void {
+        let byDesktop = this.managedScopes.get(scope.output);
+        if (byDesktop === undefined) {
+            byDesktop = new Map<string, ManagedScope>();
+            this.managedScopes.set(scope.output, byDesktop);
+        }
+        byDesktop.set(scope.desktop.id, { scope, inert: false });
+    }
+
+    // A failed or damaged scope becomes inert for this session only: the
+    // record is retained so it is never retried, while other scopes and the
+    // generic placement paths keep working.
+    private markInert(scope: CurrentScope): void {
+        let byDesktop = this.managedScopes.get(scope.output);
+        if (byDesktop === undefined) {
+            byDesktop = new Map<string, ManagedScope>();
+            this.managedScopes.set(scope.output, byDesktop);
+        }
+        byDesktop.set(scope.desktop.id, { scope, inert: true });
+        this.diagnostic("ownership-inert");
+    }
+
+    // Adopt session-local ownership of the anchored scope with ratio-free
+    // dwindle. A valid selected overlay takes precedence and leaves the scope
+    // overlay-managed. The owned population is every eligible in-scope window
+    // from the proven window collection excluding explicitly detached windows.
+    // When the scope's tree already realizes the dwindle blueprint for that
+    // count it is adopted unchanged; otherwise a full reconstruction starts:
+    // a synchronous removals-only collapse to a single leaf followed by a
+    // non-timer event-loop yield before the deferred split reconstruction.
+    private ensureManaged(scope: CurrentScope): void {
+        if (this.isOwned(scope) || this.isInert(scope)) {
+            return;
+        }
+        if (this.readSelectedOverlay(scope) !== null) {
+            return;
+        }
+        const population = this.ownedPopulation(scope);
+        if (population.length === 0) {
+            return;
+        }
+        this.setManaged(scope);
+        if (this.dwindleMatches(scope, population.length)) {
+            this.diagnostic("ownership-taken");
+            return;
+        }
+        this.startReconstruction(scope);
+    }
+
+    // The owned population of a scope: eligible in-scope windows from the
+    // proven window collection, excluding windows explicitly detached by the
+    // detach action. Floating non-detached windows count because the dwindle
+    // takeover owns and tiles every eligible window in the managed scope.
+    private ownedPopulation(scope: CurrentScope): readonly WindowCapability[] {
+        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+            return [];
+        }
+        this.decodedBoundary("workspace-window-list");
+        const owned: WindowCapability[] = [];
+        for (const window of windows.value) {
+            if (windowInScope(window, scope) && !this.detachedWindows.has(window)) {
+                owned.push(window);
+            }
+        }
+        return owned;
+    }
+
+    // Whether the scope's current tree already realizes the ratio-free dwindle
+    // blueprint for the owned count. A count of one is realized by exactly one
+    // usable leaf (a non-layout tile or a zero-child layout root) occupied by
+    // the sole owned window, regardless of the root wrapper; higher counts
+    // require the exact dwindle chain with alternating orientation. A zero
+    // count is never realized, so an empty owned scope never matches.
+    private dwindleMatches(scope: CurrentScope, count: number): boolean {
+        if (!Number.isSafeInteger(count) || count <= 0) {
+            return false;
+        }
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isCustomTile(root)) {
+            return false;
+        }
+        if (count === 1) {
+            const leaves = decodeUsableLeaves(root);
+            if (leaves === null || leaves.length !== 1) {
+                return false;
+            }
+            const sole = leaves[0];
+            if (sole === undefined) {
+                return false;
+            }
+            const occupants = sole.windows.filter(
+                (value) => windowInScope(value, scope) && value.tile === sole.tile,
+            );
+            return occupants.length === 1;
+        }
+        const blueprint = buildDwindleBlueprint(count);
+        if (!blueprint.ok) {
+            return false;
+        }
+        return dwindleNodeMatches(root, blueprint.value, 0);
+    }
+
+    // Full dwindle reconstruction, phase registration: record the owned scope
+    // as awaiting its first one-shot event-loop yield and arm it. No structural
+    // call happens here; the removals-only collapse runs at the first yield
+    // callback and the splits-only rebuild at the second. A valid selected
+    // overlay or an inert scope drops the pending reconstruction without
+    // acting. A later request while a reconstruction is already pending starts
+    // no second one: it re-arms the current phase's yield so a lost callDBus
+    // reply (scripting.cpp:361-364 never invokes the callback on an error
+    // reply) cannot strand the scope in a collapsed or un-rebuilt state. Each
+    // such re-arm counts against the current phase's bounded budget; once the
+    // budget is exhausted the scope fails closed and becomes inert instead of
+    // retrying forever, while the phase and pending-identity guards keep every
+    // stale or duplicate callback inert.
+    private startReconstruction(scope: CurrentScope): void {
+        const existing = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
+        if (existing !== undefined) {
+            existing.rearmCount += 1;
+            if (existing.rearmCount > MAX_YIELD_REARM_PER_PHASE) {
+                this.markInert(scope);
+                this.dropPendingRebuild(scope, existing);
+                return;
+            }
+            if (!this.armRebuildYield(scope, existing)) {
+                this.markInert(scope);
+                this.dropPendingRebuild(scope, existing);
+            }
+            return;
+        }
+        const pending: PendingRebuild = { scope, phase: "awaiting-collapse", rearmCount: 0 };
+        let byDesktop = this.pendingRebuilds.get(scope.output);
+        if (byDesktop === undefined) {
+            byDesktop = new Map<string, PendingRebuild>();
+            this.pendingRebuilds.set(scope.output, byDesktop);
+        }
+        byDesktop.set(scope.desktop.id, pending);
+        if (!this.armRebuildYield(scope, pending)) {
+            this.markInert(scope);
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        this.diagnostic("ownership-pending");
+    }
+
+    // Arm exactly one one-shot event-loop yield for the pending rebuild's
+    // current phase. The callback captures the phase it was armed for and is
+    // inert unless the same pending record is still current and still in that
+    // phase, so a duplicate or stale callback can never collapse, split, or
+    // assign twice. A failed arm fails the scope closed rather than stranding
+    // it.
+    private armRebuildYield(scope: CurrentScope, pending: PendingRebuild): boolean {
+        const armedFor = pending.phase;
+        let armed = false;
+        try {
+            armed = this.environment.yieldOnce(() => {
+                if (this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id) !== pending) {
+                    return;
+                }
+                if (pending.phase !== armedFor) {
+                    return;
+                }
+                this.settleScopeRebuild(scope, pending);
+            });
+        } catch (error) {
+            void error;
+            return false;
+        }
+        return armed;
+    }
+
+    // Guarded collapse of an owned scope to a single leaf through the guarded
+    // reset seam: every occupant is unmanaged before the first removal, each
+    // removal is one `CustomTile.remove()`, and the root is freshly decoded
+    // after every removal. No removal result is ever an acknowledgement.
+    private collapseOwnedScope(scope: CurrentScope): boolean {
+        const seam: ResetSeam<TileCapability, WindowCapability> = {
+            snapshot: () => this.resetSnapshot(scope),
+            unmanage: (_tile, window) => detachWindowFromTile(window),
+            remove: (tile) => isCustomTile(tile) && removeCustomTile(tile),
+        };
+        const result = collapseToRootLeaf(seam);
+        return result.ok;
+    }
+
+    // Fresh decoded snapshot of the whole scope tree for the guarded reset
+    // seam. The root and every reachable tile are re-resolved from the
+    // environment each call; no handle is retained across removals.
+    private resetSnapshot(scope: CurrentScope): ResetSnapshot<TileCapability, WindowCapability> | null {
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isTile(root)) {
+            return null;
+        }
+        const tiles = decodeTileTree(root);
+        if (tiles === null) {
+            return null;
+        }
+        const entries: ResetTile<TileCapability, WindowCapability>[] = [];
+        for (const tile of tiles) {
+            const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+            if (!children.ok) {
+                return null;
+            }
+            let occupants: readonly WindowCapability[] = [];
+            if (!tile.isLayout) {
+                const decoded = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+                if (!decoded.ok) {
+                    return null;
+                }
+                occupants = decoded.value;
+            }
+            entries.push({ tile, children: children.value, occupants, removable: tile.canBeRemoved });
+        }
+        return { root, tiles: entries };
+    }
+
+    // Full dwindle reconstruction phase dispatch: re-validate everything fresh
+    // (scope ownership, selected-overlay precedence, owned population, and the
+    // live dwindle match), then either drop the pending rebuild or perform the
+    // phase's one structural dispatch. The awaiting-collapse dispatch is a
+    // synchronous removals-only collapse that arms the second yield; the
+    // awaiting-split dispatch is a synchronous splits-only rebuild that drops
+    // the pending record. Every callback re-resolves the scope, root, and
+    // window membership fresh and never touches a recorded child tile handle.
+    private settleScopeRebuild(scope: CurrentScope, pending: PendingRebuild): void {
+        if (this.isInert(scope) || !this.isOwned(scope)) {
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        if (this.readSelectedOverlay(scope) !== null) {
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        const population = this.ownedPopulation(scope);
+        if (population.length === 0) {
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        if (this.dwindleMatches(scope, population.length)) {
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        if (pending.phase === "awaiting-collapse") {
+            // Phase one: a synchronous homogeneous removals-only collapse to a
+            // single leaf with a fresh whole-root decode after every removal.
+            // The split reconstruction then waits for the second yield.
+            if (!this.collapseOwnedScope(scope)) {
+                this.markInert(scope);
+                this.dropPendingRebuild(scope, pending);
+                return;
+            }
+            pending.phase = "awaiting-split";
+            pending.rearmCount = 0;
+            this.diagnostic("ownership-collapsed");
+            if (!this.armRebuildYield(scope, pending)) {
+                this.markInert(scope);
+                this.dropPendingRebuild(scope, pending);
+            }
+            return;
+        }
+        // Phase two: the splits-only dwindle rebuild in one synchronous batch.
+        if (this.rebuildDwindle(scope, population)) {
+            this.diagnostic("ownership-taken");
+        } else {
+            this.markInert(scope);
+        }
+        this.dropPendingRebuild(scope, pending);
+    }
+
+    // Fresh resolution of a compiled blueprint path to the live custom tile:
+    // the scope root is re-resolved from the environment and the tree is
+    // re-decoded on every call, so the returned handle is valid only until the
+    // next structural call and is never retained across one.
+    private dwindleTileAtPath(scope: CurrentScope, path: BlueprintPath): CustomTileCapability | null {
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isCustomTile(root)) {
+            return null;
+        }
+        let current: CustomTileCapability = root;
+        for (const segment of path) {
+            if (segment === "root") {
+                continue;
+            }
+            const children = decodeSequential(current.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+            if (!children.ok) {
+                return null;
+            }
+            const child = segment === "left" ? children.value[0] : children.value[1];
+            if (child === undefined) {
+                return null;
+            }
+            current = child;
+        }
+        return current;
+    }
+
+    // Full dwindle reconstruction, phase two body: a single synchronous
+    // splits-only batch realizing the ratio-free dwindle blueprint for the
+    // current owned population on the freshly resolved single-leaf root, then
+    // guarded assignments of the population to the ordinal leaves. Every split
+    // re-resolves the scope root and fresh-decodes the tree around the call,
+    // and the split return value is validated and discarded rather than
+    // retained, so no tile handle survives from one structural call to the
+    // next. The whole split reconstruction finishes in one dispatch, never one
+    // frame per tile.
+    private rebuildDwindle(
+        scope: CurrentScope,
+        population: readonly WindowCapability[],
+    ): boolean {
+        if (population.length === 0) {
+            return false;
+        }
+        const compiled = buildPreset("dwindle", population.length);
+        if (!compiled.ok) {
+            return false;
+        }
+        for (const instruction of compiled.value.splits) {
+            const target = this.dwindleTileAtPath(scope, instruction.targetPath);
+            if (target === null) {
+                return false;
+            }
+            let split: unknown;
+            try {
+                split = splitCustomTile(target, layoutDirectionFor(instruction.orientation));
+            } catch (error) {
+                void error;
+                return false;
+            }
+            const decoded = decodeSequential(split, isCustomTile, 2);
+            if (!decoded.ok || decoded.value.length !== 2) {
+                return false;
+            }
+            // The split result is validated and then discarded: the next split
+            // and the final leaf realization re-resolve the root and re-decode.
+        }
+        const leaves: TileCapability[] = [];
+        for (const leafPath of compiled.value.leafPaths) {
+            const leaf = this.dwindleTileAtPath(scope, leafPath.path);
+            if (leaf === null) {
+                return false;
+            }
+            leaves.push(leaf);
+        }
+        if (leaves.length !== population.length) {
+            return false;
+        }
+        for (let index = 0; index < population.length; index += 1) {
+            const window = population[index];
+            const leaf = leaves[index];
+            if (window === undefined || leaf === undefined) {
+                return false;
+            }
+            let assigned = false;
+            try {
+                assigned = assignWindowToTile(window, leaf);
+            } catch (error) {
+                void error;
+                return false;
+            }
+            if (!assigned) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private dropPendingRebuild(scope: CurrentScope, pending: PendingRebuild): void {
+        const byDesktop = this.pendingRebuilds.get(scope.output);
+        if (byDesktop?.get(scope.desktop.id) === pending) {
+            byDesktop.delete(scope.desktop.id);
+            if (byDesktop.size === 0) {
+                this.pendingRebuilds.delete(scope.output);
+            }
+        }
+    }
+
+    private recordDetached(window: WindowCapability): void {
+        if (this.detachedWindows.size >= MAX_SEQUENTIAL_LENGTH) {
+            const stale = this.detachedWindows.values().next().value;
+            if (stale !== undefined) {
+                this.detachedWindows.delete(stale);
+            }
+        }
+        this.detachedWindows.add(window);
+    }
+
+    // Re-establish the dwindle invariant for an owned scope after a managed
+    // count change: when the current tree no longer realizes the dwindle
+    // blueprint for the current population, start a full reconstruction. A
+    // scope with no owned population or an authoritative valid overlay is
+    // untouched.
+    private dwindleEnsureInvariant(scope: CurrentScope): void {
+        if (!this.isOwned(scope) || this.isInert(scope)) {
+            return;
+        }
+        if (this.readSelectedOverlay(scope) !== null) {
+            return;
+        }
+        const population = this.ownedPopulation(scope);
+        if (population.length === 0) {
+            return;
+        }
+        if (this.dwindleMatches(scope, population.length)) {
+            return;
+        }
+        this.startReconstruction(scope);
+    }
+
+    // The deepest right-spine non-layout custom tile under the scope root (the
+    // dwindle insertion point) with its depth. The dwindle chain recurses into
+    // the last decoded child of every layout, so the insertion point is that
+    // spine's terminal leaf. Freshly decoded each call; no handle is retained
+    // across structural calls.
+    private deepestLeaf(
+        scope: CurrentScope,
+    ): { readonly tile: CustomTileCapability; readonly depth: number } | null {
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isCustomTile(root)) {
+            return null;
+        }
+        // A tree with exactly one usable leaf is functionally dwindle(1)
+        // regardless of the root wrapper: a one-child layout is promoted on
+        // KWin and a zero-child layout root is itself the sole usable leaf.
+        // Its insertion point is the whole scope at the root: splitting the
+        // root horizontally grows dwindle(1) into dwindle(2) with the previous
+        // occupant in one child.
+        const usable = decodeUsableLeaves(root);
+        if (usable === null) {
+            return null;
+        }
+        if (usable.length === 1) {
+            return { tile: root, depth: 0 };
+        }
+        const walk = (tile: CustomTileCapability, depth: number): { readonly tile: CustomTileCapability; readonly depth: number } | null => {
+            if (tile.isLayout) {
+                const children = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+                if (!children.ok || children.value.length === 0) {
+                    return null;
+                }
+                const last = children.value[children.value.length - 1];
+                if (last === undefined) {
+                    return null;
+                }
+                return walk(last, depth + 1);
+            }
+            return { tile, depth };
+        };
+        return walk(root, 0);
+    }
+
+    // Dispatch an eligible added window to the owned-scope dwindle path or the
+    // generic overlay/automatic-placement path.
+    private placeEligibleAdded(window: WindowCapability, scope: CurrentScope): void {
+        if (this.isOwned(scope)) {
+            this.dwindleAdd(window, scope);
+        } else {
+            this.refillOrPlaceAutomatically(window, scope);
+        }
+    }
+
+    // Owned-scope add: a valid selected overlay wins and its reflow (with the
+    // established generic fallback) handles the window. Without an overlay the
+    // window is placed into a retained empty leaf through the same guarded
+    // automatic placement, and only when no empty leaf exists does a single
+    // splits-only dwindle insertion split the deepest leaf. No removal is ever
+    // part of an add dispatch.
+    private dwindleAdd(window: WindowCapability, scope: CurrentScope): void {
+        const outcome = this.runReflow(scope, window);
+        if (outcome.kind !== "no-selection" && outcome.kind !== "no-capacity") {
+            return;
+        }
+        if (outcome.kind === "no-capacity") {
+            this.placeAutomatically(window, scope);
+            return;
+        }
+        if (window.tile !== null) {
+            return;
+        }
+        if (this.placeAutomatically(window, scope)) {
+            return;
+        }
+        this.dwindleInsert(window, scope);
+        this.dwindleEnsureInvariant(scope);
+    }
+
+    // One dwindle insertion: split the deepest leaf with depth-derived
+    // orientation, keep its sole eligible occupant on the first child, and
+    // assign the incoming window to the second child. The split is the only
+    // structural call; its result is freshly decoded before any assignment.
+    // Any structural or decode failure marks the scope inert.
+    private dwindleInsert(window: WindowCapability, scope: CurrentScope): void {
+        if (this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id) !== undefined) {
+            // A reconstruction is already pending for this scope: leave the
+            // incoming window floating and let the pending rebuild re-resolve
+            // the fresh population (which includes it) on its next dispatch.
+            // Never mutate topology or damage the scope mid-reconstruction.
+            return;
+        }
+        const topology = this.topologyForScope(scope);
+        if (topology === null) {
+            this.markInert(scope);
+            return;
+        }
+        if (window.tile !== null) {
+            return;
+        }
+        const deepest = this.deepestLeaf(scope);
+        if (deepest === null) {
+            this.markInert(scope);
+            return;
+        }
+        // The occupant list of the insertion leaf. When the insertion tile is
+        // the layout root of a functionally single-leaf tree, the occupant
+        // lives in the tree's only non-layout leaf, or in the root itself when
+        // the root is a zero-child layout (the sole usable leaf).
+        const insertion = this.insertionLeafWindows(scope, topology, deepest);
+        if (insertion === null) {
+            this.markInert(scope);
+            return;
+        }
+        const occupants = insertion.windows.filter(
+            (value) => windowInScope(value, scope) && value.tile === insertion.tile,
+        );
+        // A scope reduced to N=0 keeps an empty zero-child layout root as its
+        // sole usable leaf (deepestLeaf and insertionLeafWindows resolve it
+        // directly). The first eligible incoming window becomes the root's
+        // occupant through one guarded compatibility assignment, and never a
+        // split. A fresh decoded invariant check after the write accepts either
+        // live realization of the singleton (the window directly on the
+        // zero-child root, or a one-child layout root with the window in its
+        // sole leaf), matching the count-one dwindle match; any other outcome
+        // marks the scope inert.
+        if (insertion.windows.length === 0 && insertion.tile.isLayout) {
+            let assigned = false;
+            try {
+                assigned = assignWindowToTile(window, insertion.tile);
+            } catch (error) {
+                void error;
+            }
+            if (!assigned || !this.dwindleMatches(scope, 1)) {
+                this.markInert(scope);
+                return;
+            }
+            this.diagnostic("ownership-add-occupied-root");
+            return;
+        }
+        if (occupants.length !== 1) {
+            this.markInert(scope);
+            return;
+        }
+        const occupant = occupants[0];
+        if (occupant === undefined) {
+            this.markInert(scope);
+            return;
+        }
+        const orientation: Orientation = deepest.depth % 2 === 0 ? "horizontal" : "vertical";
+        let split: unknown;
+        try {
+            split = splitCustomTile(deepest.tile, layoutDirectionFor(orientation));
+        } catch (error) {
+            void error;
+            this.markInert(scope);
+            return;
+        }
+        const decoded = decodeSequential(split, isCustomTile, 2);
+        if (!decoded.ok || decoded.value.length !== 2) {
+            this.markInert(scope);
+            return;
+        }
+        this.decodedBoundary("split-result");
+        const axis = orientation === "horizontal" ? "x" : "y";
+        const children = orderedChildren(decoded.value, axis);
+        if (children === null) {
+            this.markInert(scope);
+            return;
+        }
+        let occupantAssigned = false;
+        let incomingAssigned = false;
+        try {
+            occupantAssigned = assignWindowToTile(occupant, children[0]);
+            incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1]);
+        } catch (error) {
+            void error;
+        }
+        if (!occupantAssigned || !incomingAssigned) {
+            this.diagnostic("ownership-add-failed:assignment");
+            return;
+        }
+        this.diagnostic("ownership-add-split");
+    }
+
+    // The decoded occupant list of the dwindle insertion leaf for a freshly
+    // resolved deepest leaf, with the leaf tile the occupants belong to. A
+    // non-layout deepest leaf resolves through the operation topology; a
+    // layout root with a single non-layout child falls back to that sole
+    // leaf; a zero-child layout root is itself the sole usable leaf and its
+    // own window list carries the occupant. Null on a damaged tree that
+    // cannot resolve an insertion leaf.
+    private insertionLeafWindows(
+        scope: CurrentScope,
+        topology: readonly OperationLeaf[],
+        deepest: { readonly tile: CustomTileCapability; readonly depth: number },
+    ): { readonly tile: TileCapability; readonly windows: readonly WindowCapability[] } | null {
+        const operationLeaf = operationLeafForTile(topology, deepest.tile);
+        if (operationLeaf !== null) {
+            return { tile: operationLeaf.decoded.tile, windows: operationLeaf.windows };
+        }
+        const leaves = topology.filter((entry) => !entry.leaf.isLayout);
+        const sole = leaves[0];
+        if (leaves.length === 1 && sole !== undefined) {
+            return { tile: sole.decoded.tile, windows: sole.windows };
+        }
+        if (!deepest.tile.isLayout) {
+            return null;
+        }
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (root !== deepest.tile) {
+            return null;
+        }
+        const decoded = decodeSequential(deepest.tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        return decoded.ok ? { tile: deepest.tile, windows: decoded.value } : null;
+    }
+
+    // Owned-scope removal: after the established overlay reflow, a provably
+    // freed leaf of an owned scope collapses with exactly one guarded remove
+    // and a fresh whole-root decode. Detached windows (`window.tile === null`),
+    // a leaf that still holds another eligible window, and the root itself are
+    // all excluded, so no dispatch that removes ever also splits.
+    //
+    // Live KWin 6.7.3 delivers `windowRemoved` while the removed window is
+    // still listed in its former leaf's `windows` array (unit-19c), so the
+    // leaf is not yet provably freed at the notification. A removal whose
+    // leaf still lists the window is deferred to one one-shot event-loop
+    // yield; its settle callback re-resolves the scope root and fresh-decodes
+    // before any structural call, so the collapse runs only once KWin has
+    // evacuated the leaf.
+    private dwindleRemove(window: WindowCapability, scope: CurrentScope): void {
+        if (this.readSelectedOverlay(scope) !== null) {
+            return;
+        }
+        if (window.tile === null || !isTile(window.tile)) {
+            return;
+        }
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isTile(root) || window.tile === root) {
+            return;
+        }
+        const topology = this.topologyForScope(scope);
+        if (topology === null) {
+            this.markInert(scope);
+            return;
+        }
+        const leaf = operationLeafForTile(topology, window.tile);
+        if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+            return;
+        }
+        if (windowIndex(leaf.windows, window) >= 0) {
+            // KWin still lists the removed window here. Defer the collapse to
+            // a later event-loop turn so the leaf evacuation settles first.
+            this.deferRemovalCollapse(window, scope, leaf.decoded.tile);
+            return;
+        }
+        if (leaf.windows.some((value) => value !== window && windowInScope(value, scope))) {
+            return;
+        }
+        this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
+    }
+
+    // Arm exactly one one-shot event-loop yield that settles the deferred
+    // removal on a later event-loop turn. The callback re-validates the scope
+    // and leaf fresh, so it is inert when the scope stopped being owned, a
+    // valid overlay appeared, or the leaf was already collapsed elsewhere. It
+    // never re-arms itself, so a removal that never settles leaves the scope
+    // intact instead of retrying forever.
+    private deferRemovalCollapse(window: WindowCapability, scope: CurrentScope, leafTile: TileCapability): void {
+        let armed = false;
+        try {
+            armed = this.environment.yieldOnce(() => {
+                this.settleRemovalCollapse(window, scope, leafTile);
+            });
+        } catch (error) {
+            void error;
+        }
+        if (!armed) {
+            this.markInert(scope);
+            return;
+        }
+        this.diagnostic("ownership-remove-deferred");
+    }
+
+    // Deferred removal collapse body. Runs on a later event-loop turn, after
+    // KWin has evacuated the removed window from its former leaf. Everything
+    // is re-validated and re-resolved fresh: the captured leaf handle is used
+    // only to identify the leaf by object identity inside a fresh whole-root
+    // decode, never to touch stale children. A leaf that still lists the
+    // window, a leaf that holds another eligible occupant, or a leaf that is
+    // gone from the fresh tree are all left untouched.
+    private settleRemovalCollapse(window: WindowCapability, scope: CurrentScope, leafTile: TileCapability): void {
+        if (this.isInert(scope) || !this.isOwned(scope)) {
+            return;
+        }
+        if (this.readSelectedOverlay(scope) !== null) {
+            return;
+        }
+        const topology = this.topologyForScope(scope);
+        if (topology === null) {
+            this.markInert(scope);
+            return;
+        }
+        const leaf = operationLeafForTile(topology, leafTile);
+        if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+            return;
+        }
+        if (windowIndex(leaf.windows, window) >= 0) {
+            return;
+        }
+        if (leaf.windows.some((value) => value !== window && windowInScope(value, scope))) {
+            return;
+        }
+        this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
+    }
+
+    // Exactly one guarded `CustomTile.remove()` of a provably-freed decoded
+    // leaf, a fresh whole-root decode immediately afterwards, and a strict
+    // one-fewer-leaf postcondition. The invariant check that follows may start
+    // or re-arm a deferred reconstruction, but never a split in this dispatch.
+    private collapseFreedLeaf(
+        scope: CurrentScope,
+        topology: readonly OperationLeaf[],
+        leafTile: CustomTileCapability,
+    ): void {
+        let removed = false;
+        try {
+            removed = removeCustomTile(leafTile);
+        } catch (error) {
+            void error;
+        }
+        if (!removed) {
+            this.markInert(scope);
+            return;
+        }
+        const after = this.topologyForScope(scope);
+        if (after === null || after.length !== topology.length - 1) {
+            this.markInert(scope);
+            return;
+        }
+        this.diagnostic("ownership-remove-collapsed");
+        // A changed managed count may leave the tree non-dwindle (for example
+        // removing the first chain window's leaf leaves a single-child root);
+        // the invariant check starts a reconstruction in this same removals-only
+        // dispatch and defers the split reconstruction.
+        this.dwindleEnsureInvariant(scope);
+    }
+
+    private dwindleMaybeRemove(window: WindowCapability): void {
+        const scope = this.scopeForWindow(window);
+        if (scope === null || !this.isOwned(scope)) {
+            return;
+        }
+        this.dwindleRemove(window, scope);
     }
 }
