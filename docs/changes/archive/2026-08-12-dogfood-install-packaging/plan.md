@@ -54,6 +54,16 @@ slices use `unit-<n>/attempt-<n>`.
 - Static tests prove command construction and isolated filesystem behavior, not
   live KWin session effects. Live invocation remains explicitly outside scope.
 
+## Future Work
+
+- Focus-right binding mismatch: `plasma-auto-tiler-focus-right` uses
+  `Meta+Alt+Ctrl+L` (`kwin/src/controller.ts:674`), whereas focus-left,
+  focus-down, and focus-up use `Meta+H`, `Meta+J`, and `Meta+K`
+  (`kwin/src/controller.ts:656,662,668`). No comment in `kwin/src` or the README
+  documents why focus-right deviates, and none references KDE's `Meta+L`
+  lock-screen shortcut; the mismatch reason is unverified by source. Binding
+  changes are out of scope for this change.
+
 ## Final Outcome
 
 - All work units (unit-01 through unit-03) are implemented and the full static
