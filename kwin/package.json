@@ -3,7 +3,6 @@
   "version": "0.1.0",
   "private": true,
   "description": "KWin scripting component for Plasma Auto Tiler. Development-only toolchain; KWin executes only the generated non-module bundle.",
-  "type": "commonjs",
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "build": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js",
