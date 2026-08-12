@@ -3192,7 +3192,9 @@ export class TileController {
     // orientation, keep its sole eligible occupant on the first child, and
     // assign the incoming window to the second child. The split is the only
     // structural call; its result is freshly decoded before any assignment.
-    // Any structural or decode failure marks the scope inert.
+    // A structural or decode failure marks the scope inert; a strict
+    // geometry-order rejection is a capacity failure that leaves the scope
+    // retryable.
     private dwindleInsert(window: WindowCapability, scope: CurrentScope): void {
         if (this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id) !== undefined) {
             // A reconstruction is already pending for this scope: leave the
@@ -3276,7 +3278,12 @@ export class TileController {
         const axis = orientation === "horizontal" ? "x" : "y";
         const children = orderedChildren(decoded.value, axis);
         if (children === null) {
-            this.markInert(scope);
+            // KWin minimum tile geometry can yield an empty split child, so a
+            // strict geometry-order rejection is a capacity failure, not a
+            // damaged tree. Leave the impossible incoming insertion unmanaged
+            // and keep the scope retryable on a later lifecycle event instead
+            // of making it session-inert.
+            this.diagnostic("ownership-add-failed:no-child-geometry");
             return;
         }
         let occupantAssigned = false;

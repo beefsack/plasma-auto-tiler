@@ -4783,6 +4783,37 @@ function installDwindleSplitter(tile: TestTile): void {
     };
 }
 
+// Install a configurable splitter that models the KWin minimum-geometry
+// boundary. While `state.rejecting` is true it yields a split result whose
+// children carry invalid geometry (the strict `orderedChildren` check rejects
+// the pair) and does not realize the split in the live tree, so a capacity
+// rejection leaves the scope structurally unchanged and retryable. When
+// `state.rejecting` is false it behaves exactly like `installDwindleSplitter`,
+// realizing a valid dwindle chain.
+function installCapacityRejectingSplitter(tile: TestTile, state: { rejecting: boolean }): void {
+    tile.split = (direction) => {
+        const horizontal = direction === 1;
+        const validA = makeTile(
+            horizontal ? { x: 0, y: 0, width: 50, height: 100 } : { x: 0, y: 0, width: 100, height: 50 },
+        );
+        const validB = makeTile(
+            horizontal ? { x: 50, y: 0, width: 50, height: 100 } : { x: 0, y: 50, width: 100, height: 50 },
+        );
+        if (state.rejecting) {
+            // KWin minimum geometry can yield an empty child: the first child
+            // has zero width, so `orderedChildren` must reject the pair.
+            return [makeTile({ x: 0, y: 0, width: 0, height: 100 }), validB];
+        }
+        tile.isLayout = true;
+        tile.layoutDirection = direction;
+        tile.windows = [];
+        installDwindleSplitter(validA);
+        installDwindleSplitter(validB);
+        tile.tiles = [validA, validB];
+        return [validA, validB];
+    };
+}
+
 function makeTile(geometry = RECT, isLayout = false): TestTile {
     return tile(geometry, isLayout);
 }
@@ -5769,6 +5800,80 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(controller.isEnabled, true);
         assert.equal(harness.scheduled.length, 0);
         assert.equal(harness.yields.length, 0);
+    });
+
+    it("keeps a scope retryable when minimum geometry rejects the split children, then recovers on a later lifecycle dispatch", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const leaf = tile();
+        const first = window({ tile: leaf });
+        leaf.windows = [first];
+        root.tiles = [leaf];
+        const seam = { rejecting: true };
+        installCapacityRejectingSplitter(root, seam);
+        let removes = 0;
+        leaf.remove = () => {
+            removes += 1;
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+            return true;
+        };
+        root.remove = () => {
+            removes += 1;
+            return true;
+        };
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first];
+        attachTileWriter(first);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // A second window is added while KWin minimum geometry rejects the
+        // split children. The strict geometry-order validation still rejects,
+        // the incoming window is left unmanaged, and the scope is NOT marked
+        // inert: the rejection is a capacity failure, not a damaged tree.
+        const second = window();
+        harness.windows = [first, second];
+        attachTileWriter(second);
+        harness.emitAdded(second);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-add-failed:no-child-geometry"), 1);
+        assert.equal(second.tile, null, "the impossible incoming insertion stays unmanaged");
+
+        // The failed insert leaves the scope owned and retryable, so the same
+        // add dispatch's invariant check can proceed and arms the deferred
+        // reconstruction. This assertion MUST fail when the retry dispatch
+        // seam is absent: the old source marked the scope inert and
+        // `dwindleEnsureInvariant` was suppressed.
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+
+        // A later lifecycle dispatch collapses to the single root leaf.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(harness.yields.length, 1);
+
+        // KWin geometry now admits a valid split; the deferred rebuild
+        // proceeds and realizes dwindle(2) with both windows assigned. The
+        // second `ownership-taken` is the rebuild completion.
+        seam.rejecting = false;
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 1, "the collapse removed exactly one leaf");
+        const rootChildren = root.tiles as TestTile[];
+        assert.equal(rootChildren.length, 2);
+        assert.equal(first.tile, rootChildren[0]);
+        assert.equal(second.tile, rootChildren[1]);
+        const compiled = buildDwindleBlueprint(2);
+        assert.equal(compiled.ok, true);
+        if (compiled.ok) {
+            assertDwindleShape(root, compiled.value, 0);
+        }
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.scheduled.length, 0);
+        assert.equal(controller.isEnabled, true);
     });
 
     it("defers a removal during a pending reconstruction and keeps stale duplicate callbacks inert", () => {
