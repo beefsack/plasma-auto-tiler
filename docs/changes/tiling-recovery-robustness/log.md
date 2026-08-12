@@ -17,3 +17,18 @@
 - It is not valid nested reproduction evidence. The no-harness-iteration
   constraint ends nested reproduction here; source evidence remains the basis
   for the correction.
+
+## 2026-08-12 - Lead - unit-03 accepted
+
+- `dwindleInsert` now treats strict post-split child-geometry rejection as a
+  capacity failure: it emits `ownership-add-failed:no-child-geometry` and keeps
+  the scope retryable instead of calling `markInert`.
+- The regression test models KWin's empty-child result, proves the old source
+  emits `ownership-inert`, and proves the corrected controller arms and
+  completes the existing deferred reconstruction on a later lifecycle path.
+- Verification: targeted pre-fix test failed 1/1 at
+  `/tmp/opencode/tiling-recovery/pre-fix-regression.log`; corrected targeted
+  test passed 1/1; `npm --prefix kwin run typecheck`, `npm --prefix kwin run
+  build`, `npm --prefix kwin test` (431 pass), and
+  `bash scripts/start-test.test.sh` (248 pass) passed.
+- Commit: `aa8cc13`.
