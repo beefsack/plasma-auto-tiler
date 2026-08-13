@@ -9525,7 +9525,7 @@ describe("TileController floating and sticky windows", () => {
         assert.deepEqual(root.tiles, [target]);
     });
 
-    it("retains the all-desktop pin and floating state when a sticky window's tile assignment fails", () => {
+    it("restores the all-desktop pin when a sticky window's tile assignment fails", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
         const target = tile();
@@ -9558,8 +9558,71 @@ describe("TileController floating and sticky windows", () => {
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         assert.equal(countEvent(harness.logs, "tile-failed:assignment-failed"), 1);
         assert.equal(countEvent(harness.logs, "sticky-disabled"), 0);
-        assert.equal(focused.onAllDesktops, true, "the all-desktop pin survives the failed tile assignment");
+        assert.equal(countEvent(harness.logs, "tile-completed"), 0);
+        assert.equal(focused.onAllDesktops, true, "the all-desktop pin is restored after the failed tile");
         assert.equal(focused.tile, null, "the window remains floating");
+        assert.deepEqual(root.tiles, [target]);
+    });
+
+    it("logs a distinct reason when a failed tile cannot restore the all-desktop pin", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target });
+        target.windows = [focused];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        target.manage = () => false;
+        target.unmanage = (value) => {
+            (value as TestWindow).tile = null;
+            target.windows = [];
+            return true;
+        };
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(focused.onAllDesktops, true);
+
+        let pinned = true;
+        Object.defineProperty(focused, "onAllDesktops", {
+            configurable: true,
+            get: () => pinned,
+            set: (value: boolean) => {
+                if (value === true) {
+                    throw new Error("pin-write-failed");
+                }
+                pinned = value;
+            },
+        });
+
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(countEvent(harness.logs, "tile-failed:assignment-failed"), 1);
+        assert.equal(countEvent(harness.logs, "tile-failed:sticky-restore-failed"), 1);
+        assert.equal(countEvent(harness.logs, "sticky-disabled"), 0);
+        assert.equal(countEvent(harness.logs, "tile-completed"), 0);
+        assert.equal(focused.tile, null, "the window remains floating");
+    });
+
+    it("never tiles a sticky window whose all-desktop pin cannot be cleared", () => {
+        const { harness, root, target, focused, manages } = floatSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(focused.onAllDesktops, true);
+        assert.equal(focused.tile, null);
+
+        Object.defineProperty(focused, "onAllDesktops", {
+            configurable: true,
+            get: () => true,
+        });
+
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(manages.filter((entry) => entry.window === focused).length, 0);
+        assert.equal(focused.tile, null, "the window is not tiled when the pin cannot be cleared");
+        assert.equal(countEvent(harness.logs, "tile-failed:sticky-clear-failed"), 1);
+        assert.equal(countEvent(harness.logs, "sticky-disabled"), 0);
+        assert.equal(countEvent(harness.logs, "tile-completed"), 0);
+        assert.deepEqual(root.tiles, [target]);
     });
 
     it("leaves a floating window floating on an assignment failure with the exact reason", () => {
@@ -9757,5 +9820,49 @@ describe("TileController floating and sticky windows", () => {
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         assert.equal(countEvent(harness.logs, "float-rejected:active-tile-association"), 1);
         assert.equal(countEvent(harness.logs, "float-completed"), 0);
+    });
+
+    it("routes attach of a floating window through the float-to-tile transition", () => {
+        const { harness, target, focused } = floatSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(focused.tile, null);
+
+        invokeShortcut(harness, "plasma-auto-tiler-attach");
+        assert.equal(focused.tile, target);
+        assert.equal(countEvent(harness.logs, "tile-completed"), 1);
+        assert.equal(countEvent(harness.logs, "attach-completed"), 0);
+    });
+
+    it("routes attach of a sticky floating window through the float-to-tile transition, clearing the pin", () => {
+        const { harness, target, focused } = floatSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(focused.onAllDesktops, true);
+        assert.equal(focused.tile, null);
+
+        invokeShortcut(harness, "plasma-auto-tiler-attach");
+        assert.equal(focused.tile, target);
+        assert.equal(focused.onAllDesktops, false, "attach clears the pin through the float-to-tile transition");
+        assert.equal(countEvent(harness.logs, "sticky-disabled"), 1);
+        assert.equal(countEvent(harness.logs, "tile-completed"), 1);
+        assert.equal(countEvent(harness.logs, "attach-completed"), 0);
+    });
+
+    it("declines startup adoption of an already tile-managed all-desktops window with no mutation", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const leaf = tile();
+        const tiledSticky = window({ tile: leaf, onAllDesktops: true });
+        leaf.windows = [tiledSticky];
+        root.tiles = [leaf];
+        harness.root = root;
+        harness.active = tiledSticky;
+        harness.windows = [tiledSticky];
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        assert.equal(countEvent(harness.logs, "startup-sticky-float"), 0);
+        assert.equal(countEvent(harness.logs, "startup-sticky-declined:tile-managed"), 1);
+        assert.equal(tiledSticky.tile, leaf, "the window keeps its tile");
+        assert.equal(tiledSticky.onAllDesktops, true, "the pin is not mutated at startup");
     });
 });

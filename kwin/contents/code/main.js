@@ -2123,6 +2123,10 @@
           this.diagnostic("attach-rejected:already-assigned");
           return;
         }
+        if (this.isFloating(active)) {
+          this.tileFloatingActive(scope, active);
+          return;
+        }
         const topology = this.topologyForScope(scope, (reason) => {
           this.diagnostic(`attach-rejected:${reason}`);
         });
@@ -2283,9 +2287,13 @@
     // `tile.manage()` into the deterministic first available empty non-layout
     // leaf. Every failure path - topology, capacity (no available leaf), stale
     // revalidation, and floor (assignment) - leaves the float unchanged with
-    // the exact reason, including a sticky window's all-desktop pin and sticky
-    // state. Sticky is cleared only after a successful `tile.manage`, so a
-    // successfully tiled window never remains sticky.
+    // the exact reason. A sticky window's all-desktop pin is cleared before any
+    // tile write, so a failed clear leaves it sticky floating (never tiled). If
+    // the clear succeeds but the subsequent `tile.manage` fails, the pin and
+    // sticky tracking are restored before returning so the failed transition
+    // leaves the original sticky floating state intact; a failed restore is
+    // logged with its own reason. Only after a successful manage does the
+    // infallible floating/sticky state cleanup run.
     tileFloatingActive(scope, active) {
       const topology = this.topologyForScope(scope, (reason) => {
         this.diagnostic(`tile-failed:${reason}`);
@@ -2302,23 +2310,30 @@
         this.diagnostic("tile-failed:assignment-stale");
         return;
       }
-      let managed = false;
-      try {
-        managed = manageTile(target.decoded.tile, active);
-      } catch (error) {
-        void error;
-        this.diagnostic("tile-failed:assignment-failed");
-        return;
-      }
-      if (!managed) {
-        this.diagnostic("tile-failed:assignment-failed");
-        return;
-      }
+      let clearedSticky = false;
       if (this.isSticky(active)) {
         if (!this.clearSticky(active)) {
           this.diagnostic("tile-failed:sticky-clear-failed");
           return;
         }
+        clearedSticky = true;
+      }
+      let managed = false;
+      try {
+        managed = manageTile(target.decoded.tile, active);
+      } catch (error) {
+        void error;
+      }
+      if (!managed) {
+        if (clearedSticky) {
+          if (!this.pinSticky(active)) {
+            this.diagnostic("tile-failed:sticky-restore-failed");
+          }
+        }
+        this.diagnostic("tile-failed:assignment-failed");
+        return;
+      }
+      if (clearedSticky) {
         this.diagnostic("sticky-disabled");
       }
       this.rememberCurrentFloatGeometry(active);
@@ -3186,7 +3201,10 @@
     // previous session) is recorded as sticky floating so it is never re-tiled
     // by placement or reconstruction. This is narrowly appropriate: no mutation
     // happens here (no geometry write, no pin change), and ordinary startup
-    // windows use normal placement.
+    // windows use normal placement. An already tile-managed all-desktops window
+    // is never classified both tiled and sticky/floating: it is declined with
+    // an explicit diagnostic and left untouched (no pin clear, no adoption) so
+    // startup performs no structural mutation on a window KWin already owns.
     adoptStartupFloatingWindows() {
       const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
       if (!windows.ok) {
@@ -3202,6 +3220,10 @@
         }
         const scope = this.scopeForWindow(window);
         if (scope === null) {
+          continue;
+        }
+        if (window.tile !== null) {
+          this.onceDiagnostic("startup-sticky-declined:tile-managed");
           continue;
         }
         this.floatingWindows.add(window);
