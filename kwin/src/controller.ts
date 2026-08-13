@@ -182,6 +182,17 @@ interface ActiveDrag {
     armedDeferredRemoval: boolean;
 }
 
+// The kind of interactive window gesture read from the live `move` / `resize`
+// booleans at gesture start. KWin clears both booleans before emitting the
+// finished signal, so the finish dispatch attributes bails from the kind
+// captured here rather than a stale live read.
+type InteractiveKind = "move" | "resize" | "unknown";
+
+interface InteractiveWatch {
+    readonly disconnect: () => void;
+    kind: InteractiveKind;
+}
+
 // The two windows occupying the two leaves a reflow split produced: the
 // dragged window and the split target's original occupant. Retained only as
 // stable window identity across the deferred origin-collapse yield; their
@@ -670,7 +681,7 @@ export class TileController {
     private readonly gate = new FeatureGate();
     private readonly pending = new TransientState<PendingKeyboard>();
     private readonly drag = new TransientState<ActiveDrag>();
-    private readonly interactiveWindows = new Map<WindowCapability, () => void>();
+    private readonly interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
     private readonly deferredEligibility = new Map<WindowCapability, () => void>();
     private readonly decodedBoundaries = new Set<BoundaryKind>();
     private readonly onceDiagnostics = new Set<string>();
@@ -2534,17 +2545,17 @@ export class TileController {
             () => this.handleMoveResizedChanged(),
             () => this.handleInteractiveInvalidated(window),
         );
-        this.interactiveWindows.set(window, watched.disconnect);
+        this.interactiveWindows.set(window, { disconnect: watched.disconnect, kind: "unknown" });
         return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
     }
 
     private detachInteractiveWindow(window: WindowCapability): void {
-        const disconnect = this.interactiveWindows.get(window);
-        if (disconnect === undefined) {
+        const watch = this.interactiveWindows.get(window);
+        if (watch === undefined) {
             return;
         }
         this.interactiveWindows.delete(window);
-        disconnect();
+        watch.disconnect();
     }
 
     private handleInteractiveInvalidated(window: WindowCapability): void {
@@ -2561,6 +2572,10 @@ export class TileController {
     private handleInteractiveStarted(window: WindowCapability): void {
         this.diagnostic("drag-started");
         this.gate.run(() => {
+            const watch = this.interactiveWindows.get(window);
+            if (watch !== undefined) {
+                watch.kind = window.resize ? "resize" : window.move ? "move" : "unknown";
+            }
             if (this.drag.current !== undefined) {
                 if (this.trackedDragLive()) {
                     this.diagnostic("drag-origin-capture-failed:already-active");
@@ -2571,7 +2586,11 @@ export class TileController {
                 this.clearDrag();
                 this.settleOwedInvariants();
             }
-            if (!window.move || window.resize) {
+            if (window.resize) {
+                this.diagnostic("drag-origin-capture-failed:resize");
+                return;
+            }
+            if (!window.move) {
                 this.diagnostic("drag-origin-capture-failed:not-move");
                 return;
             }
@@ -2622,7 +2641,11 @@ export class TileController {
         this.gate.run(() => {
             const drag = this.drag.current;
             if (drag === undefined) {
-                this.diagnostic("drag-bail:no-tracked-drag");
+                if (this.interactiveWindows.get(window)?.kind === "resize") {
+                    this.diagnostic("drag-bail:no-tracked-drag:resize");
+                } else {
+                    this.diagnostic("drag-bail:no-tracked-drag");
+                }
                 return;
             }
             if (drag.window !== window) {

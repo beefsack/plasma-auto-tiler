@@ -8777,6 +8777,35 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(countEvent(harness.logs, "drag-bail:window-mismatch"), 1);
     });
 
+    it("logs an interactive resize separately from an unknown non-move and attributes its follow-on bail", () => {
+        const { harness, controller, dragged, targetWindow } = dragSetup();
+
+        // An interactive resize (resize live, move not live) is not captured
+        // and is logged as a resize, distinct from an unknown non-move.
+        dragged.resize = true;
+        dragged.move = false;
+        dragged.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:resize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:not-move"), 0);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        assert.equal(controller.hasActiveDrag, false);
+
+        // The resize finish sees no tracked drag and the bail is attributed to
+        // the resize rather than a generic no-tracked-drag.
+        dragged.resize = false;
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 0);
+
+        // An unknown non-move (neither move nor resize) keeps the generic
+        // not-move capture failure and generic no-tracked-drag finish bail.
+        targetWindow.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:not-move"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:resize"), 1);
+        targetWindow.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
+    });
+
     it("logs a drag-bail reason when invalidation clears an active tracked drag", () => {
         const { harness, controller, dragged } = dragSetup();
         startDrag(dragged);

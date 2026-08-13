@@ -2847,16 +2847,16 @@
         () => this.handleMoveResizedChanged(),
         () => this.handleInteractiveInvalidated(window)
       );
-      this.interactiveWindows.set(window, watched.disconnect);
+      this.interactiveWindows.set(window, { disconnect: watched.disconnect, kind: "unknown" });
       return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
     }
     detachInteractiveWindow(window) {
-      const disconnect = this.interactiveWindows.get(window);
-      if (disconnect === void 0) {
+      const watch = this.interactiveWindows.get(window);
+      if (watch === void 0) {
         return;
       }
       this.interactiveWindows.delete(window);
-      disconnect();
+      watch.disconnect();
     }
     handleInteractiveInvalidated(window) {
       this.gate.run(() => {
@@ -2872,6 +2872,10 @@
     handleInteractiveStarted(window) {
       this.diagnostic("drag-started");
       this.gate.run(() => {
+        const watch = this.interactiveWindows.get(window);
+        if (watch !== void 0) {
+          watch.kind = window.resize ? "resize" : window.move ? "move" : "unknown";
+        }
         if (this.drag.current !== void 0) {
           if (this.trackedDragLive()) {
             this.diagnostic("drag-origin-capture-failed:already-active");
@@ -2880,7 +2884,11 @@
           this.clearDrag();
           this.settleOwedInvariants();
         }
-        if (!window.move || window.resize) {
+        if (window.resize) {
+          this.diagnostic("drag-origin-capture-failed:resize");
+          return;
+        }
+        if (!window.move) {
           this.diagnostic("drag-origin-capture-failed:not-move");
           return;
         }
@@ -2928,9 +2936,14 @@
     }
     handleInteractiveFinished(window) {
       this.gate.run(() => {
+        var _a;
         const drag = this.drag.current;
         if (drag === void 0) {
-          this.diagnostic("drag-bail:no-tracked-drag");
+          if (((_a = this.interactiveWindows.get(window)) == null ? void 0 : _a.kind) === "resize") {
+            this.diagnostic("drag-bail:no-tracked-drag:resize");
+          } else {
+            this.diagnostic("drag-bail:no-tracked-drag");
+          }
           return;
         }
         if (drag.window !== window) {
