@@ -155,6 +155,26 @@ export function pickTargetLeaf(leaves: readonly Leaf[], point: Point): Leaf | nu
     return best;
 }
 
+// Smallest non-layout leaf (occupied or empty) under the point, by the
+// ordering rule. Returns null when no non-layout leaf contains the point.
+// Geometry-drop target resolution uses this because an empty non-layout leaf is
+// a valid direct-placement target, unlike the occupied-only pickTargetLeaf.
+export function pickDropLeaf(leaves: readonly Leaf[], point: Point): Leaf | null {
+    let best: Leaf | null = null;
+    for (const leaf of leaves) {
+        if (leaf.isLayout) {
+            continue;
+        }
+        if (!containsPoint(leaf.geometry, point)) {
+            continue;
+        }
+        if (best === null || compareLeaves(leaf, best) < 0) {
+            best = leaf;
+        }
+    }
+    return best;
+}
+
 // Directional-neighbor selection: a candidate's facing edge must be strictly on
 // the requested side and its perpendicular half-open interval must overlap the
 // current leaf. The smallest facing-edge distance wins; ties resolve with the
@@ -244,6 +264,102 @@ export function rectCenter(rect: Rect): Point | null {
         return null;
     }
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+}
+
+// Small documented numeric tolerance for relativeGeometry equality checks, in
+// screen-relative [0,1] units. A difference at or below this bound counts as
+// equal; the tolerance exists because KWin derives relativeGeometry from
+// floating-point geometry arithmetic.
+export const RELATIVE_GEOMETRY_EPSILON = 1e-6;
+
+// The axis a two-child layout splits along: Horizontal (side-by-side) children
+// split "x", Vertical (stacked) children split "y".
+export type SplitAxis = "x" | "y";
+
+export interface EqualSplit {
+    readonly axis: SplitAxis;
+    readonly first: Rect;
+    readonly second: Rect;
+}
+
+function nearEdge(rect: Rect, axis: SplitAxis): number {
+    return axis === "x" ? rect.x : rect.y;
+}
+
+function farEdge(rect: Rect, axis: SplitAxis): number {
+    return axis === "x" ? rect.x + rect.width : rect.y + rect.height;
+}
+
+function perpStart(rect: Rect, axis: SplitAxis): number {
+    return axis === "x" ? rect.y : rect.x;
+}
+
+function perpEnd(rect: Rect, axis: SplitAxis): number {
+    return axis === "x" ? rect.y + rect.height : rect.x + rect.width;
+}
+
+function nearlyEqual(a: number, b: number): boolean {
+    return Math.abs(a - b) <= RELATIVE_GEOMETRY_EPSILON;
+}
+
+// Equal 50/50 split of a parent rect along one axis, from two children that
+// currently tile the parent. Returns null unless the parent and both children
+// are positive finite rects, the two children are adjacent (first far edge ==
+// second near edge), and they fill the parent along the axis (first near ==
+// parent near, second far == parent far) with both spanning the parent's full
+// perpendicular extent. A null result means the midpoint is not a provably safe
+// target, so no write should be attempted.
+export function planEqualSplit(
+    parent: Rect,
+    a: Rect,
+    b: Rect,
+    axis: SplitAxis,
+): EqualSplit | null {
+    if (!isValidRect(parent) || !isValidRect(a) || !isValidRect(b)) {
+        return null;
+    }
+    const [first, second] = nearEdge(a, axis) <= nearEdge(b, axis) ? [a, b] : [b, a];
+    if (nearlyEqual(nearEdge(first, axis), nearEdge(second, axis))) {
+        return null;
+    }
+    if (
+        !nearlyEqual(perpStart(first, axis), perpStart(parent, axis)) ||
+        !nearlyEqual(perpEnd(first, axis), perpEnd(parent, axis)) ||
+        !nearlyEqual(perpStart(second, axis), perpStart(parent, axis)) ||
+        !nearlyEqual(perpEnd(second, axis), perpEnd(parent, axis))
+    ) {
+        return null;
+    }
+    if (!nearlyEqual(nearEdge(first, axis), nearEdge(parent, axis))) {
+        return null;
+    }
+    if (!nearlyEqual(farEdge(first, axis), nearEdge(second, axis))) {
+        return null;
+    }
+    if (!nearlyEqual(farEdge(second, axis), farEdge(parent, axis))) {
+        return null;
+    }
+    const start = nearEdge(parent, axis);
+    const end = farEdge(parent, axis);
+    const midpoint = start + (end - start) / 2;
+    const firstTarget =
+        axis === "x"
+            ? { x: start, y: first.y, width: midpoint - start, height: first.height }
+            : { x: first.x, y: start, width: first.width, height: midpoint - start };
+    const secondTarget =
+        axis === "x"
+            ? { x: midpoint, y: second.y, width: end - midpoint, height: second.height }
+            : { x: second.x, y: midpoint, width: second.width, height: end - midpoint };
+    return { axis, first: firstTarget, second: secondTarget };
+}
+
+// Whether two rects are equal along the split axis within the documented
+// numeric tolerance. Used to prove the two reflow leaves became equal after a
+// relativeGeometry write; the perpendicular extents are fixed by parent tiling.
+export function equalAlongAxis(a: Rect, b: Rect, axis: SplitAxis): boolean {
+    const aExtent = axis === "x" ? a.width : a.height;
+    const bExtent = axis === "x" ? b.width : b.height;
+    return Math.abs(aExtent - bExtent) <= RELATIVE_GEOMETRY_EPSILON;
 }
 
 // Normalized pointer fraction relative to a positive finite rect. The pointer
@@ -485,34 +601,45 @@ export interface GeometryDropRequest {
     readonly originLeaf: Leaf;
     readonly targetLeaf: Leaf;
     readonly draggedWindow: WindowRef;
-    readonly finalGeometry: Rect;
+    readonly pointer: Point;
     readonly record: OriginRecord | null;
 }
 
-export type GeometryDropPlan = {
-    readonly kind: "geometry-drop";
-    readonly scope: Scope;
-    readonly direction: Direction;
-    readonly originLeaf: Leaf;
-    readonly targetLeaf: Leaf;
-    readonly selectedWindow: WindowRef;
-    readonly oppositeWindow: WindowRef;
-};
+export type GeometryDropPlan =
+    | {
+        readonly kind: "geometry-drop";
+        readonly scope: Scope;
+        readonly direction: Direction;
+        readonly originLeaf: Leaf;
+        readonly targetLeaf: Leaf;
+        readonly selectedWindow: WindowRef;
+        readonly oppositeWindow: WindowRef;
+    }
+    | {
+        readonly kind: "geometry-drop-empty";
+        readonly scope: Scope;
+        readonly originLeaf: Leaf;
+        readonly targetLeaf: Leaf;
+        readonly selectedWindow: WindowRef;
+    };
 
 // Plain (no-modifier) drop finish: KWin has floated the dragged window at the
 // drop point and no custom tile was applied, so the target is derived from the
-// dragged window's final frame geometry against the tile tree instead of any
+// chosen finish-time resolver point against the tile tree instead of any
 // native tile assignment. The origin leaf may or may not still list the dragged
 // window: KWin's unmanage can lag the finish hook, and both states must plan.
 // The same plan is authoritative for a native Shift drop, whose target leaf
 // already holds the dragged window plus one occupant, so all drop kinds
-// converge on one reflow. This plans only the position-directed split of the
-// target leaf; the origin collapse is a separate deferred phase. The central
-// 50% dead zone defaults to a vertical split with the original occupant above
-// and the dragged window below.
+// converge on one reflow. An empty non-layout target leaf is a valid
+// direct-placement target: the dragged window is placed into it without a
+// split. An occupied target plans the position-directed split of the target
+// leaf; the origin collapse is a separate deferred phase. The split direction
+// and dragged side derive from the chosen pointer relative to the target leaf
+// geometry; the central 50% dead zone defaults to a vertical split with the
+// original occupant above and the dragged window below.
 export function planGeometryDrop(request: GeometryDropRequest): Result<GeometryDropPlan> {
-    if (!isValidRect(request.finalGeometry)) {
-        return reject("invalid-geometry", "final geometry must be positive and finite");
+    if (!isValidPoint(request.pointer)) {
+        return reject("invalid-numbers", "pointer coordinates must be finite");
     }
     if (!isValidRect(request.originLeaf.geometry)) {
         return reject("invalid-geometry", "origin leaf geometry must be positive and finite");
@@ -547,10 +674,6 @@ export function planGeometryDrop(request: GeometryDropRequest): Result<GeometryD
     if (request.originLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
         return reject("mismatched-state", "dragged window must appear at most once in the origin leaf");
     }
-    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
-    if (oppositeWindow === undefined) {
-        return reject("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
-    }
     if (request.record !== null) {
         if (!sameScope(request.record.scope, request.scope)) {
             return reject("cross-scope", "recorded scope differs from the current scope");
@@ -562,11 +685,23 @@ export function planGeometryDrop(request: GeometryDropRequest): Result<GeometryD
             return reject("stale-state", "recorded window no longer matches the dragged window");
         }
     }
-    const center = rectCenter(request.finalGeometry);
-    if (center === null) {
-        return reject("invalid-geometry", "final geometry center must be finite");
+    if (request.targetLeaf.windows.length === 0) {
+        return {
+            ok: true,
+            value: {
+                kind: "geometry-drop-empty",
+                scope: request.scope,
+                originLeaf: request.originLeaf,
+                targetLeaf: request.targetLeaf,
+                selectedWindow: request.draggedWindow,
+            },
+        };
     }
-    const classified = classifyDirection(center, request.targetLeaf.geometry);
+    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
+    if (oppositeWindow === undefined) {
+        return reject("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
+    }
+    const classified = classifyDirection(request.pointer, request.targetLeaf.geometry);
     if (!classified.ok) {
         return classified;
     }

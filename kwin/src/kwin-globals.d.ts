@@ -118,6 +118,9 @@ interface Window {
     // and returns it to floating.
     tile: Tile | null;
     readonly frameGeometry: Rect;
+    // Documented Window property (KWin scripting API): the window's caption
+    // (title) string. Read for snapshot observability only.
+    readonly caption: string;
     // src/window.h exposes QML `move` / `resize`, backed by
     // isInteractiveMove() / isInteractiveResize(). Move and resize are
     // distinguished before drag state is captured.
@@ -131,12 +134,19 @@ interface Window {
     readonly interactiveMoveResizeStarted: Signal;
     readonly interactiveMoveResizeStepped: Signal1<Rect>;
     readonly interactiveMoveResizeFinished: Signal;
+    readonly moveResizedChanged: Signal;
 }
 
 // src/tiles/tile.h: tile tree (tiles/windows), geometry, layout, and
 // manage/unmanage. bool manage(Window *); bool unmanage(Window *).
 interface Tile {
-    readonly relativeGeometry: Rect;
+    // src/tiles/tile.h: Q_PROPERTY(KWin::RectF relativeGeometry READ
+    // relativeGeometry WRITE setRelativeGeometry NOTIFY relativeGeometryChanged).
+    // Writable: assigning dispatches to Tile::setRelativeGeometry (CustomTile
+    // overrides it and adjusts sibling tiles at the changed shared edges). The
+    // value is in screen-relative [0,1] units. The neighbor-adjusting detail is
+    // source-derived and not live-proven here.
+    relativeGeometry: Rect;
     readonly absoluteGeometry: Rect;
     readonly parent: Tile | null;
     // QList QObject boundaries require runtime decoding before iteration.

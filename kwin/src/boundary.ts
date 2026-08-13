@@ -166,45 +166,12 @@ export interface WindowCapability {
     readonly output: OutputCapability | null;
     readonly tile: object | null;
     readonly frameGeometry: RectCapability;
+    // Documented Window `caption`, read for snapshot observability only. Not
+    // validated by `isWindow`: a missing or throwing caption must not affect
+    // capability checks, and snapshot reads swallow any read error.
+    readonly caption?: string;
     readonly move: boolean;
     readonly resize: boolean;
-}
-
-interface SignalCapability {
-    connect(callback: () => void): void;
-    disconnect(callback: () => void): void;
-}
-
-export interface WindowScopeSignals {
-    readonly outputChanged: SignalCapability;
-    readonly desktopsChanged: SignalCapability;
-    readonly tileChanged: SignalCapability;
-}
-
-export interface WindowInteractionSignals extends WindowScopeSignals {
-    readonly interactiveMoveResizeStarted: SignalCapability;
-    readonly interactiveMoveResizeFinished: SignalCapability;
-}
-
-export function hasWindowScopeSignals(value: unknown): value is WindowScopeSignals {
-    return (
-        isObject(value) &&
-        hasValue(value, "outputChanged", isSignal) &&
-        hasValue(value, "desktopsChanged", isSignal) &&
-        hasValue(value, "tileChanged", isSignal)
-    );
-}
-
-export function hasWindowInteractionSignals(value: unknown): value is WindowInteractionSignals {
-    return (
-        hasWindowScopeSignals(value) &&
-        hasValue(value, "interactiveMoveResizeStarted", isSignal) &&
-        hasValue(value, "interactiveMoveResizeFinished", isSignal)
-    );
-}
-
-function isSignal(value: unknown): value is SignalCapability {
-    return isObject(value) && hasValue(value, "connect", isMethod);
 }
 
 export function isWindow(value: unknown): value is WindowCapability {
@@ -292,6 +259,24 @@ export function detachWindowFromTile(window: WindowCapability): boolean {
 export function assignWindowToTile(window: WindowCapability, tile: TileCapability): boolean {
     try {
         return Reflect.set(window, "tile", tile) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
+// Documented writable `Tile.relativeGeometry` (tile.h Q_PROPERTY WRITE
+// setRelativeGeometry). Writing dispatches to the source setter; CustomTile's
+// override adjusts sibling tiles at the changed shared edges (source-derived
+// and not live-proven here). Assignments require a validated finite rect and
+// are guarded: any throw or a false set is a failure, never an unvalidated
+// write.
+export function setTileRelativeGeometry(tile: TileCapability, geometry: RectCapability): boolean {
+    if (!isRect(geometry)) {
+        return false;
+    }
+    try {
+        return Reflect.set(tile, "relativeGeometry", geometry);
     } catch (error) {
         void error;
         return false;

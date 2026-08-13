@@ -4,7 +4,7 @@ import assert from "node:assert/strict";
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import { TileController, type ControllerEnvironment, type CurrentScope } from "../src/controller";
 import { buildDwindleBlueprint, type Blueprint } from "../src/layout-blueprint";
-import { DIRECTIONS, type Direction } from "../src/logic";
+import { DIRECTIONS, type Direction, type Point } from "../src/logic";
 
 const RECT = { x: 0, y: 0, width: 100, height: 100 };
 const OUTPUT = {
@@ -25,13 +25,16 @@ interface TestWindow {
     output: typeof OUTPUT | null;
     tile: object | null;
     frameGeometry: typeof RECT;
+    caption: string;
     move: boolean;
     resize: boolean;
     outputChanged: TestSignal;
     desktopsChanged: TestSignal;
     tileChanged: TestSignal;
     interactiveMoveResizeStarted: TestSignal;
+    interactiveMoveResizeStepped: TestSignal;
     interactiveMoveResizeFinished: TestSignal;
+    moveResizedChanged: TestSignal;
 }
 
 interface TestSignal {
@@ -102,13 +105,16 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
         output: OUTPUT,
         tile: null,
         frameGeometry: RECT,
+        caption: "test-window",
         move: false,
         resize: false,
         outputChanged: signal(),
         desktopsChanged: signal(),
         tileChanged: signal(),
         interactiveMoveResizeStarted: signal(),
+        interactiveMoveResizeStepped: signal(),
         interactiveMoveResizeFinished: signal(),
+        moveResizedChanged: signal(),
         ...overrides,
     };
 }
@@ -133,14 +139,37 @@ function signal(): TestSignal {
     };
 }
 
+// Approximates QV4's QObjectMethod shape: a QObject signal property reads as
+// a callable QObjectMethod function whose connect/disconnect live on the
+// function prototype (QV4 installs them on Function.prototype,
+// qv4qobjectwrapper.cpp:322-323), not as an object with an own connect member.
+// This is a Node stand-in for the QJSEngine shape and is NOT live proof that
+// KWin delivers these signals; it only proves the attach path no longer
+// requires an object-valued signal with an own connect member.
+function qv4MethodSignal(): TestSignal & (() => void) {
+    const callbacks = new Set<() => void>();
+    const method = function (): void {} as TestSignal & (() => void);
+    const proto = Object.create(Function.prototype);
+    Object.defineProperties(proto, {
+        connect: { value: (next: () => void) => callbacks.add(next) },
+        disconnect: { value: (next: () => void) => callbacks.delete(next) },
+        emit: { value: () => { for (const callback of callbacks) callback(); } },
+        subscriberCount: { get: () => callbacks.size },
+    });
+    Object.setPrototypeOf(method, proto);
+    return method;
+}
+
 class Harness {
     active: unknown = null;
     writtenActive: unknown;
     currentDesktop: unknown = DESKTOP;
     root: unknown = null;
+    rootReads = 0;
     readonly rootsByDesktop = new Map<string, unknown>();
     windows: unknown = [];
-    cursor: unknown = { x: 250, y: 50 };
+    cursor: unknown = null;
+    cursorThrows = false;
     shortcutResult = true;
     readonly shortcutResults: boolean[] = [];
     readonly shortcuts: RegisteredShortcut[] = [];
@@ -163,9 +192,17 @@ class Harness {
                 this.activeWrites.push(window);
             },
             currentDesktopForOutput: () => this.currentDesktop,
-            rootTile: (_output, desktop) => this.rootsByDesktop.get(desktop.id) ?? this.root,
+            rootTile: (_output, desktop) => {
+                this.rootReads += 1;
+                return this.rootsByDesktop.get(desktop.id) ?? this.root;
+            },
             windowList: () => this.windows,
-            cursorPos: () => this.cursor,
+            cursorPos: () => {
+                if (this.cursorThrows) {
+                    throw new Error("cursor-read-failed");
+                }
+                return this.cursor;
+            },
             onWindowAdded: (handler) => {
                 this.added = handler;
             },
@@ -178,26 +215,85 @@ class Harness {
             onCurrentDesktopChanged: (handler) => {
                 this.desktopChanged = handler;
             },
-            watchInteractiveWindow: (target, started, finished, invalidated) => {
-                target.interactiveMoveResizeStarted.connect(started);
-                target.interactiveMoveResizeFinished.connect(finished);
-                target.outputChanged.connect(invalidated);
-                target.desktopsChanged.connect(invalidated);
-                return () => {
-                    target.interactiveMoveResizeStarted.disconnect(started);
-                    target.interactiveMoveResizeFinished.disconnect(finished);
-                    target.outputChanged.disconnect(invalidated);
-                    target.desktopsChanged.disconnect(invalidated);
+            watchInteractiveWindow: (target, started, finished, stepped, moveResizedChanged, invalidated) => {
+                const connected: Array<[string, () => void]> = [];
+                const attach = (name: string, handler: () => void): boolean => {
+                    let value: unknown;
+                    try {
+                        value = (target as unknown as Record<string, unknown>)[name];
+                        (value as { connect: (next: () => void) => void }).connect(handler);
+                        connected.push([name, handler]);
+                        this.logs.push(`plasma-auto-tiler:drag-attach-ok:${name}`);
+                        return true;
+                    } catch (error) {
+                        this.logs.push(
+                            `plasma-auto-tiler:drag-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`,
+                        );
+                        return false;
+                    }
+                };
+                const attempts: ReadonlyArray<readonly [string, () => void]> = [
+                    ["interactiveMoveResizeStarted", started],
+                    ["interactiveMoveResizeStepped", stepped],
+                    ["interactiveMoveResizeFinished", finished],
+                    ["moveResizedChanged", moveResizedChanged],
+                    ["outputChanged", invalidated],
+                    ["desktopsChanged", invalidated],
+                ];
+                let ok = 0;
+                let failed = 0;
+                for (const [name, handler] of attempts) {
+                    if (attach(name, handler)) {
+                        ok += 1;
+                    } else {
+                        failed += 1;
+                    }
+                }
+                return {
+                    disconnect: () => {
+                        for (const [name, handler] of connected) {
+                            try {
+                                (target as unknown as Record<string, { disconnect: (next: () => void) => void }>)[
+                                    name
+                                ]!.disconnect(handler);
+                            } catch (error) {
+                                void error;
+                            }
+                        }
+                    },
+                    ok,
+                    failed,
                 };
             },
             onPendingTargetChanged: (target, handler) => {
-                target.outputChanged.connect(handler);
-                target.desktopsChanged.connect(handler);
-                target.tileChanged.connect(handler);
+                const surface = target as unknown as Record<string, unknown>;
+                const connected: Array<[string, () => void]> = [];
+                const attach = (name: string): boolean => {
+                    let value: unknown;
+                    try {
+                        value = surface[name];
+                        (value as { connect: (next: () => void) => void }).connect(handler);
+                        connected.push([name, handler]);
+                        this.logs.push(`plasma-auto-tiler:pending-attach-ok:${name}`);
+                        return true;
+                    } catch (error) {
+                        this.logs.push(
+                            `plasma-auto-tiler:pending-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`,
+                        );
+                        return false;
+                    }
+                };
+                attach("outputChanged");
+                attach("desktopsChanged");
+                attach("tileChanged");
                 return () => {
-                    target.outputChanged.disconnect(handler);
-                    target.desktopsChanged.disconnect(handler);
-                    target.tileChanged.disconnect(handler);
+                    for (const [name, connectedHandler] of connected) {
+                        try {
+                            (surface[name] as { disconnect: (next: () => void) => void }).disconnect(connectedHandler);
+                        } catch (error) {
+                            void error;
+                        }
+                    }
                 };
             },
             yieldOnce: (callback) => {
@@ -856,6 +952,33 @@ describe("TileController keyboard insertion", () => {
             assert.equal(countEvent(harness.logs, "keyboard-failed:first-assignment"), 0);
             assert.equal(countEvent(harness.logs, "keyboard-failed:second-assignment"), 0);
         }
+    });
+
+    it("arms keyboard insertion when target scope signals are function-valued QV4 signals (approximating QJSEngine shape, not live proof)", () => {
+        const { harness, controller, focused } = setup();
+        const outputChanged = qv4MethodSignal();
+        const desktopsChanged = qv4MethodSignal();
+        const tileChanged = qv4MethodSignal();
+        const qv4Signals: Record<string, TestSignal & (() => void)> = {
+            outputChanged,
+            desktopsChanged,
+            tileChanged,
+        };
+        for (const name of Object.keys(qv4Signals)) {
+            Object.defineProperty(focused, name, {
+                get: () => qv4Signals[name],
+                enumerable: false,
+                configurable: true,
+            });
+        }
+        controller.armKeyboardInsertion("right");
+        assert.equal(controller.hasPendingKeyboard, true);
+        assert.equal(countEvent(harness.logs, "keyboard-rejected:target-occupancy-validity"), 0);
+        assert.equal(countEvent(harness.logs, "pending-attach-ok:outputChanged"), 1);
+        assert.equal(countEvent(harness.logs, "pending-attach-ok:desktopsChanged"), 1);
+        assert.equal(countEvent(harness.logs, "pending-attach-ok:tileChanged"), 1);
+        outputChanged.emit();
+        assert.equal(controller.hasPendingKeyboard, false);
     });
 
     it("re-arming atomically replaces the recorded source and direction", () => {
@@ -4084,9 +4207,9 @@ function nativeDropSetup(): {
     right.layoutDirection = 2;
     const term2 = tile({ x: 100, y: 0, width: 100, height: 50 });
     const term3 = tile({ x: 100, y: 50, width: 100, height: 50 });
-    const term1Win = window({ tile: term1 });
-    const term2Win = window({ tile: term2 });
-    const term3Win = window({ tile: term3 });
+    const term1Win = window({ tile: term1, caption: "term1" });
+    const term2Win = window({ tile: term2, caption: "term2" });
+    const term3Win = window({ tile: term3, caption: "term3" });
     term1.windows = [term1Win];
     term2.windows = [term2Win];
     term3.windows = [term3Win];
@@ -4148,6 +4271,76 @@ function countEvent(logs: readonly string[], event: string): number {
     return logs.filter((entry) => entry === `plasma-auto-tiler:${event}`).length;
 }
 
+// A dwindle(2) scope H[a, b] where dragging `a` onto `b` with a left-horizontal
+// split leaves `a` floating (the drop manage reports success but never
+// assigns), so the occupancy bijection fails on the origin collapse and queues
+// a full reconstruction instead of the steady-state acceptance path.
+function reconstructDropSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly a: TestTile;
+    readonly b: TestTile;
+    readonly bLeft: TestTile;
+    readonly bRight: TestTile;
+    readonly aWin: TestWindow;
+    readonly bWin: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const a = tile({ x: 0, y: 0, width: 100, height: 100 });
+    const b = tile({ x: 100, y: 0, width: 100, height: 100 });
+    const aWin = window({ tile: a, caption: "a" });
+    const bWin = window({ tile: b, caption: "b" });
+    a.windows = [aWin];
+    b.windows = [bWin];
+    root.tiles = [a, b];
+    harness.root = root;
+    harness.active = aWin;
+    harness.windows = [aWin, bWin];
+    attachTileWriter(aWin);
+    attachTileWriter(bWin);
+    const manage = (leaf: TestTile) => (value: unknown): boolean => {
+        (value as TestWindow).tile = leaf;
+        return true;
+    };
+    // The dragged window's split child reports manage success without actually
+    // assigning, so the drop completes with `aWin` still floating and its
+    // reflow leaf empty. The occupancy bijection then fails on settle and the
+    // invariant queues the full reconstruction this fixture exists to exercise.
+    const bLeft = tile({ x: 100, y: 0, width: 50, height: 100 });
+    const bRight = tile({ x: 150, y: 0, width: 50, height: 100 });
+    bLeft.manage = () => true;
+    bRight.manage = manage(bRight);
+    b.split = (direction) => {
+        b.isLayout = true;
+        b.layoutDirection = direction;
+        b.windows = [];
+        b.tiles = [bLeft, bRight];
+        return [bLeft, bRight];
+    };
+    a.remove = () => {
+        root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== a);
+        return true;
+    };
+    bLeft.remove = () => {
+        b.tiles = (b.tiles as TestTile[]).filter((entry) => entry !== bLeft);
+        return true;
+    };
+    bRight.remove = () => {
+        b.tiles = (b.tiles as TestTile[]).filter((entry) => entry !== bRight);
+        return true;
+    };
+    b.remove = () => {
+        root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== b);
+        return true;
+    };
+    installDwindleSplitter(root);
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, a, b, bLeft, bRight, aWin, bWin };
+}
+
 describe("TileController interactive drag", () => {
     it("captures only interactive moves and permits one active drag", () => {
         const { controller, dragged, targetWindow } = dragSetup();
@@ -4160,6 +4353,27 @@ describe("TileController interactive drag", () => {
         targetWindow.move = true;
         targetWindow.interactiveMoveResizeStarted.emit();
         assert.equal(controller.hasActiveDrag, true);
+    });
+
+    it("does not overwrite a captured origin on a repeated start of the same window", () => {
+        const { controller, harness, origin, target, dragged, targetWindow } = dragSetup();
+        startDrag(dragged);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+
+        // A repeated started signal for the same window (e.g. a move/resize
+        // retransition) must not re-capture the origin or corrupt the drag.
+        dragged.move = true;
+        dragged.interactiveMoveResizeStarted.emit();
+        dragged.move = false;
+        assert.equal(countEvent(harness.logs, "drag-started"), 2);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+        assert.equal(controller.hasActiveDrag, true);
+
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-unchanged"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.deepEqual(origin.windows, [dragged]);
+        assert.deepEqual(target.windows, [targetWindow]);
     });
 
     it("does not claim a cancellation when origin association and geometry are unchanged", () => {
@@ -4181,8 +4395,8 @@ describe("TileController interactive drag", () => {
         assert.equal(restores, 0);
     });
 
-    it("restores association through origin manage for center and outside no-op finishes", () => {
-        for (const cursor of [{ x: 250, y: 50 }, { x: 1000, y: 1000 }]) {
+    it("restores association through origin manage when the cursor resolves to the origin or no occupied leaf", () => {
+        for (const cursor of [{ x: 60, y: 60 }, { x: 1000, y: 1000 }]) {
             const { harness, controller, origin, target, dragged } = dragSetup();
             let restores = 0;
             let splits = 0;
@@ -4206,15 +4420,12 @@ describe("TileController interactive drag", () => {
         }
     });
 
-    it("rejects stale, same, empty, multiple, ineligible, invalid, and cross-scope targets before split", () => {
+    it("rejects stale, same, multiple, ineligible, invalid, and cross-scope targets before split", () => {
         const cases: ReadonlyArray<(state: ReturnType<typeof dragSetup>) => void> = [
             (state) => {
                 // The final frame center sits over the origin, so no occupied
                 // leaf resolves and the drop restores.
                 state.dragged.frameGeometry = { x: 10, y: 10, width: 100, height: 100 };
-            },
-            (state) => {
-                state.target.windows = [];
             },
             (state) => {
                 state.target.windows = [state.targetWindow, window({ tile: state.target })];
@@ -4256,8 +4467,9 @@ describe("TileController interactive drag", () => {
     });
 
     it("maps all directions to geometric children, retaining the origin leaf", () => {
-        // Final frame centers inside the four target-leaf regions decide the
-        // split axis from geometry alone; the cursor plays no part.
+        // With no cursor available the final frame center is the fallback
+        // resolver point, so its position inside the four target-leaf regions
+        // decides the split axis and side.
         const cases: ReadonlyArray<[typeof RECT, number]> = [
             [{ x: 160, y: 0, width: 100, height: 100 }, 1],
             [{ x: 240, y: 0, width: 100, height: 100 }, 1],
@@ -4304,6 +4516,100 @@ describe("TileController interactive drag", () => {
         }
     });
 
+    it("selects the split direction from the cursor across all regions with a central dead-zone default", () => {
+        const cases: ReadonlyArray<[Point, number]> = [
+            [{ x: 210, y: 50 }, 1],
+            [{ x: 290, y: 50 }, 1],
+            [{ x: 250, y: 10 }, 2],
+            [{ x: 250, y: 90 }, 2],
+            [{ x: 250, y: 50 }, 2],
+        ];
+        for (const [cursor, expectedDirection] of cases) {
+            const { harness, origin, target, dragged, targetWindow } = dragSetup();
+            const managed: unknown[] = [];
+            const first = tile(
+                expectedDirection === 1
+                    ? { x: 200, y: 0, width: 50, height: 100 }
+                    : { x: 200, y: 0, width: 100, height: 50 },
+                false,
+                (value) => {
+                    managed.push(value);
+                    return true;
+                },
+            );
+            const second = tile(
+                expectedDirection === 1
+                    ? { x: 250, y: 0, width: 50, height: 100 }
+                    : { x: 200, y: 50, width: 100, height: 50 },
+                false,
+                (value) => {
+                    managed.push(value);
+                    return true;
+                },
+            );
+            let direction = 0;
+            target.split = (value) => {
+                direction = value;
+                target.isLayout = true;
+                target.tiles = [first, second];
+                return [second, first];
+            };
+            startDrag(dragged);
+            dragged.tile = null;
+            dragged.frameGeometry = movedGeometry();
+            harness.cursor = cursor;
+            dragged.interactiveMoveResizeFinished.emit();
+            assert.equal(direction, expectedDirection);
+            assert.equal(managed[0], targetWindow);
+            assert.equal(managed[1], dragged);
+            assert.deepEqual(origin.windows, [dragged]);
+        }
+    });
+
+    it("places the dragged window directly into an empty leaf without splitting or occupied-leaf reflow", () => {
+        const { harness, controller, root, origin, target, dragged } = dragSetup();
+        const empty = tile({ x: 400, y: 0, width: 100, height: 100 });
+        root.tiles = [origin, target, empty];
+        let splits = 0;
+        target.split = () => {
+            splits += 1;
+            return [];
+        };
+        empty.manage = (value) => {
+            (value as TestWindow).tile = empty;
+            empty.windows = [value as TestWindow];
+            return true;
+        };
+        startDrag(dragged);
+        dragged.tile = null;
+        dragged.frameGeometry = movedGeometry();
+        harness.cursor = { x: 450, y: 50 };
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(splits, 0);
+        assert.equal(countEvent(harness.logs, "drag-empty-target"), 1);
+        assert.equal(countEvent(harness.logs, "drag-empty-placement"), 1);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(dragged.tile, empty);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("logs the decisive plan rejection reason when an occupied target cannot be reflowed", () => {
+        const { harness, controller, target, targetWindow, dragged } = dragSetup();
+        target.windows = [targetWindow, window({ tile: target }), window({ tile: target })];
+        startDrag(dragged);
+        dragged.tile = null;
+        dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-bail:geometry-plan-rejected:invalid-leaf-count"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
     it("disables structural drag once for malformed split output or post-split manage failure", () => {
         const malformed = dragSetup();
         malformed.target.split = () => [];
@@ -4340,6 +4646,153 @@ describe("TileController interactive drag", () => {
         assert.equal(added.interactiveMoveResizeStarted.subscriberCount, 1);
         harness.emitRemoved(added);
         assert.equal(added.interactiveMoveResizeStarted.subscriberCount, 0);
+    });
+
+    it("emits exactly one startup drag-attach summary aggregating per-signal results", () => {
+        const { harness } = dragSetup();
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:6:6:0"), 0);
+
+        harness.desktopChanged?.();
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
+    });
+
+    it("reports a per-signal attach failure with a useful detail without skipping the window", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const origin = tile();
+        const dragged = window({ tile: origin });
+        delete (dragged as Partial<TestWindow>).moveResizedChanged;
+        origin.windows = [dragged];
+        root.tiles = [origin];
+        harness.root = root;
+        harness.windows = [dragged];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(dragged.interactiveMoveResizeStarted.subscriberCount, 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:6:5:1"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-interaction-signals"), 0);
+        const failed = harness.logs.find((entry) =>
+            entry.startsWith("plasma-auto-tiler:drag-attach-failed:moveResizedChanged:"),
+        );
+        assert.notEqual(failed, undefined);
+        assert.ok(
+            failed?.includes("typeof undefined"),
+            `failed line must name the observed typeof, got: ${failed}`,
+        );
+    });
+
+    it("attaches function-valued, prototype-provided signals approximating the QJSEngine shape (not live proof)", () => {
+        // QV4 exposes QObject signal properties as callable QObjectMethod
+        // functions whose connect/disconnect live on the function prototype
+        // (qv4qobjectwrapper.cpp:322-323), so the whole-window isSignal-style
+        // guard that required an object-valued signal with an own connect
+        // member was live-proven false. A window whose interaction signals are
+        // function-valued through a custom prototype and a getter approximates
+        // that QJSEngine shape here. This is a static approximation, NOT live
+        // proof that KWin delivers these signals.
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const origin = tile();
+        const dragged = window({ tile: origin });
+        const qv4Signals: Record<string, TestSignal & (() => void)> = {
+            interactiveMoveResizeStarted: qv4MethodSignal(),
+            interactiveMoveResizeStepped: qv4MethodSignal(),
+            interactiveMoveResizeFinished: qv4MethodSignal(),
+            outputChanged: qv4MethodSignal(),
+            desktopsChanged: qv4MethodSignal(),
+            moveResizedChanged: qv4MethodSignal(),
+        };
+        for (const name of Object.keys(qv4Signals)) {
+            Object.defineProperty(dragged, name, {
+                get: () => qv4Signals[name],
+                enumerable: false,
+                configurable: true,
+            });
+        }
+        origin.windows = [dragged];
+        root.tiles = [origin];
+        harness.root = root;
+        harness.windows = [dragged];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:6:6:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-interaction-signals"), 0);
+        assert.equal(
+            harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-attach-failed:")),
+            false,
+        );
+        assert.equal(dragged.interactiveMoveResizeStarted.subscriberCount, 1);
+        dragged.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-started"), 1);
+    });
+
+    it("logs a distinct skip reason for every remaining attach guard", () => {
+        const harness = new Harness();
+        harness.root = tile(RECT, true);
+        const plain = window({ tile: null });
+        const wrongDesktop = window({ tile: null, desktops: [{ id: "other-desktop" }] });
+        const nullOutput = window({ tile: null, output: null });
+        harness.windows = [plain, wrongDesktop, nullOutput];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:out-of-scope"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-scope"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-interaction-signals"), 0);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:not-window"), 0);
+        harness.emitAdded({ normalWindow: true });
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:not-window"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:duplicate"), 0);
+        harness.emitAdded(plain);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:duplicate"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("logs a window-list decode failure as the attach guard skip", () => {
+        const harness = new Harness();
+        harness.windows = "not-a-window-list";
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:window-list-decode-failed"), 1);
+        assert.equal(
+            harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-attach-summary:")),
+            false,
+            "a failed window-list decode must not emit a startup summary",
+        );
+    });
+
+    it("skips interactive attachment once the window map is at capacity", () => {
+        const harness = new Harness();
+        harness.root = tile(RECT, true);
+        const windows: TestWindow[] = [];
+        for (let i = 0; i < MAX_SEQUENTIAL_LENGTH; i += 1) {
+            windows.push(window({ tile: null }));
+        }
+        harness.windows = windows;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:6144:6144:0"), 1);
+        const overflow = window({ tile: null });
+        harness.emitAdded(overflow);
+        assert.equal(countEvent(harness.logs, "drag-attach-skipped:max-windows"), 1);
+    });
+
+    it("logs diagnostic-only drag event signals without mutating tiles", () => {
+        const { controller, harness, origin, target, targetWindow, dragged } = dragSetup();
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit();
+        dragged.moveResizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "drag-started"), 1);
+        assert.equal(countEvent(harness.logs, "drag-stepped"), 0);
+        assert.equal(countEvent(harness.logs, "drag-move-resized-changed"), 1);
+        assert.equal(controller.hasActiveDrag, true);
+        dragged.interactiveMoveResizeStepped.emit();
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-stepped"), 0);
+        assert.equal(countEvent(harness.logs, "drag-unchanged"), 1);
+        assert.deepEqual(origin.windows, [dragged]);
+        assert.deepEqual(target.windows, [targetWindow]);
+        assert.equal(controller.hasActiveDrag, false);
     });
 
     it("contains drag exceptions and clears active state", () => {
@@ -4532,13 +4985,12 @@ describe("TileController interactive drag", () => {
         const lagged = nativeDropSetup();
         startDrag(lagged.term2Win);
         // KWin unmanage lags the finish hook: the window is floated (tile null)
-        // but the origin leaf still lists it, and the cursor sits over term3.
-        // The final frame center targets term1, so the reflow must match the
-        // vacated drop exactly.
+        // but the origin leaf still lists it. The cursor sits over term1, so
+        // the reflow must match the vacated drop exactly.
         lagged.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
         lagged.term2Win.tile = null;
         lagged.term2.windows = [lagged.term2Win];
-        lagged.harness.cursor = { x: 150, y: 75 };
+        lagged.harness.cursor = { x: 50, y: 75 };
         lagged.term2Win.interactiveMoveResizeFinished.emit();
         assert.equal(countEvent(lagged.harness.logs, "drag-geometry-target"), 1);
         assert.equal(countEvent(lagged.harness.logs, "drag-overlap-split-completed"), 1);
@@ -4566,13 +5018,13 @@ describe("TileController interactive drag", () => {
         assert.deepEqual(lagged.term3.windows, [lagged.term3Win]);
     });
 
-    it("derives the split direction from final geometry, ignoring a cursor that would otherwise differ, for plain and Shift alike", () => {
+    it("derives the split direction from the cursor point used for target resolution, for plain and Shift alike", () => {
         for (const mode of ["plain", "shift"] as const) {
             const state = nativeDropSetup();
             startDrag(state.term2Win);
-            // Final frame center sits in the lower half of term1, so the
-            // geometry decision is a vertical split; the cursor over the upper
-            // half would otherwise classify "up".
+            // The cursor sits in the upper half of term1, so the split is
+            // vertical with the dragged window above; the final frame center
+            // (lower half) is not the intent input and is ignored for direction.
             state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
             state.harness.cursor = { x: 50, y: 25 };
             state.term2Win.tile = mode === "shift" ? state.term1 : null;
@@ -4581,44 +5033,42 @@ describe("TileController interactive drag", () => {
 
             assert.equal(countEvent(state.harness.logs, "drag-geometry-target"), 1);
             assert.equal(state.term1.layoutDirection, 2);
-            assert.equal(state.term1Win.tile, state.top);
-            assert.equal(state.term2Win.tile, state.bottom);
+            assert.equal(state.term1Win.tile, state.bottom);
+            assert.equal(state.term2Win.tile, state.top);
             assert.deepEqual(state.root.tiles, [state.term1, state.term3]);
             assert.equal(state.controller.isEnabled, true);
         }
     });
 
-    it("derives the drop target from final geometry, ignoring a cursor over another leaf, for plain and Shift alike", () => {
-        for (const mode of ["plain", "shift"] as const) {
-            const state = nativeDropSetup();
-            startDrag(state.term2Win);
-            // Final frame center sits over term1, so term1 is the target; the
-            // cursor over term3 would otherwise target term3.
-            state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
-            state.harness.cursor = { x: 150, y: 75 };
-            state.term2Win.tile = mode === "shift" ? state.term1 : null;
-            state.term2Win.interactiveMoveResizeFinished.emit();
-            state.harness.flushNextYield();
+    it("derives the drop target from the cursor, bailing to the origin over the frame-center leaf", () => {
+        const state = nativeDropSetup();
+        startDrag(state.term2Win);
+        // The cursor sits over the origin while the final frame center sits over
+        // term1: the cursor is authoritative, so the drop bails back to the
+        // origin instead of splitting term1.
+        state.term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        state.term2Win.tile = null;
+        state.term2.windows = [state.term2Win];
+        state.harness.cursor = { x: 150, y: 25 };
+        state.term2Win.interactiveMoveResizeFinished.emit();
 
-            assert.equal(countEvent(state.harness.logs, "drag-geometry-target"), 1);
-            assert.equal(countEvent(state.harness.logs, "drag-bail:no-geometry-target"), 0);
-            assert.equal(state.term1.layoutDirection, 2);
-            assert.equal(state.term1Win.tile, state.top);
-            assert.equal(state.term2Win.tile, state.bottom);
-            assert.deepEqual(state.term3.windows, [state.term3Win]);
-            assert.deepEqual(state.root.tiles, [state.term1, state.term3]);
-            assert.equal(state.controller.isEnabled, true);
-        }
+        assert.equal(countEvent(state.harness.logs, "drag-bail:target-is-origin:150,25"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-origin-restored"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(state.term2Win.tile, state.term2);
+        assert.deepEqual(state.term1.windows, [state.term1Win]);
+        assert.equal(state.controller.hasActiveDrag, false);
+        assert.equal(state.controller.isEnabled, true);
     });
 
-    it("bails when native overlap state contradicts the geometry-derived target", () => {
+    it("bails when native overlap state contradicts the cursor-derived target", () => {
         const { harness, controller, term1, term2, term2Win } = nativeDropSetup();
         startDrag(term2Win);
-        // KWin managed the dragged window into term1, but the final frame
-        // geometry center sits over term3: inconsistent state, never reflow.
+        // KWin managed the dragged window into term1, but the cursor sits over
+        // term3: inconsistent state, never reflow.
         term2Win.tile = term1;
         term2Win.frameGeometry = { x: 100, y: 50, width: 100, height: 50 };
-        harness.cursor = { x: 50, y: 75 };
+        harness.cursor = { x: 150, y: 75 };
         term2Win.interactiveMoveResizeFinished.emit();
 
         assert.equal(countEvent(harness.logs, "drag-finished"), 1);
@@ -4630,23 +5080,63 @@ describe("TileController interactive drag", () => {
         assert.equal(controller.isEnabled, true);
     });
 
-    it("logs a geometry-target bail and restores the origin when no occupied leaf sits under the final frame center", () => {
+    it("logs a distinct target-is-origin bail and restores the origin when the final frame center sits over the origin leaf", () => {
         const { harness, controller, term2, term2Win } = nativeDropSetup();
         startDrag(term2Win);
-        // Dropped back over the vacated origin leaf, which is now empty: no
-        // occupied target can resolve, so the drop bails and restores.
+        // The frame center sits back over the origin leaf, and KWin's unmanage
+        // lags the finish hook so the origin still lists the dragged window:
+        // the center resolves to the origin, so the drop bails and restores.
         term2Win.frameGeometry = { x: 100, y: 0, width: 100, height: 50 };
         term2Win.tile = null;
+        term2.windows = [term2Win];
         term2Win.interactiveMoveResizeFinished.emit();
 
         assert.equal(countEvent(harness.logs, "drag-finished"), 1);
-        assert.equal(countEvent(harness.logs, "drag-bail:no-geometry-target"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:target-is-origin:150,25"), 1);
         assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
         assert.equal(term2Win.tile, term2);
         assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
         assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
         assert.equal(controller.hasActiveDrag, false);
         assert.equal(controller.isEnabled, true);
+    });
+
+    it("logs a distinct no-target-leaf bail with the center point when the final frame center sits on no leaf", () => {
+        const { harness, controller, term2, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        // Final frame center sits outside every leaf (occupied or empty): the
+        // vacated origin no longer lists the dragged window and no leaf contains
+        // the center, so the drop bails with the decisive point.
+        term2.windows = [];
+        term2Win.frameGeometry = { x: 300, y: 0, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-finished"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:no-target-leaf:350,25"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(term2Win.tile, term2);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("logs distinct scope and topology bail reasons when the finish scope or tree is unavailable", () => {
+        const changed = nativeDropSetup();
+        startDrag(changed.term2Win);
+        changed.term2Win.output = { ...OUTPUT };
+        changed.term2Win.tile = null;
+        changed.term2Win.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(changed.harness.logs, "drag-bail:scope-changed"), 1);
+        assert.equal(changed.controller.hasActiveDrag, false);
+
+        const missingRoot = nativeDropSetup();
+        startDrag(missingRoot.term2Win);
+        missingRoot.harness.root = null;
+        missingRoot.term2Win.tile = null;
+        missingRoot.term2Win.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(missingRoot.harness.logs, "drag-bail:topology-unavailable:root-lookup"), 1);
+        assert.equal(missingRoot.controller.hasActiveDrag, false);
     });
 
     it("emits the drag-finished hook entry log before every finish decision and bail", () => {
@@ -4662,10 +5152,10 @@ describe("TileController interactive drag", () => {
                 },
             },
             {
-                outcome: "drag-bail:no-geometry-target",
+                outcome: "drag-bail:no-target-leaf:350,25",
                 prepare: (state) => {
                     state.term2Win.tile = null;
-                    state.term2Win.frameGeometry = { x: 100, y: 0, width: 100, height: 50 };
+                    state.term2Win.frameGeometry = { x: 300, y: 0, width: 100, height: 50 };
                 },
             },
             {
@@ -4686,6 +5176,577 @@ describe("TileController interactive drag", () => {
             assert.ok(state.harness.logs.includes(entry));
             assert.ok(state.harness.logs.indexOf(entry) < state.harness.logs.indexOf(outcome));
         }
+    });
+});
+
+describe("TileController drag snapshot diagnostics", () => {
+    function snapshotPayloads(logs: readonly string[], prefix: string): unknown[] {
+        const marker = `plasma-auto-tiler:${prefix}`;
+        return logs.filter((entry) => entry.startsWith(marker)).map((entry) => JSON.parse(entry.slice(marker.length)));
+    }
+
+    it("emits a compact before snapshot with final geometry, resolver center, and topology leaves", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const before = snapshotPayloads(harness.logs, "drag-snapshot-before:");
+        assert.equal(before.length, 1);
+        const payload = before[0] as {
+            geometry: { x: number; y: number; width: number; height: number };
+            center: { x: number; y: number };
+            pointSource: string;
+            leaves: unknown[];
+        };
+        assert.deepEqual(payload.geometry, { x: 0, y: 50, width: 100, height: 50 });
+        assert.deepEqual(payload.center, { x: 50, y: 75 });
+        assert.equal(payload.pointSource, "frame-center");
+        assert.deepEqual(payload.leaves, [
+            {
+                id: "tile-0",
+                geometry: { x: 100, y: 50, width: 100, height: 50 },
+                occupants: [{ id: "window-0", caption: "term3" }],
+            },
+            { id: "tile-1", geometry: { x: 100, y: 0, width: 100, height: 50 }, occupants: [] },
+            {
+                id: "tile-2",
+                geometry: { x: 0, y: 0, width: 100, height: 100 },
+                occupants: [{ id: "window-1", caption: "term1" }],
+            },
+        ]);
+    });
+
+    it("reports the target resolution outcome as a compact JSON log", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "resolved",
+            leaf: "tile-2",
+            center: { x: 50, y: 75 },
+            pointSource: "frame-center",
+            occupancy: "occupied",
+        });
+    });
+
+    it("reports empty-leaf target resolution with occupancy empty in the target outcome", () => {
+        const { harness, root, origin, target, dragged } = dragSetup();
+        const empty = tile({ x: 400, y: 0, width: 100, height: 100 });
+        root.tiles = [origin, target, empty];
+        startDrag(dragged);
+        dragged.tile = null;
+        dragged.frameGeometry = movedGeometry();
+        harness.cursor = { x: 450, y: 50 };
+        dragged.interactiveMoveResizeFinished.emit();
+
+        const targetPayloads = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(targetPayloads.length, 1);
+        assert.deepEqual(targetPayloads[0], {
+            kind: "resolved",
+            leaf: "tile-0",
+            center: { x: 450, y: 50 },
+            pointSource: "cursor",
+            occupancy: "empty",
+        });
+    });
+
+    it("uses a finite cursor as the resolver point and records pointSource cursor", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        harness.cursor = { x: 50, y: 25 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "resolved",
+            leaf: "tile-2",
+            center: { x: 50, y: 25 },
+            pointSource: "cursor",
+            occupancy: "occupied",
+        });
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-not-a-point"), 0);
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-read-threw"), 0);
+    });
+
+    it("falls back to the frame center and emits a one-time diagnostic when the cursor is unavailable", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        harness.cursor = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "resolved",
+            leaf: "tile-2",
+            center: { x: 50, y: 75 },
+            pointSource: "frame-center",
+            occupancy: "occupied",
+        });
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-not-a-point"), 1);
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-read-threw"), 0);
+    });
+
+    it("falls back to the frame center and emits a one-time diagnostic when the cursor is not a finite point", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        harness.cursor = { x: Infinity, y: 25 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "resolved",
+            leaf: "tile-2",
+            center: { x: 50, y: 75 },
+            pointSource: "frame-center",
+            occupancy: "occupied",
+        });
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-not-a-point"), 1);
+    });
+
+    it("falls back to the frame center and emits a one-time diagnostic when the cursor read throws", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        harness.cursorThrows = true;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "resolved",
+            leaf: "tile-2",
+            center: { x: 50, y: 75 },
+            pointSource: "frame-center",
+            occupancy: "occupied",
+        });
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-read-threw"), 1);
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-not-a-point"), 0);
+    });
+
+    it("shares the chosen cursor point between the bail suffix and the target payload", () => {
+        const { harness, term2, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2.windows = [term2Win];
+        harness.cursor = { x: 150, y: 25 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "target-is-origin",
+            center: { x: 150, y: 25 },
+            pointSource: "cursor",
+        });
+        assert.equal(countEvent(harness.logs, "drag-bail:target-is-origin:150,25"), 1);
+        assert.equal(countEvent(harness.logs, "drag-point-fallback:cursor-not-a-point"), 0);
+    });
+
+    it("reports a bail target outcome with the existing bail diagnostic and no after snapshot", () => {
+        const { harness, term2, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 100, y: 0, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2.windows = [term2Win];
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const target = snapshotPayloads(harness.logs, "drag-target:");
+        assert.equal(target.length, 1);
+        assert.deepEqual(target[0], {
+            kind: "target-is-origin",
+            center: { x: 150, y: 25 },
+            pointSource: "frame-center",
+        });
+        assert.equal(countEvent(harness.logs, "drag-bail:target-is-origin:150,25"), 1);
+        assert.equal(snapshotPayloads(harness.logs, "drag-snapshot-after:").length, 0);
+    });
+
+    it("emits a before snapshot with null leaves and a topology status on a topology bail", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        harness.root = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const before = snapshotPayloads(harness.logs, "drag-snapshot-before:");
+        assert.equal(before.length, 1);
+        assert.deepEqual(before[0], {
+            geometry: { x: 0, y: 50, width: 100, height: 50 },
+            center: null,
+            leaves: null,
+            topology: "root-lookup",
+        });
+        assert.equal(countEvent(harness.logs, "drag-bail:topology-unavailable:root-lookup"), 1);
+    });
+
+    it("emits a before snapshot with null center and decoded leaves on a geometry bail", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 0, width: 0, height: 0 };
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        const before = snapshotPayloads(harness.logs, "drag-snapshot-before:");
+        assert.equal(before.length, 1);
+        const payload = before[0] as {
+            geometry: unknown;
+            center: unknown;
+            leaves: unknown[];
+            topology?: unknown;
+        };
+        assert.deepEqual(payload.geometry, { x: 0, y: 0, width: 0, height: 0 });
+        assert.equal(payload.center, null);
+        assert.equal(payload.topology, undefined);
+        assert.equal(payload.leaves.length, 3);
+        assert.equal(countEvent(harness.logs, "drag-bail:geometry-invalid"), 1);
+    });
+
+    it("emits an after snapshot once the deferred reflow completion has settled", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(snapshotPayloads(harness.logs, "drag-snapshot-after:").length, 0);
+
+        harness.flushNextYield();
+
+        const after = snapshotPayloads(harness.logs, "drag-snapshot-after:");
+        assert.equal(after.length, 1);
+        const payload = after[0] as { leaves: unknown[] };
+        assert.deepEqual(payload.leaves, [
+            {
+                id: "tile-0",
+                geometry: { x: 100, y: 50, width: 100, height: 50 },
+                occupants: [{ id: "window-0", caption: "term3" }],
+            },
+            {
+                id: "tile-1",
+                geometry: { x: 0, y: 50, width: 100, height: 50 },
+                occupants: [{ id: "window-1", caption: "term2" }],
+            },
+            {
+                id: "tile-2",
+                geometry: { x: 0, y: 0, width: 100, height: 50 },
+                occupants: [{ id: "window-2", caption: "term1" }],
+            },
+        ]);
+    });
+
+    it("reuses the resolution and collapse decodes so a successful drop adds no whole-root decode", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        harness.rootReads = 0;
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+        // One pre/resolution decode: the before and target snapshots reuse it.
+        assert.equal(harness.rootReads, 1);
+        harness.flushNextYield();
+        // Settle + collapse postcondition + invariant; the after snapshot
+        // reuses the collapse postcondition decode.
+        assert.equal(harness.rootReads, 4);
+    });
+
+    it("swallows snapshot serialization errors into fixed failed diagnostics without affecting the drop", () => {
+        const { harness, controller, term2Win } = nativeDropSetup();
+        const original = JSON.stringify;
+        JSON.stringify = () => {
+            throw new Error("snapshot sink failure");
+        };
+        try {
+            startDrag(term2Win);
+            term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+            term2Win.tile = null;
+            term2Win.interactiveMoveResizeFinished.emit();
+            harness.flushNextYield();
+        } finally {
+            JSON.stringify = original;
+        }
+        assert.equal(countEvent(harness.logs, "drag-snapshot-failed:before:serialize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-snapshot-failed:target:serialize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-snapshot-failed:after:serialize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(controller.isEnabled, true);
+    });
+});
+
+describe("TileController drag reconstruction final snapshot", () => {
+    function snapshotPayloads(logs: readonly string[], prefix: string): unknown[] {
+        const marker = `plasma-auto-tiler:${prefix}`;
+        return logs.filter((entry) => entry.startsWith(marker)).map((entry) => JSON.parse(entry.slice(marker.length)));
+    }
+
+    it("emits one drag-snapshot-final only after the queued reconstruction settles", () => {
+        const state = reconstructDropSetup();
+        startDrag(state.aWin);
+        state.aWin.frameGeometry = { x: 100, y: 0, width: 50, height: 100 };
+        state.aWin.tile = null;
+        state.aWin.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(state.harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(snapshotPayloads(state.harness.logs, "drag-snapshot-final:").length, 0);
+
+        // The origin collapse leaves the root with a single layout child, so a
+        // full reconstruction is queued; the final snapshot must not appear
+        // while that reconstruction is still pending.
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+        assert.equal(snapshotPayloads(state.harness.logs, "drag-snapshot-final:").length, 0);
+
+        // The reconstruction settles over two more yields (collapse then
+        // rebuild); the final snapshot appears only once it is done.
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(snapshotPayloads(state.harness.logs, "drag-snapshot-final:").length, 0);
+        assert.equal(state.harness.flushNextYield(), true);
+
+        const final = snapshotPayloads(state.harness.logs, "drag-snapshot-final:");
+        assert.equal(final.length, 1);
+        const payload = final[0] as {
+            leaves: Array<{
+                id: string;
+                geometry: { width: number; height: number };
+                occupants: Array<{ id: string; caption: string }>;
+            }>;
+        };
+        assert.equal(payload.leaves.length, 2);
+        assert.deepEqual(
+            payload.leaves.map((leaf) => leaf.occupants[0]?.caption).sort(),
+            ["a", "b"],
+        );
+        for (const leaf of payload.leaves) {
+            assert.equal(typeof leaf.id, "string");
+            assert.equal(leaf.occupants.length, 1);
+            assert.equal(typeof leaf.occupants[0]?.id, "string");
+            assert.ok(leaf.geometry.width > 0 && leaf.geometry.height > 0);
+        }
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 2);
+        assert.equal(state.harness.yields.length, 0);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("emits no drag-snapshot-final on a non-reconstructing drop", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+        harness.flushNextYield();
+
+        assert.equal(snapshotPayloads(harness.logs, "drag-snapshot-after:").length, 1);
+        assert.equal(snapshotPayloads(harness.logs, "drag-snapshot-final:").length, 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+    });
+});
+
+// Owned dwindle(2) scope H[target, origin] with a horizontal (side-by-side)
+// split target. A drag of the origin window onto the target splits the target
+// into 50/50 left/right children; the fixture's origin removal models KWin's
+// "last child fills the area" donation, expanding the right child so the two
+// reflow leaves become 25/75. The controller's normalize step then writes the
+// equal 50/50 halves. The fixture models the controller's intent, not real
+// KWin setter behavior: the neighbor-adjusting relativeGeometry write is a
+// static stand-in, not live proof.
+function normalizeSetup(
+    setterMode: "adjust" | "throw" | "no-adjust" = "adjust",
+): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly target: TestTile;
+    readonly origin: TestTile;
+    readonly left: TestTile;
+    readonly right: TestTile;
+    readonly dragged: TestWindow;
+    readonly occupant: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile({ x: 0, y: 0, width: 200, height: 100 }, true);
+    const target = tile({ x: 0, y: 0, width: 100, height: 100 });
+    const origin = tile({ x: 100, y: 0, width: 100, height: 100 });
+    const occupant = window({ tile: target, caption: "occupant" });
+    const dragged = window({ tile: origin, caption: "dragged" });
+    target.windows = [occupant];
+    origin.windows = [dragged];
+    root.tiles = [target, origin];
+    harness.root = root;
+    harness.active = occupant;
+    harness.windows = [occupant, dragged];
+    const writes: Array<{ window: TestWindow; target: object | null }> = [];
+    attachTileWriter(occupant, writes);
+    attachTileWriter(dragged, writes);
+    const left = tile({ x: 0, y: 0, width: 50, height: 100 });
+    const right = tile({ x: 50, y: 0, width: 50, height: 100 });
+    left.parent = target;
+    right.parent = target;
+    const manage = (leaf: TestTile) => (value: unknown): boolean => {
+        (value as TestWindow).tile = leaf;
+        return true;
+    };
+    left.manage = manage(left);
+    right.manage = manage(right);
+    target.split = (direction) => {
+        target.isLayout = true;
+        target.layoutDirection = direction;
+        target.windows = [];
+        target.tiles = [left, right];
+        return [left, right];
+    };
+    origin.remove = () => {
+        root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== origin);
+        // Donation: target spans the full width and the last (right) child
+        // absorbs the extra area, so the two reflow leaves become 25/75.
+        target.relativeGeometry = { x: 0, y: 0, width: 200, height: 100 };
+        target.absoluteGeometry = target.relativeGeometry;
+        right.relativeGeometry = { x: 50, y: 0, width: 150, height: 100 };
+        right.absoluteGeometry = right.relativeGeometry;
+        // Setter model: "adjust" pushes right's near edge on a left write,
+        // "throw" models a failing write, "no-adjust" models a write that does
+        // not reach the sibling (so the post-decode stays unequal).
+        let leftState = left.relativeGeometry;
+        Object.defineProperty(left, "relativeGeometry", {
+            configurable: true,
+            get: () => leftState,
+            set:
+                setterMode === "throw"
+                    ? () => {
+                          throw new Error("relativeGeometry write failed");
+                      }
+                    : (next: typeof RECT) => {
+                          leftState = next;
+                          left.absoluteGeometry = next;
+                          if (setterMode === "adjust") {
+                              const near = next.x + next.width;
+                              const far = right.relativeGeometry.x + right.relativeGeometry.width;
+                              right.relativeGeometry = {
+                                  x: near,
+                                  y: right.relativeGeometry.y,
+                                  width: far - near,
+                                  height: right.relativeGeometry.height,
+                              };
+                              right.absoluteGeometry = right.relativeGeometry;
+                          }
+                      },
+        });
+        return true;
+    };
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, target, origin, left, right, dragged, occupant };
+}
+
+function runNormalizeDrag(state: ReturnType<typeof normalizeSetup>): void {
+    startDrag(state.dragged);
+    state.dragged.tile = null;
+    state.dragged.frameGeometry = { x: 40, y: 40, width: 20, height: 20 };
+    state.harness.cursor = { x: 75, y: 50 };
+    state.dragged.interactiveMoveResizeFinished.emit();
+}
+
+describe("TileController drag reflow normalization", () => {
+    it("equalizes the two reflow leaves to 50/50 relative geometry after origin collapse", () => {
+        const state = normalizeSetup();
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 1);
+        runNormalizeDrag(state);
+        assert.equal(countEvent(state.harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
+
+        state.harness.flushNextYield();
+
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 1);
+        assert.equal(
+            state.harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-reflow-normalize-skipped:")),
+            false,
+        );
+        assert.equal(
+            state.harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-reflow-normalize-failed:")),
+            false,
+        );
+        assert.equal(state.left.relativeGeometry.width, 100);
+        assert.equal(state.right.relativeGeometry.width, 100);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("emits the after snapshot with equal ratios after normalization", () => {
+        const state = normalizeSetup();
+        runNormalizeDrag(state);
+        state.harness.flushNextYield();
+        const markers = state.harness.logs
+            .filter((entry) => entry.startsWith("plasma-auto-tiler:drag-snapshot-after:"))
+            .map((entry) => JSON.parse(entry.slice("plasma-auto-tiler:drag-snapshot-after:".length)));
+        assert.equal(markers.length, 1);
+        const payload = markers[0] as { leaves: Array<{ geometry: { width: number } }> };
+        const widths = payload.leaves.map((leaf) => leaf.geometry.width);
+        assert.equal(widths.length, 2);
+        assert.equal(widths[0], widths[1]);
+        assert.ok(
+            state.harness.logs.indexOf("plasma-auto-tiler:drag-reflow-normalized") <
+                state.harness.logs.findIndex((entry) => entry.startsWith("plasma-auto-tiler:drag-snapshot-after:")),
+        );
+    });
+
+    it("skips normalization when the two leaves are not siblings", () => {
+        const state = normalizeSetup();
+        runNormalizeDrag(state);
+        state.left.parent = {};
+        state.harness.flushNextYield();
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalize-skipped:not-siblings"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
+        assert.equal(state.left.relativeGeometry.width, 50);
+        assert.equal(state.right.relativeGeometry.width, 150);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("skips normalization when the parent has no known split axis", () => {
+        const state = normalizeSetup();
+        runNormalizeDrag(state);
+        state.target.layoutDirection = 0;
+        state.harness.flushNextYield();
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalize-skipped:floating-parent"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("contains a failed relativeGeometry write without disabling the controller", () => {
+        const state = normalizeSetup("throw");
+        runNormalizeDrag(state);
+        state.harness.flushNextYield();
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalize-failed:write"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("reports a post-decode mismatch when the write does not reach the sibling", () => {
+        const state = normalizeSetup("no-adjust");
+        runNormalizeDrag(state);
+        state.harness.flushNextYield();
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalize-failed:mismatch"), 1);
+        assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
+        assert.equal(state.controller.isEnabled, true);
     });
 });
 
@@ -5003,7 +6064,6 @@ describe("TileController production diagnostics", () => {
         assert.equal(countEvent(unchanged.harness.logs, "drag-unchanged"), 1);
 
         const restored = dragSetup();
-        restored.harness.cursor = { x: 250, y: 50 };
         restored.origin.manage = () => {
             assert.equal(countEvent(restored.harness.logs, "drag-origin-restored"), 0);
             return true;
@@ -5317,6 +6377,131 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.yields.length, 0);
     });
 
+    it("reconstructs a persisted same-shape tree with empty leaves instead of adopting it", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const left = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const right = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const first = window();
+        const second = window();
+        root.tiles = [left, right];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first, second];
+        let removes = 0;
+        let splits = 0;
+        for (const leaf of [left, right]) {
+            leaf.remove = () => {
+                removes += 1;
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        const installedSplit = root.split;
+        root.split = (direction) => {
+            splits += 1;
+            return installedSplit(direction);
+        };
+        attachTileWriter(first);
+        attachTileWriter(second);
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // The shape is a valid dwindle(2) but both leaves are empty and both
+        // windows are floating: the occupancy bijection fails, so ownership is
+        // not taken directly and the reconstruction is armed with no direct
+        // structural call and no timer.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 0);
+        assert.equal(splits, 0);
+        assert.equal(harness.scheduled.length, 0);
+        assert.equal(harness.yields.length, 1);
+
+        // Phase one (first yield): removals-only collapse, no split.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(removes, 2);
+        assert.equal(splits, 0);
+        assert.deepEqual(root.tiles, []);
+        assert.equal(harness.yields.length, 1);
+
+        // Phase two (second yield): splits-only rebuild assigning the
+        // population to the freshly realized dwindle leaves.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 2);
+        assert.equal(harness.yields.length, 0);
+        const compiled = buildDwindleBlueprint(2);
+        assert.equal(compiled.ok, true);
+        if (compiled.ok) {
+            assertDwindleShape(root, compiled.value, 0);
+        }
+        assert.ok(first.tile !== null);
+        assert.ok(second.tile !== null);
+        assert.notEqual(first.tile, second.tile);
+        assert.equal(harness.scheduled.length, 0);
+    });
+
+    it("reconstructs a persisted same-shape tree with one empty leaf and a floating window", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const left = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const right = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const first = window({ tile: left });
+        const second = window();
+        left.windows = [first];
+        root.tiles = [left, right];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first, second];
+        let removes = 0;
+        for (const leaf of [left, right]) {
+            leaf.remove = () => {
+                removes += 1;
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(first);
+        attachTileWriter(second);
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // One leaf is correctly occupied but the other is empty and the second
+        // owned window is floating: the occupancy bijection fails even though
+        // the shape is a valid dwindle(2), so the reconstruction is armed with
+        // no direct structural call.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 0);
+        assert.equal(harness.scheduled.length, 0);
+        assert.equal(harness.yields.length, 1);
+
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(removes, 2);
+        assert.deepEqual(root.tiles, []);
+        assert.equal(harness.yields.length, 1);
+
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 2);
+        assert.equal(harness.yields.length, 0);
+        assert.ok(first.tile !== null);
+        assert.ok(second.tile !== null);
+        assert.notEqual(first.tile, second.tile);
+        assert.equal(harness.scheduled.length, 0);
+    });
+
     it("adopts a zero-child layout root as the sole usable leaf of a one-window scope", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
@@ -5417,6 +6602,77 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(removes, 0);
         assert.equal(harness.yields.length, 0);
         assert.deepEqual(root.tiles, []);
+    });
+
+    it("adopts the current desktop scope when a window is added after a switch to an empty workspace", () => {
+        const harness = new Harness();
+        const root1 = tile(RECT, true);
+        const first = window({ tile: root1 });
+        root1.windows = [first];
+        harness.rootsByDesktop.set(DESKTOP.id, root1);
+        harness.active = first;
+        harness.windows = [first];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Switch to an empty desktop with no window: no anchor exists, so the
+        // desktop is left unmanaged at the change notification.
+        const desktop2 = { id: "desktop-2" };
+        const root2 = tile(RECT, true);
+        harness.rootsByDesktop.set(desktop2.id, root2);
+        harness.currentDesktop = desktop2;
+        harness.desktopChanged?.();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+
+        // An eligible window appears on the now-current empty desktop. It must
+        // adopt the scope (not silently drop it) and reconstruct it so the
+        // window ends up tiled. Pre-fix this path hit generic placement with no
+        // empty leaf and produced no ownership-pending and no insertion.
+        const second = window({ desktops: [desktop2] });
+        attachTileWriter(second);
+        harness.active = second;
+        harness.windows = [first, second];
+        harness.emitAdded(second);
+
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(countEvent(harness.logs, "window-added-noop:no-empty-leaf"), 0);
+
+        while (harness.flushNextYield()) {
+            // Drain the two-phase reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(second.tile, root2);
+    });
+
+    it("emits a decisive no-op diagnostic when an in-scope addition reaches placement with no empty leaf on an inert scope", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const leaf = tile();
+        const first = window({ tile: leaf });
+        leaf.windows = [first];
+        root.tiles = [leaf];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first];
+        root.split = () => [];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // A malformed split damages the scope, marking it inert for the session.
+        const incoming = window();
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+
+        // A later eligible addition on the inert scope reaches generic placement
+        // with no empty leaf and no dwindle fallback: it must emit a decisive
+        // no-op reason instead of disappearing silently.
+        const later = window();
+        harness.emitAdded(later);
+        assert.equal(countEvent(harness.logs, "window-added-noop:no-empty-leaf"), 1);
+        assert.equal(later.tile, null);
     });
 
     it("rebuilds a non-dwindle one-window scope onto the collapsed zero-child root's sole leaf", () => {
@@ -6619,5 +7875,372 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(removes, 0);
         assert.equal(splits, 0);
         assert.equal(controller.isEnabled, true);
+    });
+
+    it("accepts a non-canonical but bijection-intact tree at a steady-state removal and arms no reconstruction", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 100, height: 100 });
+        const v = tile({ x: 100, y: 0, width: 100, height: 100 }, true);
+        v.layoutDirection = 2;
+        const b = tile({ x: 100, y: 0, width: 100, height: 50 });
+        const h = tile({ x: 100, y: 50, width: 100, height: 50 }, true);
+        const c = tile({ x: 100, y: 50, width: 100, height: 25 });
+        const d = tile({ x: 100, y: 75, width: 100, height: 25 });
+        const aWin = window({ tile: a, caption: "a" });
+        const bWin = window({ tile: b, caption: "b" });
+        const cWin = window({ tile: c, caption: "c" });
+        const dWin = window({ tile: d, caption: "d" });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        c.windows = [cWin];
+        d.windows = [dWin];
+        root.tiles = [a, v];
+        v.tiles = [b, h];
+        h.tiles = [c, d];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin, cWin, dWin];
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        attachTileWriter(cWin);
+        attachTileWriter(dWin);
+        let removes = 0;
+        let splits = 0;
+        for (const value of [root, v, h, a, b, c, d]) {
+            value.split = () => {
+                splits += 1;
+                return [];
+            };
+        }
+        a.remove = () => {
+            removes += 1;
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== a);
+            // KWin promotes a single-child layout after a tile removal: the
+            // vacated H wrapper disappears and the V chain becomes the root.
+            if ((root.tiles as TestTile[]).length === 1) {
+                const sole = (root.tiles as TestTile[])[0];
+                if (sole !== undefined) {
+                    harness.root = sole;
+                }
+            }
+            return true;
+        };
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // The persisted canonical dwindle(4) chain H[a, V[b, H[c, d]]] is
+        // adopted unchanged with no structural call.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // Removing the first-chain window `a`: live KWin 6.7.3 still lists the
+        // window in its leaf at `windowRemoved`, so the collapse is deferred to
+        // one one-shot event-loop yield.
+        aWin.tile = a;
+        a.windows = [aWin];
+        harness.windows = [bWin, cWin, dWin];
+        harness.emitRemoved(aWin);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(harness.yields.length, 1);
+
+        // The settle removes `a` and the root promotes to its sole child, so
+        // the live tree becomes the vertical-root V[b, H[c, d]]. The
+        // window-to-leaf occupancy bijection is intact (three leaves, three
+        // owned windows), so the steady-state invariant accepts the genuinely
+        // non-canonical topology with the accepted diagnostic instead of arming
+        // a reconstruction: no collapse beyond the single removal, no split, no
+        // pending rebuild, and every survivor stays tiled.
+        a.windows = [];
+        aWin.tile = null;
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(removes, 1);
+        assert.equal(splits, 0);
+        assert.equal(harness.root, v);
+        assert.equal(v.isLayout, true);
+        assert.equal(v.layoutDirection, 2);
+        assert.deepEqual(v.tiles, [b, h]);
+        assert.deepEqual(h.tiles, [c, d]);
+        assert.equal(bWin.tile, b);
+        assert.equal(cWin.tile, c);
+        assert.equal(dWin.tile, d);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.scheduled.length, 0);
+    });
+
+    it("arms a reconstruction from a steady-state add when the occupancy bijection fails, with the failed diagnostic", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        let removes = 0;
+        let splits = 0;
+        for (const leaf of [a, b]) {
+            leaf.remove = () => {
+                removes += 1;
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+            leaf.split = () => {
+                splits += 1;
+                return [];
+            };
+        }
+        const seam = { rejecting: true };
+        installCapacityRejectingSplitter(b, seam);
+        installDwindleSplitter(root);
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // The persisted canonical dwindle(2) H[a, b] is adopted unchanged, so
+        // ownership is established before the bijection is broken.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // A third window arrives while KWin minimum geometry rejects the split
+        // children: the insertion leaves the incoming window floating and the
+        // live tree untouched, so the occupancy bijection fails (three owned
+        // windows against two leaves) and the steady-state invariant arms the
+        // deferred reconstruction with the failed diagnostic.
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-add-failed:no-child-geometry"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(incoming.tile, null);
+        assert.equal(splits, 0);
+        assert.equal(removes, 0);
+        assert.equal(harness.yields.length, 1);
+
+        // The queued reconstruction settles: the removals-only collapse runs at
+        // the first yield, then the splits-only rebuild realizes dwindle(3)
+        // with every window tiled at the second.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(removes, 2);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.yields.length, 0);
+        const compiled = buildDwindleBlueprint(3);
+        assert.equal(compiled.ok, true);
+        if (compiled.ok) {
+            assertDwindleShape(root, compiled.value, 0);
+        }
+        assert.ok(aWin.tile !== null);
+        assert.ok(bWin.tile !== null);
+        assert.ok(incoming.tile !== null);
+        assert.notEqual(aWin.tile, bWin.tile);
+        assert.notEqual(aWin.tile, incoming.tile);
+        assert.notEqual(bWin.tile, incoming.tile);
+        assert.equal(harness.scheduled.length, 0);
+    });
+
+    it("reconciles a foreign persisted non-canonical tree to the canonical dwindle shape on adoption", () => {
+        const harness = new Harness();
+        const v = tile(RECT, true);
+        v.layoutDirection = 2;
+        const h = tile({ x: 0, y: 0, width: 100, height: 50 }, true);
+        const a = tile({ x: 0, y: 0, width: 100, height: 50 });
+        const b = tile({ x: 0, y: 50, width: 100, height: 50 });
+        const c = tile({ x: 0, y: 0, width: 100, height: 50 });
+        const aWin = window({ tile: a, caption: "a" });
+        const bWin = window({ tile: b, caption: "b" });
+        const cWin = window({ tile: c, caption: "c" });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        c.windows = [cWin];
+        v.tiles = [a, h];
+        h.tiles = [b, c];
+        harness.root = v;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin, cWin];
+        let removes = 0;
+        a.remove = () => {
+            removes += 1;
+            v.tiles = (v.tiles as TestTile[]).filter((entry) => entry !== a);
+            return true;
+        };
+        b.remove = () => {
+            removes += 1;
+            h.tiles = (h.tiles as TestTile[]).filter((entry) => entry !== b);
+            return true;
+        };
+        c.remove = () => {
+            removes += 1;
+            h.tiles = (h.tiles as TestTile[]).filter((entry) => entry !== c);
+            return true;
+        };
+        h.remove = () => {
+            removes += 1;
+            v.tiles = (v.tiles as TestTile[]).filter((entry) => entry !== h);
+            return true;
+        };
+        installDwindleSplitter(v);
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        attachTileWriter(cWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // The foreign persisted vertical-root tree V[a, H[b, c]] has an intact
+        // occupancy bijection (three leaves, three owned windows) but is
+        // non-canonical (the root is vertical, not horizontal). Adoption must
+        // reconcile it, not accept it through the steady-state bijection-only
+        // branch: no ownership-taken and no acceptance diagnostic, just the
+        // armed reconstruction.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(removes, 0);
+        assert.equal(harness.scheduled.length, 0);
+        assert.equal(harness.yields.length, 1);
+
+        // Collapse phase: the nested tree collapses removals-only to the single
+        // zero-child layout root, then arms the split phase.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
+        assert.equal(removes, 4);
+        assert.deepEqual(v.tiles, []);
+        assert.equal(harness.yields.length, 1);
+
+        // Split phase: the canonical dwindle(3) shape is realized and every
+        // window lands on its own leaf.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.yields.length, 0);
+        const compiled = buildDwindleBlueprint(3);
+        assert.equal(compiled.ok, true);
+        if (compiled.ok) {
+            assertDwindleShape(v, compiled.value, 0);
+        }
+        assert.ok(aWin.tile !== null);
+        assert.ok(bWin.tile !== null);
+        assert.ok(cWin.tile !== null);
+        assert.notEqual(aWin.tile, bWin.tile);
+        assert.notEqual(aWin.tile, cWin.tile);
+        assert.notEqual(bWin.tile, cWin.tile);
+        assert.equal(harness.scheduled.length, 0);
+    });
+
+    it("inserts a fourth window at the right-spine leaf of an owned non-canonical tree without reconstruction", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 100, height: 100 });
+        const v = tile({ x: 100, y: 0, width: 100, height: 100 }, true);
+        v.layoutDirection = 2;
+        const b = tile({ x: 100, y: 0, width: 100, height: 50 });
+        const h = tile({ x: 100, y: 50, width: 100, height: 50 }, true);
+        const c = tile({ x: 100, y: 50, width: 100, height: 25 });
+        const d = tile({ x: 100, y: 75, width: 100, height: 25 });
+        const aWin = window({ tile: a, caption: "a" });
+        const bWin = window({ tile: b, caption: "b" });
+        const cWin = window({ tile: c, caption: "c" });
+        const dWin = window({ tile: d, caption: "d" });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        c.windows = [cWin];
+        d.windows = [dWin];
+        root.tiles = [a, v];
+        v.tiles = [b, h];
+        h.tiles = [c, d];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin, cWin, dWin];
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        attachTileWriter(cWin);
+        attachTileWriter(dWin);
+        let removes = 0;
+        a.remove = () => {
+            removes += 1;
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== a);
+            if ((root.tiles as TestTile[]).length === 1) {
+                const sole = (root.tiles as TestTile[])[0];
+                if (sole !== undefined) {
+                    harness.root = sole;
+                }
+            }
+            return true;
+        };
+        installDwindleSplitter(d);
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        // The persisted canonical dwindle(4) chain H[a, V[b, H[c, d]]] is
+        // adopted unchanged with no structural call.
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // Removing the first-chain window `a` promotes the root to its sole
+        // child, leaving the owned non-canonical vertical-root tree V[b, H[c, d]]
+        // with an intact bijection (three leaves, three owned windows). The
+        // steady-state invariant accepts it instead of reconstructing.
+        aWin.tile = a;
+        a.windows = [aWin];
+        harness.windows = [bWin, cWin, dWin];
+        harness.emitRemoved(aWin);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(harness.yields.length, 1);
+        a.windows = [];
+        aWin.tile = null;
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(removes, 1);
+        assert.equal(harness.root, v);
+        assert.equal(v.layoutDirection, 2);
+
+        // A fourth window arrives into the owned non-canonical tree. The
+        // insertion target is the deepest right-spine leaf `d` at depth two
+        // (horizontal orientation), reached without depending on a canonical
+        // root: `d` splits horizontally and the incoming window lands on its
+        // second child, with the prior occupant on the first.
+        const incoming = window();
+        harness.windows = [bWin, cWin, dWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 2);
+        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.root, v);
+        assert.equal(d.isLayout, true);
+        assert.equal(d.layoutDirection, 1);
+        const dChildren = d.tiles as TestTile[];
+        assert.equal(dChildren.length, 2);
+        assert.equal(dWin.tile, dChildren[0]);
+        assert.equal(incoming.tile, dChildren[1]);
+        const occupied = [bWin.tile, cWin.tile, dWin.tile, incoming.tile];
+        for (const entry of occupied) {
+            assert.notEqual(entry, null);
+        }
+        assert.equal(new Set(occupied).size, 4);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.scheduled.length, 0);
     });
 });

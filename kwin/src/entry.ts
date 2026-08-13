@@ -31,26 +31,84 @@ const controller = new TileController({
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),
     onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
-    watchInteractiveWindow: (window, started, finished, invalidated) => {
-        window.interactiveMoveResizeStarted.connect(started);
-        window.interactiveMoveResizeFinished.connect(finished);
-        window.outputChanged.connect(invalidated);
-        window.desktopsChanged.connect(invalidated);
-        return () => {
-            window.interactiveMoveResizeStarted.disconnect(started);
-            window.interactiveMoveResizeFinished.disconnect(finished);
-            window.outputChanged.disconnect(invalidated);
-            window.desktopsChanged.disconnect(invalidated);
+    watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
+        const surface = window as unknown as Record<string, unknown>;
+        const connected: Array<[string, () => void]> = [];
+        const attach = (name: string, handler: () => void): boolean => {
+            let value: unknown;
+            try {
+                value = surface[name];
+                (value as { connect: (next: () => void) => void }).connect(handler);
+                connected.push([name, handler]);
+                console.log(`plasma-auto-tiler:drag-attach-ok:${name}`);
+                return true;
+            } catch (error) {
+                console.log(
+                    `plasma-auto-tiler:drag-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`,
+                );
+                return false;
+            }
+        };
+        const attempts: ReadonlyArray<readonly [string, () => void]> = [
+            ["interactiveMoveResizeStarted", started],
+            ["interactiveMoveResizeStepped", stepped],
+            ["interactiveMoveResizeFinished", finished],
+            ["moveResizedChanged", moveResizedChanged],
+            ["outputChanged", invalidated],
+            ["desktopsChanged", invalidated],
+        ];
+        let ok = 0;
+        let failed = 0;
+        for (const [name, handler] of attempts) {
+            if (attach(name, handler)) {
+                ok += 1;
+            } else {
+                failed += 1;
+            }
+        }
+        return {
+            disconnect: () => {
+                for (const [name, handler] of connected) {
+                    try {
+                        (surface[name] as { disconnect: (next: () => void) => void }).disconnect(handler);
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            },
+            ok,
+            failed,
         };
     },
     onPendingTargetChanged: (window, handler) => {
-        window.outputChanged.connect(handler);
-        window.desktopsChanged.connect(handler);
-        window.tileChanged.connect(handler);
+        const surface = window as unknown as Record<string, unknown>;
+        const connected: Array<[string, () => void]> = [];
+        const attach = (name: string): boolean => {
+            let value: unknown;
+            try {
+                value = surface[name];
+                (value as { connect: (next: () => void) => void }).connect(handler);
+                connected.push([name, handler]);
+                console.log(`plasma-auto-tiler:pending-attach-ok:${name}`);
+                return true;
+            } catch (error) {
+                console.log(
+                    `plasma-auto-tiler:pending-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`,
+                );
+                return false;
+            }
+        };
+        attach("outputChanged");
+        attach("desktopsChanged");
+        attach("tileChanged");
         return () => {
-            window.outputChanged.disconnect(handler);
-            window.desktopsChanged.disconnect(handler);
-            window.tileChanged.disconnect(handler);
+            for (const [name, connectedHandler] of connected) {
+                try {
+                    (surface[name] as { disconnect: (next: () => void) => void }).disconnect(connectedHandler);
+                } catch (error) {
+                    void error;
+                }
+            }
         };
     },
     // Named one-shot event-loop yield for dwindle reconstruction deferral,

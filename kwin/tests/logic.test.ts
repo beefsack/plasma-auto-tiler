@@ -6,12 +6,15 @@ import {
     classifyDirection,
     compareLeaves,
     containsPoint,
+    equalAlongAxis,
     findNeighborLeaf,
     isEligibleWindow,
+    pickDropLeaf,
     pickTargetLeaf,
     planAutomaticPlacement,
     planCancellation,
     planDragPlacement,
+    planEqualSplit,
     planGeometryDrop,
     planKeyboardInsertion,
     rectCenter,
@@ -19,6 +22,7 @@ import {
     type AutomaticRequest,
     type Direction,
     type DragRequest,
+    type GeometryDropPlan,
     type GeometryDropRequest,
     type KeyboardRequest,
     type Leaf,
@@ -110,10 +114,18 @@ function geometryDropRequest(overrides: Partial<GeometryDropRequest>): GeometryD
         originLeaf,
         targetLeaf,
         draggedWindow: window("win-dragged"),
-        finalGeometry: { x: 200, y: 50, width: 100, height: 50 },
+        pointer: { x: 250, y: 75 },
         record: null,
         ...overrides,
     };
+}
+
+function expectGeometryDrop(
+    result: Result<GeometryDropPlan>,
+): Extract<GeometryDropPlan, { readonly kind: "geometry-drop" }> {
+    const plan = expectOk(result);
+    assert.equal(plan.kind, "geometry-drop");
+    return plan as Extract<GeometryDropPlan, { readonly kind: "geometry-drop" }>;
 }
 
 function autoRequest(overrides: Partial<AutomaticRequest>): AutomaticRequest {
@@ -258,6 +270,33 @@ describe("pickTargetLeaf: deterministic occupied-target selection", () => {
         assert.ok(compareLeaves(byX, byY) > 0);
         assert.equal(compareLeaves(byY, byY), 0);
         assert.ok(compareLeaves(byId, { ...byId, id: "d" }) < 0);
+    });
+});
+
+describe("pickDropLeaf: geometry-drop target selection including empty leaves", () => {
+    it("selects an occupied leaf under the point", () => {
+        const occupied = leaf("o", RECT_100, [window("w1")]);
+        const empty = leaf("e", RECT_RIGHT, []);
+        assert.equal(pickDropLeaf([occupied, empty], { x: 50, y: 50 })?.id, "o");
+    });
+
+    it("selects an empty non-layout leaf under the point", () => {
+        const empty = leaf("e", RECT_RIGHT, []);
+        const occupied = leaf("o", RECT_100, [window("w1")]);
+        assert.equal(pickDropLeaf([occupied, empty], { x: 250, y: 50 })?.id, "e");
+    });
+
+    it("skips layout containers and returns null outside every leaf", () => {
+        const layout = leaf("l", RECT_RIGHT, [], true);
+        assert.equal(pickDropLeaf([layout], { x: 250, y: 50 }), null);
+        const empty = leaf("e", RECT_RIGHT, []);
+        assert.equal(pickDropLeaf([empty], { x: 400, y: 50 }), null);
+    });
+
+    it("orders candidates by top edge, then left edge, then id like pickTargetLeaf", () => {
+        const idB = leaf("b", { x: 10, y: 10, width: 100, height: 100 }, []);
+        const idA = leaf("a", { x: 10, y: 10, width: 100, height: 100 }, []);
+        assert.equal(pickDropLeaf([idB, idA], { x: 50, y: 60 })?.id, "a");
     });
 });
 
@@ -573,17 +612,16 @@ describe("planDragPlacement: directional placement and origin retention", () => 
     });
 });
 
-describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
+describe("planGeometryDrop: finish-point target reflow", () => {
     it("plans each directional region with the dragged window on the selected side", () => {
-        const cases: ReadonlyArray<[Rect, Direction]> = [
-            [{ x: 250, y: 0, width: 50, height: 100 }, "right"],
-            [{ x: 200, y: 0, width: 50, height: 100 }, "left"],
-            [{ x: 200, y: 0, width: 100, height: 50 }, "up"],
-            [{ x: 200, y: 50, width: 100, height: 50 }, "down"],
+        const cases: ReadonlyArray<[Point, Direction]> = [
+            [{ x: 290, y: 50 }, "right"],
+            [{ x: 210, y: 50 }, "left"],
+            [{ x: 250, y: 10 }, "up"],
+            [{ x: 250, y: 90 }, "down"],
         ];
-        for (const [finalGeometry, direction] of cases) {
-            const plan = expectOk(planGeometryDrop(geometryDropRequest({ finalGeometry })));
-            assert.equal(plan.kind, "geometry-drop");
+        for (const [pointer, direction] of cases) {
+            const plan = expectGeometryDrop(planGeometryDrop(geometryDropRequest({ pointer })));
             assert.equal(plan.direction, direction);
             assert.equal(plan.selectedWindow.id, "win-dragged");
             assert.equal(plan.oppositeWindow.id, "win-occupant");
@@ -591,20 +629,15 @@ describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
     });
 
     it("defaults the central dead zone to a vertical split with the occupant above", () => {
-        const plan = expectOk(
-            planGeometryDrop(geometryDropRequest({ finalGeometry: { x: 200, y: 25, width: 100, height: 50 } })),
-        );
-        assert.equal(plan.kind, "geometry-drop");
+        const plan = expectGeometryDrop(planGeometryDrop(geometryDropRequest({ pointer: { x: 250, y: 50 } })));
         assert.equal(plan.direction, "down");
     });
 
-    it("rejects a target that is the origin, a layout, or has no single occupant", () => {
+    it("rejects a target that is the origin, a layout, or without a single occupant", () => {
         const sameLeaf = leaf("origin", RECT_RIGHT, [window("win-occupant")]);
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: sameLeaf })), "same-leaf");
         const layout = leaf("target", RECT_RIGHT, [window("win-occupant")], true);
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: layout })), "ineligible-target");
-        const empty = leaf("target", RECT_RIGHT, []);
-        expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: empty })), "invalid-leaf-count");
         const triple = leaf("target", RECT_RIGHT, [window("win-occupant"), window("win-extra"), window("win-other")]);
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: triple })), "invalid-leaf-count");
         const draggedPlusTwo = leaf("target", RECT_RIGHT, [
@@ -619,13 +652,33 @@ describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: duplicatedDragged })), "mismatched-state");
     });
 
+    it("plans a direct placement without a split when the target leaf is empty", () => {
+        const empty = leaf("target", RECT_RIGHT, []);
+        const plan = expectOk(planGeometryDrop(geometryDropRequest({ targetLeaf: empty })));
+        assert.equal(plan.kind, "geometry-drop-empty");
+        if (plan.kind !== "geometry-drop-empty") {
+            throw new Error("expected empty placement plan");
+        }
+        assert.equal(plan.originLeaf.id, "origin");
+        assert.equal(plan.targetLeaf.id, "target");
+        assert.equal(plan.selectedWindow.id, "win-dragged");
+    });
+
+    it("rejects an ineligible empty-target window but never an empty leaf itself", () => {
+        const empty = leaf("target", RECT_RIGHT, []);
+        expectRejection(
+            planGeometryDrop(geometryDropRequest({ targetLeaf: empty, draggedWindow: window("win-dragged", false) })),
+            "ineligible-window",
+        );
+    });
+
     it("plans the same direction for a floating plain target and a native Shift target", () => {
         const plain = geometryDropRequest({});
         const shift = geometryDropRequest({
             targetLeaf: leaf("target", RECT_RIGHT, [window("win-dragged"), window("win-occupant")]),
         });
-        const plainPlan = expectOk(planGeometryDrop(plain));
-        const shiftPlan = expectOk(planGeometryDrop(shift));
+        const plainPlan = expectGeometryDrop(planGeometryDrop(plain));
+        const shiftPlan = expectGeometryDrop(planGeometryDrop(shift));
         assert.equal(plainPlan.direction, shiftPlan.direction);
         assert.equal(plainPlan.oppositeWindow.id, "win-occupant");
         assert.equal(shiftPlan.oppositeWindow.id, "win-occupant");
@@ -647,8 +700,8 @@ describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
         const associated = geometryDropRequest({
             originLeaf: leaf("origin", RECT_100, [window("win-dragged")]),
         });
-        const vacatedPlan = expectOk(planGeometryDrop(vacated));
-        const associatedPlan = expectOk(planGeometryDrop(associated));
+        const vacatedPlan = expectGeometryDrop(planGeometryDrop(vacated));
+        const associatedPlan = expectGeometryDrop(planGeometryDrop(associated));
         assert.equal(vacatedPlan.direction, associatedPlan.direction);
         assert.equal(vacatedPlan.oppositeWindow.id, "win-occupant");
         assert.equal(associatedPlan.oppositeWindow.id, "win-occupant");
@@ -662,7 +715,7 @@ describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: twoOccupants })), "invalid-leaf-count");
     });
 
-    it("rejects stale and cross-scope records, invalid geometry, and invalid final geometry", () => {
+    it("rejects stale and cross-scope records, invalid geometry, and invalid or outside pointers", () => {
         const staleLeaf: OriginRecord = {
             scope: SCOPE_1,
             originLeafId: "other-leaf",
@@ -689,13 +742,11 @@ describe("planGeometryDrop: plain-drop final-geometry target reflow", () => {
         const badTarget = leaf("target", { x: 200, y: 0, width: Number.NaN, height: 100 }, [window("win-occupant")]);
         expectRejection(planGeometryDrop(geometryDropRequest({ targetLeaf: badTarget })), "invalid-geometry");
         expectRejection(
-            planGeometryDrop(geometryDropRequest({ finalGeometry: { x: 0, y: 0, width: 0, height: 100 } })),
-            "invalid-geometry",
+            planGeometryDrop(geometryDropRequest({ pointer: { x: Number.NaN, y: 50 } })),
+            "invalid-numbers",
         );
         expectRejection(
-            planGeometryDrop(
-                geometryDropRequest({ finalGeometry: { x: 400, y: 0, width: 100, height: 100 } }),
-            ),
+            planGeometryDrop(geometryDropRequest({ pointer: { x: 400, y: 0 } })),
             "pointer-outside",
         );
     });
@@ -870,5 +921,79 @@ describe("identity, eligibility, and immutability", () => {
         assert.equal(auto.assignmentOnly, true);
         assert.equal(auto.leaf, empty);
         assert.equal(empty.windows.length, 0);
+    });
+});
+
+describe("planEqualSplit and equalAlongAxis", () => {
+    it("computes equal 50/50 halves along the x axis from two tiling children", () => {
+        const parent: Rect = { x: 0, y: 0, width: 1, height: 1 };
+        const plan = planEqualSplit(
+            parent,
+            { x: 0, y: 0, width: 0.25, height: 1 },
+            { x: 0.25, y: 0, width: 0.75, height: 1 },
+            "x",
+        );
+        assert.notEqual(plan, null);
+        assert.equal(plan?.axis, "x");
+        assert.deepEqual(plan?.first, { x: 0, y: 0, width: 0.5, height: 1 });
+        assert.deepEqual(plan?.second, { x: 0.5, y: 0, width: 0.5, height: 1 });
+    });
+
+    it("sorts children by near edge regardless of input order", () => {
+        const parent: Rect = { x: 0, y: 0, width: 100, height: 100 };
+        const plan = planEqualSplit(
+            parent,
+            { x: 25, y: 0, width: 75, height: 100 },
+            { x: 0, y: 0, width: 25, height: 100 },
+            "x",
+        );
+        assert.deepEqual(plan?.first, { x: 0, y: 0, width: 50, height: 100 });
+        assert.deepEqual(plan?.second, { x: 50, y: 0, width: 50, height: 100 });
+    });
+
+    it("computes equal halves along the y axis from stacked children", () => {
+        const parent: Rect = { x: 0, y: 0, width: 1, height: 1 };
+        const plan = planEqualSplit(
+            parent,
+            { x: 0, y: 0, width: 1, height: 0.25 },
+            { x: 0, y: 0.25, width: 1, height: 0.75 },
+            "y",
+        );
+        assert.deepEqual(plan?.first, { x: 0, y: 0, width: 1, height: 0.5 });
+        assert.deepEqual(plan?.second, { x: 0, y: 0.5, width: 1, height: 0.5 });
+    });
+
+    it("rejects children that do not tile the parent along the axis", () => {
+        const parent: Rect = { x: 0, y: 0, width: 1, height: 1 };
+        assert.equal(
+            planEqualSplit(parent, { x: 0, y: 0, width: 0.4, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 }, "x"),
+            null,
+        );
+        assert.equal(
+            planEqualSplit(parent, { x: 0, y: 0, width: 0.25, height: 0.5 }, { x: 0.25, y: 0, width: 0.75, height: 1 }, "x"),
+            null,
+        );
+    });
+
+    it("rejects duplicate or invalid geometries", () => {
+        const parent: Rect = { x: 0, y: 0, width: 1, height: 1 };
+        assert.equal(
+            planEqualSplit(parent, { x: 0, y: 0, width: 0.5, height: 1 }, { x: 0, y: 0, width: 0.5, height: 1 }, "x"),
+            null,
+        );
+        assert.equal(
+            planEqualSplit(parent, { x: 0, y: 0, width: 0, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 }, "x"),
+            null,
+        );
+        assert.equal(
+            planEqualSplit({ x: 0, y: 0, width: 0, height: 1 }, { x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 }, "x"),
+            null,
+        );
+    });
+
+    it("reports equality along the split axis within tolerance", () => {
+        assert.equal(equalAlongAxis({ x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 }, "x"), true);
+        assert.equal(equalAlongAxis({ x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.75, height: 1 }, "x"), false);
+        assert.equal(equalAlongAxis({ x: 0, y: 0, width: 1, height: 0.5 }, { x: 0, y: 0.5, width: 1, height: 0.5 }, "y"), true);
     });
 });

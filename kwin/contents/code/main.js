@@ -83,15 +83,6 @@
   function isMethod(value) {
     return typeof value === "function";
   }
-  function hasWindowScopeSignals(value) {
-    return isObject(value) && hasValue(value, "outputChanged", isSignal) && hasValue(value, "desktopsChanged", isSignal) && hasValue(value, "tileChanged", isSignal);
-  }
-  function hasWindowInteractionSignals(value) {
-    return hasWindowScopeSignals(value) && hasValue(value, "interactiveMoveResizeStarted", isSignal) && hasValue(value, "interactiveMoveResizeFinished", isSignal);
-  }
-  function isSignal(value) {
-    return isObject(value) && hasValue(value, "connect", isMethod);
-  }
   function isWindow(value) {
     return isObject(value) && hasValue(value, "normalWindow", (item) => typeof item === "boolean") && hasValue(value, "managed", (item) => typeof item === "boolean") && hasValue(value, "resizeable", (item) => typeof item === "boolean") && hasValue(value, "appletPopup", (item) => typeof item === "boolean") && hasValue(value, "desktops", () => true) && hasValue(value, "output", (item) => item === null || isOutput(item)) && hasValue(value, "tile", isObjectOrNull) && hasValue(value, "frameGeometry", isRect) && hasValue(value, "move", (item) => typeof item === "boolean") && hasValue(value, "resize", (item) => typeof item === "boolean");
   }
@@ -119,6 +110,17 @@
   function assignWindowToTile(window, tile) {
     try {
       return Reflect.set(window, "tile", tile) === true;
+    } catch (error) {
+      void error;
+      return false;
+    }
+  }
+  function setTileRelativeGeometry(tile, geometry) {
+    if (!isRect(geometry)) {
+      return false;
+    }
+    try {
+      return Reflect.set(tile, "relativeGeometry", geometry);
     } catch (error) {
       void error;
       return false;
@@ -414,10 +416,10 @@
     }
     return 0;
   }
-  function pickTargetLeaf(leaves, point) {
+  function pickDropLeaf(leaves, point) {
     let best = null;
     for (const leaf of leaves) {
-      if (leaf.isLayout || leaf.windows.length === 0) {
+      if (leaf.isLayout) {
         continue;
       }
       if (!containsPoint(leaf.geometry, point)) {
@@ -494,6 +496,54 @@
       return null;
     }
     return { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+  }
+  var RELATIVE_GEOMETRY_EPSILON = 1e-6;
+  function nearEdge(rect, axis) {
+    return axis === "x" ? rect.x : rect.y;
+  }
+  function farEdge(rect, axis) {
+    return axis === "x" ? rect.x + rect.width : rect.y + rect.height;
+  }
+  function perpStart(rect, axis) {
+    return axis === "x" ? rect.y : rect.x;
+  }
+  function perpEnd(rect, axis) {
+    return axis === "x" ? rect.y + rect.height : rect.x + rect.width;
+  }
+  function nearlyEqual(a, b) {
+    return Math.abs(a - b) <= RELATIVE_GEOMETRY_EPSILON;
+  }
+  function planEqualSplit(parent, a, b, axis) {
+    if (!isValidRect(parent) || !isValidRect(a) || !isValidRect(b)) {
+      return null;
+    }
+    const [first, second] = nearEdge(a, axis) <= nearEdge(b, axis) ? [a, b] : [b, a];
+    if (nearlyEqual(nearEdge(first, axis), nearEdge(second, axis))) {
+      return null;
+    }
+    if (!nearlyEqual(perpStart(first, axis), perpStart(parent, axis)) || !nearlyEqual(perpEnd(first, axis), perpEnd(parent, axis)) || !nearlyEqual(perpStart(second, axis), perpStart(parent, axis)) || !nearlyEqual(perpEnd(second, axis), perpEnd(parent, axis))) {
+      return null;
+    }
+    if (!nearlyEqual(nearEdge(first, axis), nearEdge(parent, axis))) {
+      return null;
+    }
+    if (!nearlyEqual(farEdge(first, axis), nearEdge(second, axis))) {
+      return null;
+    }
+    if (!nearlyEqual(farEdge(second, axis), farEdge(parent, axis))) {
+      return null;
+    }
+    const start = nearEdge(parent, axis);
+    const end = farEdge(parent, axis);
+    const midpoint = start + (end - start) / 2;
+    const firstTarget = axis === "x" ? { x: start, y: first.y, width: midpoint - start, height: first.height } : { x: first.x, y: start, width: first.width, height: midpoint - start };
+    const secondTarget = axis === "x" ? { x: midpoint, y: second.y, width: end - midpoint, height: second.height } : { x: second.x, y: midpoint, width: second.width, height: end - midpoint };
+    return { axis, first: firstTarget, second: secondTarget };
+  }
+  function equalAlongAxis(a, b, axis) {
+    const aExtent = axis === "x" ? a.width : a.height;
+    const bExtent = axis === "x" ? b.width : b.height;
+    return Math.abs(aExtent - bExtent) <= RELATIVE_GEOMETRY_EPSILON;
   }
   function classifyDirection(point, rect) {
     if (!isValidPoint(point)) {
@@ -580,8 +630,8 @@
     };
   }
   function planGeometryDrop(request) {
-    if (!isValidRect(request.finalGeometry)) {
-      return reject2("invalid-geometry", "final geometry must be positive and finite");
+    if (!isValidPoint(request.pointer)) {
+      return reject2("invalid-numbers", "pointer coordinates must be finite");
     }
     if (!isValidRect(request.originLeaf.geometry)) {
       return reject2("invalid-geometry", "origin leaf geometry must be positive and finite");
@@ -613,10 +663,6 @@
     if (request.originLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
       return reject2("mismatched-state", "dragged window must appear at most once in the origin leaf");
     }
-    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
-    if (oppositeWindow === void 0) {
-      return reject2("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
-    }
     if (request.record !== null) {
       if (!sameScope2(request.record.scope, request.scope)) {
         return reject2("cross-scope", "recorded scope differs from the current scope");
@@ -628,11 +674,23 @@
         return reject2("stale-state", "recorded window no longer matches the dragged window");
       }
     }
-    const center = rectCenter(request.finalGeometry);
-    if (center === null) {
-      return reject2("invalid-geometry", "final geometry center must be finite");
+    if (request.targetLeaf.windows.length === 0) {
+      return {
+        ok: true,
+        value: {
+          kind: "geometry-drop-empty",
+          scope: request.scope,
+          originLeaf: request.originLeaf,
+          targetLeaf: request.targetLeaf,
+          selectedWindow: request.draggedWindow
+        }
+      };
     }
-    const classified = classifyDirection(center, request.targetLeaf.geometry);
+    const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
+    if (oppositeWindow === void 0) {
+      return reject2("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
+    }
+    const classified = classifyDirection(request.pointer, request.targetLeaf.geometry);
     if (!classified.ok) {
       return classified;
     }
@@ -1133,6 +1191,29 @@
   function positiveGeometry(geometry) {
     return geometry.width > 0 && geometry.height > 0;
   }
+  function formatCoordinate(value) {
+    return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "non-finite";
+  }
+  function formatPoint(point) {
+    return `${formatCoordinate(point.x)},${formatCoordinate(point.y)}`;
+  }
+  function dragGeometryBail(target) {
+    switch (target.kind) {
+      case "center-unresolved":
+        return "drag-bail:center-unresolved";
+      case "no-target-leaf":
+        return `drag-bail:no-target-leaf:${formatPoint(target.center)}`;
+      case "target-is-origin":
+        return `drag-bail:target-is-origin:${formatPoint(target.center)}`;
+      case "leaf-not-in-topology":
+        return `drag-bail:leaf-not-in-topology:${formatPoint(target.center)}`;
+    }
+  }
+  var SNAPSHOT_CAPTION_LIMIT = 40;
+  function snapshotCaption(value) {
+    const caption = typeof value === "string" ? value : "";
+    return caption.length > SNAPSHOT_CAPTION_LIMIT ? caption.slice(0, SNAPSHOT_CAPTION_LIMIT) : caption;
+  }
   function splitDirection2(direction) {
     return direction === "left" || direction === "right" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
   }
@@ -1160,6 +1241,37 @@
       return false;
     }
     return dwindleNodeMatches(first, node.left, depth + 1) && dwindleNodeMatches(second, node.right, depth + 1) || dwindleNodeMatches(first, node.right, depth + 1) && dwindleNodeMatches(second, node.left, depth + 1);
+  }
+  function dwindleOccupancyMatches(scope, leaves, population) {
+    if (leaves.length !== population.length) {
+      return false;
+    }
+    const occupied = /* @__PURE__ */ new Set();
+    for (const leaf of leaves) {
+      let occupants = 0;
+      for (const value of leaf.windows) {
+        if (windowInScope(value, scope) && value.tile === leaf.tile) {
+          occupants += 1;
+          occupied.add(value);
+        }
+      }
+      if (occupants !== 1) {
+        return false;
+      }
+    }
+    for (const window of population) {
+      if (!occupied.has(window)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function dwindleBijectionTreeMatches(scope, root, population) {
+    const leaves = decodeUsableLeaves(root);
+    if (leaves === null) {
+      return false;
+    }
+    return dwindleOccupancyMatches(scope, leaves, population);
   }
   var TileController = class {
     constructor(environment) {
@@ -1248,7 +1360,7 @@
         this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
         this.environment.onScreensChanged(() => this.handleScopeChange());
         this.environment.onCurrentDesktopChanged(() => this.handleScopeChange());
-        this.attachExistingInteractiveWindows();
+        this.attachExistingInteractiveWindows(true);
         const insertionRegistered = this.environment.registerShortcut(
           "plasma-auto-tiler-insert-right",
           "Insert next window right of focused leaf",
@@ -1467,7 +1579,7 @@
           }
         }
         const targetOccupant = targetOccupantForActive(target, active);
-        if (targetOccupant === null || !hasWindowScopeSignals(targetOccupant.window)) {
+        if (targetOccupant === null) {
           this.diagnostic("keyboard-rejected:target-occupancy-validity");
           return;
         }
@@ -2432,7 +2544,13 @@
     refillOrPlaceAutomatically(window, scope) {
       const outcome = this.runReflow(scope, window);
       if (outcome.kind === "no-selection" || outcome.kind === "no-capacity") {
-        this.placeAutomatically(window, scope);
+        if (window.tile !== null) {
+          return;
+        }
+        const placement = this.placeAutomatically(window, scope);
+        if (placement.kind !== "managed") {
+          this.diagnostic(`window-added-noop:${placement.kind}`);
+        }
       }
     }
     // This returns the explicit realization input rather than tying executor
@@ -2517,7 +2635,7 @@
       this.gate.run(() => {
         this.clearPending();
         this.clearDrag();
-        this.attachExistingInteractiveWindows();
+        this.attachExistingInteractiveWindows(false);
         this.engageCurrentScope();
       }, (reason) => this.disabled(reason));
     }
@@ -2630,31 +2748,61 @@
       }
       return "desktop-scope-mismatch";
     }
-    attachExistingInteractiveWindows() {
+    attachExistingInteractiveWindows(emitSummary) {
       const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
       if (!windows.ok) {
+        this.diagnostic("drag-attach-skipped:window-list-decode-failed");
         return;
       }
       this.decodedBoundary("workspace-window-list");
+      let attempted = 0;
+      let ok = 0;
+      let failed2 = 0;
       for (const window of windows.value) {
-        this.attachInteractiveWindow(window);
+        const result = this.attachInteractiveWindow(window);
+        if (result === null) {
+          continue;
+        }
+        attempted += result.attempted;
+        ok += result.ok;
+        failed2 += result.failed;
+      }
+      if (emitSummary) {
+        this.diagnostic(`drag-attach-summary:${attempted}:${ok}:${failed2}`);
       }
     }
     attachInteractiveWindow(window) {
-      if (this.interactiveWindows.size >= MAX_SEQUENTIAL_LENGTH || !isWindow(window)) {
-        return;
+      if (this.interactiveWindows.size >= MAX_SEQUENTIAL_LENGTH) {
+        this.diagnostic("drag-attach-skipped:max-windows");
+        return null;
+      }
+      if (!isWindow(window)) {
+        this.diagnostic("drag-attach-skipped:not-window");
+        return null;
+      }
+      if (this.interactiveWindows.has(window)) {
+        this.diagnostic("drag-attach-skipped:duplicate");
+        return null;
       }
       const scope = this.scopeForWindow(window);
-      if (scope === null || !windowInScope(window, scope) || !hasWindowInteractionSignals(window) || this.interactiveWindows.has(window)) {
-        return;
+      if (scope === null) {
+        this.diagnostic("drag-attach-skipped:no-scope");
+        return null;
       }
-      const disconnect = this.environment.watchInteractiveWindow(
+      if (!windowInScope(window, scope)) {
+        this.diagnostic("drag-attach-skipped:out-of-scope");
+        return null;
+      }
+      const watched = this.environment.watchInteractiveWindow(
         window,
         () => this.handleInteractiveStarted(window),
         () => this.handleInteractiveFinished(window),
+        () => this.handleInteractiveStepped(),
+        () => this.handleMoveResizedChanged(),
         () => this.handleInteractiveInvalidated(window)
       );
-      this.interactiveWindows.set(window, disconnect);
+      this.interactiveWindows.set(window, watched.disconnect);
+      return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
     }
     detachInteractiveWindow(window) {
       const disconnect = this.interactiveWindows.get(window);
@@ -2674,6 +2822,7 @@
       }, (reason) => this.disabled(reason));
     }
     handleInteractiveStarted(window) {
+      this.diagnostic("drag-started");
       this.gate.run(() => {
         if (this.drag.current !== void 0 || !window.move || window.resize) {
           return;
@@ -2717,6 +2866,123 @@
         }
       }, (reason) => this.disabled(reason));
     }
+    // Stepped keeps the signal attached for live delivery proof but must not
+    // emit per-motion journal lines or mutate tiles; only Finished drives reflow.
+    handleInteractiveStepped() {
+    }
+    handleMoveResizedChanged() {
+      this.diagnostic("drag-move-resized-changed");
+    }
+    // Read the documented workspace cursor exactly once, at drag finish, under
+    // safe validation. Returns the finite cursor point, or null when the read
+    // throws or the value is not a finite point; each failure emits a one-time
+    // fallback diagnostic and the caller falls back to the final frame center.
+    readCursorPoint() {
+      let value;
+      try {
+        value = this.environment.cursorPos();
+      } catch (error) {
+        void error;
+        this.onceDiagnostic("drag-point-fallback:cursor-read-threw");
+        return null;
+      }
+      if (!isPoint(value)) {
+        this.onceDiagnostic("drag-point-fallback:cursor-not-a-point");
+        return null;
+      }
+      return { x: value.x, y: value.y };
+    }
+    // Compact one-line JSON observability for the drop-only finish. Each stage
+    // builds a plain-data payload and serializes it; any observation or
+    // serialization error is swallowed into a fixed `drag-snapshot-failed`
+    // diagnostic so observability never affects the guarded tiling operation.
+    dragSnapshot(stage, produce) {
+      let data;
+      try {
+        data = produce();
+      } catch (error) {
+        void error;
+        this.diagnostic(`drag-snapshot-failed:${stage}:observe`);
+        return;
+      }
+      let payload;
+      try {
+        payload = JSON.stringify(data);
+      } catch (error) {
+        void error;
+        this.diagnostic(`drag-snapshot-failed:${stage}:serialize`);
+        return;
+      }
+      const prefix = stage === "target" ? "drag-target" : `drag-snapshot-${stage}`;
+      this.diagnostic(`${prefix}:${payload}`);
+    }
+    topologyLeavesData(topology) {
+      return topology.map((entry) => ({
+        id: entry.leaf.id,
+        geometry: {
+          x: entry.leaf.geometry.x,
+          y: entry.leaf.geometry.y,
+          width: entry.leaf.geometry.width,
+          height: entry.leaf.geometry.height
+        },
+        occupants: entry.refs.map((ref, index) => {
+          var _a;
+          return {
+            id: ref.id,
+            caption: snapshotCaption((_a = entry.windows[index]) == null ? void 0 : _a.caption)
+          };
+        })
+      }));
+    }
+    dragSnapshotBefore(drag, topology, topologyStatus, center, pointSource = null) {
+      this.dragSnapshot("before", () => {
+        const geometry = drag.window.frameGeometry;
+        const payload = {
+          geometry: {
+            x: geometry.x,
+            y: geometry.y,
+            width: geometry.width,
+            height: geometry.height
+          },
+          center: center === null ? null : { x: center.x, y: center.y },
+          leaves: topology === null ? null : this.topologyLeavesData(topology)
+        };
+        if (pointSource !== null) {
+          payload.pointSource = pointSource;
+        }
+        if (topology === null) {
+          payload.topology = topologyStatus;
+        }
+        return payload;
+      });
+    }
+    dragTargetResolution(target) {
+      this.dragSnapshot("target", () => {
+        if (target.kind === "resolved") {
+          return {
+            kind: "resolved",
+            leaf: target.target.leaf.id,
+            center: { x: target.center.x, y: target.center.y },
+            pointSource: target.pointSource,
+            occupancy: target.empty ? "empty" : "occupied"
+          };
+        }
+        if (target.kind === "center-unresolved") {
+          return { kind: "center-unresolved" };
+        }
+        return {
+          kind: target.kind,
+          center: { x: target.center.x, y: target.center.y },
+          pointSource: target.pointSource
+        };
+      });
+    }
+    dragSnapshotAfter(topology) {
+      this.dragSnapshot("after", () => ({ leaves: this.topologyLeavesData(topology) }));
+    }
+    dragSnapshotFinal(topology) {
+      this.dragSnapshot("final", () => ({ leaves: this.topologyLeavesData(topology) }));
+    }
     restoreOrigin(drag) {
       const scope = this.scopeForWindow(drag.window);
       if (scope === null || !sameScope(scope.scope, drag.scope.scope) || !windowInScope(drag.window, scope) || !isCustomTile(drag.originTile) || drag.window.tile === drag.originTile) {
@@ -2735,25 +3001,60 @@
     completeDrag(drag) {
       this.diagnostic("drag-finished");
       const scope = this.scopeForWindow(drag.window);
-      if (scope === null || !sameScope(scope.scope, drag.scope.scope) || !windowInScope(drag.window, scope) || !isCustomTile(drag.originTile)) {
-        this.restoreOrigin(drag);
+      if (scope === null) {
+        this.dragSnapshotBefore(drag, null, "scope-unavailable", null);
+        this.bailDrag("drag-bail:scope-unavailable", drag);
+        return;
+      }
+      if (!sameScope(scope.scope, drag.scope.scope)) {
+        this.dragSnapshotBefore(drag, null, "scope-changed", null);
+        this.bailDrag("drag-bail:scope-changed", drag);
+        return;
+      }
+      if (!windowInScope(drag.window, scope)) {
+        this.dragSnapshotBefore(drag, null, "window-out-of-scope", null);
+        this.bailDrag("drag-bail:window-out-of-scope", drag);
+        return;
+      }
+      if (!isCustomTile(drag.originTile)) {
+        this.dragSnapshotBefore(drag, null, "origin-tile-not-custom", null);
+        this.bailDrag("drag-bail:origin-tile-not-custom", drag);
         return;
       }
       if (drag.window.tile === drag.originTile && sameGeometry(drag.window.frameGeometry, drag.originGeometry)) {
+        this.dragSnapshotBefore(drag, null, "unchanged", null);
         this.diagnostic("drag-unchanged");
         return;
       }
-      const topology = this.topologyForScope(scope);
-      if (topology === null || !positiveGeometry(drag.window.frameGeometry)) {
-        this.restoreOrigin(drag);
+      let topologyRejection = null;
+      const topology = this.topologyForScope(scope, (reason) => {
+        topologyRejection = reason;
+      });
+      if (topology === null) {
+        this.dragSnapshotBefore(drag, null, topologyRejection != null ? topologyRejection : "unknown", null);
+        this.bailDrag(`drag-bail:topology-unavailable:${topologyRejection != null ? topologyRejection : "unknown"}`, drag);
         return;
       }
+      if (!positiveGeometry(drag.window.frameGeometry)) {
+        this.dragSnapshotBefore(drag, topology, null, null);
+        this.bailDrag("drag-bail:geometry-invalid", drag);
+        return;
+      }
+      const cursorPoint = this.readCursorPoint();
+      const frameCenter = rectCenter(drag.window.frameGeometry);
+      const center = cursorPoint != null ? cursorPoint : frameCenter;
+      const pointSource = cursorPoint !== null ? "cursor" : "frame-center";
+      this.dragSnapshotBefore(drag, topology, null, center, pointSource);
       const origin = operationLeafForTile(topology, drag.originTile);
-      if (origin === null || origin.leaf.isLayout) {
-        this.restoreOrigin(drag);
+      if (origin === null) {
+        this.bailDrag("drag-bail:origin-unresolved", drag);
         return;
       }
-      this.recoverGeometryDrop(drag, scope, topology, origin);
+      if (origin.leaf.isLayout) {
+        this.bailDrag("drag-bail:origin-is-layout", drag);
+        return;
+      }
+      this.recoverGeometryDrop(drag, scope, topology, origin, center, pointSource);
     }
     // The OperationLeaf of a native Shift-drop target, or null unless the
     // dragged window's current tile is a non-layout custom-tile leaf holding
@@ -2790,27 +3091,27 @@
     // structural call, the position-directed split; the vacated origin's
     // collapse is then deferred to the established one-shot event-loop yield,
     // so the origin is never removed before the split.
-    recoverGeometryDrop(drag, scope, topology, origin) {
+    recoverGeometryDrop(drag, scope, topology, origin, center, pointSource) {
       const native = this.nativeDropTarget(drag, scope, topology);
-      const target = this.geometryDropTarget(drag, topology, origin);
-      if (target === null) {
-        this.bailDrag("drag-bail:no-geometry-target", drag);
+      const target = this.geometryDropTarget(topology, origin, center, pointSource);
+      this.dragTargetResolution(target);
+      if (target.kind !== "resolved") {
+        this.bailDrag(dragGeometryBail(target), drag);
         return;
       }
-      if (native !== null && native.leaf !== target.leaf) {
+      if (native !== null && native.leaf !== target.target.leaf) {
         this.bailDrag("drag-bail:geometry-native-mismatch", drag);
         return;
       }
       if (native !== null) {
         this.diagnostic("drag-native-overlap");
       }
-      this.diagnostic("drag-geometry-target");
-      const draggedIndex = windowIndex(target.windows, drag.window);
+      const draggedIndex = windowIndex(target.target.windows, drag.window);
       let draggedRef;
       if (draggedIndex >= 0) {
-        const ref = target.refs[draggedIndex];
+        const ref = target.target.refs[draggedIndex];
         if (ref === void 0) {
-          this.bailDrag("drag-bail:geometry-plan-rejected", drag);
+          this.bailDrag("drag-bail:geometry-plan-rejected:ref-unresolved", drag);
           return;
         }
         draggedRef = ref;
@@ -2824,9 +3125,9 @@
       const plan = planGeometryDrop({
         scope: scope.scope,
         originLeaf: origin.leaf,
-        targetLeaf: target.leaf,
+        targetLeaf: target.target.leaf,
         draggedWindow: draggedRef,
-        finalGeometry: drag.window.frameGeometry,
+        pointer: target.center,
         record: {
           scope: scope.scope,
           originLeafId: origin.leaf.id,
@@ -2834,35 +3135,63 @@
           geometry: drag.originGeometry
         }
       });
-      if (!plan.ok || plan.value.kind !== "geometry-drop") {
-        this.bailDrag("drag-bail:geometry-plan-rejected", drag);
+      if (!plan.ok) {
+        this.bailDrag(`drag-bail:geometry-plan-rejected:${plan.reason.kind}`, drag);
         return;
       }
-      this.applyDropSplit(drag, scope, target, plan.value.direction);
-    }
-    // The occupied non-layout leaf under the dragged window's final frame
-    // geometry center, excluding the origin leaf, or null when the center falls
-    // on no occupied leaf. The smallest eligible leaf wins by the same ordering
-    // rule as the classic cursor target selection.
-    geometryDropTarget(drag, topology, origin) {
-      const center = rectCenter(drag.window.frameGeometry);
-      if (center === null) {
-        return null;
+      if (plan.value.kind === "geometry-drop-empty") {
+        this.diagnostic("drag-empty-target");
+        this.applyEmptyDrop(drag, scope, target.target);
+        return;
       }
-      const leaf = pickTargetLeaf(topology.map((entry) => entry.leaf), center);
-      if (leaf === null || leaf.id === origin.leaf.id) {
-        return null;
+      this.diagnostic("drag-geometry-target");
+      this.applyDropSplit(drag, scope, target.target, plan.value.direction);
+    }
+    // The non-layout leaf (occupied or empty) under the chosen resolver point
+    // (the documented workspace cursor when finite, else the dragged window's
+    // final frame geometry center), excluding the origin leaf, or a distinct
+    // bail branch when the point resolves nowhere. The smallest eligible leaf
+    // wins by the same ordering rule as the classic cursor target selection.
+    // An empty leaf resolves as a direct-placement target, not a bail.
+    geometryDropTarget(topology, origin, center, pointSource) {
+      if (center === null) {
+        return { kind: "center-unresolved" };
+      }
+      const leaf = pickDropLeaf(topology.map((entry) => entry.leaf), center);
+      if (leaf === null) {
+        return { kind: "no-target-leaf", center, pointSource };
+      }
+      if (leaf.id === origin.leaf.id) {
+        return { kind: "target-is-origin", center, pointSource };
       }
       for (const entry of topology) {
         if (entry.leaf === leaf) {
-          return entry;
+          return { kind: "resolved", target: entry, center, pointSource, empty: entry.windows.length === 0 };
         }
       }
-      return null;
+      return { kind: "leaf-not-in-topology", center, pointSource };
     }
     bailDrag(reason, drag) {
       this.diagnostic(reason);
       this.restoreOrigin(drag);
+    }
+    // Direct placement of the dragged window into a resolved empty non-layout
+    // target leaf: a single guarded manage with no split and no occupied-leaf
+    // reflow, then the vacated origin's collapse is deferred to the established
+    // one-shot yield exactly like the split path.
+    applyEmptyDrop(drag, scope, target) {
+      let managed = false;
+      try {
+        managed = manageTile(target.decoded.tile, drag.window);
+      } catch (error) {
+        void error;
+      }
+      if (!managed) {
+        this.bailDrag("drag-bail:empty-placement-failed", drag);
+        return;
+      }
+      this.diagnostic("drag-empty-placement");
+      this.deferRemovalCollapse(drag.window, scope, drag.originTile, true);
     }
     // Split a resolved drop target leaf into the direction-derived children and
     // manage the original occupant onto the opposite child and the dragged
@@ -2879,7 +3208,10 @@
         return;
       }
       this.diagnostic("drag-overlap-split-completed");
-      this.deferRemovalCollapse(drag.window, scope, drag.originTile);
+      this.deferRemovalCollapse(drag.window, scope, drag.originTile, true, {
+        dragged: drag.window,
+        occupant
+      });
     }
     // Split a drop target leaf into the direction-derived children and manage
     // the original occupant onto the opposite child and the dragged window
@@ -3008,13 +3340,13 @@
       }
       this.diagnostic("keyboard-completed");
     }
-    // Returns whether the window was assigned. Managed-scope dwindle ownership
-    // reuses this deterministic empty-leaf placement so a full owned tree keeps
-    // the same guarded assignment and diagnostic as generic automatic placement.
+    // Returns the placement outcome. Managed-scope dwindle ownership reuses
+    // this deterministic empty-leaf placement so a full owned tree keeps the
+    // same guarded assignment and diagnostic as generic automatic placement.
     placeAutomatically(window, scope) {
       const topology = this.topologyForScope(scope);
       if (topology === null) {
-        return false;
+        return { kind: "topology-unavailable" };
       }
       const plan = planAutomaticPlacement({
         scope: scope.scope,
@@ -3022,18 +3354,18 @@
         leaves: topology.map((entry) => entry.leaf)
       });
       if (!plan.ok) {
-        return false;
+        return { kind: "no-empty-leaf" };
       }
       for (const entry of topology) {
         if (entry.leaf === plan.value.leaf) {
           if (manageTile(entry.decoded.tile, window)) {
             this.diagnostic("automatic-placement-managed");
-            return true;
+            return { kind: "managed" };
           }
-          return false;
+          return { kind: "assignment-failed" };
         }
       }
-      return false;
+      return { kind: "no-empty-leaf" };
     }
     // ---- Automatic session-local managed-scope dwindle ownership ----
     // Re-anchor ownership to the current scope after controller start or a
@@ -3124,7 +3456,7 @@
         return;
       }
       this.setManaged(scope);
-      if (this.dwindleMatches(scope, population.length)) {
+      if (this.dwindleMatches(scope, population)) {
         this.diagnostic("ownership-taken");
         return;
       }
@@ -3149,13 +3481,18 @@
       return owned;
     }
     // Whether the scope's current tree already realizes the ratio-free dwindle
-    // blueprint for the owned count. A count of one is realized by exactly one
-    // usable leaf (a non-layout tile or a zero-child layout root) occupied by
-    // the sole owned window, regardless of the root wrapper; higher counts
-    // require the exact dwindle chain with alternating orientation. A zero
-    // count is never realized, so an empty owned scope never matches.
-    dwindleMatches(scope, count) {
-      if (!Number.isSafeInteger(count) || count <= 0) {
+    // blueprint for the owned population. A population of one is realized by
+    // exactly one usable leaf (a non-layout tile or a zero-child layout root)
+    // occupied by the sole owned window, regardless of the root wrapper; higher
+    // counts require the exact dwindle chain with alternating orientation. In
+    // every case the occupancy must be a bijection between the usable leaves
+    // and the population: each leaf holds exactly one owned window whose
+    // recorded `tile` is that leaf, and every owned window occupies exactly one
+    // leaf. An empty population is never realized, so an empty owned scope
+    // never matches.
+    dwindleMatches(scope, population) {
+      const count = population.length;
+      if (count === 0) {
         return false;
       }
       const root = this.environment.rootTile(scope.output, scope.desktop);
@@ -3167,20 +3504,16 @@
         if (leaves === null || leaves.length !== 1) {
           return false;
         }
-        const sole = leaves[0];
-        if (sole === void 0) {
-          return false;
-        }
-        const occupants = sole.windows.filter(
-          (value) => windowInScope(value, scope) && value.tile === sole.tile
-        );
-        return occupants.length === 1;
+        return dwindleBijectionTreeMatches(scope, root, population);
       }
       const blueprint = buildDwindleBlueprint(count);
       if (!blueprint.ok) {
         return false;
       }
-      return dwindleNodeMatches(root, blueprint.value, 0);
+      if (!dwindleNodeMatches(root, blueprint.value, 0)) {
+        return false;
+      }
+      return dwindleBijectionTreeMatches(scope, root, population);
     }
     // Full dwindle reconstruction, phase registration: record the owned scope
     // as awaiting its first one-shot event-loop yield and arm it. No structural
@@ -3316,7 +3649,7 @@
         this.dropPendingRebuild(scope, pending);
         return;
       }
-      if (this.dwindleMatches(scope, population.length)) {
+      if (this.dwindleMatches(scope, population)) {
         this.dropPendingRebuild(scope, pending);
         return;
       }
@@ -3439,6 +3772,12 @@
         if (byDesktop.size === 0) {
           this.pendingRebuilds.delete(scope.output);
         }
+        if (pending.dragFinalSnapshot) {
+          const finalTopology = this.topologyForScope(scope);
+          if (finalTopology !== null) {
+            this.dragSnapshotFinal(finalTopology);
+          }
+        }
       }
     }
     recordDetached(window) {
@@ -3454,7 +3793,8 @@
     // count change: when the current tree no longer realizes the dwindle
     // blueprint for the current population, start a full reconstruction. A
     // scope with no owned population or an authoritative valid overlay is
-    // untouched.
+    // untouched. The scope root is decoded exactly once per check and shared by
+    // the occupancy-bijection predicate and the canonical-shape predicate.
     dwindleEnsureInvariant(scope) {
       if (!this.isOwned(scope) || this.isInert(scope)) {
         return;
@@ -3466,10 +3806,34 @@
       if (population.length === 0) {
         return;
       }
-      if (this.dwindleMatches(scope, population.length)) {
+      const root = this.environment.rootTile(scope.output, scope.desktop);
+      if (!isCustomTile(root) || !dwindleBijectionTreeMatches(scope, root, population)) {
+        this.diagnostic("ownership-invariant:bijection-failed");
+        this.startReconstruction(scope);
         return;
       }
-      this.startReconstruction(scope);
+      if (!this.dwindleShapeMatches(root, population)) {
+        this.diagnostic("ownership-accepted:non-canonical:bijection-intact");
+      }
+    }
+    // Canonical dwindle-shape predicate for the already-resolved scope root:
+    // whether the tree realizes the ratio-free dwindle blueprint for the
+    // population count. A population of one is realized by exactly one usable
+    // leaf (a non-layout tile or a zero-child layout root); higher counts
+    // require the exact dwindle chain with alternating orientation. Only the
+    // shape is checked here; occupancy is the separate bijection predicate. The
+    // root is never re-read.
+    dwindleShapeMatches(root, population) {
+      const count = population.length;
+      if (count === 1) {
+        const leaves = decodeUsableLeaves(root);
+        return leaves !== null && leaves.length === 1;
+      }
+      const blueprint = buildDwindleBlueprint(count);
+      if (!blueprint.ok) {
+        return false;
+      }
+      return dwindleNodeMatches(root, blueprint.value, 0);
     }
     // The deepest right-spine non-layout custom tile under the scope root (the
     // dwindle insertion point) with its depth. The dwindle chain recurses into
@@ -3505,8 +3869,16 @@
       return walk(root, 0);
     }
     // Dispatch an eligible added window to the owned-scope dwindle path or the
-    // generic overlay/automatic-placement path.
+    // generic overlay/automatic-placement path. A not-yet-owned, not-inert
+    // scope is adopted first: the window's scope is the current desktop of its
+    // output, so this re-establishes ownership when the current desktop had no
+    // window at the earlier `currentDesktopChanged` notification and was left
+    // unmanaged. Adoption goes through `ensureManaged` (dwindle match or the
+    // two-phase reconstruction), never a direct remove or split.
     placeEligibleAdded(window, scope) {
+      if (!this.isOwned(scope) && !this.isInert(scope)) {
+        this.ensureManaged(scope);
+      }
       if (this.isOwned(scope)) {
         this.dwindleAdd(window, scope);
       } else {
@@ -3531,7 +3903,7 @@
       if (window.tile !== null) {
         return;
       }
-      if (this.placeAutomatically(window, scope)) {
+      if (this.placeAutomatically(window, scope).kind === "managed") {
         return;
       }
       this.dwindleInsert(window, scope);
@@ -3577,7 +3949,7 @@
         } catch (error) {
           void error;
         }
-        if (!assigned || !this.dwindleMatches(scope, 1)) {
+        if (!assigned || !this.dwindleMatches(scope, this.ownedPopulation(scope))) {
           this.markInert(scope);
           return;
         }
@@ -3703,11 +4075,11 @@
     // valid overlay appeared, or the leaf was already collapsed elsewhere. It
     // never re-arms itself, so a removal that never settles leaves the scope
     // intact instead of retrying forever.
-    deferRemovalCollapse(window, scope, leafTile) {
+    deferRemovalCollapse(window, scope, leafTile, afterDragSnapshot = false, reflowLeaves) {
       let armed = false;
       try {
         armed = this.environment.yieldOnce(() => {
-          this.settleRemovalCollapse(window, scope, leafTile);
+          this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
         });
       } catch (error) {
         void error;
@@ -3725,7 +4097,8 @@
     // decode, never to touch stale children. A leaf that still lists the
     // window, a leaf that holds another eligible occupant, or a leaf that is
     // gone from the fresh tree are all left untouched.
-    settleRemovalCollapse(window, scope, leafTile) {
+    settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves) {
+      var _a;
       if (this.isInert(scope) || !this.isOwned(scope)) {
         return;
       }
@@ -3739,15 +4112,108 @@
       }
       const leaf = operationLeafForTile(topology, leafTile);
       if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+        if (afterDragSnapshot) {
+          this.dragSnapshotAfter(topology);
+        }
         return;
       }
       if (windowIndex(leaf.windows, window) >= 0) {
+        if (afterDragSnapshot) {
+          this.dragSnapshotAfter(topology);
+        }
         return;
       }
       if (leaf.windows.some((value) => value !== window && windowInScope(value, scope))) {
+        if (afterDragSnapshot) {
+          this.dragSnapshotAfter(topology);
+        }
         return;
       }
-      this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
+      const after = this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
+      if (afterDragSnapshot && after !== null) {
+        const finalTopology = this.normalizeReflowLeaves(scope, reflowLeaves, after);
+        this.dragSnapshotAfter(finalTopology);
+        const pending = (_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id);
+        if (pending !== void 0) {
+          pending.dragFinalSnapshot = true;
+        }
+      }
+    }
+    // The OperationLeaf holding a window in a fresh topology, resolved from the
+    // window's current `tile` association. The window is a stable identity
+    // carried across a yield; only its live tile read is used, so no stale tile
+    // wrapper is ever retained.
+    leafForWindow(topology, window) {
+      if (window.tile === null || !isTile(window.tile)) {
+        return null;
+      }
+      return operationLeafForTile(topology, window.tile);
+    }
+    // Equalize the two reflow leaves created by a drop split to 50/50 relative
+    // geometry, after the settled origin collapse. Both leaves are re-resolved
+    // from the fresh post-collapse topology by their window occupants; when they
+    // are current siblings under a common layout parent that they tile along the
+    // parent's split axis, one guarded relativeGeometry write moves only the
+    // shared edge to the midpoint (the documented source setter adjusts the
+    // sibling's shared edge; source-derived, not live-proven here). A fresh
+    // decode then proves the two leaves are equal within the documented
+    // tolerance before `drag-reflow-normalized` is claimed. Every unsafe shape
+    // emits a one-shot `drag-reflow-normalize-skipped:<reason>` and leaves the
+    // topology untouched; a write or post-decode failure emits
+    // `drag-reflow-normalize-failed:<reason>` and preserves the existing safe
+    // behavior. No remove, split, timer, or other structural call runs here.
+    normalizeReflowLeaves(scope, reflowLeaves, topology) {
+      if (reflowLeaves === void 0) {
+        return topology;
+      }
+      const draggedLeaf = this.leafForWindow(topology, reflowLeaves.dragged);
+      const occupantLeaf = this.leafForWindow(topology, reflowLeaves.occupant);
+      if (draggedLeaf === null || occupantLeaf === null || draggedLeaf.decoded.tile === occupantLeaf.decoded.tile || draggedLeaf.leaf.isLayout || occupantLeaf.leaf.isLayout) {
+        this.diagnostic("drag-reflow-normalize-skipped:leaf-resolution");
+        return topology;
+      }
+      const parent = draggedLeaf.decoded.tile.parent;
+      if (parent === null || !isTile(parent) || !isCustomTile(parent) || !parent.isLayout) {
+        this.diagnostic("drag-reflow-normalize-skipped:no-layout-parent");
+        return topology;
+      }
+      if (occupantLeaf.decoded.tile.parent !== parent) {
+        this.diagnostic("drag-reflow-normalize-skipped:not-siblings");
+        return topology;
+      }
+      const axis = parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION2 ? "y" : null;
+      if (axis === null) {
+        this.diagnostic("drag-reflow-normalize-skipped:floating-parent");
+        return topology;
+      }
+      const draggedGeometry = draggedLeaf.decoded.tile.relativeGeometry;
+      const occupantGeometry = occupantLeaf.decoded.tile.relativeGeometry;
+      const plan = planEqualSplit(parent.relativeGeometry, draggedGeometry, occupantGeometry, axis);
+      if (plan === null) {
+        this.diagnostic("drag-reflow-normalize-skipped:geometry-incompatible");
+        return topology;
+      }
+      const draggedNear = axis === "x" ? draggedGeometry.x : draggedGeometry.y;
+      const occupantNear = axis === "x" ? occupantGeometry.x : occupantGeometry.y;
+      const firstTile = draggedNear <= occupantNear ? draggedLeaf.decoded.tile : occupantLeaf.decoded.tile;
+      const written = setTileRelativeGeometry(firstTile, plan.first);
+      if (!written) {
+        this.diagnostic("drag-reflow-normalize-failed:write");
+        return topology;
+      }
+      const fresh = this.topologyForScope(scope);
+      if (fresh === null) {
+        this.diagnostic("drag-reflow-normalize-failed:post-decode");
+        return topology;
+      }
+      const freshDragged = this.leafForWindow(fresh, reflowLeaves.dragged);
+      const freshOccupant = this.leafForWindow(fresh, reflowLeaves.occupant);
+      if (freshDragged === null || freshOccupant === null || !equalAlongAxis(freshDragged.decoded.tile.relativeGeometry, freshOccupant.decoded.tile.relativeGeometry, axis)) {
+        this.diagnostic("drag-reflow-normalize-failed:mismatch");
+        return fresh;
+      }
+      this.diagnostic("drag-reflow-normalized");
+      return fresh;
     }
     // Exactly one guarded `CustomTile.remove()` of a provably-freed decoded
     // leaf, a fresh whole-root decode immediately afterwards, and a strict
@@ -3762,15 +4228,16 @@
       }
       if (!removed) {
         this.markInert(scope);
-        return;
+        return null;
       }
       const after = this.topologyForScope(scope);
       if (after === null || after.length !== topology.length - 1) {
         this.markInert(scope);
-        return;
+        return null;
       }
       this.diagnostic("ownership-remove-collapsed");
       this.dwindleEnsureInvariant(scope);
+      return after;
     }
     dwindleMaybeRemove(window) {
       const scope = this.scopeForWindow(window);
@@ -3800,26 +4267,84 @@
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),
     onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
-    watchInteractiveWindow: (window, started, finished, invalidated) => {
-      window.interactiveMoveResizeStarted.connect(started);
-      window.interactiveMoveResizeFinished.connect(finished);
-      window.outputChanged.connect(invalidated);
-      window.desktopsChanged.connect(invalidated);
-      return () => {
-        window.interactiveMoveResizeStarted.disconnect(started);
-        window.interactiveMoveResizeFinished.disconnect(finished);
-        window.outputChanged.disconnect(invalidated);
-        window.desktopsChanged.disconnect(invalidated);
+    watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
+      const surface = window;
+      const connected = [];
+      const attach = (name, handler) => {
+        let value;
+        try {
+          value = surface[name];
+          value.connect(handler);
+          connected.push([name, handler]);
+          console.log(`plasma-auto-tiler:drag-attach-ok:${name}`);
+          return true;
+        } catch (error) {
+          console.log(
+            `plasma-auto-tiler:drag-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`
+          );
+          return false;
+        }
+      };
+      const attempts = [
+        ["interactiveMoveResizeStarted", started],
+        ["interactiveMoveResizeStepped", stepped],
+        ["interactiveMoveResizeFinished", finished],
+        ["moveResizedChanged", moveResizedChanged],
+        ["outputChanged", invalidated],
+        ["desktopsChanged", invalidated]
+      ];
+      let ok = 0;
+      let failed2 = 0;
+      for (const [name, handler] of attempts) {
+        if (attach(name, handler)) {
+          ok += 1;
+        } else {
+          failed2 += 1;
+        }
+      }
+      return {
+        disconnect: () => {
+          for (const [name, handler] of connected) {
+            try {
+              surface[name].disconnect(handler);
+            } catch (error) {
+              void error;
+            }
+          }
+        },
+        ok,
+        failed: failed2
       };
     },
     onPendingTargetChanged: (window, handler) => {
-      window.outputChanged.connect(handler);
-      window.desktopsChanged.connect(handler);
-      window.tileChanged.connect(handler);
+      const surface = window;
+      const connected = [];
+      const attach = (name) => {
+        let value;
+        try {
+          value = surface[name];
+          value.connect(handler);
+          connected.push([name, handler]);
+          console.log(`plasma-auto-tiler:pending-attach-ok:${name}`);
+          return true;
+        } catch (error) {
+          console.log(
+            `plasma-auto-tiler:pending-attach-failed:${name}:${String(error)} (observed typeof ${typeof value})`
+          );
+          return false;
+        }
+      };
+      attach("outputChanged");
+      attach("desktopsChanged");
+      attach("tileChanged");
       return () => {
-        window.outputChanged.disconnect(handler);
-        window.desktopsChanged.disconnect(handler);
-        window.tileChanged.disconnect(handler);
+        for (const [name, connectedHandler] of connected) {
+          try {
+            surface[name].disconnect(connectedHandler);
+          } catch (error) {
+            void error;
+          }
+        }
       };
     },
     // Named one-shot event-loop yield for dwindle reconstruction deferral,
