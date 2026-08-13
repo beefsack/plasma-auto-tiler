@@ -140,6 +140,14 @@ interface Window {
     // Declared read-only here: the controller observes fullscreen but never
     // writes it (cover-and-restore is KWin-owned).
     readonly fullScreen: boolean;
+    // Read-only in the KWin scripting API: `KWin::Window.maximizeMode`
+    // (Q_PROPERTY `KWin::MaximizeMode maximizeMode READ maximizeMode NOTIFY
+    // maximizedChanged`, window.h; a read-only `KWin::MaximizeMode` enum:
+    // 0=restore, 1=vertical, 2=horizontal, 3=full). Declared read-only here:
+    // the controller never writes native maximize (incompatible with tile
+    // retention) and only observes it at startup to preserve an
+    // already-maximized window's state.
+    readonly maximizeMode: number;
     // Documented Window property (KWin scripting API): the window's caption
     // (title) string. Read for snapshot observability only.
     readonly caption: string;
@@ -161,6 +169,11 @@ interface Window {
     // API -> KWin::Window -> Signals -> `fullScreenChanged()`). Attached via the
     // feature-detecting environment seam, never assumed present.
     readonly fullScreenChanged: Signal;
+    // Documented notify signal for the `maximizeMode` property (KWin scripting
+    // API -> KWin::Window -> Signals -> `maximizedChanged()`; the `maximizeMode`
+    // Q_PROPERTY is `NOTIFY maximizedChanged`). Attached via the optional
+    // feature-detecting environment seam, never assumed present.
+    readonly maximizedChanged: Signal;
 }
 
 // src/tiles/tile.h: tile tree (tiles/windows), geometry, layout, and

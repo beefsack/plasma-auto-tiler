@@ -191,6 +191,15 @@ export interface WindowCapability {
     // binding that lacks the property is treated as not-fullscreen rather than
     // rejecting the whole window.
     readonly fullScreen?: boolean;
+    // Read-only `maximizeMode` (KWin::Window Q_PROPERTY, `KWin::MaximizeMode`
+    // enum: 0=restore, 1=vertical, 2=horizontal, 3=full; added in KWin commit
+    // 6c345acb, present from Plasma 6.3.0). Read-only and optional here: the
+    // controller never writes native maximize (incompatible with tile
+    // retention) and only observes it at startup to record an already-maximized
+    // window so its state and tree are preserved rather than re-placed. A
+    // binding that lacks the property or reports a non-integer value is treated
+    // as not-maximized.
+    readonly maximizeMode?: number;
     // Documented Window `caption`, read for snapshot observability only. Not
     // validated by `isWindow`: a missing or throwing caption must not affect
     // capability checks, and snapshot reads swallow any read error.
@@ -321,6 +330,18 @@ export function writeWindowFrameGeometry(window: WindowCapability, geometry: Rec
         void error;
         return false;
     }
+}
+
+// Read-only `maximizeMode` (KWin::Window Q_PROPERTY, `KWin::MaximizeMode` enum,
+// source-pinned to window.h Q_PROPERTY `KWin::MaximizeMode maximizeMode READ
+// maximizeMode NOTIFY maximizedChanged`). A window is treated as natively
+// maximized only when the binding reports a valid non-restore mode (1 vertical,
+// 2 horizontal, 3 full); a missing, non-number, or out-of-range value is
+// treated as not-maximized. Guarded feature detection: never assumed when the
+// binding cannot identify the state.
+export function isNativelyMaximized(window: WindowCapability): boolean {
+    const mode = window.maximizeMode;
+    return typeof mode === "number" && Number.isInteger(mode) && mode >= 1 && mode <= 3;
 }
 
 // Documented read-write `Window.onAllDesktops` (official KWin scripting API,

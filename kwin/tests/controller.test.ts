@@ -27,6 +27,7 @@ interface TestWindow {
     frameGeometry: typeof RECT;
     caption: string;
     fullScreen: boolean;
+    maximizeMode: number;
     onAllDesktops: boolean;
     move: boolean;
     resize: boolean;
@@ -38,6 +39,7 @@ interface TestWindow {
     interactiveMoveResizeFinished: TestSignal;
     moveResizedChanged: TestSignal;
     fullScreenChanged: TestSignal;
+    maximizedChanged: TestSignal;
 }
 
 interface TestSignal {
@@ -110,6 +112,7 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
         frameGeometry: RECT,
         caption: "test-window",
         fullScreen: false,
+        maximizeMode: 0,
         onAllDesktops: false,
         move: false,
         resize: false,
@@ -121,6 +124,7 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
         interactiveMoveResizeFinished: signal(),
         moveResizedChanged: signal(),
         fullScreenChanged: signal(),
+        maximizedChanged: signal(),
         ...overrides,
     };
 }
@@ -354,6 +358,35 @@ class Harness {
                 } catch (error) {
                     this.logs.push(
                         `plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:${String(error)} (observed typeof ${typeof value})`,
+                    );
+                    return { disconnect: () => {}, ok: 0, failed: 1 };
+                }
+            },
+            watchMaximize: (target, changed) => {
+                let value: unknown;
+                try {
+                    value = (target as unknown as Record<string, unknown>)["maximizedChanged"];
+                    (value as { connect: (next: () => void) => void }).connect(changed);
+                    this.logs.push("plasma-auto-tiler:maximize-attach-ok:maximizedChanged");
+                    return {
+                        disconnect: () => {
+                            try {
+                                (
+                                    target as unknown as Record<
+                                        string,
+                                        { disconnect: (next: () => void) => void }
+                                    >
+                                )["maximizedChanged"]!.disconnect(changed);
+                            } catch (error) {
+                                void error;
+                            }
+                        },
+                        ok: 1,
+                        failed: 0,
+                    };
+                } catch (error) {
+                    this.logs.push(
+                        `plasma-auto-tiler:maximize-attach-failed:maximizedChanged:${String(error)} (observed typeof ${typeof value})`,
                     );
                     return { disconnect: () => {}, ok: 0, failed: 1 };
                 }
@@ -1387,6 +1420,7 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
         ["plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+G"],
         ["plasma-auto-tiler-sticky-toggle", "Toggle sticky floating on all desktops", "Meta+Shift+G"],
+        ["plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M"],
         ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
         ...presetActions,
         ...workspaceActions,
@@ -1424,6 +1458,7 @@ describe("TileController keyboard focus", () => {
             invokeShortcut(harness, "plasma-auto-tiler-attach");
             invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
             invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+            invokeShortcut(harness, "plasma-auto-tiler-maximize");
             invokeShortcut(harness, "plasma-auto-tiler-fill-scope");
             for (const [name] of presetActions) {
                 invokeShortcut(harness, name);
@@ -6434,7 +6469,7 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 49-action all-or-nothing catalog", () => {
+    it("registers the exact 50-action all-or-nothing catalog", () => {
         const { harness } = setup();
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [
@@ -6458,6 +6493,7 @@ describe("TileController shortcut registration", () => {
             "plasma-auto-tiler-insert-left",
             "plasma-auto-tiler-insert-right",
             "plasma-auto-tiler-insert-up",
+            "plasma-auto-tiler-maximize",
             "plasma-auto-tiler-move-down",
             "plasma-auto-tiler-move-down-arrow",
             "plasma-auto-tiler-move-left",
@@ -10654,5 +10690,362 @@ describe("TileController dynamic virtual desktops", () => {
             "desktop-3",
             "desktop-5",
         ]);
+    });
+});
+
+describe("TileController per-workspace maximize", () => {
+    const WORK_AREA = { x: 0, y: 0, width: 200, height: 200 };
+
+    function maximizeSetup(): {
+        readonly harness: Harness;
+        readonly controller: TileController;
+        readonly root: TestTile;
+        readonly target: TestTile;
+        readonly focused: TestWindow;
+    } {
+        const state = setup();
+        state.harness.clientArea = WORK_AREA;
+        return state;
+    }
+
+    function setFullscreen(subject: TestWindow, value: boolean): void {
+        subject.fullScreen = value;
+        subject.fullScreenChanged.emit();
+    }
+
+    it("covers with the work-area geometry and preserves the exact tree and tile slot", () => {
+        const { harness, root, target, focused } = maximizeSetup();
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(focused, writes);
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.deepEqual(target.windows, [focused]);
+        assert.equal(writes.length, 0);
+        assert.equal(countEvent(harness.logs, "maximize:enter preserved"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:enter covered"), 1);
+    });
+
+    it("restores the tile geometry on the second toggle and clears the record", () => {
+        const { harness, target, focused } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.deepEqual(focused.frameGeometry, RECT);
+        assert.equal(focused.tile, target);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        // A third toggle re-enters: the record was fully cleared.
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(countEvent(harness.logs, "maximize:enter covered"), 2);
+    });
+
+    it("ignores drag and lifecycle events while maximized without placement or retile", () => {
+        const { harness, controller, root, target, focused } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        focused.moveResizedChanged.emit();
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(harness.yields.length, 0);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+    });
+
+    it("no-ops the maximize command while the active window is fullscreen with a specific reason", () => {
+        const { harness, focused } = maximizeSetup();
+        focused.fullScreen = true;
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize-ignored:fullscreen"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:enter preserved"), 0);
+    });
+
+    it("preserves the maximize record through a fullscreen round trip and re-covers on exit", () => {
+        const { harness, focused } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        setFullscreen(focused, true);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter preserved"), 1);
+        setFullscreen(focused, false);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restored"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:re-covered"), 1);
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        assert.deepEqual(focused.frameGeometry, RECT);
+    });
+
+    it("refuses to maximize a sticky window", () => {
+        const { harness, focused, target } = maximizeSetup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(countEvent(harness.logs, "sticky-enabled"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize-rejected:sticky"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:enter covered"), 0);
+    });
+
+    it("refuses to float a maximized window before any mutation", () => {
+        const { harness, focused, target } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(countEvent(harness.logs, "float-rejected:maximized"), 1);
+        // The maximize cover and record stay intact: no restore, no unmanage.
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(focused.tile, target);
+        assert.equal(countEvent(harness.logs, "float-completed"), 0);
+    });
+
+    it("refuses sticky on a maximized window before any mutation", () => {
+        const { harness, focused, target } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(countEvent(harness.logs, "sticky-rejected:maximized"), 1);
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(focused.tile, target);
+        assert.equal(countEvent(harness.logs, "sticky-enabled"), 0);
+        assert.equal(countEvent(harness.logs, "float-completed"), 0);
+    });
+
+    it("refuses a workspace move while maximized before any mutation", () => {
+        const { harness, focused, target } = maximizeSetup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-refused:maximized"), 1);
+        assert.equal(countEvent(harness.logs, "workspace-move-pending"), 0);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        // No restore happened: the maximize cover and record stay intact.
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(focused.tile, target);
+    });
+
+    it("refuses a workspace move on a maximized window without inspecting its restore path", () => {
+        const { harness, focused, target } = maximizeSetup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        focused.tile = null;
+        target.windows = [];
+        target.manage = () => false;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-refused:maximized"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:exit restore failed:assignment-failed"), 0);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+    });
+
+    it("clears the maximize record on close and proceeds with normal removal", () => {
+        const { harness, focused, target } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        // Live KWin lists the removed window in its former leaf until the
+        // deferred one-shot yield collapses it.
+        harness.emitRemoved(focused);
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 0);
+        target.windows = [];
+        focused.tile = null;
+        assert.equal(harness.flushNextYield(), true);
+        const incoming = window();
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 1);
+    });
+
+    it("keeps unrelated window addition managed while another window is maximized", () => {
+        const { harness, root, target, focused } = maximizeSetup();
+        // A retained empty leaf lets automatic placement absorb an added
+        // window without a structural split into the preserved slot.
+        const empty = tile();
+        empty.manage = (value) => {
+            const win = value as TestWindow;
+            win.tile = empty;
+            empty.windows = [win];
+            return true;
+        };
+        root.tiles = [target, empty];
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        const incoming = window();
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 1);
+        assert.equal(incoming.tile, empty);
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(focused.tile, target);
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 0);
+        assert.equal(countEvent(harness.logs, "maximize:ignored reconstruction while maximized"), 0);
+        // The unrelated window's removal proceeds through the normal removal
+        // path and never gets globally blocked by the maximize record.
+        harness.emitRemoved(incoming);
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 0);
+        empty.windows = [];
+        incoming.tile = null;
+        assert.equal(harness.flushNextYield(), true);
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
+        assert.equal(focused.tile, target);
+    });
+
+    it("records an already-maximized tiled window at startup preserving its state and tree", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target, maximizeMode: 3 });
+        target.windows = [focused];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.deepEqual(target.windows, [focused]);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 0);
+        // The Meta+M toggle must not simulate the native unmaximize that alone
+        // clears a startup-native classification: it is refused, not restored.
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize-rejected:startup-native"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(focused.frameGeometry, RECT);
+        // A real native unmaximize transition restores the tile geometry
+        // through the startup record.
+        focused.maximizeMode = 0;
+        focused.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        assert.deepEqual(focused.frameGeometry, RECT);
+        assert.equal(focused.tile, target);
+    });
+
+    it("leaves an already-maximized untiled ordinary window unmanaged until its state clears", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const maximizedUntiled = window({ tile: null, maximizeMode: 3 });
+        target.windows = [];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = maximizedUntiled;
+        harness.windows = [maximizedUntiled];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 0);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+        // The Meta+M toggle must not simulate the native unmaximize that alone
+        // clears a startup-native classification: it is refused, not cleared.
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize-rejected:startup-native"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:exit cleared"), 0);
+        assert.equal(maximizedUntiled.tile, null);
+        // A real native unmaximize transition clears the classification and
+        // unblocks the scope.
+        maximizedUntiled.maximizeMode = 0;
+        maximizedUntiled.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit cleared"), 1);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("keeps a startup-native-maximized untiled window unmanaged through a fullscreen round trip", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const maximizedUntiled = window({ tile: null, maximizeMode: 3 });
+        target.windows = [];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = maximizedUntiled;
+        harness.windows = [maximizedUntiled];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        setFullscreen(maximizedUntiled, true);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter unmanaged"), 1);
+        setFullscreen(maximizedUntiled, false);
+        // The fullscreen exit must not place the still-classified window:
+        // ordinary placement is skipped while the startup record persists.
+        assert.equal(countEvent(harness.logs, "fullscreen:exit newly managed"), 0);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(countEvent(harness.logs, "maximize:exit cleared"), 0);
+        // A real native unmaximize transition then clears the classification.
+        maximizedUntiled.maximizeMode = 0;
+        maximizedUntiled.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit cleared"), 1);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("refuses scope reconstruction while a startup-native-maximized window is classified", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const maximizedUntiled = window({ tile: null, maximizeMode: 3 });
+        target.windows = [];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = maximizedUntiled;
+        harness.windows = [maximizedUntiled];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        // The untiled window leaves the only leaf empty while its scope is
+        // classified, so the occupancy bijection fails and a reconstruction
+        // would arm - but the startup classification refuses it.
+        assert.equal(countEvent(harness.logs, "maximize:ignored reconstruction while maximized"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("bails non-destructively and logs a reason when the preserved slot is gone", () => {
+        const { harness, root, focused, target } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        focused.tile = null;
+        target.windows = [];
+        root.tiles = [];
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize:exit restore failed:tile-missing"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 0);
+        assert.equal(focused.frameGeometry, WORK_AREA);
+    });
+
+    it("rejects with a specific reason when there is no active window", () => {
+        const { harness } = maximizeSetup();
+        harness.active = null;
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize-rejected:no-active-window"), 1);
+    });
+
+    it("keeps repeated maximize toggles idempotent", () => {
+        const { harness, focused } = maximizeSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize:enter preserved"), 2);
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:enter covered"), 2);
+        assert.deepEqual(focused.frameGeometry, WORK_AREA);
     });
 });

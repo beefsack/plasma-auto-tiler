@@ -145,6 +145,10 @@
       return false;
     }
   }
+  function isNativelyMaximized(window) {
+    const mode = window.maximizeMode;
+    return typeof mode === "number" && Number.isInteger(mode) && mode >= 1 && mode <= 3;
+  }
   function setWindowOnAllDesktops(window, value) {
     try {
       return Reflect.set(window, "onAllDesktops", value) === true;
@@ -1345,6 +1349,14 @@
       // bounded like the other identity sets so they cannot grow without limit.
       this.fullscreenWatches = /* @__PURE__ */ new Map();
       this.fullscreenWindows = /* @__PURE__ */ new Map();
+      // Per-window tiled-maximize cover records. A maximized window keeps its
+      // tile assignment and covers the work area; the record carries the owning
+      // desktop scope. Bounded like the other identity sets.
+      this.maximizedWindows = /* @__PURE__ */ new Map();
+      // Per-window `maximizedChanged` watch disconnects for startup-native
+      // maximized records, observed to clear the classification on a real native
+      // unmaximize. Bounded like the other identity sets.
+      this.maximizeWatches = /* @__PURE__ */ new Map();
       this.deferredEligibility = /* @__PURE__ */ new Map();
       this.decodedBoundaries = /* @__PURE__ */ new Set();
       this.onceDiagnostics = /* @__PURE__ */ new Set();
@@ -1610,6 +1622,12 @@
           "Meta+Shift+G",
           () => this.stickyActiveWindow()
         );
+        const maximizeRegistered = this.environment.registerShortcut(
+          "plasma-auto-tiler-maximize",
+          "Maximize active window in its workspace",
+          "Meta+M",
+          () => this.maximizeActiveWindow()
+        );
         const fillScopeRegistered = this.environment.registerShortcut(
           "plasma-auto-tiler-fill-scope",
           "Fill available tiles with windows",
@@ -1674,7 +1692,7 @@
           () => this.moveActiveToWorkspace(0)
         );
         const workspaceRegistrationsOk = workspaceRegistrations.every((registered) => registered) && appendRegistered && moveAppendRegistered;
-        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered || !focusLeftArrowRegistered || !focusDownArrowRegistered || !focusUpArrowRegistered || !focusRightArrowRegistered || !moveLeftRegistered || !moveDownRegistered || !moveUpRegistered || !moveRightRegistered || !moveLeftArrowRegistered || !moveDownArrowRegistered || !moveUpArrowRegistered || !moveRightArrowRegistered || !detachRegistered || !attachRegistered || !floatRegistered || !stickyRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered || !workspaceRegistrationsOk) {
+        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered || !focusLeftArrowRegistered || !focusDownArrowRegistered || !focusUpArrowRegistered || !focusRightArrowRegistered || !moveLeftRegistered || !moveDownRegistered || !moveUpRegistered || !moveRightRegistered || !moveLeftArrowRegistered || !moveDownArrowRegistered || !moveUpArrowRegistered || !moveRightArrowRegistered || !detachRegistered || !attachRegistered || !floatRegistered || !stickyRegistered || !maximizeRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered || !workspaceRegistrationsOk) {
           this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
           return;
         }
@@ -2299,6 +2317,10 @@
         if (guard === null) {
           return;
         }
+        if (this.maximizedWindows.has(guard.active)) {
+          this.diagnostic("float-rejected:maximized");
+          return;
+        }
         if (guard.active.tile !== null) {
           if (!isCustomTile(guard.active.tile) || guard.active.tile.isLayout) {
             this.diagnostic("float-rejected:active-tile-association");
@@ -2502,6 +2524,10 @@
             return;
           }
           this.diagnostic("sticky-disabled");
+          return;
+        }
+        if (this.maximizedWindows.has(active)) {
+          this.diagnostic("sticky-rejected:maximized");
           return;
         }
         if (!this.isFloating(active)) {
@@ -2869,6 +2895,10 @@
       if (overlay === null) {
         return { kind: "no-selection" };
       }
+      if (this.reflowTouchesMaximized(scope, overlay)) {
+        this.diagnostic("maximize:ignored reflow while maximized");
+        return { kind: "no-op" };
+      }
       if (overlay.leaves.length === 0) {
         return { kind: "rejected", reason: "topology-decode" };
       }
@@ -3175,6 +3205,8 @@
           this.floatScopes.delete(window);
           this.stickyWindows.delete(window);
           this.floatGeometries.delete(window);
+          this.maximizedWindows.delete(window);
+          this.detachMaximizeWindow(window);
           this.reflowAfterRemoval(window);
           this.dwindleMaybeRemove(window);
           this.detachFullscreenWindow(window);
@@ -3336,6 +3368,9 @@
         if (isWindow(window) && window.fullScreen === true) {
           this.enterFullscreen(window);
         }
+        if (isWindow(window) && isNativelyMaximized(window)) {
+          this.recordStartupMaximize(window);
+        }
         const result = this.attachInteractiveWindow(window);
         if (result === null) {
           continue;
@@ -3455,8 +3490,11 @@
       this.fullscreenWindows.delete(window);
       if (record.wasTiled) {
         this.restoreFullscreenSlot(window, record);
-      } else {
+      } else if (!this.maximizedWindows.has(window)) {
         this.newlyManageAfterFullscreen(window);
+      }
+      if (this.maximizedWindows.has(window)) {
+        this.recoverMaximize(window);
       }
     }
     // Restore the preserved slot through the safe `tile.manage(window)` attach
@@ -3548,12 +3586,311 @@
       }
       return false;
     }
+    // ---- Maximize cover-and-restore (geometry-cover seam) ----
+    // Meta+M toggle. Maximize is the geometry-cover seam: the window's frame
+    // geometry is written to its workspace work area while its exact tile
+    // assignment and the tree are preserved; un-maximize restores the tile
+    // geometry. Maximize is per window plus its owning desktop and never
+    // sticky. Fullscreen is distinct and takes precedence: a fullscreen active
+    // window is a specific no-op, and a maximized window that entered fullscreen
+    // keeps its maximize record and is re-covered on fullscreen exit.
+    maximizeActiveWindow() {
+      this.gate.run(() => {
+        this.diagnostic("maximize-invoked");
+        const active = this.environment.activeWindow();
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("maximize-ignored:fullscreen");
+          return;
+        }
+        const guard = this.activeActionGuard("maximize");
+        if (guard === null) {
+          return;
+        }
+        if (this.isSticky(guard.active)) {
+          this.diagnostic("maximize-rejected:sticky");
+          return;
+        }
+        if (this.maximizedWindows.has(guard.active)) {
+          const record = this.maximizedWindows.get(guard.active);
+          if (record !== void 0 && record.kind === "startup") {
+            this.diagnostic("maximize-rejected:startup-native");
+            return;
+          }
+          this.exitMaximize(guard.active);
+          return;
+        }
+        this.enterMaximize(guard.scope, guard.active);
+      }, (reason) => this.disabled(reason));
+    }
+    // Enter: validate the exact tile association through a fresh topology,
+    // then write the workspace work-area geometry. No structural call is ever
+    // made; the tree and tile slot stay exactly as they were.
+    enterMaximize(scope, window) {
+      if (this.maximizedWindows.has(window)) {
+        return;
+      }
+      if (window.tile === null || !isCustomTile(window.tile) || window.tile.isLayout) {
+        this.diagnostic("maximize-rejected:not-tiled");
+        return;
+      }
+      const topology = this.topologyForScope(scope);
+      if (topology === null) {
+        this.diagnostic("maximize-failed:topology-unavailable");
+        return;
+      }
+      const leaf = operationLeafForTile(topology, window.tile);
+      if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+        this.diagnostic("maximize-rejected:tile-association");
+        return;
+      }
+      if (windowIndex(leaf.windows, window) < 0) {
+        this.diagnostic("maximize-rejected:occupancy");
+        return;
+      }
+      const workArea = this.workAreaForScope(scope);
+      if (workArea === null) {
+        this.diagnostic("maximize-failed:work-area-unavailable");
+        return;
+      }
+      if (!writeWindowFrameGeometry(window, workArea)) {
+        this.diagnostic("maximize-failed:geometry-write");
+        return;
+      }
+      this.maximizedWindows.set(window, { scope, preservedTile: window.tile, kind: "cover" });
+      this.diagnostic("maximize:enter preserved");
+      this.diagnostic("maximize:enter covered");
+    }
+    // Startup recording of an already-maximized window (the read-only
+    // `maximizeMode` binding, guarded through `isNativelyMaximized`, never
+    // written by the controller). No mutation happens: the record alone
+    // preserves the window's state and tree by excluding the scope from
+    // reconstruction and placement. A tiled window keeps its exact tile slot;
+    // an untiled window stays unmanaged until a real native unmaximize
+    // transition clears the classification. The startup record is distinct
+    // from a controller-managed cover (`kind: "startup"`), so the toggle
+    // refuses it and only the native maximize transition may clear it.
+    recordStartupMaximize(window) {
+      const scope = this.scopeForWindow(window);
+      if (scope === null) {
+        return;
+      }
+      if (this.maximizedWindows.has(window)) {
+        return;
+      }
+      const tile = window.tile;
+      const preservedTile = tile !== null && isTile(tile) ? tile : null;
+      this.maximizedWindows.set(window, { scope, preservedTile, kind: "startup" });
+      this.attachMaximizeWindow(window);
+      this.diagnostic("maximize:startup recorded");
+    }
+    // Attach the documented `maximizedChanged` notify signal for a startup
+    // record so the classification clears on a real native unmaximize
+    // transition instead of persisting forever. Attachment is feature-detected
+    // through the optional environment seam: a missing binding is skipped
+    // (the classification then simply persists) but never fails startup.
+    // Bounded and deduplicated per window.
+    attachMaximizeWindow(window) {
+      if (this.maximizeWatches.size >= MAX_SEQUENTIAL_LENGTH) {
+        return;
+      }
+      if (this.maximizeWatches.has(window)) {
+        return;
+      }
+      const watchMaximize = this.environment.watchMaximize;
+      if (watchMaximize === void 0) {
+        return;
+      }
+      const watched = watchMaximize(window, () => this.handleMaximizeChanged(window));
+      this.maximizeWatches.set(window, watched.disconnect);
+    }
+    detachMaximizeWindow(window) {
+      const disconnect = this.maximizeWatches.get(window);
+      if (disconnect === void 0) {
+        return;
+      }
+      this.maximizeWatches.delete(window);
+      disconnect();
+    }
+    // A real native maximize transition (KWin emitted `maximizedChanged`).
+    // Only a startup-kind record is observed: when the window is no longer
+    // natively maximized the classification clears through the same
+    // exit/restore seam, which unblocks the scope and lets the window become
+    // managed normally. A tiled startup window falls through to the shared
+    // restore path; an untiled one simply clears. Any other record class and
+    // any transition that leaves the window maximized is ignored.
+    handleMaximizeChanged(window) {
+      this.gate.run(() => {
+        const record = this.maximizedWindows.get(window);
+        if (record === void 0 || record.kind !== "startup") {
+          return;
+        }
+        if (isNativelyMaximized(window)) {
+          return;
+        }
+        this.exitMaximize(window);
+      }, (reason) => this.disabled(reason));
+    }
+    // Exit: restore the tile geometry through the safe geometry seam and a
+    // fresh topology. Every unsafe precondition is a distinct non-destructive
+    // bail that leaves the record and cover untouched: no reconstruction and no
+    // mutation. A window detached from its preserved tile while maximized is
+    // re-attached through the safe `tile.manage(window)` attach seam first.
+    // Returns whether the restore completed; a false return means the caller
+    // must bail out of the operation that requested it.
+    exitMaximize(window) {
+      const record = this.maximizedWindows.get(window);
+      if (record === void 0) {
+        return true;
+      }
+      if (record.kind === "startup") {
+        if (record.preservedTile === null || record.scope === null) {
+          this.maximizedWindows.delete(window);
+          this.diagnostic("maximize:exit cleared");
+          return true;
+        }
+      } else if (record.scope === null || record.preservedTile === null) {
+        return true;
+      }
+      if (window.fullScreen === true) {
+        this.diagnostic("maximize:exit restore failed:fullscreen");
+        return false;
+      }
+      const scope = this.scopeForWindow(window);
+      if (scope === null || !sameScope(scope.scope, record.scope.scope)) {
+        this.diagnostic("maximize:exit restore failed:scope-changed");
+        return false;
+      }
+      if (window.tile !== null && window.tile !== record.preservedTile) {
+        this.diagnostic("maximize:exit restore failed:assignment-changed");
+        return false;
+      }
+      const topology = this.topologyForScope(scope);
+      if (topology === null) {
+        this.diagnostic("maximize:exit restore failed:topology-unavailable");
+        return false;
+      }
+      const leaf = operationLeafForTile(topology, record.preservedTile);
+      if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+        this.diagnostic("maximize:exit restore failed:tile-missing");
+        return false;
+      }
+      if (window.tile === null) {
+        if (leaf.windows.some((occupant) => occupant !== window)) {
+          this.diagnostic("maximize:exit restore failed:leaf-occupied");
+          return false;
+        }
+        if (!manageTile(leaf.decoded.tile, window)) {
+          this.diagnostic("maximize:exit restore failed:assignment-failed");
+          return false;
+        }
+      }
+      if (!writeWindowFrameGeometry(window, leaf.decoded.tile.absoluteGeometry)) {
+        this.diagnostic("maximize:exit restore failed:geometry-write");
+        return false;
+      }
+      this.maximizedWindows.delete(window);
+      this.diagnostic("maximize:exit restored");
+      return true;
+    }
+    // Re-assert the work-area cover after a fullscreen exit. The maximize
+    // record survived the fullscreen round trip; the re-cover is idempotent
+    // because KWin already restored the pre-fullscreen cover geometry. Any
+    // validation failure is a silent non-destructive skip: the record stays and
+    // the next un-maximize runs the full bail analysis.
+    recoverMaximize(window) {
+      const record = this.maximizedWindows.get(window);
+      if (record === void 0 || record.scope === null || record.preservedTile === null) {
+        return;
+      }
+      if (window.fullScreen === true) {
+        return;
+      }
+      const scope = this.scopeForWindow(window);
+      if (scope === null || !sameScope(scope.scope, record.scope.scope)) {
+        return;
+      }
+      if (window.tile !== record.preservedTile) {
+        return;
+      }
+      const workArea = this.workAreaForScope(scope);
+      if (workArea === null) {
+        return;
+      }
+      if (writeWindowFrameGeometry(window, workArea)) {
+        this.diagnostic("maximize:re-covered");
+      } else {
+        this.diagnostic("maximize:re-cover-failed:geometry-write");
+      }
+    }
+    // Whether any maximized window belongs to this scope. Used only to refuse
+    // the whole-scope dwindle reconstruction while a maximized window's
+    // preserved tile lives in the scope: reconstruction collapses and rebuilds
+    // every leaf, which would destroy the preserved slot. This is a narrow
+    // operation-specific refusal for reconstruction only, never a generic
+    // scope-wide lifecycle block: unrelated window addition/removal and
+    // leaf-level placement proceed (guarded by the precise per-window checks
+    // in `runReflow` and `dwindleInsert`). Fullscreen windows are skipped
+    // because the fullscreen cover already excludes the scope.
+    scopeHasMaximized(scope) {
+      for (const [window, record] of this.maximizedWindows) {
+        if (window.fullScreen === true) {
+          continue;
+        }
+        const currentScope = this.scopeForWindow(window);
+        if (currentScope !== null && sameScope(currentScope.scope, scope.scope)) {
+          return true;
+        }
+        if (currentScope === null && record.scope !== null && sameScope(record.scope.scope, scope.scope)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    // Whether a selected-overlay reflow would reassign a maximized window:
+    // true when a live maximized window's current tile is one of the overlay
+    // leaves, so the compacting reflow could move it off its preserved slot.
+    // Other overlay reflows that never touch the maximized window proceed.
+    reflowTouchesMaximized(scope, overlay) {
+      for (const [window, record] of this.maximizedWindows) {
+        if (window.fullScreen === true) {
+          continue;
+        }
+        const currentScope = this.scopeForWindow(window);
+        const inScope = currentScope !== null && sameScope(currentScope.scope, scope.scope) || currentScope === null && record.scope !== null && sameScope(record.scope.scope, scope.scope);
+        if (!inScope || !isTile(window.tile)) {
+          continue;
+        }
+        if (overlay.leaves.includes(window.tile)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    // Whether a dwindle insertion would split the preserved tile of a maximized
+    // window in this scope. The split targets the deepest leaf; when that leaf
+    // is a maximized window's preserved tile, the split is refused so the
+    // preserved slot survives. Splitting any other leaf proceeds normally.
+    insertionTouchesMaximized(scope, deepest) {
+      for (const [, record] of this.maximizedWindows) {
+        if (record.scope === null || record.preservedTile === null) {
+          continue;
+        }
+        if (sameScope(record.scope.scope, scope.scope) && record.preservedTile === deepest.tile) {
+          return true;
+        }
+      }
+      return false;
+    }
     handleInteractiveInvalidated(window) {
       this.gate.run(() => {
         var _a;
         if (((_a = this.drag.current) == null ? void 0 : _a.window) === window) {
           this.diagnostic("drag-bail:window-invalidated");
           this.clearDrag();
+        }
+        if (this.maximizedWindows.has(window)) {
+          this.diagnostic("maximize:ignored lifecycle while maximized");
+          return;
         }
         this.detachInteractiveWindow(window);
         this.settleOwedInvariants();
@@ -3564,6 +3901,10 @@
       this.gate.run(() => {
         if (window.fullScreen === true) {
           this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
+        if (this.maximizedWindows.has(window)) {
+          this.diagnostic("maximize:ignored lifecycle while maximized");
           return;
         }
         const watch = this.interactiveWindows.get(window);
@@ -3636,6 +3977,10 @@
       this.gate.run(() => {
         if (window.fullScreen === true) {
           this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
+        if (this.maximizedWindows.has(window)) {
+          this.diagnostic("maximize:ignored lifecycle while maximized");
           return;
         }
         const watch = this.interactiveWindows.get(window);
@@ -4459,6 +4804,10 @@
         this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
+      if (this.scopeHasMaximized(scope)) {
+        this.diagnostic("maximize:ignored reconstruction while maximized");
+        return;
+      }
       if (this.trackedDragLive()) {
         this.markOwedInvariant(scope);
         return;
@@ -4576,6 +4925,11 @@
       if (this.scopeHasFullscreen(scope)) {
         this.dropPendingRebuild(scope, pending);
         this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      if (this.scopeHasMaximized(scope)) {
+        this.dropPendingRebuild(scope, pending);
+        this.diagnostic("maximize:ignored reconstruction while maximized");
         return;
       }
       if (this.trackedDragLive()) {
@@ -4753,6 +5107,10 @@
         this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
+      if (this.scopeHasMaximized(scope)) {
+        this.diagnostic("maximize:ignored reconstruction while maximized");
+        return;
+      }
       if (this.trackedDragLive()) {
         this.markOwedInvariant(scope);
         return;
@@ -4902,6 +5260,10 @@
       const deepest = this.deepestLeaf(scope);
       if (deepest === null) {
         this.markInert(scope, "insert-deepest-leaf-failed");
+        return;
+      }
+      if (this.insertionTouchesMaximized(scope, deepest)) {
+        this.diagnostic("maximize:ignored insert while maximized");
         return;
       }
       const insertion = this.insertionLeafWindows(scope, topology, deepest);
@@ -5498,6 +5860,10 @@
           this.diagnostic("workspace-move-refused:fullscreen");
           return;
         }
+        if (isWindow(activeNow) && this.maximizedWindows.has(activeNow)) {
+          this.diagnostic("workspace-move-refused:maximized");
+          return;
+        }
         const guard = this.activeActionGuard("workspace-move");
         if (guard === null) {
           return;
@@ -5960,6 +6326,34 @@
       } catch (error) {
         console.log(
           `plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:${String(error)} (observed typeof ${typeof value})`
+        );
+        return { disconnect: () => {
+        }, ok: 0, failed: 1 };
+      }
+    },
+    watchMaximize: (window, changed) => {
+      const surface = window;
+      let value;
+      try {
+        value = surface["maximizedChanged"];
+        value.connect(changed);
+        console.log("plasma-auto-tiler:maximize-attach-ok:maximizedChanged");
+        return {
+          disconnect: () => {
+            try {
+              surface["maximizedChanged"].disconnect(
+                changed
+              );
+            } catch (error) {
+              void error;
+            }
+          },
+          ok: 1,
+          failed: 0
+        };
+      } catch (error) {
+        console.log(
+          `plasma-auto-tiler:maximize-attach-failed:maximizedChanged:${String(error)} (observed typeof ${typeof value})`
         );
         return { disconnect: () => {
         }, ok: 0, failed: 1 };
