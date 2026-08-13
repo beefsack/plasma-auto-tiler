@@ -2281,15 +2281,12 @@
     }
     // Tile a floating active window through the established safe adoption
     // `tile.manage()` into the deterministic first available empty non-layout
-    // leaf. Capacity and floor failures stay floating with the exact reason.
+    // leaf. Every failure path - topology, capacity (no available leaf), stale
+    // revalidation, and floor (assignment) - leaves the float unchanged with
+    // the exact reason, including a sticky window's all-desktop pin and sticky
+    // state. Sticky is cleared only after a successful `tile.manage`, so a
+    // successfully tiled window never remains sticky.
     tileFloatingActive(scope, active) {
-      if (this.isSticky(active)) {
-        if (!this.clearSticky(active)) {
-          this.diagnostic("tile-failed:sticky-clear-failed");
-          return;
-        }
-        this.diagnostic("sticky-disabled");
-      }
       const topology = this.topologyForScope(scope, (reason) => {
         this.diagnostic(`tile-failed:${reason}`);
       });
@@ -2317,7 +2314,14 @@
         this.diagnostic("tile-failed:assignment-failed");
         return;
       }
-      this.recordFloatGeometryOnTile(active);
+      if (this.isSticky(active)) {
+        if (!this.clearSticky(active)) {
+          this.diagnostic("tile-failed:sticky-clear-failed");
+          return;
+        }
+        this.diagnostic("sticky-disabled");
+      }
+      this.rememberCurrentFloatGeometry(active);
       this.floatingWindows.delete(active);
       this.floatScopes.delete(active);
       this.detachedWindows.delete(active);
@@ -2343,9 +2347,11 @@
     }
     // Remember the live frame geometry at the moment a floating window tiles,
     // so a user resize while floating is the geometry restored on the next
-    // float. Read-only observation; a failed or invalid read keeps the prior
-    // record.
-    recordFloatGeometryOnTile(window) {
+    // float. Also called immediately before a fullscreen-exit restoration so a
+    // user-adjusted float geometry survives the fullscreen round trip, not the
+    // geometry recorded at the initial float. Read-only observation; a failed
+    // or invalid read keeps the prior record.
+    rememberCurrentFloatGeometry(window) {
       try {
         const geometry = window.frameGeometry;
         if (isRect(geometry) && positiveGeometry(geometry)) {
@@ -3394,6 +3400,7 @@
       if (this.isFloating(window)) {
         const scope2 = this.scopeForWindow(window);
         if (scope2 !== null) {
+          this.rememberCurrentFloatGeometry(window);
           this.writeFloatGeometry(window, scope2);
         }
         this.diagnostic("fullscreen:exit restored float");

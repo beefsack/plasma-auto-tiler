@@ -1821,15 +1821,12 @@ export class TileController {
 
     // Tile a floating active window through the established safe adoption
     // `tile.manage()` into the deterministic first available empty non-layout
-    // leaf. Capacity and floor failures stay floating with the exact reason.
+    // leaf. Every failure path - topology, capacity (no available leaf), stale
+    // revalidation, and floor (assignment) - leaves the float unchanged with
+    // the exact reason, including a sticky window's all-desktop pin and sticky
+    // state. Sticky is cleared only after a successful `tile.manage`, so a
+    // successfully tiled window never remains sticky.
     private tileFloatingActive(scope: CurrentScope, active: WindowCapability): void {
-        if (this.isSticky(active)) {
-            if (!this.clearSticky(active)) {
-                this.diagnostic("tile-failed:sticky-clear-failed");
-                return;
-            }
-            this.diagnostic("sticky-disabled");
-        }
         const topology = this.topologyForScope(scope, (reason) => {
             this.diagnostic(`tile-failed:${reason}`);
         });
@@ -1857,7 +1854,14 @@ export class TileController {
             this.diagnostic("tile-failed:assignment-failed");
             return;
         }
-        this.recordFloatGeometryOnTile(active);
+        if (this.isSticky(active)) {
+            if (!this.clearSticky(active)) {
+                this.diagnostic("tile-failed:sticky-clear-failed");
+                return;
+            }
+            this.diagnostic("sticky-disabled");
+        }
+        this.rememberCurrentFloatGeometry(active);
         this.floatingWindows.delete(active);
         this.floatScopes.delete(active);
         this.detachedWindows.delete(active);
@@ -1894,9 +1898,11 @@ export class TileController {
 
     // Remember the live frame geometry at the moment a floating window tiles,
     // so a user resize while floating is the geometry restored on the next
-    // float. Read-only observation; a failed or invalid read keeps the prior
-    // record.
-    private recordFloatGeometryOnTile(window: WindowCapability): void {
+    // float. Also called immediately before a fullscreen-exit restoration so a
+    // user-adjusted float geometry survives the fullscreen round trip, not the
+    // geometry recorded at the initial float. Read-only observation; a failed
+    // or invalid read keeps the prior record.
+    private rememberCurrentFloatGeometry(window: WindowCapability): void {
         try {
             const geometry = window.frameGeometry;
             if (isRect(geometry) && positiveGeometry(geometry)) {
@@ -3147,6 +3153,11 @@ export class TileController {
         if (this.isFloating(window)) {
             const scope = this.scopeForWindow(window);
             if (scope !== null) {
+                // KWin's fullscreen cover-and-restore has already restored the
+                // pre-fullscreen frame geometry here; snapshot it into the
+                // remembered float geometry so the restoration that follows
+                // preserves the user's adjusted size, then re-apply it.
+                this.rememberCurrentFloatGeometry(window);
                 this.writeFloatGeometry(window, scope);
             }
             this.diagnostic("fullscreen:exit restored float");

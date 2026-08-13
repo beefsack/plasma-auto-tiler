@@ -9507,6 +9507,61 @@ describe("TileController floating and sticky windows", () => {
         assert.deepEqual(root.tiles, [target]);
     });
 
+    it("retains the all-desktop pin and floating state when a sticky window's tile request fails", () => {
+        const { harness, root, target, focused } = floatSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(focused.onAllDesktops, true);
+
+        const second = window();
+        harness.emitAdded(second);
+        assert.equal(second.tile, target, "the new window fills the retained empty leaf");
+
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(countEvent(harness.logs, "tile-failed:no-available-leaf"), 1);
+        assert.equal(countEvent(harness.logs, "sticky-disabled"), 0);
+        assert.equal(countEvent(harness.logs, "tile-completed"), 0);
+        assert.equal(focused.onAllDesktops, true, "the all-desktop pin survives the failed tile request");
+        assert.equal(focused.tile, null, "the window remains floating");
+        assert.deepEqual(root.tiles, [target]);
+    });
+
+    it("retains the all-desktop pin and floating state when a sticky window's tile assignment fails", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target });
+        target.windows = [focused];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        let failManage = false;
+        target.manage = (value) => {
+            if (failManage) {
+                return false;
+            }
+            (value as TestWindow).tile = target;
+            target.windows = [value as TestWindow];
+            return true;
+        };
+        target.unmanage = (value) => {
+            (value as TestWindow).tile = null;
+            target.windows = [];
+            return true;
+        };
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(focused.onAllDesktops, true);
+
+        failManage = true;
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(countEvent(harness.logs, "tile-failed:assignment-failed"), 1);
+        assert.equal(countEvent(harness.logs, "sticky-disabled"), 0);
+        assert.equal(focused.onAllDesktops, true, "the all-desktop pin survives the failed tile assignment");
+        assert.equal(focused.tile, null, "the window remains floating");
+    });
+
     it("leaves a floating window floating on an assignment failure with the exact reason", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
@@ -9633,6 +9688,20 @@ describe("TileController floating and sticky windows", () => {
         assert.equal(countEvent(harness.logs, "fullscreen:exit restored float"), 1);
         assert.equal(focused.tile, null);
         assert.deepEqual(focused.frameGeometry, { x: 20, y: 20, width: 60, height: 60 });
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+    });
+
+    it("restores a user-adjusted float geometry through a fullscreen round trip", () => {
+        const { harness, focused } = floatSetup();
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        const userGeometry = { x: 30, y: 40, width: 70, height: 50 };
+        focused.frameGeometry = userGeometry;
+
+        setFullscreen(focused, true);
+        setFullscreen(focused, false);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restored float"), 1);
+        assert.equal(focused.tile, null);
+        assert.deepEqual(focused.frameGeometry, userGeometry);
         assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
     });
 
