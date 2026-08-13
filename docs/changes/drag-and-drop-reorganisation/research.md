@@ -2,9 +2,10 @@
 
 Research for the drag-and-drop reorganisation change. This document records
 prior findings A1-A4, their cited KWin 6.7.3 source locations, the explicit
-consequence, the uninvestigated plugin-ownership question, and the open
-architecture decision. Research only: no specification, plan, log, or state
-document exists for this change yet.
+consequence, the uninvestigated plugin-ownership question, the open
+architecture decision, and the later documented-API findings B1-B5 below.
+Research only: no specification, plan, log, or state document exists for this
+change yet.
 
 ## Source Pin
 
@@ -97,6 +98,112 @@ document exists for this change yet.
 Native-fidelity reflow-on-drop requires compiled C++ integration, or a
 post-finish script workaround that races floating-drop completion and has no
 veto guarantee and no equivalent preview.
+
+## Findings B1-B5 (documented API, mandated evidence hierarchy)
+
+Per handover section 4, the primary source of truth is official KWin scripting
+documentation (`https://develop.kde.org/docs/plasma/kwin/api/`), the binding
+layer second, and C++ internals only as explanation.
+
+### B1: The documented per-window drag signal set
+
+The scripting API reference lists all four drag signals under `KWin::Window`
+-> Signals, labelled `documented`:
+
+- `interactiveMoveResizeStarted()`
+- `interactiveMoveResizeStepped(const QRectF &geometry)`
+- `interactiveMoveResizeFinished()`
+- `moveResizedChanged()`
+
+`moveResizedChanged` was previously not on the attachment boundary; it is now
+attached and logged like the interactive move/resize signals.
+
+### B2: The workspace-level hypothesis is refuted
+
+The unverified hypothesis (handover section 5) was that drag lifecycle might be
+exposed at the workspace level as `windowStartUserMovedResized` /
+`windowFinishUserMovedResized`. That hypothesis is refuted: those are
+`EffectWindow` signals for effect plugins, not the scripting `Workspace` /
+`Window` surface.
+
+- Citation: `/tmp/opencode/kwin/src/effect/effectwindow.h:687` (start),
+  `:703` (`windowStepUserMovedResized`), `:710` (finish), at pinned commit
+  `45ec9a6d0ed312a803ff5658a2a3e61f221566c6` (v6.7.3). `EffectWindow` is the
+  effects API, distinct from the scripting `Window` wrapper that scripts
+  receive from `windowAdded` / `workspace.windowList()`.
+- Consequence: no workspace-level drag signal exists for scripts; the
+  per-window `interactiveMoveResize*` / `moveResizedChanged` signals are the
+  only documented candidates, so the attachment boundary connects each of them
+  defensively with distinct logs.
+
+### B3: Diagnostics design and live-proof boundary
+
+- Per-signal connect under `try/catch`, emitting exactly
+  `plasma-auto-tiler:drag-attach-ok:<signal>` or
+  `plasma-auto-tiler:drag-attach-failed:<signal>:<detail>` for each attempted
+  connect, so "never attached" and "attached but never fires" stay distinct.
+- Every attach guard skip logs `plasma-auto-tiler:drag-attach-skipped:<reason>`
+  (window-list decode, max-windows, not-window, duplicate, no-scope,
+  out-of-scope).
+- Exactly one startup existing-window
+  `plasma-auto-tiler:drag-attach-summary:<attempted>:<ok>:<failed>` after the
+  initial attachment pass (`attempted = ok + failed`); later-window and
+  scope-change attachments emit none, making the two kinds diagnosable.
+- Diagnostic-only event logs `drag-started`, `drag-stepped`,
+  `drag-move-resized-changed` prove delivery; only
+  `interactiveMoveResizeFinished` drives reflow. No mid-drag tile mutation.
+- Live-proof boundary: static suites exercise the instrumentation but cannot
+  prove KWin delivers any signal. Only the user's journal
+  (`journalctl --user -f`) is live proof, and the attach lines plus summary
+  make a single live test decisive.
+- Known unknown: Esc-cancellation is unverified. Whether a cancelled drag fires
+  `interactiveMoveResizeFinished`, and its effect on the finish-only reflow,
+  is not established and remains out of scope.
+
+### B4: The false `no-interaction-signals` guard (live-proven)
+
+The first live trial (unit-05/attempt-01) proved the attach path was inert
+before any drag event was needed: **every** in-scope window was skipped by
+`no-interaction-signals` and the startup summary was `0:0:0`. No `.connect()`
+was ever attempted. KWin non-delivery of drag signals was therefore **never
+tested**; the earlier "KWin delivers no drag event" framing was wrong.
+
+- Root cause, source-derived: `isSignal` (`kwin/src/boundary.ts`) requires
+  `isObject`, but QV4 exposes QObject signal properties as callable
+  `QObjectMethod` functions, so `typeof` is `"function"` and the guard always
+  short-circuited.
+- Qt 6.10 source evidence: `qqmlpropertycache.cpp:90-101` (signals load with
+  `FunctionType`), `:468-495` (signal method flags and handler cache);
+  `qv4qobjectwrapper.cpp:322-323` (`Function.prototype` gains
+  `connect`/`disconnect`), `:360-367` and `:367-368` (signal access returns
+  `QObjectMethod::create`), `:1336-1418` (`method_connect` reads the Qt signal
+  from `this`), `:2706-2712` (`QObjectMethod::create`).
+- Official docs: `https://doc.qt.io/qt-6/qjsengine.html` (QObject Integration)
+  and `https://doc.qt.io/qt-6/qtqml-syntax-signals.html` (Signal and Handler
+  Event System) document that QObject signals are reachable from scripts and
+  that QML signal syntax wraps them as callable members.
+- KWin's window binding exposes the per-window signals to scripting at
+  `src/scripting/workspace_wrapper.h:642` and `src/scripting/scripting.cpp:230,713`.
+- Consequence: the whole-window `no-interaction-signals` guard is **removed**
+  with no replacement pre-check. Attachment proceeds for every window passing
+  the remaining guards; each individual `.connect()` either succeeds or throws
+  under its own `try/catch`, and the per-signal failure line names the signal
+  plus the observed `typeof`.
+- `out-of-scope` uses exactly the same `scopeForWindow` + `windowInScope`
+  predicates as `handleWindowAdded` tiling-eligibility and ownership; it is not
+  widened. Known timing asymmetry only: `windowAdded` can be skipped during
+  desktop settling and re-evaluated later, while attach simply waits for a
+  later scope change.
+
+### B5: QV4-shape test approximation
+
+The function-valued signal regression test (controller) supplies signals as
+functions whose `connect`/`disconnect`/`emit` live on a custom prototype or a
+non-enumerable getter, approximating QV4's `QObjectMethod` shape in Node. The
+test name and comment state explicitly that this approximates the QJSEngine
+shape and is **not** live proof that KWin delivers these signals; its purpose
+is to lock in the removal of the false pre-check. The artifact-smoke stub also
+uses function-valued stub signals for the shipped bundle.
 
 ## Uninvestigated Question
 
