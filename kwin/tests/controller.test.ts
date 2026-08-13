@@ -5000,16 +5000,18 @@ describe("TileController interactive drag", () => {
         assert.equal(controller.isEnabled, true);
     });
 
-    it("refuses a native drop split whose equal halves fall below the minimum tile size, leaving the tree untouched", () => {
+    it("refuses an undersized drop split while the dragged window still holds its origin leaf, leaving the tree untouched", () => {
         const { harness, controller, root, rows, row0Win, row2Win, splits } = rowsDropSetup();
         const [row0, row1, row2, row3] = rows;
         assert.equal(row2.absoluteGeometry.height, 245);
         assert.equal((harness.clientArea as typeof RECT).height, 980);
 
         startDrag(row0Win);
-        // Model the native Shift finish: KWin manages the dragged window into
-        // row2 (534..779) and vacates the origin row0 before the finish hook.
-        row0Win.tile = row2;
+        // Model the no-op condition: the dragged window never left its origin
+        // leaf, and the finish resolver point lands on the center of row2
+        // (534..779). The center dead zone classifies a vertical split, whose
+        // 122.5px halves fall below the 147px floor, so the drop is refused
+        // before any mutation and no rollback is required.
         row0Win.frameGeometry = { x: 768, y: 656, width: 100, height: 100 };
         harness.cursor = { x: 768, y: 656 };
         row0Win.interactiveMoveResizeFinished.emit();
@@ -5025,11 +5027,11 @@ describe("TileController interactive drag", () => {
         assert.equal(row2.isLayout, false);
         assert.deepEqual(row2.tiles, []);
         assert.equal(collectLeaves(root).length, 4);
-        // KWin's native overlap is left as-is: the dragged window stays in the
-        // target row beside its occupant, and the origin stays vacated.
-        assert.equal(row0Win.tile, row2);
-        assert.deepEqual(row2.windows, [row2Win, row0Win]);
-        assert.deepEqual(row0.windows, []);
+        // The dragged window still holds its origin leaf and row2 keeps its
+        // single occupant: refusal needs no rollback because nothing mutated.
+        assert.equal(row0Win.tile, row0);
+        assert.deepEqual(row0.windows, [row0Win]);
+        assert.deepEqual(row2.windows, [row2Win]);
         assert.equal(controller.hasActiveDrag, false);
         assert.equal(controller.isEnabled, true);
     });
