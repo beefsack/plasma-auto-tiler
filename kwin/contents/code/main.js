@@ -2862,6 +2862,7 @@
       this.gate.run(() => {
         var _a;
         if (((_a = this.drag.current) == null ? void 0 : _a.window) === window) {
+          this.diagnostic("drag-bail:window-invalidated");
           this.clearDrag();
         }
         this.detachInteractiveWindow(window);

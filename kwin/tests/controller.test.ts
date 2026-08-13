@@ -8777,6 +8777,17 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(countEvent(harness.logs, "drag-bail:window-mismatch"), 1);
     });
 
+    it("logs a drag-bail reason when invalidation clears an active tracked drag", () => {
+        const { harness, controller, dragged } = dragSetup();
+        startDrag(dragged);
+        assert.equal(controller.hasActiveDrag, true);
+        assert.equal(countEvent(harness.logs, "drag-bail:window-invalidated"), 0);
+
+        dragged.desktopsChanged.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:window-invalidated"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
     it("logs an explicit reason when a tiled drag is ignored because its scope is inert", () => {
         const harness = new Harness();
         const root = tile(RECT, true);

@@ -2550,6 +2550,7 @@ export class TileController {
     private handleInteractiveInvalidated(window: WindowCapability): void {
         this.gate.run(() => {
             if (this.drag.current?.window === window) {
+                this.diagnostic("drag-bail:window-invalidated");
                 this.clearDrag();
             }
             this.detachInteractiveWindow(window);
