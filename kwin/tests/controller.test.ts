@@ -9983,23 +9983,56 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
     });
 
-    it("Meta+0 always appends and navigates even when a trailing empty desktop exists", () => {
+    it("Meta+0 focuses an existing script-owned trailing empty without duplicate creation", () => {
         const { harness } = setup();
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(countEvent(harness.logs, "workspace-append-completed"), 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        // Repeated Meta+0 on the trailing empty focuses it without appending.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        assert.equal(harness.createDesktopCalls.length, 2);
-        assert.equal(countEvent(harness.logs, "workspace-append-completed"), 2);
-        assert.equal(countEvent(harness.logs, "workspace-created-owned"), 2);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(countEvent(harness.logs, "workspace-append-focused-existing"), 2);
+        assert.equal(countEvent(harness.logs, "workspace-created-owned"), 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+        ]);
     });
 
-    it("cleanup removes trailing empty owned desktops, keeping exactly one trailing empty", () => {
-        const { harness } = setup();
+    it("cleanup removes excess owned empty trailing desktops, keeping exactly one trailing empty", () => {
+        const { harness, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        // Meta+0 creates the trailing owned empty; moving the floating window
+        // into it makes reconciliation append a replacement.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        const ids = (harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id);
-        assert.deepEqual(ids, ["desktop-1", "desktop-3"]);
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+        ]);
+        // Moving back re-empties desktop-2: it is now excess next to the kept
+        // replacement desktop-3, so cleanup removes only it. Simulate the
+        // window returning to desktop-1 and the user following it.
+        focused.desktops = [DESKTOP];
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        harness.emitDesktopsChanged();
         assert.equal(harness.removedDesktops.length, 1);
         assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-2");
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+        ]);
     });
 
     it("move to an absent index is a specific no-op with no membership write", () => {
@@ -10262,35 +10295,89 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("keeps cleanup nonfatal when removeDesktop throws mid-cleanup", () => {
-        const { harness, controller } = setup();
+        const { harness, controller, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        // Reach [desktop-1(occupied), desktop-2(owned empty)] then occupy the
+        // trailing empty so a replacement desktop-3 is appended.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        assert.equal(harness.removedDesktops.length, 1);
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        // The excess desktop-2 is removed by the next reconciliation, but the
+        // removal throws.
         harness.removeDesktopThrows = new Error("remove-failed");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        focused.desktops = [DESKTOP];
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        harness.emitDesktopsChanged();
         assert.equal(countEvent(harness.logs, "workspace-cleanup-remove-failed:remove-failed"), 1);
-        assert.equal(harness.removedDesktops.length, 1);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+        ]);
         assert.equal(controller.isEnabled, true);
     });
 
-    it("defers cleanup during a live drag and retries after drag completion", () => {
-        const { harness, focused } = setup();
+    it("defers desktop mutation during a live drag and performs it after drag completion", () => {
+        const { harness, root, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            root.tiles = [];
+            return true;
+        };
         focused.move = true;
         focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+        // Meta+0 while the drag is live defers the desktop creation: nothing is
+        // created and no desktop list mutation occurs.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:drag-live"), 2);
-        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-create-deferred:navigate"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        // Shift+0 while the drag is live defers the whole move: the window does
+        // not move before its required target exists.
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-create-deferred:move"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+        ]);
+        // Drag completion drains both requests: the trailing empty is created
+        // and focused, then the window moves into it.
         focused.move = false;
         focused.interactiveMoveResizeFinished.emit();
-        assert.equal(countEvent(harness.logs, "workspace-cleanup-removed"), 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        // The move's destination adoption settles on its yield and the
+        // replacement is appended.
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
+            "desktop-2",
             "desktop-3",
         ]);
     });
 
-    it("defers cleanup while a reconstruction is pending and retries after it settles", () => {
+    it("defers desktop mutation while a reconstruction is pending and performs it after it settles", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
         const left = tile({ x: 0, y: 0, width: 50, height: 100 });
@@ -10313,18 +10400,259 @@ describe("TileController dynamic virtual desktops", () => {
         const controller = new TileController(harness.environment());
         controller.start();
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        // Meta+0 while the reconstruction is pending defers the desktop
+        // creation: nothing is created and no desktop list mutation occurs.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-create-deferred:navigate"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        // Shift+0 while the reconstruction is pending defers the whole move.
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-create-deferred:move"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.deepEqual((first.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+        ]);
+        // Settle the reconstruction; the final pending drop retries cleanup and
+        // drains the deferred requests.
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.ok(countEvent(harness.logs, "ownership-taken") >= 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.deepEqual((first.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        void controller;
+    });
+
+    it("Meta+0 focuses the trailing-most owned empty when stale excess exists", () => {
+        const { harness, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        // Build [desktop-1(occupied), desktop-2(occupied), desktop-3(owned
+        // empty)]: Meta+0 then occupy the trailing empty so a replacement is
+        // replenished.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:reconstruction-pending"), 2);
-        assert.equal(harness.removedDesktops.length, 0);
-        // Settle the two-phase reconstruction (collapse then split); the final
-        // pending drop retries cleanup and removes the middle empty desktop.
-        assert.equal(harness.flushNextYield(), true);
-        assert.equal(harness.flushNextYield(), true);
-        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 2);
+        // Stale excess: desktop-2 becomes empty again before reconciliation
+        // runs, leaving two owned empty trailing desktops (desktop-2 and
+        // desktop-3).
+        focused.desktops = [DESKTOP];
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        // Meta+0 must focus the trailing-most owned empty (desktop-3), the one
+        // cleanup would retain, never the removable desktop-2.
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-append-focused-existing"), 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-3");
+        // Reconciliation then removes the excess desktop-2 without the current
+        // desktop guard blocking it, leaving exactly one trailing empty.
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 1);
+        assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-2");
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-3",
+        ]);
+    });
+
+    it("Shift+0 moves into the trailing empty then appends a replacement after it settles", () => {
+        const { harness, root, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            root.tiles = [];
+            return true;
+        };
+        // Meta+0 creates the sole trailing owned empty.
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+        ]);
+        // Shift+0 moves the tiled window into the trailing empty; membership is
+        // written synchronously and the destination adoption is yielded.
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.yields.length, 1);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        // Nothing is appended before the move settles.
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.flushNextYield(), true);
+        // The destination is now occupied; the destination reconstruction still
+        // defers the replacement until it settles.
+        assert.equal(harness.createDesktopCalls.length, 1);
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+        ]);
+    });
+
+    it("an occupancy event on the trailing empty replenishes a replacement", () => {
+        const { harness } = setup();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        // A window arrives on the trailing empty: it is now occupied, so the
+        // occupancy reconciliation must replenish a replacement once the
+        // destination reconstruction settles.
+        harness.currentDesktop = { id: "desktop-2", x11DesktopNumber: 2 };
+        const trailing = { id: "desktop-2", x11DesktopNumber: 2 };
+        const incoming = window({ desktops: [trailing] });
+        harness.windows = [...(harness.windows as unknown[]), incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:reconstruction-pending"), 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+        ]);
+    });
+
+    it("reconciliation is idempotent under repeated triggers", () => {
+        const { harness, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        // The focused trailing empty stays empty: repeated reconciliation
+        // neither appends duplicates nor removes it.
+        for (let index = 0; index < 4; index += 1) {
+            harness.emitDesktopsChanged();
+        }
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.removedDesktops.length, 0);
+        // After the trailing empty is occupied and a replacement replenished,
+        // repeated reconciliation stays stable at exactly one trailing empty.
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 2);
+        for (let index = 0; index < 4; index += 1) {
+            harness.emitDesktopsChanged();
+        }
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+        ]);
+    });
+
+    it("a desktop creation failure retains the valid existing state and logs", () => {
+        const { harness, controller, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        // The trailing empty becomes occupied and the replacement create fails:
+        // the failure is non-destructive, specifically logged, and the valid
+        // existing desktop set is retained.
+        harness.createDesktopThrows = new Error("create-failed");
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+        ]);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("cleanup never deletes pre-existing, current, or visible desktops", () => {
+        const { harness, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        harness.screensList = [OUTPUT, { ...OUTPUT, name: "screen-2" }];
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+            { id: "desktop-3", x11DesktopNumber: 3 },
+        ];
+        // The harness generates monotonic ids from here so the first create is
+        // desktop-4, never colliding with the pre-existing desktops.
+        harness.nextDesktopNumber = 3;
+        // Meta+0 appends the trailing owned empty (desktop-4); desktop-2 and
+        // desktop-3 are pre-existing and never owned.
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 1);
+        // Occupy it and replenish: [desktop-1(occupied), 2, 3,
+        // desktop-4(occupied), desktop-5(owned empty)].
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 2);
+        // desktop-4 (owned) becomes empty again and is current and visible on
+        // every output: it must not be removed even though desktop-5 is the
+        // kept replacement.
+        focused.desktops = [DESKTOP];
+        harness.currentDesktop = { id: "desktop-4", x11DesktopNumber: 4 };
+        harness.currentDesktopValue = { id: "desktop-4", x11DesktopNumber: 4 };
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+            "desktop-4",
+            "desktop-5",
+        ]);
+        // Once the user navigates away, desktop-4 is no longer visible and the
+        // excess is removed; the pre-existing desktops and the kept replacement
+        // are untouched.
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 1);
+        assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-4");
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-2",
+            "desktop-3",
+            "desktop-5",
         ]);
     });
 });

@@ -186,6 +186,18 @@ export interface PendingRebuild {
     dragFinalSnapshot?: boolean;
 }
 
+// A deferred script-owned trailing-empty creation request. A user Meta+0
+// (navigate) or Meta+Shift+0 (move) that would have to create the trailing
+// empty while a live drag, pending reconstruction, or unsettled move makes the
+// desktop list unsafe to mutate is queued instead of acting, and is retried
+// through the existing settle seams (drag finish, reconstruction drop,
+// adoption, desktopsChanged). Every request is re-validated against current
+// context before it runs so a stale request can never act after the context
+// changed.
+type PendingDesktopIntent =
+    | { readonly kind: "navigate" }
+    | { readonly kind: "move"; readonly window: WindowCapability };
+
 interface DecodedLeaf {
     readonly tile: TileCapability;
     readonly windows: readonly WindowCapability[];
@@ -808,10 +820,16 @@ export class TileController {
     // Cleanup is deferred while any move is unsettled so a desktop is never
     // removed under a window that is still being re-placed.
     private readonly pendingMoves = new Set<WindowCapability>();
-    // Re-entrancy guard for desktop cleanup: removeDesktop re-fires
-    // desktopsChanged, and cleanup is idempotent so the guard only prevents a
-    // nested re-entry, never skips owed work.
-    private cleaningDesktops = false;
+    // Re-entrancy guard for desktop reconciliation: createDesktop and
+    // removeDesktop both re-fire desktopsChanged synchronously, and a
+    // mid-mutation list (desktop created but not yet owned, or partially
+    // removed) must never re-drive a second reconcile. Reconciliation is
+    // idempotent, so the guard only prevents a nested re-entry, never skips
+    // owed work.
+    private reconcilingDesktops = false;
+    // Deferred user trailing-empty creation requests (see PendingDesktopIntent).
+    // Bounded like the other controller queues.
+    private readonly pendingDesktopIntents: PendingDesktopIntent[] = [];
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -2871,6 +2889,11 @@ export class TileController {
             this.settleOwedInvariants();
             this.attachExistingInteractiveWindows(false);
             this.engageCurrentScope();
+            // A current-desktop change can move the sole trailing owned empty
+            // into or out of occupancy (for example a pager move onto it), so
+            // reconcile. Cleanup defers while a drag or reconstruction is live.
+            this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -2909,6 +2932,11 @@ export class TileController {
                 this.fullscreenWindows.delete(window);
             }
             this.settleOwedInvariants();
+            // A window removal can leave an owned desktop empty again, turning
+            // the kept replacement plus the re-emptied desktop into excess, so
+            // reconcile. Cleanup defers while a drag or reconstruction is live.
+            this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -2919,29 +2947,34 @@ export class TileController {
             this.attachFullscreenWindow(window);
             if (isWindow(window) && window.fullScreen === true) {
                 this.enterFullscreen(window);
-                return;
-            }
-            const pending = this.pending.current;
-            if (pending === undefined) {
-                const scope = this.scopeForWindow(window);
-                if (scope === null || !windowInScope(window, scope)) {
-                    const reason = this.windowAddedRejection(window, scope);
-                    if (reason === "desktop-scope-mismatch" && scope !== null && isWindow(window)) {
-                        this.deferDesktopScopeReevaluation(window, scope);
-                        return;
+            } else {
+                const pending = this.pending.current;
+                if (pending === undefined) {
+                    const scope = this.scopeForWindow(window);
+                    if (scope === null || !windowInScope(window, scope)) {
+                        const reason = this.windowAddedRejection(window, scope);
+                        if (reason === "desktop-scope-mismatch" && scope !== null && isWindow(window)) {
+                            this.deferDesktopScopeReevaluation(window, scope);
+                        } else {
+                            this.onceDiagnostic(`window-added-rejected:${reason}`);
+                        }
+                    } else {
+                        this.onceDiagnostic("window-added-eligible");
+                        this.placeEligibleAdded(window, scope);
                     }
-                    this.onceDiagnostic(`window-added-rejected:${reason}`);
-                    return;
+                } else {
+                    try {
+                        this.completeKeyboardInsertion(window, pending);
+                    } finally {
+                        this.clearPending();
+                    }
                 }
-                this.onceDiagnostic("window-added-eligible");
-                this.placeEligibleAdded(window, scope);
-                return;
             }
-            try {
-                this.completeKeyboardInsertion(window, pending);
-            } finally {
-                this.clearPending();
-            }
+            // A window arrival on the script-owned trailing empty makes it
+            // occupied, so reconcile. Cleanup defers while a drag or
+            // reconstruction is live and retries through the settle seams.
+            this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -2985,6 +3018,10 @@ export class TileController {
             }
             this.onceDiagnostic("window-added-eligible-deferred");
             this.placeEligibleAdded(window, freshScope);
+            // A deferred window arrival on the script-owned trailing empty also
+            // makes it occupied, so reconcile here as well.
+            this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -3437,6 +3474,7 @@ export class TileController {
             // drag no longer tracks as live, so a previously deferred cleanup
             // is no longer blocked and nothing re-triggers it otherwise.
             this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -4624,6 +4662,7 @@ export class TileController {
         // back into reconstruction.
         if (this.pendingRebuilds.size === 0) {
             this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }
     }
 
@@ -5274,6 +5313,7 @@ export class TileController {
     private handleDesktopsChanged(): void {
         this.gate.run(() => {
             this.cleanupDesktops();
+            this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -5296,50 +5336,212 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Meta+0: always append a new desktop and navigate to it, even when a
-    // trailing empty desktop already exists.
+    // Meta+0: focus the existing script-owned trailing empty when present,
+    // otherwise append a desktop and navigate to it. Repeated Meta+0 on the
+    // trailing empty never creates a duplicate, and a focused trailing empty
+    // that stays empty stays exactly one: nothing is appended until occupancy
+    // moves the highest occupied workspace past it, at which point
+    // reconciliation replenishes a replacement. When the trailing empty is
+    // missing but the desktop list cannot be mutated yet (live drag, pending
+    // reconstruction, unsettled move), the navigate request is deferred and
+    // retried through the existing settle seams.
     appendWorkspace(): void {
         this.gate.run(() => {
             this.diagnostic("workspace-append-invoked");
-            const created = this.appendDesktop();
-            if (created === null) {
+            this.navigateToOrCreateTrailingEmpty();
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Focus the existing script-owned trailing empty, or create it and focus
+    // it. The create is deferred while the desktop list is unsafe to mutate.
+    private navigateToOrCreateTrailingEmpty(): void {
+        const existing = this.trailingOwnedEmptyDesktop();
+        if (existing !== null) {
+            this.setCurrentDesktop(existing);
+            this.diagnostic("workspace-append-focused-existing");
+            return;
+        }
+        if (this.workspaceMutationDeferred()) {
+            this.deferDesktopIntent({ kind: "navigate" });
+            return;
+        }
+        const created = this.appendDesktop();
+        if (created === null) {
+            return;
+        }
+        this.setCurrentDesktop(created);
+        this.diagnostic("workspace-append-completed");
+        this.cleanupDesktops();
+        this.drainPendingDesktopIntents();
+    }
+
+    // The script-owned trailing empty that reconciliation would retain: the
+    // trailing-most owned empty desktop after every occupied desktop, or null
+    // when none exists. The trailing-most candidate is the one cleanup keeps,
+    // so focusing or moving into it never blocks cleanup of the excess owned
+    // empties before it. Pre-existing and user-owned empty desktops are never
+    // candidates.
+    private trailingOwnedEmptyDesktop(): VirtualDesktopCapability | null {
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return null;
+        }
+        const occupied = this.occupiedDesktopIds();
+        let highestOccupied = 0;
+        for (let position = 0; position < desktops.length; position += 1) {
+            const desktop = desktops[position];
+            if (desktop !== undefined && occupied.has(desktop.id)) {
+                highestOccupied = position + 1;
+            }
+        }
+        let candidate: VirtualDesktopCapability | null = null;
+        for (let position = 0; position < desktops.length; position += 1) {
+            const desktop = desktops[position];
+            if (desktop === undefined) {
+                continue;
+            }
+            if (!this.ownedDesktopIds.has(desktop.id)) {
+                continue;
+            }
+            if (occupied.has(desktop.id)) {
+                continue;
+            }
+            if (position + 1 <= highestOccupied) {
+                continue;
+            }
+            candidate = desktop;
+        }
+        return candidate;
+    }
+
+    // Whether the desktop list must not be mutated right now: a live drag, a
+    // pending reconstruction, or an unsettled cross-workspace move. Desktop
+    // creation and removal are deferred in exactly these conditions and
+    // retried through the existing settle/yield seams.
+    private workspaceMutationDeferred(): boolean {
+        return this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0;
+    }
+
+    // Queue a user trailing-empty creation request for later execution. The
+    // queue is bounded and each entry is re-validated on execution.
+    private deferDesktopIntent(intent: PendingDesktopIntent): void {
+        if (this.pendingDesktopIntents.length < MAX_SEQUENTIAL_LENGTH) {
+            this.pendingDesktopIntents.push(intent);
+        }
+        this.diagnostic(intent.kind === "navigate" ? "workspace-create-deferred:navigate" : "workspace-create-deferred:move");
+    }
+
+    // Run every queued trailing-empty creation request, in order, once the
+    // desktop list is safe to mutate. A request that is still unsafe is kept
+    // queued; a request whose context became stale is cancelled.
+    private drainPendingDesktopIntents(): void {
+        if (!this.gate.isEnabled) {
+            return;
+        }
+        if (this.workspaceMutationDeferred()) {
+            return;
+        }
+        const pending = this.pendingDesktopIntents.slice();
+        this.pendingDesktopIntents.length = 0;
+        for (const intent of pending) {
+            if (intent.kind === "navigate") {
+                this.navigateToOrCreateTrailingEmpty();
+            } else {
+                this.finishMoveToTrailing(intent.window);
+            }
+        }
+    }
+
+    // Execute a deferred Meta+Shift+0 request: re-validate the captured window
+    // against current context, ensure the trailing empty exists, then move the
+    // window into it. A window that is no longer movable cancels the request.
+    private finishMoveToTrailing(window: WindowCapability): void {
+        if (!this.isWindowMovableToTrailing(window)) {
+            this.diagnostic("workspace-move-deferred-cancelled:stale");
+            return;
+        }
+        const scope = this.scopeForWindow(window);
+        if (scope === null) {
+            this.diagnostic("workspace-move-deferred-cancelled:scope");
+            return;
+        }
+        let target = this.trailingOwnedEmptyDesktop();
+        if (target === null) {
+            if (this.workspaceMutationDeferred()) {
+                this.deferDesktopIntent({ kind: "move", window });
                 return;
             }
-            this.setCurrentDesktop(created);
-            this.diagnostic("workspace-append-completed");
-            this.cleanupDesktops();
-        }, (reason) => this.disabled(reason));
+            target = this.appendDesktop();
+        }
+        if (target === null) {
+            return;
+        }
+        if (target.id === scope.desktop.id) {
+            this.diagnostic("workspace-move-no-op:already-there");
+            return;
+        }
+        this.moveWindowToDesktop(window, scope, target);
+    }
+
+    // Re-validate a deferred move's captured window: still a movable normal
+    // managed window in a readable scope, and not sticky or fullscreen. The
+    // scope is re-resolved from the current context so a desktop change during
+    // the deferral is respected rather than acted on stale.
+    private isWindowMovableToTrailing(window: WindowCapability): boolean {
+        if (!isWindow(window) || window.fullScreen === true) {
+            return false;
+        }
+        if (!window.normalWindow || !window.managed || !window.resizeable || window.appletPopup) {
+            return false;
+        }
+        if (this.isSticky(window)) {
+            return false;
+        }
+        const scope = this.scopeForWindow(window);
+        return scope !== null && windowInScope(window, scope);
     }
 
     // Append one desktop through the createDesktop surface, re-enumerating the
     // live list to resolve the new desktop (no desktop lookup API exists). The
-    // new desktop is recorded script-owned for this session only.
+    // new desktop is recorded script-owned for this session only. The
+    // reconciliation guard is held across the create so the synchronous
+    // desktopsChanged re-entry cannot reconcile the not-yet-owned desktop.
     private appendDesktop(): VirtualDesktopCapability | null {
         const before = this.liveDesktops();
         if (before === null) {
             return null;
         }
         const beforeIds = new Set(before.map((desktop) => desktop.id));
+        const guarding = !this.reconcilingDesktops;
+        if (guarding) {
+            this.reconcilingDesktops = true;
+        }
         try {
-            this.environment.createDesktop(before.length + 1, String(before.length + 1));
-        } catch (error) {
-            this.diagnostic(`workspace-append-create-failed:${describeWorkspaceFailure(error)}`);
-            return null;
+            try {
+                this.environment.createDesktop(before.length + 1, String(before.length + 1));
+            } catch (error) {
+                this.diagnostic(`workspace-append-create-failed:${describeWorkspaceFailure(error)}`);
+                return null;
+            }
+            const after = this.liveDesktops();
+            if (after === null) {
+                this.diagnostic("workspace-append-created-unverified");
+                return null;
+            }
+            const fresh = after.filter((desktop) => !beforeIds.has(desktop.id));
+            const candidate = fresh.length === 1 ? fresh[0] : fresh[fresh.length - 1];
+            if (candidate === undefined) {
+                this.diagnostic("workspace-append-created-unresolved");
+                return null;
+            }
+            this.ownedDesktopIds.add(candidate.id);
+            this.diagnostic("workspace-created-owned");
+            return candidate;
+        } finally {
+            if (guarding) {
+                this.reconcilingDesktops = false;
+            }
         }
-        const after = this.liveDesktops();
-        if (after === null) {
-            this.diagnostic("workspace-append-created-unverified");
-            return null;
-        }
-        const fresh = after.filter((desktop) => !beforeIds.has(desktop.id));
-        const candidate = fresh.length === 1 ? fresh[0] : fresh[fresh.length - 1];
-        if (candidate === undefined) {
-            this.diagnostic("workspace-append-created-unresolved");
-            return null;
-        }
-        this.ownedDesktopIds.add(candidate.id);
-        this.diagnostic("workspace-created-owned");
-        return candidate;
     }
 
     // Meta+Shift+1..9 and Meta+Shift+0: move the focused window to the target
@@ -5364,7 +5566,18 @@ export class TileController {
             }
             let target: VirtualDesktopCapability | null;
             if (index === 0) {
-                target = this.appendDesktop();
+                // Move into the script-owned trailing empty. When it is missing
+                // and the desktop list cannot be mutated yet (live drag, pending
+                // reconstruction, unsettled move), the whole move is deferred so
+                // no window moves before its required target exists.
+                target = this.trailingOwnedEmptyDesktop();
+                if (target === null) {
+                    if (this.workspaceMutationDeferred()) {
+                        this.deferDesktopIntent({ kind: "move", window: active });
+                        return;
+                    }
+                    target = this.appendDesktop();
+                }
             } else {
                 const desktops = this.liveDesktops();
                 if (desktops === null) {
@@ -5410,6 +5623,7 @@ export class TileController {
         this.diagnostic("workspace-move-floated");
         this.setCurrentDesktop(target);
         this.cleanupDesktops();
+        this.drainPendingDesktopIntents();
     }
 
     // Tiled move: write the new membership, collapse the freed source leaf
@@ -5505,6 +5719,7 @@ export class TileController {
             this.diagnostic(`workspace-move-adopt-failed:${describeWorkspaceFailure(error)}`);
         }
         this.cleanupDesktops();
+        this.drainPendingDesktopIntents();
     }
 
     private setCurrentDesktop(target: VirtualDesktopCapability): void {
@@ -5516,11 +5731,17 @@ export class TileController {
         }
     }
 
-    // Attempt cleanup to exactly one trailing empty script-owned desktop after
-    // the highest occupied workspace. Never removes non-owned, the last
-    // desktop, the current desktop, or any desktop current on any output.
+    // Reconcile the desktop list to exactly one trailing script-owned empty
+    // desktop after the highest occupied workspace. Excess owned empty trailing
+    // desktops are removed (only owned, non-current, non-visible-on-another-
+    // output, non-last); a missing trailing empty is replenished by appending
+    // one replacement, which happens only once an owned desktop exists in the
+    // live list (the dynamic-desktop feature is engaged). Pre-existing and
+    // user-owned desktops are never removed. Deferral keeps the list untouched
+    // while a drag, reconstruction, or unsettled move is live, and the
+    // reconciliation guard keeps create/remove re-entry inert.
     private cleanupDesktops(): void {
-        if (!this.gate.isEnabled || this.cleaningDesktops) {
+        if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
         }
         if (this.trackedDragLive()) {
@@ -5553,7 +5774,7 @@ export class TileController {
             }
         }
         const lastIndex = desktops.length - 1;
-        const removals: VirtualDesktopCapability[] = [];
+        const trailing: Array<{ readonly desktop: VirtualDesktopCapability; readonly position: number }> = [];
         for (let position = 0; position < desktops.length; position += 1) {
             const desktop = desktops[position];
             if (desktop === undefined) {
@@ -5568,30 +5789,56 @@ export class TileController {
             if (position + 1 <= highestOccupied) {
                 continue;
             }
-            if (position === lastIndex) {
-                continue;
-            }
-            if (visible.has(desktop.id)) {
-                continue;
-            }
-            removals.push(desktop);
+            trailing.push({ desktop, position });
         }
-        if (removals.length === 0) {
+        if (trailing.length === 0) {
+            // Missing trailing empty: the script-owned trailing desktop just
+            // became occupied (for example Meta+Shift+0 moved a window into
+            // it), so append one replacement. The feature gate means a fresh
+            // all-pre-existing desktop set is never mutated unrequested. A
+            // create failure is non-destructive and leaves the valid existing
+            // state in place.
+            const ownedLive = desktops.some(
+                (desktop) => desktop !== undefined && this.ownedDesktopIds.has(desktop.id),
+            );
+            if (!ownedLive) {
+                return;
+            }
+            const created = this.appendDesktop();
+            if (created !== null) {
+                this.diagnostic("workspace-cleanup-replenished");
+            }
             return;
         }
-        this.cleaningDesktops = true;
+        // Excess owned empty trailing desktops: remove every one before the
+        // kept trailing-most replacement. The current desktop, any desktop
+        // visible on another output, and the last desktop are never removed.
+        const keep = trailing[trailing.length - 1];
+        if (keep === undefined) {
+            return;
+        }
+        this.reconcilingDesktops = true;
         try {
-            for (const desktop of removals) {
+            for (const entry of trailing) {
+                if (entry.position === keep.position) {
+                    continue;
+                }
+                if (entry.position === lastIndex) {
+                    continue;
+                }
+                if (visible.has(entry.desktop.id)) {
+                    continue;
+                }
                 try {
-                    this.environment.removeDesktop(desktop);
-                    this.ownedDesktopIds.delete(desktop.id);
+                    this.environment.removeDesktop(entry.desktop);
+                    this.ownedDesktopIds.delete(entry.desktop.id);
                     this.diagnostic("workspace-cleanup-removed");
                 } catch (error) {
                     this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
                 }
             }
         } finally {
-            this.cleaningDesktops = false;
+            this.reconcilingDesktops = false;
         }
     }
 
