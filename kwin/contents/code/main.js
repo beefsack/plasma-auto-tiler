@@ -970,6 +970,8 @@
   var HORIZONTAL_LAYOUT_DIRECTION2 = 1;
   var VERTICAL_LAYOUT_DIRECTION2 = 2;
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+  var MINIMUM_TILE_FRACTION = 0.15;
+  var WORK_AREA_CLIENT_AREA_OPTION = 5;
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var MAX_YIELD_REARM_PER_PHASE = 2;
   function windowInScope(window, scope) {
@@ -3306,6 +3308,10 @@
         this.bailDrag("drag-bail:target-occupant-invalid", drag);
         return;
       }
+      if (this.splitWouldViolateMinimum(scope, target, direction)) {
+        this.diagnostic("drag-refused:undersized-split");
+        return;
+      }
       if (!this.splitDropTarget(target, occupant, drag, direction)) {
         return;
       }
@@ -3315,6 +3321,24 @@
         dragged: drag.window,
         occupant
       });
+    }
+    // Whether the equal 50/50 drop split of the resolved target leaf along the
+    // split direction would put either half below KWin's minimum tile size. The
+    // floor is MINIMUM_TILE_FRACTION of the per-output working area extent on
+    // the split axis (x for left/right, y for up/down). An unreadable working
+    // area never refuses: the preflight must not invent a floor it cannot prove.
+    splitWouldViolateMinimum(scope, target, direction) {
+      const axis = direction === "left" || direction === "right" ? "x" : "y";
+      const leafExtent = axis === "x" ? target.leaf.geometry.width : target.leaf.geometry.height;
+      const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+      if (!isRect(workArea)) {
+        return false;
+      }
+      const workExtent = axis === "x" ? workArea.width : workArea.height;
+      if (!(workExtent > 0)) {
+        return false;
+      }
+      return leafExtent / 2 < MINIMUM_TILE_FRACTION * workExtent;
     }
     // Split a drop target leaf into the direction-derived children and manage
     // the original occupant onto the opposite child and the dragged window
@@ -4400,6 +4424,7 @@
     rootTile: (output, desktop) => workspace.rootTile(output, desktop),
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
+    clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),
     onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),

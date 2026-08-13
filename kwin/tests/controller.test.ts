@@ -170,6 +170,7 @@ class Harness {
     windows: unknown = [];
     cursor: unknown = null;
     cursorThrows = false;
+    clientArea: unknown = { x: 0, y: 0, width: 100, height: 100 };
     shortcutResult = true;
     readonly shortcutResults: boolean[] = [];
     readonly shortcuts: RegisteredShortcut[] = [];
@@ -203,6 +204,7 @@ class Harness {
                 }
                 return this.cursor;
             },
+            clientArea: () => this.clientArea,
             onWindowAdded: (handler) => {
                 this.added = handler;
             },
@@ -4256,6 +4258,112 @@ function nativeDropSetup(): {
     return { harness, controller, root, term1, right, term2, term3, top, bottom, term1Win, term2Win, term3Win };
 }
 
+// The live minimum-split floor failure: four full-width rows 245px tall inside
+// a 980px working height (y 44..289, 289..534, 534..779, 779..1024). A 50/50
+// vertical split of a 245px row yields 122.5px halves, below KWin's 15%
+// working-height floor (147px), so the split must be refused before mutating.
+function rowsDropSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly rows: readonly [TestTile, TestTile, TestTile, TestTile];
+    readonly row0Win: TestWindow;
+    readonly row1Win: TestWindow;
+    readonly row2Win: TestWindow;
+    readonly row3Win: TestWindow;
+    readonly splits: number[];
+} {
+    const harness = new Harness();
+    harness.clientArea = { x: 0, y: 44, width: 1536, height: 980 };
+    const row0 = tile({ x: 0, y: 44, width: 1536, height: 245 });
+    const row1 = tile({ x: 0, y: 289, width: 1536, height: 245 });
+    const row2 = tile({ x: 0, y: 534, width: 1536, height: 245 });
+    const row3 = tile({ x: 0, y: 779, width: 1536, height: 245 });
+    const root = tile({ x: 0, y: 44, width: 1536, height: 980 }, true);
+    root.layoutDirection = 2;
+    const row0Win = window({ tile: row0, caption: "row0" });
+    const row1Win = window({ tile: row1, caption: "row1" });
+    const row2Win = window({ tile: row2, caption: "row2" });
+    const row3Win = window({ tile: row3, caption: "row3" });
+    row0.windows = [row0Win];
+    row1.windows = [row1Win];
+    row2.windows = [row2Win];
+    row3.windows = [row3Win];
+    root.tiles = [row0, row1, row2, row3];
+    harness.root = root;
+    harness.active = row0Win;
+    harness.windows = [row0Win, row1Win, row2Win, row3Win];
+    const writes: Array<{ window: TestWindow; target: object | null }> = [];
+    attachTileWriter(row0Win, writes);
+    attachTileWriter(row1Win, writes);
+    attachTileWriter(row2Win, writes);
+    attachTileWriter(row3Win, writes);
+    const splits: number[] = [];
+    const manage = (leaf: TestTile) => (value: unknown): boolean => {
+        (value as TestWindow).tile = leaf;
+        return true;
+    };
+    const halve = (source: TestTile, direction: number): unknown => {
+        splits.push(direction);
+        source.isLayout = true;
+        source.windows = [];
+        const geometry = source.absoluteGeometry;
+        const first = tile({ x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height });
+        const second = tile({ x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height });
+        if (direction === 1) {
+            first.absoluteGeometry = { x: geometry.x, y: geometry.y, width: geometry.width / 2, height: geometry.height };
+            second.absoluteGeometry = { x: geometry.x + geometry.width / 2, y: geometry.y, width: geometry.width / 2, height: geometry.height };
+        } else {
+            first.absoluteGeometry = { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height / 2 };
+            second.absoluteGeometry = { x: geometry.x, y: geometry.y + geometry.height / 2, width: geometry.width, height: geometry.height / 2 };
+        }
+        first.relativeGeometry = first.absoluteGeometry;
+        second.relativeGeometry = second.absoluteGeometry;
+        first.manage = manage(first);
+        second.manage = manage(second);
+        source.tiles = [first, second];
+        return [first, second];
+    };
+    row0.split = (direction) => halve(row0, direction);
+    row1.split = (direction) => halve(row1, direction);
+    row2.split = (direction) => halve(row2, direction);
+    row3.split = (direction) => halve(row3, direction);
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, rows: [row0, row1, row2, row3], row0Win, row1Win, row2Win, row3Win, splits };
+}
+
+function collectLeaves(tile: TestTile): TestTile[] {
+    if (!tile.isLayout) {
+        return [tile];
+    }
+    const result: TestTile[] = [];
+    for (const child of tile.tiles as TestTile[]) {
+        result.push(...collectLeaves(child));
+    }
+    return result;
+}
+
+function assertLeafPartition(leaves: readonly TestTile[], area: typeof RECT): void {
+    let total = 0;
+    for (const leaf of leaves) {
+        const g = leaf.absoluteGeometry;
+        assert.ok(g.x >= area.x - 1e-9 && g.y >= area.y - 1e-9, "leaf must start within the working area");
+        assert.ok(g.x + g.width <= area.x + area.width + 1e-9, "leaf must not exceed the working area width");
+        assert.ok(g.y + g.height <= area.y + area.height + 1e-9, "leaf must not exceed the working area height");
+        total += g.width * g.height;
+    }
+    for (let i = 0; i < leaves.length; i += 1) {
+        for (let j = i + 1; j < leaves.length; j += 1) {
+            const a = leaves[i]!.absoluteGeometry;
+            const b = leaves[j]!.absoluteGeometry;
+            const overlaps = a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+            assert.equal(overlaps, false, `leaves ${i} and ${j} must not overlap`);
+        }
+    }
+    assert.equal(total, area.width * area.height, "leaves must sum the full working extent");
+}
+
 function startDrag(dragged: TestWindow): void {
     dragged.move = true;
     dragged.resize = false;
@@ -4889,6 +4997,65 @@ describe("TileController interactive drag", () => {
         assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
         assert.equal(term2Win.tile, term2);
         assert.equal((term1.windows as TestWindow[]).includes(term2Win), false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("refuses a native drop split whose equal halves fall below the minimum tile size, leaving the tree untouched", () => {
+        const { harness, controller, root, rows, row0Win, row2Win, splits } = rowsDropSetup();
+        const [row0, row1, row2, row3] = rows;
+        assert.equal(row2.absoluteGeometry.height, 245);
+        assert.equal((harness.clientArea as typeof RECT).height, 980);
+
+        startDrag(row0Win);
+        // Model the native Shift finish: KWin manages the dragged window into
+        // row2 (534..779) and vacates the origin row0 before the finish hook.
+        row0Win.tile = row2;
+        row0Win.frameGeometry = { x: 768, y: 656, width: 100, height: 100 };
+        harness.cursor = { x: 768, y: 656 };
+        row0Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-refused:undersized-split"), 1);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 0);
+        assert.equal(splits.length, 0);
+        // Tree structure is completely untouched: the four rows remain the four
+        // leaves, row2 was never split, and no new tile exists.
+        assert.deepEqual(root.tiles, [row0, row1, row2, row3]);
+        assert.equal(row2.isLayout, false);
+        assert.deepEqual(row2.tiles, []);
+        assert.equal(collectLeaves(root).length, 4);
+        // KWin's native overlap is left as-is: the dragged window stays in the
+        // target row beside its occupant, and the origin stays vacated.
+        assert.equal(row0Win.tile, row2);
+        assert.deepEqual(row2.windows, [row2Win, row0Win]);
+        assert.deepEqual(row0.windows, []);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("keeps a passing drop split contiguous, non-overlapping, and summing the full working extent", () => {
+        const { harness, controller, root, rows, row0Win, splits } = rowsDropSetup();
+        const row2 = rows[2];
+        assert.ok(row2 !== undefined);
+
+        startDrag(row0Win);
+        // Native Shift drop into the left half of row2 (534..779): a horizontal
+        // 50/50 split of the 1536px-wide row yields 768px halves, above the 15%
+        // working-width floor (230.4px), so the split is allowed.
+        row0Win.tile = row2;
+        row0Win.frameGeometry = { x: 300, y: 656, width: 100, height: 100 };
+        harness.cursor = { x: 300, y: 656 };
+        row0Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-refused:undersized-split"), 0);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(splits.length, 1);
+        assert.equal(row2.isLayout, true);
+        assert.equal(collectLeaves(root).length, 5);
+        // The geometry invariant still holds after the split: the leaves are
+        // contiguous, non-overlapping, and sum the full working extent.
+        assertLeafPartition(collectLeaves(root), harness.clientArea as typeof RECT);
         assert.equal(controller.isEnabled, true);
     });
 

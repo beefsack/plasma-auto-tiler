@@ -27,6 +27,7 @@ const controller = new TileController({
     rootTile: (output, desktop) => workspace.rootTile(output, desktop),
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
+    clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),
     onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),

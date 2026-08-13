@@ -8,6 +8,7 @@ import {
     isCustomTile,
     isOutput,
     isPoint,
+    isRect,
     isTile,
     isVirtualDesktop,
     isWindow,
@@ -55,6 +56,16 @@ const MAX_TILES = MAX_SEQUENTIAL_LENGTH;
 const HORIZONTAL_LAYOUT_DIRECTION = 1;
 const VERTICAL_LAYOUT_DIRECTION = 2;
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+// KWin tile minimumSize default is QSizeF(0.15, 0.15) in working-area-relative
+// units (src/tiles/tile.h:179, pinned v6.7.3). A position-directed 50/50 drop
+// split produces two equal halves; when either half falls below this floor KWin
+// clamps the children and corrupts the geometry, so the split must be refused.
+const MINIMUM_TILE_FRACTION = 0.15;
+// src/scripting/workspace_wrapper.h ClientAreaOption ordering: PlacementArea=0,
+// MovementArea=1, MaximizeArea=2, MaximizeFullArea=3, FullScreenArea=4,
+// WorkArea=5, FullArea=6, ScreenArea=7. WorkArea is the per-output working area
+// (screen minus panel struts), the reference extent of the tile minimum size.
+const WORK_AREA_CLIENT_AREA_OPTION = 5;
 // A newly-mapped window's `desktops` value can still be settling at the
 // exact `windowAdded` instant (unit-05/attempt-16 live evidence). One short,
 // bounded re-evaluation gives it a chance to settle before being treated as
@@ -79,6 +90,7 @@ export interface ControllerEnvironment {
     readonly rootTile: (output: OutputCapability, desktop: VirtualDesktopCapability) => unknown;
     readonly windowList: () => unknown;
     readonly cursorPos: () => unknown;
+    readonly clientArea: (option: number, output: OutputCapability, desktop: VirtualDesktopCapability) => unknown;
     readonly onWindowAdded: (handler: (window: unknown) => void) => void;
     readonly onWindowRemoved: (handler: (window: unknown) => void) => void;
     readonly onScreensChanged: (handler: () => void) => void;
@@ -3062,6 +3074,10 @@ export class TileController {
             this.bailDrag("drag-bail:target-occupant-invalid", drag);
             return;
         }
+        if (this.splitWouldViolateMinimum(scope, target, direction)) {
+            this.diagnostic("drag-refused:undersized-split");
+            return;
+        }
         if (!this.splitDropTarget(target, occupant, drag, direction)) {
             return;
         }
@@ -3071,6 +3087,25 @@ export class TileController {
             dragged: drag.window,
             occupant,
         });
+    }
+
+    // Whether the equal 50/50 drop split of the resolved target leaf along the
+    // split direction would put either half below KWin's minimum tile size. The
+    // floor is MINIMUM_TILE_FRACTION of the per-output working area extent on
+    // the split axis (x for left/right, y for up/down). An unreadable working
+    // area never refuses: the preflight must not invent a floor it cannot prove.
+    private splitWouldViolateMinimum(scope: CurrentScope, target: OperationLeaf, direction: Direction): boolean {
+        const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
+        const leafExtent = axis === "x" ? target.leaf.geometry.width : target.leaf.geometry.height;
+        const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+        if (!isRect(workArea)) {
+            return false;
+        }
+        const workExtent = axis === "x" ? workArea.width : workArea.height;
+        if (!(workExtent > 0)) {
+            return false;
+        }
+        return leafExtent / 2 < MINIMUM_TILE_FRACTION * workExtent;
     }
 
     // Split a drop target leaf into the direction-derived children and manage

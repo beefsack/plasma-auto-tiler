@@ -221,6 +221,11 @@ interface Workspace {
     activeWindow: Window | null;
     currentDesktopForScreen(output: Output): VirtualDesktop | null;
     rootTile(output: Output, desktop: VirtualDesktop): Tile | null;
+    // src/scripting/workspace_wrapper.h: Q_SCRIPTABLE QRectF clientArea(
+    //     ClientAreaOption option, Output *output, VirtualDesktop *desktop)
+    // const. Returns the per-output client working area (screen minus panel
+    // struts). The option is the ClientAreaOption enum: WorkArea is 5.
+    clientArea(option: number, output: Output, desktop: VirtualDesktop): Rect;
     // The JavaScript-only QList<Window *> boundary requires runtime decoding.
     windowList(): unknown;
     readonly windowAdded: Signal1<Window>;
