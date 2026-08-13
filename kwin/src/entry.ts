@@ -81,6 +81,33 @@ const controller = new TileController({
             failed,
         };
     },
+    watchFullscreen: (window, changed) => {
+        const surface = window as unknown as Record<string, unknown>;
+        let value: unknown;
+        try {
+            value = surface["fullScreenChanged"];
+            (value as { connect: (next: () => void) => void }).connect(changed);
+            console.log("plasma-auto-tiler:fullscreen-attach-ok:fullScreenChanged");
+            return {
+                disconnect: () => {
+                    try {
+                        (surface["fullScreenChanged"] as { disconnect: (next: () => void) => void }).disconnect(
+                            changed,
+                        );
+                    } catch (error) {
+                        void error;
+                    }
+                },
+                ok: 1,
+                failed: 0,
+            };
+        } catch (error) {
+            console.log(
+                `plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:${String(error)} (observed typeof ${typeof value})`,
+            );
+            return { disconnect: () => {}, ok: 0, failed: 1 };
+        }
+    },
     onPendingTargetChanged: (window, handler) => {
         const surface = window as unknown as Record<string, unknown>;
         const connected: Array<[string, () => void]> = [];

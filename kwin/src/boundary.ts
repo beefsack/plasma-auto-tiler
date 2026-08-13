@@ -166,6 +166,12 @@ export interface WindowCapability {
     readonly output: OutputCapability | null;
     readonly tile: object | null;
     readonly frameGeometry: RectCapability;
+    // Documented Window `fullScreen` (read-write Q_PROPERTY in the KWin
+    // scripting API). Read-only and optional here: the controller observes but
+    // never writes fullscreen state (cover-and-restore is KWin-owned), and a
+    // binding that lacks the property is treated as not-fullscreen rather than
+    // rejecting the whole window.
+    readonly fullScreen?: boolean;
     // Documented Window `caption`, read for snapshot observability only. Not
     // validated by `isWindow`: a missing or throwing caption must not affect
     // capability checks, and snapshot reads swallow any read error.

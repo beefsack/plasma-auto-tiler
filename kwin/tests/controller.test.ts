@@ -26,6 +26,7 @@ interface TestWindow {
     tile: object | null;
     frameGeometry: typeof RECT;
     caption: string;
+    fullScreen: boolean;
     move: boolean;
     resize: boolean;
     outputChanged: TestSignal;
@@ -35,6 +36,7 @@ interface TestWindow {
     interactiveMoveResizeStepped: TestSignal;
     interactiveMoveResizeFinished: TestSignal;
     moveResizedChanged: TestSignal;
+    fullScreenChanged: TestSignal;
 }
 
 interface TestSignal {
@@ -106,6 +108,7 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
         tile: null,
         frameGeometry: RECT,
         caption: "test-window",
+        fullScreen: false,
         move: false,
         resize: false,
         outputChanged: signal(),
@@ -115,6 +118,7 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
         interactiveMoveResizeStepped: signal(),
         interactiveMoveResizeFinished: signal(),
         moveResizedChanged: signal(),
+        fullScreenChanged: signal(),
         ...overrides,
     };
 }
@@ -266,6 +270,35 @@ class Harness {
                     ok,
                     failed,
                 };
+            },
+            watchFullscreen: (target, changed) => {
+                let value: unknown;
+                try {
+                    value = (target as unknown as Record<string, unknown>)["fullScreenChanged"];
+                    (value as { connect: (next: () => void) => void }).connect(changed);
+                    this.logs.push("plasma-auto-tiler:fullscreen-attach-ok:fullScreenChanged");
+                    return {
+                        disconnect: () => {
+                            try {
+                                (
+                                    target as unknown as Record<
+                                        string,
+                                        { disconnect: (next: () => void) => void }
+                                    >
+                                )["fullScreenChanged"]!.disconnect(changed);
+                            } catch (error) {
+                                void error;
+                            }
+                        },
+                        ok: 1,
+                        failed: 0,
+                    };
+                } catch (error) {
+                    this.logs.push(
+                        `plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:${String(error)} (observed typeof ${typeof value})`,
+                    );
+                    return { disconnect: () => {}, ok: 0, failed: 1 };
+                }
             },
             onPendingTargetChanged: (target, handler) => {
                 const surface = target as unknown as Record<string, unknown>;
@@ -9030,5 +9063,349 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:scope-inert"), 1);
         assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
         assert.equal(controller.hasActiveDrag, false);
+    });
+});
+
+describe("TileController fullscreen passthrough", () => {
+    function setFullscreen(subject: TestWindow, value: boolean): void {
+        subject.fullScreen = value;
+        subject.fullScreenChanged.emit();
+    }
+
+    it("leaves a created fullscreen window unmanaged with no tile write", () => {
+        const { harness } = setup();
+        const created = window({ fullScreen: true });
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(created, writes);
+        harness.emitAdded(created);
+        assert.equal(created.tile, null);
+        assert.equal(writes.length, 0);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter unmanaged"), 1);
+        assert.equal(countEvent(harness.logs, "window-added-eligible"), 0);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+    });
+
+    it("preserves the slot and never mutates the tree when a tiled window enters fullscreen", () => {
+        const { harness, root, target, focused } = setup();
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(focused, writes);
+        setFullscreen(focused, true);
+        assert.equal(focused.tile, target);
+        assert.equal(writes.length, 0);
+        assert.deepEqual(root.tiles, [target]);
+        assert.deepEqual(target.windows, [focused]);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter preserved"), 1);
+    });
+
+    it("ignores geometry and lifecycle events while fullscreen without placement, reconstruction, drag, or resize", () => {
+        const { harness, controller, root, target, focused } = setup();
+        setFullscreen(focused, true);
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        focused.moveResizedChanged.emit();
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(harness.yields.length, 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("restores the preserved slot on exit via tile.manage without a guarded window.tile write", () => {
+        const { harness, target, focused } = setup();
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(focused, writes);
+        setFullscreen(focused, true);
+        focused.tile = null;
+        target.windows = [];
+        let manages = 0;
+        target.manage = (value) => {
+            manages += 1;
+            return value === focused;
+        };
+        writes.length = 0;
+        setFullscreen(focused, false);
+        assert.equal(manages, 1);
+        assert.equal(writes.length, 0);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restored"), 1);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restore failed"), 0);
+    });
+
+    it("keeps the fullscreen record through removal so the owned tree is not collapsed", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const leafA = tile();
+        const leafB = tile({ x: 200, y: 0, width: 100, height: 100 });
+        const fsWin = window({ tile: leafA });
+        const otherWin = window({ tile: leafB });
+        leafA.windows = [fsWin];
+        leafB.windows = [otherWin];
+        root.tiles = [leafA, leafB];
+        harness.root = root;
+        harness.active = fsWin;
+        harness.windows = [fsWin, otherWin];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        setFullscreen(fsWin, true);
+        leafA.windows = [];
+        let removes = 0;
+        leafA.remove = () => {
+            removes += 1;
+            return true;
+        };
+        harness.emitRemoved(fsWin);
+        assert.equal(removes, 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.equal(otherWin.tile, leafB);
+        assert.deepEqual(root.tiles, [leafA, leafB]);
+        assert.ok(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen") >= 1);
+        assert.equal(fsWin.fullScreenChanged.subscriberCount, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("does not reflow a selected overlay when another window is removed while fullscreen", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const first = tile();
+        const second = tile({ x: 200, y: 0, width: 100, height: 100 });
+        const fullscreen = window({ tile: first });
+        const removed = window({ tile: second });
+        first.windows = [fullscreen];
+        second.windows = [removed];
+        root.tiles = [first, second];
+        harness.root = root;
+        harness.active = fullscreen;
+        harness.windows = [fullscreen, removed];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, "plasma-auto-tiler-apply-columns");
+        setFullscreen(fullscreen, true);
+        second.windows = [];
+        harness.emitRemoved(removed);
+        assert.equal(fullscreen.tile, first);
+        assert.equal(countEvent(harness.logs, "reflow-completed"), 0);
+        assert.ok(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen") >= 1);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("suppresses the new scope after a fullscreen window changes output", () => {
+        const { harness, root, target, focused } = setup();
+        const otherOutput = { ...OUTPUT, name: "screen-2" };
+        setFullscreen(focused, true);
+        focused.output = otherOutput;
+        focused.outputChanged.emit();
+        const incoming = window({ output: otherOutput });
+        harness.emitAdded(incoming);
+        assert.equal(incoming.tile, null);
+        assert.deepEqual(root.tiles, [target]);
+        assert.ok(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen") >= 1);
+    });
+
+    it("newly manages a created fullscreen window on exit into an empty leaf", () => {
+        const { harness, root, target } = setup();
+        const empty = tile(RECT, false, () => true);
+        root.tiles = [target, empty];
+        const created = window({ fullScreen: true });
+        harness.emitAdded(created);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter unmanaged"), 1);
+        setFullscreen(created, false);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit newly managed"), 1);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 1);
+    });
+
+    it("bails non-destructively and logs a reason when the preserved slot is gone", () => {
+        const { harness, root, target, focused } = setup();
+        setFullscreen(focused, true);
+        focused.tile = null;
+        target.windows = [];
+        root.tiles = [];
+        setFullscreen(focused, false);
+        assert.equal(focused.tile, null);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restore failed:tile-missing"), 1);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restored"), 0);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("feature-detects a missing fullScreenChanged binding without failing startup", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const focused = window({ tile: null });
+        delete (focused as unknown as Record<string, unknown>)["fullScreenChanged"];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(controller.isEnabled, true);
+        assert.ok(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:")));
+        const created = window({ fullScreen: true });
+        harness.emitAdded(created);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter unmanaged"), 1);
+    });
+
+    it("guards keyboard window movement while the active window is fullscreen", () => {
+        const state = moveSetup("right");
+        setFullscreen(state.focused, true);
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(state.focused.tile, state.focusedTile);
+        assert.deepEqual(state.target.windows, []);
+        assert.deepEqual(
+            state.harness.logs
+                .slice(baseline)
+                .filter((entry) => entry.startsWith("plasma-auto-tiler:move-") || entry.includes("fullscreen:ignored")),
+            ["plasma-auto-tiler:move-invoked", "plasma-auto-tiler:fullscreen:ignored lifecycle while fullscreen"],
+        );
+    });
+
+    it("never swaps the active window onto a fullscreen occupant", () => {
+        const state = swapSetup("right");
+        setFullscreen(state.occupant, true);
+        const baseline = state.harness.logs.length;
+        invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+        assert.equal(
+            countEvent(state.harness.logs.slice(baseline), "fullscreen:ignored lifecycle while fullscreen"),
+            1,
+        );
+        assert.equal(state.active.tile, state.source);
+        assert.equal(state.occupant.tile, state.target);
+        assert.deepEqual(state.source.windows, [state.active]);
+        assert.deepEqual(state.target.windows, [state.occupant]);
+    });
+
+    it("guards preset application while the active window is fullscreen", () => {
+        const { harness, focused, target } = setup();
+        setFullscreen(focused, true);
+        const baseline = harness.logs.length;
+        invokeShortcut(harness, "plasma-auto-tiler-apply-columns");
+        assert.equal(focused.tile, target);
+        assert.deepEqual(
+            harness.logs
+                .slice(baseline)
+                .filter((entry) => entry.startsWith("plasma-auto-tiler:preset-") || entry.includes("fullscreen:ignored")),
+            [
+                "plasma-auto-tiler:preset-invoked:columns",
+                "plasma-auto-tiler:fullscreen:ignored lifecycle while fullscreen",
+            ],
+        );
+    });
+
+    it("guards keyboard insertion arming while the active window is fullscreen", () => {
+        const { harness, focused, target } = setup();
+        setFullscreen(focused, true);
+        const baseline = harness.logs.length;
+        invokeShortcut(harness, "plasma-auto-tiler-insert-right");
+        assert.equal(focused.tile, target);
+        assert.deepEqual(
+            harness.logs
+                .slice(baseline)
+                .filter((entry) => entry.startsWith("plasma-auto-tiler:keyboard-") || entry.includes("fullscreen:ignored")),
+            [
+                "plasma-auto-tiler:keyboard-invoked",
+                "plasma-auto-tiler:fullscreen:ignored lifecycle while fullscreen",
+            ],
+        );
+    });
+
+    it("guards detach while the active window is fullscreen", () => {
+        const { harness, focused, target } = setup();
+        setFullscreen(focused, true);
+        const baseline = harness.logs.length;
+        invokeShortcut(harness, "plasma-auto-tiler-detach");
+        assert.equal(focused.tile, target);
+        assert.deepEqual(
+            harness.logs
+                .slice(baseline)
+                .filter((entry) => entry.startsWith("plasma-auto-tiler:detach-") || entry.includes("fullscreen:ignored")),
+            [
+                "plasma-auto-tiler:detach-invoked",
+                "plasma-auto-tiler:fullscreen:ignored lifecycle while fullscreen",
+            ],
+        );
+    });
+
+    it("guards drag/drop and resize lifecycle while fullscreen without reflow", () => {
+        const { harness, controller, root, target, focused } = setup();
+        setFullscreen(focused, true);
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        focused.move = false;
+        focused.resize = true;
+        focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(harness.yields.length, 0);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("records an already-fullscreen existing window at startup without tiling, writing, reconstruction, or automatic placement", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const fullscreen = window({ fullScreen: true });
+        const target = tile();
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(fullscreen, writes);
+        target.manage = (value) => {
+            fullscreen.tile = target;
+            return value === fullscreen;
+        };
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = fullscreen;
+        harness.windows = [fullscreen];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(controller.isEnabled, true);
+        assert.equal(fullscreen.tile, null);
+        assert.deepEqual(target.windows, []);
+        assert.equal(writes.length, 0);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter unmanaged"), 1);
+        assert.equal(countEvent(harness.logs, "fullscreen:enter preserved"), 0);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+        assert.equal(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen"), 1);
+        const incoming = window();
+        const incomingWrites: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(incoming, incomingWrites);
+        harness.emitAdded(incoming);
+        assert.equal(incoming.tile, null);
+        assert.equal(incomingWrites.length, 0);
+        assert.equal(writes.length, 0);
+        assert.deepEqual(target.windows, []);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
+        fullscreen.move = true;
+        fullscreen.interactiveMoveResizeStarted.emit();
+        fullscreen.interactiveMoveResizeFinished.emit();
+        assert.equal(fullscreen.tile, null);
+        assert.equal(writes.length, 0);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        fullscreen.fullScreen = false;
+        fullscreen.fullScreenChanged.emit();
+        assert.equal(countEvent(harness.logs, "fullscreen:exit newly managed"), 1);
+        assert.equal(fullscreen.tile, target);
+        assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 1);
+    });
+
+    it("bails non-destructively on exit when the preserved leaf became occupied by another window", () => {
+        const { harness, root, target, focused } = setup();
+        setFullscreen(focused, true);
+        focused.tile = null;
+        target.windows = [];
+        const intruder = window({ tile: target });
+        target.windows = [intruder];
+        setFullscreen(focused, false);
+        assert.equal(focused.tile, null);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restore failed:leaf-occupied"), 1);
+        assert.equal(countEvent(harness.logs, "fullscreen:exit restored"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(intruder.tile, target);
+        assert.deepEqual(root.tiles, [target]);
     });
 });

@@ -1282,6 +1282,10 @@
       this.pending = new TransientState();
       this.drag = new TransientState();
       this.interactiveWindows = /* @__PURE__ */ new Map();
+      // Per-window fullscreen watch disconnects and enter/exit records. Both are
+      // bounded like the other identity sets so they cannot grow without limit.
+      this.fullscreenWatches = /* @__PURE__ */ new Map();
+      this.fullscreenWindows = /* @__PURE__ */ new Map();
       this.deferredEligibility = /* @__PURE__ */ new Map();
       this.decodedBoundaries = /* @__PURE__ */ new Set();
       this.onceDiagnostics = /* @__PURE__ */ new Set();
@@ -1555,6 +1559,10 @@
           this.diagnostic("keyboard-rejected:no-active-window");
           return;
         }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("keyboard-rejected:desktop-output-scope");
@@ -1683,6 +1691,10 @@
           this.diagnostic("move-rejected:no-active-window");
           return;
         }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("move-rejected:desktop-output-scope");
@@ -1765,6 +1777,10 @@
     // called.
     swapToOccupiedTarget(scope, active, source, target, direction) {
       this.diagnostic("move-swap-invoked");
+      if (active.fullScreen === true) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       if (target.leaf.isLayout || target.windows.length !== 1) {
         this.diagnostic("move-rejected:swap-occupancy-validity");
         return;
@@ -1772,6 +1788,10 @@
       const occupant = target.windows[0];
       if (occupant === void 0 || !windowInScope(occupant, scope)) {
         this.diagnostic("move-rejected:swap-occupant-ineligible");
+        return;
+      }
+      if (occupant.fullScreen === true) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
       if (!this.swapRevalidates(scope, active, occupant, source, target, direction, "before-first")) {
@@ -1932,6 +1952,10 @@
         const active = this.environment.activeWindow();
         if (active === null) {
           this.diagnostic("detach-rejected:no-active-window");
+          return;
+        }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
           return;
         }
         const scope = this.scopeForWindow(active);
@@ -2122,6 +2146,10 @@
           this.diagnostic("fill-rejected:no-active-window");
           return;
         }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("fill-rejected:desktop-output-scope");
@@ -2265,6 +2293,10 @@
           this.diagnostic("preset-rejected:no-active-window");
           return;
         }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("preset-rejected:desktop-output-scope");
@@ -2373,6 +2405,10 @@
     // never claim a reflow. `candidate` supplies a newly added eligible window
     // that may fill the first trailing leaf only when the overlay has capacity.
     runReflow(scope, candidate) {
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return { kind: "no-op" };
+      }
       const outcome = this.reflowSelectedOverlay(scope, candidate);
       switch (outcome.kind) {
         case "no-op":
@@ -2702,6 +2738,8 @@
           this.detachedWindows.delete(window);
           this.reflowAfterRemoval(window);
           this.dwindleMaybeRemove(window);
+          this.detachFullscreenWindow(window);
+          this.fullscreenWindows.delete(window);
         }
         this.settleOwedInvariants();
       }, (reason) => this.disabled(reason));
@@ -2710,6 +2748,11 @@
       this.gate.run(() => {
         this.onceDiagnostic("window-added-observed");
         this.attachInteractiveWindow(window);
+        this.attachFullscreenWindow(window);
+        if (isWindow(window) && window.fullScreen === true) {
+          this.enterFullscreen(window);
+          return;
+        }
         const pending = this.pending.current;
         if (pending === void 0) {
           const scope = this.scopeForWindow(window);
@@ -2807,6 +2850,10 @@
       let ok = 0;
       let failed2 = 0;
       for (const window of windows.value) {
+        this.attachFullscreenWindow(window);
+        if (isWindow(window) && window.fullScreen === true) {
+          this.enterFullscreen(window);
+        }
         const result = this.attachInteractiveWindow(window);
         if (result === null) {
           continue;
@@ -2860,6 +2907,156 @@
       this.interactiveWindows.delete(window);
       watch.disconnect();
     }
+    // ---- Fullscreen cover-and-restore passthrough ----
+    // Attach the documented `fullScreenChanged` notify signal for a managed
+    // normal window. Attachment is feature-detected through the environment
+    // seam exactly like the interactive signals: a missing binding is logged
+    // as failed but never fails startup. Bounded and deduplicated per window.
+    attachFullscreenWindow(window) {
+      if (this.fullscreenWatches.size >= MAX_SEQUENTIAL_LENGTH) {
+        return;
+      }
+      if (!isWindow(window) || this.fullscreenWatches.has(window)) {
+        return;
+      }
+      if (!window.normalWindow || !window.managed || window.appletPopup) {
+        return;
+      }
+      const watched = this.environment.watchFullscreen(window, () => this.handleFullscreenChanged(window));
+      this.fullscreenWatches.set(window, watched.disconnect);
+    }
+    detachFullscreenWindow(window) {
+      const disconnect = this.fullscreenWatches.get(window);
+      if (disconnect === void 0) {
+        return;
+      }
+      this.fullscreenWatches.delete(window);
+      disconnect();
+    }
+    handleFullscreenChanged(window) {
+      this.gate.run(() => {
+        if (window.fullScreen === true) {
+          this.enterFullscreen(window);
+        } else {
+          this.exitFullscreen(window);
+        }
+      }, (reason) => this.disabled(reason));
+    }
+    // Enter: preserve the exact tile for a managed tiled window without any
+    // mutation (cover is KWin-owned); a created/floating fullscreen window is
+    // recorded unmanaged. A window already fullscreen is not re-recorded. A
+    // live drag on the entering window is dropped so finish cannot complete a
+    // half-captured drop.
+    enterFullscreen(window) {
+      var _a;
+      if (this.fullscreenWindows.has(window)) {
+        return;
+      }
+      if (((_a = this.drag.current) == null ? void 0 : _a.window) === window) {
+        this.clearDrag();
+      }
+      const scope = this.scopeForWindow(window);
+      const preservedTile = window.tile;
+      if (preservedTile !== null && isTile(preservedTile) && scope !== null) {
+        this.fullscreenWindows.set(window, { scope, preservedTile, wasTiled: true });
+        this.diagnostic("fullscreen:enter preserved");
+        return;
+      }
+      this.fullscreenWindows.set(window, { scope, preservedTile: null, wasTiled: false });
+      this.diagnostic("fullscreen:enter unmanaged");
+    }
+    exitFullscreen(window) {
+      const record = this.fullscreenWindows.get(window);
+      if (record === void 0) {
+        return;
+      }
+      this.fullscreenWindows.delete(window);
+      if (record.wasTiled) {
+        this.restoreFullscreenSlot(window, record);
+      } else {
+        this.newlyManageAfterFullscreen(window);
+      }
+    }
+    // Restore the preserved slot through the safe `tile.manage(window)` attach
+    // API only. Every unsafe precondition is a distinct non-destructive bail:
+    // no reconstruction and no mutation when the scope changed, the assignment
+    // drifted, or the preserved tile is gone from the live topology. The
+    // preserved tile is never touched directly: it is re-resolved as the fresh
+    // entry tile of the live topology and that fresh handle is managed.
+    restoreFullscreenSlot(window, record) {
+      if (record.preservedTile === null || record.scope === null) {
+        this.diagnostic("fullscreen:exit restore failed:no-preserved-slot");
+        return;
+      }
+      const scope = this.scopeForWindow(window);
+      if (scope === null || !sameScope(scope.scope, record.scope.scope)) {
+        this.diagnostic("fullscreen:exit restore failed:scope-changed");
+        return;
+      }
+      if (window.tile === record.preservedTile) {
+        this.diagnostic("fullscreen:exit restored");
+        return;
+      }
+      if (window.tile !== null) {
+        this.diagnostic("fullscreen:exit restore failed:assignment-changed");
+        return;
+      }
+      const topology = this.topologyForScope(scope);
+      if (topology === null) {
+        this.diagnostic("fullscreen:exit restore failed:topology-unavailable");
+        return;
+      }
+      const preservedLeaf = topology.find((entry) => entry.decoded.tile === record.preservedTile);
+      if (preservedLeaf === void 0) {
+        this.diagnostic("fullscreen:exit restore failed:tile-missing");
+        return;
+      }
+      if (preservedLeaf.windows.some((occupant) => occupant !== window)) {
+        this.diagnostic("fullscreen:exit restore failed:leaf-occupied");
+        return;
+      }
+      if (!manageTile(preservedLeaf.decoded.tile, window)) {
+        this.diagnostic("fullscreen:exit restore failed:assignment-failed");
+        return;
+      }
+      this.diagnostic("fullscreen:exit restored");
+    }
+    // Exit from a created/floating fullscreen window: manage under the normal
+    // newly-eligible semantics. A persisted user float state (the explicit
+    // detach set) blocks re-management and leaves the window floating; there is
+    // no broader float feature implemented.
+    newlyManageAfterFullscreen(window) {
+      const scope = this.scopeForWindow(window);
+      if (scope === null || !windowInScope(window, scope)) {
+        this.diagnostic("fullscreen:exit restore failed:ineligible");
+        return;
+      }
+      if (this.detachedWindows.has(window)) {
+        this.diagnostic("fullscreen:exit restore failed:persisted-float");
+        return;
+      }
+      this.placeEligibleAdded(window, scope);
+      this.diagnostic("fullscreen:exit newly managed");
+    }
+    // Whether any fullscreen window belongs to this scope. While such a window
+    // is fullscreen the scope must not be reconstructed or structurally
+    // mutated: a preserved-tiled window's slot survives untouched until exit,
+    // and an untiled fullscreen window must never be tiled by a rebuild.
+    scopeHasFullscreen(scope) {
+      for (const [window, record] of this.fullscreenWindows) {
+        if (window.fullScreen !== true) {
+          continue;
+        }
+        const currentScope = this.scopeForWindow(window);
+        if (currentScope !== null && sameScope(currentScope.scope, scope.scope)) {
+          return true;
+        }
+        if (currentScope === null && record.scope !== null && sameScope(record.scope.scope, scope.scope)) {
+          return true;
+        }
+      }
+      return false;
+    }
     handleInteractiveInvalidated(window) {
       this.gate.run(() => {
         var _a;
@@ -2874,6 +3071,10 @@
     handleInteractiveStarted(window) {
       this.diagnostic("drag-started");
       this.gate.run(() => {
+        if (window.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const watch = this.interactiveWindows.get(window);
         if (watch !== void 0) {
           watch.kind = window.resize ? "resize" : window.move ? "move" : "unknown";
@@ -2938,6 +3139,10 @@
     }
     handleInteractiveFinished(window) {
       this.gate.run(() => {
+        if (window.fullScreen === true) {
+          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          return;
+        }
         const watch = this.interactiveWindows.get(window);
         const wasResize = (watch == null ? void 0 : watch.kind) === "resize";
         if (watch !== void 0) {
@@ -3103,6 +3308,10 @@
     }
     completeDrag(drag) {
       this.diagnostic("drag-finished");
+      if (drag.window.fullScreen === true) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       const scope = this.scopeForWindow(drag.window);
       if (scope === null) {
         this.dragSnapshotBefore(drag, null, "scope-unavailable", null);
@@ -3408,6 +3617,10 @@
       if (activeScope === null || scope === null || !sameScope(activeScope.scope, pending.scope.scope) || !sameScope(scope.scope, pending.scope.scope) || !windowInScope(active, activeScope) || !windowInScope(window, scope) || !windowInScope(pending.targetWindow, scope) || active.tile !== pending.targetTile) {
         return;
       }
+      if (window.fullScreen === true || active.fullScreen === true || pending.targetWindow.fullScreen === true) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       const topology = this.topologyForScope(scope);
       if (topology === null) {
         return;
@@ -3657,6 +3870,10 @@
     // stale or duplicate callback inert.
     startReconstruction(scope) {
       var _a;
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       if (this.trackedDragLive()) {
         this.markOwedInvariant(scope);
         return;
@@ -3769,6 +3986,11 @@
     settleScopeRebuild(scope, pending) {
       if (this.isInert(scope) || !this.isOwned(scope)) {
         this.dropPendingRebuild(scope, pending);
+        return;
+      }
+      if (this.scopeHasFullscreen(scope)) {
+        this.dropPendingRebuild(scope, pending);
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
       if (this.trackedDragLive()) {
@@ -3938,6 +4160,10 @@
       if (this.readSelectedOverlay(scope) !== null) {
         return;
       }
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       if (this.trackedDragLive()) {
         this.markOwedInvariant(scope);
         return;
@@ -4016,6 +4242,10 @@
     // unmanaged. Adoption goes through `ensureManaged` (dwindle match or the
     // two-phase reconstruction), never a direct remove or split.
     placeEligibleAdded(window, scope) {
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       if (!this.isOwned(scope) && !this.isInert(scope)) {
         this.ensureManaged(scope);
       }
@@ -4059,6 +4289,10 @@
     dwindleInsert(window, scope) {
       var _a;
       if (((_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) !== void 0) {
+        return;
+      }
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
       const topology = this.topologyForScope(scope);
@@ -4184,6 +4418,10 @@
       if (this.readSelectedOverlay(scope) !== null) {
         return;
       }
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
       if (window.tile === null || !isTile(window.tile)) {
         return;
       }
@@ -4248,6 +4486,10 @@
         return;
       }
       if (this.readSelectedOverlay(scope) !== null) {
+        return;
+      }
+      if (this.scopeHasFullscreen(scope)) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
         return;
       }
       const topology = this.topologyForScope(scope);
@@ -4477,6 +4719,34 @@
         ok,
         failed: failed2
       };
+    },
+    watchFullscreen: (window, changed) => {
+      const surface = window;
+      let value;
+      try {
+        value = surface["fullScreenChanged"];
+        value.connect(changed);
+        console.log("plasma-auto-tiler:fullscreen-attach-ok:fullScreenChanged");
+        return {
+          disconnect: () => {
+            try {
+              surface["fullScreenChanged"].disconnect(
+                changed
+              );
+            } catch (error) {
+              void error;
+            }
+          },
+          ok: 1,
+          failed: 0
+        };
+      } catch (error) {
+        console.log(
+          `plasma-auto-tiler:fullscreen-attach-failed:fullScreenChanged:${String(error)} (observed typeof ${typeof value})`
+        );
+        return { disconnect: () => {
+        }, ok: 0, failed: 1 };
+      }
     },
     onPendingTargetChanged: (window, handler) => {
       const surface = window;

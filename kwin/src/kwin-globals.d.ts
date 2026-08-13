@@ -118,6 +118,11 @@ interface Window {
     // and returns it to floating.
     tile: Tile | null;
     readonly frameGeometry: Rect;
+    // Read-write in the official KWin scripting API (KWin::Window -> Read-write
+    // Properties -> `bool fullScreen`; https://develop.kde.org/docs/plasma/kwin/api/).
+    // Declared read-only here: the controller observes fullscreen but never
+    // writes it (cover-and-restore is KWin-owned).
+    readonly fullScreen: boolean;
     // Documented Window property (KWin scripting API): the window's caption
     // (title) string. Read for snapshot observability only.
     readonly caption: string;
@@ -135,6 +140,10 @@ interface Window {
     readonly interactiveMoveResizeStepped: Signal1<Rect>;
     readonly interactiveMoveResizeFinished: Signal;
     readonly moveResizedChanged: Signal;
+    // Documented notify signal for the `fullScreen` property (KWin scripting
+    // API -> KWin::Window -> Signals -> `fullScreenChanged()`). Attached via the
+    // feature-detecting environment seam, never assumed present.
+    readonly fullScreenChanged: Signal;
 }
 
 // src/tiles/tile.h: tile tree (tiles/windows), geometry, layout, and
