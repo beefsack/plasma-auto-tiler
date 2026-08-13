@@ -117,7 +117,14 @@ interface Window {
     // Assigning null detaches the window from its requested tile (unmanage)
     // and returns it to floating.
     tile: Tile | null;
-    readonly frameGeometry: Rect;
+    // Read-write: official KWin scripting API -> KWin::Window -> Read-write
+    // Properties -> `QRectF frameGeometry`. Written only through the guarded
+    // boundary seam for float geometry.
+    frameGeometry: Rect;
+    // Read-write: official KWin scripting API -> KWin::Window -> Read-write
+    // Properties -> `bool onAllDesktops`. Written only through the guarded
+    // boundary seam for sticky floating.
+    onAllDesktops: boolean;
     // Read-write in the official KWin scripting API (KWin::Window -> Read-write
     // Properties -> `bool fullScreen`; https://develop.kde.org/docs/plasma/kwin/api/).
     // Declared read-only here: the controller observes fullscreen but never

@@ -59,7 +59,7 @@ bash scripts/dogfood-install.sh status
 
 ### Shortcut catalog
 
-The controller registers these 27 shortcuts (identifiers and sequences as
+The controller registers these 29 shortcuts (identifiers and sequences as
 authored in `kwin/src/controller.ts`):
 
 | Identifier | Shortcut |
@@ -86,6 +86,8 @@ authored in `kwin/src/controller.ts`):
 | plasma-auto-tiler-move-right-arrow | Meta+Shift+Right |
 | plasma-auto-tiler-detach | Meta+Shift+Space |
 | plasma-auto-tiler-attach | Meta+Alt+Shift+Space |
+| plasma-auto-tiler-float-toggle | Meta+G |
+| plasma-auto-tiler-sticky-toggle | Meta+Shift+G |
 | plasma-auto-tiler-fill-scope | Meta+Alt+Return |
 | plasma-auto-tiler-apply-columns | Meta+Alt+1 |
 | plasma-auto-tiler-apply-rows | Meta+Alt+2 |
@@ -99,6 +101,16 @@ managed scope: on start it takes over the current scope and keeps it owned for
 the session unless it becomes inert. This is proven by static tests and
 nested-compositor probing only; live-host validation was not performed, so
 treat live session behavior as unverified.
+
+`Meta+G` floats the active window at a centered 60% x 60% of its current output
+work area (remembered per window for the session) or tiles it back;
+`Meta+Shift+G` pins a floating window across all workspaces (sticky implies
+floating, and disabling sticky leaves it floating). Floating windows are
+excluded from automatic placement, the tile-tree bijection, drag retiling, and
+reconstruction, and their vacated tile leaf is retained rather than collapsed.
+At startup, windows that are already on all desktops are treated as session-local
+sticky floating windows; this heuristic cannot distinguish a user-pinned window
+from an application-requested one, so it applies only within the session.
 
 ### Disable
 

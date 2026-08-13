@@ -4,7 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const EXPECTED_SHORTCUT_COUNT = 27;
+const EXPECTED_SHORTCUT_COUNT = 29;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
@@ -124,6 +124,9 @@ describe("shipped artifact smoke execution", () => {
         assert.equal(stub.counts.workspaceConnects, 4);
         assert.equal(stub.counts.windowConnects, 6);
         assert.equal(stub.registeredShortcuts.length, EXPECTED_SHORTCUT_COUNT);
+        const names = stub.registeredShortcuts.map(([name]) => name);
+        assert.ok(names.includes("plasma-auto-tiler-float-toggle"));
+        assert.ok(names.includes("plasma-auto-tiler-sticky-toggle"));
         assert.ok(stub.diagnostics.includes(SHORTCUT_REGISTERED_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(STARTUP_HANDLERS_READY_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(DRAG_ATTACH_SUMMARY_DIAGNOSTIC));

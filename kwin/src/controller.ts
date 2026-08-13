@@ -16,7 +16,10 @@ import {
     removeCustomTile,
     sameScope,
     setTileRelativeGeometry,
+    setWindowOnAllDesktops,
     splitCustomTile,
+    unmanageTile,
+    writeWindowFrameGeometry,
     type CustomTileCapability,
     type OutputCapability,
     type RectCapability,
@@ -66,6 +69,9 @@ const MINIMUM_TILE_FRACTION = 0.15;
 // WorkArea=5, FullArea=6, ScreenArea=7. WorkArea is the per-output working area
 // (screen minus panel struts), the reference extent of the tile minimum size.
 const WORK_AREA_CLIENT_AREA_OPTION = 5;
+// Default float geometry is 60% x 60% of the current output work area,
+// centered within it (roadmap floating-windows default geometry).
+const FLOAT_WORK_AREA_FRACTION = 0.6;
 // A newly-mapped window's `desktops` value can still be settling at the
 // exact `windowAdded` instant (unit-05/attempt-16 live evidence). One short,
 // bounded re-evaluation gives it a chance to settle before being treated as
@@ -738,6 +744,21 @@ export class TileController {
     // null) are excluded from the owned population and the dwindle rebuild.
     // Bounded like removedOccupants so it cannot grow without limit.
     private readonly detachedWindows = new Set<WindowCapability>();
+    // Session-local floating state. A floating window left its tile through
+    // `tile.unmanage(window)` with its vacated leaf retained; it is excluded
+    // from automatic placement, bijection, drag, and reconstruction window-set
+    // comparisons. `floatScopes` records the exact scope where each floating
+    // window's preserved leaf lives so invariant checks can tolerate the
+    // vacated leaves. Sticky windows are always also floating. Bounded like the
+    // other identity sets.
+    private readonly floatingWindows = new Set<WindowCapability>();
+    private readonly floatScopes = new Map<WindowCapability, Scope>();
+    // Session-local sticky state: pinned across all workspaces, floating only.
+    // A strict subset of `floatingWindows`; sticky implies floating.
+    private readonly stickyWindows = new Set<WindowCapability>();
+    // Last floated geometry per window for the session, restored on re-float
+    // and across sticky toggles and a fullscreen round trip.
+    private readonly floatGeometries = new Map<WindowCapability, RectCapability>();
     // Scopes whose dwindle invariant check was deferred while a live drag was
     // in progress. Each scope owes exactly one later check, run once the
     // tracked drag window is no longer live-moving/resizing.
@@ -811,6 +832,7 @@ export class TileController {
             this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
             this.environment.onScreensChanged(() => this.handleScopeChange());
             this.environment.onCurrentDesktopChanged(() => this.handleScopeChange());
+            this.adoptStartupFloatingWindows();
             this.attachExistingInteractiveWindows(true);
             const insertionRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-insert-right",
@@ -944,6 +966,18 @@ export class TileController {
                 "Meta+Alt+Shift+Space",
                 () => this.attachActiveWindow(),
             );
+            const floatRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-float-toggle",
+                "Float or tile active window",
+                "Meta+G",
+                () => this.floatActiveWindow(),
+            );
+            const stickyRegistered = this.environment.registerShortcut(
+                "plasma-auto-tiler-sticky-toggle",
+                "Toggle sticky floating on all desktops",
+                "Meta+Shift+G",
+                () => this.stickyActiveWindow(),
+            );
             const fillScopeRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-fill-scope",
                 "Fill available tiles with windows",
@@ -997,6 +1031,8 @@ export class TileController {
                 !moveRightArrowRegistered ||
                 !detachRegistered ||
                 !attachRegistered ||
+                !floatRegistered ||
+                !stickyRegistered ||
                 !fillScopeRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
@@ -1658,6 +1694,296 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
+    // Shared active-window guard for the float/sticky actions: every rejection
+    // is an explicit reason log, and fullscreen windows are ignored through the
+    // established fullscreen diagnostic. Returns the re-validated active window
+    // and its scope, or null after emitting exactly one rejection reason.
+    private activeActionGuard(action: string): { readonly active: WindowCapability; readonly scope: CurrentScope } | null {
+        const active = this.environment.activeWindow();
+        if (active === null) {
+            this.diagnostic(`${action}-rejected:no-active-window`);
+            return null;
+        }
+        if (isWindow(active) && active.fullScreen === true) {
+            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+            return null;
+        }
+        if (!isWindow(active)) {
+            this.diagnostic(`${action}-rejected:not-a-window`);
+            return null;
+        }
+        if (!active.normalWindow) {
+            this.diagnostic(`${action}-rejected:not-normal-window`);
+            return null;
+        }
+        if (!active.managed) {
+            this.diagnostic(`${action}-rejected:not-managed`);
+            return null;
+        }
+        if (!active.resizeable) {
+            this.diagnostic(`${action}-rejected:not-resizeable`);
+            return null;
+        }
+        if (active.appletPopup) {
+            this.diagnostic(`${action}-rejected:applet-popup`);
+            return null;
+        }
+        const scope = this.scopeForWindow(active);
+        if (scope === null) {
+            this.diagnostic(`${action}-rejected:desktop-output-scope`);
+            return null;
+        }
+        return { active, scope };
+    }
+
+    // Meta+G float/tile toggle. Floating leaves the tile tree intact: the
+    // vacated leaf is retained (unmanage never collapses), the window leaves
+    // the placement population, and its centered 60% work-area geometry (or the
+    // session-remembered one, bounded to the work area) is written. Tiling back
+    // uses the established `tile.manage()` adoption into the first available
+    // empty leaf; capacity (no available leaf) and floor (assignment) failures
+    // leave it floating with the exact reason logged. A sticky window being
+    // tiled first clears its all-desktop pin because sticky implies floating.
+    floatActiveWindow(): void {
+        this.gate.run(() => {
+            this.diagnostic("float-invoked");
+            const guard = this.activeActionGuard("float");
+            if (guard === null) {
+                return;
+            }
+            if (guard.active.tile !== null) {
+                if (!isCustomTile(guard.active.tile) || guard.active.tile.isLayout) {
+                    this.diagnostic("float-rejected:active-tile-association");
+                    return;
+                }
+                this.floatTiledActive(guard.scope, guard.active);
+                return;
+            }
+            this.tileFloatingActive(guard.scope, guard.active);
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Float an already-tiled active window. Re-derives active identity, scope,
+    // and the exact tile association immediately before the single unmanage
+    // write, then writes the float geometry. No structural call is ever made.
+    private floatTiledActive(scope: CurrentScope, active: WindowCapability): void {
+        const originTile = active.tile;
+        if (originTile === null || !isCustomTile(originTile) || originTile.isLayout) {
+            this.diagnostic("float-rejected:active-tile-association");
+            return;
+        }
+        if (!this.floatRevalidates(scope, active, originTile)) {
+            this.diagnostic("float-rejected:assignment-stale");
+            return;
+        }
+        let unmanaged = false;
+        try {
+            unmanaged = unmanageTile(originTile, active);
+        } catch (error) {
+            void error;
+            this.diagnostic("float-rejected:assignment-failed");
+            return;
+        }
+        if (!unmanaged) {
+            this.diagnostic("float-rejected:assignment-failed");
+            return;
+        }
+        if (active.tile !== null) {
+            this.diagnostic("float-failed:postcondition");
+            return;
+        }
+        this.floatingWindows.add(active);
+        this.floatScopes.set(active, scope.scope);
+        if (!this.writeFloatGeometry(active, scope)) {
+            this.diagnostic("float-geometry-failed");
+        }
+        this.diagnostic("float-completed");
+    }
+
+    private floatRevalidates(scope: CurrentScope, active: WindowCapability, originTile: TileCapability): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
+            return false;
+        }
+        if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshOrigin = operationLeafForTile(topology, originTile);
+        return freshOrigin !== null && windowIndex(freshOrigin.windows, active) >= 0;
+    }
+
+    // Tile a floating active window through the established safe adoption
+    // `tile.manage()` into the deterministic first available empty non-layout
+    // leaf. Capacity and floor failures stay floating with the exact reason.
+    private tileFloatingActive(scope: CurrentScope, active: WindowCapability): void {
+        if (this.isSticky(active)) {
+            if (!this.clearSticky(active)) {
+                this.diagnostic("tile-failed:sticky-clear-failed");
+                return;
+            }
+            this.diagnostic("sticky-disabled");
+        }
+        const topology = this.topologyForScope(scope, (reason) => {
+            this.diagnostic(`tile-failed:${reason}`);
+        });
+        if (topology === null) {
+            return;
+        }
+        const target = this.firstEmptyLeaf(topology);
+        if (target === null) {
+            this.diagnostic("tile-failed:no-available-leaf");
+            return;
+        }
+        if (!this.tileFloatRevalidates(scope, active, target)) {
+            this.diagnostic("tile-failed:assignment-stale");
+            return;
+        }
+        let managed = false;
+        try {
+            managed = manageTile(target.decoded.tile, active);
+        } catch (error) {
+            void error;
+            this.diagnostic("tile-failed:assignment-failed");
+            return;
+        }
+        if (!managed) {
+            this.diagnostic("tile-failed:assignment-failed");
+            return;
+        }
+        this.recordFloatGeometryOnTile(active);
+        this.floatingWindows.delete(active);
+        this.floatScopes.delete(active);
+        this.detachedWindows.delete(active);
+        this.diagnostic("tile-completed");
+    }
+
+    private tileFloatRevalidates(
+        scope: CurrentScope,
+        active: WindowCapability,
+        target: OperationLeaf,
+    ): boolean {
+        if (this.environment.activeWindow() !== active) {
+            return false;
+        }
+        const freshScope = this.scopeForWindow(active);
+        if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
+            return false;
+        }
+        if (active.tile !== null) {
+            return false;
+        }
+        const topology = this.topologyForScope(freshScope);
+        if (topology === null) {
+            return false;
+        }
+        const freshTarget = operationLeafForTile(topology, target.decoded.tile);
+        return (
+            freshTarget !== null &&
+            !freshTarget.leaf.isLayout &&
+            isCustomTile(freshTarget.decoded.tile) &&
+            freshTarget.windows.length === 0
+        );
+    }
+
+    // Remember the live frame geometry at the moment a floating window tiles,
+    // so a user resize while floating is the geometry restored on the next
+    // float. Read-only observation; a failed or invalid read keeps the prior
+    // record.
+    private recordFloatGeometryOnTile(window: WindowCapability): void {
+        try {
+            const geometry = window.frameGeometry;
+            if (isRect(geometry) && positiveGeometry(geometry)) {
+                this.floatGeometries.set(window, geometry);
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private clearSticky(window: WindowCapability): boolean {
+        let cleared = false;
+        try {
+            cleared = setWindowOnAllDesktops(window, false);
+        } catch (error) {
+            void error;
+        }
+        if (!cleared) {
+            return false;
+        }
+        this.stickyWindows.delete(window);
+        return true;
+    }
+
+    private pinSticky(window: WindowCapability): boolean {
+        let pinned = false;
+        try {
+            pinned = setWindowOnAllDesktops(window, true);
+        } catch (error) {
+            void error;
+        }
+        if (!pinned) {
+            return false;
+        }
+        this.stickyWindows.add(window);
+        return true;
+    }
+
+    // Meta+Shift+G sticky toggle. Sticky implies floating: enabling on a tiled
+    // window floats it first (unmanage + float geometry) then pins it across
+    // all desktops via the documented writable `onAllDesktops`. Disabling
+    // clears the pin but the window remains floating. Never touches keepAbove
+    // or any equivalent.
+    stickyActiveWindow(): void {
+        this.gate.run(() => {
+            this.diagnostic("sticky-invoked");
+            const guard = this.activeActionGuard("sticky");
+            if (guard === null) {
+                return;
+            }
+            const { active, scope } = guard;
+            if (this.isSticky(active)) {
+                if (!this.clearSticky(active)) {
+                    this.diagnostic("sticky-failed:on-all-desktops-write");
+                    return;
+                }
+                this.diagnostic("sticky-disabled");
+                return;
+            }
+            if (!this.isFloating(active)) {
+                if (active.tile !== null) {
+                    if (!isCustomTile(active.tile) || active.tile.isLayout) {
+                        this.diagnostic("sticky-rejected:active-tile-association");
+                        return;
+                    }
+                    this.floatTiledActive(scope, active);
+                    if (!this.isFloating(active)) {
+                        return;
+                    }
+                } else {
+                    if (!this.writeFloatGeometry(active, scope)) {
+                        this.diagnostic("sticky-rejected:float-geometry-failed");
+                        return;
+                    }
+                    this.floatingWindows.add(active);
+                    this.floatScopes.set(active, scope.scope);
+                    this.diagnostic("float-completed");
+                }
+            }
+            if (!this.pinSticky(active)) {
+                this.diagnostic("sticky-failed:on-all-desktops-write");
+                return;
+            }
+            this.diagnostic("sticky-enabled");
+        }, (reason) => this.disabled(reason));
+    }
+
     // Deterministic first available empty non-layout leaf in the exact decoded
     // traversal order. Layout and occupied leaves are skipped; valid explicitly
     // selected overlay leaves are ordinary authored tree leaves and participate
@@ -1840,7 +2166,11 @@ export class TileController {
         this.decodedBoundary("workspace-window-list");
         const candidates: WindowCapability[] = [];
         for (const window of windows.value) {
-            if (windowInScope(window, scope) && window.tile === null) {
+            if (
+                windowInScope(window, scope) &&
+                window.tile === null &&
+                !this.isFloating(window)
+            ) {
                 candidates.push(window);
             }
         }
@@ -2448,6 +2778,13 @@ export class TileController {
                 this.detachInteractiveWindow(window);
                 this.cancelDeferredEligibility(window);
                 this.detachedWindows.delete(window);
+                // Floating close cleanup only drops session state; it never
+                // removes or collapses a tile (the floating window left its
+                // leaf through unmanage and owns no tile of its own).
+                this.floatingWindows.delete(window);
+                this.floatScopes.delete(window);
+                this.stickyWindows.delete(window);
+                this.floatGeometries.delete(window);
                 this.reflowAfterRemoval(window);
                 this.dwindleMaybeRemove(window);
                 // The fullscreen record stays alive through both removal paths:
@@ -2566,6 +2903,42 @@ export class TileController {
             return "applet-popup";
         }
         return "desktop-scope-mismatch";
+    }
+
+    // Startup adoption of already-all-desktops windows as session-local sticky
+    // floating windows. The session-only heuristic (a window pinned across all
+    // desktops before the controller started, either by KWin's own pinning or a
+    // previous session) is recorded as sticky floating so it is never re-tiled
+    // by placement or reconstruction. This is narrowly appropriate: no mutation
+    // happens here (no geometry write, no pin change), and ordinary startup
+    // windows use normal placement.
+    private adoptStartupFloatingWindows(): void {
+        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+            return;
+        }
+        this.decodedBoundary("workspace-window-list");
+        for (const window of windows.value) {
+            if (window.onAllDesktops !== true) {
+                continue;
+            }
+            if (
+                !window.normalWindow ||
+                !window.managed ||
+                !window.resizeable ||
+                window.appletPopup
+            ) {
+                continue;
+            }
+            const scope = this.scopeForWindow(window);
+            if (scope === null) {
+                continue;
+            }
+            this.floatingWindows.add(window);
+            this.stickyWindows.add(window);
+            this.floatScopes.set(window, scope.scope);
+            this.onceDiagnostic("startup-sticky-float");
+        }
     }
 
     private attachExistingInteractiveWindows(emitSummary: boolean): void {
@@ -2766,6 +3139,19 @@ export class TileController {
     // detach set) blocks re-management and leaves the window floating; there is
     // no broader float feature implemented.
     private newlyManageAfterFullscreen(window: WindowCapability): void {
+        // A floating window (including sticky) must survive a fullscreen round
+        // trip as floating: never re-place it, and restore its remembered float
+        // geometry so the cover-and-restore seam does not leave it at a tiled
+        // size. The fullscreen record for a floating window was `wasTiled:
+        // false`, so this branch runs before any placement.
+        if (this.isFloating(window)) {
+            const scope = this.scopeForWindow(window);
+            if (scope !== null) {
+                this.writeFloatGeometry(window, scope);
+            }
+            this.diagnostic("fullscreen:exit restored float");
+            return;
+        }
         const scope = this.scopeForWindow(window);
         if (scope === null || !windowInScope(window, scope)) {
             this.diagnostic("fullscreen:exit restore failed:ineligible");
@@ -2837,6 +3223,13 @@ export class TileController {
             }
             if (!window.move) {
                 this.diagnostic("drag-origin-capture-failed:not-move");
+                return;
+            }
+            // Floating and sticky windows are excluded from drag/drop retile:
+            // a move on one is ignored with an explicit reason before any scope
+            // or tile capture.
+            if (this.isFloating(window)) {
+                this.diagnostic("drag-origin-capture-failed:floating");
                 return;
             }
             const scope = this.scopeForWindow(window);
@@ -3421,6 +3814,98 @@ export class TileController {
         return makeOperationLeaves(leaves);
     }
 
+    // ---- Floating and sticky window state ----
+
+    private isFloating(window: WindowCapability): boolean {
+        return this.floatingWindows.has(window);
+    }
+
+    private isSticky(window: WindowCapability): boolean {
+        return this.stickyWindows.has(window);
+    }
+
+    // Floating windows whose preserved leaf lives in this exact scope. Sticky
+    // windows keep their float-scope record at the scope where they were
+    // floated, so this still counts them after they were pinned across
+    // desktops. The dwindle bijection and invariant checks use this to tolerate
+    // the vacated preserved leaves instead of collapsing them.
+    private scopeFloatingCount(scope: CurrentScope): number {
+        let count = 0;
+        for (const window of this.floatingWindows) {
+            const record = this.floatScopes.get(window);
+            if (record !== undefined && sameScope(record, scope.scope)) {
+                count += 1;
+            }
+        }
+        return count;
+    }
+
+    private scopeHasFloating(scope: CurrentScope): boolean {
+        return this.scopeFloatingCount(scope) > 0;
+    }
+
+    // Per-output working area for the exact scope through the documented
+    // workspace `clientArea(WorkArea, output, desktop)` seam (source-pinned
+    // enum WorkArea = 5). Returns null when the read throws or the area is not
+    // a positive finite rect, so no unvalidated geometry is ever derived.
+    private workAreaForScope(scope: CurrentScope): RectCapability | null {
+        let value: unknown;
+        try {
+            value = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+        } catch (error) {
+            void error;
+            return null;
+        }
+        if (!isRect(value) || value.width <= 0 || value.height <= 0) {
+            return null;
+        }
+        return value;
+    }
+
+    // Centered 60% x 60% of the working area, floored to integer pixels and
+    // strictly inside it (60% of a positive rect always fits).
+    private centeredFloatGeometry(workArea: RectCapability): RectCapability {
+        const width = Math.floor(workArea.width * FLOAT_WORK_AREA_FRACTION);
+        const height = Math.floor(workArea.height * FLOAT_WORK_AREA_FRACTION);
+        return {
+            x: Math.floor(workArea.x + (workArea.width - width) / 2),
+            y: Math.floor(workArea.y + (workArea.height - height) / 2),
+            width,
+            height,
+        };
+    }
+
+    // Clamp a remembered float geometry so the window stays fully inside the
+    // current work area (bounded to it) when the output geometry changed.
+    private boundFloatGeometry(geometry: RectCapability, workArea: RectCapability): RectCapability {
+        const width = Math.min(geometry.width, workArea.width);
+        const height = Math.min(geometry.height, workArea.height);
+        const maxX = workArea.x + workArea.width - width;
+        const maxY = workArea.y + workArea.height - height;
+        const x = Math.min(Math.max(geometry.x, workArea.x), maxX);
+        const y = Math.min(Math.max(geometry.y, workArea.y), maxY);
+        return { x, y, width, height };
+    }
+
+    // Write the float geometry: the session-remembered geometry bounded to the
+    // current work area, or the centered 60% default when none is remembered.
+    // The written geometry is recorded for the session so re-float, sticky
+    // toggles, and the fullscreen round trip restore it. Returns whether the
+    // guarded write reported success; the record is kept even on a failed write
+    // so the remembered size survives the fullscreen seam.
+    private writeFloatGeometry(window: WindowCapability, scope: CurrentScope): boolean {
+        const workArea = this.workAreaForScope(scope);
+        if (workArea === null) {
+            return false;
+        }
+        const remembered = this.floatGeometries.get(window);
+        const geometry =
+            remembered !== undefined ? this.boundFloatGeometry(remembered, workArea) : this.centeredFloatGeometry(workArea);
+        const written = writeWindowFrameGeometry(window, geometry);
+        this.floatGeometries.set(window, geometry);
+        return written;
+    }
+
     private completeKeyboardInsertion(window: unknown, pending: PendingKeyboard): void {
         const active = this.environment.activeWindow();
         const activeScope = this.scopeForWindow(active);
@@ -3634,6 +4119,13 @@ export class TileController {
             return;
         }
         this.setManaged(scope);
+        if (this.scopeHasFloating(scope)) {
+            // A scope with floating windows preserves its tree as the user
+            // left it: the vacated leaves must never be collapsed, so the
+            // tree is adopted unchanged rather than reconstructed.
+            this.diagnostic("ownership-taken");
+            return;
+        }
         if (this.dwindleMatches(scope, population)) {
             this.diagnostic("ownership-taken");
             return;
@@ -3643,8 +4135,10 @@ export class TileController {
 
     // The owned population of a scope: eligible in-scope windows from the
     // proven window collection, excluding windows explicitly detached by the
-    // detach action. Floating non-detached windows count because the dwindle
-    // takeover owns and tiles every eligible window in the managed scope.
+    // detach action and floating/sticky windows. Floating windows are never
+    // part of the placement population, the tree bijection, or the
+    // reconstruction window-set comparisons; their vacated preserved leaves are
+    // tolerated by the invariant checks through `scopeFloatingCount`.
     private ownedPopulation(scope: CurrentScope): readonly WindowCapability[] {
         const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
         if (!windows.ok) {
@@ -3653,7 +4147,11 @@ export class TileController {
         this.decodedBoundary("workspace-window-list");
         const owned: WindowCapability[] = [];
         for (const window of windows.value) {
-            if (windowInScope(window, scope) && !this.detachedWindows.has(window)) {
+            if (
+                windowInScope(window, scope) &&
+                !this.detachedWindows.has(window) &&
+                !this.isFloating(window)
+            ) {
                 owned.push(window);
             }
         }
@@ -4029,6 +4527,13 @@ export class TileController {
         if (population.length === 0) {
             return;
         }
+        if (this.scopeHasFloating(scope)) {
+            // Floating windows vacated preserved leaves that must never be
+            // collapsed: the mismatch they cause is by design, so the tree is
+            // accepted as the user left it instead of being reconstructed.
+            this.diagnostic("ownership-invariant:float-preserved");
+            return;
+        }
         const root = this.environment.rootTile(scope.output, scope.desktop);
         if (!isCustomTile(root) || !dwindleBijectionTreeMatches(scope, root, population)) {
             this.diagnostic("ownership-invariant:bijection-failed");
@@ -4110,6 +4615,9 @@ export class TileController {
     // unmanaged. Adoption goes through `ensureManaged` (dwindle match or the
     // two-phase reconstruction), never a direct remove or split.
     private placeEligibleAdded(window: WindowCapability, scope: CurrentScope): void {
+        if (this.isFloating(window)) {
+            return;
+        }
         if (this.scopeHasFullscreen(scope)) {
             this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
             return;

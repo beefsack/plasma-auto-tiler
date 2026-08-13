@@ -166,6 +166,11 @@ export interface WindowCapability {
     readonly output: OutputCapability | null;
     readonly tile: object | null;
     readonly frameGeometry: RectCapability;
+    // Documented read-write Window `onAllDesktops` (official KWin scripting API,
+    // KWin::Window -> Read-write Properties -> `bool onAllDesktops`). Optional
+    // here: a binding that lacks the property must not fail the whole window
+    // capability check. Written only through the guarded boundary seam.
+    readonly onAllDesktops?: boolean;
     // Documented Window `fullScreen` (read-write Q_PROPERTY in the KWin
     // scripting API). Read-only and optional here: the controller observes but
     // never writes fullscreen state (cover-and-restore is KWin-owned), and a
@@ -265,6 +270,52 @@ export function detachWindowFromTile(window: WindowCapability): boolean {
 export function assignWindowToTile(window: WindowCapability, tile: TileCapability): boolean {
     try {
         return Reflect.set(window, "tile", tile) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
+// Float's unmanage half, mirroring the roadmap implementation note: the tile's
+// own `unmanage(window)` removes the window's request and leaves the vacated
+// leaf retained (never collapsed). Distinct from the legacy detach seam only
+// in which operation owns the window's membership; both never remove a tile.
+export function unmanageTile(tile: TileCapability, window: WindowCapability): boolean {
+    const method = read(tile, "unmanage");
+    if (!method.ok || !isMethod(method.value)) {
+        return false;
+    }
+    try {
+        return Reflect.apply(method.value, tile, [window]) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
+// Documented read-write `Window.frameGeometry` (official KWin scripting API,
+// KWin::Window -> Read-write Properties -> `QRectF frameGeometry`). Writes are
+// guarded and validated: any throw or false set is a failure, never an
+// unvalidated geometry write.
+export function writeWindowFrameGeometry(window: WindowCapability, geometry: RectCapability): boolean {
+    if (!isRect(geometry)) {
+        return false;
+    }
+    try {
+        return Reflect.set(window, "frameGeometry", geometry) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
+// Documented read-write `Window.onAllDesktops` (official KWin scripting API,
+// KWin::Window -> Read-write Properties -> `bool onAllDesktops`). Sticky
+// floating writes it through this guarded seam; true pins the window across
+// all desktops, false restores single-desktop membership.
+export function setWindowOnAllDesktops(window: WindowCapability, value: boolean): boolean {
+    try {
+        return Reflect.set(window, "onAllDesktops", value) === true;
     } catch (error) {
         void error;
         return false;
