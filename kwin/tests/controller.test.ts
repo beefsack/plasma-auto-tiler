@@ -6368,7 +6368,7 @@ describe("TileController automatic dwindle ownership", () => {
 
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
         assert.equal(countEvent(harness.logs, "ownership-split"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(splits, 0);
         assert.equal(removes, 0);
         assert.equal(first.tile, left);
@@ -6414,7 +6414,7 @@ describe("TileController automatic dwindle ownership", () => {
         // structural call and no timer.
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 0);
         assert.equal(splits, 0);
         assert.equal(harness.scheduled.length, 0);
@@ -6433,7 +6433,7 @@ describe("TileController automatic dwindle ownership", () => {
         // population to the freshly realized dwindle leaves.
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 2);
         assert.equal(harness.yields.length, 0);
         const compiled = buildDwindleBlueprint(2);
@@ -6479,7 +6479,7 @@ describe("TileController automatic dwindle ownership", () => {
         // no direct structural call.
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 0);
         assert.equal(harness.scheduled.length, 0);
         assert.equal(harness.yields.length, 1);
@@ -6493,7 +6493,7 @@ describe("TileController automatic dwindle ownership", () => {
 
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 2);
         assert.equal(harness.yields.length, 0);
         assert.ok(first.tile !== null);
@@ -6530,7 +6530,7 @@ describe("TileController automatic dwindle ownership", () => {
         // reject the root and arm a needless collapse/split reconstruction.
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(splits, 0);
         assert.equal(removes, 0);
         assert.equal(first.tile, root);
@@ -6562,7 +6562,7 @@ describe("TileController automatic dwindle ownership", () => {
         // MUST fail with the prior behavior, which could not resolve a
         // non-layout insertion leaf and marked the scope inert.
         assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         const rootChildren = root.tiles as TestTile[];
         assert.equal(rootChildren.length, 2);
         assert.equal(first.tile, rootChildren[0]);
@@ -6597,7 +6597,7 @@ describe("TileController automatic dwindle ownership", () => {
         // never reconstructed, and never marked inert.
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(splits, 0);
         assert.equal(removes, 0);
         assert.equal(harness.yields.length, 0);
@@ -6664,7 +6664,7 @@ describe("TileController automatic dwindle ownership", () => {
         // A malformed split damages the scope, marking it inert for the session.
         const incoming = window();
         harness.emitAdded(incoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-split-decode-failed"), 1);
 
         // A later eligible addition on the inert scope reaches generic placement
         // with no empty leaf and no dwindle fallback: it must emit a decisive
@@ -6712,7 +6712,7 @@ describe("TileController automatic dwindle ownership", () => {
         // dropped floating and ownership claimed without occupying it.
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.yields.length, 0);
         assert.equal(first.tile, root);
         assert.deepEqual(root.windows, [first]);
@@ -6831,7 +6831,7 @@ describe("TileController automatic dwindle ownership", () => {
         // preceded by a fresh root resolution and tree decode.
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.yields.length, 0);
         const compiled = buildDwindleBlueprint(3);
         assert.equal(compiled.ok, true);
@@ -6954,7 +6954,7 @@ describe("TileController automatic dwindle ownership", () => {
         // gone from the fresh tree, so it must not remove or arm anything.
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.yields.length, 1);
 
         // The split-phase dispatch realizes dwindle(2) from the changed
@@ -7132,7 +7132,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
         assert.deepEqual(root.tiles, []);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
 
         // First eligible add on the N=0 scope: the incoming window must become
         // the empty zero-child root's occupant through one guarded
@@ -7144,7 +7144,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [incoming];
         harness.emitAdded(incoming);
         assert.equal(countEvent(harness.logs, "ownership-add-occupied-root"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
         assert.equal(splits, 0);
         assert.equal(incoming.tile, root);
@@ -7230,7 +7230,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.flushNextYield(), true);
         assert.equal(removes, 1, "a duplicate settle callback cannot remove again");
         assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.deepEqual(root.tiles, [left]);
         assert.equal(harness.yields.length, 0);
         assert.equal(harness.scheduled.length, 0);
@@ -7453,13 +7453,13 @@ describe("TileController automatic dwindle ownership", () => {
 
         const incoming = window();
         harness.emitAdded(incoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-split-decode-failed"), 1);
         assert.equal(splits, 1);
 
         const later = window();
         harness.emitAdded(later);
         assert.equal(splits, 1, "a damaged scope is never retried");
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-split-decode-failed"), 1);
         assert.equal(controller.isEnabled, true);
         assert.equal(harness.scheduled.length, 0);
         assert.equal(harness.yields.length, 0);
@@ -7500,7 +7500,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second];
         attachTileWriter(second);
         harness.emitAdded(second);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(countEvent(harness.logs, "ownership-add-failed:no-child-geometry"), 1);
         assert.equal(second.tile, null, "the impossible incoming insertion stays unmanaged");
 
@@ -7523,7 +7523,7 @@ describe("TileController automatic dwindle ownership", () => {
         seam.rejecting = false;
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 1, "the collapse removed exactly one leaf");
         const rootChildren = root.tiles as TestTile[];
         assert.equal(rootChildren.length, 2);
@@ -7619,7 +7619,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.flushNextYield(), true);
         assert.equal(removes, 4, "a stale settle callback cannot remove a collapsed leaf");
         assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
 
         // The split-phase dispatch realizes dwindle(3) from the surviving
         // population and never reassigns the removed window.
@@ -7678,7 +7678,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.dropNextYield(), true);
         assert.equal(harness.yields.length, 0);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.deepEqual(root.tiles, []);
 
         // A later already-wired ordinary lifecycle event re-drives completion
@@ -7690,7 +7690,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second, third, incoming];
         attachTileWriter(incoming);
         harness.emitAdded(incoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(countEvent(harness.logs, "ownership-add-split"), 0);
         assert.equal(harness.yields.length, 1);
 
@@ -7761,7 +7761,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.dropNextYield(), true);
         assert.equal(harness.yields.length, 0);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
 
         // A lifecycle event re-arms the split-phase yield (budget 1 of 2) so
         // the scope is not stranded collapsed after one lost reply. No split,
@@ -7770,7 +7770,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second, third, firstIncoming];
         attachTileWriter(firstIncoming);
         harness.emitAdded(firstIncoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(splits, 0);
         assert.equal(harness.yields.length, 1);
@@ -7787,7 +7787,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second, third, firstIncoming, secondIncoming];
         attachTileWriter(secondIncoming);
         harness.emitAdded(secondIncoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.yields.length, 1);
 
         // That re-armed reply is lost as well, exhausting the budget.
@@ -7802,7 +7802,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second, third, firstIncoming, secondIncoming, thirdIncoming];
         attachTileWriter(thirdIncoming);
         harness.emitAdded(thirdIncoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:rearm-budget-exhausted"), 1);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(splits, 0);
         assert.equal(removes, 3);
@@ -7816,7 +7816,7 @@ describe("TileController automatic dwindle ownership", () => {
         harness.windows = [first, second, third, firstIncoming, secondIncoming, thirdIncoming, fourthIncoming];
         attachTileWriter(fourthIncoming);
         harness.emitAdded(fourthIncoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:rearm-budget-exhausted"), 1);
         assert.equal(splits, 0);
         assert.equal(removes, 3);
         assert.deepEqual(root.tiles, []);
@@ -7859,7 +7859,7 @@ describe("TileController automatic dwindle ownership", () => {
 
         // The takeover arm fails closed: the scope is inert, nothing is armed,
         // and no structural call ever ran.
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:initial-yield-arm-failed"), 1);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
         assert.equal(harness.yields.length, 0);
         assert.equal(removes, 0);
@@ -7870,7 +7870,7 @@ describe("TileController automatic dwindle ownership", () => {
         const incoming = window();
         harness.windows = [first, second, third, incoming];
         harness.emitAdded(incoming);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:initial-yield-arm-failed"), 1);
         assert.equal(harness.yields.length, 0);
         assert.equal(removes, 0);
         assert.equal(splits, 0);
@@ -8111,7 +8111,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(countEvent(harness.logs, "ownership-taken"), 0);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
         assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 0);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(removes, 0);
         assert.equal(harness.scheduled.length, 0);
         assert.equal(harness.yields.length, 1);
@@ -8129,7 +8129,7 @@ describe("TileController automatic dwindle ownership", () => {
         // window lands on its own leaf.
         assert.equal(harness.flushNextYield(), true);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.yields.length, 0);
         const compiled = buildDwindleBlueprint(3);
         assert.equal(compiled.ok, true);
@@ -8227,7 +8227,7 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
         assert.equal(countEvent(harness.logs, "ownership-accepted:non-canonical:bijection-intact"), 2);
-        assert.equal(countEvent(harness.logs, "ownership-inert"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
         assert.equal(harness.root, v);
         assert.equal(d.isLayout, true);
         assert.equal(d.layoutDirection, 1);

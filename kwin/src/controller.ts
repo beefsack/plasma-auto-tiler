@@ -3198,14 +3198,14 @@ export class TileController {
     // A failed or damaged scope becomes inert for this session only: the
     // record is retained so it is never retried, while other scopes and the
     // generic placement paths keep working.
-    private markInert(scope: CurrentScope): void {
+    private markInert(scope: CurrentScope, reason: string): void {
         let byDesktop = this.managedScopes.get(scope.output);
         if (byDesktop === undefined) {
             byDesktop = new Map<string, ManagedScope>();
             this.managedScopes.set(scope.output, byDesktop);
         }
         byDesktop.set(scope.desktop.id, { scope, inert: true });
-        this.diagnostic("ownership-inert");
+        this.diagnostic(`ownership-inert:${reason}`);
     }
 
     // Adopt session-local ownership of the anchored scope with ratio-free
@@ -3308,12 +3308,12 @@ export class TileController {
         if (existing !== undefined) {
             existing.rearmCount += 1;
             if (existing.rearmCount > MAX_YIELD_REARM_PER_PHASE) {
-                this.markInert(scope);
+                this.markInert(scope, "rearm-budget-exhausted");
                 this.dropPendingRebuild(scope, existing);
                 return;
             }
             if (!this.armRebuildYield(scope, existing)) {
-                this.markInert(scope);
+                this.markInert(scope, "rearm-yield-arm-failed");
                 this.dropPendingRebuild(scope, existing);
             }
             return;
@@ -3326,7 +3326,7 @@ export class TileController {
         }
         byDesktop.set(scope.desktop.id, pending);
         if (!this.armRebuildYield(scope, pending)) {
-            this.markInert(scope);
+            this.markInert(scope, "initial-yield-arm-failed");
             this.dropPendingRebuild(scope, pending);
             return;
         }
@@ -3435,7 +3435,7 @@ export class TileController {
             // single leaf with a fresh whole-root decode after every removal.
             // The split reconstruction then waits for the second yield.
             if (!this.collapseOwnedScope(scope)) {
-                this.markInert(scope);
+                this.markInert(scope, "collapse-failed");
                 this.dropPendingRebuild(scope, pending);
                 return;
             }
@@ -3443,7 +3443,7 @@ export class TileController {
             pending.rearmCount = 0;
             this.diagnostic("ownership-collapsed");
             if (!this.armRebuildYield(scope, pending)) {
-                this.markInert(scope);
+                this.markInert(scope, "split-yield-arm-failed");
                 this.dropPendingRebuild(scope, pending);
             }
             return;
@@ -3452,7 +3452,7 @@ export class TileController {
         if (this.rebuildDwindle(scope, population)) {
             this.diagnostic("ownership-taken");
         } else {
-            this.markInert(scope);
+            this.markInert(scope, "rebuild-failed");
         }
         this.dropPendingRebuild(scope, pending);
     }
@@ -3730,7 +3730,7 @@ export class TileController {
         }
         const topology = this.topologyForScope(scope);
         if (topology === null) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-topology-failed");
             return;
         }
         if (window.tile !== null) {
@@ -3738,7 +3738,7 @@ export class TileController {
         }
         const deepest = this.deepestLeaf(scope);
         if (deepest === null) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-deepest-leaf-failed");
             return;
         }
         // The occupant list of the insertion leaf. When the insertion tile is
@@ -3747,7 +3747,7 @@ export class TileController {
         // the root is a zero-child layout (the sole usable leaf).
         const insertion = this.insertionLeafWindows(scope, topology, deepest);
         if (insertion === null) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-leaf-resolution-failed");
             return;
         }
         const occupants = insertion.windows.filter(
@@ -3770,19 +3770,19 @@ export class TileController {
                 void error;
             }
             if (!assigned || !this.dwindleMatches(scope, this.ownedPopulation(scope))) {
-                this.markInert(scope);
+                this.markInert(scope, "occupied-root-assign-failed");
                 return;
             }
             this.diagnostic("ownership-add-occupied-root");
             return;
         }
         if (occupants.length !== 1) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-occupant-count-mismatch");
             return;
         }
         const occupant = occupants[0];
         if (occupant === undefined) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-occupant-missing");
             return;
         }
         const orientation: Orientation = deepest.depth % 2 === 0 ? "horizontal" : "vertical";
@@ -3791,12 +3791,12 @@ export class TileController {
             split = splitCustomTile(deepest.tile, layoutDirectionFor(orientation));
         } catch (error) {
             void error;
-            this.markInert(scope);
+            this.markInert(scope, "insert-split-threw");
             return;
         }
         const decoded = decodeSequential(split, isCustomTile, 2);
         if (!decoded.ok || decoded.value.length !== 2) {
-            this.markInert(scope);
+            this.markInert(scope, "insert-split-decode-failed");
             return;
         }
         this.decodedBoundary("split-result");
@@ -3884,7 +3884,7 @@ export class TileController {
         }
         const topology = this.topologyForScope(scope);
         if (topology === null) {
-            this.markInert(scope);
+            this.markInert(scope, "remove-topology-failed");
             return;
         }
         const leaf = operationLeafForTile(topology, window.tile);
@@ -3925,7 +3925,7 @@ export class TileController {
             void error;
         }
         if (!armed) {
-            this.markInert(scope);
+            this.markInert(scope, "removal-yield-arm-failed");
             return;
         }
         this.diagnostic("ownership-remove-deferred");
@@ -3953,7 +3953,7 @@ export class TileController {
         }
         const topology = this.topologyForScope(scope);
         if (topology === null) {
-            this.markInert(scope);
+            this.markInert(scope, "settle-topology-failed");
             return;
         }
         const leaf = operationLeafForTile(topology, leafTile);
@@ -4109,12 +4109,12 @@ export class TileController {
             void error;
         }
         if (!removed) {
-            this.markInert(scope);
+            this.markInert(scope, "leaf-remove-failed");
             return null;
         }
         const after = this.topologyForScope(scope);
         if (after === null || after.length !== topology.length - 1) {
-            this.markInert(scope);
+            this.markInert(scope, "leaf-collapse-verify-failed");
             return null;
         }
         this.diagnostic("ownership-remove-collapsed");
