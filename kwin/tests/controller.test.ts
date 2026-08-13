@@ -8244,3 +8244,565 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(harness.scheduled.length, 0);
     });
 });
+
+describe("TileController deferred invariant recovery", () => {
+    it("recovers a leaf-count mismatch from a real drag split deferred origin removal", () => {
+        const state = reconstructDropSetup();
+        // KWin's CustomTile::remove() returns void: a no-throw call is only
+        // mutation-possible, never an acknowledgement. Model the deleteLater
+        // lag on the first origin removal: it reports success but the live tree
+        // still lists the origin, so the settle postcondition sees a leaf-count
+        // mismatch instead of a one-fewer-leaf tree.
+        let aRemoves = 0;
+        state.a.remove = () => {
+            aRemoves += 1;
+            if (aRemoves === 1) {
+                return true;
+            }
+            state.root.tiles = (state.root.tiles as TestTile[]).filter((entry) => entry !== state.a);
+            return true;
+        };
+        startDrag(state.aWin);
+        state.aWin.frameGeometry = { x: 100, y: 0, width: 50, height: 100 };
+        state.aWin.tile = null;
+        state.aWin.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(state.harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(state.harness.yields.length, 1);
+
+        // The deferred origin removal settle hits the leaf-count mismatch:
+        // recoverable, not inert. No after snapshot applies because the
+        // collapse did not complete.
+        state.harness.flushNextYield();
+        assert.equal(countEvent(state.harness.logs, "ownership-remove-failed:leaf-count"), 1);
+        assert.equal(state.harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(countEvent(state.harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+        assert.equal(
+            state.harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-snapshot-after:")),
+            false,
+        );
+
+        // The owed invariant recovery settles to a full reconstruction with both
+        // windows tiled and no orphan left behind.
+        while (state.harness.flushNextYield()) {
+            // Drain the two-phase reconstruction to completion.
+        }
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 2);
+        assert.equal(state.harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(state.aWin.tile !== null);
+        assert.ok(state.bWin.tile !== null);
+        assert.notEqual(state.aWin.tile, state.bWin.tile);
+        assert.equal(state.harness.yields.length, 0);
+    });
+
+    it("defers the dwindle invariant during a live drag without structural work", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        installCapacityRejectingSplitter(b, { rejecting: true });
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(harness.yields.length, 0);
+
+        // Start a live drag on aWin and keep `move` true so the drag is still
+        // live-moving when the invariant is reached.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+
+        // A third window arrives while the drag is live. Its insertion hits the
+        // minimum-geometry capacity rejection and stays floating, so the
+        // steady-state invariant would normally arm a reconstruction. During a
+        // live drag it must defer instead of doing structural work.
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-add-failed:no-child-geometry"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(incoming.tile, null);
+        assert.deepEqual(root.tiles, [a, b]);
+        assert.deepEqual(a.windows, [aWin]);
+        assert.deepEqual(b.windows, [bWin]);
+    });
+
+    it("runs the owed invariant check once after a no-finish abnormal termination", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        for (const leaf of [a, b]) {
+            leaf.remove = () => {
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installCapacityRejectingSplitter(b, { rejecting: true });
+        installDwindleSplitter(root);
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Live drag aWin, then a third window arrives and the invariant is
+        // deferred, marking exactly one owed check.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // Abnormal termination: the dragged window is removed with no finish
+        // event. The owed check must run exactly once and arm the deferred
+        // reconstruction.
+        aWin.tile = null;
+        harness.windows = [bWin, incoming];
+        harness.emitRemoved(aWin);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        // The owed reconstruction settles: collapse then rebuild dwindle(2)
+        // with both surviving windows tiled and no orphan left behind.
+        while (harness.flushNextYield()) {
+            // Drain the two-phase reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(bWin.tile !== null);
+        assert.ok(incoming.tile !== null);
+        assert.notEqual(bWin.tile, incoming.tile);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("runs the owed invariant check via moveResizedChanged when the finish signal is missed", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        for (const leaf of [a, b]) {
+            leaf.remove = () => {
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installCapacityRejectingSplitter(b, { rejecting: true });
+        installDwindleSplitter(root);
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Live drag aWin, then a third window arrives and the invariant is
+        // deferred, marking exactly one owed check.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // The interactiveMoveResizeFinished signal is missed entirely: the
+        // live move simply turns false, and the resulting moveResizedChanged
+        // must run the owed invariant check. No window is removed and no
+        // scope change happens.
+        aWin.move = false;
+        aWin.resize = false;
+        aWin.moveResizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "drag-move-resized-changed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
+        assert.equal(incoming.tile, null);
+        assert.deepEqual(root.tiles, [a, b]);
+        assert.deepEqual(a.windows, [aWin]);
+        assert.deepEqual(b.windows, [bWin]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        // The owed reconstruction settles: collapse then rebuild dwindle(3)
+        // with all three windows tiled and no orphan left behind.
+        while (harness.flushNextYield()) {
+            // Drain the two-phase reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(aWin.tile !== null);
+        assert.ok(bWin.tile !== null);
+        assert.ok(incoming.tile !== null);
+        assert.equal(new Set([aWin.tile, bWin.tile, incoming.tile]).size, 3);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("defers adoption reconstruction during a live drag", () => {
+        const harness = new Harness();
+        const root1 = tile(RECT, true);
+        const leaf = tile();
+        const aWin = window({ tile: leaf, caption: "a" });
+        leaf.windows = [aWin];
+        root1.tiles = [leaf];
+        const desktop2 = { id: "desktop-2" };
+        const root2 = tile(RECT, true);
+        const c = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const d = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const w2 = window({ tile: c, caption: "w2", desktops: [desktop2] });
+        c.windows = [w2];
+        root2.tiles = [c, d];
+        harness.rootsByDesktop.set(DESKTOP.id, root1);
+        harness.rootsByDesktop.set(desktop2.id, root2);
+        harness.active = aWin;
+        harness.windows = [aWin];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Live drag aWin on the first desktop.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+
+        // A window arrives on a second, not-yet-owned desktop while the drag is
+        // live: adoption would normally arm a reconstruction, but must defer.
+        harness.currentDesktop = desktop2;
+        harness.windows = [aWin, w2];
+        harness.emitAdded(w2);
+
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+    });
+
+    it("defers a removal during a live drag without structural work", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        let removes = 0;
+        for (const entry of [a, b]) {
+            entry.remove = () => {
+                removes += 1;
+                root.tiles = (root.tiles as TestTile[]).filter((tile) => tile !== entry);
+                return true;
+            };
+        }
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Live drag aWin.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+
+        // bWin is removed (its leaf already provably freed) while the drag is
+        // live: the removal must defer instead of structurally removing.
+        b.windows = [];
+        harness.windows = [aWin];
+        harness.emitRemoved(bWin);
+
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.equal(removes, 0);
+        assert.deepEqual(root.tiles, [a, b]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        // The drag ends without a drop: the owed check runs and reconstructs the
+        // reduced population with no orphan left behind.
+        aWin.move = false;
+        aWin.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-unchanged"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+
+        while (harness.flushNextYield()) {
+            // Drain the reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(aWin.tile !== null);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("defers a pending removal settle during a live drag", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const aWin = window({ tile: a });
+        const bWin = window({ tile: b });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        let removes = 0;
+        for (const entry of [a, b]) {
+            entry.remove = () => {
+                removes += 1;
+                root.tiles = (root.tiles as TestTile[]).filter((tile) => tile !== entry);
+                return true;
+            };
+        }
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Remove bWin while it is still listed in its leaf: the removal is
+        // deferred to a one-shot yield before any drag starts.
+        bWin.tile = b;
+        b.windows = [bWin];
+        harness.windows = [aWin];
+        harness.emitRemoved(bWin);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(harness.yields.length, 1);
+
+        // A live drag starts before the deferred settle fires.
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+
+        // The deferred settle fires mid-drag: it must defer instead of removing.
+        harness.flushNextYield();
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(removes, 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        assert.deepEqual(root.tiles, [a, b]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        // The drag ends without a drop: the owed check runs and reconstructs.
+        aWin.move = false;
+        aWin.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-unchanged"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-invariant:bijection-failed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+
+        while (harness.flushNextYield()) {
+            // Drain the reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(aWin.tile !== null);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("runs the owed check only after the deferred origin removal settles on a drop", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 100, height: 100 });
+        const b = tile({ x: 100, y: 0, width: 100, height: 100 });
+        const aWin = window({ tile: a, caption: "a" });
+        const bWin = window({ tile: b, caption: "b" });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const manage = (leaf: TestTile) => (value: unknown): boolean => {
+            (value as TestWindow).tile = leaf;
+            return true;
+        };
+        const bLeft = tile({ x: 100, y: 0, width: 50, height: 100 });
+        const bRight = tile({ x: 150, y: 0, width: 50, height: 100 });
+        bLeft.manage = manage(bLeft);
+        bRight.manage = manage(bRight);
+        const seam = { rejecting: true };
+        b.split = (direction) => {
+            if (seam.rejecting) {
+                return [tile({ x: 100, y: 0, width: 0, height: 100 }), tile({ x: 150, y: 0, width: 50, height: 100 })];
+            }
+            b.isLayout = true;
+            b.layoutDirection = direction;
+            b.windows = [];
+            b.tiles = [bLeft, bRight];
+            return [bLeft, bRight];
+        };
+        a.remove = () => {
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== a);
+            return true;
+        };
+        bLeft.remove = () => {
+            b.tiles = (b.tiles as TestTile[]).filter((entry) => entry !== bLeft);
+            return true;
+        };
+        bRight.remove = () => {
+            b.tiles = (b.tiles as TestTile[]).filter((entry) => entry !== bRight);
+            return true;
+        };
+        b.remove = () => {
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== b);
+            return true;
+        };
+        installDwindleSplitter(root);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // Live drag aWin, then a third window arrives and the invariant is
+        // deferred (marking exactly one owed check).
+        aWin.move = true;
+        aWin.resize = false;
+        aWin.interactiveMoveResizeStarted.emit();
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+
+        // The drag ends as a drop onto bWin, arming the deferred origin removal.
+        // The owed check must NOT run yet: the origin is transiently empty.
+        seam.rejecting = false;
+        aWin.tile = null;
+        aWin.frameGeometry = { x: 100, y: 0, width: 50, height: 100 };
+        aWin.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 1);
+
+        // After the deferred origin removal settles, the owed check runs and
+        // arms the reconstruction for the reduced population.
+        harness.flushNextYield();
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        while (harness.flushNextYield()) {
+            // Drain the reconstruction to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.ok(aWin.tile !== null);
+        assert.ok(bWin.tile !== null);
+        assert.ok(incoming.tile !== null);
+        assert.equal(new Set([aWin.tile, bWin.tile, incoming.tile]).size, 3);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("clears a stale drag record before accepting a new drag", () => {
+        const { controller, harness, dragged, targetWindow } = dragSetup();
+        startDrag(dragged);
+        assert.equal(controller.hasActiveDrag, true);
+        assert.equal(dragged.move, false);
+
+        // The drag ended without a finish event: the captured record is stale.
+        // A new drag on the target window must clear it and capture fresh.
+        targetWindow.move = true;
+        targetWindow.interactiveMoveResizeStarted.emit();
+        targetWindow.move = false;
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 2);
+        assert.equal(controller.hasActiveDrag, true);
+    });
+
+    it("logs a drag-bail reason when finish has no tracked drag or a mismatched window", () => {
+        const { harness, dragged, targetWindow } = dragSetup();
+        // Finish with no tracked drag.
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
+
+        // Track a drag on `dragged`, then finish fires for a different window.
+        startDrag(dragged);
+        targetWindow.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:window-mismatch"), 1);
+    });
+
+    it("logs an explicit reason when a tiled drag is ignored because its scope is inert", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const leaf = tile();
+        const first = window({ tile: leaf });
+        leaf.windows = [first];
+        root.tiles = [leaf];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first];
+        root.split = () => [];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        // A malformed split marks the scope inert for the session.
+        const incoming = window();
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-split-decode-failed"), 1);
+
+        // A move drag on the still-tiled window is ignored with an explicit log.
+        first.move = true;
+        first.resize = false;
+        first.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:scope-inert"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+});

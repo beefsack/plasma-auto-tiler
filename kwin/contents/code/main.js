@@ -1302,6 +1302,10 @@
       // null) are excluded from the owned population and the dwindle rebuild.
       // Bounded like removedOccupants so it cannot grow without limit.
       this.detachedWindows = /* @__PURE__ */ new Set();
+      // Scopes whose dwindle invariant check was deferred while a live drag was
+      // in progress. Each scope owes exactly one later check, run once the
+      // tracked drag window is no longer live-moving/resizing.
+      this.owedInvariantScopes = /* @__PURE__ */ new Map();
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -2631,10 +2635,51 @@
     clearDrag() {
       this.drag.clearForScopeChange();
     }
+    // Whether the tracked drag window is currently live-moving or
+    // live-resizing, per the documented Window live state (`move` / `resize`).
+    // This is the authoritative active-drag signal: the captured-origin latch is
+    // never used on its own to decide that a drag is still in progress.
+    trackedDragLive() {
+      const drag = this.drag.current;
+      return drag !== void 0 && (drag.window.move || drag.window.resize);
+    }
+    // Record exactly one owed invariant check for a scope whose check was
+    // deferred by a live drag. A scope that already owes a check is neither
+    // re-marked nor re-logged, keeping the diagnostic non-noisy.
+    markOwedInvariant(scope) {
+      let byDesktop = this.owedInvariantScopes.get(scope.output);
+      if (byDesktop === void 0) {
+        byDesktop = /* @__PURE__ */ new Map();
+        this.owedInvariantScopes.set(scope.output, byDesktop);
+      }
+      if (!byDesktop.has(scope.desktop.id)) {
+        byDesktop.set(scope.desktop.id, scope);
+        this.diagnostic("ownership-invariant-deferred:drag-live");
+      }
+    }
+    // Run every owed invariant check exactly once, after the tracked drag is no
+    // longer live. Owed scopes are cleared before their check runs so a
+    // still-live drag re-marks rather than double-running.
+    settleOwedInvariants() {
+      if (this.trackedDragLive() || this.owedInvariantScopes.size === 0) {
+        return;
+      }
+      const owed = [];
+      for (const byDesktop of this.owedInvariantScopes.values()) {
+        for (const scope of byDesktop.values()) {
+          owed.push(scope);
+        }
+      }
+      this.owedInvariantScopes.clear();
+      for (const scope of owed) {
+        this.dwindleEnsureInvariant(scope);
+      }
+    }
     handleScopeChange() {
       this.gate.run(() => {
         this.clearPending();
         this.clearDrag();
+        this.settleOwedInvariants();
         this.attachExistingInteractiveWindows(false);
         this.engageCurrentScope();
       }, (reason) => this.disabled(reason));
@@ -2656,6 +2701,7 @@
           this.reflowAfterRemoval(window);
           this.dwindleMaybeRemove(window);
         }
+        this.settleOwedInvariants();
       }, (reason) => this.disabled(reason));
     }
     handleWindowAdded(window) {
@@ -2819,24 +2865,49 @@
           this.clearDrag();
         }
         this.detachInteractiveWindow(window);
+        this.settleOwedInvariants();
       }, (reason) => this.disabled(reason));
     }
     handleInteractiveStarted(window) {
       this.diagnostic("drag-started");
       this.gate.run(() => {
-        if (this.drag.current !== void 0 || !window.move || window.resize) {
+        if (this.drag.current !== void 0) {
+          if (this.trackedDragLive()) {
+            this.diagnostic("drag-origin-capture-failed:already-active");
+            return;
+          }
+          this.clearDrag();
+          this.settleOwedInvariants();
+        }
+        if (!window.move || window.resize) {
+          this.diagnostic("drag-origin-capture-failed:not-move");
           return;
         }
         const scope = this.scopeForWindow(window);
-        if (scope === null || !windowInScope(window, scope) || window.tile === null || !isCustomTile(window.tile)) {
+        if (scope === null || !windowInScope(window, scope)) {
+          this.diagnostic("drag-origin-capture-failed:scope");
+          return;
+        }
+        if (window.tile === null || !isCustomTile(window.tile)) {
+          this.diagnostic("drag-origin-capture-failed:tile-association");
+          return;
+        }
+        if (this.isInert(scope)) {
+          this.diagnostic("drag-origin-capture-failed:scope-inert");
           return;
         }
         const topology = this.topologyForScope(scope);
-        if (topology === null || !positiveGeometry(window.frameGeometry)) {
+        if (topology === null) {
+          this.diagnostic("drag-origin-capture-failed:topology");
+          return;
+        }
+        if (!positiveGeometry(window.frameGeometry)) {
+          this.diagnostic("drag-origin-capture-failed:geometry-invalid");
           return;
         }
         const origin = operationLeafForTile(topology, window.tile);
         if (origin === null || origin.leaf.isLayout || windowIndex(origin.windows, window) < 0) {
+          this.diagnostic("drag-origin-capture-failed:origin-occupancy");
           return;
         }
         this.drag.set({
@@ -2848,7 +2919,8 @@
             y: window.frameGeometry.y,
             width: window.frameGeometry.width,
             height: window.frameGeometry.height
-          }
+          },
+          armedDeferredRemoval: false
         });
         this.diagnostic("drag-origin-captured");
       }, (reason) => this.disabled(reason));
@@ -2856,13 +2928,21 @@
     handleInteractiveFinished(window) {
       this.gate.run(() => {
         const drag = this.drag.current;
-        if (drag === void 0 || drag.window !== window) {
+        if (drag === void 0) {
+          this.diagnostic("drag-bail:no-tracked-drag");
+          return;
+        }
+        if (drag.window !== window) {
+          this.diagnostic("drag-bail:window-mismatch");
           return;
         }
         try {
           this.completeDrag(drag);
         } finally {
           this.clearDrag();
+        }
+        if (!drag.armedDeferredRemoval) {
+          this.settleOwedInvariants();
         }
       }, (reason) => this.disabled(reason));
     }
@@ -2872,6 +2952,9 @@
     }
     handleMoveResizedChanged() {
       this.diagnostic("drag-move-resized-changed");
+      this.gate.run(() => {
+        this.settleOwedInvariants();
+      }, (reason) => this.disabled(reason));
     }
     // Read the documented workspace cursor exactly once, at drag finish, under
     // safe validation. Returns the finite cursor point, or null when the read
@@ -3191,6 +3274,7 @@
         return;
       }
       this.diagnostic("drag-empty-placement");
+      drag.armedDeferredRemoval = true;
       this.deferRemovalCollapse(drag.window, scope, drag.originTile, true);
     }
     // Split a resolved drop target leaf into the direction-derived children and
@@ -3208,6 +3292,7 @@
         return;
       }
       this.diagnostic("drag-overlap-split-completed");
+      drag.armedDeferredRemoval = true;
       this.deferRemovalCollapse(drag.window, scope, drag.originTile, true, {
         dragged: drag.window,
         occupant
@@ -3427,14 +3512,14 @@
     // A failed or damaged scope becomes inert for this session only: the
     // record is retained so it is never retried, while other scopes and the
     // generic placement paths keep working.
-    markInert(scope) {
+    markInert(scope, reason) {
       let byDesktop = this.managedScopes.get(scope.output);
       if (byDesktop === void 0) {
         byDesktop = /* @__PURE__ */ new Map();
         this.managedScopes.set(scope.output, byDesktop);
       }
       byDesktop.set(scope.desktop.id, { scope, inert: true });
-      this.diagnostic("ownership-inert");
+      this.diagnostic(`ownership-inert:${reason}`);
     }
     // Adopt session-local ownership of the anchored scope with ratio-free
     // dwindle. A valid selected overlay takes precedence and leaves the scope
@@ -3530,16 +3615,20 @@
     // stale or duplicate callback inert.
     startReconstruction(scope) {
       var _a;
+      if (this.trackedDragLive()) {
+        this.markOwedInvariant(scope);
+        return;
+      }
       const existing = (_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id);
       if (existing !== void 0) {
         existing.rearmCount += 1;
         if (existing.rearmCount > MAX_YIELD_REARM_PER_PHASE) {
-          this.markInert(scope);
+          this.markInert(scope, "rearm-budget-exhausted");
           this.dropPendingRebuild(scope, existing);
           return;
         }
         if (!this.armRebuildYield(scope, existing)) {
-          this.markInert(scope);
+          this.markInert(scope, "rearm-yield-arm-failed");
           this.dropPendingRebuild(scope, existing);
         }
         return;
@@ -3552,7 +3641,7 @@
       }
       byDesktop.set(scope.desktop.id, pending);
       if (!this.armRebuildYield(scope, pending)) {
-        this.markInert(scope);
+        this.markInert(scope, "initial-yield-arm-failed");
         this.dropPendingRebuild(scope, pending);
         return;
       }
@@ -3640,6 +3729,11 @@
         this.dropPendingRebuild(scope, pending);
         return;
       }
+      if (this.trackedDragLive()) {
+        this.markOwedInvariant(scope);
+        this.dropPendingRebuild(scope, pending);
+        return;
+      }
       if (this.readSelectedOverlay(scope) !== null) {
         this.dropPendingRebuild(scope, pending);
         return;
@@ -3655,7 +3749,7 @@
       }
       if (pending.phase === "awaiting-collapse") {
         if (!this.collapseOwnedScope(scope)) {
-          this.markInert(scope);
+          this.markInert(scope, "collapse-failed");
           this.dropPendingRebuild(scope, pending);
           return;
         }
@@ -3663,7 +3757,7 @@
         pending.rearmCount = 0;
         this.diagnostic("ownership-collapsed");
         if (!this.armRebuildYield(scope, pending)) {
-          this.markInert(scope);
+          this.markInert(scope, "split-yield-arm-failed");
           this.dropPendingRebuild(scope, pending);
         }
         return;
@@ -3671,7 +3765,7 @@
       if (this.rebuildDwindle(scope, population)) {
         this.diagnostic("ownership-taken");
       } else {
-        this.markInert(scope);
+        this.markInert(scope, "rebuild-failed");
       }
       this.dropPendingRebuild(scope, pending);
     }
@@ -3802,6 +3896,10 @@
       if (this.readSelectedOverlay(scope) !== null) {
         return;
       }
+      if (this.trackedDragLive()) {
+        this.markOwedInvariant(scope);
+        return;
+      }
       const population = this.ownedPopulation(scope);
       if (population.length === 0) {
         return;
@@ -3923,7 +4021,7 @@
       }
       const topology = this.topologyForScope(scope);
       if (topology === null) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-topology-failed");
         return;
       }
       if (window.tile !== null) {
@@ -3931,12 +4029,12 @@
       }
       const deepest = this.deepestLeaf(scope);
       if (deepest === null) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-deepest-leaf-failed");
         return;
       }
       const insertion = this.insertionLeafWindows(scope, topology, deepest);
       if (insertion === null) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-leaf-resolution-failed");
         return;
       }
       const occupants = insertion.windows.filter(
@@ -3950,19 +4048,19 @@
           void error;
         }
         if (!assigned || !this.dwindleMatches(scope, this.ownedPopulation(scope))) {
-          this.markInert(scope);
+          this.markInert(scope, "occupied-root-assign-failed");
           return;
         }
         this.diagnostic("ownership-add-occupied-root");
         return;
       }
       if (occupants.length !== 1) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-occupant-count-mismatch");
         return;
       }
       const occupant = occupants[0];
       if (occupant === void 0) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-occupant-missing");
         return;
       }
       const orientation = deepest.depth % 2 === 0 ? "horizontal" : "vertical";
@@ -3971,12 +4069,12 @@
         split = splitCustomTile(deepest.tile, layoutDirectionFor(orientation));
       } catch (error) {
         void error;
-        this.markInert(scope);
+        this.markInert(scope, "insert-split-threw");
         return;
       }
       const decoded = decodeSequential(split, isCustomTile, 2);
       if (!decoded.ok || decoded.value.length !== 2) {
-        this.markInert(scope);
+        this.markInert(scope, "insert-split-decode-failed");
         return;
       }
       this.decodedBoundary("split-result");
@@ -4053,7 +4151,7 @@
       }
       const topology = this.topologyForScope(scope);
       if (topology === null) {
-        this.markInert(scope);
+        this.markInert(scope, "remove-topology-failed");
         return;
       }
       const leaf = operationLeafForTile(topology, window.tile);
@@ -4080,12 +4178,13 @@
       try {
         armed = this.environment.yieldOnce(() => {
           this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
+          this.settleOwedInvariants();
         });
       } catch (error) {
         void error;
       }
       if (!armed) {
-        this.markInert(scope);
+        this.markInert(scope, "removal-yield-arm-failed");
         return;
       }
       this.diagnostic("ownership-remove-deferred");
@@ -4102,12 +4201,16 @@
       if (this.isInert(scope) || !this.isOwned(scope)) {
         return;
       }
+      if (this.trackedDragLive()) {
+        this.markOwedInvariant(scope);
+        return;
+      }
       if (this.readSelectedOverlay(scope) !== null) {
         return;
       }
       const topology = this.topologyForScope(scope);
       if (topology === null) {
-        this.markInert(scope);
+        this.markInert(scope, "settle-topology-failed");
         return;
       }
       const leaf = operationLeafForTile(topology, leafTile);
@@ -4227,12 +4330,17 @@
         void error;
       }
       if (!removed) {
-        this.markInert(scope);
+        this.markInert(scope, "leaf-remove-failed");
         return null;
       }
       const after = this.topologyForScope(scope);
-      if (after === null || after.length !== topology.length - 1) {
-        this.markInert(scope);
+      if (after === null) {
+        this.markInert(scope, "leaf-collapse-verify-failed");
+        return null;
+      }
+      if (after.length !== topology.length - 1) {
+        this.diagnostic("ownership-remove-failed:leaf-count");
+        this.dwindleEnsureInvariant(scope);
         return null;
       }
       this.diagnostic("ownership-remove-collapsed");
@@ -4241,7 +4349,18 @@
     }
     dwindleMaybeRemove(window) {
       const scope = this.scopeForWindow(window);
-      if (scope === null || !this.isOwned(scope)) {
+      if (scope === null) {
+        return;
+      }
+      if (this.isInert(scope)) {
+        this.onceDiagnostic("ownership-inert-ignored:removal");
+        return;
+      }
+      if (!this.isOwned(scope)) {
+        return;
+      }
+      if (this.trackedDragLive()) {
+        this.markOwedInvariant(scope);
         return;
       }
       this.dwindleRemove(window, scope);

@@ -175,6 +175,11 @@ interface ActiveDrag {
     readonly window: WindowCapability;
     readonly originTile: CustomTileCapability;
     readonly originGeometry: RectCapability;
+    // Set once a changed drop has armed a deferred origin removal. The finish
+    // dispatch must not settle owed invariants immediately in that case: the
+    // origin is transiently empty until the removal settle completes, so a
+    // check there would spuriously reconstruct.
+    armedDeferredRemoval: boolean;
 }
 
 // The two windows occupying the two leaves a reflow split produced: the
@@ -688,6 +693,10 @@ export class TileController {
     // null) are excluded from the owned population and the dwindle rebuild.
     // Bounded like removedOccupants so it cannot grow without limit.
     private readonly detachedWindows = new Set<WindowCapability>();
+    // Scopes whose dwindle invariant check was deferred while a live drag was
+    // in progress. Each scope owes exactly one later check, run once the
+    // tracked drag window is no longer live-moving/resizing.
+    private readonly owedInvariantScopes = new Map<OutputCapability, Map<string, CurrentScope>>();
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -2293,10 +2302,54 @@ export class TileController {
         this.drag.clearForScopeChange();
     }
 
+    // Whether the tracked drag window is currently live-moving or
+    // live-resizing, per the documented Window live state (`move` / `resize`).
+    // This is the authoritative active-drag signal: the captured-origin latch is
+    // never used on its own to decide that a drag is still in progress.
+    private trackedDragLive(): boolean {
+        const drag = this.drag.current;
+        return drag !== undefined && (drag.window.move || drag.window.resize);
+    }
+
+    // Record exactly one owed invariant check for a scope whose check was
+    // deferred by a live drag. A scope that already owes a check is neither
+    // re-marked nor re-logged, keeping the diagnostic non-noisy.
+    private markOwedInvariant(scope: CurrentScope): void {
+        let byDesktop = this.owedInvariantScopes.get(scope.output);
+        if (byDesktop === undefined) {
+            byDesktop = new Map<string, CurrentScope>();
+            this.owedInvariantScopes.set(scope.output, byDesktop);
+        }
+        if (!byDesktop.has(scope.desktop.id)) {
+            byDesktop.set(scope.desktop.id, scope);
+            this.diagnostic("ownership-invariant-deferred:drag-live");
+        }
+    }
+
+    // Run every owed invariant check exactly once, after the tracked drag is no
+    // longer live. Owed scopes are cleared before their check runs so a
+    // still-live drag re-marks rather than double-running.
+    private settleOwedInvariants(): void {
+        if (this.trackedDragLive() || this.owedInvariantScopes.size === 0) {
+            return;
+        }
+        const owed: CurrentScope[] = [];
+        for (const byDesktop of this.owedInvariantScopes.values()) {
+            for (const scope of byDesktop.values()) {
+                owed.push(scope);
+            }
+        }
+        this.owedInvariantScopes.clear();
+        for (const scope of owed) {
+            this.dwindleEnsureInvariant(scope);
+        }
+    }
+
     private handleScopeChange(): void {
         this.gate.run(() => {
             this.clearPending();
             this.clearDrag();
+            this.settleOwedInvariants();
             this.attachExistingInteractiveWindows(false);
             this.engageCurrentScope();
         }, (reason) => this.disabled(reason));
@@ -2321,6 +2374,7 @@ export class TileController {
                 this.reflowAfterRemoval(window);
                 this.dwindleMaybeRemove(window);
             }
+            this.settleOwedInvariants();
         }, (reason) => this.disabled(reason));
     }
 
@@ -2499,25 +2553,52 @@ export class TileController {
                 this.clearDrag();
             }
             this.detachInteractiveWindow(window);
+            this.settleOwedInvariants();
         }, (reason) => this.disabled(reason));
     }
 
     private handleInteractiveStarted(window: WindowCapability): void {
         this.diagnostic("drag-started");
         this.gate.run(() => {
-            if (this.drag.current !== undefined || !window.move || window.resize) {
+            if (this.drag.current !== undefined) {
+                if (this.trackedDragLive()) {
+                    this.diagnostic("drag-origin-capture-failed:already-active");
+                    return;
+                }
+                // A stale captured record whose window is no longer
+                // live-moving/resizing must not block a new drag.
+                this.clearDrag();
+                this.settleOwedInvariants();
+            }
+            if (!window.move || window.resize) {
+                this.diagnostic("drag-origin-capture-failed:not-move");
                 return;
             }
             const scope = this.scopeForWindow(window);
-            if (scope === null || !windowInScope(window, scope) || window.tile === null || !isCustomTile(window.tile)) {
+            if (scope === null || !windowInScope(window, scope)) {
+                this.diagnostic("drag-origin-capture-failed:scope");
+                return;
+            }
+            if (window.tile === null || !isCustomTile(window.tile)) {
+                this.diagnostic("drag-origin-capture-failed:tile-association");
+                return;
+            }
+            if (this.isInert(scope)) {
+                this.diagnostic("drag-origin-capture-failed:scope-inert");
                 return;
             }
             const topology = this.topologyForScope(scope);
-            if (topology === null || !positiveGeometry(window.frameGeometry)) {
+            if (topology === null) {
+                this.diagnostic("drag-origin-capture-failed:topology");
+                return;
+            }
+            if (!positiveGeometry(window.frameGeometry)) {
+                this.diagnostic("drag-origin-capture-failed:geometry-invalid");
                 return;
             }
             const origin = operationLeafForTile(topology, window.tile);
             if (origin === null || origin.leaf.isLayout || windowIndex(origin.windows, window) < 0) {
+                this.diagnostic("drag-origin-capture-failed:origin-occupancy");
                 return;
             }
             this.drag.set({
@@ -2530,6 +2611,7 @@ export class TileController {
                     width: window.frameGeometry.width,
                     height: window.frameGeometry.height,
                 },
+                armedDeferredRemoval: false,
             });
             this.diagnostic("drag-origin-captured");
         }, (reason) => this.disabled(reason));
@@ -2538,13 +2620,23 @@ export class TileController {
     private handleInteractiveFinished(window: WindowCapability): void {
         this.gate.run(() => {
             const drag = this.drag.current;
-            if (drag === undefined || drag.window !== window) {
+            if (drag === undefined) {
+                this.diagnostic("drag-bail:no-tracked-drag");
+                return;
+            }
+            if (drag.window !== window) {
+                this.diagnostic("drag-bail:window-mismatch");
                 return;
             }
             try {
                 this.completeDrag(drag);
             } finally {
                 this.clearDrag();
+            }
+            // A drop that armed a deferred origin removal leaves the origin
+            // transiently empty; its removal settle runs the owed recovery.
+            if (!drag.armedDeferredRemoval) {
+                this.settleOwedInvariants();
             }
         }, (reason) => this.disabled(reason));
     }
@@ -2555,6 +2647,9 @@ export class TileController {
 
     private handleMoveResizedChanged(): void {
         this.diagnostic("drag-move-resized-changed");
+        this.gate.run(() => {
+            this.settleOwedInvariants();
+        }, (reason) => this.disabled(reason));
     }
 
     // Read the documented workspace cursor exactly once, at drag finish, under
@@ -2918,6 +3013,7 @@ export class TileController {
             return;
         }
         this.diagnostic("drag-empty-placement");
+        drag.armedDeferredRemoval = true;
         this.deferRemovalCollapse(drag.window, scope, drag.originTile, true);
     }
 
@@ -2941,6 +3037,7 @@ export class TileController {
             return;
         }
         this.diagnostic("drag-overlap-split-completed");
+        drag.armedDeferredRemoval = true;
         this.deferRemovalCollapse(drag.window, scope, drag.originTile, true, {
             dragged: drag.window,
             occupant,
@@ -3304,6 +3401,10 @@ export class TileController {
     // retrying forever, while the phase and pending-identity guards keep every
     // stale or duplicate callback inert.
     private startReconstruction(scope: CurrentScope): void {
+        if (this.trackedDragLive()) {
+            this.markOwedInvariant(scope);
+            return;
+        }
         const existing = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
         if (existing !== undefined) {
             existing.rearmCount += 1;
@@ -3414,6 +3515,11 @@ export class TileController {
     // window membership fresh and never touches a recorded child tile handle.
     private settleScopeRebuild(scope: CurrentScope, pending: PendingRebuild): void {
         if (this.isInert(scope) || !this.isOwned(scope)) {
+            this.dropPendingRebuild(scope, pending);
+            return;
+        }
+        if (this.trackedDragLive()) {
+            this.markOwedInvariant(scope);
             this.dropPendingRebuild(scope, pending);
             return;
         }
@@ -3591,6 +3697,10 @@ export class TileController {
             return;
         }
         if (this.readSelectedOverlay(scope) !== null) {
+            return;
+        }
+        if (this.trackedDragLive()) {
+            this.markOwedInvariant(scope);
             return;
         }
         const population = this.ownedPopulation(scope);
@@ -3920,6 +4030,7 @@ export class TileController {
         try {
             armed = this.environment.yieldOnce(() => {
                 this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
+                this.settleOwedInvariants();
             });
         } catch (error) {
             void error;
@@ -3946,6 +4057,10 @@ export class TileController {
         reflowLeaves?: ReflowLeaves,
     ): void {
         if (this.isInert(scope) || !this.isOwned(scope)) {
+            return;
+        }
+        if (this.trackedDragLive()) {
+            this.markOwedInvariant(scope);
             return;
         }
         if (this.readSelectedOverlay(scope) !== null) {
@@ -4113,8 +4228,17 @@ export class TileController {
             return null;
         }
         const after = this.topologyForScope(scope);
-        if (after === null || after.length !== topology.length - 1) {
+        if (after === null) {
             this.markInert(scope, "leaf-collapse-verify-failed");
+            return null;
+        }
+        if (after.length !== topology.length - 1) {
+            // The remove reported success but the live leaf count did not drop
+            // by exactly one. This is a recoverable count mismatch, not a
+            // damaged tree: defer to the invariant recovery instead of marking
+            // the scope inert, so the owed check re-settles the population.
+            this.diagnostic("ownership-remove-failed:leaf-count");
+            this.dwindleEnsureInvariant(scope);
             return null;
         }
         this.diagnostic("ownership-remove-collapsed");
@@ -4128,7 +4252,18 @@ export class TileController {
 
     private dwindleMaybeRemove(window: WindowCapability): void {
         const scope = this.scopeForWindow(window);
-        if (scope === null || !this.isOwned(scope)) {
+        if (scope === null) {
+            return;
+        }
+        if (this.isInert(scope)) {
+            this.onceDiagnostic("ownership-inert-ignored:removal");
+            return;
+        }
+        if (!this.isOwned(scope)) {
+            return;
+        }
+        if (this.trackedDragLive()) {
+            this.markOwedInvariant(scope);
             return;
         }
         this.dwindleRemove(window, scope);
