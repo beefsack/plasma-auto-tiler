@@ -143,10 +143,24 @@ export function isOutput(value: unknown): value is OutputCapability {
 
 export interface VirtualDesktopCapability {
     readonly id: string;
+    // Optional here: the 1-based desktop number used only to order the live
+    // `workspace.desktops` list. A desktop binding that lacks it still decodes
+    // as a desktop; ordering then falls back to list position.
+    readonly x11DesktopNumber?: number;
 }
 
 export function isVirtualDesktop(value: unknown): value is VirtualDesktopCapability {
     return isObject(value) && hasValue(value, "id", (item) => typeof item === "string");
+}
+
+// The 1-based X11 desktop number, or null when absent or not a positive
+// integer. Used only for ordering; never for identity (id is identity).
+export function desktopNumber(value: VirtualDesktopCapability): number | null {
+    const number = value.x11DesktopNumber;
+    if (typeof number !== "number" || !Number.isFinite(number) || !Number.isInteger(number) || number < 1) {
+        return null;
+    }
+    return number;
 }
 
 function isObjectOrNull(value: unknown): boolean {
@@ -316,6 +330,23 @@ export function writeWindowFrameGeometry(window: WindowCapability, geometry: Rec
 export function setWindowOnAllDesktops(window: WindowCapability, value: boolean): boolean {
     try {
         return Reflect.set(window, "onAllDesktops", value) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
+// Documented read-write `Window.desktops` (official KWin scripting API,
+// KWin::Window -> Read-write Properties -> the window's virtual-desktop
+// membership list). A workspace move writes a single-desktop membership
+// through this guarded seam; any throw or false set is a failure, never an
+// unvalidated write.
+export function writeWindowDesktops(
+    window: WindowCapability,
+    desktops: readonly VirtualDesktopCapability[],
+): boolean {
+    try {
+        return Reflect.set(window, "desktops", desktops) === true;
     } catch (error) {
         void error;
         return false;

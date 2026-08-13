@@ -188,6 +188,18 @@ class Harness {
     removed: ((value: unknown) => void) | undefined;
     screensChanged: (() => void) | undefined;
     desktopChanged: (() => void) | undefined;
+    desktopsChanged: (() => void) | undefined;
+    desktopsList: unknown = [DESKTOP];
+    screensList: unknown = [OUTPUT];
+    currentDesktopValue: unknown = DESKTOP;
+    createDesktopThrows: Error | undefined;
+    removeDesktopThrows: Error | undefined;
+    setCurrentDesktopThrows: Error | undefined;
+    desktopsThrows: Error | undefined;
+    readonly createDesktopCalls: Array<{ position: number; name: string }> = [];
+    readonly removedDesktops: unknown[] = [];
+    readonly currentDesktopWrites: unknown[] = [];
+    nextDesktopNumber = 1;
     throwOnLog = false;
     readonly logs: string[] = [];
 
@@ -222,6 +234,50 @@ class Harness {
             },
             onCurrentDesktopChanged: (handler) => {
                 this.desktopChanged = handler;
+            },
+            desktops: () => {
+                if (this.desktopsThrows !== undefined) {
+                    throw this.desktopsThrows;
+                }
+                return this.desktopsList;
+            },
+            screens: () => this.screensList,
+            currentDesktop: () => this.currentDesktopValue,
+            createDesktop: (position, name) => {
+                if (this.createDesktopThrows !== undefined) {
+                    throw this.createDesktopThrows;
+                }
+                this.createDesktopCalls.push({ position, name });
+                // Monotonic desktop id/number: a trailing empty desktop removed
+                // by cleanup must never cause a later create to reuse its id.
+                this.nextDesktopNumber += 1;
+                const created = { id: `desktop-${this.nextDesktopNumber}`, x11DesktopNumber: this.nextDesktopNumber };
+                this.desktopsList = [
+                    ...((Array.isArray(this.desktopsList) ? this.desktopsList : []) as unknown[]),
+                    created,
+                ];
+                return created;
+            },
+            removeDesktop: (desktop) => {
+                if (this.removeDesktopThrows !== undefined) {
+                    throw this.removeDesktopThrows;
+                }
+                this.removedDesktops.push(desktop);
+                if (Array.isArray(this.desktopsList)) {
+                    this.desktopsList = (this.desktopsList as unknown[]).filter(
+                        (entry) => (entry as { id: string }).id !== (desktop as { id: string }).id,
+                    );
+                }
+            },
+            setCurrentDesktop: (desktop) => {
+                if (this.setCurrentDesktopThrows !== undefined) {
+                    throw this.setCurrentDesktopThrows;
+                }
+                this.currentDesktopWrites.push(desktop);
+                this.currentDesktopValue = desktop;
+            },
+            onDesktopsChanged: (handler) => {
+                this.desktopsChanged = handler;
             },
             watchInteractiveWindow: (target, started, finished, stepped, moveResizedChanged, invalidated) => {
                 const connected: Array<[string, () => void]> = [];
@@ -369,6 +425,12 @@ class Harness {
     emitRemoved(value: unknown): void {
         if (this.removed !== undefined) {
             this.removed(value);
+        }
+    }
+
+    emitDesktopsChanged(): void {
+        if (this.desktopsChanged !== undefined) {
+            this.desktopsChanged();
         }
     }
 
@@ -1303,6 +1365,17 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
         ["plasma-auto-tiler-apply-dwindle", "Apply dwindle in focused leaf", "Meta+Alt+4"],
     ];
+    const workspaceActions: ReadonlyArray<readonly [string, string, string]> = [
+        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(
+            (index) => [`plasma-auto-tiler-workspace-${index}`, `Focus workspace ${index}`, `Meta+${index}`] as const,
+        ),
+        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(
+            (index) =>
+                [`plasma-auto-tiler-move-workspace-${index}`, `Move window to workspace ${index}`, `Meta+Shift+${index}`] as const,
+        ),
+        ["plasma-auto-tiler-workspace-append", "Append and focus a new workspace", "Meta+0"],
+        ["plasma-auto-tiler-move-workspace-append", "Move window to a newly appended workspace", "Meta+Shift+0"],
+    ];
 
     const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
         ...insertActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
@@ -1316,6 +1389,7 @@ describe("TileController keyboard focus", () => {
         ["plasma-auto-tiler-sticky-toggle", "Toggle sticky floating on all desktops", "Meta+Shift+G"],
         ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
         ...presetActions,
+        ...workspaceActions,
     ];
 
     it("registers the exact current action catalog in order", () => {
@@ -1352,6 +1426,9 @@ describe("TileController keyboard focus", () => {
             invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
             invokeShortcut(harness, "plasma-auto-tiler-fill-scope");
             for (const [name] of presetActions) {
+                invokeShortcut(harness, name);
+            }
+            for (const [name] of workspaceActions) {
                 invokeShortcut(harness, name);
             }
             harness.emitAdded(window());
@@ -6357,7 +6434,7 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 29-action all-or-nothing catalog", () => {
+    it("registers the exact 49-action all-or-nothing catalog", () => {
         const { harness } = setup();
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [
@@ -6389,7 +6466,27 @@ describe("TileController shortcut registration", () => {
             "plasma-auto-tiler-move-right-arrow",
             "plasma-auto-tiler-move-up",
             "plasma-auto-tiler-move-up-arrow",
+            "plasma-auto-tiler-move-workspace-1",
+            "plasma-auto-tiler-move-workspace-2",
+            "plasma-auto-tiler-move-workspace-3",
+            "plasma-auto-tiler-move-workspace-4",
+            "plasma-auto-tiler-move-workspace-5",
+            "plasma-auto-tiler-move-workspace-6",
+            "plasma-auto-tiler-move-workspace-7",
+            "plasma-auto-tiler-move-workspace-8",
+            "plasma-auto-tiler-move-workspace-9",
+            "plasma-auto-tiler-move-workspace-append",
             "plasma-auto-tiler-sticky-toggle",
+            "plasma-auto-tiler-workspace-1",
+            "plasma-auto-tiler-workspace-2",
+            "plasma-auto-tiler-workspace-3",
+            "plasma-auto-tiler-workspace-4",
+            "plasma-auto-tiler-workspace-5",
+            "plasma-auto-tiler-workspace-6",
+            "plasma-auto-tiler-workspace-7",
+            "plasma-auto-tiler-workspace-8",
+            "plasma-auto-tiler-workspace-9",
+            "plasma-auto-tiler-workspace-append",
         ]);
     });
 
@@ -9864,5 +9961,370 @@ describe("TileController floating and sticky windows", () => {
         assert.equal(countEvent(harness.logs, "startup-sticky-declined:tile-managed"), 1);
         assert.equal(tiledSticky.tile, leaf, "the window keeps its tile");
         assert.equal(tiledSticky.onAllDesktops, true, "the pin is not mutated at startup");
+    });
+});
+
+describe("TileController dynamic virtual desktops", () => {
+    it("navigates to an existing 1-based index and never creates on an absent index", () => {
+        const { harness } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(harness.currentDesktopWrites.length, 1);
+        assert.equal((harness.currentDesktopWrites[0] as { id: string }).id, "desktop-2");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-completed:2"), 1);
+
+        const writes = harness.currentDesktopWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-9");
+        assert.equal(harness.currentDesktopWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
+    });
+
+    it("Meta+0 always appends and navigates even when a trailing empty desktop exists", () => {
+        const { harness } = setup();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.equal(countEvent(harness.logs, "workspace-append-completed"), 2);
+        assert.equal(countEvent(harness.logs, "workspace-created-owned"), 2);
+    });
+
+    it("cleanup removes trailing empty owned desktops, keeping exactly one trailing empty", () => {
+        const { harness } = setup();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        const ids = (harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id);
+        assert.deepEqual(ids, ["desktop-1", "desktop-3"]);
+        assert.equal(harness.removedDesktops.length, 1);
+        assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-2");
+    });
+
+    it("move to an absent index is a specific no-op with no membership write", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-5");
+        assert.equal(countEvent(harness.logs, "workspace-move-absent:5"), 1);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.deepEqual(focused.desktops as unknown[], [DESKTOP]);
+    });
+
+    it("moves a tiled window to an existing desktop, writing membership and following", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        const members = (focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id);
+        assert.deepEqual(members, ["desktop-2"]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        // The destination adoption is deferred one event-loop turn and never
+        // loses the window; flush the queued yield without throwing.
+        assert.equal(harness.flushNextYield(), true);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-2"]);
+    });
+
+    it("move to the current desktop is a specific no-op", () => {
+        const { harness } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-1");
+        assert.equal(countEvent(harness.logs, "workspace-move-no-op:already-there"), 1);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+    });
+
+    it("collapses the tiled source leaf synchronously and adopts only on the yielded turn", () => {
+        const { harness, root, target, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        let unmanages = 0;
+        let removes = 0;
+        target.unmanage = (_value) => {
+            unmanages += 1;
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            removes += 1;
+            root.tiles = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        // Synchronous turn: the freed source leaf is unmanaged and collapsed,
+        // the window is untiled and already a member of the target desktop.
+        assert.equal(unmanages, 1);
+        assert.equal(removes, 1);
+        assert.deepEqual(root.tiles, []);
+        assert.equal(focused.tile, null);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        // Destination adoption is deferred: nothing has adopted yet and the
+        // move's one-shot yield is still queued.
+        assert.equal(harness.yields.length, 1);
+        assert.equal(countEvent(harness.logs, "workspace-move-adopt"), 0);
+        // Adoption runs only on the yielded turn and defers the still-floating
+        // window into the destination scope's pending reconstruction.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "workspace-move-adopted-deferred:reconstruction"), 1);
+        assert.ok(harness.yields.length >= 1);
+    });
+
+    it("leaves a moved window floating on the target when destination placement fails", () => {
+        const { harness, root, target, focused, controller } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        // No event-loop yield can be armed: the destination scope cannot even
+        // start its reconstruction, so adoption must fail closed into a
+        // retained-floating placement instead of stranding the window.
+        harness.yieldResult = false;
+        let unmanages = 0;
+        let removes = 0;
+        target.unmanage = (_value) => {
+            unmanages += 1;
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            removes += 1;
+            root.tiles = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(unmanages, 1);
+        assert.equal(removes, 1);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-move-adopt-failed:retained-floating"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-inert:initial-yield-arm-failed"), 1);
+        assert.equal(focused.tile, null);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("defers cleanup while a cross-workspace move is unsettled and retries after it settles", () => {
+        const { harness, root, target, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            root.tiles = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(harness.yields.length, 1);
+        // Cleanup triggered while the move is still pending defers it.
+        harness.emitDesktopsChanged();
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:move-unsettled"), 1);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:reconstruction-pending"), 0);
+        assert.equal(harness.removedDesktops.length, 0);
+        // After the move settles, cleanup is no longer deferred by it; the only
+        // remaining deferral is the destination scope's pending reconstruction.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:move-unsettled"), 1);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:reconstruction-pending"), 1);
+    });
+
+    it("moves a floating window across workspaces without mutating the tile tree", () => {
+        const { harness, root, target, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        let unmanages = 0;
+        let removes = 0;
+        let splits = 0;
+        target.unmanage = (_value) => {
+            unmanages += 1;
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            removes += 1;
+            return true;
+        };
+        target.split = () => {
+            splits += 1;
+            return [];
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
+        assert.equal(countEvent(harness.logs, "float-completed"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-floated"), 1);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        // The tile tree is untouched: only the float's own single unmanage ran.
+        assert.equal(focused.tile, null);
+        assert.equal(unmanages, 1);
+        assert.equal(removes, 0);
+        assert.equal(splits, 0);
+        assert.deepEqual(root.tiles, [target]);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("refuses to move a sticky window with no membership write or navigation", () => {
+        const { harness, target, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(countEvent(harness.logs, "sticky-enabled"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-refused:sticky"), 1);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+        ]);
+    });
+
+    it("refuses to move a fullscreen window with no membership write or navigation", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        focused.fullScreen = true;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-refused:fullscreen"), 1);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+        ]);
+    });
+
+    it("reports an append create failure without navigating or owning", () => {
+        const { harness } = setup();
+        harness.createDesktopThrows = new Error("create-failed");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-created-owned"), 0);
+    });
+
+    it("reports a failed membership write on a tiled move without navigating or arming", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        Object.defineProperty(focused, "desktops", {
+            configurable: true,
+            get: () => [DESKTOP],
+            set: () => {
+                throw new Error("desktops-write-failed");
+            },
+        });
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-move-failed:desktops-write"), 1);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("keeps navigation nonfatal when the desktops surface is missing", () => {
+        const { harness, controller } = setup();
+        harness.desktopsThrows = new Error("kwin-workspace-surface-missing:desktops");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(
+            countEvent(harness.logs, "workspace-desktops-unavailable:kwin-workspace-surface-missing:desktops"),
+            1,
+        );
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("keeps cleanup nonfatal when removeDesktop throws mid-cleanup", () => {
+        const { harness, controller } = setup();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(harness.removedDesktops.length, 1);
+        harness.removeDesktopThrows = new Error("remove-failed");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-remove-failed:remove-failed"), 1);
+        assert.equal(harness.removedDesktops.length, 1);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("defers cleanup during a live drag and retries after drag completion", () => {
+        const { harness, focused } = setup();
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:drag-live"), 2);
+        assert.equal(harness.removedDesktops.length, 0);
+        focused.move = false;
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-removed"), 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+        ]);
+    });
+
+    it("defers cleanup while a reconstruction is pending and retries after it settles", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const left = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const right = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const first = window();
+        const second = window();
+        root.tiles = [left, right];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first, second];
+        for (const leaf of [left, right]) {
+            leaf.remove = () => {
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(first);
+        attachTileWriter(second);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:reconstruction-pending"), 2);
+        assert.equal(harness.removedDesktops.length, 0);
+        // Settle the two-phase reconstruction (collapse then split); the final
+        // pending drop retries cleanup and removes the middle empty desktop.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+        ]);
     });
 });

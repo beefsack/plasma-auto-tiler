@@ -77,6 +77,13 @@
   function isVirtualDesktop(value) {
     return isObject(value) && hasValue(value, "id", (item) => typeof item === "string");
   }
+  function desktopNumber(value) {
+    const number = value.x11DesktopNumber;
+    if (typeof number !== "number" || !Number.isFinite(number) || !Number.isInteger(number) || number < 1) {
+      return null;
+    }
+    return number;
+  }
   function isObjectOrNull(value) {
     return value === null || isObject(value);
   }
@@ -141,6 +148,14 @@
   function setWindowOnAllDesktops(window, value) {
     try {
       return Reflect.set(window, "onAllDesktops", value) === true;
+    } catch (error) {
+      void error;
+      return false;
+    }
+  }
+  function writeWindowDesktops(window, desktops) {
+    try {
+      return Reflect.set(window, "desktops", desktops) === true;
     } catch (error) {
       void error;
       return false;
@@ -1026,6 +1041,18 @@
     }
     return desktops.value.some((desktop) => desktop.id === scope.scope.desktopId) ? "match" : "no-match";
   }
+  function orderedDesktops(desktops) {
+    const indexed = desktops.map((desktop, index) => ({ desktop, number: desktopNumber(desktop), index }));
+    const allNumbered = indexed.every((entry) => entry.number !== null);
+    const ordered = allNumbered ? indexed.slice().sort((a, b) => a.number - b.number) : indexed.slice().sort((a, b) => a.index - b.index);
+    return ordered.map((entry) => entry.desktop);
+  }
+  function describeWorkspaceFailure(error) {
+    if (error instanceof Error) {
+      return error.message === "" ? error.name : error.message;
+    }
+    return String(error);
+  }
   function decodeLeaves(root, decodedBoundary) {
     const pending = [root];
     const visited = /* @__PURE__ */ new Set([root]);
@@ -1359,6 +1386,19 @@
       // in progress. Each scope owes exactly one later check, run once the
       // tracked drag window is no longer live-moving/resizing.
       this.owedInvariantScopes = /* @__PURE__ */ new Map();
+      // Session-only script-owned virtual desktops (by desktop id). A desktop the
+      // controller appended via Meta+0 / Meta+Shift+0 is owned for this session
+      // only; no identity survives restart and pre-existing desktops are never
+      // owned or removed. Cleanup may only ever remove owned desktops.
+      this.ownedDesktopIds = /* @__PURE__ */ new Set();
+      // Cross-workspace tile moves awaiting their destination adoption yield.
+      // Cleanup is deferred while any move is unsettled so a desktop is never
+      // removed under a window that is still being re-placed.
+      this.pendingMoves = /* @__PURE__ */ new Set();
+      // Re-entrancy guard for desktop cleanup: removeDesktop re-fires
+      // desktopsChanged, and cleanup is idempotent so the guard only prevents a
+      // nested re-entry, never skips owed work.
+      this.cleaningDesktops = false;
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -1417,6 +1457,7 @@
         this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
         this.environment.onScreensChanged(() => this.handleScopeChange());
         this.environment.onCurrentDesktopChanged(() => this.handleScopeChange());
+        this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
         const insertionRegistered = this.environment.registerShortcut(
@@ -1593,7 +1634,41 @@
           "Meta+Alt+4",
           () => this.applyPreset("dwindle")
         );
-        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered || !focusLeftArrowRegistered || !focusDownArrowRegistered || !focusUpArrowRegistered || !focusRightArrowRegistered || !moveLeftRegistered || !moveDownRegistered || !moveUpRegistered || !moveRightRegistered || !moveLeftArrowRegistered || !moveDownArrowRegistered || !moveUpArrowRegistered || !moveRightArrowRegistered || !detachRegistered || !attachRegistered || !floatRegistered || !stickyRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered) {
+        const workspaceRegistrations = [];
+        for (let index = 1; index <= 9; index += 1) {
+          workspaceRegistrations.push(
+            this.environment.registerShortcut(
+              `plasma-auto-tiler-workspace-${index}`,
+              `Focus workspace ${index}`,
+              `Meta+${index}`,
+              () => this.navigateWorkspace(index)
+            )
+          );
+        }
+        for (let index = 1; index <= 9; index += 1) {
+          workspaceRegistrations.push(
+            this.environment.registerShortcut(
+              `plasma-auto-tiler-move-workspace-${index}`,
+              `Move window to workspace ${index}`,
+              `Meta+Shift+${index}`,
+              () => this.moveActiveToWorkspace(index)
+            )
+          );
+        }
+        const appendRegistered = this.environment.registerShortcut(
+          "plasma-auto-tiler-workspace-append",
+          "Append and focus a new workspace",
+          "Meta+0",
+          () => this.appendWorkspace()
+        );
+        const moveAppendRegistered = this.environment.registerShortcut(
+          "plasma-auto-tiler-move-workspace-append",
+          "Move window to a newly appended workspace",
+          "Meta+Shift+0",
+          () => this.moveActiveToWorkspace(0)
+        );
+        const workspaceRegistrationsOk = workspaceRegistrations.every((registered) => registered) && appendRegistered && moveAppendRegistered;
+        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered || !focusLeftArrowRegistered || !focusDownArrowRegistered || !focusUpArrowRegistered || !focusRightArrowRegistered || !moveLeftRegistered || !moveDownRegistered || !moveUpRegistered || !moveRightRegistered || !moveLeftArrowRegistered || !moveDownArrowRegistered || !moveUpArrowRegistered || !moveRightArrowRegistered || !detachRegistered || !attachRegistered || !floatRegistered || !stickyRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered || !workspaceRegistrationsOk) {
           this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
           return;
         }
@@ -3575,6 +3650,7 @@
         if (!drag.armedDeferredRemoval) {
           this.settleOwedInvariants();
         }
+        this.cleanupDesktops();
       }, (reason) => this.disabled(reason));
     }
     // Stepped keeps the signal attached for live delivery proof but must not
@@ -4631,6 +4707,9 @@
           }
         }
       }
+      if (this.pendingRebuilds.size === 0) {
+        this.cleanupDesktops();
+      }
     }
     recordDetached(window) {
       if (this.detachedWindows.size >= MAX_SEQUENTIAL_LENGTH) {
@@ -5150,6 +5229,394 @@
       }
       this.dwindleRemove(window, scope);
     }
+    // ---- Dynamic virtual desktops ----
+    // Ordered live desktop list, or null when the workspace surface is absent
+    // or the list cannot be decoded. Ordering is 1-based X11 number ascending
+    // with positional-order fallback; identity is always the string id.
+    liveDesktops() {
+      let value;
+      try {
+        value = this.environment.desktops();
+      } catch (error) {
+        this.diagnostic(`workspace-desktops-unavailable:${describeWorkspaceFailure(error)}`);
+        return null;
+      }
+      const decoded = decodeSequential(value, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
+      if (!decoded.ok) {
+        this.diagnostic("workspace-desktops-unavailable:decode");
+        return null;
+      }
+      return orderedDesktops(decoded.value);
+    }
+    handleDesktopsChanged() {
+      this.gate.run(() => {
+        this.cleanupDesktops();
+      }, (reason) => this.disabled(reason));
+    }
+    // Meta+1..9: navigate to the existing desktop at the given 1-based index.
+    // An absent index is a specific no-op and never creates a desktop.
+    navigateWorkspace(index) {
+      this.gate.run(() => {
+        this.diagnostic(`workspace-navigate-invoked:${index}`);
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+          return;
+        }
+        const target = desktops[index - 1];
+        if (target === void 0) {
+          this.diagnostic(`workspace-navigate-absent:${index}`);
+          return;
+        }
+        this.setCurrentDesktop(target);
+        this.diagnostic(`workspace-navigate-completed:${index}`);
+      }, (reason) => this.disabled(reason));
+    }
+    // Meta+0: always append a new desktop and navigate to it, even when a
+    // trailing empty desktop already exists.
+    appendWorkspace() {
+      this.gate.run(() => {
+        this.diagnostic("workspace-append-invoked");
+        const created = this.appendDesktop();
+        if (created === null) {
+          return;
+        }
+        this.setCurrentDesktop(created);
+        this.diagnostic("workspace-append-completed");
+        this.cleanupDesktops();
+      }, (reason) => this.disabled(reason));
+    }
+    // Append one desktop through the createDesktop surface, re-enumerating the
+    // live list to resolve the new desktop (no desktop lookup API exists). The
+    // new desktop is recorded script-owned for this session only.
+    appendDesktop() {
+      const before = this.liveDesktops();
+      if (before === null) {
+        return null;
+      }
+      const beforeIds = new Set(before.map((desktop) => desktop.id));
+      try {
+        this.environment.createDesktop(before.length + 1, String(before.length + 1));
+      } catch (error) {
+        this.diagnostic(`workspace-append-create-failed:${describeWorkspaceFailure(error)}`);
+        return null;
+      }
+      const after = this.liveDesktops();
+      if (after === null) {
+        this.diagnostic("workspace-append-created-unverified");
+        return null;
+      }
+      const fresh = after.filter((desktop) => !beforeIds.has(desktop.id));
+      const candidate = fresh.length === 1 ? fresh[0] : fresh[fresh.length - 1];
+      if (candidate === void 0) {
+        this.diagnostic("workspace-append-created-unresolved");
+        return null;
+      }
+      this.ownedDesktopIds.add(candidate.id);
+      this.diagnostic("workspace-created-owned");
+      return candidate;
+    }
+    // Meta+Shift+1..9 and Meta+Shift+0: move the focused window to the target
+    // desktop then follow it. Index 0 appends first. A sticky window is a
+    // specific no-op; fullscreen is refused by the active-action guard.
+    moveActiveToWorkspace(index) {
+      this.gate.run(() => {
+        this.diagnostic(`workspace-move-invoked:${index}`);
+        const activeNow = this.environment.activeWindow();
+        if (isWindow(activeNow) && activeNow.fullScreen === true) {
+          this.diagnostic("workspace-move-refused:fullscreen");
+          return;
+        }
+        const guard = this.activeActionGuard("workspace-move");
+        if (guard === null) {
+          return;
+        }
+        const { active, scope } = guard;
+        if (this.isSticky(active)) {
+          this.diagnostic("workspace-move-refused:sticky");
+          return;
+        }
+        let target;
+        if (index === 0) {
+          target = this.appendDesktop();
+        } else {
+          const desktops = this.liveDesktops();
+          if (desktops === null) {
+            return;
+          }
+          const entry = desktops[index - 1];
+          if (entry === void 0) {
+            this.diagnostic(`workspace-move-absent:${index}`);
+            return;
+          }
+          target = entry;
+        }
+        if (target === null) {
+          return;
+        }
+        if (target.id === scope.desktop.id) {
+          this.diagnostic("workspace-move-no-op:already-there");
+          return;
+        }
+        this.moveWindowToDesktop(active, scope, target);
+      }, (reason) => this.disabled(reason));
+    }
+    moveWindowToDesktop(window, sourceScope, target) {
+      if (this.isFloating(window)) {
+        this.moveFloatingWindow(window, target);
+        return;
+      }
+      this.moveTiledWindow(window, sourceScope, target);
+    }
+    // Floating move: update desktop membership only, preserve floating state,
+    // and never mutate the tile tree.
+    moveFloatingWindow(window, target) {
+      if (!writeWindowDesktops(window, [target])) {
+        this.diagnostic("workspace-move-failed:desktops-write");
+        return;
+      }
+      this.diagnostic("workspace-move-floated");
+      this.setCurrentDesktop(target);
+      this.cleanupDesktops();
+    }
+    // Tiled move: write the new membership, collapse the freed source leaf
+    // through the removals-only pipeline, then defer the destination adoption
+    // to a later event-loop turn so no remove and split share one structural
+    // operation. The window is never lost: a failed destination placement
+    // leaves it floating on the target.
+    moveTiledWindow(window, sourceScope, target) {
+      const targetScope = {
+        output: sourceScope.output,
+        desktop: target,
+        scope: { output: sourceScope.output, desktopId: target.id }
+      };
+      if (!writeWindowDesktops(window, [target])) {
+        this.diagnostic("workspace-move-failed:desktops-write");
+        return;
+      }
+      this.collapseMovedSourceLeaf(window, sourceScope);
+      this.pendingMoves.add(window);
+      let armed = false;
+      try {
+        armed = this.environment.yieldOnce(() => {
+          this.pendingMoves.delete(window);
+          this.adoptMovedWindow(window, targetScope);
+        });
+      } catch (error) {
+        void error;
+      }
+      if (!armed) {
+        this.pendingMoves.delete(window);
+        this.adoptMovedWindow(window, targetScope);
+        return;
+      }
+      this.diagnostic("workspace-move-pending");
+      this.setCurrentDesktop(target);
+    }
+    // Collapse the source leaf a tiled window just vacated: one unmanage then
+    // one removals-only leaf collapse. No split is ever performed here.
+    collapseMovedSourceLeaf(window, sourceScope) {
+      if (window.tile === null || !isCustomTile(window.tile) || window.tile.isLayout) {
+        return;
+      }
+      const topology = this.topologyForScope(sourceScope);
+      if (topology === null) {
+        return;
+      }
+      const leaf = operationLeafForTile(topology, window.tile);
+      if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
+        return;
+      }
+      let unmanaged = false;
+      try {
+        unmanaged = unmanageTile(leaf.decoded.tile, window);
+      } catch (error) {
+        void error;
+      }
+      if (!unmanaged) {
+        return;
+      }
+      this.collapseFreedLeaf(sourceScope, topology, leaf.decoded.tile);
+    }
+    // Destination adoption for a moved tiled window, on a later event-loop
+    // turn: ordinary placement/adoption into the target scope. A window that is
+    // still untiled afterwards is retained safely as floating on the target.
+    adoptMovedWindow(window, targetScope) {
+      var _a;
+      if (!this.gate.isEnabled) {
+        return;
+      }
+      try {
+        if (window.tile !== null) {
+          this.diagnostic("workspace-move-adopted-existing");
+          return;
+        }
+        this.placeEligibleAdded(window, targetScope);
+        if (window.tile !== null) {
+          this.diagnostic("workspace-move-adopted");
+        } else if (((_a = this.pendingRebuilds.get(targetScope.output)) == null ? void 0 : _a.get(targetScope.desktop.id)) !== void 0) {
+          this.diagnostic("workspace-move-adopted-deferred:reconstruction");
+        } else {
+          this.floatingWindows.add(window);
+          this.floatScopes.set(window, targetScope.scope);
+          this.diagnostic("workspace-move-adopt-failed:retained-floating");
+        }
+      } catch (error) {
+        this.floatingWindows.add(window);
+        this.floatScopes.set(window, targetScope.scope);
+        this.diagnostic(`workspace-move-adopt-failed:${describeWorkspaceFailure(error)}`);
+      }
+      this.cleanupDesktops();
+    }
+    setCurrentDesktop(target) {
+      try {
+        this.environment.setCurrentDesktop(target);
+        this.diagnostic("workspace-navigate-set");
+      } catch (error) {
+        this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
+      }
+    }
+    // Attempt cleanup to exactly one trailing empty script-owned desktop after
+    // the highest occupied workspace. Never removes non-owned, the last
+    // desktop, the current desktop, or any desktop current on any output.
+    cleanupDesktops() {
+      if (!this.gate.isEnabled || this.cleaningDesktops) {
+        return;
+      }
+      if (this.trackedDragLive()) {
+        this.diagnostic("workspace-cleanup-deferred:drag-live");
+        return;
+      }
+      if (this.pendingRebuilds.size > 0) {
+        this.diagnostic("workspace-cleanup-deferred:reconstruction-pending");
+        return;
+      }
+      if (this.pendingMoves.size > 0) {
+        this.diagnostic("workspace-cleanup-deferred:move-unsettled");
+        return;
+      }
+      const visible = this.visibleDesktopIds();
+      if (visible === null) {
+        this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+        return;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null || desktops.length <= 1) {
+        return;
+      }
+      const occupied = this.occupiedDesktopIds();
+      let highestOccupied = 0;
+      for (let position = 0; position < desktops.length; position += 1) {
+        const desktop = desktops[position];
+        if (desktop !== void 0 && occupied.has(desktop.id)) {
+          highestOccupied = position + 1;
+        }
+      }
+      const lastIndex = desktops.length - 1;
+      const removals = [];
+      for (let position = 0; position < desktops.length; position += 1) {
+        const desktop = desktops[position];
+        if (desktop === void 0) {
+          continue;
+        }
+        if (!this.ownedDesktopIds.has(desktop.id)) {
+          continue;
+        }
+        if (occupied.has(desktop.id)) {
+          continue;
+        }
+        if (position + 1 <= highestOccupied) {
+          continue;
+        }
+        if (position === lastIndex) {
+          continue;
+        }
+        if (visible.has(desktop.id)) {
+          continue;
+        }
+        removals.push(desktop);
+      }
+      if (removals.length === 0) {
+        return;
+      }
+      this.cleaningDesktops = true;
+      try {
+        for (const desktop of removals) {
+          try {
+            this.environment.removeDesktop(desktop);
+            this.ownedDesktopIds.delete(desktop.id);
+            this.diagnostic("workspace-cleanup-removed");
+          } catch (error) {
+            this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
+          }
+        }
+      } finally {
+        this.cleaningDesktops = false;
+      }
+    }
+    // Desktop ids currently visible on any output (per-output current desktop)
+    // plus the global current desktop. Returns null when outputs cannot be
+    // enumerated or a per-output read fails, so cleanup can defer safely.
+    visibleDesktopIds() {
+      let raw;
+      try {
+        raw = this.environment.screens();
+      } catch (error) {
+        return null;
+      }
+      const screens = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+      if (!screens.ok || screens.value.length === 0) {
+        return null;
+      }
+      const visible = /* @__PURE__ */ new Set();
+      for (const output of screens.value) {
+        let current;
+        try {
+          current = this.environment.currentDesktopForOutput(output);
+        } catch (error) {
+          return null;
+        }
+        if (isVirtualDesktop(current)) {
+          visible.add(current.id);
+        }
+      }
+      try {
+        const global = this.environment.currentDesktop();
+        if (isVirtualDesktop(global)) {
+          visible.add(global.id);
+        }
+      } catch (error) {
+        return null;
+      }
+      return visible;
+    }
+    // Desktop ids that hold at least one non-sticky window. A window without a
+    // readable `onAllDesktops` is treated as not-sticky.
+    occupiedDesktopIds() {
+      const occupied = /* @__PURE__ */ new Set();
+      const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+      if (!windows.ok) {
+        const desktops = this.liveDesktops();
+        if (desktops !== null) {
+          for (const desktop of desktops) {
+            occupied.add(desktop.id);
+          }
+        }
+        return occupied;
+      }
+      for (const window of windows.value) {
+        if (window.onAllDesktops === true) {
+          continue;
+        }
+        const members = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
+        if (!members.ok) {
+          continue;
+        }
+        for (const desktop of members.value) {
+          occupied.add(desktop.id);
+        }
+      }
+      return occupied;
+    }
   };
 
   // src/entry.ts
@@ -5168,6 +5635,51 @@
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
     clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),
+    desktops: () => {
+      const value = workspace.desktops;
+      if (value === void 0) {
+        throw new Error("kwin-workspace-surface-missing:desktops");
+      }
+      return value;
+    },
+    screens: () => {
+      const value = workspace.screens;
+      if (value === void 0) {
+        throw new Error("kwin-workspace-surface-missing:screens");
+      }
+      return value;
+    },
+    currentDesktop: () => {
+      const value = workspace.currentDesktop;
+      return value != null ? value : null;
+    },
+    createDesktop: (position, name) => {
+      if (typeof workspace.createDesktop !== "function") {
+        throw new Error("kwin-workspace-surface-missing:createDesktop");
+      }
+      return workspace.createDesktop(position, name);
+    },
+    removeDesktop: (desktop) => {
+      if (typeof workspace.removeDesktop !== "function") {
+        throw new Error("kwin-workspace-surface-missing:removeDesktop");
+      }
+      workspace.removeDesktop(desktop);
+    },
+    setCurrentDesktop: (desktop) => {
+      try {
+        workspace.currentDesktop = desktop;
+      } catch (error) {
+        throw new Error(`kwin-workspace-surface-missing:setCurrentDesktop:${String(error)}`);
+      }
+    },
+    onDesktopsChanged: (handler) => {
+      const signal = workspace.desktopsChanged;
+      if (signal === void 0) {
+        console.log("plasma-auto-tiler:workspace-surface-missing:desktopsChanged");
+        return;
+      }
+      signal.connect(handler);
+    },
     onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),

@@ -59,7 +59,7 @@ bash scripts/dogfood-install.sh status
 
 ### Shortcut catalog
 
-The controller registers these 29 shortcuts (identifiers and sequences as
+The controller registers these 49 shortcuts (identifiers and sequences as
 authored in `kwin/src/controller.ts`):
 
 | Identifier | Shortcut |
@@ -93,6 +93,10 @@ authored in `kwin/src/controller.ts`):
 | plasma-auto-tiler-apply-rows | Meta+Alt+2 |
 | plasma-auto-tiler-apply-balanced-grid | Meta+Alt+3 |
 | plasma-auto-tiler-apply-dwindle | Meta+Alt+4 |
+| plasma-auto-tiler-workspace-1..9 | Meta+1..9 |
+| plasma-auto-tiler-workspace-append | Meta+0 |
+| plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
+| plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
 
 ### What this does to your session
 
@@ -111,6 +115,16 @@ reconstruction, and their vacated tile leaf is retained rather than collapsed.
 At startup, windows that are already on all desktops are treated as session-local
 sticky floating windows; this heuristic cannot distinguish a user-pinned window
 from an application-requested one, so it applies only within the session.
+
+`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` always appends a
+new workspace and focuses it; `Meta+Shift+1..9` moves the focused window to the
+existing workspace and follows it; `Meta+Shift+0` appends a workspace, moves the
+focused window, and follows it. Workspaces appended by the controller are
+session-local script-owned desktops: on a session restart no desktop is treated
+as owned and existing desktops are never removed. Cleanup only ever removes an
+owned trailing empty desktop after the highest occupied workspace, keeping
+exactly one trailing empty desktop, and never removes a non-owned, current, or
+per-output-visible desktop.
 
 ### Disable
 

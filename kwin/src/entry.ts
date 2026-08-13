@@ -28,6 +28,51 @@ const controller = new TileController({
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
     clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),
+    desktops: () => {
+        const value = workspace.desktops;
+        if (value === undefined) {
+            throw new Error("kwin-workspace-surface-missing:desktops");
+        }
+        return value;
+    },
+    screens: () => {
+        const value = workspace.screens;
+        if (value === undefined) {
+            throw new Error("kwin-workspace-surface-missing:screens");
+        }
+        return value;
+    },
+    currentDesktop: () => {
+        const value = workspace.currentDesktop;
+        return value ?? null;
+    },
+    createDesktop: (position, name) => {
+        if (typeof workspace.createDesktop !== "function") {
+            throw new Error("kwin-workspace-surface-missing:createDesktop");
+        }
+        return workspace.createDesktop(position, name);
+    },
+    removeDesktop: (desktop) => {
+        if (typeof workspace.removeDesktop !== "function") {
+            throw new Error("kwin-workspace-surface-missing:removeDesktop");
+        }
+        workspace.removeDesktop(desktop as unknown as VirtualDesktop);
+    },
+    setCurrentDesktop: (desktop) => {
+        try {
+            workspace.currentDesktop = desktop as unknown as VirtualDesktop;
+        } catch (error) {
+            throw new Error(`kwin-workspace-surface-missing:setCurrentDesktop:${String(error)}`);
+        }
+    },
+    onDesktopsChanged: (handler) => {
+        const signal = workspace.desktopsChanged;
+        if (signal === undefined) {
+            console.log("plasma-auto-tiler:workspace-surface-missing:desktopsChanged");
+            return;
+        }
+        signal.connect(handler);
+    },
     onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
     onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),

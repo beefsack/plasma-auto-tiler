@@ -85,9 +85,15 @@ declare enum LayoutDirection {
 }
 
 // src/virtualdesktops.h: virtual-desktop ID is a scripting-facing string
-// property.
+// property. x11DesktopNumber is the 1-based desktop number
+// (src/virtualdesktops.h Q_PROPERTY(uint x11DesktopNumber READ
+// x11DesktopNumber)); declared optional here so the boundary capability type
+// stays structurally assignable, and read defensively only to order the live
+// `workspace.desktops` list. The controller's 1-based navigation index is
+// positional order, never this number.
 interface VirtualDesktop {
     readonly id: string;
+    readonly x11DesktopNumber?: number;
 }
 
 // src/core/output.h: only scripting-exposed Q_PROPERTY members. uuid() is
@@ -109,7 +115,11 @@ interface Window {
     readonly resizeable: boolean;
     readonly appletPopup: boolean;
     // QList<VirtualDesktop *> has no established JavaScript marshalling contract.
-    readonly desktops: unknown;
+    // Read-write in the official KWin scripting API (KWin::Window -> Read-write
+    // Properties -> `desktopList`/`desktops`); a JS array assignment sets the
+    // window's virtual-desktop membership. Written only through the guarded
+    // boundary seam for workspace moves.
+    desktops: unknown;
     readonly output: Output | null;
     // Writable: src/window.h at pinned v6.7.3 declares
     //     Q_PROPERTY(KWin::Tile *tile READ requestedTile WRITE
@@ -229,7 +239,28 @@ interface Workspace {
     // QList<LogicalOutput *> requires runtime decoding before iteration.
     readonly screens: unknown;
     readonly cursorPos: Point;
-    readonly currentDesktop: VirtualDesktop | null;
+    // QList<VirtualDesktop *> requires runtime decoding before iteration.
+    readonly desktops: unknown;
+    // Read-write: src/scripting/workspace_wrapper.h declares the WRITE setter
+    //     Q_PROPERTY(KWin::VirtualDesktop *currentDesktop READ currentDesktop
+    //     WRITE setCurrentDesktop NOTIFY currentDesktopChanged)
+    // at pinned v6.7.3. Assigning switches the current virtual desktop.
+    currentDesktop: VirtualDesktop | null;
+    // src/scripting/workspace_wrapper.h at pinned v6.7.3 commit
+    // 45ec9a6d0ed312a803ff5658a2a3e61f221566c6:
+    //     Q_SCRIPTABLE void createDesktop(int position, const QString &name)
+    //     const
+    // Creates a desktop at the 1-based position and returns nothing. The
+    // controller re-enumerates `desktops` to resolve the new desktop and never
+    // relies on a return value.
+    createDesktop(position: number, name: string): void;
+    // src/scripting/workspace_wrapper.h:
+    //     Q_INVOKABLE void removeDesktop(VirtualDesktop *desktop)
+    removeDesktop(desktop: VirtualDesktop): void;
+    // src/scripting/workspace_wrapper.h:
+    //     Q_INVOKABLE void setCurrentDesktopForScreen(VirtualDesktop *desktop,
+    //                                                 Output *output)
+    setCurrentDesktopForScreen(desktop: VirtualDesktop, output: Output): void;
     // Writable: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::Window *activeWindow READ activeWindow WRITE
     //     setActiveWindow NOTIFY windowActivated)
@@ -247,6 +278,7 @@ interface Workspace {
     readonly windowAdded: Signal1<Window>;
     readonly windowRemoved: Signal1<Window>;
     readonly screensChanged: Signal;
+    readonly desktopsChanged: Signal;
     readonly currentDesktopChanged: Signal3<VirtualDesktop | null, VirtualDesktop | null, Output | null>;
 }
 
