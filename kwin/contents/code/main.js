@@ -2936,10 +2936,14 @@
     }
     handleInteractiveFinished(window) {
       this.gate.run(() => {
-        var _a;
+        const watch = this.interactiveWindows.get(window);
+        const wasResize = (watch == null ? void 0 : watch.kind) === "resize";
+        if (watch !== void 0) {
+          watch.kind = "unknown";
+        }
         const drag = this.drag.current;
         if (drag === void 0) {
-          if (((_a = this.interactiveWindows.get(window)) == null ? void 0 : _a.kind) === "resize") {
+          if (wasResize) {
             this.diagnostic("drag-bail:no-tracked-drag:resize");
           } else {
             this.diagnostic("drag-bail:no-tracked-drag");

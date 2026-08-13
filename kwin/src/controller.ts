@@ -2639,9 +2639,14 @@ export class TileController {
 
     private handleInteractiveFinished(window: WindowCapability): void {
         this.gate.run(() => {
+            const watch = this.interactiveWindows.get(window);
+            const wasResize = watch?.kind === "resize";
+            if (watch !== undefined) {
+                watch.kind = "unknown";
+            }
             const drag = this.drag.current;
             if (drag === undefined) {
-                if (this.interactiveWindows.get(window)?.kind === "resize") {
+                if (wasResize) {
                     this.diagnostic("drag-bail:no-tracked-drag:resize");
                 } else {
                     this.diagnostic("drag-bail:no-tracked-drag");

@@ -8806,6 +8806,23 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
     });
 
+    it("does not attribute an unpaired finish after a completed resize", () => {
+        const { harness, dragged } = dragSetup();
+
+        // Complete a normal interactive resize.
+        dragged.resize = true;
+        dragged.interactiveMoveResizeStarted.emit();
+        dragged.resize = false;
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+
+        // A later finish with no preceding start must not be attributed to the
+        // consumed resize gesture.
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
+    });
+
     it("logs a drag-bail reason when invalidation clears an active tracked drag", () => {
         const { harness, controller, dragged } = dragSetup();
         startDrag(dragged);
