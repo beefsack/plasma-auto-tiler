@@ -12739,3 +12739,342 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-8"]);
     });
 });
+
+describe("TileController shared workspaces (Unit 07)", () => {
+    const OUTPUT_E = { ...OUTPUT, name: "screen-e", serialNumber: "11" };
+    const OUTPUT_L = { ...OUTPUT, name: "screen-l", serialNumber: "22" };
+    const DESKTOP_1 = { id: "desktop-1", x11DesktopNumber: 1 };
+    const DESKTOP_2 = { id: "desktop-2", x11DesktopNumber: 2 };
+
+    // Two-output shared session: every output shows the same logical desktop
+    // and the global list IS the shared set (spec D3). Startup reconciliation
+    // creates one shared owned trailing empty (desktop-3). All moves below are
+    // floating moves (membership write + follow only, never a tile-tree
+    // mutation). Per-output currents are modeled through the override so the
+    // synchronized state is observable per output.
+    function sharedSetup(): {
+        readonly harness: Harness;
+        readonly controller: TileController;
+        readonly wE: TestWindow;
+        readonly wL: TestWindow;
+    } {
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1, DESKTOP_2];
+        harness.nextDesktopNumber = 2;
+        // Null currents at startup so no scope is owned and no dwindle
+        // reconstruction is armed (the same pattern as the Unit 05 two-output
+        // setup); tests set a current when they need a window in scope.
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        harness.windows = [wE, wL];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        return { harness, controller, wE, wL };
+    }
+
+    // Model both outputs already showing the shared desktop-1 without firing a
+    // scope event, so navigation assertions start from the spec H.13 state.
+    function bothOnDesktopOne(harness: Harness): void {
+        harness.currentDesktop = DESKTOP_1;
+        harness.currentDesktopValue = DESKTOP_1;
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_1);
+    }
+
+    // Float a window through the sticky toggle and clear the pin so it is
+    // floating and movable on the desktop it belongs to, with no tile tree.
+    function makeSharedFloating(harness: Harness, win: TestWindow): void {
+        harness.currentDesktop = DESKTOP_1;
+        harness.currentDesktopValue = DESKTOP_1;
+        harness.active = win;
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+        invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
+    }
+
+    function bothOutputsOn(harness: Harness): [string, string] {
+        const e = harness.currentDesktopByOutput.get(OUTPUT_E) ?? harness.currentDesktop;
+        const l = harness.currentDesktopByOutput.get(OUTPUT_L) ?? harness.currentDesktop;
+        return [(e as { id: string }).id, (l as { id: string }).id];
+    }
+
+    it("Meta+0 stays absent and Meta+Shift+0 remains registered (shared)", () => {
+        const { harness } = sharedSetup();
+        assert.equal(
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
+            false,
+        );
+        assert.equal(
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
+            true,
+        );
+    });
+
+    it("holds one global ordered shared desktop-id set with one owned trailing empty, duplicate-free on repeat", () => {
+        // Spec D3/F: the shared set is the ordered live global list plus the one
+        // owned trailing empty created by startup reconciliation. A repeated
+        // reconciliation creates no duplicate and removes nothing.
+        const { harness, controller } = sharedSetup();
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
+        const creates = harness.createDesktopCalls.length;
+        const removals = harness.removedDesktops.length;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, removals);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+    });
+
+    it("Meta+2 writes the same desktop id to E and L (spec H.10/H.13)", () => {
+        // Spec H.10: mode shared, Meta+2 sets E and L to the same desktop id;
+        // H.13: both show logical 1, Meta+2 changes both to logical 2. The
+        // synchronization iterates setCurrentDesktopForScreen over every
+        // connected output; no window output ever moves.
+        const { harness, wE } = sharedSetup();
+        bothOnDesktopOne(harness);
+        harness.active = wE;
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-1", "desktop-1"]);
+        const writesBefore = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        const newWrites = harness.currentDesktopForScreenWrites.slice(writesBefore);
+        assert.equal(newWrites.length, 2);
+        for (const write of newWrites) {
+            assert.equal((write.desktop as { id: string }).id, "desktop-2");
+        }
+        assert.deepEqual(
+            newWrites.map((write) => write.output).sort((a, b) => (a as { name: string }).name.localeCompare((b as { name: string }).name)),
+            [OUTPUT_E, OUTPUT_L],
+        );
+    });
+
+    it("synchronizes every output with no focused window (activeScreen unavailable)", () => {
+        // Shared navigation is output-agnostic: it synchronizes every connected
+        // output regardless of focus, so the absence of a focused window and an
+        // unavailable activeScreen never blocks the shared write.
+        const { harness } = sharedSetup();
+        harness.active = null;
+        harness.activeScreenValue = null;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+    });
+
+    it("an absent shared index is a specific no-op with no write or create", () => {
+        const { harness } = sharedSetup();
+        harness.active = null;
+        const writes = harness.currentDesktopForScreenWrites.length;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-9");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, creates);
+    });
+
+    it("Meta+Shift+2 moves the eligible active window then synchronizes all outputs", () => {
+        // Spec D3 move-follow: single membership write on the active window's
+        // output, then switch every output to the shared target.
+        const { harness, wE } = sharedSetup();
+        makeSharedFloating(harness, wE);
+        harness.active = wE;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-2"]);
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        // The other output's window is untouched: its membership is unchanged
+        // and no window ever transfers outputs implicitly.
+        assert.deepEqual((wE.output as { name: string }).name, "screen-e");
+    });
+
+    it("Meta+Shift+0 reuses the existing shared trailing empty and synchronizes all outputs", () => {
+        const { harness, controller, wE } = sharedSetup();
+        makeSharedFloating(harness, wE);
+        harness.active = wE;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        // The destination is the existing shared trailing empty (desktop-3): the
+        // move-append reuses it without creating a destination; the automatic
+        // replenish then keeps one replacement (desktop-4).
+        assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-3"]);
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-3", "desktop-3"]);
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-3", "desktop-4"]);
+    });
+
+    it("Meta+Shift+0 creates exactly one shared desktop when no trailing empty exists, moves, and synchronizes all outputs", () => {
+        // Single pre-existing desktop: startup cleanup does not create a
+        // trailing empty (cleanup requires at least two live desktops), so the
+        // move-append path creates the shared destination exactly once. The
+        // automatic replenish then keeps one replacement trailing empty.
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        harness.windows = [wE];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1"]);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        makeSharedFloating(harness, wE);
+        harness.active = wE;
+        const createsBefore = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        // Exactly one destination was created for the move (desktop-2); the
+        // trailing-empty replenish keeps a fresh one-owned desktop after it.
+        const createdId = (harness.createDesktopCalls[createsBefore] as { position: number; name: string });
+        assert.equal(createdId.name, "2");
+        assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-2"]);
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-2", "desktop-3"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+    });
+
+    it("refuses sticky, fullscreen, and maximized shared moves before any write or create", () => {
+        const sticky = sharedSetup();
+        makeSharedFloating(sticky.harness, sticky.wE);
+        const enabledBaseline = countEvent(sticky.harness.logs, "sticky-enabled");
+        invokeShortcut(sticky.harness, "plasma-auto-tiler-sticky-toggle");
+        assert.equal(countEvent(sticky.harness.logs, "sticky-enabled"), enabledBaseline + 1);
+        const createsBefore = sticky.harness.createDesktopCalls.length;
+        sticky.harness.active = sticky.wE;
+        invokeShortcut(sticky.harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(sticky.harness.logs, "workspace-move-refused:sticky"), 1);
+        assert.equal(sticky.harness.currentDesktopForScreenWrites.length, 0);
+        assert.equal(sticky.harness.createDesktopCalls.length, createsBefore);
+
+        const fullscreen = sharedSetup();
+        makeSharedFloating(fullscreen.harness, fullscreen.wE);
+        fullscreen.wE.fullScreen = true;
+        const createsFs = fullscreen.harness.createDesktopCalls.length;
+        fullscreen.harness.active = fullscreen.wE;
+        invokeShortcut(fullscreen.harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(fullscreen.harness.logs, "workspace-move-refused:fullscreen"), 1);
+        assert.equal(fullscreen.harness.currentDesktopForScreenWrites.length, 0);
+        assert.equal(fullscreen.harness.createDesktopCalls.length, createsFs);
+
+        // A tiled window so the maximize action can record it.
+        const maximized = new Harness();
+        maximized.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        maximized.screensList = [OUTPUT_E, OUTPUT_L];
+        maximized.desktopsList = [DESKTOP_1, DESKTOP_2];
+        maximized.nextDesktopNumber = 2;
+        maximized.currentDesktop = DESKTOP_1;
+        maximized.currentDesktopValue = DESKTOP_1;
+        maximized.currentDesktopForOutputOverride = (output) =>
+            maximized.currentDesktopByOutput.get(output) ?? maximized.currentDesktop;
+        const maxRoot = tile(RECT, true);
+        const maxTarget = tile();
+        const maxWE = window({ tile: maxTarget, output: OUTPUT_E });
+        maxTarget.windows = [maxWE];
+        maxRoot.tiles = [maxTarget];
+        maximized.root = maxRoot;
+        maximized.windows = [maxWE];
+        maximized.active = maxWE;
+        maximized.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        const maxController = new TileController(maximized.environment());
+        maxController.start();
+        const createsMax = maximized.createDesktopCalls.length;
+        invokeShortcut(maximized, "plasma-auto-tiler-maximize");
+        invokeShortcut(maximized, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(maximized.logs, "workspace-move-refused:maximized"), 1);
+        assert.equal(maximized.currentDesktopForScreenWrites.length, 0);
+        assert.equal(maximized.createDesktopCalls.length, createsMax);
+    });
+
+    it("cleanup never removes the current shared desktop or a pre-existing desktop", () => {
+        // The owned trailing empty becomes the synchronized current desktop on
+        // every output; a reconciliation must keep it (current + visible) and
+        // must never remove a pre-existing desktop. Windows are cleared so no
+        // scope/reconstruction defers cleanup.
+        const { harness, controller } = sharedSetup();
+        harness.windows = [];
+        harness.active = null;
+        harness.currentDesktopByOutput.set(OUTPUT_E, { id: "desktop-3" });
+        harness.currentDesktopByOutput.set(OUTPUT_L, { id: "desktop-3" });
+        harness.currentDesktop = { id: "desktop-3" };
+        harness.currentDesktopValue = { id: "desktop-3" };
+        harness.removedDesktops.length = 0;
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+    });
+
+    it("hotplug adds a new output at the current shared workspace and disconnect never deletes a desktop", () => {
+        const { harness, controller } = sharedSetup();
+        harness.active = null;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        harness.windows = [];
+        harness.removedDesktops.length = 0;
+        // Disconnect L: the shared set is untouched and no desktop is deleted.
+        harness.screensList = [OUTPUT_E];
+        harness.screensChanged?.();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-2");
+        // Reconnect the identical tuple: it joins the current shared workspace
+        // (desktop-2) without creating or deleting a desktop.
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.screensChanged?.();
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
+    });
+
+    it("a throwing shared sync write is reported and never corrupts state (rollback-safe)", () => {
+        // A per-output write failure is reported per output and the remaining
+        // outputs still synchronize; the current desktop state is never left
+        // partially mutated beyond the failed write itself.
+        const { harness, controller } = sharedSetup();
+        harness.active = null;
+        harness.setCurrentDesktopThrows = new Error("sync-failed");
+        const writes = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-failed:sync-failed"), 2);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+    });
+
+    it("a failing move-append create is non-destructive and leaves the shared set unchanged", () => {
+        // When createDesktop throws, the move-append aborts before any write:
+        // the window stays put, no current changes, and the shared set is
+        // intact (repeat/failure-safe).
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        harness.windows = [wE];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        makeSharedFloating(harness, wE);
+        harness.active = wE;
+        harness.createDesktopThrows = new Error("create-failed");
+        const writes = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-1"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1"]);
+    });
+});

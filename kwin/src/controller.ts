@@ -1381,6 +1381,13 @@ export class TileController {
     // only, so a later output never adopts a pre-existing desktop merely because
     // it is visible (spec E hotplug).
     private globalUniquePrimary: string | undefined;
+    // Shared mode (spec D3, Unit 07): one global ordered shared desktop id set.
+    // Logical workspace n maps to the nth id; no output owns a desktop (spec F
+    // shared state). Rebuilt idempotently from the live global list on every
+    // reconcile and navigation (never creates), so a rename/reorder never
+    // changes it (spec E) and hotplug/disconnect leaves it intact. Session-only,
+    // never persisted; empty for every non-shared mode.
+    private sharedWorkspaces: string[] = [];
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -1448,6 +1455,12 @@ export class TileController {
             snapshot[key] = Object.freeze([...ids]);
         }
         return snapshot;
+    }
+
+    // Shared mapping snapshot for tests (spec D3/H.10-13): the ordered shared
+    // desktop id set. Present only in shared mode; read-only copy.
+    sharedWorkspaceSnapshot(): readonly string[] {
+        return Object.freeze([...this.sharedWorkspaces]);
     }
 
     // Test seam for the spec D2/H.12 example: seed the global-unique
@@ -3788,10 +3801,15 @@ export class TileController {
 
     // screensChanged -> rebuild the deterministic session output keys, then
     // re-anchor ownership and reconcile (spec F). A removed output's keys stay
-    // in the registry so a re-plug with the same tuple is matched again.
+    // in the registry so a re-plug with the same tuple is matched again. In
+    // shared mode a newly connected output is synchronized onto the current
+    // shared workspace; disconnect never deletes a desktop (spec D3/E).
     private handleScreensChanged(): void {
         this.rebuildOutputKeys();
         this.handleScopeChange();
+        if (this.gate.isEnabled) {
+            this.synchronizeSharedCurrent();
+        }
     }
 
     // currentDesktopChanged(previous, current, output) -> re-resolve the
@@ -6645,7 +6663,8 @@ export class TileController {
     // per-output-local mode the target resolves against the active output's
     // local list and writes through the per-output seam only; in global-unique
     // mode it resolves the nth member of the active output's assigned subset
-    // (spec D2). `shared` mode (Unit 07) keeps the global fallback below.
+    // (spec D2). In shared mode it resolves the nth member of the shared set and
+    // synchronizes every connected output (spec D3).
     navigateWorkspace(index: number): void {
         this.gate.run(() => {
             this.diagnostic(`workspace-navigate-invoked:${index}`);
@@ -6657,17 +6676,7 @@ export class TileController {
                 this.navigateGlobalUnique(index);
                 return;
             }
-            const desktops = this.liveDesktops();
-            if (desktops === null) {
-                return;
-            }
-            const target = desktops[index - 1];
-            if (target === undefined) {
-                this.diagnostic(`workspace-navigate-absent:${index}`);
-                return;
-            }
-            this.setCurrentDesktop(target);
-            this.diagnostic(`workspace-navigate-completed:${index}`);
+            this.navigateShared(index);
         }, (reason) => this.disabled(reason));
     }
 
@@ -6718,6 +6727,116 @@ export class TileController {
         }
         this.setCurrentDesktop(target);
         this.diagnostic(`workspace-navigate-completed:${index}`);
+    }
+
+    // ---- shared workspace set (Unit 07, spec D3) ----
+    //
+    // One logical workspace set synchronized across every connected output:
+    // logical number n maps to the nth member of the shared ordered desktop id
+    // set, which is the ordered live global list (pre-existing and owned alike),
+    // rebuilt idempotently on every reconcile. No output owns a desktop, so
+    // navigation, move-follow, and move-append synchronize every output via
+    // `setCurrentDesktopForScreen` (spec G native). Windows never transfer
+    // outputs implicitly; a window's membership write is the only thing that
+    // moves it.
+
+    // Read-only rebuild of the shared set from the current live list. Never
+    // creates or removes a desktop; a rename/reorder cannot change the set
+    // (identity is the id string, spec E) and hotplug/disconnect leaves it
+    // intact.
+    private rebuildSharedMapping(desktops?: readonly VirtualDesktopCapability[]): void {
+        if (this.workspaceMode !== "shared") {
+            return;
+        }
+        const resolved = desktops ?? this.liveDesktops();
+        if (resolved === null) {
+            return;
+        }
+        this.sharedWorkspaces = resolved.map((desktop) => desktop.id);
+    }
+
+    // Shared navigation (spec D3): resolve logical index n against the shared
+    // set and synchronize every connected output to that desktop. Absent n is a
+    // specific no-op and never creates (spec D common).
+    private navigateShared(index: number): void {
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        this.rebuildSharedMapping(desktops);
+        const target = desktops[index - 1];
+        if (target === undefined) {
+            this.diagnostic(`workspace-navigate-absent:${index}`);
+            return;
+        }
+        this.synchronizeShared(target);
+        this.diagnostic(`workspace-navigate-completed:${index}`);
+    }
+
+    // Shared-mode synchronization (spec D3): set every currently connected
+    // output's current desktop to `target` by iterating
+    // `setCurrentDesktopForScreen` over `workspace.screens` (spec G native).
+    // A throwing per-output write is reported and does not stop the remaining
+    // outputs. When screens cannot be enumerated the single global active-screen
+    // write falls back, so a desktop change never fails on an unavailable seam.
+    // The write fires currentDesktopChanged, whose handler reconciles
+    // idempotently; the reconciliation guard keeps the re-entry inert, so no
+    // event loop is produced (spec F, Unit 07 risk).
+    private synchronizeShared(target: VirtualDesktopCapability): void {
+        let raw: unknown;
+        try {
+            raw = this.environment.screens();
+        } catch (error) {
+            void error;
+            try {
+                this.environment.setCurrentDesktop(target);
+                this.diagnostic("workspace-navigate-set");
+            } catch (setError) {
+                this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(setError)}`);
+            }
+            return;
+        }
+        const screens = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+        if (!screens.ok || screens.value.length === 0) {
+            try {
+                this.environment.setCurrentDesktop(target);
+                this.diagnostic("workspace-navigate-set");
+            } catch (error) {
+                this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
+            }
+            return;
+        }
+        for (const output of screens.value) {
+            try {
+                this.environment.setCurrentDesktopForScreen(target, output);
+                this.diagnostic("workspace-navigate-set");
+            } catch (error) {
+                this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
+            }
+        }
+    }
+
+    // Hotplug in shared mode (spec D3/E): a newly connected output starts at the
+    // current shared workspace. Synchronizing every connected output to the
+    // current shared desktop brings a fresh output onto the shared workspace
+    // without moving a window or deleting a desktop; disconnect never deletes a
+    // desktop (cleanup keeps the shared trailing empty and current set). Inert
+    // in every non-shared mode and when the current desktop is unreadable.
+    private synchronizeSharedCurrent(): void {
+        if (this.workspaceMode !== "shared") {
+            return;
+        }
+        let current: unknown;
+        try {
+            current = this.environment.currentDesktop();
+        } catch (error) {
+            void error;
+            return;
+        }
+        if (!isVirtualDesktop(current)) {
+            return;
+        }
+        this.synchronizeShared(current);
     }
 
     // Meta+0 is deferred and unbound (spec I): there is no navigate-append
@@ -6847,9 +6966,15 @@ export class TileController {
         }
         if (target.id === scope.desktop.id) {
             this.diagnostic("workspace-move-no-op:already-there");
+            if (this.workspaceMode === "shared") {
+                this.synchronizeShared(target);
+            }
             return;
         }
         this.moveWindowToDesktop(window, scope, target);
+        if (this.workspaceMode === "shared") {
+            this.synchronizeShared(target);
+        }
     }
 
     // Re-validate a deferred move's captured window: still a movable normal
@@ -7015,9 +7140,15 @@ export class TileController {
             }
             if (target.id === scope.desktop.id) {
                 this.diagnostic("workspace-move-no-op:already-there");
+                if (this.workspaceMode === "shared") {
+                    this.synchronizeShared(target);
+                }
                 return;
             }
             this.moveWindowToDesktop(active, scope, target);
+            if (this.workspaceMode === "shared") {
+                this.synchronizeShared(target);
+            }
         }, (reason) => this.disabled(reason));
     }
 
@@ -7245,6 +7376,11 @@ export class TileController {
         }
         const desktops = this.liveDesktops();
         if (desktops === null || desktops.length <= 1) {
+            // A singleton list has nothing to reconcile, but the shared set
+            // still tracks the live ordered list so the snapshot is accurate.
+            if (this.workspaceMode === "shared" && desktops !== null) {
+                this.rebuildSharedMapping(desktops);
+            }
             return;
         }
         if (this.workspaceMode === "per-output-local") {
@@ -7255,6 +7391,7 @@ export class TileController {
             this.reconcileGlobalUnique(desktops, visible);
             return;
         }
+        this.rebuildSharedMapping(desktops);
         const occupied = this.occupiedDesktopIds();
         let highestOccupied = 0;
         for (let position = 0; position < desktops.length; position += 1) {
@@ -7282,22 +7419,18 @@ export class TileController {
             trailing.push({ desktop, position });
         }
         if (trailing.length === 0) {
-            // Missing trailing empty: the script-owned trailing desktop just
-            // became occupied (for example Meta+Shift+0 moved a window into
-            // it), so append one replacement. The feature gate means a fresh
-            // all-pre-existing desktop set is never mutated unrequested. A
-            // create failure is non-destructive and leaves the valid existing
-            // state in place.
-            const ownedLive = desktops.some(
-                (desktop) => desktop !== undefined && this.ownedDesktopIds.has(desktop.id),
-            );
-            if (!ownedLive) {
-                return;
-            }
+            // Missing shared trailing empty (spec D3): the shared set retains
+            // exactly one trailing empty, so append one replacement. This runs
+            // even in a fresh all-pre-existing session (the shared set is the
+            // feature's own ordered set, exactly like the per-output-local
+            // trailing-empty retention), and again when Meta+Shift+0 moved a
+            // window into the owned trailing desktop. A create failure is
+            // non-destructive and leaves the valid existing state in place.
             const created = this.appendDesktop();
             if (created !== null) {
                 this.diagnostic("workspace-cleanup-replenished");
             }
+            this.rebuildSharedMapping();
             return;
         }
         // Excess owned empty trailing desktops: remove every one before the
@@ -7330,6 +7463,7 @@ export class TileController {
         } finally {
             this.reconcilingDesktops = false;
         }
+        this.rebuildSharedMapping();
     }
 
     // ---- per-output-local workspace mapping (Unit 05, spec D1) ----
