@@ -210,6 +210,136 @@ export function parseTilingAlgorithm(value: unknown): {
     };
 }
 
+// ==== Automatic split target configuration ====
+//
+// `automaticSplitTarget` selects which occupied leaf a newly opened window is
+// automatically tiled into: `dwindle` preserves the current automatic split
+// intent, `largest` selects the occupied leaf with the greatest area, and
+// `active` selects the active occupied leaf. The value is read once at startup;
+// selection itself is a later unit. Missing/empty selects the dwindle default
+// without a diagnostic; an invalid value falls back to the default with a
+// diagnostic. Deterministic and pure for the tests.
+export type AutomaticSplitTarget = "dwindle" | "largest" | "active";
+export const DEFAULT_AUTOMATIC_SPLIT_TARGET: AutomaticSplitTarget = "dwindle";
+export const AUTOMATIC_SPLIT_TARGET_CONFIG_KEY = "automaticSplitTarget";
+export const AUTOMATIC_SPLIT_TARGETS: readonly AutomaticSplitTarget[] = Object.freeze([
+    "dwindle",
+    "largest",
+    "active",
+]);
+
+export function parseAutomaticSplitTarget(value: unknown): {
+    readonly target: AutomaticSplitTarget;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "string" && (AUTOMATIC_SPLIT_TARGETS as readonly string[]).includes(value)) {
+        return { target: value as AutomaticSplitTarget, diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { target: DEFAULT_AUTOMATIC_SPLIT_TARGET, diagnostics: Object.freeze([]) };
+    }
+    return {
+        target: DEFAULT_AUTOMATIC_SPLIT_TARGET,
+        diagnostics: Object.freeze(["automatic-split-target-invalid:fallback-dwindle"]),
+    };
+}
+
+// ==== Automatic split target selection seam ====
+//
+// Deterministic strategy-specific intended-leaf selection for the future
+// automatic-insertion path. An isolated seam: it chooses only the intended
+// occupied leaf a strategy prefers and never mutates topology, preflights
+// splittability, or resolves a fallback. The existing nearest-splittable
+// fallback and no-candidate behavior keep applying to the chosen intended leaf
+// unchanged, and split orientation stays the established depth-derived rule,
+// so this seam changes only which occupied leaf is the intended target.
+
+// A candidate intended target: an opaque tile identity the caller resolves to
+// its real tile, the depth that derives the split orientation, the pure leaf
+// data for stable ordering and area decisions, and whether the leaf holds an
+// eligible in-scope occupant.
+export interface AutomaticSplitCandidate {
+    readonly tile: object;
+    readonly depth: number;
+    readonly leaf: Leaf;
+    readonly occupied: boolean;
+}
+
+// The resolved selection context. `dwindle` is the deepest-right-spine intent,
+// `candidates` are the scope's usable leaves in stable compareLeaves order, and
+// `active` is the active tiled window's leaf candidate when one is available
+// (otherwise null). In-scope eligibility is this seam's concern: the active
+// leaf qualifies only when it resolves to one of the scope's candidate leaves.
+// Occupancy (`occupied`) is decided by this seam.
+export interface AutomaticSplitSelectionContext {
+    readonly dwindle: AutomaticSplitCandidate;
+    readonly candidates: readonly AutomaticSplitCandidate[];
+    readonly active: AutomaticSplitCandidate | null;
+}
+
+// Pure intended-leaf selection:
+// - `dwindle` preserves the deepest-right-spine intent unchanged.
+// - `largest` selects the eligible occupied candidate with the greatest leaf
+//   area; equal areas resolve to the earlier stable compareLeaves ordinal.
+// - `active` selects the active tiled window's leaf when it is available,
+//   eligible (occupied), and resolves to a candidate in the same ownership
+//   scope; otherwise the dwindle intent.
+// Returns null only when the strategy yields no eligible occupied intended leaf
+// (`largest` with no occupied candidate), which the caller's existing
+// no-candidate behavior floats without mutating topology.
+export function selectAutomaticSplitTarget(
+    strategy: AutomaticSplitTarget,
+    context: AutomaticSplitSelectionContext,
+): AutomaticSplitCandidate | null {
+    switch (strategy) {
+        case "dwindle":
+            return context.dwindle;
+        case "largest":
+            return selectLargestOccupied(context.candidates);
+        case "active":
+            return activeLeafInScope(context) ?? context.dwindle;
+    }
+}
+
+// Resolve the active tiled window's leaf to the selection scope's candidate.
+// The active leaf is in the same ownership scope only when its tile matches one
+// of the scope candidate tiles; a foreign-scope active window resolves to null.
+// An in-scope active leaf qualifies only when it is occupied.
+function activeLeafInScope(
+    context: AutomaticSplitSelectionContext,
+): AutomaticSplitCandidate | null {
+    if (context.active === null) {
+        return null;
+    }
+    for (const candidate of context.candidates) {
+        if (candidate.tile === context.active.tile) {
+            return candidate.occupied ? candidate : null;
+        }
+    }
+    return null;
+}
+
+function selectLargestOccupied(
+    candidates: readonly AutomaticSplitCandidate[],
+): AutomaticSplitCandidate | null {
+    let best: AutomaticSplitCandidate | null = null;
+    for (const candidate of candidates) {
+        if (!candidate.occupied) {
+            continue;
+        }
+        if (best === null) {
+            best = candidate;
+            continue;
+        }
+        const area = candidate.leaf.geometry.width * candidate.leaf.geometry.height;
+        const bestArea = best.leaf.geometry.width * best.leaf.geometry.height;
+        if (area > bestArea || (area === bestArea && compareLeaves(candidate.leaf, best.leaf) < 0)) {
+            best = candidate;
+        }
+    }
+    return best;
+}
+
 // ==== Session output identity (Unit 04) ====
 //
 // The physical output ID (spec B/E) is the ordered tuple of the four scriptable
@@ -1499,6 +1629,11 @@ export class TileController {
     // automatic takeover below builds its shape and reconstruction from this
     // value; manual preset shortcuts keep their fixed presets.
     private tilingAlgorithm: TilingAlgorithm = DEFAULT_TILING_ALGORITHM;
+    // Parsed `automaticSplitTarget` configuration. Set from readConfig at
+    // startup; invalid input falls back to the dwindle default with a
+    // diagnostic. Target selection is a later unit; this field is the parsed
+    // seam the automatic split reads.
+    private automaticSplitTarget: AutomaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
     // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
     // at startup and on screensChanged; never persisted. A stale or unknown
     // output wrapper is reported once per session tuple.
@@ -1574,6 +1709,12 @@ export class TileController {
     // once at startup and drives the automatic takeover shape.
     tilingAlgorithmSnapshot(): TilingAlgorithm {
         return this.tilingAlgorithm;
+    }
+
+    // Parsed automatic split target. Read-only snapshot for tests; the value is
+    // set once at startup and drives the automatic split's chosen leaf.
+    automaticSplitTargetSnapshot(): AutomaticSplitTarget {
+        return this.automaticSplitTarget;
     }
 
     // Deterministic session output key for the given output (spec E), or
@@ -1751,6 +1892,17 @@ export class TileController {
                 this.diagnostic(diagnostic);
             }
             this.tilingAlgorithm = algorithm.algorithm;
+            // Parsed `automaticSplitTarget`: the default is dwindle; a valid
+            // value selects its own target; anything else falls back with a
+            // diagnostic. Parsed before the first automatic split so the chosen
+            // leaf intent is the selected target's, never the default's.
+            const target = parseAutomaticSplitTarget(
+                this.environment.readConfig(AUTOMATIC_SPLIT_TARGET_CONFIG_KEY, DEFAULT_AUTOMATIC_SPLIT_TARGET),
+            );
+            for (const diagnostic of target.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            this.automaticSplitTarget = target.target;
             // Build the per-mode mapping and its one trailing empty per
             // connected output from the current screens/desktops before any
             // keyboard or lifecycle event resolves a workspace.
@@ -6288,6 +6440,88 @@ export class TileController {
         return walk(root, 0);
     }
 
+    // Resolve the configured automatic split target to the intended occupied
+    // leaf for an owned-scope automatic insertion. The candidate set is the
+    // scope's usable leaves in stable compareLeaves order, the dwindle intent
+    // is the deepest-right-spine leaf, and the active leaf qualifies only when
+    // the active window's tile is one of those candidates. Returns the
+    // intended leaf tile with its own depth (which derives the split
+    // orientation) or null when the strategy yields no eligible occupied
+    // intended leaf. Any structural degradation preserves the dwindle intent
+    // unchanged.
+    private automaticSplitIntended(
+        scope: CurrentScope,
+        deepest: { readonly tile: CustomTileCapability; readonly depth: number },
+    ): { readonly tile: CustomTileCapability; readonly depth: number } | null {
+        const root = this.environment.rootTile(scope.output, scope.desktop);
+        if (!isCustomTile(root)) {
+            return null;
+        }
+        const depths = dwindleLeafDepths(root);
+        const usable = decodeUsableLeaves(root);
+        if (depths === null || usable === null) {
+            return deepest;
+        }
+        const candidates: AutomaticSplitCandidate[] = [];
+        for (let index = 0; index < usable.length; index += 1) {
+            const entry = usable[index];
+            if (entry === undefined) {
+                continue;
+            }
+            const tile = entry.tile;
+            if (!isCustomTile(tile)) {
+                continue;
+            }
+            const depth = depths.get(tile);
+            if (depth === undefined) {
+                return deepest;
+            }
+            const occupants = entry.windows.filter(
+                (value) => windowInScope(value, scope) && value.tile === tile,
+            );
+            candidates.push({
+                tile,
+                depth,
+                leaf: {
+                    id: `tile-${index}`,
+                    isLayout: tile.isLayout,
+                    geometry: tile.absoluteGeometry,
+                    windows: [],
+                },
+                occupied: occupants.length === 1,
+            });
+        }
+        candidates.sort((a, b) => compareLeaves(a.leaf, b.leaf));
+        let active: AutomaticSplitCandidate | null = null;
+        const activeWindow = this.environment.activeWindow();
+        if (isWindow(activeWindow) && activeWindow.tile !== null) {
+            for (const candidate of candidates) {
+                if (candidate.tile === activeWindow.tile) {
+                    active = candidate;
+                    break;
+                }
+            }
+        }
+        const context: AutomaticSplitSelectionContext = {
+            dwindle:
+                candidates.find((candidate) => candidate.tile === deepest.tile) ?? {
+                    tile: deepest.tile,
+                    depth: deepest.depth,
+                    leaf: {
+                        id: "tile-dwindle",
+                        isLayout: deepest.tile.isLayout,
+                        geometry: deepest.tile.absoluteGeometry,
+                        windows: [],
+                    },
+                    occupied: false,
+                },
+            candidates,
+            active,
+        };
+        const selected = selectAutomaticSplitTarget(this.automaticSplitTarget, context);
+        return selected === null ? null : { tile: selected.tile as CustomTileCapability, depth: selected.depth };
+    }
+
     // Dispatch an eligible added window to the owned-scope dwindle path or the
     // generic overlay/automatic-placement path. A not-yet-owned, not-inert
     // scope is adopted first: the window's scope is the current desktop of its
@@ -6379,11 +6613,27 @@ export class TileController {
             this.diagnostic("maximize:ignored insert while maximized");
             return;
         }
+        // Resolve the configured `automaticSplitTarget` to the intended
+        // occupied leaf before any structural call. The accepted selector
+        // decides between the dwindle deepest-right-spine intent, the largest
+        // eligible occupied leaf, and the active in-scope occupied leaf. The
+        // chosen leaf is the only changed target and retains its own
+        // depth-derived orientation; the nearest-splittable fallback and
+        // no-candidate floating behavior below apply relative to it. A null
+        // selection (`largest` with no occupied leaf) floats the newcomer
+        // alone and leaves the tree untouched.
+        const intended = this.automaticSplitIntended(scope, deepest);
+        if (intended === null) {
+            this.floatingWindows.add(window);
+            this.floatScopes.set(window, scope.scope);
+            this.diagnostic("ownership-add-refused:no-eligible-leaf");
+            return;
+        }
         // The occupant list of the insertion leaf. When the insertion tile is
         // the layout root of a functionally single-leaf tree, the occupant
         // lives in the tree's only non-layout leaf, or in the root itself when
         // the root is a zero-child layout (the sole usable leaf).
-        const insertion = this.insertionLeafWindows(scope, topology, deepest);
+        const insertion = this.insertionLeafWindows(scope, topology, intended);
         if (insertion === null) {
             this.markInert(scope, "insert-leaf-resolution-failed");
             return;
@@ -6424,17 +6674,17 @@ export class TileController {
             return;
         }
         // Preflight the intended leaf before any split: when it cannot split
-        // under its own dwindle orientation without violating KWin's minimum
-        // floor, select the eligible fallback candidate (or float the newcomer
-        // alone when none exists) before any structural mutation.
-        const intended = operationLeafForTile(topology, deepest.tile);
-        const intendedGeometry = intended?.leaf.geometry ?? deepest.tile.absoluteGeometry;
-        const intendedAxis: SplitAxis = deepest.depth % 2 === 0 ? "x" : "y";
+        // under its own depth-derived orientation without violating KWin's
+        // minimum floor, select the eligible fallback candidate (or float the
+        // newcomer alone when none exists) before any structural mutation.
+        const intendedLeaf = operationLeafForTile(topology, intended.tile);
+        const intendedGeometry = intendedLeaf?.leaf.geometry ?? intended.tile.absoluteGeometry;
+        const intendedAxis: SplitAxis = intended.depth % 2 === 0 ? "x" : "y";
         let target: DwindleInsertionTarget;
         if (!this.splitAxisWouldViolateMinimum(scope, intendedGeometry, intendedAxis)) {
-            target = { tile: deepest.tile, depth: deepest.depth, occupant };
+            target = { tile: intended.tile, depth: intended.depth, occupant };
         } else {
-            const fallback = this.dwindleInsertionFallback(scope, topology, deepest);
+            const fallback = this.dwindleInsertionFallback(scope, topology, intended);
             if (fallback === null) {
                 // No leaf can split under its own orientation: the newcomer
                 // alone stays floating, the tree is untouched, and the scope

@@ -15,6 +15,15 @@
                 <choice name="dwindle" value="dwindle"/>
             </choices>
         </entry>
+        <entry name="automaticSplitTarget" type="Enum">
+            <label>The occupied leaf a newly opened window is automatically tiled into</label>
+            <default>dwindle</default>
+            <choices>
+                <choice name="dwindle" value="dwindle"/>
+                <choice name="largest" value="largest"/>
+                <choice name="active" value="active"/>
+            </choices>
+        </entry>
         <entry name="workspaceMode" type="Enum">
             <label>The multi-output workspace model</label>
             <default>per-output-local</default>

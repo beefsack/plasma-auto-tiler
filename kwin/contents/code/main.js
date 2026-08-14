@@ -1080,6 +1080,65 @@
       diagnostics: Object.freeze(["tiling-algorithm-invalid:fallback-dwindle"])
     };
   }
+  var DEFAULT_AUTOMATIC_SPLIT_TARGET = "dwindle";
+  var AUTOMATIC_SPLIT_TARGET_CONFIG_KEY = "automaticSplitTarget";
+  var AUTOMATIC_SPLIT_TARGETS = Object.freeze([
+    "dwindle",
+    "largest",
+    "active"
+  ]);
+  function parseAutomaticSplitTarget(value) {
+    if (typeof value === "string" && AUTOMATIC_SPLIT_TARGETS.includes(value)) {
+      return { target: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { target: DEFAULT_AUTOMATIC_SPLIT_TARGET, diagnostics: Object.freeze([]) };
+    }
+    return {
+      target: DEFAULT_AUTOMATIC_SPLIT_TARGET,
+      diagnostics: Object.freeze(["automatic-split-target-invalid:fallback-dwindle"])
+    };
+  }
+  function selectAutomaticSplitTarget(strategy, context) {
+    var _a;
+    switch (strategy) {
+      case "dwindle":
+        return context.dwindle;
+      case "largest":
+        return selectLargestOccupied(context.candidates);
+      case "active":
+        return (_a = activeLeafInScope(context)) != null ? _a : context.dwindle;
+    }
+  }
+  function activeLeafInScope(context) {
+    if (context.active === null) {
+      return null;
+    }
+    for (const candidate of context.candidates) {
+      if (candidate.tile === context.active.tile) {
+        return candidate.occupied ? candidate : null;
+      }
+    }
+    return null;
+  }
+  function selectLargestOccupied(candidates) {
+    let best = null;
+    for (const candidate of candidates) {
+      if (!candidate.occupied) {
+        continue;
+      }
+      if (best === null) {
+        best = candidate;
+        continue;
+      }
+      const area = candidate.leaf.geometry.width * candidate.leaf.geometry.height;
+      const bestArea = best.leaf.geometry.width * best.leaf.geometry.height;
+      if (area > bestArea || area === bestArea && compareLeaves(candidate.leaf, best.leaf) < 0) {
+        best = candidate;
+      }
+    }
+    return best;
+  }
   function outputTuple(output) {
     return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
   }
@@ -1787,6 +1846,11 @@
       // automatic takeover below builds its shape and reconstruction from this
       // value; manual preset shortcuts keep their fixed presets.
       this.tilingAlgorithm = DEFAULT_TILING_ALGORITHM;
+      // Parsed `automaticSplitTarget` configuration. Set from readConfig at
+      // startup; invalid input falls back to the dwindle default with a
+      // diagnostic. Target selection is a later unit; this field is the parsed
+      // seam the automatic split reads.
+      this.automaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
       // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
       // at startup and on screensChanged; never persisted. A stale or unknown
       // output wrapper is reported once per session tuple.
@@ -1845,6 +1909,11 @@
     // once at startup and drives the automatic takeover shape.
     tilingAlgorithmSnapshot() {
       return this.tilingAlgorithm;
+    }
+    // Parsed automatic split target. Read-only snapshot for tests; the value is
+    // set once at startup and drives the automatic split's chosen leaf.
+    automaticSplitTargetSnapshot() {
+      return this.automaticSplitTarget;
     }
     // Deterministic session output key for the given output (spec E), or
     // undefined before any rebuild observed it. Session-only; never persisted.
@@ -1996,6 +2065,13 @@
           this.diagnostic(diagnostic);
         }
         this.tilingAlgorithm = algorithm.algorithm;
+        const target = parseAutomaticSplitTarget(
+          this.environment.readConfig(AUTOMATIC_SPLIT_TARGET_CONFIG_KEY, DEFAULT_AUTOMATIC_SPLIT_TARGET)
+        );
+        for (const diagnostic of target.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.automaticSplitTarget = target.target;
         this.cleanupDesktops();
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
@@ -5908,6 +5984,84 @@
       };
       return walk(root, 0);
     }
+    // Resolve the configured automatic split target to the intended occupied
+    // leaf for an owned-scope automatic insertion. The candidate set is the
+    // scope's usable leaves in stable compareLeaves order, the dwindle intent
+    // is the deepest-right-spine leaf, and the active leaf qualifies only when
+    // the active window's tile is one of those candidates. Returns the
+    // intended leaf tile with its own depth (which derives the split
+    // orientation) or null when the strategy yields no eligible occupied
+    // intended leaf. Any structural degradation preserves the dwindle intent
+    // unchanged.
+    automaticSplitIntended(scope, deepest) {
+      var _a;
+      const root = this.environment.rootTile(scope.output, scope.desktop);
+      if (!isCustomTile(root)) {
+        return null;
+      }
+      const depths = dwindleLeafDepths(root);
+      const usable = decodeUsableLeaves(root);
+      if (depths === null || usable === null) {
+        return deepest;
+      }
+      const candidates = [];
+      for (let index = 0; index < usable.length; index += 1) {
+        const entry = usable[index];
+        if (entry === void 0) {
+          continue;
+        }
+        const tile = entry.tile;
+        if (!isCustomTile(tile)) {
+          continue;
+        }
+        const depth = depths.get(tile);
+        if (depth === void 0) {
+          return deepest;
+        }
+        const occupants = entry.windows.filter(
+          (value) => windowInScope(value, scope) && value.tile === tile
+        );
+        candidates.push({
+          tile,
+          depth,
+          leaf: {
+            id: `tile-${index}`,
+            isLayout: tile.isLayout,
+            geometry: tile.absoluteGeometry,
+            windows: []
+          },
+          occupied: occupants.length === 1
+        });
+      }
+      candidates.sort((a, b) => compareLeaves(a.leaf, b.leaf));
+      let active = null;
+      const activeWindow = this.environment.activeWindow();
+      if (isWindow(activeWindow) && activeWindow.tile !== null) {
+        for (const candidate of candidates) {
+          if (candidate.tile === activeWindow.tile) {
+            active = candidate;
+            break;
+          }
+        }
+      }
+      const context = {
+        dwindle: (_a = candidates.find((candidate) => candidate.tile === deepest.tile)) != null ? _a : {
+          tile: deepest.tile,
+          depth: deepest.depth,
+          leaf: {
+            id: "tile-dwindle",
+            isLayout: deepest.tile.isLayout,
+            geometry: deepest.tile.absoluteGeometry,
+            windows: []
+          },
+          occupied: false
+        },
+        candidates,
+        active
+      };
+      const selected = selectAutomaticSplitTarget(this.automaticSplitTarget, context);
+      return selected === null ? null : { tile: selected.tile, depth: selected.depth };
+    }
     // Dispatch an eligible added window to the owned-scope dwindle path or the
     // generic overlay/automatic-placement path. A not-yet-owned, not-inert
     // scope is adopted first: the window's scope is the current desktop of its
@@ -5989,7 +6143,14 @@
         this.diagnostic("maximize:ignored insert while maximized");
         return;
       }
-      const insertion = this.insertionLeafWindows(scope, topology, deepest);
+      const intended = this.automaticSplitIntended(scope, deepest);
+      if (intended === null) {
+        this.floatingWindows.add(window);
+        this.floatScopes.set(window, scope.scope);
+        this.diagnostic("ownership-add-refused:no-eligible-leaf");
+        return;
+      }
+      const insertion = this.insertionLeafWindows(scope, topology, intended);
       if (insertion === null) {
         this.markInert(scope, "insert-leaf-resolution-failed");
         return;
@@ -6020,14 +6181,14 @@
         this.markInert(scope, "insert-occupant-missing");
         return;
       }
-      const intended = operationLeafForTile(topology, deepest.tile);
-      const intendedGeometry = (_b = intended == null ? void 0 : intended.leaf.geometry) != null ? _b : deepest.tile.absoluteGeometry;
-      const intendedAxis = deepest.depth % 2 === 0 ? "x" : "y";
+      const intendedLeaf = operationLeafForTile(topology, intended.tile);
+      const intendedGeometry = (_b = intendedLeaf == null ? void 0 : intendedLeaf.leaf.geometry) != null ? _b : intended.tile.absoluteGeometry;
+      const intendedAxis = intended.depth % 2 === 0 ? "x" : "y";
       let target;
       if (!this.splitAxisWouldViolateMinimum(scope, intendedGeometry, intendedAxis)) {
-        target = { tile: deepest.tile, depth: deepest.depth, occupant };
+        target = { tile: intended.tile, depth: intended.depth, occupant };
       } else {
-        const fallback = this.dwindleInsertionFallback(scope, topology, deepest);
+        const fallback = this.dwindleInsertionFallback(scope, topology, intended);
         if (fallback === null) {
           this.floatingWindows.add(window);
           this.floatScopes.set(window, scope.scope);

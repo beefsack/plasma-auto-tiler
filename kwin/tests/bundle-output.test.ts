@@ -33,6 +33,7 @@ describe("production bundle compatibility", () => {
         const schema = readFileSync("contents/config/main.xml", "utf8");
         assert.match(metadata, /"X-KDE-ConfigModule"\s*:\s*"kwin\/effects\/configs\/kcm_kwin4_genericscripted"/);
         assert.match(schema, /<entry name="tilingAlgorithm" type="Enum">/);
+        assert.match(schema, /<entry name="automaticSplitTarget" type="Enum">/);
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
     });
@@ -45,6 +46,9 @@ describe("production bundle compatibility", () => {
         for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
             assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
         }
+        for (const target of ["dwindle", "largest", "active"]) {
+            assert.match(schema, new RegExp(`<choice name="${target}" value="${target}"\\/>`));
+        }
         for (const mode of ["per-output-local", "global-unique", "shared"]) {
             assert.match(schema, new RegExp(`<choice name="${mode}" value="${mode}"\\/>`));
         }
@@ -56,7 +60,7 @@ describe("production bundle compatibility", () => {
     it("declares the standard KCM UI with kcfg_ bound comboboxes", () => {
         const ui = readFileSync("contents/ui/config.ui", "utf8");
         assert.match(ui, /<widget class="QWidget"/);
-        for (const entry of ["tilingAlgorithm", "workspaceMode", "shortcutProfile"]) {
+        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile"]) {
             assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
         }
     });
