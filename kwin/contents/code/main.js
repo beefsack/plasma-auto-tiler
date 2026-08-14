@@ -1,5 +1,22 @@
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+
   // src/boundary.ts
   var MAX_SEQUENTIAL_LENGTH = 1024;
   function isObject(value) {
@@ -1099,6 +1116,20 @@
       diagnostics: Object.freeze(["automatic-split-target-invalid:fallback-dwindle"])
     };
   }
+  var DEFAULT_DROP_OUTLINE_PREVIEW = false;
+  var DROP_OUTLINE_PREVIEW_CONFIG_KEY = "dropOutlinePreview";
+  function parseDropOutlinePreview(value) {
+    if (typeof value === "boolean") {
+      return { enabled: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { enabled: DEFAULT_DROP_OUTLINE_PREVIEW, diagnostics: Object.freeze([]) };
+    }
+    return {
+      enabled: DEFAULT_DROP_OUTLINE_PREVIEW,
+      diagnostics: Object.freeze(["drop-outline-preview-invalid:fallback-false"])
+    };
+  }
   function selectAutomaticSplitTarget(strategy, context) {
     var _a;
     switch (strategy) {
@@ -1754,6 +1785,7 @@
       this.gate = new FeatureGate();
       this.pending = new TransientState();
       this.drag = new TransientState();
+      this.shownDropOutline = null;
       this.interactiveWindows = /* @__PURE__ */ new Map();
       // Per-window fullscreen watch disconnects and enter/exit records. Both are
       // bounded like the other identity sets so they cannot grow without limit.
@@ -1851,6 +1883,8 @@
       // diagnostic. Target selection is a later unit; this field is the parsed
       // seam the automatic split reads.
       this.automaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
+      // Parsed but intentionally unused until the drag destination outline unit.
+      this.dropOutlinePreview = DEFAULT_DROP_OUTLINE_PREVIEW;
       // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
       // at startup and on screensChanged; never persisted. A stale or unknown
       // output wrapper is reported once per session tuple.
@@ -1914,6 +1948,9 @@
     // set once at startup and drives the automatic split's chosen leaf.
     automaticSplitTargetSnapshot() {
       return this.automaticSplitTarget;
+    }
+    dropOutlinePreviewSnapshot() {
+      return this.dropOutlinePreview;
     }
     // Deterministic session output key for the given output (spec E), or
     // undefined before any rebuild observed it. Session-only; never persisted.
@@ -2039,6 +2076,7 @@
       this.diagnostic(event);
     }
     disabled(reason) {
+      this.hideDropOutline();
       this.diagnostic(`disabled:${reason}`);
     }
     start() {
@@ -2072,6 +2110,13 @@
           this.diagnostic(diagnostic);
         }
         this.automaticSplitTarget = target.target;
+        const outlinePreview = parseDropOutlinePreview(
+          this.environment.readConfig(DROP_OUTLINE_PREVIEW_CONFIG_KEY, DEFAULT_DROP_OUTLINE_PREVIEW)
+        );
+        for (const diagnostic of outlinePreview.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.dropOutlinePreview = outlinePreview.enabled;
         this.cleanupDesktops();
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
@@ -3896,6 +3941,7 @@
       }
     }
     clearDrag() {
+      this.hideDropOutline();
       this.drag.clearForScopeChange();
     }
     // Whether the tracked drag window is currently live-moving or
@@ -4197,7 +4243,7 @@
         window,
         () => this.handleInteractiveStarted(window),
         () => this.handleInteractiveFinished(window),
-        () => this.handleInteractiveStepped(),
+        (geometry) => this.handleInteractiveStepped(geometry),
         () => this.handleMoveResizedChanged(),
         () => this.handleInteractiveInvalidated(window)
       );
@@ -4758,10 +4804,12 @@
       this.gate.run(() => {
         if (window.fullScreen === true) {
           this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+          this.hideDropOutline();
           return;
         }
         if (this.maximizedWindows.has(window)) {
           this.diagnostic("maximize:ignored lifecycle while maximized");
+          this.hideDropOutline();
           return;
         }
         const watch = this.interactiveWindows.get(window);
@@ -4794,9 +4842,79 @@
         this.drainPendingDesktopIntents();
       }, (reason) => this.disabled(reason));
     }
-    // Stepped keeps the signal attached for live delivery proof but must not
-    // emit per-motion journal lines or mutate tiles; only Finished drives reflow.
-    handleInteractiveStepped() {
+    // Stepped derives a read-only destination cue only. Finished remains the
+    // sole drag path that may change tile structure.
+    handleInteractiveStepped(geometry) {
+      this.gate.run(() => {
+        if (!this.dropOutlinePreview) {
+          return;
+        }
+        const drag = this.drag.current;
+        if (drag === void 0) {
+          return;
+        }
+        const scope = this.scopeForWindow(drag.window);
+        if (scope === null || !sameScope(scope.scope, drag.scope.scope) || !windowInScope(drag.window, scope)) {
+          this.hideDropOutline();
+          return;
+        }
+        const topology = this.topologyForScope(scope);
+        if (topology === null) {
+          this.hideDropOutline();
+          return;
+        }
+        const origin = operationLeafForTile(topology, drag.originTile);
+        if (origin === null || origin.leaf.isLayout) {
+          this.hideDropOutline();
+          return;
+        }
+        const originIndex = windowIndex(origin.windows, drag.window);
+        const draggedRef = origin.refs[originIndex];
+        if (originIndex < 0 || draggedRef === void 0) {
+          this.hideDropOutline();
+          return;
+        }
+        const cursorPoint = this.readCursorPoint();
+        const center = cursorPoint != null ? cursorPoint : isRect(geometry) && positiveGeometry(geometry) ? rectCenter(geometry) : null;
+        const pointSource = cursorPoint !== null ? "cursor" : "frame-center";
+        const target = this.geometryDropTarget(topology, origin, center, pointSource);
+        if (target.kind !== "resolved") {
+          this.hideDropOutline();
+          return;
+        }
+        const plan = planGeometryDrop({
+          scope: scope.scope,
+          originLeaf: origin.leaf,
+          targetLeaf: target.target.leaf,
+          draggedWindow: draggedRef,
+          pointer: target.center,
+          record: {
+            scope: drag.scope.scope,
+            originLeafId: origin.leaf.id,
+            windowId: draggedRef.id,
+            geometry: drag.originGeometry
+          }
+        });
+        if (!plan.ok || plan.value.kind === "geometry-drop" && this.splitWouldViolateMinimum(scope, target.target, plan.value.direction)) {
+          this.hideDropOutline();
+          return;
+        }
+        this.showDropOutline(target.target.leaf.geometry);
+      }, (reason) => this.disabled(reason));
+    }
+    showDropOutline(geometry) {
+      if (this.shownDropOutline !== null && sameGeometry(this.shownDropOutline, geometry)) {
+        return;
+      }
+      this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
+      this.shownDropOutline = __spreadValues({}, geometry);
+    }
+    hideDropOutline() {
+      if (this.shownDropOutline === null) {
+        return;
+      }
+      this.environment.hideOutline();
+      this.shownDropOutline = null;
     }
     handleMoveResizedChanged() {
       this.diagnostic("drag-move-resized-changed");
@@ -4804,10 +4922,10 @@
         this.settleOwedInvariants();
       }, (reason) => this.disabled(reason));
     }
-    // Read the documented workspace cursor exactly once, at drag finish, under
-    // safe validation. Returns the finite cursor point, or null when the read
-    // throws or the value is not a finite point; each failure emits a one-time
-    // fallback diagnostic and the caller falls back to the final frame center.
+    // Read the documented workspace cursor exactly once for drag target recovery,
+    // under safe validation. Returns the finite cursor point, or null when the
+    // read throws or the value is not a finite point; each failure emits a one-time
+    // fallback diagnostic and the caller falls back to the frame center.
     readCursorPoint() {
       let value;
       try {
@@ -8420,6 +8538,10 @@
         }
       };
     },
+    // Geometry-only outline rectangle surface, mapped to the KWin workspace
+    // `showOutline(x, y, w, h)` and `hideOutline()` slots.
+    showOutline: (x, y, w, h) => workspace.showOutline(x, y, w, h),
+    hideOutline: () => workspace.hideOutline(),
     // Named one-shot event-loop yield for dwindle reconstruction deferral,
     // implemented with the proven callDBus async callback seam. ListNames on
     // the session bus dispatches its callback exactly once on a real later

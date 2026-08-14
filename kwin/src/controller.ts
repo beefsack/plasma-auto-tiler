@@ -244,6 +244,29 @@ export function parseAutomaticSplitTarget(value: unknown): {
     };
 }
 
+// ==== Drag destination outline configuration ====
+//
+// `dropOutlinePreview` remains an inert startup seam in this unit. KConfigXT
+// supplies a Boolean, and missing values resolve to the disabled default.
+export const DEFAULT_DROP_OUTLINE_PREVIEW = false;
+export const DROP_OUTLINE_PREVIEW_CONFIG_KEY = "dropOutlinePreview";
+
+export function parseDropOutlinePreview(value: unknown): {
+    readonly enabled: boolean;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "boolean") {
+        return { enabled: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { enabled: DEFAULT_DROP_OUTLINE_PREVIEW, diagnostics: Object.freeze([]) };
+    }
+    return {
+        enabled: DEFAULT_DROP_OUTLINE_PREVIEW,
+        diagnostics: Object.freeze(["drop-outline-preview-invalid:fallback-false"]),
+    };
+}
+
 // ==== Automatic split target selection seam ====
 //
 // Deterministic strategy-specific intended-leaf selection for the future
@@ -829,7 +852,7 @@ export interface ControllerEnvironment {
         window: WindowCapability,
         started: () => void,
         finished: () => void,
-        stepped: () => void,
+        stepped: (geometry: RectCapability) => void,
         moveResizedChanged: () => void,
         invalidated: () => void,
     ) => { readonly disconnect: () => void; readonly ok: number; readonly failed: number };
@@ -849,6 +872,11 @@ export interface ControllerEnvironment {
         changed: () => void,
     ) => { readonly disconnect: () => void; readonly ok: number; readonly failed: number };
     readonly onPendingTargetChanged: (window: WindowCapability, handler: () => void) => () => void;
+    // Geometry-only outline rectangle surface (KWin workspace
+    // `showOutline(x, y, w, h)` / `hideOutline()` slots). Typed seam only in
+    // this unit; no lifecycle call site invokes it yet.
+    readonly showOutline: (x: number, y: number, w: number, h: number) => void;
+    readonly hideOutline: () => void;
     // Named one-shot event-loop yield used to defer dwindle reconstruction
     // between the removals-only collapse and the splits-only rebuild. Returns
     // whether the yield was armed: a false return means the caller must fail
@@ -1537,6 +1565,7 @@ export class TileController {
     private readonly gate = new FeatureGate();
     private readonly pending = new TransientState<PendingKeyboard>();
     private readonly drag = new TransientState<ActiveDrag>();
+    private shownDropOutline: RectCapability | null = null;
     private readonly interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
     // Per-window fullscreen watch disconnects and enter/exit records. Both are
     // bounded like the other identity sets so they cannot grow without limit.
@@ -1634,6 +1663,8 @@ export class TileController {
     // diagnostic. Target selection is a later unit; this field is the parsed
     // seam the automatic split reads.
     private automaticSplitTarget: AutomaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
+    // Parsed but intentionally unused until the drag destination outline unit.
+    private dropOutlinePreview = DEFAULT_DROP_OUTLINE_PREVIEW;
     // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
     // at startup and on screensChanged; never persisted. A stale or unknown
     // output wrapper is reported once per session tuple.
@@ -1715,6 +1746,10 @@ export class TileController {
     // set once at startup and drives the automatic split's chosen leaf.
     automaticSplitTargetSnapshot(): AutomaticSplitTarget {
         return this.automaticSplitTarget;
+    }
+
+    dropOutlinePreviewSnapshot(): boolean {
+        return this.dropOutlinePreview;
     }
 
     // Deterministic session output key for the given output (spec E), or
@@ -1853,6 +1888,7 @@ export class TileController {
     }
 
     private disabled(reason: string): void {
+        this.hideDropOutline();
         this.diagnostic(`disabled:${reason}`);
     }
 
@@ -1903,6 +1939,13 @@ export class TileController {
                 this.diagnostic(diagnostic);
             }
             this.automaticSplitTarget = target.target;
+            const outlinePreview = parseDropOutlinePreview(
+                this.environment.readConfig(DROP_OUTLINE_PREVIEW_CONFIG_KEY, DEFAULT_DROP_OUTLINE_PREVIEW),
+            );
+            for (const diagnostic of outlinePreview.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            this.dropOutlinePreview = outlinePreview.enabled;
             // Build the per-mode mapping and its one trailing empty per
             // connected output from the current screens/desktops before any
             // keyboard or lifecycle event resolves a workspace.
@@ -4082,6 +4125,7 @@ export class TileController {
     }
 
     private clearDrag(): void {
+        this.hideDropOutline();
         this.drag.clearForScopeChange();
     }
 
@@ -4437,7 +4481,7 @@ export class TileController {
             window,
             () => this.handleInteractiveStarted(window),
             () => this.handleInteractiveFinished(window),
-            () => this.handleInteractiveStepped(),
+            (geometry) => this.handleInteractiveStepped(geometry),
             () => this.handleMoveResizedChanged(),
             () => this.handleInteractiveInvalidated(window),
         );
@@ -5063,10 +5107,12 @@ export class TileController {
         this.gate.run(() => {
             if (window.fullScreen === true) {
                 this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+                this.hideDropOutline();
                 return;
             }
             if (this.maximizedWindows.has(window)) {
                 this.diagnostic("maximize:ignored lifecycle while maximized");
+                this.hideDropOutline();
                 return;
             }
             const watch = this.interactiveWindows.get(window);
@@ -5105,9 +5151,86 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Stepped keeps the signal attached for live delivery proof but must not
-    // emit per-motion journal lines or mutate tiles; only Finished drives reflow.
-    private handleInteractiveStepped(): void {}
+    // Stepped derives a read-only destination cue only. Finished remains the
+    // sole drag path that may change tile structure.
+    private handleInteractiveStepped(geometry: RectCapability): void {
+        this.gate.run(() => {
+            if (!this.dropOutlinePreview) {
+                return;
+            }
+            const drag = this.drag.current;
+            if (drag === undefined) {
+                return;
+            }
+            const scope = this.scopeForWindow(drag.window);
+            if (
+                scope === null ||
+                !sameScope(scope.scope, drag.scope.scope) ||
+                !windowInScope(drag.window, scope)
+            ) {
+                this.hideDropOutline();
+                return;
+            }
+            const topology = this.topologyForScope(scope);
+            if (topology === null) {
+                this.hideDropOutline();
+                return;
+            }
+            const origin = operationLeafForTile(topology, drag.originTile);
+            if (origin === null || origin.leaf.isLayout) {
+                this.hideDropOutline();
+                return;
+            }
+            const originIndex = windowIndex(origin.windows, drag.window);
+            const draggedRef = origin.refs[originIndex];
+            if (originIndex < 0 || draggedRef === undefined) {
+                this.hideDropOutline();
+                return;
+            }
+            const cursorPoint = this.readCursorPoint();
+            const center = cursorPoint ?? (isRect(geometry) && positiveGeometry(geometry) ? rectCenter(geometry) : null);
+            const pointSource: "cursor" | "frame-center" = cursorPoint !== null ? "cursor" : "frame-center";
+            const target = this.geometryDropTarget(topology, origin, center, pointSource);
+            if (target.kind !== "resolved") {
+                this.hideDropOutline();
+                return;
+            }
+            const plan = planGeometryDrop({
+                scope: scope.scope,
+                originLeaf: origin.leaf,
+                targetLeaf: target.target.leaf,
+                draggedWindow: draggedRef,
+                pointer: target.center,
+                record: {
+                    scope: drag.scope.scope,
+                    originLeafId: origin.leaf.id,
+                    windowId: draggedRef.id,
+                    geometry: drag.originGeometry,
+                },
+            });
+            if (!plan.ok || (plan.value.kind === "geometry-drop" && this.splitWouldViolateMinimum(scope, target.target, plan.value.direction))) {
+                this.hideDropOutline();
+                return;
+            }
+            this.showDropOutline(target.target.leaf.geometry);
+        }, (reason) => this.disabled(reason));
+    }
+
+    private showDropOutline(geometry: RectCapability): void {
+        if (this.shownDropOutline !== null && sameGeometry(this.shownDropOutline, geometry)) {
+            return;
+        }
+        this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
+        this.shownDropOutline = { ...geometry };
+    }
+
+    private hideDropOutline(): void {
+        if (this.shownDropOutline === null) {
+            return;
+        }
+        this.environment.hideOutline();
+        this.shownDropOutline = null;
+    }
 
     private handleMoveResizedChanged(): void {
         this.diagnostic("drag-move-resized-changed");
@@ -5116,10 +5239,10 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Read the documented workspace cursor exactly once, at drag finish, under
-    // safe validation. Returns the finite cursor point, or null when the read
-    // throws or the value is not a finite point; each failure emits a one-time
-    // fallback diagnostic and the caller falls back to the final frame center.
+    // Read the documented workspace cursor exactly once for drag target recovery,
+    // under safe validation. Returns the finite cursor point, or null when the
+    // read throws or the value is not a finite point; each failure emits a one-time
+    // fallback diagnostic and the caller falls back to the frame center.
     private readCursorPoint(): Point | null {
         let value: unknown;
         try {

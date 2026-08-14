@@ -2,13 +2,15 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
+import { MAX_SEQUENTIAL_LENGTH, type RectCapability } from "../src/boundary";
 import {
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     AUTOMATIC_SPLIT_TARGETS,
     DEFAULT_AUTOMATIC_SPLIT_TARGET,
+    DEFAULT_DROP_OUTLINE_PREVIEW,
     DEFAULT_TILING_ALGORITHM,
     DEFAULT_WORKSPACE_MODE,
+    DROP_OUTLINE_PREVIEW_CONFIG_KEY,
     PROFILE_CATALOGS,
     REGISTERED_PROFILE_ACTION_IDS,
     SessionOutputKeys,
@@ -20,6 +22,7 @@ import {
     catalogValidationDiagnostics,
     outputTuple,
     parseAutomaticSplitTarget,
+    parseDropOutlinePreview,
     parseTilingAlgorithm,
     parseWorkspaceMode,
     validateProfile,
@@ -74,9 +77,9 @@ interface TestWindow {
 }
 
 interface TestSignal {
-    connect(callback: () => void): void;
-    disconnect(callback: () => void): void;
-    emit(): void;
+    connect(callback: (geometry?: RectCapability) => void): void;
+    disconnect(callback: (geometry?: RectCapability) => void): void;
+    emit(geometry?: RectCapability): void;
     readonly subscriberCount: number;
 }
 
@@ -176,7 +179,7 @@ function setMaximized(subject: TestWindow, mode: number): void {
 }
 
 function signal(): TestSignal {
-    const callbacks = new Set<() => void>();
+    const callbacks = new Set<(geometry?: RectCapability) => void>();
     return {
         connect: (next) => {
             callbacks.add(next);
@@ -184,9 +187,9 @@ function signal(): TestSignal {
         disconnect: (next) => {
             callbacks.delete(next);
         },
-        emit: () => {
+        emit: (geometry) => {
             for (const callback of callbacks) {
-                callback();
+                callback(geometry);
             }
         },
         get subscriberCount(): number {
@@ -203,13 +206,13 @@ function signal(): TestSignal {
 // KWin delivers these signals; it only proves the attach path no longer
 // requires an object-valued signal with an own connect member.
 function qv4MethodSignal(): TestSignal & (() => void) {
-    const callbacks = new Set<() => void>();
+    const callbacks = new Set<(geometry?: RectCapability) => void>();
     const method = function (): void {} as TestSignal & (() => void);
     const proto = Object.create(Function.prototype);
     Object.defineProperties(proto, {
-        connect: { value: (next: () => void) => callbacks.add(next) },
-        disconnect: { value: (next: () => void) => callbacks.delete(next) },
-        emit: { value: () => { for (const callback of callbacks) callback(); } },
+        connect: { value: (next: (geometry?: RectCapability) => void) => callbacks.add(next) },
+        disconnect: { value: (next: (geometry?: RectCapability) => void) => callbacks.delete(next) },
+        emit: { value: (geometry?: RectCapability) => { for (const callback of callbacks) callback(geometry); } },
         subscriberCount: { get: () => callbacks.size },
     });
     Object.setPrototypeOf(method, proto);
@@ -265,6 +268,8 @@ class Harness {
     nextDesktopNumber = 1;
     throwOnLog = false;
     readonly logs: string[] = [];
+    readonly showOutlineCalls: Array<{ x: number; y: number; w: number; h: number }> = [];
+    hideOutlineCalls = 0;
 
     environment(): ControllerEnvironment {
         return {
@@ -356,12 +361,12 @@ class Harness {
                 this.desktopsChanged = handler;
             },
             watchInteractiveWindow: (target, started, finished, stepped, moveResizedChanged, invalidated) => {
-                const connected: Array<[string, () => void]> = [];
-                const attach = (name: string, handler: () => void): boolean => {
+                const connected: Array<[string, (geometry: RectCapability) => void]> = [];
+                const attach = (name: string, handler: (geometry: RectCapability) => void): boolean => {
                     let value: unknown;
                     try {
                         value = (target as unknown as Record<string, unknown>)[name];
-                        (value as { connect: (next: () => void) => void }).connect(handler);
+                        (value as { connect: (next: (geometry: RectCapability) => void) => void }).connect(handler);
                         connected.push([name, handler]);
                         this.logs.push(`plasma-auto-tiler:drag-attach-ok:${name}`);
                         return true;
@@ -372,7 +377,7 @@ class Harness {
                         return false;
                     }
                 };
-                const attempts: ReadonlyArray<readonly [string, () => void]> = [
+                const attempts: ReadonlyArray<readonly [string, (geometry: RectCapability) => void]> = [
                     ["interactiveMoveResizeStarted", started],
                     ["interactiveMoveResizeStepped", stepped],
                     ["interactiveMoveResizeFinished", finished],
@@ -393,9 +398,12 @@ class Harness {
                     disconnect: () => {
                         for (const [name, handler] of connected) {
                             try {
-                                (target as unknown as Record<string, { disconnect: (next: () => void) => void }>)[
-                                    name
-                                ]!.disconnect(handler);
+                                (
+                                    target as unknown as Record<
+                                        string,
+                                        { disconnect: (next: (geometry: RectCapability) => void) => void }
+                                    >
+                                )[name]!.disconnect(handler);
                             } catch (error) {
                                 void error;
                             }
@@ -521,6 +529,12 @@ class Harness {
                     throw new Error("log sink failed");
                 }
                 this.logs.push(message);
+            },
+            showOutline: (x, y, w, h) => {
+                this.showOutlineCalls.push({ x, y, w, h });
+            },
+            hideOutline: () => {
+                this.hideOutlineCalls += 1;
             },
         };
     }
@@ -4420,7 +4434,7 @@ describe("TileController selected overlay reflow", () => {
     });
 });
 
-function dragSetup(): {
+function dragSetup(dropOutlinePreview = false): {
     readonly harness: Harness;
     readonly controller: TileController;
     readonly root: TestTile;
@@ -4441,6 +4455,7 @@ function dragSetup(): {
     harness.root = root;
     harness.active = dragged;
     harness.windows = [dragged, targetWindow];
+    harness.configValues.set(DROP_OUTLINE_PREVIEW_CONFIG_KEY, dropOutlinePreview);
     const controller = new TileController(harness.environment());
     controller.start();
     return { harness, controller, root, origin, target, dragged, targetWindow };
@@ -4450,7 +4465,7 @@ function dragSetup(): {
 // target term1 split-ready and the vacated origin term2 removable. The scope is
 // adopted unchanged on start (ownership-taken, no yields), so a later native
 // Shift drop models the accepted three-window example.
-function nativeDropSetup(): {
+function nativeDropSetup(dropOutlinePreview = false): {
     readonly harness: Harness;
     readonly controller: TileController;
     readonly root: TestTile;
@@ -4482,6 +4497,7 @@ function nativeDropSetup(): {
     harness.root = root;
     harness.active = term1Win;
     harness.windows = [term1Win, term2Win, term3Win];
+    harness.configValues.set(DROP_OUTLINE_PREVIEW_CONFIG_KEY, dropOutlinePreview);
     const writes: Array<{ window: TestWindow; target: object | null }> = [];
     attachTileWriter(term1Win, writes);
     attachTileWriter(term2Win, writes);
@@ -4524,7 +4540,7 @@ function nativeDropSetup(): {
 // a 980px working height (y 44..289, 289..534, 534..779, 779..1024). A 50/50
 // vertical split of a 245px row yields 122.5px halves, below KWin's 15%
 // working-height floor (147px), so the split must be refused before mutating.
-function rowsDropSetup(): {
+function rowsDropSetup(dropOutlinePreview = false): {
     readonly harness: Harness;
     readonly controller: TileController;
     readonly root: TestTile;
@@ -4555,6 +4571,7 @@ function rowsDropSetup(): {
     harness.root = root;
     harness.active = row0Win;
     harness.windows = [row0Win, row1Win, row2Win, row3Win];
+    harness.configValues.set(DROP_OUTLINE_PREVIEW_CONFIG_KEY, dropOutlinePreview);
     const writes: Array<{ window: TestWindow; target: object | null }> = [];
     attachTileWriter(row0Win, writes);
     attachTileWriter(row1Win, writes);
@@ -5163,6 +5180,221 @@ describe("TileController interactive drag", () => {
         assert.deepEqual(origin.windows, [dragged]);
         assert.deepEqual(target.windows, [targetWindow]);
         assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("shows the whole valid target leaf on a stepped drag without structural mutation", () => {
+        const { harness, origin, target, dragged } = dragSetup(true);
+        let structuralCalls = 0;
+        for (const subject of [origin, target]) {
+            subject.manage = () => {
+                structuralCalls += 1;
+                return false;
+            };
+            subject.unmanage = () => {
+                structuralCalls += 1;
+                return false;
+            };
+            subject.split = () => {
+                structuralCalls += 1;
+                return [];
+            };
+            subject.remove = () => {
+                structuralCalls += 1;
+                return false;
+            };
+        }
+        harness.cursor = { x: 250, y: 50 };
+
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        assert.deepEqual(harness.showOutlineCalls, [{ x: 200, y: 0, w: 100, h: 100 }]);
+        assert.equal(harness.hideOutlineCalls, 0);
+        assert.equal(structuralCalls, 0);
+        assert.equal(dragged.tile, origin);
+    });
+
+    it("suppresses duplicate stepped outline requests", () => {
+        const { harness, dragged } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        assert.equal(harness.showOutlineCalls.length, 1);
+        assert.equal(harness.hideOutlineCalls, 0);
+    });
+
+    it("hides a shown outline when a stepped target becomes unresolved, origin, out of scope, or topology-invalid", () => {
+        const cases: ReadonlyArray<(state: ReturnType<typeof dragSetup>) => void> = [
+            ({ harness }) => {
+                harness.cursor = { x: 1000, y: 1000 };
+            },
+            ({ harness }) => {
+                harness.cursor = { x: 50, y: 50 };
+            },
+            ({ dragged }) => {
+                dragged.desktops = [];
+            },
+            ({ target }) => {
+                target.absoluteGeometry = { x: 200, y: 0, width: 0, height: 100 };
+                target.relativeGeometry = target.absoluteGeometry;
+            },
+        ];
+        for (const invalidate of cases) {
+            const state = dragSetup(true);
+            state.harness.cursor = { x: 250, y: 50 };
+            startDrag(state.dragged);
+            state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+            invalidate(state);
+            state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+
+            assert.equal(state.harness.showOutlineCalls.length, 1);
+            assert.equal(state.harness.hideOutlineCalls, 1);
+        }
+    });
+
+    it("hides a shown outline when the target split would violate the minimum size", () => {
+        const { harness, row0Win } = rowsDropSetup(true);
+        startDrag(row0Win);
+        harness.cursor = { x: 10, y: 400 };
+        row0Win.interactiveMoveResizeStepped.emit(movedGeometry());
+        harness.cursor = { x: 768, y: 411 };
+        row0Win.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        assert.equal(harness.showOutlineCalls.length, 1);
+        assert.equal(harness.hideOutlineCalls, 1);
+    });
+
+    it("does nothing for stepped outlines when the configuration is disabled", () => {
+        const { harness, dragged } = dragSetup();
+        harness.cursor = { x: 250, y: 50 };
+
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        assert.equal(harness.showOutlineCalls.length, 0);
+        assert.equal(harness.hideOutlineCalls, 0);
+    });
+
+    it("clears a shown outline once when a drop finishes successfully", () => {
+        const { harness, term1Win, term2Win } = nativeDropSetup(true);
+        harness.cursor = { x: 50, y: 25 };
+        startDrag(term2Win);
+        term2Win.interactiveMoveResizeStepped.emit({ x: 0, y: 0, width: 100, height: 50 });
+        assert.equal(harness.showOutlineCalls.length, 1);
+
+        term2Win.frameGeometry = { x: 0, y: 0, width: 100, height: 50 };
+        term2Win.tile = term1Win.tile;
+        term2Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        assert.equal(harness.hideOutlineCalls, 1);
+    });
+
+    it("clears a shown outline once when the final drop is refused as undersized", () => {
+        const { controller, harness, row0Win } = rowsDropSetup(true);
+        harness.cursor = { x: 10, y: 400 };
+        startDrag(row0Win);
+        row0Win.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.equal(harness.showOutlineCalls.length, 1);
+
+        row0Win.tile = null;
+        row0Win.frameGeometry = { x: 718, y: 361, width: 100, height: 100 };
+        harness.cursor = { x: 768, y: 411 };
+        row0Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-refused:undersized-split"), 1);
+        assert.equal(harness.hideOutlineCalls, 1);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("clears a shown outline when its origin is invalidated or removed", () => {
+        const actions: ReadonlyArray<(state: ReturnType<typeof dragSetup>) => void> = [
+            ({ dragged }) => dragged.desktopsChanged.emit(),
+            ({ harness, dragged }) => harness.emitRemoved(dragged),
+        ];
+        for (const clear of actions) {
+            const state = dragSetup(true);
+            state.harness.cursor = { x: 250, y: 50 };
+            startDrag(state.dragged);
+            state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+            clear(state);
+
+            assert.equal(state.harness.hideOutlineCalls, 1);
+            assert.equal(state.controller.hasActiveDrag, false);
+        }
+    });
+
+    it("clears a shown outline before replacing a stale drag", () => {
+        const { controller, harness, dragged, targetWindow } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        targetWindow.move = true;
+        targetWindow.interactiveMoveResizeStarted.emit();
+        targetWindow.move = false;
+
+        assert.equal(harness.hideOutlineCalls, 1);
+        assert.equal(controller.hasActiveDrag, true);
+    });
+
+    it("clears a shown outline when the controller disables without duplicate teardown", () => {
+        const { controller, harness, target, dragged } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        target.split = () => [];
+        dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(controller.isEnabled, false);
+        assert.equal(harness.hideOutlineCalls, 1);
+    });
+
+    it("does not hide an outline again after terminal cleanup", () => {
+        const { controller, harness, dragged } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        dragged.interactiveMoveResizeFinished.emit();
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(harness.hideOutlineCalls, 1);
+    });
+
+    it("hides a shown outline once when finished arrives while fullscreen", () => {
+        const { controller, harness, dragged } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.equal(harness.showOutlineCalls.length, 1);
+
+        dragged.fullScreen = true;
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "fullscreen:ignored lifecycle while fullscreen"), 1);
+        assert.equal(controller.hasActiveDrag, true);
+        assert.equal(harness.hideOutlineCalls, 1);
+    });
+
+    it("hides a shown outline once when finished arrives while maximized", () => {
+        const { controller, harness, dragged } = dragSetup(true);
+        harness.cursor = { x: 250, y: 50 };
+        startDrag(dragged);
+        dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.equal(harness.showOutlineCalls.length, 1);
+
+        invokeShortcut(harness, "plasma-auto-tiler-maximize");
+        assert.equal(countEvent(harness.logs, "maximize:enter covered"), 1);
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 1);
+        assert.equal(controller.hasActiveDrag, true);
+        assert.equal(harness.hideOutlineCalls, 1);
     });
 
     it("contains drag exceptions and clears active state", () => {
@@ -7957,6 +8189,48 @@ describe("parseAutomaticSplitTarget", () => {
         invalidController.start();
         assert.equal(invalidController.automaticSplitTargetSnapshot(), "dwindle");
         assert.equal(countEvent(invalid.logs, "automatic-split-target-invalid:fallback-dwindle"), 1);
+    });
+});
+
+describe("parseDropOutlinePreview", () => {
+    it("defaults missing values to false and preserves false and true without diagnostics", () => {
+        for (const [value, expected] of [
+            [undefined, false],
+            [false, false],
+            [true, true],
+        ] as const) {
+            const parsed = parseDropOutlinePreview(value);
+            assert.equal(parsed.enabled, expected);
+            assert.deepEqual(parsed.diagnostics, []);
+        }
+        assert.equal(DEFAULT_DROP_OUTLINE_PREVIEW, false);
+    });
+
+    it("falls back to false with a diagnostic for invalid values", () => {
+        for (const value of ["true", 1, {}]) {
+            const parsed = parseDropOutlinePreview(value);
+            assert.equal(parsed.enabled, false);
+            assert.deepEqual(parsed.diagnostics, ["drop-outline-preview-invalid:fallback-false"]);
+        }
+    });
+
+    it("selects dropOutlinePreview from readConfig at startup", () => {
+        const enabled = new Harness();
+        enabled.configValues.set(DROP_OUTLINE_PREVIEW_CONFIG_KEY, true);
+        const enabledController = new TileController(enabled.environment());
+        enabledController.start();
+        assert.equal(enabledController.dropOutlinePreviewSnapshot(), true);
+
+        const disabled = new Harness();
+        disabled.configValues.set(DROP_OUTLINE_PREVIEW_CONFIG_KEY, false);
+        const disabledController = new TileController(disabled.environment());
+        disabledController.start();
+        assert.equal(disabledController.dropOutlinePreviewSnapshot(), false);
+
+        const missing = new Harness();
+        const missingController = new TileController(missing.environment());
+        missingController.start();
+        assert.equal(missingController.dropOutlinePreviewSnapshot(), false);
     });
 });
 

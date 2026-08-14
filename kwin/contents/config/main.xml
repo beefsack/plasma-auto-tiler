@@ -42,5 +42,9 @@
                 <choice name="bspwm" value="bspwm"/>
             </choices>
         </entry>
+        <entry name="dropOutlinePreview" type="Bool">
+            <label>Show a destination outline while dragging a tiled window</label>
+            <default>false</default>
+        </entry>
     </group>
 </kcfg>

@@ -304,6 +304,10 @@ interface Workspace {
     readonly screensChanged: Signal;
     readonly desktopsChanged: Signal;
     readonly currentDesktopChanged: Signal3<VirtualDesktop | null, VirtualDesktop | null, Output | null>;
+    // Geometry-only outline rectangle slots (src/scripting/workspace_wrapper.h,
+    // `showOutline(QRect)` / `showOutline(x, y, w, h)` / `hideOutline()`).
+    showOutline(x: number, y: number, w: number, h: number): void;
+    hideOutline(): void;
 }
 
 // src/scripting/workspace_wrapper.h: the scripting workspace singleton.

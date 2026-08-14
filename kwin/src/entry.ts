@@ -1,4 +1,5 @@
 import { TileController } from "./controller";
+import { type RectCapability } from "./boundary";
 
 function isKWinWindowSurface(value: unknown): value is Window {
     return (
@@ -89,12 +90,12 @@ const controller = new TileController({
     onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
     watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
         const surface = window as unknown as Record<string, unknown>;
-        const connected: Array<[string, () => void]> = [];
-        const attach = (name: string, handler: () => void): boolean => {
+        const connected: Array<[string, (geometry: RectCapability) => void]> = [];
+        const attach = (name: string, handler: (geometry: RectCapability) => void): boolean => {
             let value: unknown;
             try {
                 value = surface[name];
-                (value as { connect: (next: () => void) => void }).connect(handler);
+                (value as { connect: (next: (geometry: RectCapability) => void) => void }).connect(handler);
                 connected.push([name, handler]);
                 console.log(`plasma-auto-tiler:drag-attach-ok:${name}`);
                 return true;
@@ -105,7 +106,7 @@ const controller = new TileController({
                 return false;
             }
         };
-        const attempts: ReadonlyArray<readonly [string, () => void]> = [
+        const attempts: ReadonlyArray<readonly [string, (geometry: RectCapability) => void]> = [
             ["interactiveMoveResizeStarted", started],
             ["interactiveMoveResizeStepped", stepped],
             ["interactiveMoveResizeFinished", finished],
@@ -126,7 +127,9 @@ const controller = new TileController({
             disconnect: () => {
                 for (const [name, handler] of connected) {
                     try {
-                        (surface[name] as { disconnect: (next: () => void) => void }).disconnect(handler);
+                        (surface[name] as {
+                            disconnect: (next: (geometry: RectCapability) => void) => void;
+                        }).disconnect(handler);
                     } catch (error) {
                         void error;
                     }
@@ -221,6 +224,10 @@ const controller = new TileController({
             }
         };
     },
+    // Geometry-only outline rectangle surface, mapped to the KWin workspace
+    // `showOutline(x, y, w, h)` and `hideOutline()` slots.
+    showOutline: (x, y, w, h) => workspace.showOutline(x, y, w, h),
+    hideOutline: () => workspace.hideOutline(),
     // Named one-shot event-loop yield for dwindle reconstruction deferral,
     // implemented with the proven callDBus async callback seam. ListNames on
     // the session bus dispatches its callback exactly once on a real later
