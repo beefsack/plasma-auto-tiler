@@ -154,7 +154,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   Hyprland `persistent` [H-WS], COSMIC "pin workspaces" [C-Bas], bspwm fixed
   [B1]). Implemented statically as the three-mode `workspaceMode` model
   (`per-output-local` default, `global-unique`, `shared`) in
-  [multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/).
+  [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
   [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0` focuses
   or creates the mode-defined trailing empty (registered as
@@ -184,7 +184,7 @@ config key `shortcutProfile`), so the selected-profile catalog replaces the
 earlier blended project shortcut decision: only validated catalog rows
 register, and rows colliding with Plasma stay shadowed until the separately
 gated installer/KCM migration exists
-([multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/)).
+([multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/)).
 
 | Action | Identifier | Sequence | Precedent |
 |---|---|---|---|
@@ -308,7 +308,7 @@ Each preserves its decision; only implementation viability needs a KWin test.
 |---|---|---|
 | PARKED-1 | Drop overlay input coupling (feature 4) | Drag events do not reach the script yet (handover section 5). The C2 effect overlay stays decided; the drag-to-target wiring cannot be implemented until signal delivery is proven. |
 | PARKED-2 | Multi-window tile stability + group header (feature 5) | Multi-window-per-tile stability is `unknown` with an evacuation-design TODO (handover section 12); the QML header overlay must be proven to render over shared-geometry members. |
-| PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
+| PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
 | PARKED-4 | All-window corner clipping (feature 8) | Whether a QML `SceneEffect` can clip rounded corners uniformly on XWayland/non-Qt windows is `unproven-until-live`; fallback is a native effect (composition.md Path 4). |
 
 ## Further feature ideas (PROPOSED, not decided)

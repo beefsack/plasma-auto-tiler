@@ -1,7 +1,7 @@
 # Implementation plan: multi-output workspaces and shortcuts
 
-Status: implementation in progress. Revised plan approved by the Orchestrator
-and user on 2026-08-14.
+Status: completed and user-approved 2026-08-14. Final acceptance evidence and
+residual risks were reconciled by the Lead before archival.
 
 ## Constraints and evidence
 
@@ -294,9 +294,9 @@ Implementation status: accepted 2026-08-14. The three workspace modes,
 profile catalog, dynamic lifecycle, and documentation were reconciled. Focused
 independent review found and the bounded correction pass resolved singleton
 multi-output reconciliation, output-wrapper identity, synchronous tiled
-move-follow, and unimplemented catalog-row truthfulness. Result approval and
-the completion transaction remain pending; this active change must not yet be
-archived or removed from the backlog.
+move-follow, and unimplemented catalog-row truthfulness. The user approved the
+delivered result on 2026-08-14; the completion transaction may archive this
+change.
 
 Dependencies: Units 01-07. Scope: run the complete static/unit suite, inspect
 the aggregate shortcut gate and all mode dispatches, update user-facing project
@@ -333,10 +333,31 @@ diff as Unit 02 input, not as accepted behavior. Do not commit, push, stage all,
 touch protected untracked paths, or run live KWin/Plasma mutation during
 planning or implementation without later authorization.
 
-## Pending approval and blocked dependency
+## Final acceptance evidence
 
-- User result approval is pending. Do not archive this change or remove related
-  backlog entries before that approval.
-- Full selected-profile support that overrides Plasma conflicts is blocked on a
-  separately approved installer/KCM migration component. Script-local v1 must
-  be described as partial activation where Plasma already owns a sequence.
+- Profile catalogs, collision validation, stable KWin-local registration, and
+  the `Meta+0` registration/append-focus amendment are covered by accepted
+  Units 01-03 and the final static verification record.
+- `workspaceMode` parsing, session-only output identity, and the
+  per-output-local, global-unique, and shared mode behavior are covered by
+  accepted Units 04-07, including static two-output, lifecycle, idempotence,
+  and state-refusal cases.
+- Unit 08's final static verification passed: `npm run typecheck`, `npm test`
+  (692 tests), 248 lifecycle checks, 108 installer checks, and two reproducible
+  builds. The approved `Meta+0` amendment was subsequently implemented and
+  statically verified in commit `fd59ed8`.
+- The focused independent review and its bounded correction pass found no
+  unapproved DBus, helper, persistence, live mutation, or structural-safety
+  violation. User result approval is recorded for this completed delivery.
+
+## Residual risks
+
+- Live KWin/Plasma behavior, including desktop lifecycle and shortcut
+  activation in the presence of Plasma-global conflicts, remains
+  unproven-until-live; no live mutation was authorized or performed.
+- KWin-local registration cannot displace Plasma-global bindings. The separate
+  installer/KCM migration, collision handling, rollback, and live evidence
+  remain unfinished and are not part of this archived change.
+- Output identity and per-output mappings are session-local. Identical output
+  tuples use first-seen order, and `per-output-local` exposes N*M desktops in
+  Plasma's pager/overview.
