@@ -4547,7 +4547,18 @@ export class TileController {
             if (isNativelyMaximized(window)) {
                 return;
             }
-            this.exitMaximize(window);
+            if (this.exitMaximize(window)) {
+                // The startup classification cleared: the scope is no longer
+                // deferred, so settle its invariant immediately instead of
+                // waiting for an unrelated lifecycle event. A window made
+                // eligible by the clear is adopted through the same
+                // reconciliation used elsewhere; this never invents unsafe
+                // structural mutation.
+                const scope = this.scopeForWindow(window);
+                if (scope !== null && this.isOwned(scope)) {
+                    this.dwindleEnsureInvariant(scope);
+                }
+            }
         }, (reason) => this.disabled(reason));
     }
 
@@ -4653,10 +4664,13 @@ export class TileController {
         }
     }
 
-    // Whether any maximized window belongs to this scope. Used only to refuse
-    // the whole-scope dwindle reconstruction while a maximized window's
-    // preserved tile lives in the scope: reconstruction collapses and rebuilds
-    // every leaf, which would destroy the preserved slot. This is a narrow
+    // Whether a genuinely tiled maximized window belongs to this scope. Used
+    // to defer whole-scope reconstruction and insertion while a maximized
+    // window's preserved tile lives in the scope: reconstruction collapses and
+    // rebuilds every leaf, while insertion can mutate deferred topology. An untiled
+    // startup-maximized record (`preservedTile === null`) preserves no slot, so
+    // it never blocks reconstruction of the scope: the window stays unmanaged
+    // while unrelated scope reconstruction proceeds. This is a narrow
     // operation-specific refusal for reconstruction only, never a generic
     // scope-wide lifecycle block: unrelated window addition/removal and
     // leaf-level placement proceed (guarded by the precise per-window checks
@@ -4664,7 +4678,7 @@ export class TileController {
     // because the fullscreen cover already excludes the scope.
     private scopeHasMaximized(scope: CurrentScope): boolean {
         for (const [window, record] of this.maximizedWindows) {
-            if (window.fullScreen === true) {
+            if (window.fullScreen === true || record.preservedTile === null) {
                 continue;
             }
             const currentScope = this.scopeForWindow(window);
@@ -4695,25 +4709,6 @@ export class TileController {
                 continue;
             }
             if (overlay.leaves.includes(window.tile)) {
-                return true;
-            }
-        }
-        return false;
-    }
-
-    // Whether a dwindle insertion would split the preserved tile of a maximized
-    // window in this scope. The split targets the deepest leaf; when that leaf
-    // is a maximized window's preserved tile, the split is refused so the
-    // preserved slot survives. Splitting any other leaf proceeds normally.
-    private insertionTouchesMaximized(
-        scope: CurrentScope,
-        deepest: { readonly tile: CustomTileCapability; readonly depth: number },
-    ): boolean {
-        for (const [, record] of this.maximizedWindows) {
-            if (record.scope === null || record.preservedTile === null) {
-                continue;
-            }
-            if (sameScope(record.scope.scope, scope.scope) && record.preservedTile === deepest.tile) {
                 return true;
             }
         }
@@ -5694,7 +5689,12 @@ export class TileController {
     // detach action and floating/sticky windows. Floating windows are never
     // part of the placement population, the tree bijection, or the
     // reconstruction window-set comparisons; their vacated preserved leaves are
-    // tolerated by the invariant checks through `scopeFloatingCount`.
+    // tolerated by the invariant checks through `scopeFloatingCount`. An
+    // untiled maximized window (a startup record with no preserved tile) is
+    // likewise excluded: it stays unmanaged and out of the population, so
+    // scope reconstruction for the remaining windows proceeds without ever
+    // placing it. A tiled maximized window keeps its preserved slot and is a
+    // normal leaf occupant, so it stays in the population.
     private ownedPopulation(scope: CurrentScope): readonly WindowCapability[] {
         const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
         if (!windows.ok) {
@@ -5708,6 +5708,10 @@ export class TileController {
                 !this.detachedWindows.has(window) &&
                 !this.isFloating(window)
             ) {
+                const maximize = this.maximizedWindows.get(window);
+                if (maximize !== undefined && maximize.preservedTile === null) {
+                    continue;
+                }
                 owned.push(window);
             }
         }
@@ -6266,10 +6270,12 @@ export class TileController {
             this.markInert(scope, "insert-deepest-leaf-failed");
             return;
         }
-        if (this.insertionTouchesMaximized(scope, deepest)) {
-            // The insertion split would target the preserved tile of a
-            // maximized window in this scope: refuse the split so the
-            // preserved slot survives. Other insertion splits proceed.
+        if (this.scopeHasMaximized(scope)) {
+            // A genuinely tiled maximized window's preserved slot lives in
+            // this scope and reconstruction is deferred: refuse the split so
+            // additions cannot mutate the deferred topology into an inert
+            // state, and leave the incoming window for the deferred
+            // reconstruction to re-resolve.
             this.diagnostic("maximize:ignored insert while maximized");
             return;
         }

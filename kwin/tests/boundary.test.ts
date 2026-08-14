@@ -9,6 +9,7 @@ import {
     decodeSequential,
     detachWindowFromTile,
     isCustomTile,
+    isNativelyMaximized,
     isOutput,
     isRect,
     isTile,
@@ -18,6 +19,7 @@ import {
     type BoundaryScope,
 } from "../src/boundary";
 import { sameScope as sameLogicScope, type Scope as LogicScope } from "../src/logic";
+import type { WindowCapability } from "../src/boundary";
 
 function isNumber(value: unknown): value is number {
     return typeof value === "number";
@@ -187,6 +189,38 @@ describe("boundary capability guards", () => {
         assert.equal(splits, 0);
         assert.equal(isCustomTile({ ...customTile, split: 1 }), false);
         assert.equal(isOutput(throwingOutput), false);
+    });
+
+    it("decodes the native maximize enum Restore=0, Vertical=1, Horizontal=2, Full=3", () => {
+        const maximizeWindow = {
+            normalWindow: true,
+            managed: true,
+            resizeable: true,
+            appletPopup: false,
+            desktops: [],
+            output: OUTPUT,
+            tile: null,
+            frameGeometry: RECT,
+            move: false,
+            resize: false,
+            maximizeMode: 0,
+        };
+        assert.equal(isNativelyMaximized(maximizeWindow), false);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: 1 }), true);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: 2 }), true);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: 3 }), true);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: 4 }), false);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: -1 }), false);
+        assert.equal(isNativelyMaximized({ ...maximizeWindow, maximizeMode: 1.5 }), false);
+        assert.equal(
+            isNativelyMaximized({ ...maximizeWindow, maximizeMode: "3" } as unknown as WindowCapability),
+            false,
+        );
+        assert.equal(
+            isNativelyMaximized({ ...maximizeWindow, maximizeMode: undefined } as unknown as WindowCapability),
+            false,
+        );
+        assert.equal(isNativelyMaximized({ ...maximizeWindow }), false);
     });
 });
 

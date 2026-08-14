@@ -12103,27 +12103,59 @@ describe("TileController per-workspace maximize", () => {
         assert.equal(controller.isEnabled, true);
     });
 
-    it("refuses scope reconstruction while a startup-native-maximized window is classified", () => {
+    it("does not let an untiled startup-maximized window suppress malformed tree reconstruction", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
-        const target = tile();
+        const a = tile();
+        const b = tile();
+        const normal = window({ tile: a });
         const maximizedUntiled = window({ tile: null, maximizeMode: 3 });
-        target.windows = [];
-        root.tiles = [target];
+        a.windows = [normal];
+        b.windows = [];
+        root.tiles = [a, b];
+        const spliceFromTree = (node: TestTile, entry: TestTile): boolean => {
+            const children = node.tiles as TestTile[];
+            for (let index = 0; index < children.length; index += 1) {
+                if (children[index] === entry) {
+                    children.splice(index, 1);
+                    return true;
+                }
+                if (spliceFromTree(children[index] as TestTile, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (const leaf of [a, b]) {
+            leaf.remove = () => {
+                spliceFromTree(root, leaf);
+                return true;
+            };
+        }
+        attachTileWriter(normal);
         harness.root = root;
-        harness.active = maximizedUntiled;
-        harness.windows = [maximizedUntiled];
+        harness.active = normal;
+        harness.windows = [normal, maximizedUntiled];
         harness.clientArea = WORK_AREA;
         const controller = new TileController(harness.environment());
         controller.start();
         assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
-        // The untiled window leaves the only leaf empty while its scope is
-        // classified, so the occupancy bijection fails and a reconstruction
-        // would arm - but the startup classification refuses it.
-        assert.equal(countEvent(harness.logs, "maximize:ignored reconstruction while maximized"), 1);
-        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 0);
-        assert.equal(harness.yields.length, 0);
+        // The untiled startup-maximized window preserves no slot, so it must
+        // not block the reconstruction of the malformed tree: the scope has
+        // one owned window against two leaves, the bijection fails, and the
+        // reconstruction arms instead of being refused.
+        assert.equal(countEvent(harness.logs, "maximize:ignored reconstruction while maximized"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
         assert.equal(maximizedUntiled.tile, null);
+        // The reconstruction completes and the maximized window stays untiled.
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.ok(normal.tile !== null);
+        assert.equal(maximizedUntiled.tile, null);
+        assert.equal(harness.yields.length, 0);
         assert.equal(controller.isEnabled, true);
     });
 
@@ -12155,6 +12187,410 @@ describe("TileController per-workspace maximize", () => {
         assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
         assert.equal(countEvent(harness.logs, "maximize:enter covered"), 2);
         assert.deepEqual(focused.frameGeometry, WORK_AREA);
+    });
+
+    it("defers a tiled maximized scope so additions do not split and no inert forms", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target, maximizeMode: 3 });
+        target.windows = [focused];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(harness.yields.length, 0);
+
+        const incoming = window();
+        harness.windows = [focused, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 1);
+        assert.equal(incoming.tile, null);
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(focused.tile, target);
+        assert.deepEqual(root.tiles, [target]);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("refuses an insertion targeting a normal occupant leaf in a multi-leaf scope with a tiled maximized preserved tile elsewhere", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const maximizedLeaf = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const occupantLeaf = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const maximized = window({ tile: maximizedLeaf, maximizeMode: 3 });
+        const occupant = window({ tile: occupantLeaf });
+        maximizedLeaf.windows = [maximized];
+        occupantLeaf.windows = [occupant];
+        root.tiles = [maximizedLeaf, occupantLeaf];
+        harness.root = root;
+        harness.active = maximized;
+        harness.windows = [maximized, occupant];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(harness.yields.length, 0);
+
+        const incoming = window();
+        harness.windows = [maximized, occupant, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(incoming.tile, null);
+        assert.equal(maximized.tile, maximizedLeaf);
+        assert.equal(occupant.tile, occupantLeaf);
+        assert.deepEqual(root.tiles, [maximizedLeaf, occupantLeaf]);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("does not defer reconstruction or insertion in a different output scope for a maximized window", () => {
+        const harness = new Harness();
+        const OUTPUT_B = { ...OUTPUT, name: "screen-2" };
+        const desktopB = { id: "desktop-2" };
+        const rootA = tile(RECT, true);
+        const targetA = tile();
+        const maximized = window({ tile: targetA, maximizeMode: 3 });
+        targetA.windows = [maximized];
+        rootA.tiles = [targetA];
+        const rootB = tile(RECT, true);
+        const leafB = tile();
+        const winB = window({ tile: leafB, output: OUTPUT_B, desktops: [desktopB] });
+        leafB.windows = [winB];
+        rootB.tiles = [leafB];
+        for (const entry of [leafB]) {
+            entry.remove = () => {
+                rootB.tiles = (rootB.tiles as TestTile[]).filter((value) => value !== entry);
+                return true;
+            };
+        }
+        installDwindleSplitter(rootB);
+        attachTileWriter(winB);
+        harness.rootsByDesktop.set(DESKTOP.id, rootA);
+        harness.rootsByDesktop.set(desktopB.id, rootB);
+        harness.root = rootA;
+        harness.active = maximized;
+        harness.windows = [maximized, winB];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(maximized.tile, targetA);
+        assert.equal(harness.yields.length, 0);
+
+        harness.currentDesktop = desktopB;
+        harness.currentDesktopValue = desktopB;
+        const incomingB = window({ output: OUTPUT_B, desktops: [desktopB] });
+        attachTileWriter(incomingB);
+        harness.windows = [maximized, winB, incomingB];
+        harness.emitAdded(incomingB);
+        assert.equal(countEvent(harness.logs, "maximize:ignored reconstruction while maximized"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 0);
+        while (harness.flushNextYield()) {
+            // Drain to completion.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.ok(winB.tile !== null);
+        assert.ok(incomingB.tile !== null);
+        assert.equal(maximized.tile, targetA);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("recovers a deferred tiled maximized scope on native unmaximize", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target, maximizeMode: 3 });
+        target.windows = [focused];
+        root.tiles = [target];
+        const spliceFromTree = (node: TestTile, entry: TestTile): boolean => {
+            const children = node.tiles as TestTile[];
+            for (let index = 0; index < children.length; index += 1) {
+                if (children[index] === entry) {
+                    children.splice(index, 1);
+                    return true;
+                }
+                if (spliceFromTree(children[index] as TestTile, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (const leaf of [target]) {
+            leaf.remove = () => {
+                spliceFromTree(root, leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(focused);
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const incoming = window();
+        attachTileWriter(incoming);
+        harness.windows = [focused, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 1);
+        assert.equal(incoming.tile, null);
+
+        focused.maximizeMode = 0;
+        focused.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.ok(focused.tile !== null);
+        assert.ok(incoming.tile !== null);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("settles an owned scope when a native unmaximize clears an untiled startup record", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const normal = window({ tile: target });
+        const maximizedUntiled = window({ tile: null, maximizeMode: 3 });
+        target.windows = [normal];
+        root.tiles = [target];
+        const spliceFromTree = (node: TestTile, entry: TestTile): boolean => {
+            const children = node.tiles as TestTile[];
+            for (let index = 0; index < children.length; index += 1) {
+                if (children[index] === entry) {
+                    children.splice(index, 1);
+                    return true;
+                }
+                if (spliceFromTree(children[index] as TestTile, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (const leaf of [target]) {
+            leaf.remove = () => {
+                spliceFromTree(root, leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(normal);
+        attachTileWriter(maximizedUntiled);
+        harness.root = root;
+        harness.active = normal;
+        harness.windows = [normal, maximizedUntiled];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(maximizedUntiled.tile, null);
+
+        maximizedUntiled.maximizeMode = 0;
+        maximizedUntiled.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit cleared"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-collapsed"), 1);
+        assert.equal(harness.flushNextYield(), true);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 2);
+        assert.ok(normal.tile !== null);
+        assert.ok(maximizedUntiled.tile !== null);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("recovers a maximized scope when the maximized window closes", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target, maximizeMode: 3 });
+        target.windows = [focused];
+        root.tiles = [target];
+        const spliceFromTree = (node: TestTile, entry: TestTile): boolean => {
+            const children = node.tiles as TestTile[];
+            for (let index = 0; index < children.length; index += 1) {
+                if (children[index] === entry) {
+                    children.splice(index, 1);
+                    return true;
+                }
+                if (spliceFromTree(children[index] as TestTile, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (const leaf of [target]) {
+            leaf.remove = () => {
+                spliceFromTree(root, leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(focused);
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const incoming = window();
+        attachTileWriter(incoming);
+        harness.windows = [focused, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 1);
+        assert.equal(incoming.tile, null);
+
+        harness.emitRemoved(focused);
+        assert.equal(countEvent(harness.logs, "maximize:ignored lifecycle while maximized"), 0);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        target.windows = [];
+        focused.tile = null;
+        harness.windows = [incoming];
+        while (harness.flushNextYield()) {
+            // Drain the removal collapse and the reconstruction it arms.
+        }
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 1);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+
+        const later = window();
+        attachTileWriter(later);
+        harness.windows = [incoming, later];
+        harness.emitAdded(later);
+        assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), 1);
+        assert.ok(later.tile !== null);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("keeps repeated no-empty-leaf additions to a deferred maximized scope non-inert", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target, maximizeMode: 3 });
+        target.windows = [focused];
+        root.tiles = [target];
+        const spliceFromTree = (node: TestTile, entry: TestTile): boolean => {
+            const children = node.tiles as TestTile[];
+            for (let index = 0; index < children.length; index += 1) {
+                if (children[index] === entry) {
+                    children.splice(index, 1);
+                    return true;
+                }
+                if (spliceFromTree(children[index] as TestTile, entry)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+        for (const leaf of [target]) {
+            leaf.remove = () => {
+                spliceFromTree(root, leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(focused);
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
+        harness.clientArea = WORK_AREA;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "maximize:startup recorded"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const pending: TestWindow[] = [];
+        for (let index = 0; index < 3; index += 1) {
+            const added = window();
+            attachTileWriter(added);
+            pending.push(added);
+            harness.windows = [focused, ...pending];
+            harness.emitAdded(added);
+            assert.equal(countEvent(harness.logs, "maximize:ignored insert while maximized"), index + 1);
+            assert.equal(added.tile, null);
+            assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+            assert.equal(harness.yields.length, 0);
+        }
+
+        focused.maximizeMode = 0;
+        focused.maximizedChanged.emit();
+        assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        assert.equal(harness.yields.length, 1);
+        while (harness.flushNextYield()) {
+            // Drain the reconstruction to completion.
+        }
+        for (const added of pending) {
+            assert.ok(added.tile !== null);
+        }
+        assert.ok(focused.tile !== null);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("marks a scope inert on an insertion occupant-count mismatch", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const win1 = window({ tile: a });
+        const win2 = window({ tile: b });
+        a.windows = [win1];
+        b.windows = [win2];
+        root.tiles = [a, b];
+        harness.root = root;
+        harness.active = win1;
+        harness.windows = [win1, win2];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const win3 = window({ tile: b });
+        b.windows = [win2, win3];
+        harness.windows = [win1, win2, win3];
+        const incoming = window();
+        harness.windows = [win1, win2, win3, incoming];
+        harness.emitAdded(incoming);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-occupant-count-mismatch"), 1);
+        assert.equal(incoming.tile, null);
+
+        const later = window();
+        harness.windows = [win1, win2, win3, incoming, later];
+        harness.emitAdded(later);
+        assert.equal(countEvent(harness.logs, "ownership-inert:insert-occupant-count-mismatch"), 1);
+        assert.equal(later.tile, null);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(harness.scheduled.length, 0);
+        assert.equal(controller.isEnabled, true);
     });
 });
 
