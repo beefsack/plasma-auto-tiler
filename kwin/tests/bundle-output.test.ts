@@ -17,4 +17,14 @@ describe("production bundle compatibility", () => {
         assert.doesNotMatch(bundle, /^\s*(?:import|export)\s/m);
         assert.doesNotMatch(bundle, /node:|sourceMappingURL/);
     });
+
+    it("keeps the bundle free of post-ES2017 non-transpiled built-ins", () => {
+        const bundle = readFileSync("contents/code/main.js", "utf8");
+        assert.doesNotMatch(bundle, /\.flatMap\(/);
+        assert.doesNotMatch(bundle, /\.flat\(/);
+        assert.doesNotMatch(bundle, /Object\.fromEntries/);
+        assert.doesNotMatch(bundle, /\.finally\(/);
+        assert.doesNotMatch(bundle, /Promise\.(?:allSettled|any)\(/);
+        assert.doesNotMatch(bundle, /\.(?:trimStart|trimEnd|matchAll|replaceAll)\(/);
+    });
 });

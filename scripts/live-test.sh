@@ -243,6 +243,10 @@ static_scan() {
     echo "error: static scan found a forbidden bundle token" >&2
     return 1
   fi
+  if grep -nE '\.flatMap\(|\.flat\(|Object\.fromEntries|\.finally\(|Promise\.(allSettled|any)\(|\.(trimStart|trimEnd|matchAll|replaceAll)\(' "$BUNDLE"; then
+    echo "error: static scan found a post-ES2017 built-in in the bundle" >&2
+    return 1
+  fi
   if grep -nE '\?\.' "$BUNDLE"; then
     echo "error: static scan found optional chaining in the bundle" >&2
     return 1

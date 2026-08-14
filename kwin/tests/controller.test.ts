@@ -7441,6 +7441,29 @@ describe("TileController binding profile catalog", () => {
         assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "workspace-0"), "Meta+0");
         assert.equal(PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "workspace-0")?.sequence, "Meta+0");
     });
+
+    it("derives the registered action ID set in exact order and content", () => {
+        // Pins the ES2017-safe explicit-loop derivation of the registered set
+        // (Array.prototype.flatMap is ES2019 and this KWin QJSEngine rejects it).
+        // Content and insertion order must match the previous flatMap build.
+        const expected: string[] = [];
+        for (const family of ["focus", "move"]) {
+            for (const direction of ["left", "down", "up", "right"]) {
+                expected.push(`${family}-${direction}`, `${family}-${direction}-arrow`);
+            }
+        }
+        expected.push("float-toggle", "maximize", "resize-mode-outwards", "resize-mode-inwards");
+        for (const kind of ["expand", "contract"]) {
+            for (const direction of ["left", "down", "up", "right"]) {
+                expected.push(`resize-${kind}-${direction}`);
+            }
+        }
+        expected.push("move-workspace-0", "workspace-0");
+        for (let index = 1; index <= 9; index += 1) {
+            expected.push(`workspace-${index}`, `move-workspace-${index}`);
+        }
+        assert.deepEqual([...REGISTERED_PROFILE_ACTION_IDS], expected);
+    });
 });
 
 describe("TileController shortcut registration", () => {

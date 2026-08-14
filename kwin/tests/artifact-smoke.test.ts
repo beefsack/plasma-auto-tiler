@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
@@ -8,6 +9,32 @@ const EXPECTED_SHORTCUT_COUNT = 52;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
+
+// Post-ES2017 syntax and non-transpiled built-ins this KWin QJSEngine (ES2017)
+// rejects. These are the confirmed-unsupported tokens; pre-ES2017 methods are
+// deliberately not listed.
+const POST_ES2017_PATTERNS: ReadonlyArray<RegExp> = [
+    /\.flatMap\(/,
+    /\.flat\(/,
+    /Object\.fromEntries/,
+    /\.finally\(/,
+    /Promise\.(?:allSettled|any)\(/,
+    /\.(?:trimStart|trimEnd|matchAll|replaceAll)\(/,
+    /\bcatch\s*\{/,
+];
+
+function collectSourceFiles(dir: string): string[] {
+    const files: string[] = [];
+    for (const entry of readdirSync(dir)) {
+        const full = join(dir, entry);
+        if (statSync(full).isDirectory()) {
+            files.push(...collectSourceFiles(full));
+        } else if (full.endsWith(".ts")) {
+            files.push(full);
+        }
+    }
+    return files;
+}
 
 interface KWinStubResult {
     readonly context: ReturnType<typeof createContext>;
@@ -175,5 +202,19 @@ describe("shipped artifact smoke execution", () => {
         const bundle = readFileSync(SHIPPED_BUNDLE, "utf8");
         assert.doesNotMatch(bundle, /__esm|__commonJS/);
         assert.doesNotMatch(bundle, /\b(?:init|require)_[a-z_]+\s*\(/);
+    });
+
+    it("keeps production source and shipped bundle free of post-ES2017 built-ins", () => {
+        const sources = collectSourceFiles("src");
+        assert.ok(sources.length > 0);
+        const texts: ReadonlyArray<readonly [string, string]> = [
+            [SHIPPED_BUNDLE, readFileSync(SHIPPED_BUNDLE, "utf8")],
+            ...sources.map((file) => [file, readFileSync(file, "utf8")] as const),
+        ];
+        for (const [file, text] of texts) {
+            for (const pattern of POST_ES2017_PATTERNS) {
+                assert.doesNotMatch(text, pattern, `${file} matched ${String(pattern)}`);
+            }
+        }
     });
 });

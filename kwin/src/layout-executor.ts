@@ -183,7 +183,8 @@ export function executeBlueprintInstructions<Tile extends object>(
             return failed(completedSplits, mutationPossible);
         }
         return { ok: true, leaves: Object.freeze(realized), completedSplits };
-    } catch {
+    } catch (error) {
+        void error;
         return failed(completedSplits, mutationPossible);
     }
 }

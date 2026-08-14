@@ -427,7 +427,8 @@
         return failed(completedSplits, mutationPossible);
       }
       return { ok: true, leaves: Object.freeze(realized), completedSplits };
-    } catch (e) {
+    } catch (error) {
+      void error;
       return failed(completedSplits, mutationPossible);
     }
   }
@@ -1251,28 +1252,27 @@
     hyprland: Object.freeze({ key: "hyprland", name: "Hyprland", rows: HYPRLAND_ROWS }),
     bspwm: Object.freeze({ key: "bspwm", name: "bspwm", rows: BSPWM_ROWS })
   });
+  function registeredProfileActionIdList() {
+    const ids = [];
+    for (const family of ["focus", "move"]) {
+      for (const direction of ["left", "down", "up", "right"]) {
+        ids.push(`${family}-${direction}`, `${family}-${direction}-arrow`);
+      }
+    }
+    ids.push("float-toggle", "maximize", "resize-mode-outwards", "resize-mode-inwards");
+    for (const kind of ["expand", "contract"]) {
+      for (const direction of ["left", "down", "up", "right"]) {
+        ids.push(`resize-${kind}-${direction}`);
+      }
+    }
+    ids.push("move-workspace-0", "workspace-0");
+    for (let index = 1; index <= 9; index += 1) {
+      ids.push(`workspace-${index}`, `move-workspace-${index}`);
+    }
+    return ids;
+  }
   var REGISTERED_PROFILE_ACTION_IDS = Object.freeze(
-    /* @__PURE__ */ new Set([
-      ...["focus", "move"].flatMap(
-        (family) => ["left", "down", "up", "right"].flatMap((direction) => [
-          `${family}-${direction}`,
-          `${family}-${direction}-arrow`
-        ])
-      ),
-      "float-toggle",
-      "maximize",
-      "resize-mode-outwards",
-      "resize-mode-inwards",
-      ...["expand", "contract"].flatMap(
-        (kind) => ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`)
-      ),
-      "move-workspace-0",
-      "workspace-0",
-      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
-        `workspace-${index}`,
-        `move-workspace-${index}`
-      ])
-    ])
+    new Set(registeredProfileActionIdList())
   );
   function selectProfile(value) {
     if (typeof value === "string" && PROFILE_KEYS.includes(value)) {
@@ -7328,7 +7328,12 @@
       const primary = this.localSessionPrimary;
       if (primary !== void 0 && keys.includes(primary)) {
         const list = (_b = this.localWorkspaces.get(primary)) != null ? _b : [];
-        const assigned = new Set([...this.localWorkspaces.values()].flat());
+        const assigned = /* @__PURE__ */ new Set();
+        for (const ids of this.localWorkspaces.values()) {
+          for (const id of ids) {
+            assigned.add(id);
+          }
+        }
         for (const desktop of desktops) {
           if (this.ownedDesktopIds.has(desktop.id)) {
             continue;

@@ -454,28 +454,31 @@ export const PROFILE_CATALOGS: Readonly<Record<ProfileKey, ProfileCatalog>> = Ob
 // `workspace-0` Meta+0 row is implemented and registered. Kept beside
 // `profileActions` in `start()` so the registration contract stays in one place
 // and tests can derive the exact expected registered set from the catalog.
+// ES2017-safe derivation of the registered action ID set: Array.prototype.flatMap
+// is ES2019 and this KWin QJSEngine rejects it, so explicit loops preserve the
+// exact insertion order without the unsupported built-in.
+function registeredProfileActionIdList(): string[] {
+    const ids: string[] = [];
+    for (const family of ["focus", "move"]) {
+        for (const direction of ["left", "down", "up", "right"]) {
+            ids.push(`${family}-${direction}`, `${family}-${direction}-arrow`);
+        }
+    }
+    ids.push("float-toggle", "maximize", "resize-mode-outwards", "resize-mode-inwards");
+    for (const kind of ["expand", "contract"]) {
+        for (const direction of ["left", "down", "up", "right"]) {
+            ids.push(`resize-${kind}-${direction}`);
+        }
+    }
+    ids.push("move-workspace-0", "workspace-0");
+    for (let index = 1; index <= 9; index += 1) {
+        ids.push(`workspace-${index}`, `move-workspace-${index}`);
+    }
+    return ids;
+}
+
 export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
-    new Set([
-        ...["focus", "move"].flatMap((family) =>
-            ["left", "down", "up", "right"].flatMap((direction) => [
-                `${family}-${direction}`,
-                `${family}-${direction}-arrow`,
-            ]),
-        ),
-        "float-toggle",
-        "maximize",
-        "resize-mode-outwards",
-        "resize-mode-inwards",
-        ...["expand", "contract"].flatMap((kind) =>
-            ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`),
-        ),
-        "move-workspace-0",
-        "workspace-0",
-        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
-            `workspace-${index}`,
-            `move-workspace-${index}`,
-        ]),
-    ]),
+    new Set(registeredProfileActionIdList()),
 );
 
 // Absent/null/empty selects the cosmic default without a diagnostic; a valid
@@ -7877,7 +7880,12 @@ export class TileController {
         const primary = this.localSessionPrimary;
         if (primary !== undefined && keys.includes(primary)) {
             const list = this.localWorkspaces.get(primary) ?? [];
-            const assigned = new Set([...this.localWorkspaces.values()].flat());
+            const assigned = new Set<string>();
+            for (const ids of this.localWorkspaces.values()) {
+                for (const id of ids) {
+                    assigned.add(id);
+                }
+            }
             for (const desktop of desktops) {
                 if (this.ownedDesktopIds.has(desktop.id)) {
                     continue;
