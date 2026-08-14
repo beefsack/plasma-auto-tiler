@@ -130,6 +130,95 @@ export const DEFAULT_PROFILE: ProfileKey = "cosmic";
 export const SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
 export const PROFILE_KEYS: readonly ProfileKey[] = Object.freeze(["cosmic", "hyprland", "bspwm"]);
 
+// ==== Workspace mode configuration (Unit 04) ====
+//
+// `workspaceMode` selects the multi-output workspace model (spec D): each
+// output owns an independent local set (`per-output-local`), desktops are
+// global with per-output ordered assignment (`global-unique`), or one shared
+// set synchronized across every output (`shared`). The mode dispatch itself is
+// Unit 05; this unit establishes the parsed configuration plus the session-only
+// output/workspace state every mode needs. Missing/empty selects the default
+// without a diagnostic; an invalid value falls back to the default with a
+// diagnostic. Deterministic and pure for the tests.
+export type WorkspaceMode = "per-output-local" | "global-unique" | "shared";
+export const DEFAULT_WORKSPACE_MODE: WorkspaceMode = "per-output-local";
+export const WORKSPACE_MODE_CONFIG_KEY = "workspaceMode";
+export const WORKSPACE_MODES: readonly WorkspaceMode[] = Object.freeze([
+    "per-output-local",
+    "global-unique",
+    "shared",
+]);
+
+export function parseWorkspaceMode(value: unknown): {
+    readonly mode: WorkspaceMode;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "string" && (WORKSPACE_MODES as readonly string[]).includes(value)) {
+        return { mode: value as WorkspaceMode, diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { mode: DEFAULT_WORKSPACE_MODE, diagnostics: Object.freeze([]) };
+    }
+    return {
+        mode: DEFAULT_WORKSPACE_MODE,
+        diagnostics: Object.freeze(["workspace-mode-invalid:fallback-per-output-local"]),
+    };
+}
+
+// ==== Session output identity (Unit 04) ====
+//
+// The physical output ID (spec B/E) is the ordered tuple of the four scriptable
+// Output properties. Delimiting with NUL makes the tuple unambiguous when a
+// field is empty or itself contains the separator.
+export function outputTuple(output: OutputCapability): string {
+    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\u0000");
+}
+
+// Session-local deterministic output key registry (spec E). Keys are derived
+// from the ordered (manufacturer, model, serialNumber, name) tuple and assigned
+// in first-seen order. A rebuild matches each output against the earliest
+// unconsumed slot with the same tuple, so a surviving output keeps its key and
+// a colliding tuple (two outputs indistinguishable by the scriptable API) gets
+// a distinct first-seen key. Keys are session-only and never persisted.
+export class SessionOutputKeys {
+    private readonly slots: Array<{ readonly key: string; readonly tuple: string }> = [];
+    private readonly byOutput = new Map<OutputCapability, string>();
+    private next = 0;
+
+    rebuild(outputs: readonly OutputCapability[]): void {
+        this.byOutput.clear();
+        const consumed = new Set<number>();
+        for (const output of outputs) {
+            const tuple = outputTuple(output);
+            let matchedIndex = -1;
+            let entry: { readonly key: string; readonly tuple: string } | undefined;
+            for (let index = 0; index < this.slots.length; index += 1) {
+                if (consumed.has(index)) {
+                    continue;
+                }
+                const candidate = this.slots[index];
+                if (candidate !== undefined && candidate.tuple === tuple) {
+                    matchedIndex = index;
+                    entry = candidate;
+                    break;
+                }
+            }
+            if (entry === undefined) {
+                matchedIndex = this.slots.length;
+                entry = { key: `output-${this.next}`, tuple };
+                this.next += 1;
+                this.slots.push(entry);
+            }
+            consumed.add(matchedIndex);
+            this.byOutput.set(output, entry.key);
+        }
+    }
+
+    keyFor(output: OutputCapability): string | undefined {
+        return this.byOutput.get(output);
+    }
+}
+
 const COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
 const HYPRLAND_REF = "[H-Ex] Hyprland example/hyprland.lua";
 const BSPWM_REF = "[B1-EX] bspwm examples/sxhkdrc";
@@ -471,7 +560,12 @@ export interface ControllerEnvironment {
     readonly onWindowAdded: (handler: (window: unknown) => void) => void;
     readonly onWindowRemoved: (handler: (window: unknown) => void) => void;
     readonly onScreensChanged: (handler: () => void) => void;
-    readonly onCurrentDesktopChanged: (handler: () => void) => void;
+    // The workspace `currentDesktopChanged(previous, current, output)` signal.
+    // The handler carries all three arguments so the output is preserved across
+    // the typed boundary (spec F); it is authoritative for which output switched.
+    readonly onCurrentDesktopChanged: (
+        handler: (previous: unknown, current: unknown, output: unknown) => void,
+    ) => void;
     // Dynamic virtual-desktop surface. Every method may throw when the
     // underlying KWin surface is absent or rejects the call; the workspace
     // commands catch and log a specific failure without affecting startup.
@@ -481,6 +575,13 @@ export interface ControllerEnvironment {
     readonly createDesktop: (position: number, name: string) => unknown;
     readonly removeDesktop: (desktop: VirtualDesktopCapability) => unknown;
     readonly setCurrentDesktop: (desktop: VirtualDesktopCapability) => void;
+    // Per-output current-desktop write (documented KWin scripting API,
+    // workspace `setCurrentDesktopForScreen(desktop, output)`). Independent per
+    // output; used for workspace navigation/follow on the affected output.
+    readonly setCurrentDesktopForScreen: (
+        desktop: VirtualDesktopCapability,
+        output: OutputCapability,
+    ) => void;
     readonly onDesktopsChanged: (handler: () => void) => void;
     readonly watchInteractiveWindow: (
         window: WindowCapability,
@@ -1237,6 +1338,17 @@ export class TileController {
     // those directional keys dispatch a resize step instead of a focus step.
     private resizeModeActive = false;
     private resizeModeDirection: "outwards" | "inwards" = "outwards";
+    // Parsed `workspaceMode` configuration (spec D). Set from readConfig at
+    // startup; invalid input falls back to the default with a diagnostic. The
+    // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
+    private workspaceMode: WorkspaceMode = DEFAULT_WORKSPACE_MODE;
+    // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
+    // at startup and on screensChanged; never persisted.
+    private readonly outputKeys = new SessionOutputKeys();
+    // The output argument of the most recent `currentDesktopChanged` event
+    // (spec F), preserved through the typed boundary. Session-only; the Unit 05
+    // per-output scope re-resolution consumes it.
+    private recentDesktopChangeOutput: OutputCapability | null = null;
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -1256,6 +1368,32 @@ export class TileController {
     // deterministic and observable without mutating topology or assignments.
     resizeModeSnapshot(): { readonly active: boolean; readonly direction: "outwards" | "inwards" } {
         return { active: this.resizeModeActive, direction: this.resizeModeDirection };
+    }
+
+    // Parsed workspace mode (spec D). Read-only snapshot for tests and the
+    // Unit 05 mode dispatch; the value is set once at startup.
+    workspaceModeSnapshot(): WorkspaceMode {
+        return this.workspaceMode;
+    }
+
+    // Deterministic session output key for the given output (spec E), or
+    // undefined before any rebuild observed it. Session-only; never persisted.
+    outputKeyFor(output: OutputCapability): string | undefined {
+        return this.outputKeys.keyFor(output);
+    }
+
+    // The output argument of the most recent `currentDesktopChanged` event
+    // (spec F), or null before any such event. Preserved through the typed
+    // boundary for the Unit 05 per-output scope re-resolution.
+    currentDesktopChangeOutput(): OutputCapability | null {
+        return this.recentDesktopChangeOutput;
+    }
+
+    // Session-owned desktop id snapshot for tests and diagnostics: exactly the
+    // desktop ids the script created this session. Pre-existing and user-owned
+    // desktops are never present (spec B ownership).
+    ownedDesktopIdSnapshot(): readonly string[] {
+        return Object.freeze([...this.ownedDesktopIds]);
     }
 
     // Narrow read/self-validation seam for a future bounded assignment-only
@@ -1310,9 +1448,14 @@ export class TileController {
         this.gate.run(() => {
             this.environment.onWindowAdded((window) => this.handleWindowAdded(window));
             this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
-            this.environment.onScreensChanged(() => this.handleScopeChange());
-            this.environment.onCurrentDesktopChanged(() => this.handleScopeChange());
+            this.environment.onScreensChanged(() => this.handleScreensChanged());
+            this.environment.onCurrentDesktopChanged((previous, current, output) =>
+                this.handleCurrentDesktopChanged(previous, current, output),
+            );
             this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
+            // Deterministic session output keys from the current screens, so
+            // every mode sees a key for each output before any event fires.
+            this.rebuildOutputKeys();
             this.adoptStartupFloatingWindows();
             this.attachExistingInteractiveWindows(true);
             const insertionRegistered = this.environment.registerShortcut(
@@ -1378,6 +1521,16 @@ export class TileController {
             for (const diagnostic of selected.diagnostics) {
                 this.diagnostic(diagnostic);
             }
+            // Parsed `workspaceMode` (spec D): the default is per-output-local;
+            // a valid value selects its own mode; anything else falls back with
+            // a diagnostic. The mode dispatch itself is Unit 05.
+            const mode = parseWorkspaceMode(
+                this.environment.readConfig(WORKSPACE_MODE_CONFIG_KEY, DEFAULT_WORKSPACE_MODE),
+            );
+            for (const diagnostic of mode.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            this.workspaceMode = mode.mode;
             // Deterministic catalog validation before any row registers: a
             // duplicate effective sequence or duplicate shortcut ID is a
             // catalog defect, reported with both conflicting action IDs. Every
@@ -3528,6 +3681,29 @@ export class TileController {
         for (const scope of owed) {
             this.dwindleEnsureInvariant(scope);
         }
+    }
+
+    // screensChanged -> rebuild the deterministic session output keys, then
+    // re-anchor ownership and reconcile (spec F). A removed output's keys stay
+    // in the registry so a re-plug with the same tuple is matched again.
+    private handleScreensChanged(): void {
+        this.rebuildOutputKeys();
+        this.handleScopeChange();
+    }
+
+    // currentDesktopChanged(previous, current, output) -> re-resolve the
+    // affected output's scope (spec F). The signal's output argument is
+    // authoritative for which output switched; it is preserved here (through
+    // the typed boundary) so the Unit 05 per-mode dispatch can consume it
+    // without re-wiring the seam. Until that dispatch exists the single-output
+    // behavior is unchanged.
+    private handleCurrentDesktopChanged(previous: unknown, current: unknown, output: unknown): void {
+        if (isOutput(output)) {
+            this.recentDesktopChangeOutput = output;
+        }
+        this.handleScopeChange();
+        void previous;
+        void current;
     }
 
     private handleScopeChange(): void {
@@ -6343,6 +6519,24 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
+    // Rebuild the deterministic session output keys from `workspace.screens`
+    // (spec E). A missing or undecodable screens surface is read-only and
+    // silently skipped: no key changes, and startup/lifecycle is unaffected.
+    private rebuildOutputKeys(): void {
+        let raw: unknown;
+        try {
+            raw = this.environment.screens();
+        } catch (error) {
+            void error;
+            return;
+        }
+        const decoded = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+        if (!decoded.ok) {
+            return;
+        }
+        this.outputKeys.rebuild(decoded.value);
+    }
+
     // Meta+1..9: navigate to the existing desktop at the given 1-based index.
     // An absent index is a specific no-op and never creates a desktop.
     navigateWorkspace(index: number): void {
@@ -6604,21 +6798,27 @@ export class TileController {
         target: VirtualDesktopCapability,
     ): void {
         if (this.isFloating(window)) {
-            this.moveFloatingWindow(window, target);
+            this.moveFloatingWindow(window, target, sourceScope.output);
             return;
         }
         this.moveTiledWindow(window, sourceScope, target);
     }
 
     // Floating move: update desktop membership only, preserve floating state,
-    // and never mutate the tile tree.
-    private moveFloatingWindow(window: WindowCapability, target: VirtualDesktopCapability): void {
+    // and never mutate the tile tree. The follow write goes to the window's
+    // output, never the current active window (a deferred move can fire after
+    // focus moved elsewhere).
+    private moveFloatingWindow(
+        window: WindowCapability,
+        target: VirtualDesktopCapability,
+        output: OutputCapability,
+    ): void {
         if (!writeWindowDesktops(window, [target])) {
             this.diagnostic("workspace-move-failed:desktops-write");
             return;
         }
         this.diagnostic("workspace-move-floated");
-        this.setCurrentDesktop(target);
+        this.setCurrentDesktop(target, output);
         this.cleanupDesktops();
         this.drainPendingDesktopIntents();
     }
@@ -6659,7 +6859,7 @@ export class TileController {
             return;
         }
         this.diagnostic("workspace-move-pending");
-        this.setCurrentDesktop(target);
+        this.setCurrentDesktop(target, sourceScope.output);
     }
 
     // Collapse the source leaf a tiled window just vacated: one unmanage then
@@ -6719,13 +6919,44 @@ export class TileController {
         this.drainPendingDesktopIntents();
     }
 
-    private setCurrentDesktop(target: VirtualDesktopCapability): void {
+    // Navigate/follow to a desktop, written through the per-output seam on the
+    // affected output when one is known (spec D1: navigation and move-follow
+    // operate on the active output's current desktop via
+    // setCurrentDesktopForScreen). With one output this is exactly the global
+    // write, so the migrated behavior is unchanged; when no output is known
+    // (no focused window), it falls back to the global active-screen write.
+    // Callers that hold a scope pass its output explicitly so a deferred move
+    // always follows on the moved window's output.
+    private setCurrentDesktop(target: VirtualDesktopCapability, output?: OutputCapability): void {
+        const resolved = output ?? this.activeOutput();
+        if (resolved !== null) {
+            try {
+                this.environment.setCurrentDesktopForScreen(target, resolved);
+                this.diagnostic("workspace-navigate-set");
+                return;
+            } catch (error) {
+                this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
+                return;
+            }
+        }
         try {
             this.environment.setCurrentDesktop(target);
             this.diagnostic("workspace-navigate-set");
         } catch (error) {
             this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
         }
+    }
+
+    // The active output for a workspace navigation: the focused window's output
+    // when one exists, else null (the global active-screen fallback). The full
+    // active-output selection (window output else workspace.activeScreen) is the
+    // Unit 05 dispatch; this preserves the migrated single-output behavior.
+    private activeOutput(): OutputCapability | null {
+        const active = this.environment.activeWindow();
+        if (isWindow(active) && isOutput(active.output)) {
+            return active.output;
+        }
+        return null;
     }
 
     // Reconcile the desktop list to exactly one trailing script-owned empty

@@ -1029,6 +1029,66 @@
   var DEFAULT_PROFILE = "cosmic";
   var SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
   var PROFILE_KEYS = Object.freeze(["cosmic", "hyprland", "bspwm"]);
+  var DEFAULT_WORKSPACE_MODE = "per-output-local";
+  var WORKSPACE_MODE_CONFIG_KEY = "workspaceMode";
+  var WORKSPACE_MODES = Object.freeze([
+    "per-output-local",
+    "global-unique",
+    "shared"
+  ]);
+  function parseWorkspaceMode(value) {
+    if (typeof value === "string" && WORKSPACE_MODES.includes(value)) {
+      return { mode: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { mode: DEFAULT_WORKSPACE_MODE, diagnostics: Object.freeze([]) };
+    }
+    return {
+      mode: DEFAULT_WORKSPACE_MODE,
+      diagnostics: Object.freeze(["workspace-mode-invalid:fallback-per-output-local"])
+    };
+  }
+  function outputTuple(output) {
+    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
+  }
+  var SessionOutputKeys = class {
+    constructor() {
+      this.slots = [];
+      this.byOutput = /* @__PURE__ */ new Map();
+      this.next = 0;
+    }
+    rebuild(outputs) {
+      this.byOutput.clear();
+      const consumed = /* @__PURE__ */ new Set();
+      for (const output of outputs) {
+        const tuple = outputTuple(output);
+        let matchedIndex = -1;
+        let entry;
+        for (let index = 0; index < this.slots.length; index += 1) {
+          if (consumed.has(index)) {
+            continue;
+          }
+          const candidate = this.slots[index];
+          if (candidate !== void 0 && candidate.tuple === tuple) {
+            matchedIndex = index;
+            entry = candidate;
+            break;
+          }
+        }
+        if (entry === void 0) {
+          matchedIndex = this.slots.length;
+          entry = { key: `output-${this.next}`, tuple };
+          this.next += 1;
+          this.slots.push(entry);
+        }
+        consumed.add(matchedIndex);
+        this.byOutput.set(output, entry.key);
+      }
+    }
+    keyFor(output) {
+      return this.byOutput.get(output);
+    }
+  };
   var COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
   var HYPRLAND_REF = "[H-Ex] Hyprland example/hyprland.lua";
   var BSPWM_REF = "[B1-EX] bspwm examples/sxhkdrc";
@@ -1633,6 +1693,17 @@
       // those directional keys dispatch a resize step instead of a focus step.
       this.resizeModeActive = false;
       this.resizeModeDirection = "outwards";
+      // Parsed `workspaceMode` configuration (spec D). Set from readConfig at
+      // startup; invalid input falls back to the default with a diagnostic. The
+      // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
+      this.workspaceMode = DEFAULT_WORKSPACE_MODE;
+      // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
+      // at startup and on screensChanged; never persisted.
+      this.outputKeys = new SessionOutputKeys();
+      // The output argument of the most recent `currentDesktopChanged` event
+      // (spec F), preserved through the typed boundary. Session-only; the Unit 05
+      // per-output scope re-resolution consumes it.
+      this.recentDesktopChangeOutput = null;
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -1647,6 +1718,28 @@
     // deterministic and observable without mutating topology or assignments.
     resizeModeSnapshot() {
       return { active: this.resizeModeActive, direction: this.resizeModeDirection };
+    }
+    // Parsed workspace mode (spec D). Read-only snapshot for tests and the
+    // Unit 05 mode dispatch; the value is set once at startup.
+    workspaceModeSnapshot() {
+      return this.workspaceMode;
+    }
+    // Deterministic session output key for the given output (spec E), or
+    // undefined before any rebuild observed it. Session-only; never persisted.
+    outputKeyFor(output) {
+      return this.outputKeys.keyFor(output);
+    }
+    // The output argument of the most recent `currentDesktopChanged` event
+    // (spec F), or null before any such event. Preserved through the typed
+    // boundary for the Unit 05 per-output scope re-resolution.
+    currentDesktopChangeOutput() {
+      return this.recentDesktopChangeOutput;
+    }
+    // Session-owned desktop id snapshot for tests and diagnostics: exactly the
+    // desktop ids the script created this session. Pre-existing and user-owned
+    // desktops are never present (spec B ownership).
+    ownedDesktopIdSnapshot() {
+      return Object.freeze([...this.ownedDesktopIds]);
     }
     // Narrow read/self-validation seam for a future bounded assignment-only
     // reflow. The overlay for the exact scope is returned only when its
@@ -1694,9 +1787,12 @@
       this.gate.run(() => {
         this.environment.onWindowAdded((window) => this.handleWindowAdded(window));
         this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
-        this.environment.onScreensChanged(() => this.handleScopeChange());
-        this.environment.onCurrentDesktopChanged(() => this.handleScopeChange());
+        this.environment.onScreensChanged(() => this.handleScreensChanged());
+        this.environment.onCurrentDesktopChanged(
+          (previous, current, output) => this.handleCurrentDesktopChanged(previous, current, output)
+        );
         this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
+        this.rebuildOutputKeys();
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
         const insertionRegistered = this.environment.registerShortcut(
@@ -1762,6 +1858,13 @@
         for (const diagnostic of selected.diagnostics) {
           this.diagnostic(diagnostic);
         }
+        const mode = parseWorkspaceMode(
+          this.environment.readConfig(WORKSPACE_MODE_CONFIG_KEY, DEFAULT_WORKSPACE_MODE)
+        );
+        for (const diagnostic of mode.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.workspaceMode = mode.mode;
         for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
           this.diagnostic(diagnostic);
         }
@@ -3560,6 +3663,27 @@
       for (const scope of owed) {
         this.dwindleEnsureInvariant(scope);
       }
+    }
+    // screensChanged -> rebuild the deterministic session output keys, then
+    // re-anchor ownership and reconcile (spec F). A removed output's keys stay
+    // in the registry so a re-plug with the same tuple is matched again.
+    handleScreensChanged() {
+      this.rebuildOutputKeys();
+      this.handleScopeChange();
+    }
+    // currentDesktopChanged(previous, current, output) -> re-resolve the
+    // affected output's scope (spec F). The signal's output argument is
+    // authoritative for which output switched; it is preserved here (through
+    // the typed boundary) so the Unit 05 per-mode dispatch can consume it
+    // without re-wiring the seam. Until that dispatch exists the single-output
+    // behavior is unchanged.
+    handleCurrentDesktopChanged(previous, current, output) {
+      if (isOutput(output)) {
+        this.recentDesktopChangeOutput = output;
+      }
+      this.handleScopeChange();
+      void previous;
+      void current;
     }
     handleScopeChange() {
       this.gate.run(() => {
@@ -6017,6 +6141,23 @@
         this.drainPendingDesktopIntents();
       }, (reason) => this.disabled(reason));
     }
+    // Rebuild the deterministic session output keys from `workspace.screens`
+    // (spec E). A missing or undecodable screens surface is read-only and
+    // silently skipped: no key changes, and startup/lifecycle is unaffected.
+    rebuildOutputKeys() {
+      let raw;
+      try {
+        raw = this.environment.screens();
+      } catch (error) {
+        void error;
+        return;
+      }
+      const decoded = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+      if (!decoded.ok) {
+        return;
+      }
+      this.outputKeys.rebuild(decoded.value);
+    }
     // Meta+1..9: navigate to the existing desktop at the given 1-based index.
     // An absent index is a specific no-op and never creates a desktop.
     navigateWorkspace(index) {
@@ -6256,20 +6397,22 @@
     }
     moveWindowToDesktop(window, sourceScope, target) {
       if (this.isFloating(window)) {
-        this.moveFloatingWindow(window, target);
+        this.moveFloatingWindow(window, target, sourceScope.output);
         return;
       }
       this.moveTiledWindow(window, sourceScope, target);
     }
     // Floating move: update desktop membership only, preserve floating state,
-    // and never mutate the tile tree.
-    moveFloatingWindow(window, target) {
+    // and never mutate the tile tree. The follow write goes to the window's
+    // output, never the current active window (a deferred move can fire after
+    // focus moved elsewhere).
+    moveFloatingWindow(window, target, output) {
       if (!writeWindowDesktops(window, [target])) {
         this.diagnostic("workspace-move-failed:desktops-write");
         return;
       }
       this.diagnostic("workspace-move-floated");
-      this.setCurrentDesktop(target);
+      this.setCurrentDesktop(target, output);
       this.cleanupDesktops();
       this.drainPendingDesktopIntents();
     }
@@ -6305,7 +6448,7 @@
         return;
       }
       this.diagnostic("workspace-move-pending");
-      this.setCurrentDesktop(target);
+      this.setCurrentDesktop(target, sourceScope.output);
     }
     // Collapse the source leaf a tiled window just vacated: one unmanage then
     // one removals-only leaf collapse. No split is ever performed here.
@@ -6363,13 +6506,43 @@
       this.cleanupDesktops();
       this.drainPendingDesktopIntents();
     }
-    setCurrentDesktop(target) {
+    // Navigate/follow to a desktop, written through the per-output seam on the
+    // affected output when one is known (spec D1: navigation and move-follow
+    // operate on the active output's current desktop via
+    // setCurrentDesktopForScreen). With one output this is exactly the global
+    // write, so the migrated behavior is unchanged; when no output is known
+    // (no focused window), it falls back to the global active-screen write.
+    // Callers that hold a scope pass its output explicitly so a deferred move
+    // always follows on the moved window's output.
+    setCurrentDesktop(target, output) {
+      const resolved = output != null ? output : this.activeOutput();
+      if (resolved !== null) {
+        try {
+          this.environment.setCurrentDesktopForScreen(target, resolved);
+          this.diagnostic("workspace-navigate-set");
+          return;
+        } catch (error) {
+          this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
+          return;
+        }
+      }
       try {
         this.environment.setCurrentDesktop(target);
         this.diagnostic("workspace-navigate-set");
       } catch (error) {
         this.diagnostic(`workspace-navigate-failed:${describeWorkspaceFailure(error)}`);
       }
+    }
+    // The active output for a workspace navigation: the focused window's output
+    // when one exists, else null (the global active-screen fallback). The full
+    // active-output selection (window output else workspace.activeScreen) is the
+    // Unit 05 dispatch; this preserves the migrated single-output behavior.
+    activeOutput() {
+      const active = this.environment.activeWindow();
+      if (isWindow(active) && isOutput(active.output)) {
+        return active.output;
+      }
+      return null;
     }
     // Reconcile the desktop list to exactly one trailing script-owned empty
     // desktop after the highest occupied workspace. Excess owned empty trailing
@@ -6590,6 +6763,9 @@
       } catch (error) {
         throw new Error(`kwin-workspace-surface-missing:setCurrentDesktop:${String(error)}`);
       }
+    },
+    setCurrentDesktopForScreen: (desktop, output) => {
+      workspace.setCurrentDesktopForScreen(desktop, output);
     },
     onDesktopsChanged: (handler) => {
       const signal = workspace.desktopsChanged;

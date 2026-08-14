@@ -65,6 +65,9 @@ const controller = new TileController({
             throw new Error(`kwin-workspace-surface-missing:setCurrentDesktop:${String(error)}`);
         }
     },
+    setCurrentDesktopForScreen: (desktop, output) => {
+        workspace.setCurrentDesktopForScreen(desktop as unknown as VirtualDesktop, output as unknown as Output);
+    },
     onDesktopsChanged: (handler) => {
         const signal = workspace.desktopsChanged;
         if (signal === undefined) {

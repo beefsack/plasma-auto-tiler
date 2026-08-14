@@ -3,11 +3,17 @@ import assert from "node:assert/strict";
 
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import {
+    DEFAULT_WORKSPACE_MODE,
     PROFILE_CATALOGS,
     REGISTERED_PROFILE_ACTION_IDS,
+    SessionOutputKeys,
     ShortcutOverrides,
     TileController,
+    WORKSPACE_MODE_CONFIG_KEY,
+    WORKSPACE_MODES,
     catalogValidationDiagnostics,
+    outputTuple,
+    parseWorkspaceMode,
     validateProfile,
     resolveSequence,
     selectProfile,
@@ -220,7 +226,7 @@ class Harness {
     added: ((value: unknown) => void) | undefined;
     removed: ((value: unknown) => void) | undefined;
     screensChanged: (() => void) | undefined;
-    desktopChanged: (() => void) | undefined;
+    desktopChanged: ((previous: unknown, current: unknown, output: unknown) => void) | undefined;
     desktopsChanged: (() => void) | undefined;
     desktopsList: unknown = [DESKTOP];
     screensList: unknown = [OUTPUT];
@@ -232,6 +238,7 @@ class Harness {
     readonly createDesktopCalls: Array<{ position: number; name: string }> = [];
     readonly removedDesktops: unknown[] = [];
     readonly currentDesktopWrites: unknown[] = [];
+    readonly currentDesktopForScreenWrites: Array<{ desktop: unknown; output: unknown }> = [];
     nextDesktopNumber = 1;
     throwOnLog = false;
     readonly logs: string[] = [];
@@ -306,6 +313,14 @@ class Harness {
                 if (this.setCurrentDesktopThrows !== undefined) {
                     throw this.setCurrentDesktopThrows;
                 }
+                this.currentDesktopWrites.push(desktop);
+                this.currentDesktopValue = desktop;
+            },
+            setCurrentDesktopForScreen: (desktop, output) => {
+                if (this.setCurrentDesktopThrows !== undefined) {
+                    throw this.setCurrentDesktopThrows;
+                }
+                this.currentDesktopForScreenWrites.push({ desktop, output });
                 this.currentDesktopWrites.push(desktop);
                 this.currentDesktopValue = desktop;
             },
@@ -497,6 +512,12 @@ class Harness {
     emitDesktopsChanged(): void {
         if (this.desktopsChanged !== undefined) {
             this.desktopsChanged();
+        }
+    }
+
+    emitCurrentDesktopChanged(previous: unknown, current: unknown, output: unknown): void {
+        if (this.desktopChanged !== undefined) {
+            this.desktopChanged(previous, current, output);
         }
     }
 
@@ -1025,7 +1046,7 @@ describe("TileController keyboard insertion", () => {
         harness.emitAdded(window());
         controller.armKeyboardInsertion("right");
         if (harness.desktopChanged !== undefined) {
-            harness.desktopChanged();
+            harness.emitCurrentDesktopChanged(null, null, null);
         }
         harness.emitAdded(window());
         controller.armKeyboardInsertion("right");
@@ -1494,7 +1515,7 @@ describe("TileController keyboard focus", () => {
             harness.emitAdded(window());
             harness.emitRemoved(window());
             harness.screensChanged?.();
-            harness.desktopChanged?.();
+            harness.emitCurrentDesktopChanged(null, null, null);
             assert.equal(harness.logs.length, baseline);
             assert.deepEqual(harness.activeWrites, []);
             assert.equal(controller.hasPendingKeyboard, false);
@@ -4958,7 +4979,7 @@ describe("TileController interactive drag", () => {
         dragged.desktopsChanged.emit();
         assert.equal(dragged.interactiveMoveResizeStarted.subscriberCount, 0);
         if (harness.desktopChanged !== undefined) {
-            harness.desktopChanged();
+            harness.emitCurrentDesktopChanged(null, null, null);
         }
         assert.equal(dragged.interactiveMoveResizeStarted.subscriberCount, 1);
         const added = window();
@@ -4974,7 +4995,7 @@ describe("TileController interactive drag", () => {
         assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
         assert.equal(countEvent(harness.logs, "drag-attach-summary:6:6:0"), 0);
 
-        harness.desktopChanged?.();
+        harness.emitCurrentDesktopChanged(null, null, null);
         assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
     });
 
@@ -7807,7 +7828,7 @@ describe("TileController automatic dwindle ownership", () => {
         const root2 = tile(RECT, true);
         harness.rootsByDesktop.set(desktop2.id, root2);
         harness.currentDesktop = desktop2;
-        harness.desktopChanged?.();
+        harness.emitCurrentDesktopChanged(null, desktop2, null);
         assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
 
@@ -11819,5 +11840,208 @@ describe("TileController per-workspace maximize", () => {
         assert.equal(countEvent(harness.logs, "maximize:exit restored"), 1);
         assert.equal(countEvent(harness.logs, "maximize:enter covered"), 2);
         assert.deepEqual(focused.frameGeometry, WORK_AREA);
+    });
+});
+
+describe("TileController workspace mode and per-output seams (Unit 04)", () => {
+    it("parses workspaceMode: missing selects per-output-local, each valid mode parses, invalid falls back", () => {
+        assert.equal(DEFAULT_WORKSPACE_MODE, "per-output-local");
+        assert.deepEqual(WORKSPACE_MODES, ["per-output-local", "global-unique", "shared"]);
+        for (const missing of [undefined, null, ""]) {
+            const parsed = parseWorkspaceMode(missing);
+            assert.equal(parsed.mode, "per-output-local");
+            assert.deepEqual(parsed.diagnostics, []);
+        }
+        for (const mode of WORKSPACE_MODES) {
+            const parsed = parseWorkspaceMode(mode);
+            assert.equal(parsed.mode, mode);
+            assert.deepEqual(parsed.diagnostics, []);
+        }
+        const fallback = parseWorkspaceMode("bogus-mode");
+        assert.equal(fallback.mode, "per-output-local");
+        assert.deepEqual(fallback.diagnostics, ["workspace-mode-invalid:fallback-per-output-local"]);
+    });
+
+    it("selects workspaceMode from readConfig at startup with default and diagnostic fallback", () => {
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "global-unique");
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(controller.workspaceModeSnapshot(), "global-unique");
+        assert.equal(countEvent(harness.logs, "workspace-mode-invalid:fallback-per-output-local"), 0);
+
+        const missing = new Harness();
+        const missingController = new TileController(missing.environment());
+        missingController.start();
+        assert.equal(missingController.workspaceModeSnapshot(), "per-output-local");
+        assert.equal(countEvent(missing.logs, "workspace-mode-invalid:fallback-per-output-local"), 0);
+
+        const invalid = new Harness();
+        invalid.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "not-a-mode");
+        const invalidController = new TileController(invalid.environment());
+        invalidController.start();
+        assert.equal(invalidController.workspaceModeSnapshot(), "per-output-local");
+        assert.equal(countEvent(invalid.logs, "workspace-mode-invalid:fallback-per-output-local"), 1);
+    });
+
+    it("routes navigation through setCurrentDesktopForScreen on the active window's output", () => {
+        const { harness } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(harness.currentDesktopForScreenWrites.length, 1);
+        assert.equal((harness.currentDesktopForScreenWrites[0]?.desktop as { id: string }).id, "desktop-2");
+        assert.equal(harness.currentDesktopForScreenWrites[0]?.output, OUTPUT);
+        assert.equal(harness.currentDesktopWrites.length, 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+    });
+
+    it("falls back to the global current-desktop write when no active window output exists", () => {
+        const { harness } = setup();
+        harness.active = null;
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(harness.currentDesktopForScreenWrites.length, 0);
+        assert.equal(harness.currentDesktopWrites.length, 1);
+        assert.equal((harness.currentDesktopWrites[0] as { id: string }).id, "desktop-2");
+    });
+
+    it("preserves the output argument of currentDesktopChanged through the typed boundary", () => {
+        const harness = new Harness();
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(controller.currentDesktopChangeOutput(), null);
+        harness.emitCurrentDesktopChanged(null, DESKTOP, OUTPUT);
+        assert.equal(controller.currentDesktopChangeOutput(), OUTPUT);
+        // A non-output argument is never adopted as the affected output.
+        harness.emitCurrentDesktopChanged(null, DESKTOP, null);
+        assert.equal(controller.currentDesktopChangeOutput(), OUTPUT);
+    });
+
+    it("derives the output tuple from manufacturer/model/serial/name", () => {
+        assert.equal(outputTuple(OUTPUT), "KDE\u0000test\u00001\u0000screen-1");
+        assert.equal(outputTuple({ ...OUTPUT }), outputTuple(OUTPUT));
+        assert.notEqual(outputTuple({ ...OUTPUT, name: "other" }), outputTuple(OUTPUT));
+        assert.notEqual(outputTuple({ ...OUTPUT, serialNumber: "2" }), outputTuple(OUTPUT));
+    });
+
+    it("assigns deterministic session output keys with first-seen distinct keys for same-tuple outputs", () => {
+        const registry = new SessionOutputKeys();
+        const e = { ...OUTPUT };
+        const l = { ...OUTPUT };
+        registry.rebuild([e, l]);
+        const keyE = registry.keyFor(e);
+        const keyL = registry.keyFor(l);
+        assert.notEqual(keyE, undefined);
+        assert.notEqual(keyL, undefined);
+        assert.notEqual(keyE, keyL);
+        // Same first-seen order across a rebuild is stable.
+        registry.rebuild([e, l]);
+        assert.equal(registry.keyFor(e), keyE);
+        assert.equal(registry.keyFor(l), keyL);
+        // A surviving output keeps its key; a distinct tuple gets its own key.
+        const a = { ...OUTPUT, name: "screen-a" };
+        const b = { ...OUTPUT, name: "screen-b" };
+        const other = new SessionOutputKeys();
+        other.rebuild([a, b]);
+        const keyA = other.keyFor(a);
+        const keyB = other.keyFor(b);
+        assert.notEqual(keyA, undefined);
+        assert.notEqual(keyB, undefined);
+        assert.notEqual(keyA, keyB);
+        other.rebuild([a, b]);
+        assert.equal(other.keyFor(a), keyA);
+        assert.equal(other.keyFor(b), keyB);
+        // An output tuple rename (name change) is a new physical identity per
+        // spec E (matched by the ordered 4-tuple), so it gets a fresh key and
+        // never reuses another output's key.
+        const renamed = { ...a, name: "screen-a2" };
+        other.rebuild([renamed, b]);
+        assert.notEqual(other.keyFor(renamed), keyA);
+        assert.notEqual(other.keyFor(renamed), keyB);
+        assert.equal(other.keyFor(b), keyB);
+    });
+
+    it("exposes deterministic session output keys from the controller and keeps them across screensChanged", () => {
+        const e = { ...OUTPUT };
+        const l = { ...OUTPUT };
+        const harness = new Harness();
+        harness.screensList = [e, l];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const keyE = controller.outputKeyFor(e);
+        const keyL = controller.outputKeyFor(l);
+        assert.notEqual(keyE, undefined);
+        assert.notEqual(keyL, undefined);
+        assert.notEqual(keyE, keyL);
+        harness.screensChanged?.();
+        assert.equal(controller.outputKeyFor(e), keyE);
+        assert.equal(controller.outputKeyFor(l), keyL);
+    });
+
+    it("migrates startup state non-destructively: pre-existing desktops are never owned or removed", () => {
+        const harness = new Harness();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        harness.nextDesktopNumber = 2;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        // Repeated reconciliation leaves the pre-existing set untouched.
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, 0);
+    });
+
+    it("desktop identity is id-based: a renamed/reordered wrapper keeps ownership", () => {
+        const { harness } = setup();
+        ownTrailingEmpty(harness);
+        harness.removedDesktops.length = 0;
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+        ]);
+        // Simulate a rename/reorder: a fresh wrapper for the owned desktop
+        // (same id, new number) placed at a different position. Identity is the
+        // id string, so the owned desktop is still recognized and kept, and the
+        // pre-existing desktop is never removed.
+        harness.desktopsList = [
+            { id: "desktop-3", x11DesktopNumber: 9 },
+            { id: "desktop-1", x11DesktopNumber: 1 },
+        ];
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, 2);
+    });
+
+    it("preserves one-output logical behavior through the per-output migration", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        // Move-follow writes membership then follows on the single output.
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        assert.equal(harness.currentDesktopForScreenWrites.length, 1);
+        assert.equal(harness.currentDesktopForScreenWrites[0]?.output, OUTPUT);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        // Navigation also writes through the per-output seam on the single output.
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+        assert.equal(harness.currentDesktopForScreenWrites.length, 2);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-1");
     });
 });

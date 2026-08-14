@@ -95,6 +95,7 @@ function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult
             activeWindow: () => null,
             windowList: () => [window],
             currentDesktopForScreen: () => ({ id: "desktop-1" }),
+            screens: [output],
             windowAdded: workspaceSignal(),
             windowRemoved: workspaceSignal(),
             screensChanged: workspaceSignal(),

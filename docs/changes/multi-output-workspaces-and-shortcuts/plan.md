@@ -149,6 +149,11 @@ the gated dependency.
 
 ## Unit 04 - Mode seam and per-output model
 
+Implementation status: accepted 2026-08-14. `workspaceMode` parsing, deterministic
+session output keys, typed per-output desktop-write/event seams, and the
+non-destructive one-output migration are complete. Per-output workspace
+dispatch and reconciliation remain Unit 05.
+
 Dependencies: Unit 03. Scope: introduce `workspaceMode` configuration and the
 session-only output/workspace state needed by all modes. Default to
 `per-output-local`; validate the three allowed values and use the default for

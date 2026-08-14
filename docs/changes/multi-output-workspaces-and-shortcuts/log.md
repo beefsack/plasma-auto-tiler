@@ -77,3 +77,19 @@
   scripts/dogfood-install.test.sh` (108 checks); and a repeated `npm run build`
   with no generated-bundle diff. Live KWin behavior and Plasma-global collision
   activation remain unproven and outside authorization.
+- Unit 04 accepted: `workspaceMode` (`per-output-local` default,
+  `global-unique`, `shared`) parses via the existing `readConfig` seam with
+  invalid fallback diagnostics. `setCurrentDesktopForScreen` is wired through
+  `ControllerEnvironment` and the entry seam, and workspace navigation/follow
+  now writes per-output on the affected output with a global fallback, so
+  one-output behavior is unchanged. `currentDesktopChanged` keeps its output
+  argument across the typed boundary. Deterministic session output keys derive
+  from the manufacturer/model/serial/name tuple with first-seen collision
+  ordering, rebuilt on start and screensChanged, and never persisted.
+  Migration is non-destructive: pre-existing/user desktops are never adopted as
+  owned or removed. Unit 05 dispatch is not implemented. Generated bundle
+  reproduced only through `npm run build`.
+- Unit 04 verification passed: `npm run typecheck`; `npm test` (652 tests, 381
+  controller); `bash scripts/start-test.test.sh` (248 checks). Live KWin
+  behavior and Plasma-global collision activation remain unproven and outside
+  authorization.
