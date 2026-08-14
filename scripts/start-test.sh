@@ -24,6 +24,11 @@ PLUGIN_ID=""
 SCRIPT_ID=""
 KWIN_PID=""
 JOURNAL_CURSOR=""
+# Attempt-owned temporary file holding the retained raw current-attempt
+# after-cursor same-KWin-PID evidence (project diagnostics plus kwin_scripting
+# messages only; never window captions). Lives until post-cleanup reporting
+# completes, then is removed.
+EVIDENCE_FILE=""
 
 # The exact project action IDs this lifecycle interface owns.
 PROJECT_ACTIONS=(
@@ -124,6 +129,15 @@ diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type
 # applied, completed, armed, managed, or a no-op reflow).
 diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach|attach|fill)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|attach|reflow|fill)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
 
+# Current-attempt (after-cursor, same-KWin-PID) failure-report extraction
+# predicates over slurped journalctl JSON-lines. The disabled reasons and
+# shortcut-register-failed reasons are reported exactly; kwin_scripting
+# warnings/errors are reported separately from the project diagnostics.
+start_attempt_project='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:"))]'
+start_attempt_disabled='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:disabled:"))]'
+start_attempt_register_failed='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:shortcut-register-failed:"))]'
+start_attempt_kwin_scripting='[.[] | select((._PID? // "") == $pid) | select((((.QT_CATEGORY? // "") == "kwin_scripting") or ((.SYSLOG_IDENTIFIER? // "") == "kwin_scripting"))) | select((.MESSAGE? | type) == "string") | .MESSAGE]'
+
 # Bounded deterministic readiness wait: fixed attempt count and fixed delay.
 READINESS_ATTEMPTS=30
 READINESS_DELAY=0.1
@@ -194,14 +208,52 @@ read_plugin_id() {
   fi
 }
 
-cleanup_after_load() {
-  local msg="$1"
+# Exact idempotent stop/unload of the directly loaded script. Never prints or
+# exits; callers decide when and whether to report and exit.
+cleanup_loaded() {
   if [[ -n "$SCRIPT_ID" ]]; then
     busctl $BUS_SCOPE call "$BUS_DEST" "/Scripting/Script$SCRIPT_ID" $BUS_SCRIPT_IFACE stop >/dev/null 2>&1 || true
   fi
   busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE unloadScript s "$PLUGIN_ID" >/dev/null 2>&1 || true
+}
+
+cleanup_after_load() {
+  local msg="$1"
+  cleanup_loaded
+  [[ -n "${EVIDENCE_FILE:-}" ]] && rm -f "$EVIDENCE_FILE"
   echo "error: $msg" >&2
   echo "note: best-effort stop/unload of '$PLUGIN_ID' attempted after the failed load" >&2
+  exit 1
+}
+
+# Reports the retained attempt-owned after-cursor same-KWin-PID evidence for a
+# failed start: the raw project messages, the exact disabled:* and
+# shortcut-register-failed:* reasons, and separate kwin_scripting
+# warnings/errors. Reads from the attempt-owned evidence file, scopes strictly
+# to the current attempt (never the historical pre-cursor epoch), and prints no
+# window caption or payload.
+report_start_failure() {
+  local pid="$1"
+  echo "controller diagnostics (current attempt, after-cursor, same-KWin-PID):" >&2
+  jq -s -r --arg pid "$pid" "$start_attempt_project | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+  echo "disabled reasons (current attempt):" >&2
+  jq -s -r --arg pid "$pid" "$start_attempt_disabled | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+  echo "shortcut-register-failed reasons (current attempt):" >&2
+  jq -s -r --arg pid "$pid" "$start_attempt_register_failed | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+  echo "kwin_scripting warnings/errors (current attempt):" >&2
+  jq -s -r --arg pid "$pid" "$start_attempt_kwin_scripting | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
+}
+
+# Readiness failure: report the retained evidence, perform the exact idempotent
+# cleanup, then report the same retained evidence again before removing it.
+fail_start_readiness() {
+  local msg="$1"
+  report_start_failure "$KWIN_PID"
+  cleanup_loaded
+  echo "error: $msg" >&2
+  echo "note: best-effort stop/unload of '$PLUGIN_ID' attempted after the failed load" >&2
+  report_start_failure "$KWIN_PID"
+  rm -f "$EVIDENCE_FILE"
   exit 1
 }
 
@@ -395,6 +447,10 @@ cmd_start() {
   # deterministic window. The pre-load cursor prevents old/unrelated messages
   # being accepted, and a disabled diagnostic fails immediately.
   local attempt journal_out
+  EVIDENCE_FILE="$(mktemp "${TMPDIR:-/tmp}/plasma-auto-tiler-start.XXXXXX")" || {
+    echo "error: could not create the attempt evidence file" >&2
+    exit 1
+  }
   for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt += 1)); do
     journal_out="$(journalctl --user --quiet --no-pager --after-cursor="$JOURNAL_CURSOR" "_PID=$KWIN_PID" -o json)" || {
       cleanup_after_load "could not read KWin readiness diagnostics"
@@ -402,7 +458,15 @@ cmd_start() {
     if ! jq -s -e "$journal_lines_valid" <<<"$journal_out" >/dev/null 2>&1; then
       cleanup_after_load "could not parse KWin readiness diagnostics"
     fi
+    # Retain only the attempt-owned project diagnostics and kwin_scripting
+    # messages (never window captions or unrelated records).
+    jq -s -c --arg pid "$KWIN_PID" \
+      '.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | select(((.MESSAGE | startswith("plasma-auto-tiler:")) or ((.QT_CATEGORY? // .SYSLOG_IDENTIFIER? // "") == "kwin_scripting")))' \
+      <<<"$journal_out" > "$EVIDENCE_FILE" || {
+      cleanup_after_load "could not retain KWin readiness evidence"
+    }
     if jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null 2>&1; then
+      rm -f "$EVIDENCE_FILE"
       echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; controller readiness confirmed"
       echo
       echo "stop it:"
@@ -416,11 +480,11 @@ cmd_start() {
       return 0
     fi
     if jq -s -e "$disabled_seen_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      cleanup_after_load "controller disabled itself during startup"
+      fail_start_readiness "controller disabled itself during startup"
     fi
     sleep "$READINESS_DELAY"
   done
-  cleanup_after_load "controller readiness was not confirmed by KWin diagnostics within the bounded window"
+  fail_start_readiness "controller readiness was not confirmed by KWin diagnostics within the bounded window"
 }
 
 cmd_status() {

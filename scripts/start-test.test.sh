@@ -34,7 +34,16 @@ if [[ "$count" -gt 1 && -f "$state/pgrep-next-pid" ]]; then
 fi
 printf '%s /nix/store/kwin-6.7.3/bin/kwin_wayland --wayland-fd 7 --socket wayland-0\n' "$pid"
 EOF
-  printf '%s\n' '#!/usr/bin/env bash' 'if [[ "$*" == *"--show-cursor"* ]]; then' '  cat "$FAKE_JOURNAL_CURSOR"' 'else' '  cat "$FAKE_JOURNAL_READ"' 'fi' > "$FAKE_BIN/bin/journalctl"
+  cat > "$FAKE_BIN/bin/journalctl" <<'EOF'
+#!/usr/bin/env bash
+if [[ "$*" == *"--show-cursor"* ]]; then
+  cat "$FAKE_JOURNAL_CURSOR"
+elif [[ "$*" == *"--after-cursor"* ]]; then
+  cat "${FAKE_JOURNAL_AFTER:?}"
+else
+  cat "$FAKE_JOURNAL_READ"
+fi
+EOF
   cat > "$FAKE_BIN/bin/busctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -151,11 +160,17 @@ setup_state() {
   mkdir -p "$WORK/state"
   printf '%s\n' "$1" > "$WORK/cursor"
   printf '%s' "$2" > "$WORK/journal_read"
+  if [[ $# -ge 3 ]]; then
+    printf '%s' "$3" > "$WORK/journal_after"
+  else
+    printf '%s' "$2" > "$WORK/journal_after"
+  fi
 }
 
 run_script() {
   set +e
   FAKE_STATE_DIR="$WORK/state" FAKE_JOURNAL_CURSOR="$WORK/cursor" FAKE_JOURNAL_READ="$WORK/journal_read" \
+    FAKE_JOURNAL_AFTER="$WORK/journal_after" \
     FAKE_CALL_LOG="$WORK/setshortcut.log" PATH="$FAKE_BIN/bin:$PATH" bash "$SCRIPT" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
@@ -194,6 +209,36 @@ assert_not_contains() {
     FAIL=$((FAIL + 1))
   else
     PASS=$((PASS + 1))
+  fi
+}
+
+assert_occurrences() {
+  local expected="$1" needle="$2"
+  local n
+  n="$(grep -Fc "$needle" "$OUTPUT" || true)"
+  if [[ "$n" -eq "$expected" ]]; then
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: expected $expected occurrence(s) of '$needle', got $n" >&2
+    echo "--- output ---" >&2
+    cat "$OUTPUT" >&2
+    FAIL=$((FAIL + 1))
+  fi
+}
+
+# Asserts that $before appears earlier in the output than $after.
+assert_order() {
+  local before="$1" after="$2"
+  local bi ai
+  bi="$(grep -Fn "$before" "$OUTPUT" | head -1 | cut -d: -f1)"
+  ai="$(grep -Fn "$after" "$OUTPUT" | head -1 | cut -d: -f1)"
+  if [[ -n "$bi" && -n "$ai" && "$bi" -lt "$ai" ]]; then
+    PASS=$((PASS + 1))
+  else
+    echo "FAIL: expected '$before' before '$after'" >&2
+    echo "--- output ---" >&2
+    cat "$OUTPUT" >&2
+    FAIL=$((FAIL + 1))
   fi
 }
 
@@ -259,6 +304,59 @@ run_script start
 check_exit 1
 assert_contains "controller disabled itself during startup"
 assert_not_contains "started:"
+
+# start: current disabled failure reports the exact disabled reason, the exact
+# shortcut-register-failed reason, and separate kwin_scripting errors, all
+# scoped to the current attempt (after-cursor, same-KWin-PID)
+setup_state '-- cursor: cursor-1' \
+  '{"MESSAGE":"plasma-auto-tiler:disabled:some-old-reason"}' \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-focus-left"}
+{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","MESSAGE":"script evaluation error: cannot read"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:some-other-project-diagnostic"}'
+run_script start
+check_exit 1
+assert_contains "controller disabled itself during startup"
+assert_contains "controller diagnostics (current attempt, after-cursor, same-KWin-PID):"
+assert_contains "disabled reasons (current attempt):"
+assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
+assert_contains "shortcut-register-failed reasons (current attempt):"
+assert_contains "plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-focus-left"
+assert_contains "kwin_scripting warnings/errors (current attempt):"
+assert_contains "script evaluation error: cannot read"
+assert_contains "plasma-auto-tiler:some-other-project-diagnostic"
+assert_not_contains "some-old-reason"
+assert_not_contains "started:"
+# the retained evidence is reported before cleanup and again after cleanup
+assert_occurrences 2 "controller diagnostics (current attempt, after-cursor, same-KWin-PID):"
+assert_occurrences 2 "disabled reasons (current attempt):"
+assert_occurrences 2 "shortcut-register-failed reasons (current attempt):"
+assert_occurrences 2 "kwin_scripting warnings/errors (current attempt):"
+assert_order "disabled reasons (current attempt):" "error: controller disabled itself during startup"
+NOTE_LINE="$(grep -Fn "note: best-effort stop/unload of 'plasma-auto-tiler-kwin' attempted after the failed load" "$OUTPUT" | head -1 | cut -d: -f1)"
+LAST_DISABLED="$(grep -Fn "disabled reasons (current attempt):" "$OUTPUT" | tail -1 | cut -d: -f1)"
+if [[ -n "$NOTE_LINE" && -n "$LAST_DISABLED" && "$NOTE_LINE" -lt "$LAST_DISABLED" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: expected a second evidence report after the cleanup note" >&2
+  echo "--- output ---" >&2
+  cat "$OUTPUT" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+# start: a failed start never falls back to the historical (pre-cursor) epoch
+# when a current attempt exists; only after-cursor same-PID evidence is reported
+setup_state '-- cursor: cursor-1' \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:historical-reason"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-historical"}' \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-current"}'
+run_script start
+check_exit 1
+assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
+assert_contains "plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-current"
+assert_not_contains "historical-reason"
+assert_not_contains "plasma-auto-tiler-historical"
 
 # start: missing readiness fails closed
 setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}'
