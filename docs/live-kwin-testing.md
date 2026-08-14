@@ -135,9 +135,14 @@ validation ladder above.
   for ordered same-KWin-PID `shortcut-registered` and `startup-handlers-ready`
   diagnostics with no `disabled:` diagnostic before it reports success. The
   pre-load journal cursor and `_PID` filter prevent old/unrelated diagnostics
-  from being accepted; a disabled diagnostic fails immediately. Running it is a
-  live KWin mutation and still requires one explicit, bounded authorization
-  under the Safety Boundary.
+  from being accepted; a disabled diagnostic fails immediately. A failed
+  `start` retains and prints the attempt-owned raw after-cursor same-KWin-PID
+  project diagnostics, the exact current-attempt `disabled:*` and
+  `shortcut-register-failed:*` reasons, and separate `kwin_scripting`
+  warnings/errors before the exact idempotent stop/unload; it never falls back
+  to the historical (pre-cursor) epoch when a current attempt exists. Running
+  it is a live KWin mutation and still requires one explicit, bounded
+  authorization under the Safety Boundary.
 - `scripts/start-test.sh status` is read-only. It reports the exact plugin load
   state from `isScriptLoaded`, labels controller running/callback delivery as
   unproven, reports whether this KWin process's journal has readiness evidence,
@@ -199,6 +204,43 @@ validation ladder above.
   restore only already-touched actions to their snapshots and stop. Never
   unregister records, alter another sequence, or clear a non-plugin owner.
 
+
+## Interactive Live Runner
+
+`scripts/live-test.sh run` is the primary repeated live path. It wraps the
+manual start launcher in one nonce-owned interactive run; the low-level
+`start-test.sh` commands above remain the manual reference.
+
+- `bash scripts/live-test.sh run` runs a full preflight (typecheck, build,
+  tests, and a critical static scan), then a read-only dogfood/direct status
+  check. It fails closed if the controller is already loaded or its state
+  cannot be safely owned. It records the exact installed-plugin enable state
+  and, if enabled, disables only that plugin through the existing dogfood
+  command. It captures the current KWin PID and journal cursor, then invokes
+  `start-test.sh start` (it never duplicates the D-Bus lifecycle). On success
+  it prints status/diagnostics/desktops plus a concise checklist and
+  foreground-follows the same-PID `plasma-auto-tiler` and `kwin_scripting`
+  logs into the nonce-owned evidence directory until Ctrl-C/TERM.
+- `bash scripts/live-test.sh run --quick` skips the full test suite but still
+  typechecks, builds the current bundle, and runs the critical static scan.
+- On EXIT/INT/TERM it stops only the script it loaded, prints final
+  status/diagnostics/desktops, and restores the installed-plugin enable state
+  only when this run changed it and verified the restore. On a failed start it
+  performs the same cleanup/restoration, prints the retained attempt
+  diagnostics, and never retries.
+- One run lock per nonce: an existing (even stale) lock is refused, never
+  deleted, and stale evidence is never removed automatically. Evidence is
+  written under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>` and
+  retained. Ctrl-C (SIGINT) and SIGTERM run the cleanup trap; SIGKILL cannot
+  be trapped and leaves the lock, a loaded script, and any plugin disable as
+  manual-recovery residual.
+- The run never mutates shortcut records, never runs `reconcile-shortcuts
+  --apply`, never kills/restarts KWin, never creates desktops or windows, and
+  never launches a nested compositor. Stopping/unloading does not roll back
+  Custom Tile topology changes or persisted shortcut records; shortcut drift
+  is reported read-only (via `status`/`reconcile-shortcuts`) and never
+  auto-applied. After the current failed run, resolve the reported reason and
+  run `bash scripts/live-test.sh run` once; it never retries automatically.
 
 ## KGlobalAccel and Collector
 

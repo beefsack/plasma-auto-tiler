@@ -8,6 +8,31 @@ Package and manage the `plasma-auto-tiler-kwin` KWin script from this
 repository with `scripts/dogfood-install.sh`. There is no build step other than
 what the script performs; `install` builds the bundle first.
 
+### Live test
+
+The primary repeated live path is `scripts/live-test.sh run`: one nonce-owned
+interactive run that preflights (typecheck, build, tests, static scan), then
+records and disables the installed plugin if enabled, loads and runs the
+controller through `start-test.sh`, prints status/diagnostics/desktops plus a
+checklist, and foreground-follows the same-KWin-PID `plasma-auto-tiler` and
+`kwin_scripting` logs into a nonce-owned evidence directory until you press
+Ctrl-C.
+
+```sh
+bash scripts/live-test.sh run          # full preflight
+bash scripts/live-test.sh run --quick  # skip the full test suite
+```
+
+Ctrl-C or SIGTERM stops only the script that run loaded, prints final
+status/diagnostics/desktops, and restores the installed-plugin enable state
+only when the run changed it and verified the restore. Evidence is retained
+under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. A failed
+start reports the exact attempt diagnostics and never retries. The run never
+mutates shortcut records (drift is reported, not auto-applied) and never
+rolls back Custom Tile topology changes or persisted shortcuts made during
+the session. Read `docs/live-kwin-testing.md` before any live run; the
+low-level `scripts/start-test.sh` commands remain the manual reference.
+
 ### Prerequisites
 
 Build prerequisite:
