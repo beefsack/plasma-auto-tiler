@@ -140,7 +140,37 @@ fi
 exit 0
 EOF
 
-  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus"
+  cat > "$FAKE_BIN/bin/jq" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'jq %s\n' "$*" >> "${FAKE_TOOL_LOG:?}"
+if [[ -f "${FAKE_STATE_DIR:?}/jq-fail" ]]; then
+  echo "fake jq: simulated JSON parse failure" >&2
+  exit 1
+fi
+if [[ -n "${JQ_FAKE_OUTPUT:-}" ]]; then
+  printf '%s\n' "$JQ_FAKE_OUTPUT"
+  exit 0
+fi
+file=""
+for arg in "$@"; do
+  [[ -f "$arg" ]] && file="$arg"
+done
+[[ -n "$file" ]] || exit 2
+id=""
+while IFS= read -r line || [[ -n "$line" ]]; do
+  if [[ "$line" == *'"Id"'* ]]; then
+    id="${line#*\"Id\"}"
+    id="${id#*:}"
+    id="${id#*\"}"
+    id="${id%%\"*}"
+    break
+  fi
+done < "$file"
+printf '%s\n' "$id"
+EOF
+
+  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus" "$FAKE_BIN/bin/jq"
 
   for tool in dirname pwd rm mkdir cp cat mktemp mv; do
     ln -sf "$(command -v "$tool")" "$FAKE_BIN/core/$tool"
@@ -150,6 +180,8 @@ EOF
 # Per-test overrides; an empty TEST_*_BIN omits the variable (forces the PATH
 # fallback) and TEST_PATH limits PATH to a coreutils-only dir for the
 # missing-tool probes so they are independent of any host Plasma tools.
+# TEST_SCRIPT points at a throwaway copy of the script whose REPO_ROOT/kwin is
+# a temporary tree, so dry-run source-data probes never touch the real package.
 reset_state() {
   rm -rf "$WORK/state" "$WORK/data" "$WORK/config" "$WORK/home"
   mkdir -p "$WORK/state" "$WORK/home"
@@ -159,19 +191,25 @@ reset_state() {
   TEST_KWRITECONFIG6_BIN="$FAKE_BIN/bin/kwriteconfig6"
   TEST_KREADCONFIG6_BIN="$FAKE_BIN/bin/kreadconfig6"
   TEST_QDBUS_BIN="$FAKE_BIN/bin/qdbus"
+  TEST_JQ_BIN="$FAKE_BIN/bin/jq"
+  TEST_SCRIPT=""
   TEST_PATH="$PATH"
+  unset JQ_FAKE_OUTPUT
 }
 
 run_script() {
   set +e
-  local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
+  local script="${TEST_SCRIPT:-$SCRIPT}"
+  local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
     "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$TEST_PATH")
   [[ -z "$TEST_NPM_BIN" ]] || cmd+=("NPM_BIN=$TEST_NPM_BIN")
   [[ -z "$TEST_KWRITECONFIG6_BIN" ]] || cmd+=("KWRITECONFIG6_BIN=$TEST_KWRITECONFIG6_BIN")
   [[ -z "$TEST_KREADCONFIG6_BIN" ]] || cmd+=("KREADCONFIG6_BIN=$TEST_KREADCONFIG6_BIN")
   [[ -z "$TEST_QDBUS_BIN" ]] || cmd+=("QDBUS_BIN=$TEST_QDBUS_BIN")
+  [[ -z "$TEST_JQ_BIN" ]] || cmd+=("JQ_BIN=$TEST_JQ_BIN")
+  [[ -z "${JQ_FAKE_OUTPUT:-}" ]] || cmd+=("JQ_FAKE_OUTPUT=$JQ_FAKE_OUTPUT")
   cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" )
-  cmd+=( "$BASH_PATH" "$SCRIPT" "$@" )
+  cmd+=( "$BASH_PATH" "$script" "$@" )
   "${cmd[@]}" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
@@ -191,7 +229,7 @@ check_exit() {
 
 assert_contains() {
   local needle="$1"
-  if grep -Fq "$needle" "$OUTPUT"; then
+  if grep -Fq -- "$needle" "$OUTPUT"; then
     PASS=$((PASS + 1))
   else
     echo "FAIL: output does not contain '$needle'" >&2
@@ -203,7 +241,7 @@ assert_contains() {
 
 assert_not_contains() {
   local needle="$1"
-  if grep -Fq "$needle" "$OUTPUT"; then
+  if grep -Fq -- "$needle" "$OUTPUT"; then
     echo "FAIL: output unexpectedly contains '$needle'" >&2
     echo "--- output ---" >&2
     cat "$OUTPUT" >&2
@@ -242,7 +280,7 @@ assert_cmp() {
 
 assert_grep_file() {
   local needle="$1" file="$2"
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     PASS=$((PASS + 1))
   else
     echo "FAIL: '$file' does not contain '$needle'" >&2
@@ -253,7 +291,7 @@ assert_grep_file() {
 
 assert_not_grep_file() {
   local needle="$1" file="$2"
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     echo "FAIL: '$file' unexpectedly contains '$needle'" >&2
     cat "$file" >&2
     FAIL=$((FAIL + 1))
@@ -287,6 +325,20 @@ assert_qdbus_calls() {
   fi
 }
 
+# Builds a throwaway kwin source tree plus a copy of the script under test so
+# dry-run source-data probes are fully hermetic. The copy resolves its own
+# KWIN_DIR to $WORK/kwin because REPO_ROOT derives from the script location.
+setup_dry_source() {
+  rm -rf "$WORK/kwin" "$WORK/scripts"
+  mkdir -p "$WORK/kwin/contents/code" "$WORK/kwin/contents/config" "$WORK/kwin/contents/ui" "$WORK/scripts"
+  printf '{"KPackageStructure":"KWin/Script","KPlugin":{"Id":"plasma-auto-tiler-kwin"}}\n' > "$WORK/kwin/metadata.json"
+  printf 'bundle\n' > "$WORK/kwin/contents/code/main.js"
+  printf '<xml/>\n' > "$WORK/kwin/contents/config/main.xml"
+  printf '<ui/>\n' > "$WORK/kwin/contents/ui/config.ui"
+  cp "$SCRIPT" "$WORK/scripts/dogfood-install.sh"
+  TEST_SCRIPT="$WORK/scripts/dogfood-install.sh"
+}
+
 make_fake_tools
 reset_state
 
@@ -312,7 +364,7 @@ check_exit 1
 assert_contains "error: '--help' takes no arguments"
 
 # parsing: every subcommand rejects extra arguments
-for command in install uninstall enable disable status; do
+for command in install uninstall enable disable status dry-run; do
   run_script "$command" extra
   check_exit 1
   assert_contains "error: '$command' takes no arguments"
@@ -507,6 +559,100 @@ mkdir -p "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
 run_script status
 check_exit 0
 assert_contains "installed: no"
+
+# dry-run: fresh root reports valid source, absent destination, no mutation
+reset_state
+setup_dry_source
+run_script dry-run
+check_exit 0
+assert_contains "source metadata: valid (KPlugin.Id=plasma-auto-tiler-kwin)"
+assert_contains "source bundle: present ($WORK/kwin/contents/code/main.js)"
+assert_contains "KCM schema: present ($WORK/kwin/contents/config/main.xml)"
+assert_contains "KCM UI: present ($WORK/kwin/contents/ui/config.ui)"
+assert_contains "installed: no"
+assert_contains "enabled: no"
+assert_contains "intended actions:"
+assert_contains "- build the kwin bundle (npm --prefix $WORK/kwin run build)"
+assert_contains "- replace any existing plugin directory at $DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_contains "dry-run is read-only and never builds, copies, writes configuration, reconfigures KWin, or reconciles shortcuts"
+assert_grep_file "jq -r .KPlugin.Id" "$WORK/tools.log"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled" "$WORK/tools.log"
+assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
+assert_not_grep_file "qdbus" "$WORK/tools.log"
+assert_not_grep_file "npm" "$WORK/tools.log"
+assert_qdbus_calls 0
+assert_not_exists "$CONFIG/kwinrc"
+assert_count 0 "$(find "$DATA" -type f | wc -l)" "files under data root after dry-run"
+
+# dry-run: installed and enabled state is reported through the kreadconfig6 convention
+reset_state
+setup_dry_source
+mkdir -p "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
+cp "$WORK/kwin/metadata.json" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-kwinEnabled=true\n' > "$CONFIG/kwinrc"
+run_script dry-run
+check_exit 0
+assert_contains "installed: yes ($DATA/kwin/scripts/plasma-auto-tiler-kwin)"
+assert_contains "enabled: yes"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled" "$WORK/tools.log"
+assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
+assert_not_grep_file "qdbus" "$WORK/tools.log"
+assert_qdbus_calls 0
+
+# dry-run: missing read tool fails closed (jq)
+reset_state
+setup_dry_source
+TEST_JQ_BIN=""
+TEST_PATH="$FAKE_BIN/core"
+run_script dry-run
+check_exit 1
+assert_contains "required tool 'jq' not found in PATH"
+assert_contains "set JQ_BIN to its absolute path"
+
+# dry-run: missing read tool fails closed (kreadconfig6)
+reset_state
+setup_dry_source
+TEST_KREADCONFIG6_BIN=""
+TEST_PATH="$FAKE_BIN/core"
+run_script dry-run
+check_exit 1
+assert_contains "required tool 'kreadconfig6' not found in PATH"
+assert_contains "set KREADCONFIG6_BIN to its absolute path"
+
+# dry-run: missing source data fails closed before any report
+reset_state
+setup_dry_source
+rm "$WORK/kwin/contents/ui/config.ui"
+run_script dry-run
+check_exit 1
+assert_contains "error: dry-run requires source data that is missing:"
+assert_contains "- $WORK/kwin/contents/ui/config.ui"
+assert_not_contains "intended actions:"
+
+# dry-run: invalid metadata JSON fails closed
+reset_state
+setup_dry_source
+touch "$WORK/state/jq-fail"
+run_script dry-run
+check_exit 1
+assert_contains "error: metadata.json is not valid JSON: $WORK/kwin/metadata.json"
+
+# dry-run: metadata KPlugin.Id mismatch fails closed
+reset_state
+setup_dry_source
+JQ_FAKE_OUTPUT="not-the-plugin"
+run_script dry-run
+check_exit 1
+assert_contains "error: metadata.json KPlugin.Id is 'not-the-plugin'; expected 'plasma-auto-tiler-kwin'"
+
+# dry-run: kreadconfig6 failure fails closed
+reset_state
+setup_dry_source
+touch "$WORK/state/kread-fail"
+run_script dry-run
+check_exit 1
+assert_contains "error: kreadconfig6 failed to read plasma-auto-tiler-kwinEnabled from $CONFIG/kwinrc"
 
 echo "passes: $PASS failures: $FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

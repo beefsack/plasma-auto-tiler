@@ -5,6 +5,8 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 KWIN_DIR="$REPO_ROOT/kwin"
 META="$KWIN_DIR/metadata.json"
 BUNDLE="$KWIN_DIR/contents/code/main.js"
+KCM_SCHEMA="$KWIN_DIR/contents/config/main.xml"
+KCM_UI="$KWIN_DIR/contents/ui/config.ui"
 
 # KPlugin.Id from kwin/metadata.json (fixed project identity). The KWin plugin
 # setting key is KPlugin.Id + "Enabled", verified against KWin source.
@@ -40,11 +42,14 @@ Commands:
   disable    write [Plugins] plasma-auto-tiler-kwinEnabled=false through
              kwriteconfig6 and reconfigure KWin via D-Bus
   status     report installed and enabled state; read-only, never mutates
+  dry-run    inspect source package metadata, bundle, KCM schema/UI, and
+             destination install/enabled state; lists intended install
+             actions; read-only, never mutates
 
   --help     show this help and exit
 
-Runtime tool-path overrides (host Plasma prerequisites): NPM_BIN,
-KWRITECONFIG6_BIN, KREADCONFIG6_BIN, QDBUS_BIN.
+Runtime tool-path overrides: NPM_BIN, KWRITECONFIG6_BIN, KREADCONFIG6_BIN,
+QDBUS_BIN, JQ_BIN.
 Test-only destination/config root overrides: DOGFOOD_DATA_ROOT,
 DOGFOOD_CONFIG_ROOT.
 
@@ -153,8 +158,67 @@ cmd_status() {
   echo "note: status is read-only and never reconfigures KWin."
 }
 
+cmd_dry_run() {
+  require_tool JQ_BIN jq
+  local jq="$TOOL"
+  require_tool KREADCONFIG6_BIN kreadconfig6
+  local kreadconfig="$TOOL"
+
+  local missing=()
+  [[ -f "$META" ]] || missing+=("$META")
+  [[ -f "$BUNDLE" ]] || missing+=("$BUNDLE")
+  [[ -f "$KCM_SCHEMA" ]] || missing+=("$KCM_SCHEMA")
+  [[ -f "$KCM_UI" ]] || missing+=("$KCM_UI")
+  if [[ ${#missing[@]} -gt 0 ]]; then
+    echo "error: dry-run requires source data that is missing:" >&2
+    for path in "${missing[@]}"; do
+      echo "  - $path" >&2
+    done
+    echo "error: run 'install' to rebuild the bundle or restore the missing source files before dry-run" >&2
+    exit 1
+  fi
+
+  local plugin_id
+  plugin_id="$( "$jq" -r '.KPlugin.Id // empty' "$META" 2>/dev/null )" || {
+    echo "error: metadata.json is not valid JSON: $META" >&2
+    exit 1
+  }
+  if [[ "$plugin_id" != "$PLUGIN_ID" ]]; then
+    echo "error: metadata.json KPlugin.Id is '$plugin_id'; expected '$PLUGIN_ID'" >&2
+    exit 1
+  fi
+
+  echo "source metadata: valid (KPlugin.Id=$PLUGIN_ID)"
+  echo "source bundle: present ($BUNDLE)"
+  echo "KCM schema: present ($KCM_SCHEMA)"
+  echo "KCM UI: present ($KCM_UI)"
+
+  if [[ -d "$INSTALL_DIR" && -f "$INSTALL_DIR/metadata.json" ]]; then
+    echo "installed: yes ($INSTALL_DIR)"
+  else
+    echo "installed: no"
+  fi
+
+  local raw
+  raw="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$CONFIG_KEY" )" || {
+    echo "error: kreadconfig6 failed to read $CONFIG_KEY from $KWINRC" >&2
+    exit 1
+  }
+  if [[ "$raw" == "true" ]]; then
+    echo "enabled: yes"
+  else
+    echo "enabled: no"
+  fi
+
+  echo "intended actions:"
+  echo "  - build the kwin bundle (npm --prefix $KWIN_DIR run build)"
+  echo "  - replace any existing plugin directory at $INSTALL_DIR"
+  echo "  - copy metadata.json and contents/ into $INSTALL_DIR"
+  echo "note: dry-run is read-only and never builds, copies, writes configuration, reconfigures KWin, or reconciles shortcuts."
+}
+
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (install, uninstall, enable, disable, or status)" >&2
+  echo "error: missing command (install, uninstall, enable, disable, status, or dry-run)" >&2
   usage >&2
   exit 1
 fi
@@ -202,6 +266,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_status
+    ;;
+  dry-run)
+    if [[ $# -ne 1 ]]; then
+      echo "error: 'dry-run' takes no arguments" >&2
+      exit 1
+    fi
+    cmd_dry_run
     ;;
   *)
     echo "error: unknown command '$1'" >&2

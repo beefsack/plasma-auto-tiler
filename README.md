@@ -56,9 +56,13 @@ Host Plasma runtime requirements (used at runtime against your running
 session):
 
 - `kwriteconfig6` - used by `enable` and `disable` to write the plugin setting
-- `kreadconfig6` - used by `status` to read the plugin setting
+- `kreadconfig6` - used by `status` and `dry-run` to read the plugin setting
 - `qdbus` - used by `enable` and `disable` to ask the running KWin to
   reconfigure
+
+Other runtime tool requirements:
+
+- `jq` - used by `dry-run` to validate the source package metadata
 
 `kwriteconfig6`, `kreadconfig6`, and `qdbus` are host Plasma runtime tools, not
 devenv dependencies. The script detects each required tool at runtime per
@@ -92,6 +96,25 @@ Read-only report of installed and enabled state. It never reconfigures KWin.
 
 ```sh
 bash scripts/dogfood-install.sh status
+```
+
+### Dry-run
+
+Read-only inspection before a mutating install. Reports whether the source
+package metadata is valid (the `KPlugin.Id` in `kwin/metadata.json` is parsed
+and must match `plasma-auto-tiler-kwin`), whether the built bundle and the
+required KCM schema/UI (`kwin/contents/code/main.js`,
+`kwin/contents/config/main.xml`, `kwin/contents/ui/config.ui`) are present,
+the current destination install state, the enabled state through the same
+`kreadconfig6` read path as `status`, and the actions `install` would take.
+
+It never builds, copies, writes configuration, reconfigures KWin, or
+reconciles shortcuts, and it fails closed with an actionable error when a
+required read tool (`jq`, `kreadconfig6`) or required source data is
+unavailable.
+
+```sh
+bash scripts/dogfood-install.sh dry-run
 ```
 
 ### Shortcut catalog
@@ -235,3 +258,4 @@ bash scripts/dogfood-install.sh uninstall
   plasma-auto-tiler-kwinEnabled` setting in `kwinrc` and request KWin
   reconfiguration; they never modify the installed package.
 - `status` is read-only.
+- `dry-run` is read-only and never mutates anything.
