@@ -230,11 +230,18 @@ class Harness {
     desktopsChanged: (() => void) | undefined;
     desktopsList: unknown = [DESKTOP];
     screensList: unknown = [OUTPUT];
+    activeScreenValue: unknown = null;
     currentDesktopValue: unknown = DESKTOP;
     createDesktopThrows: Error | undefined;
     removeDesktopThrows: Error | undefined;
     setCurrentDesktopThrows: Error | undefined;
     desktopsThrows: Error | undefined;
+    // Optional per-output current-desktop read model (global-unique tests). When
+    // set, `currentDesktopForOutput` reports the override's value per output
+    // (mirroring KWin's independent per-output current desktop); otherwise the
+    // legacy single global `currentDesktop` value is reported for every output,
+    // preserving existing single-output test behavior.
+    currentDesktopForOutputOverride: ((output: unknown) => unknown) | undefined;
     readonly createDesktopCalls: Array<{ position: number; name: string }> = [];
     readonly removedDesktops: unknown[] = [];
     readonly currentDesktopWrites: unknown[] = [];
@@ -254,7 +261,10 @@ class Harness {
                 this.writtenActive = window;
                 this.activeWrites.push(window);
             },
-            currentDesktopForOutput: () => this.currentDesktop,
+            currentDesktopForOutput: (output) =>
+                this.currentDesktopForOutputOverride !== undefined
+                    ? this.currentDesktopForOutputOverride(output)
+                    : this.currentDesktop,
             rootTile: (_output, desktop) => {
                 this.rootReads += 1;
                 return this.rootsByDesktop.get(desktop.id) ?? this.root;
@@ -286,6 +296,7 @@ class Harness {
                 return this.desktopsList;
             },
             screens: () => this.screensList,
+            activeScreen: () => this.activeScreenValue,
             currentDesktop: () => this.currentDesktopValue,
             createDesktop: (position, name) => {
                 if (this.createDesktopThrows !== undefined) {
@@ -12375,5 +12386,356 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal(harness.currentDesktopForScreenWrites.length, 1);
         assert.equal(harness.currentDesktopForScreenWrites[0]?.output, sameA);
         assert.equal((harness.currentDesktopByOutput.get(sameA) as { id: string }).id, "desktop-2");
+    });
+
+    it("selects the active screen's local target with no focused window (activeScreen = L)", () => {
+        // Spec D common: with no focused window the active output is
+        // `workspace.activeScreen`. L owns locals [4,5,6,7], so Meta+2 selects
+        // L's local 2nd (desktop-5) through the per-output write only; E is
+        // never resolved positionally and stays unchanged.
+        const { harness, wE, wL1, wL2, wL3 } = twoOutputSetup();
+        for (const win of [wE, wL1, wL2, wL3]) {
+            makeFloating(harness, win);
+        }
+        moveToTrailing(harness, wL1);
+        moveToTrailing(harness, wL2);
+        moveToTrailing(harness, wL3);
+        moveToTrailing(harness, wE);
+        harness.currentDesktop = { id: "desktop-8", x11DesktopNumber: 8 };
+        moveToLocal(harness, wE, 1);
+        harness.active = null;
+        harness.activeScreenValue = OUTPUT_L;
+        harness.currentDesktopByOutput.delete(OUTPUT_E);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-5");
+        assert.equal(harness.currentDesktopByOutput.has(OUTPUT_E), false);
+        const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
+        assert.equal((last?.desktop as { id: string }).id, "desktop-5");
+        assert.equal(last?.output, OUTPUT_L);
+    });
+});
+
+describe("TileController global-unique workspaces (Unit 06)", () => {
+    const OUTPUT_E = { ...OUTPUT, name: "screen-e", serialNumber: "11" };
+    const OUTPUT_L = { ...OUTPUT, name: "screen-l", serialNumber: "22" };
+    const DESKTOP_1 = { id: "desktop-1" };
+    const DESKTOP_3 = { id: "desktop-3" };
+    const DESKTOP_4 = { id: "desktop-4" };
+    const DESKTOP_5 = { id: "desktop-5" };
+    const DESKTOP_8 = { id: "desktop-8" };
+
+    // Two-output global-unique session. Startup reconciliation assigns every
+    // pre-existing desktop to the session primary output (E) and creates one
+    // owned trailing empty per connected output (desktop-7 on E, desktop-8 on
+    // L). The spec H.12 exact example (E owns [1,2,4], L owns [3,5,6]) is then
+    // constructed through the deterministic session seeding seam, with each
+    // output's owned trailing empty kept at the end of its subset. Per-output
+    // current desktops are modeled through the harness override so the
+    // visible-target swap detection sees independent per-output currents.
+    function globalUniqueSetup(): {
+        readonly harness: Harness;
+        readonly controller: TileController;
+        readonly keyE: string;
+        readonly keyL: string;
+        readonly wE: TestWindow;
+        readonly wL: TestWindow;
+    } {
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "global-unique");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+            { id: "desktop-3", x11DesktopNumber: 3 },
+            { id: "desktop-4", x11DesktopNumber: 4 },
+            { id: "desktop-5", x11DesktopNumber: 5 },
+            { id: "desktop-6", x11DesktopNumber: 6 },
+        ];
+        harness.nextDesktopNumber = 6;
+        // Null currents at startup so no window is in scope and no dwindle
+        // reconstruction is armed (the same pattern as the Unit 05 two-output
+        // setup); per-output currents are modeled after startup.
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        harness.windows = [wE, wL];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const keyE = controller.outputKeyFor(OUTPUT_E) as string;
+        const keyL = controller.outputKeyFor(OUTPUT_L) as string;
+        controller.seedGlobalUniqueAssignment({
+            [keyE]: ["desktop-1", "desktop-2", "desktop-4", "desktop-7"],
+            [keyL]: ["desktop-3", "desktop-5", "desktop-6", "desktop-8"],
+        });
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
+        harness.currentDesktop = DESKTOP_1;
+        harness.currentDesktopValue = DESKTOP_1;
+        return { harness, controller, keyE, keyL, wE, wL };
+    }
+
+    it("Meta+0 stays absent: no navigate-append shortcut is ever registered", () => {
+        const { harness } = globalUniqueSetup();
+        assert.equal(
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
+            false,
+        );
+        assert.equal(
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
+            true,
+        );
+    });
+
+    it("selects the nth member of the active output's assigned subset via per-output writes (E 3rd = 4, L 2nd = 5)", () => {
+        // Spec H.12: E owns [1,2,4], L owns [3,5,6] (plus owned trailing
+        // empties). Meta+3 on E selects global 4; Meta+2 on L selects global 5.
+        const onE = globalUniqueSetup();
+        onE.harness.active = onE.wE;
+        onE.harness.currentDesktopByOutput.delete(OUTPUT_L);
+        invokeShortcut(onE.harness, "plasma-auto-tiler-workspace-3");
+        assert.equal((onE.harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-4");
+        assert.equal(onE.harness.currentDesktopByOutput.has(OUTPUT_L), false);
+        const lastE = onE.harness.currentDesktopForScreenWrites[
+            onE.harness.currentDesktopForScreenWrites.length - 1
+        ];
+        assert.equal((lastE?.desktop as { id: string }).id, "desktop-4");
+        assert.equal(lastE?.output, OUTPUT_E);
+
+        const onL = globalUniqueSetup();
+        onL.harness.active = onL.wL;
+        onL.harness.currentDesktopByOutput.delete(OUTPUT_E);
+        invokeShortcut(onL.harness, "plasma-auto-tiler-workspace-2");
+        assert.equal((onL.harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-5");
+        assert.equal(onL.harness.currentDesktopByOutput.has(OUTPUT_E), false);
+        const lastL = onL.harness.currentDesktopForScreenWrites[
+            onL.harness.currentDesktopForScreenWrites.length - 1
+        ];
+        assert.equal((lastL?.desktop as { id: string }).id, "desktop-5");
+        assert.equal(lastL?.output, OUTPUT_L);
+    });
+
+    it("selects the active screen's assigned subset member with no focused window (activeScreen = L)", () => {
+        // Spec D common: with no focused window the active output is
+        // `workspace.activeScreen`. L's assigned subset is [3,5,6,8] ordered by
+        // x11DesktopNumber, so Meta+2 selects global desktop-5 via the
+        // per-output write only; E's subset is never used as a substitute and E
+        // stays unchanged.
+        const { harness } = globalUniqueSetup();
+        harness.active = null;
+        harness.activeScreenValue = OUTPUT_L;
+        harness.currentDesktopByOutput.delete(OUTPUT_E);
+        const writesBefore = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-5");
+        assert.equal(harness.currentDesktopByOutput.has(OUTPUT_E), false);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writesBefore + 1);
+        const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
+        assert.equal((last?.desktop as { id: string }).id, "desktop-5");
+        assert.equal(last?.output, OUTPUT_L);
+    });
+
+    it("no-ops with a diagnostic when neither a focused window nor activeScreen is available (global-unique)", () => {
+        const { harness } = globalUniqueSetup();
+        harness.active = null;
+        harness.activeScreenValue = null;
+        const writes = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-active-screen-unavailable"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+    });
+
+    it("an absent subset index is a specific no-op with no write", () => {
+        const { harness, wE } = globalUniqueSetup();
+        harness.active = wE;
+        const writes = harness.currentDesktopForScreenWrites.length;
+        const createsBefore = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-9");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, createsBefore);
+    });
+
+    it("applies the visible-target swap before navigation: target moves to the active output, prior current to the other, assignments follow", () => {
+        const { harness, controller, keyE, keyL, wE } = globalUniqueSetup();
+        // L already shows global desktop-4 (E's 3rd subset member).
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_4);
+        harness.active = wE;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-3");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-swap"), 1);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-4");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-1");
+        // One assigned current desktop per affected output; the swap moved
+        // desktop-1 to L and left desktop-4 assigned to E.
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(snapshot[keyE]?.slice().sort(), ["desktop-2", "desktop-4", "desktop-7"]);
+        assert.deepEqual(
+            snapshot[keyL]?.slice().sort(),
+            ["desktop-1", "desktop-3", "desktop-5", "desktop-6", "desktop-8"],
+        );
+        // The swap writes come first (target to the active output, prior
+        // current to the other output); the navigation follow write re-asserts
+        // the target on the active output last.
+        const writes = harness.currentDesktopForScreenWrites;
+        const swapWrites = writes.slice(-3);
+        assert.equal((swapWrites[0]?.desktop as { id: string }).id, "desktop-4");
+        assert.equal(swapWrites[0]?.output, OUTPUT_E);
+        assert.equal((swapWrites[1]?.desktop as { id: string }).id, "desktop-1");
+        assert.equal(swapWrites[1]?.output, OUTPUT_L);
+        assert.equal((swapWrites[2]?.desktop as { id: string }).id, "desktop-4");
+        assert.equal(swapWrites[2]?.output, OUTPUT_E);
+    });
+
+    it("move-follow applies the visible-target swap before the membership write and follow", () => {
+        const { harness, controller, keyE, keyL, wL } = globalUniqueSetup();
+        // E already shows global desktop-5 (L's 2nd subset member).
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_5);
+        harness.active = wL;
+        wL.desktops = [DESKTOP_3];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-swap"), 1);
+        assert.deepEqual((wL.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-5"]);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-5");
+        // L's prior current desktop-3 moved to E, so the swap preserves one
+        // assigned current per affected output.
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-3");
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(
+            snapshot[keyE]?.slice().sort(),
+            ["desktop-1", "desktop-2", "desktop-3", "desktop-4", "desktop-7"],
+        );
+        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-5", "desktop-6", "desktop-8"]);
+    });
+
+    it("Meta+Shift+0 moves into the active subset's existing trailing empty without creating", () => {
+        const { harness, wL } = globalUniqueSetup();
+        harness.active = wL;
+        wL.desktops = [DESKTOP_3];
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
+        const createsBefore = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, createsBefore);
+        assert.deepEqual((wL.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-8"]);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-8");
+    });
+
+    it("Meta+Shift+0 creates and assigns exactly one desktop only when the active subset lacks a trailing empty", () => {
+        const { harness, controller, keyE, keyL, wL } = globalUniqueSetup();
+        // Re-seed so L's subset has no owned desktop: no trailing empty exists.
+        controller.seedGlobalUniqueAssignment({
+            [keyE]: ["desktop-1", "desktop-2", "desktop-4", "desktop-7", "desktop-8"],
+            [keyL]: ["desktop-3", "desktop-5", "desktop-6"],
+        });
+        harness.active = wL;
+        wL.desktops = [DESKTOP_3];
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
+        const createsBefore = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, createsBefore + 1);
+        assert.deepEqual((wL.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-9"]);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-9");
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-3", "desktop-5", "desktop-6", "desktop-9"]);
+    });
+
+    it("refuses sticky, fullscreen, and maximized moves before any write or create", () => {
+        const sticky = globalUniqueSetup();
+        sticky.harness.active = sticky.wE;
+        sticky.harness.currentDesktop = DESKTOP_1;
+        sticky.harness.currentDesktopValue = DESKTOP_1;
+        invokeShortcut(sticky.harness, "plasma-auto-tiler-sticky-toggle");
+        const createsBefore = sticky.harness.createDesktopCalls.length;
+        invokeShortcut(sticky.harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(sticky.harness.logs, "workspace-move-refused:sticky"), 1);
+        assert.equal(sticky.harness.currentDesktopForScreenWrites.length, 0);
+        assert.equal(sticky.harness.createDesktopCalls.length, createsBefore);
+
+        const fullscreen = globalUniqueSetup();
+        fullscreen.harness.active = fullscreen.wE;
+        fullscreen.wE.fullScreen = true;
+        const createsFs = fullscreen.harness.createDesktopCalls.length;
+        invokeShortcut(fullscreen.harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(fullscreen.harness.logs, "workspace-move-refused:fullscreen"), 1);
+        assert.equal(fullscreen.harness.currentDesktopForScreenWrites.length, 0);
+        assert.equal(fullscreen.harness.createDesktopCalls.length, createsFs);
+
+        // A tiled window so the maximize action can record it.
+        const maximized = new Harness();
+        maximized.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "global-unique");
+        maximized.screensList = [OUTPUT_E, OUTPUT_L];
+        maximized.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+            { id: "desktop-3", x11DesktopNumber: 3 },
+            { id: "desktop-4", x11DesktopNumber: 4 },
+            { id: "desktop-5", x11DesktopNumber: 5 },
+            { id: "desktop-6", x11DesktopNumber: 6 },
+        ];
+        maximized.nextDesktopNumber = 6;
+        maximized.currentDesktop = DESKTOP_1;
+        maximized.currentDesktopValue = DESKTOP_1;
+        maximized.currentDesktopForOutputOverride = (output) =>
+            maximized.currentDesktopByOutput.get(output) ?? maximized.currentDesktop;
+        const maxRoot = tile(RECT, true);
+        const maxTarget = tile();
+        const maxWE = window({ tile: maxTarget, output: OUTPUT_E });
+        maxTarget.windows = [maxWE];
+        maxRoot.tiles = [maxTarget];
+        maximized.root = maxRoot;
+        maximized.windows = [maxWE];
+        maximized.active = maxWE;
+        maximized.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        const maxController = new TileController(maximized.environment());
+        maxController.start();
+        const createsMax = maximized.createDesktopCalls.length;
+        invokeShortcut(maximized, "plasma-auto-tiler-maximize");
+        invokeShortcut(maximized, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(countEvent(maximized.logs, "workspace-move-refused:maximized"), 1);
+        assert.equal(maximized.currentDesktopForScreenWrites.length, 0);
+        assert.equal(maximized.createDesktopCalls.length, createsMax);
+    });
+
+    it("cleanup removes only an owned, empty, non-current, invisible, unassigned desktop and never a pre-existing one", () => {
+        const { harness, controller, keyL } = globalUniqueSetup();
+        // No windows in scope so the screens change arms no reconstruction and
+        // cleanup runs immediately (the Unit 05 hotplug pattern).
+        harness.windows = [];
+        harness.removedDesktops.length = 0;
+        // Disconnect E: its owned trailing desktop-7 becomes unassigned, empty,
+        // and invisible; pre-existing desktops (including those re-assigned to
+        // L) are never removed.
+        harness.screensList = [OUTPUT_L];
+        harness.currentDesktopByOutput.delete(OUTPUT_E);
+        harness.screensChanged?.();
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
+            ["desktop-7"],
+        );
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(Object.keys(snapshot), [keyL]);
+        assert.deepEqual(
+            snapshot[keyL]?.slice().sort(),
+            ["desktop-1", "desktop-2", "desktop-3", "desktop-4", "desktop-5", "desktop-6", "desktop-8"],
+        );
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-8"]);
+    });
+
+    it("cleanup never removes a current, visible, or assigned owned desktop", () => {
+        const { harness, controller } = globalUniqueSetup();
+        harness.windows = [];
+        // L shows its owned trailing desktop-8 (current + visible + assigned),
+        // so it survives; only E's disconnected owned desktop-7 is removed.
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_8);
+        harness.removedDesktops.length = 0;
+        harness.screensList = [OUTPUT_L];
+        harness.screensChanged?.();
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
+            ["desktop-7"],
+        );
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-8"]);
     });
 });

@@ -258,6 +258,10 @@ declare const QTimer: {
 interface Workspace {
     // QList<LogicalOutput *> requires runtime decoding before iteration.
     readonly screens: unknown;
+    // Read-only: official KWin scripting API -> Workspace Scripting -> Output
+    // properties -> `activeScreen`. The output that currently has keyboard
+    // focus; used as the active output when no window is focused (spec D).
+    readonly activeScreen: Output | null;
     readonly cursorPos: Point;
     // QList<VirtualDesktop *> requires runtime decoding before iteration.
     readonly desktops: unknown;

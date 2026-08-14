@@ -1711,6 +1711,16 @@
       // reconciliation, never persisted (spec E session persistence). Empty for
       // every non-per-output-local mode.
       this.localWorkspaces = /* @__PURE__ */ new Map();
+      // Global-unique mode (spec D2, Unit 06): outputKey -> the ordered subset of
+      // global desktops assigned to that output, with `globalUniqueInverse` as its
+      // desktop id -> outputKey inverse. An assignment is script state, not a KWin
+      // desktop property (spec F); every logical global desktop is assigned
+      // exactly once. Subset order is derived from `x11DesktopNumber` ascending
+      // at use, never from storage order (spec D2). Session-only, rebuilt
+      // idempotently on every reconciliation, never persisted. Empty for every
+      // non-global-unique mode.
+      this.globalUniqueAssigned = /* @__PURE__ */ new Map();
+      this.globalUniqueInverse = /* @__PURE__ */ new Map();
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -1756,6 +1766,59 @@
         snapshot[key] = Object.freeze([...ids]);
       }
       return snapshot;
+    }
+    // Global-unique assignment snapshot (spec D2/F, Unit 06): outputKey ->
+    // assigned global desktop id subset. Present only in global-unique mode;
+    // read-only copies. The stored order is storage order; the semantic order
+    // (x11DesktopNumber ascending) is derived at resolution.
+    globalUniqueAssignmentSnapshot() {
+      const snapshot = {};
+      for (const [key, ids] of this.globalUniqueAssigned) {
+        snapshot[key] = Object.freeze([...ids]);
+      }
+      return snapshot;
+    }
+    // Test seam for the spec D2/H.12 example: seed the global-unique
+    // assignment/inverse from an explicit outputKey -> id subset mapping. The
+    // deterministic session initialization cannot reach an arbitrary split of
+    // pre-existing desktops (they all resolve to the session primary output,
+    // spec E hotplug), so the spec's E=[1,2,4]/L=[3,5,6] case is constructed
+    // through this seam. Session-only, never persisted, no user-facing config.
+    // Inert unless global-unique mode is active, every referenced id is live,
+    // and the mapping assigns every live desktop exactly once.
+    seedGlobalUniqueAssignment(mapping) {
+      if (this.workspaceMode !== "global-unique") {
+        return;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return;
+      }
+      const liveIds = new Set(desktops.map((desktop) => desktop.id));
+      const covered = /* @__PURE__ */ new Set();
+      const subsets = /* @__PURE__ */ new Map();
+      for (const [key, ids] of Object.entries(mapping)) {
+        const list = [];
+        for (const id of ids) {
+          if (!liveIds.has(id) || covered.has(id)) {
+            return;
+          }
+          covered.add(id);
+          list.push(id);
+        }
+        subsets.set(key, list);
+      }
+      if (covered.size !== liveIds.size) {
+        return;
+      }
+      this.globalUniqueAssigned.clear();
+      this.globalUniqueInverse.clear();
+      for (const [key, ids] of subsets) {
+        this.globalUniqueAssigned.set(key, [...ids]);
+        for (const id of ids) {
+          this.globalUniqueInverse.set(id, key);
+        }
+      }
     }
     // Narrow read/self-validation seam for a future bounded assignment-only
     // reflow. The overlay for the exact scope is returned only when its
@@ -1809,6 +1872,13 @@
         );
         this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
         this.rebuildOutputKeys();
+        const mode = parseWorkspaceMode(
+          this.environment.readConfig(WORKSPACE_MODE_CONFIG_KEY, DEFAULT_WORKSPACE_MODE)
+        );
+        for (const diagnostic of mode.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.workspaceMode = mode.mode;
         this.cleanupDesktops();
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
@@ -1875,13 +1945,6 @@
         for (const diagnostic of selected.diagnostics) {
           this.diagnostic(diagnostic);
         }
-        const mode = parseWorkspaceMode(
-          this.environment.readConfig(WORKSPACE_MODE_CONFIG_KEY, DEFAULT_WORKSPACE_MODE)
-        );
-        for (const diagnostic of mode.diagnostics) {
-          this.diagnostic(diagnostic);
-        }
-        this.workspaceMode = mode.mode;
         for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
           this.diagnostic(diagnostic);
         }
@@ -6178,12 +6241,18 @@
     // Meta+1..9: navigate to the existing desktop at the given 1-based index.
     // An absent index is a specific no-op and never creates a desktop. In
     // per-output-local mode the target resolves against the active output's
-    // local list and writes through the per-output seam only.
+    // local list and writes through the per-output seam only; in global-unique
+    // mode it resolves the nth member of the active output's assigned subset
+    // (spec D2). `shared` mode (Unit 07) keeps the global fallback below.
     navigateWorkspace(index) {
       this.gate.run(() => {
         this.diagnostic(`workspace-navigate-invoked:${index}`);
         if (this.workspaceMode === "per-output-local") {
           this.navigateLocalWorkspace(index);
+          return;
+        }
+        if (this.workspaceMode === "global-unique") {
+          this.navigateGlobalUnique(index);
           return;
         }
         const desktops = this.liveDesktops();
@@ -6202,18 +6271,19 @@
     // Per-output-local navigation (spec D1): resolve logical index n against the
     // focused window's output local list and write
     // `setCurrentDesktopForScreen(target, output)`; the other outputs are never
-    // touched. With no focused window the migrated single-output global
-    // active-screen fallback is preserved, so a desktop change never fails or
-    // recurses when focus is elsewhere. The mapping is refreshed from the live
-    // list first (idempotent, never creates) so a pre-existing desktop added
-    // since the last reconciliation still resolves.
+    // touched. With no focused window the active output is `workspace.activeScreen`
+    // (spec D common), resolved through the typed seam; when that is unavailable
+    // the migrated single-output global fallback is preserved, so a desktop
+    // change never fails or recurses when focus is elsewhere. The mapping is
+    // refreshed from the live list first (idempotent, never creates) so a
+    // pre-existing desktop added since the last reconciliation still resolves.
     navigateLocalWorkspace(index) {
       const desktops = this.liveDesktops();
       if (desktops === null) {
         return;
       }
       this.rebuildLocalMapping(desktops);
-      const output = this.activeOutput();
+      const output = this.activeOutputForWorkspace();
       if (output !== null) {
         const key = this.outputKeys.keyFor(output);
         const list = key === void 0 ? void 0 : this.localWorkspaces.get(key);
@@ -6340,6 +6410,15 @@
           }
           target = this.appendTrailingForOutput(scope.output);
         }
+      } else if (this.workspaceMode === "global-unique") {
+        target = this.trailingOwnedEmptyForGlobalUnique(scope.output);
+        if (target === null) {
+          if (this.workspaceMutationDeferred()) {
+            this.deferDesktopIntent(window);
+            return;
+          }
+          target = this.appendDesktopForGlobalUnique(scope.output);
+        }
       } else {
         target = this.trailingOwnedEmptyDesktop();
         if (target === null) {
@@ -6456,6 +6535,15 @@
               }
               target = this.appendTrailingForOutput(scope.output);
             }
+          } else if (this.workspaceMode === "global-unique") {
+            target = this.trailingOwnedEmptyForGlobalUnique(scope.output);
+            if (target === null) {
+              if (this.workspaceMutationDeferred()) {
+                this.deferDesktopIntent(active);
+                return;
+              }
+              target = this.appendDesktopForGlobalUnique(scope.output);
+            }
           } else {
             target = this.trailingOwnedEmptyDesktop();
             if (target === null) {
@@ -6473,6 +6561,13 @@
               this.diagnostic(`workspace-move-absent:${index}`);
               return;
             }
+          } else if (this.workspaceMode === "global-unique") {
+            target = this.globalUniqueTargetForOutput(scope.output, index);
+            if (target === null) {
+              this.diagnostic(`workspace-move-absent:${index}`);
+              return;
+            }
+            this.globalUniqueSwapIfVisibleElsewhere(target, scope.output);
           } else {
             const desktops = this.liveDesktops();
             if (desktops === null) {
@@ -6645,6 +6740,30 @@
       }
       return null;
     }
+    // The active output for keyboard workspace selection (spec D common): the
+    // focused window's output when one exists, else `workspace.activeScreen`
+    // when it is a valid output. Null only when neither is available; the
+    // callers then preserve their safe fallback. A first connected screen is
+    // never substituted for the active screen.
+    activeOutputForWorkspace() {
+      const focused = this.activeOutput();
+      if (focused !== null) {
+        return focused;
+      }
+      let raw;
+      try {
+        raw = this.environment.activeScreen();
+      } catch (error) {
+        void error;
+        this.diagnostic("workspace-active-screen-unavailable");
+        return null;
+      }
+      if (isOutput(raw)) {
+        return raw;
+      }
+      this.diagnostic("workspace-active-screen-unavailable");
+      return null;
+    }
     // Reconcile the desktop list to exactly one trailing script-owned empty
     // desktop after the highest occupied workspace. Excess owned empty trailing
     // desktops are removed (only owned, non-current, non-visible-on-another-
@@ -6681,6 +6800,10 @@
       }
       if (this.workspaceMode === "per-output-local") {
         this.reconcileLocalWorkspaces(desktops, visible);
+        return;
+      }
+      if (this.workspaceMode === "global-unique") {
+        this.reconcileGlobalUnique(desktops, visible);
         return;
       }
       const occupied = this.occupiedDesktopIds();
@@ -7048,6 +7171,353 @@
       }
       return this.appendDesktopForOutputKey(key);
     }
+    // ---- global-unique workspace assignment (Unit 06, spec D2/F) ----
+    //
+    // Desktops are global and each output's ordered assigned subset is its
+    // assigned global desktops ordered by `x11DesktopNumber` ascending. The
+    // assignment and its inverse are script state, rebuilt idempotently on every
+    // reconciliation: a disconnected output is unassigned, every live desktop is
+    // assigned exactly once (unassigned pre-existing desktops go to the session
+    // primary output, spec E hotplug), and each connected output retains exactly
+    // one script-owned trailing empty in its subset. Cleanup removes only an
+    // owned, empty, non-current, invisible-on-every-output desktop that is no
+    // longer assigned to any output; pre-existing desktops are never removed.
+    // The ordered assigned subset of a connected output key, filtered to live
+    // desktops and sorted by x11DesktopNumber ascending (spec D2). The stored
+    // list order is never trusted; order always derives from the live number.
+    globalUniqueOrdered(desktops, key) {
+      var _a;
+      const ids = new Set((_a = this.globalUniqueAssigned.get(key)) != null ? _a : []);
+      return desktops.filter((desktop) => ids.has(desktop.id)).sort((a, b) => {
+        var _a2, _b;
+        return ((_a2 = a.x11DesktopNumber) != null ? _a2 : 0) - ((_b = b.x11DesktopNumber) != null ? _b : 0);
+      });
+    }
+    // Assign `id` to `key`, removing it from any previous output's subset so
+    // every logical global desktop stays assigned exactly once (spec D2).
+    assignGlobalUnique(id, key) {
+      var _a;
+      const previous = this.globalUniqueInverse.get(id);
+      if (previous !== void 0 && previous !== key) {
+        const priorList = this.globalUniqueAssigned.get(previous);
+        if (priorList !== void 0) {
+          const position = priorList.indexOf(id);
+          if (position >= 0) {
+            priorList.splice(position, 1);
+          }
+        }
+      }
+      this.globalUniqueInverse.set(id, key);
+      const list = (_a = this.globalUniqueAssigned.get(key)) != null ? _a : [];
+      if (!list.includes(id)) {
+        list.push(id);
+      }
+      this.globalUniqueAssigned.set(key, list);
+    }
+    // Remove `id` from its assigned output's subset and from the inverse.
+    unassignGlobalUnique(id) {
+      const key = this.globalUniqueInverse.get(id);
+      if (key === void 0) {
+        return;
+      }
+      this.globalUniqueInverse.delete(id);
+      const list = this.globalUniqueAssigned.get(key);
+      if (list !== void 0) {
+        const position = list.indexOf(id);
+        if (position >= 0) {
+          list.splice(position, 1);
+        }
+      }
+    }
+    // Global-unique navigation (spec D2): resolve the nth member of the active
+    // output's assigned subset (ordered by x11DesktopNumber ascending) and
+    // write `setCurrentDesktopForScreen` on the active output. Absent n is a
+    // no-op and never creates. When the target is already shown on another
+    // output the Hyprland `focusworkspaceoncurrentmonitor` swap applies first:
+    // the target becomes the active output's current, the active output's prior
+    // current desktop moves to the other output, and both desktops' assignments
+    // follow (spec D2/F).
+    navigateGlobalUnique(index) {
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return;
+      }
+      const output = this.globalUniqueActiveOutput();
+      if (output === null) {
+        return;
+      }
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return;
+      }
+      const target = this.globalUniqueOrdered(desktops, key)[index - 1];
+      if (target === void 0) {
+        this.diagnostic(`workspace-navigate-absent:${index}`);
+        return;
+      }
+      this.globalUniqueSwapIfVisibleElsewhere(target, output);
+      this.setCurrentDesktop(target, output);
+      this.diagnostic(`workspace-navigate-completed:${index}`);
+    }
+    // The active output for global-unique navigation (spec D common): the
+    // focused window's output when one exists, else `workspace.activeScreen`
+    // through the typed seam. Null only when neither is available; navigation
+    // then no-ops rather than substituting a first screen for the active screen.
+    globalUniqueActiveOutput() {
+      return this.activeOutputForWorkspace();
+    }
+    // The navigation swap (spec D2): when `target` is the current desktop of a
+    // different output, swap the two outputs' currents and assignments so the
+    // target moves to the active output and the active output's prior current
+    // desktop moves to the other output. One assigned current desktop per
+    // affected output is preserved. Inert when the target is not shown on any
+    // other output, when the active output's prior current is unreadable, or
+    // when the write throws (reported, non-destructive).
+    globalUniqueSwapIfVisibleElsewhere(target, active) {
+      let raw;
+      try {
+        raw = this.environment.screens();
+      } catch (error) {
+        void error;
+        return;
+      }
+      const screens = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+      if (!screens.ok) {
+        return;
+      }
+      let activeCurrent = null;
+      for (const other of screens.value) {
+        if (other === active) {
+          continue;
+        }
+        let current;
+        try {
+          current = this.environment.currentDesktopForOutput(other);
+        } catch (error) {
+          void error;
+          continue;
+        }
+        if (!isVirtualDesktop(current) || current.id !== target.id) {
+          continue;
+        }
+        if (activeCurrent === null) {
+          try {
+            const prior = this.environment.currentDesktopForOutput(active);
+            if (isVirtualDesktop(prior)) {
+              activeCurrent = prior;
+            }
+          } catch (error) {
+            void error;
+          }
+        }
+        if (activeCurrent === null || activeCurrent.id === target.id) {
+          return;
+        }
+        const activeKey = this.outputKeys.keyFor(active);
+        const otherKey = this.outputKeys.keyFor(other);
+        if (activeKey === void 0 || otherKey === void 0) {
+          return;
+        }
+        this.assignGlobalUnique(target.id, activeKey);
+        this.assignGlobalUnique(activeCurrent.id, otherKey);
+        try {
+          this.environment.setCurrentDesktopForScreen(target, active);
+          this.environment.setCurrentDesktopForScreen(activeCurrent, other);
+          this.diagnostic("workspace-navigate-swap");
+        } catch (error) {
+          this.diagnostic(`workspace-navigate-swap-failed:${describeWorkspaceFailure(error)}`);
+        }
+        return;
+      }
+    }
+    // The 1-based nth member of an output's assigned subset, or null when absent
+    // or unresolvable. Never creates (absent n is a specific no-op).
+    globalUniqueTargetForOutput(output, index) {
+      var _a;
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return null;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return null;
+      }
+      return (_a = this.globalUniqueOrdered(desktops, key)[index - 1]) != null ? _a : null;
+    }
+    // The trailing owned empty entries of an ordered subset: owned, empty, and
+    // after every occupied desktop. The trailing-most entry is the one cleanup
+    // keeps and Meta+Shift+0 moves into.
+    trailingOwnedEmptiesInSubset(subset, occupied) {
+      const trailing = [];
+      let highestOccupied = 0;
+      for (let position = 0; position < subset.length; position += 1) {
+        const desktop = subset[position];
+        if (desktop !== void 0 && occupied.has(desktop.id)) {
+          highestOccupied = position + 1;
+        }
+      }
+      for (let position = 0; position < subset.length; position += 1) {
+        const desktop = subset[position];
+        if (desktop === void 0) {
+          continue;
+        }
+        if (!this.ownedDesktopIds.has(desktop.id)) {
+          continue;
+        }
+        if (occupied.has(desktop.id)) {
+          continue;
+        }
+        if (position + 1 <= highestOccupied) {
+          continue;
+        }
+        trailing.push({ desktop, position });
+      }
+      return trailing;
+    }
+    // The script-owned trailing empty of an output's assigned subset, or null
+    // when none exists. Never creates.
+    trailingOwnedEmptyForGlobalUnique(output) {
+      var _a, _b;
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return null;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return null;
+      }
+      const subset = this.globalUniqueOrdered(desktops, key);
+      const trailing = this.trailingOwnedEmptiesInSubset(subset, this.occupiedDesktopIds());
+      return (_b = (_a = trailing[trailing.length - 1]) == null ? void 0 : _a.desktop) != null ? _b : null;
+    }
+    // Append one owned desktop and assign it to the given output (Meta+Shift+0
+    // and trailing-empty replenish paths).
+    appendDesktopForGlobalUnique(output) {
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return null;
+      }
+      const created = this.appendDesktop();
+      if (created !== null) {
+        this.assignGlobalUnique(created.id, key);
+      }
+      return created;
+    }
+    // Global-unique reconciliation (spec D2/D3, spec E hotplug, spec F). Drops
+    // disconnected outputs (unassigning their desktops), assigns every live
+    // desktop exactly once (unassigned pre-existing desktops to the session
+    // primary output), filters assigned subsets to live ids, retains exactly one
+    // trailing empty per connected output, then removes owned desktops that are
+    // empty, non-current, invisible on every output, and no longer assigned to
+    // any output. Pre-existing desktops are never removed.
+    reconcileGlobalUnique(desktops, visible) {
+      var _a;
+      const keys = this.connectedOutputKeys();
+      const connected = new Set(keys);
+      if (this.globalUniquePrimary === void 0 || !connected.has(this.globalUniquePrimary)) {
+        this.globalUniquePrimary = keys[0];
+      }
+      for (const key of [...this.globalUniqueAssigned.keys()]) {
+        if (!connected.has(key)) {
+          for (const id of [...(_a = this.globalUniqueAssigned.get(key)) != null ? _a : []]) {
+            this.unassignGlobalUnique(id);
+          }
+          this.globalUniqueAssigned.delete(key);
+        }
+      }
+      for (const desktop of desktops) {
+        if (this.globalUniqueInverse.has(desktop.id)) {
+          continue;
+        }
+        if (this.globalUniquePrimary === void 0) {
+          continue;
+        }
+        this.assignGlobalUnique(desktop.id, this.globalUniquePrimary);
+      }
+      for (const key of keys) {
+        const list = this.globalUniqueAssigned.get(key);
+        if (list === void 0) {
+          continue;
+        }
+        const liveIds = new Set(desktops.map((desktop) => desktop.id));
+        const filtered = list.filter((id) => liveIds.has(id));
+        if (filtered.length !== list.length) {
+          this.globalUniqueAssigned.set(key, filtered);
+        }
+      }
+      const occupied = this.occupiedDesktopIds();
+      const lastIndex = desktops.length - 1;
+      for (const key of keys) {
+        const subset = this.globalUniqueOrdered(desktops, key);
+        const trailing = this.trailingOwnedEmptiesInSubset(subset, occupied);
+        if (trailing.length === 0) {
+          const created = this.appendDesktopForGlobalUniqueKey(key);
+          if (created !== null) {
+            this.diagnostic("workspace-cleanup-replenished");
+          }
+          continue;
+        }
+        const keep = trailing[trailing.length - 1];
+        if (keep === void 0) {
+          continue;
+        }
+        this.reconcilingDesktops = true;
+        try {
+          for (const entry of trailing) {
+            if (entry.desktop.id === keep.desktop.id) {
+              continue;
+            }
+            this.removeOwnedEmptyGlobalUnique(entry.desktop.id, desktops, visible, lastIndex);
+          }
+        } finally {
+          this.reconcilingDesktops = false;
+        }
+      }
+      const assigned = new Set(this.globalUniqueInverse.keys());
+      for (const id of [...this.ownedDesktopIds]) {
+        if (assigned.has(id)) {
+          continue;
+        }
+        if (occupied.has(id)) {
+          continue;
+        }
+        this.removeOwnedEmptyGlobalUnique(id, desktops, visible, lastIndex);
+      }
+    }
+    // Remove one script-owned, empty, non-current, non-visible-on-any-output,
+    // non-last-global desktop and unassign it. Plain removeDesktop only - never
+    // a structural tiling mutation. A throwing remove is reported and preserved.
+    removeOwnedEmptyGlobalUnique(id, desktops, visible, lastIndex) {
+      if (visible.has(id)) {
+        return false;
+      }
+      const position = desktops.findIndex((desktop2) => desktop2.id === id);
+      if (position === lastIndex) {
+        return false;
+      }
+      const desktop = desktops[position];
+      if (desktop === void 0) {
+        return false;
+      }
+      try {
+        this.environment.removeDesktop(desktop);
+        this.ownedDesktopIds.delete(id);
+        this.unassignGlobalUnique(id);
+        this.diagnostic("workspace-cleanup-removed");
+        return true;
+      } catch (error) {
+        this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
+        return false;
+      }
+    }
+    // Append one owned desktop and assign it to the given connected output key.
+    appendDesktopForGlobalUniqueKey(key) {
+      const created = this.appendDesktop();
+      if (created !== null) {
+        this.assignGlobalUnique(created.id, key);
+      }
+      return created;
+    }
     // Desktop ids currently visible on any output (per-output current desktop)
     // plus the global current desktop. Returns null when outputs cannot be
     // enumerated or a per-output read fails, so cleanup can defer safely.
@@ -7141,6 +7611,13 @@
       const value = workspace.screens;
       if (value === void 0) {
         throw new Error("kwin-workspace-surface-missing:screens");
+      }
+      return value;
+    },
+    activeScreen: () => {
+      const value = workspace.activeScreen;
+      if (value === void 0) {
+        throw new Error("kwin-workspace-surface-missing:activeScreen");
       }
       return value;
     },

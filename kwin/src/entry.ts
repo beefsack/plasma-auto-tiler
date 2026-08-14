@@ -42,6 +42,13 @@ const controller = new TileController({
         }
         return value;
     },
+    activeScreen: () => {
+        const value = workspace.activeScreen;
+        if (value === undefined) {
+            throw new Error("kwin-workspace-surface-missing:activeScreen");
+        }
+        return value;
+    },
     currentDesktop: () => {
         const value = workspace.currentDesktop;
         return value ?? null;

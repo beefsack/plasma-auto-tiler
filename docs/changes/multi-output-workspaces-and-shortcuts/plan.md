@@ -224,6 +224,11 @@ mutation. Keep cleanup session-owned and global-visibility-aware.
 
 ## Unit 06 - Global-unique mode
 
+Implementation status: accepted 2026-08-14. Session-only assigned subsets and
+their inverse resolve logical positions by global desktop number, including the
+visible-target output swap. The typed `activeScreen` seam supplies keyboard
+active-output selection when no window is focused. Shared mode remains Unit 07.
+
 Dependencies: Unit 05. Scope: add only `global-unique` assignment state:
 ordered output subsets and inverse desktop assignment. Implement active-output
 navigation and move-follow, including the specified visible-target output swap,

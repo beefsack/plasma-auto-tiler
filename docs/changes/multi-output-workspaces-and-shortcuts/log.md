@@ -106,3 +106,15 @@
   `bash scripts/start-test.test.sh` (248 checks); `bash
   scripts/dogfood-install.test.sh` (108 checks); and two reproducible
   `npm run build` runs. No live KWin/Plasma mutation was performed.
+- Unit 06 accepted: `global-unique` holds session-only assigned ordered subsets
+  and an inverse desktop-to-output map. Meta+n addresses the nth
+  `x11DesktopNumber`-ordered member of the active output's subset, rather than
+  its global number. A visible target swaps current desktops and assignments
+  before navigation or move-follow. Meta+Shift+0 uses the assigned trailing
+  empty; Meta+0 remains unbound. `workspace.activeScreen` is now a typed
+  controller seam used when no window is focused. Cleanup retains every
+  assigned, visible, current, or pre-existing desktop.
+- Unit 06 verification passed: `npm run typecheck`; `npm test` (673 tests);
+  `bash scripts/start-test.test.sh` (248 checks); `bash
+  scripts/dogfood-install.test.sh` (108 checks); and reproducible `npm run
+  build`. No live KWin/Plasma mutation was performed.
