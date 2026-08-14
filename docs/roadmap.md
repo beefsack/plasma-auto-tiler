@@ -9,6 +9,10 @@ sources prove reference-WM precedents only; they never prove KWin behaviour.
 Every KWin-targeted claim stays `unproven-until-live` even where in-repo static
 evidence supports API availability.
 
+Live KWin/Plasma mutations are user-run only: agents cannot perform them.
+Carrier, distribution, shortcut-migration, and opt-in decisions remain parked
+until the corresponding live evidence or user decision is available.
+
 ## Status labels
 
 | Label | Meaning |
@@ -35,6 +39,8 @@ In-repo KWin evidence is cited from
 ("api-surface") and `.../package-composition.md` ("composition"), and
 `docs/handover.md` ("handover"). KWin behaviours not established by those
 records are `unproven-until-live`.
+Reference-profile source invariants are statically enforced by `ec07485`; this
+does not replace validation against actual reference-WM runtimes.
 
 ## Autonomous decision ledger
 
@@ -47,8 +53,8 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 | 12 | Float/tile toggle = `Meta+G`; sticky toggle = `Meta+Shift+G`, and sticky implies floating. | COSMIC `Super+G` = `ToggleWindowFloating` [C-KB] [C-KR]; Hyprland example `mainMod+V` float [H-Ex]; COSMIC sticky is "excluded from tiling" [C-302]. No reference-WM default binding exists for sticky, so `Meta+Shift+G` is our own mirror of `Meta+G`. |
 | 13 | Maximize = `Meta+M` (per workspace, not sticky); fullscreen = `Meta+F11` (distinct). | COSMIC `Super+M` maximize / `Super+F11` fullscreen [C-KB] [C-KR]; Hyprland `fullscreen_state` 0/1/2/3 separates maximize from fullscreen [H-Disp]. |
 | 14 | Split resizing via a resize mode: `Meta+R` enters, `H/J/K/L` (or arrows) step the focused split ratio, `Esc`/`Return` exits. | COSMIC `Super+R` resize [C-KB]; Hyprland `splitratio` delta/exact [H-Dw]; ratio written through `tile.relativeGeometry` (api-surface capability 3). |
-| 15 | Group/stack toggle = `Meta+S`; group member switch = `Meta+Tab` / `Meta+Shift+Tab`. | COSMIC `Super+S` stack toggle and `Super+Left/Right` member switch [C-Bas]; our `Meta+Left/Right` is already focus-neighbour, so member switch uses the free `Meta+Tab` pair (no reference default; see Open questions). |
-| 16 | Distribution = one system package carrying a `KWin/Script` (javascript) + a `KWin/Effect` (QML); generic KCM for settings; no systemd service or separate binary for v1. | composition.md C1/C2; one system package may hold several KPackages (upstream precedent `fadedesktop`); overlay preview and border/rounding require an effect (handover section 7). |
+| 15 | `PARKED`: group/stack behavior, bindings, and header design await multi-window tile stability proof. | COSMIC offers stack precedent [C-Bas], but it cannot establish KWin shared-tile behavior or choose this product's group interaction. |
+| 16 | `REVISITED - PARKED`: generic KCM settings are delivered, but the visual carrier, distribution channel, and Plasma-global shortcut migration are not selected. | Static package research does not prove a supported script/effect bridge, complete client coverage, or a user-acceptable shortcut migration. |
 
 ## Feature-by-feature roadmap
 
@@ -119,33 +125,36 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   reference doc line 209); its nearest grounded analogue is bspwm's
   `presel_feedback` area [B1], with drop-time reflow per Hyprland [H-Disp].
   Live-reflow-as-preview stays deferred (handover section 6).
-- **Implementation:** the script computes the target tile by hit-testing
-  `RootTile::pick(cursorPos)` (api-surface capability 6); a QML `KWin/Effect`
-  (`SceneEffect`) renders the preview rectangle using the shared QML engine
-  (composition.md Path 2). This raises the composition to C2 (script + effect).
+- **Implementation boundary:** the script can compute the target tile by
+  hit-testing `RootTile::pick(cursorPos)` (api-surface capability 6). First
+  prove the documented ordinary-script rectangle outline during a controlled
+  drag; do not choose a QML carrier, bridge, or declarative conversion before
+  that result ([drop-overlay feasibility](changes/archive/2026-08-14-drop-overlay-feasibility/research/feasibility.md)).
 - **Main KWin risk:** drag events do not yet reach the script (handover
-  section 5); the overlay rendering is compositing-gated
-  (`scriptedeffect.cpp:202-205`).
-- **Status:** `DECIDED`; input coupling `PARKED` (see Feasibility spikes).
+  section 5); motion delivery, cleanup, stacking, and XWayland behavior remain
+  `unproven-until-live`.
+- **Status:** intended feedback `DECIDED`; carrier and input coupling `PARKED`
+  (see Feasibility spikes).
 
 ### 5. Stacked / grouped windows and group indicator UI
 
-- **Decided semantics:** tabbed groups as a tile-level construct (decision 5,
-  reference doc line 208). Members of a group share one tile and overlap at
-  identical geometry; the active member fills the tile. This is the chosen
-  remedy for KWin's geometry-floor overflow (handover section 12).
-- **Group indicator UI:** a header bar drawn across the top of the group tile,
-  listing each member's icon/title, with the active member highlighted and
-  click-to-switch. KWin provides no native tab/stack UI (handover section 12),
-  so the product draws its own via the same QML `KWin/Effect`.
-- **Bindings:** toggle `Meta+S` (COSMIC `Super+S` [C-Bas]); member switch
-  `Meta+Tab` / `Meta+Shift+Tab` (see decision 15).
-- **Implementation:** group membership via `Tile::add()` on the multi-window
-  `m_windows` list (handover section 12); the header overlay reads membership
-  from the shared-engine `Tile.windows` property (api-surface capability 2).
+- **Parked product design:** tabbed groups are a candidate tile-level construct
+  (decision 5, reference doc line 208), but member presentation, controls, and
+  bindings are not selected. The former shared-geometry proposal cannot be
+  treated as a remedy for geometry-floor overflow before live stability proof.
+- **Group indicator UI:** a header bar is a future product design, not yet a
+  selected QML implementation. KWin provides no native tab/stack UI (handover
+  section 12), and carrier selection follows the separate live proof.
+- **Bindings:** no group binding is selected; `Meta+S` and the `Meta+Tab` pair
+  are only prior candidates (see parked decision 15).
+- **Implementation boundary:** do not assign a second window to a Custom Tile
+  until a live stability spike proves cardinality, geometry, stacking, focus,
+  close, reconstruction, maximize, fullscreen, and float recovery
+  ([stacked-window feasibility](changes/archive/2026-08-14-stacked-window-feasibility/research/feasibility.md)).
 - **Main KWin risk:** multi-window-per-tile stability is `unknown` and the
   pinned source carries an evacuation-design TODO (handover section 12).
-- **Status:** `DECIDED`; multi-window stability and header overlay `PARKED`.
+- **Status:** group/header implementation `PARKED` pending the stability spike
+  and later group/header design.
 
 ### 6. Dynamic workspaces
 
@@ -247,7 +256,8 @@ gated installer/KCM migration exists
   installer.
 - **Main KWin risk:** per-window corner clipping of XWayland content is
   `unproven-until-live`.
-- **Status:** `DECIDED`; QML-clipping viability `PARKED`.
+- **Status:** intended all-window treatment `DECIDED`; QML versus native
+  carrier and the complete client matrix `PARKED`.
 
 ### 9. Fullscreen games never tiled / resized / disturbed
 
@@ -281,24 +291,18 @@ gated installer/KCM migration exists
 
 ### 11. Distribution and one-step install
 
-- **Decided semantics:** primary composition is one system package carrying a
-  `KWin/Script` (javascript, tiling logic) plus a `KWin/Effect` (QML, preview +
-  border/rounding). One system package may hold several KPackages (upstream
-  precedent, composition.md line 316-324). This supersedes script-only C1
-  because the roadmap makes the overlay preview and border/rounding mandatory.
-- **Rejected for v1:** systemd user service (no IPC needed - `callDBus` is
-  outbound-only and the mandatory workflow has no receiver, composition.md
-  Path 6); a separate binary / native C++ component (only the fallback for
-  border/rounding or an optional KCM/indicator, composition.md Path 4); a
-  bespoke C++ KCM (generic KCM suffices).
-- **One-step install:** extend `scripts/dogfood-install.sh` to install both
-  KPackages (`kwin/scripts/...` and `kwin/effects/...`), write both enable keys,
-  and reconfigure once - a single command mirroring the existing
-  `install` + `enable` flow.
-- **Main KWin risk:** effect enablement and reconfigure reliability, and
-  `kpackagetool6` upgrade/removal side effects, are `unproven-until-live`
-  (composition.md residual risks).
-- **Status:** `DECIDED`; lifecycle `unproven-until-live`.
+- **Delivered static work:** generic KCM settings are delivered in `2198382`;
+  the installer dry-run is delivered in `f5e6907` and is inspection-only. The
+  latter did not select a release channel, apply mode, uninstall policy, or
+  shortcut migration ([installer evidence](changes/archive/2026-08-14-installer-dry-run/plan.md)).
+- **Parked composition:** do not select one package, a QML effect, native C++,
+  or a script/effect bridge until the rectangle-outline and visual carrier
+  spikes establish the supported path.
+- **Parked user decision:** select the distribution channel and policy for
+  conflicting Plasma-global shortcut migration. No agent may make either
+  decision from static evidence.
+- **Status:** settings and dry-run `completed`; composition, distribution, and
+  shortcut migration `PARKED`.
 
 ## Feasibility spikes (PARKED)
 
@@ -306,10 +310,23 @@ Each preserves its decision; only implementation viability needs a KWin test.
 
 | Spike | Feature | Why parked |
 |---|---|---|
-| PARKED-1 | Drop overlay input coupling (feature 4) | Drag events do not reach the script yet (handover section 5). The C2 effect overlay stays decided; the drag-to-target wiring cannot be implemented until signal delivery is proven. |
-| PARKED-2 | Multi-window tile stability + group header (feature 5) | Multi-window-per-tile stability is `unknown` with an evacuation-design TODO (handover section 12); the QML header overlay must be proven to render over shared-geometry members. |
+| PARKED-1 | Drop rectangle outline (feature 4) | Run the minimal ordinary-script outline during a controlled drag, then use the result to decide whether rich QML is needed or supported; do not infer a bridge from documentation alone. |
+| PARKED-2 | Multi-window tile stability (feature 5) | Prove shared-tile membership and recovery before deciding group behavior or header design; header carrier validation is a separate later proof. |
 | PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
-| PARKED-4 | All-window corner clipping (feature 8) | Whether a QML `SceneEffect` can clip rounded corners uniformly on XWayland/non-Qt windows is `unproven-until-live`; fallback is a native effect (composition.md Path 4). |
+| PARKED-4 | All-window border/corner carrier (feature 8) | Prove geometry, stacking, activation, cleanup, and rounding across Qt, CSD, non-Qt, XWayland, maximized, and fullscreen clients before selecting QML or native C++. |
+
+## Pending Live Acceptance And Parked Decisions
+
+All live entries require a user-run session and separate mutation authorization;
+agents cannot perform host mutations.
+
+| Item | Required evidence or decision | State |
+|---|---|---|
+| Delivered KCM/config and split targets | Exercise generic KCM rendering, configuration reload, and automatic split-target selection on the target host. | `unproven-until-live` |
+| Core behavior | Stage live acceptance for resize, float/sticky, fullscreen, maximize, workspace modes/shortcuts, and two-output isolation. | `unproven-until-live` |
+| Floor-aware rebalancing | In a nested compositor, prove safe single and multi-ancestor ratio writes with fresh decode, then make the opt-in decision. | `PARKED` |
+| Reference precedents | Validate intended behavior at actual bspwm, Hyprland, and COSMIC runtimes rather than source/documentation alone. | `PARKED` |
+| Distribution and shortcuts | Select a distribution channel and the Plasma-global shortcut migration policy. | `PARKED` |
 
 ## Further feature ideas (PROPOSED, not decided)
 
