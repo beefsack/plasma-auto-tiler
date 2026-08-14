@@ -244,6 +244,7 @@ const controller = new TileController({
         };
     },
     registerShortcut,
+    readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message),
 });
 

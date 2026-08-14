@@ -2,7 +2,19 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
-import { TileController, type ControllerEnvironment, type CurrentScope } from "../src/controller";
+import {
+    PROFILE_CATALOGS,
+    REGISTERED_PROFILE_ACTION_IDS,
+    ShortcutOverrides,
+    TileController,
+    validateProfile,
+    resolveSequence,
+    selectProfile,
+    type ControllerEnvironment,
+    type CurrentScope,
+    type ProfileCatalog,
+    type RowClassification,
+} from "../src/controller";
 import { buildDwindleBlueprint, type Blueprint } from "../src/layout-blueprint";
 import { DIRECTIONS, type Direction, type Point } from "../src/logic";
 
@@ -129,6 +141,21 @@ function window(overrides: Partial<TestWindow> = {}): TestWindow {
     };
 }
 
+// Direct state setters for the keyboard eligibility gates. They set the
+// read properties synchronously without emitting, so no controller signal
+// side effects interfere with a single-shot gate assertion.
+function setFullscreen(subject: TestWindow, value: boolean): void {
+    subject.fullScreen = value;
+}
+
+function setSticky(subject: TestWindow, value: boolean): void {
+    subject.onAllDesktops = value;
+}
+
+function setMaximized(subject: TestWindow, mode: number): void {
+    subject.maximizeMode = mode;
+}
+
 function signal(): TestSignal {
     const callbacks = new Set<() => void>();
     return {
@@ -184,6 +211,7 @@ class Harness {
     shortcutResult = true;
     readonly shortcutResults: boolean[] = [];
     readonly shortcuts: RegisteredShortcut[] = [];
+    readonly configValues = new Map<string, unknown>();
     readonly scheduled: { delayMs: number; callback: () => void; cancelled: boolean }[] = [];
     readonly activeWrites: unknown[] = [];
     yieldResult = true;
@@ -439,6 +467,10 @@ class Harness {
             registerShortcut: (name, text, sequence, handler) => {
                 this.shortcuts.push({ name, text, sequence, handler });
                 return this.shortcutResults.shift() ?? this.shortcutResult;
+            },
+            readConfig: (key, defaultValue) => {
+                const stored = this.configValues.get(key);
+                return stored === undefined ? defaultValue : stored;
             },
             log: (message) => {
                 if (this.throwOnLog) {
@@ -1372,7 +1404,7 @@ describe("TileController keyboard focus", () => {
         ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+H"],
         ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+J"],
         ["up", "plasma-auto-tiler-focus-up", "Focus window up", "Meta+K"],
-        ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+Alt+Ctrl+L"],
+        ["right", "plasma-auto-tiler-focus-right", "Focus window right", "Meta+L"],
     ];
     const focusArrowActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-focus-left-arrow", "Focus window left (arrow)", "Meta+Left"],
@@ -1380,50 +1412,34 @@ describe("TileController keyboard focus", () => {
         ["up", "plasma-auto-tiler-focus-up-arrow", "Focus window up (arrow)", "Meta+Up"],
         ["right", "plasma-auto-tiler-focus-right-arrow", "Focus window right (arrow)", "Meta+Right"],
     ];
-    const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
-        ["left", "plasma-auto-tiler-move-left", "Move window left", "Meta+Shift+H"],
-        ["down", "plasma-auto-tiler-move-down", "Move window down", "Meta+Shift+J"],
-        ["up", "plasma-auto-tiler-move-up", "Move window up", "Meta+Shift+K"],
-        ["right", "plasma-auto-tiler-move-right", "Move window right", "Meta+Shift+L"],
-    ];
-    const moveArrowActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
-        ["left", "plasma-auto-tiler-move-left-arrow", "Move window left (arrow)", "Meta+Shift+Left"],
-        ["down", "plasma-auto-tiler-move-down-arrow", "Move window down (arrow)", "Meta+Shift+Down"],
-        ["up", "plasma-auto-tiler-move-up-arrow", "Move window up (arrow)", "Meta+Shift+Up"],
-        ["right", "plasma-auto-tiler-move-right-arrow", "Move window right (arrow)", "Meta+Shift+Right"],
-    ];
     const presetActions: ReadonlyArray<readonly [string, string, string]> = [
         ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
         ["plasma-auto-tiler-apply-rows", "Apply rows in focused leaf", "Meta+Alt+2"],
         ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
         ["plasma-auto-tiler-apply-dwindle", "Apply dwindle in focused leaf", "Meta+Alt+4"],
     ];
-    const workspaceActions: ReadonlyArray<readonly [string, string, string]> = [
-        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(
-            (index) => [`plasma-auto-tiler-workspace-${index}`, `Focus workspace ${index}`, `Meta+${index}`] as const,
-        ),
-        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].map(
-            (index) =>
-                [`plasma-auto-tiler-move-workspace-${index}`, `Move window to workspace ${index}`, `Meta+Shift+${index}`] as const,
-        ),
-        ["plasma-auto-tiler-workspace-append", "Append and focus a new workspace", "Meta+0"],
-        ["plasma-auto-tiler-move-workspace-append", "Move window to a newly appended workspace", "Meta+Shift+0"],
+    // The keyboard-focus suite uses only the focus families for its guard loop;
+    // move/workspace registrations are catalog-derived and asserted through the
+    // binding-profile-catalog suite and the actionCatalog set.
+    const projectActionCatalog: ReadonlyArray<readonly [string, string, string]> = [
+        ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
+        ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
+        ["plasma-auto-tiler-sticky-toggle", "Toggle sticky floating on all desktops", "Meta+Shift+G"],
+        ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
     ];
+    // Expected registration is catalog-driven: the selected profile's own
+    // non-deferred rows whose actionId has an implemented callback, in catalog
+    // order, plus the fixed project-only rows. Meta+0 is deferred and never
+    // registered; Meta+Shift+0 (move-workspace-0) is a registered catalog row.
+    const catalogActionCatalog: ReadonlyArray<readonly [string, string, string]> = PROFILE_CATALOGS.cosmic.rows
+        .filter((row) => row.classification !== "deferred" && REGISTERED_PROFILE_ACTION_IDS.has(row.actionId))
+        .map((row) => [row.shortcutId, row.text, row.sequence] as const);
 
     const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
         ...insertActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ...focusActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ...focusArrowActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ...moveActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ...moveArrowActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
-        ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
-        ["plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+G"],
-        ["plasma-auto-tiler-sticky-toggle", "Toggle sticky floating on all desktops", "Meta+Shift+G"],
-        ["plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M"],
-        ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
+        ...catalogActionCatalog,
+        ...projectActionCatalog,
         ...presetActions,
-        ...workspaceActions,
     ];
 
     it("registers the exact current action catalog in order", () => {
@@ -1448,22 +1464,7 @@ describe("TileController keyboard focus", () => {
             assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
             assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
             const baseline = harness.logs.length;
-            for (const [, name] of insertActions) {
-                invokeShortcut(harness, name);
-            }
-            for (const [, name] of [...focusActions, ...focusArrowActions, ...moveActions, ...moveArrowActions]) {
-                invokeShortcut(harness, name);
-            }
-            invokeShortcut(harness, "plasma-auto-tiler-detach");
-            invokeShortcut(harness, "plasma-auto-tiler-attach");
-            invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
-            invokeShortcut(harness, "plasma-auto-tiler-sticky-toggle");
-            invokeShortcut(harness, "plasma-auto-tiler-maximize");
-            invokeShortcut(harness, "plasma-auto-tiler-fill-scope");
-            for (const [name] of presetActions) {
-                invokeShortcut(harness, name);
-            }
-            for (const [name] of workspaceActions) {
+            for (const [name] of actionCatalog) {
                 invokeShortcut(harness, name);
             }
             harness.emitAdded(window());
@@ -1663,6 +1664,25 @@ describe("TileController keyboard focus", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
         assert.equal(state.controller.isEnabled, true);
         assert.deepEqual(state.harness.activeWrites, [state.neighborWindow]);
+    });
+
+    it("bails focus with the specific reason for fullscreen, sticky, and maximized active windows", () => {
+        const gates: ReadonlyArray<{ readonly label: string; readonly configure: (state: ReturnType<typeof focusSetup>) => void }> = [
+            { label: "focus-rejected:fullscreen", configure: (state) => setFullscreen(state.focused, true) },
+            { label: "focus-rejected:sticky", configure: (state) => setSticky(state.focused, true) },
+            { label: "focus-rejected:maximized", configure: (state) => setMaximized(state.focused, 3) },
+        ];
+        for (const gate of gates) {
+            const state = focusSetup("right");
+            const baseline = state.harness.logs.length;
+            gate.configure(state);
+            invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+            assert.deepEqual(state.harness.activeWrites, []);
+            assert.deepEqual(
+                state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:focus-")),
+                ["plasma-auto-tiler:focus-invoked", `plasma-auto-tiler:${gate.label}`],
+            );
+        }
     });
 });
 
@@ -2000,6 +2020,24 @@ describe("TileController keyboard move", () => {
         invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
         assert.equal(state.controller.isEnabled, true);
         assert.equal(manages, 1);
+    });
+
+    it("bails move with the specific reason for sticky and maximized active windows", () => {
+        const gates: ReadonlyArray<{ readonly label: string; readonly configure: (state: ReturnType<typeof moveSetup>) => void }> = [
+            { label: "move-rejected:sticky", configure: (state) => setSticky(state.focused, true) },
+            { label: "move-rejected:maximized", configure: (state) => setMaximized(state.focused, 3) },
+        ];
+        for (const gate of gates) {
+            const state = moveSetup("right");
+            const baseline = state.harness.logs.length;
+            gate.configure(state);
+            invokeShortcut(state.harness, "plasma-auto-tiler-move-right");
+            assert.deepEqual(state.target.windows, []);
+            assert.deepEqual(
+                state.harness.logs.slice(baseline).filter((entry) => entry.startsWith("plasma-auto-tiler:move-")),
+                ["plasma-auto-tiler:move-invoked", `plasma-auto-tiler:${gate.label}`],
+            );
+        }
     });
 });
 
@@ -6437,6 +6475,289 @@ describe("TileController production diagnostics", () => {
     });
 });
 
+describe("TileController binding profile catalog", () => {
+    // Pinned upstream fixtures (retrieved 2026-08-14):
+    // - COSMIC: pop-os/cosmic-comp master data/keybindings.ron [C-KR]
+    // - Hyprland: hyprwm/Hyprland main example/hyprland.lua (the generated
+    //   default embeds exactly this example config)
+    // - bspwm: baskerville/bspwm master examples/sxhkdrc (canonical example;
+    //   bspwm ships no WM-enforced bindings)
+    const workspacePinned = (): ReadonlyArray<readonly [string, string]> =>
+        [1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => [`workspace-${index}`, `Meta+${index}`] as const);
+    const moveWorkspacePinned = (): ReadonlyArray<readonly [string, string]> =>
+        [1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => [`move-workspace-${index}`, `Meta+Shift+${index}`] as const);
+
+    const COSMIC_PINNED_EXACT: ReadonlyArray<readonly [string, string]> = [
+        ["focus-left", "Meta+H"],
+        ["focus-down", "Meta+J"],
+        ["focus-up", "Meta+K"],
+        ["focus-right", "Meta+L"],
+        ["focus-left-arrow", "Meta+Left"],
+        ["focus-down-arrow", "Meta+Down"],
+        ["focus-up-arrow", "Meta+Up"],
+        ["focus-right-arrow", "Meta+Right"],
+        ["move-left", "Meta+Shift+H"],
+        ["move-down", "Meta+Shift+J"],
+        ["move-up", "Meta+Shift+K"],
+        ["move-right", "Meta+Shift+L"],
+        ["move-left-arrow", "Meta+Shift+Left"],
+        ["move-down-arrow", "Meta+Shift+Down"],
+        ["move-up-arrow", "Meta+Shift+Up"],
+        ["move-right-arrow", "Meta+Shift+Right"],
+        ["float-toggle", "Meta+G"],
+        ["maximize", "Meta+M"],
+        ...workspacePinned(),
+        ...moveWorkspacePinned(),
+        ["move-workspace-0", "Meta+Shift+0"],
+        ["previous-workspace-up", "Meta+Ctrl+Up"],
+        ["previous-workspace-left", "Meta+Ctrl+Left"],
+        ["previous-workspace-h", "Meta+Ctrl+H"],
+        ["previous-workspace-k", "Meta+Ctrl+K"],
+        ["next-workspace-down", "Meta+Ctrl+Down"],
+        ["next-workspace-right", "Meta+Ctrl+Right"],
+        ["next-workspace-j", "Meta+Ctrl+J"],
+        ["next-workspace-l", "Meta+Ctrl+L"],
+        ["fullscreen", "Meta+F11"],
+        ["resize-mode-outwards", "Meta+R"],
+        ["resize-mode-inwards", "Meta+Shift+R"],
+        ["group-toggle", "Meta+S"],
+    ];
+
+    const HYPRLAND_PINNED_EXACT: ReadonlyArray<readonly [string, string]> = [
+        ["focus-left-arrow", "Meta+Left"],
+        ["focus-down-arrow", "Meta+Down"],
+        ["focus-up-arrow", "Meta+Up"],
+        ["focus-right-arrow", "Meta+Right"],
+        ["float-toggle", "Meta+V"],
+        ...workspacePinned(),
+        ...moveWorkspacePinned(),
+        ["move-workspace-0", "Meta+Shift+0"],
+    ];
+
+    const HYPRLAND_PINNED_ALIASES: ReadonlyArray<readonly [string, string]> = [
+        ["focus-left", "Meta+H"],
+        ["focus-down", "Meta+J"],
+        ["focus-up", "Meta+K"],
+        ["focus-right", "Meta+L"],
+        ["move-left", "Meta+Shift+H"],
+        ["move-down", "Meta+Shift+J"],
+        ["move-up", "Meta+Shift+K"],
+        ["move-right", "Meta+Shift+L"],
+        ["move-left-arrow", "Meta+Shift+Left"],
+        ["move-down-arrow", "Meta+Shift+Down"],
+        ["move-up-arrow", "Meta+Shift+Up"],
+        ["move-right-arrow", "Meta+Shift+Right"],
+    ];
+
+    const BSPWM_PINNED_CANONICAL: ReadonlyArray<readonly [string, string]> = [
+        ["focus-left", "Meta+H"],
+        ["focus-down", "Meta+J"],
+        ["focus-up", "Meta+K"],
+        ["focus-right", "Meta+L"],
+        ["move-left", "Meta+Shift+H"],
+        ["move-down", "Meta+Shift+J"],
+        ["move-up", "Meta+Shift+K"],
+        ["move-right", "Meta+Shift+L"],
+        ...workspacePinned(),
+        ...moveWorkspacePinned(),
+        ["move-workspace-0", "Meta+Shift+0"],
+        ["previous-workspace", "Meta+BracketLeft"],
+        ["next-workspace", "Meta+BracketRight"],
+        ["float-toggle", "Meta+S"],
+        ["fullscreen", "Meta+F"],
+        ["resize-expand-left", "Meta+Alt+H"],
+        ["resize-expand-down", "Meta+Alt+J"],
+        ["resize-expand-up", "Meta+Alt+K"],
+        ["resize-expand-right", "Meta+Alt+L"],
+        ["resize-contract-left", "Meta+Alt+Shift+H"],
+        ["resize-contract-down", "Meta+Alt+Shift+J"],
+        ["resize-contract-up", "Meta+Alt+Shift+K"],
+        ["resize-contract-right", "Meta+Alt+Shift+L"],
+    ];
+
+    // Project-required arrow aliases for the directional families. bspwm's
+    // sxhkdrc ships no arrow focus and its only arrow binding (super+{Left,..}
+    // bspc node -v) is a floating-window nudge, not the tiled move/swap action,
+    // so the arrow rows are project parity aliases, never canonical-example.
+    const BSPWM_PINNED_ALIASES: ReadonlyArray<readonly [string, string]> = [
+        ["focus-left-arrow", "Meta+Left"],
+        ["focus-down-arrow", "Meta+Down"],
+        ["focus-up-arrow", "Meta+Up"],
+        ["focus-right-arrow", "Meta+Right"],
+        ["move-left-arrow", "Meta+Shift+Left"],
+        ["move-down-arrow", "Meta+Shift+Down"],
+        ["move-up-arrow", "Meta+Shift+Up"],
+        ["move-right-arrow", "Meta+Shift+Right"],
+    ];
+
+    function projected(
+        catalog: ProfileCatalog,
+        classification: RowClassification,
+    ): ReadonlyArray<readonly [string, string]> {
+        return catalog.rows
+            .filter((row) => row.classification === classification)
+            .map((row) => [row.actionId, row.sequence] as const);
+    }
+
+    it("pins the cosmic catalog exactly to its upstream fixture, with only Meta+0 deferred", () => {
+        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "exact"), COSMIC_PINNED_EXACT);
+        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "compatibility-alias"), []);
+        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "deferred"), [["workspace-0", "Meta+0"]]);
+    });
+
+    it("pins the hyprland catalog to its upstream default plus explicitly-classified parity aliases", () => {
+        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "exact"), HYPRLAND_PINNED_EXACT);
+        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "compatibility-alias"), HYPRLAND_PINNED_ALIASES);
+        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "deferred"), [["workspace-0", "Meta+0"]]);
+    });
+
+    it("pins the bspwm catalog to its canonical sxhkdrc rows plus project parity arrow aliases", () => {
+        assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "canonical-example"), BSPWM_PINNED_CANONICAL);
+        assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "compatibility-alias"), BSPWM_PINNED_ALIASES);
+        assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "deferred"), [["workspace-0", "Meta+0"]]);
+    });
+
+    it("classifies every row of every shipped profile", () => {
+        for (const profile of Object.values(PROFILE_CATALOGS)) {
+            for (const row of profile.rows) {
+                assert.equal(
+                    ["exact", "canonical-example", "compatibility-alias", "deferred"].includes(row.classification),
+                    true,
+                    `${profile.key}:${row.shortcutId}`,
+                );
+            }
+        }
+    });
+
+    it("validates every shipped profile with zero in-profile duplicate sequences or ID conflicts", () => {
+        for (const profile of Object.values(PROFILE_CATALOGS)) {
+            const validation = validateProfile(profile);
+            assert.equal(validation.ok, true, profile.key);
+            assert.deepEqual(validation.duplicateSequences, [], profile.key);
+            assert.deepEqual(validation.shortcutIdConflicts, [], profile.key);
+        }
+    });
+
+    it("rejects duplicate effective sequences and names both conflicting action IDs", () => {
+        const conflicting = validateProfile({
+            key: "cosmic",
+            name: "COSMIC",
+            rows: [
+                ...PROFILE_CATALOGS.cosmic.rows.filter((row) => row.classification !== "deferred"),
+                { ...PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "focus-right")!, shortcutId: "duplicate-row" },
+            ],
+        });
+        assert.equal(conflicting.ok, false);
+        assert.deepEqual(conflicting.duplicateSequences, [
+            { sequence: "Meta+L", actionIds: ["focus-right", "focus-right"] },
+        ]);
+    });
+
+    it("rejects duplicate shortcut names and reports both conflicting action IDs", () => {
+        const conflicting = validateProfile({
+            key: "cosmic",
+            name: "COSMIC",
+            rows: [
+                ...PROFILE_CATALOGS.cosmic.rows,
+                { ...PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "maximize")!, shortcutId: "plasma-auto-tiler-float-toggle" },
+            ],
+        });
+        assert.equal(conflicting.ok, false);
+        assert.deepEqual(conflicting.shortcutIdConflicts, [
+            { shortcutId: "plasma-auto-tiler-float-toggle", actionIds: ["float-toggle", "maximize"] },
+        ]);
+    });
+
+    it("selects the cosmic catalog when the config is absent and when it is invalid, with a diagnostic only for invalid", () => {
+        assert.deepEqual(selectProfile(undefined).profile, PROFILE_CATALOGS.cosmic);
+        assert.deepEqual(selectProfile(undefined).diagnostics, []);
+        assert.deepEqual(selectProfile(null).profile, PROFILE_CATALOGS.cosmic);
+        assert.deepEqual(selectProfile("").profile, PROFILE_CATALOGS.cosmic);
+        assert.deepEqual(selectProfile("cosmic").profile, PROFILE_CATALOGS.cosmic);
+        assert.deepEqual(selectProfile("hyprland").profile, PROFILE_CATALOGS.hyprland);
+        assert.deepEqual(selectProfile("bspwm").profile, PROFILE_CATALOGS.bspwm);
+        const invalid = selectProfile("not-a-profile");
+        assert.deepEqual(invalid.profile, PROFILE_CATALOGS.cosmic);
+        assert.deepEqual(invalid.diagnostics, ["profile-invalid:fallback-cosmic"]);
+    });
+
+    it("applies user override > selected baseline > profile default without touching the catalog default", () => {
+        const overrides = new ShortcutOverrides();
+        overrides.set("focus-right", "Meta+Alt+L");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "focus-right", overrides), "Meta+Alt+L");
+        // Switch the selected baseline; the override survives and still wins.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "focus-right", overrides), "Meta+Alt+L");
+        // Without an override the baseline wins; the catalog default is untouched.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "focus-right"), "Meta+L");
+        assert.equal(
+            PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "focus-right")?.sequence,
+            "Meta+L",
+        );
+        // A baseline row wins over the cosmic profile default.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "float-toggle"), "Meta+V");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.bspwm, "float-toggle"), "Meta+S");
+        // An action the selected profile lacks falls back to the cosmic profile default.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "maximize"), "Meta+M");
+        // Unknown actions resolve to null.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "no-such-action"), null);
+    });
+
+    it("registers the selected profile's catalog rows and never registers Meta+0", () => {
+        const cosmic = new Harness();
+        new TileController(cosmic.environment()).start();
+        const cosmicSequences = new Map(cosmic.shortcuts.map((entry) => [entry.name, entry.sequence]));
+        assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-left"), "Meta+H");
+        assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
+        assert.equal(cosmicSequences.get("plasma-auto-tiler-move-left"), "Meta+Shift+H");
+        assert.equal(cosmicSequences.has("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(cosmicSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
+        assert.equal(countEvent(cosmic.logs, "profile-invalid:fallback-cosmic"), 0);
+
+        const hyprland = new Harness();
+        hyprland.configValues.set("shortcutProfile", "hyprland");
+        new TileController(hyprland.environment()).start();
+        const hyprlandSequences = new Map(hyprland.shortcuts.map((entry) => [entry.name, entry.sequence]));
+        assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right-arrow"), "Meta+Right");
+        assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
+        assert.equal(hyprlandSequences.get("plasma-auto-tiler-float-toggle"), "Meta+V");
+        assert.equal(hyprlandSequences.has("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(hyprlandSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
+
+        const invalid = new Harness();
+        invalid.configValues.set("shortcutProfile", "bogus");
+        new TileController(invalid.environment()).start();
+        const invalidSequences = new Map(invalid.shortcuts.map((entry) => [entry.name, entry.sequence]));
+        assert.equal(invalidSequences.get("plasma-auto-tiler-focus-left"), "Meta+H");
+        assert.equal(countEvent(invalid.logs, "profile-invalid:fallback-cosmic"), 1);
+    });
+
+    it("registers every alias under a distinct shortcut ID and Meta+0 never registers in any profile", () => {
+        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
+            const harness = new Harness();
+            harness.configValues.set("shortcutProfile", key);
+            new TileController(harness.environment()).start();
+            const names = harness.shortcuts.map((entry) => entry.name);
+            assert.equal(new Set(names).size, names.length, key);
+            assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false, key);
+            assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
+        }
+    });
+
+    it("documents the script-local registration boundary without claiming Plasma-global takeover", () => {
+        // Spec H.16: script-local registration is evidence of attempted
+        // registration only; no v1 behavior displaces or reassigns a Plasma
+        // global shortcut. The controller emits no migration diagnostic and the
+        // aggregate gate only reflects registerShortcut results.
+        const { harness } = setup();
+        for (const entry of harness.logs) {
+            assert.equal(entry.includes("displaced"), false);
+            assert.equal(entry.includes("migrated"), false);
+            assert.equal(entry.includes("kglobalshortcutsrc"), false);
+        }
+        assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
+    });
+});
+
 describe("TileController shortcut registration", () => {
     it("captures the result and emits one fixed success diagnostic before readiness", () => {
         const { harness } = setup();
@@ -6469,61 +6790,29 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers the exact 50-action all-or-nothing catalog", () => {
+    it("registers exactly the catalog-driven all-or-nothing action set with no Meta+0", () => {
         const { harness } = setup();
-        const names = harness.shortcuts.map((entry) => entry.name).sort();
-        assert.deepEqual(names, [
-            "plasma-auto-tiler-apply-balanced-grid",
-            "plasma-auto-tiler-apply-columns",
-            "plasma-auto-tiler-apply-dwindle",
-            "plasma-auto-tiler-apply-rows",
-            "plasma-auto-tiler-attach",
-            "plasma-auto-tiler-detach",
-            "plasma-auto-tiler-fill-scope",
-            "plasma-auto-tiler-float-toggle",
-            "plasma-auto-tiler-focus-down",
-            "plasma-auto-tiler-focus-down-arrow",
-            "plasma-auto-tiler-focus-left",
-            "plasma-auto-tiler-focus-left-arrow",
-            "plasma-auto-tiler-focus-right",
-            "plasma-auto-tiler-focus-right-arrow",
-            "plasma-auto-tiler-focus-up",
-            "plasma-auto-tiler-focus-up-arrow",
-            "plasma-auto-tiler-insert-down",
-            "plasma-auto-tiler-insert-left",
+        const expected = new Set<string>([
+            ...PROFILE_CATALOGS.cosmic.rows
+                .filter((row) => row.classification !== "deferred" && REGISTERED_PROFILE_ACTION_IDS.has(row.actionId))
+                .map((row) => row.shortcutId),
             "plasma-auto-tiler-insert-right",
+            "plasma-auto-tiler-insert-left",
             "plasma-auto-tiler-insert-up",
-            "plasma-auto-tiler-maximize",
-            "plasma-auto-tiler-move-down",
-            "plasma-auto-tiler-move-down-arrow",
-            "plasma-auto-tiler-move-left",
-            "plasma-auto-tiler-move-left-arrow",
-            "plasma-auto-tiler-move-right",
-            "plasma-auto-tiler-move-right-arrow",
-            "plasma-auto-tiler-move-up",
-            "plasma-auto-tiler-move-up-arrow",
-            "plasma-auto-tiler-move-workspace-1",
-            "plasma-auto-tiler-move-workspace-2",
-            "plasma-auto-tiler-move-workspace-3",
-            "plasma-auto-tiler-move-workspace-4",
-            "plasma-auto-tiler-move-workspace-5",
-            "plasma-auto-tiler-move-workspace-6",
-            "plasma-auto-tiler-move-workspace-7",
-            "plasma-auto-tiler-move-workspace-8",
-            "plasma-auto-tiler-move-workspace-9",
-            "plasma-auto-tiler-move-workspace-append",
+            "plasma-auto-tiler-insert-down",
+            "plasma-auto-tiler-detach",
+            "plasma-auto-tiler-attach",
             "plasma-auto-tiler-sticky-toggle",
-            "plasma-auto-tiler-workspace-1",
-            "plasma-auto-tiler-workspace-2",
-            "plasma-auto-tiler-workspace-3",
-            "plasma-auto-tiler-workspace-4",
-            "plasma-auto-tiler-workspace-5",
-            "plasma-auto-tiler-workspace-6",
-            "plasma-auto-tiler-workspace-7",
-            "plasma-auto-tiler-workspace-8",
-            "plasma-auto-tiler-workspace-9",
-            "plasma-auto-tiler-workspace-append",
+            "plasma-auto-tiler-fill-scope",
+            "plasma-auto-tiler-apply-columns",
+            "plasma-auto-tiler-apply-rows",
+            "plasma-auto-tiler-apply-balanced-grid",
+            "plasma-auto-tiler-apply-dwindle",
         ]);
+        const names = harness.shortcuts.map((entry) => entry.name).sort();
+        assert.deepEqual(names, [...expected].sort());
+        assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true);
     });
 
     it("disables atomically when any single new directional insertion registration fails", () => {
@@ -10020,14 +10309,14 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("Meta+0 focuses an existing script-owned trailing empty without duplicate creation", () => {
-        const { harness } = setup();
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        const { harness, controller } = setup();
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         assert.equal(countEvent(harness.logs, "workspace-append-completed"), 1);
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         // Repeated Meta+0 on the trailing empty focuses it without appending.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         assert.equal(countEvent(harness.logs, "workspace-append-focused-existing"), 2);
         assert.equal(countEvent(harness.logs, "workspace-created-owned"), 1);
@@ -10038,7 +10327,7 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("cleanup removes excess owned empty trailing desktops, keeping exactly one trailing empty", () => {
-        const { harness, target, focused } = setup();
+        const { harness, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -10046,7 +10335,7 @@ describe("TileController dynamic virtual desktops", () => {
         };
         // Meta+0 creates the trailing owned empty; moving the floating window
         // into it makes reconciliation append a replacement.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
@@ -10290,9 +10579,9 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("reports an append create failure without navigating or owning", () => {
-        const { harness } = setup();
+        const { harness, controller } = setup();
         harness.createDesktopThrows = new Error("create-failed");
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
         assert.equal(harness.createDesktopCalls.length, 0);
         assert.equal(harness.currentDesktopWrites.length, 0);
@@ -10339,7 +10628,7 @@ describe("TileController dynamic virtual desktops", () => {
         };
         // Reach [desktop-1(occupied), desktop-2(owned empty)] then occupy the
         // trailing empty so a replacement desktop-3 is appended.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
@@ -10362,7 +10651,7 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("defers desktop mutation during a live drag and performs it after drag completion", () => {
-        const { harness, root, target, focused } = setup();
+        const { harness, root, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -10377,7 +10666,7 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
         // Meta+0 while the drag is live defers the desktop creation: nothing is
         // created and no desktop list mutation occurs.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(countEvent(harness.logs, "workspace-create-deferred:navigate"), 1);
         assert.equal(harness.createDesktopCalls.length, 0);
         // Shift+0 while the drag is live defers the whole move: the window does
@@ -10438,7 +10727,7 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
         // Meta+0 while the reconstruction is pending defers the desktop
         // creation: nothing is created and no desktop list mutation occurs.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(countEvent(harness.logs, "workspace-create-deferred:navigate"), 1);
         assert.equal(harness.createDesktopCalls.length, 0);
         // Shift+0 while the reconstruction is pending defers the whole move.
@@ -10465,7 +10754,7 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("Meta+0 focuses the trailing-most owned empty when stale excess exists", () => {
-        const { harness, target, focused } = setup();
+        const { harness, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -10474,7 +10763,7 @@ describe("TileController dynamic virtual desktops", () => {
         // Build [desktop-1(occupied), desktop-2(occupied), desktop-3(owned
         // empty)]: Meta+0 then occupy the trailing empty so a replacement is
         // replenished.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
@@ -10487,7 +10776,7 @@ describe("TileController dynamic virtual desktops", () => {
         harness.currentDesktopValue = DESKTOP;
         // Meta+0 must focus the trailing-most owned empty (desktop-3), the one
         // cleanup would retain, never the removable desktop-2.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(countEvent(harness.logs, "workspace-append-focused-existing"), 1);
         assert.equal(harness.createDesktopCalls.length, 2);
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-3");
@@ -10503,7 +10792,7 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("Shift+0 moves into the trailing empty then appends a replacement after it settles", () => {
-        const { harness, root, target, focused } = setup();
+        const { harness, root, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -10514,7 +10803,7 @@ describe("TileController dynamic virtual desktops", () => {
             return true;
         };
         // Meta+0 creates the sole trailing owned empty.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
@@ -10548,8 +10837,8 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("an occupancy event on the trailing empty replenishes a replacement", () => {
-        const { harness } = setup();
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        const { harness, controller } = setup();
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         // A window arrives on the trailing empty: it is now occupied, so the
         // occupancy reconciliation must replenish a replacement once the
@@ -10576,13 +10865,13 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("reconciliation is idempotent under repeated triggers", () => {
-        const { harness, target, focused } = setup();
+        const { harness, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
             return true;
         };
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         // The focused trailing empty stays empty: repeated reconciliation
         // neither appends duplicates nor removes it.
@@ -10616,7 +10905,7 @@ describe("TileController dynamic virtual desktops", () => {
             target.windows = [];
             return true;
         };
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         // The trailing empty becomes occupied and the replacement create fails:
         // the failure is non-destructive, specifically logged, and the valid
@@ -10636,7 +10925,7 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("cleanup never deletes pre-existing, current, or visible desktops", () => {
-        const { harness, target, focused } = setup();
+        const { harness, target, focused, controller } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -10653,7 +10942,7 @@ describe("TileController dynamic virtual desktops", () => {
         harness.nextDesktopNumber = 3;
         // Meta+0 appends the trailing owned empty (desktop-4); desktop-2 and
         // desktop-3 are pre-existing and never owned.
-        invokeShortcut(harness, "plasma-auto-tiler-workspace-append");
+        controller.appendWorkspace();
         assert.equal(harness.createDesktopCalls.length, 1);
         // Occupy it and replenish: [desktop-1(occupied), 2, 3,
         // desktop-4(occupied), desktop-5(owned empty)].

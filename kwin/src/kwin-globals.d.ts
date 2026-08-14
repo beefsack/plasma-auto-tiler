@@ -22,6 +22,13 @@ declare function registerShortcut(
     callback: () => void,
 ): boolean;
 
+// KWin scripting API -> Global -> Functions:
+//     QVariant readConfig(QString key, QVariant defaultValue = QVariant())
+// Reads the script's config value for key; without a default and with no stored
+// value an undefined value is returned. Used here only for the selected
+// shortcut-profile key; no other script configuration is read.
+declare function readConfig(key: string, defaultValue?: unknown): unknown;
+
 // src/scripting/scripting.h:
 //     Q_INVOKABLE void callDBus(const QString &service, const QString &path,
 //                               const QString &interface, const QString &method,

@@ -4,7 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const EXPECTED_SHORTCUT_COUNT = 50;
+const EXPECTED_SHORTCUT_COUNT = 49;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
@@ -104,6 +104,7 @@ function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult
             registeredShortcuts.push([name, text, sequence]);
             return true;
         },
+        readConfig: () => undefined,
         callDBus: () => {},
         QTimer: function QTimer() {},
         console: { ...console, log: (message: string) => diagnostics.push(message) },

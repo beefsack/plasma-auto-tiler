@@ -67,6 +67,9 @@ const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
 // split produces two equal halves; when either half falls below this floor KWin
 // clamps the children and corrupts the geometry, so the split must be refused.
 const MINIMUM_TILE_FRACTION = 0.15;
+// Fixed direct resize step: each Meta+Ctrl+H/J/K/L press moves the nearest
+// relevant ancestor split's shared edge by this fraction of the parent extent.
+const RESIZE_STEP_FRACTION = 0.05;
 // src/scripting/workspace_wrapper.h ClientAreaOption ordering: PlacementArea=0,
 // MovementArea=1, MaximizeArea=2, MaximizeFullArea=3, FullScreenArea=4,
 // WorkArea=5, FullArea=6, ScreenArea=7. WorkArea is the per-output working area
@@ -87,6 +90,345 @@ const DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
 // collapsed awaiting-split scope retrying forever instead of reaching the
 // session-local inert state.
 const MAX_YIELD_REARM_PER_PHASE = 2;
+
+// ==== Binding profile catalog and validation (Unit 01) ====
+//
+// Typed profile/action/sequence catalog for the three reference-WM baselines.
+// Every row is classified: `exact` is the reference WM's own shipped default
+// for that action; `canonical-example` is a canonical shipped example config
+// (bspwm ships no WM-enforced bindings, so its `examples/sxhkdrc` is the
+// baseline); `compatibility-alias` is a project-added parity binding the
+// reference does not ship; `deferred` is deliberately unbound in this change
+// (only Meta+0). Rows never silently displace an exact row of the same profile;
+// the validator rejects such in-profile duplicate sequences.
+
+export type ProfileKey = "cosmic" | "hyprland" | "bspwm";
+export type RowClassification = "exact" | "canonical-example" | "compatibility-alias" | "deferred";
+
+export interface CatalogRow {
+    readonly actionId: string;
+    readonly shortcutId: string;
+    readonly text: string;
+    readonly sequence: string;
+    readonly classification: RowClassification;
+    readonly reference: string;
+}
+
+export interface ProfileCatalog {
+    readonly key: ProfileKey;
+    readonly name: string;
+    readonly rows: readonly CatalogRow[];
+}
+
+// Selected-profile config key read through the KWin `readConfig` seam.
+// Absent or invalid selects the cosmic default; invalid also emits a
+// diagnostic. Only the selected baseline's own rows drive registration in this
+// unit; the user-override > baseline > profile-default precedence is a model
+// seam, not a KGlobalAccel migration (spec I).
+export const DEFAULT_PROFILE: ProfileKey = "cosmic";
+export const SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
+export const PROFILE_KEYS: readonly ProfileKey[] = Object.freeze(["cosmic", "hyprland", "bspwm"]);
+
+const COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
+const HYPRLAND_REF = "[H-Ex] Hyprland example/hyprland.lua";
+const BSPWM_REF = "[B1-EX] bspwm examples/sxhkdrc";
+
+const HJKL_KEYS: ReadonlyArray<readonly [Direction, string]> = Object.freeze([
+    ["left", "H"],
+    ["down", "J"],
+    ["up", "K"],
+    ["right", "L"],
+]);
+const ARROW_KEYS: ReadonlyArray<readonly [Direction, string]> = Object.freeze([
+    ["left", "Left"],
+    ["down", "Down"],
+    ["up", "Up"],
+    ["right", "Right"],
+]);
+
+function catalogRow(
+    actionId: string,
+    shortcutId: string,
+    text: string,
+    sequence: string,
+    classification: RowClassification,
+    reference: string,
+): CatalogRow {
+    return Object.freeze({ actionId, shortcutId, text, sequence, classification, reference });
+}
+
+// A directional family: HJKL (no suffix) or arrow (`-arrow` suffix) rows for
+// the given action prefix. Arrow rows are distinct action IDs so each alias
+// registers under a distinct shortcut ID.
+function directional(
+    actionPrefix: string,
+    textPrefix: string,
+    modifiers: string,
+    suffix: "" | "arrow",
+    keys: ReadonlyArray<readonly [Direction, string]>,
+    classification: RowClassification,
+    reference: string,
+): readonly CatalogRow[] {
+    return keys.map(([direction, key]) =>
+        catalogRow(
+            `${actionPrefix}-${direction}${suffix === "" ? "" : `-${suffix}`}`,
+            `plasma-auto-tiler-${actionPrefix}-${direction}${suffix === "" ? "" : `-${suffix}`}`,
+            `${textPrefix} ${direction}${suffix === "" ? "" : ` (${suffix})`}`,
+            `${modifiers}+${key}`,
+            classification,
+            reference,
+        ),
+    );
+}
+
+function workspaceRows(
+    classification: RowClassification,
+    reference: string,
+): readonly CatalogRow[] {
+    const rows: CatalogRow[] = [];
+    for (let index = 1; index <= 9; index += 1) {
+        rows.push(
+            catalogRow(
+                `workspace-${index}`,
+                `plasma-auto-tiler-workspace-${index}`,
+                `Focus workspace ${index}`,
+                `Meta+${index}`,
+                classification,
+                reference,
+            ),
+        );
+    }
+    for (let index = 1; index <= 9; index += 1) {
+        rows.push(
+            catalogRow(
+                `move-workspace-${index}`,
+                `plasma-auto-tiler-move-workspace-${index}`,
+                `Move window to workspace ${index}`,
+                `Meta+Shift+${index}`,
+                classification,
+                reference,
+            ),
+        );
+    }
+    return rows;
+}
+
+// The Meta+0 deferred row is present in every profile catalog but never
+// registers and never gets a handler surface.
+function deferredWorkspaceZeroRow(reference: string): CatalogRow {
+    return catalogRow(
+        "workspace-0",
+        "plasma-auto-tiler-workspace-append",
+        "Append and focus a new workspace",
+        "Meta+0",
+        "deferred",
+        `deferred: ${reference}`,
+    );
+}
+
+function moveWorkspaceZeroRow(reference: string, classification: RowClassification = "exact"): CatalogRow {
+    return catalogRow(
+        "move-workspace-0",
+        "plasma-auto-tiler-move-workspace-append",
+        "Move window to a newly appended workspace",
+        "Meta+Shift+0",
+        classification,
+        reference,
+    );
+}
+
+const COSMIC_ROWS: readonly CatalogRow[] = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "exact", `${COSMIC_REF} Move(Left/Down/Up/Right)`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Move(Left/Down/Up/Right)`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+G", "exact", `${COSMIC_REF} ToggleWindowFloating`),
+    catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
+    ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
+    moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
+    deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
+    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "exact", `${COSMIC_REF} Fullscreen`),
+    catalogRow("resize-mode-outwards", "plasma-auto-tiler-resize-mode-outwards", "Enter split resize mode (grow)", "Meta+R", "exact", `${COSMIC_REF} Resizing(Outwards)`),
+    catalogRow("resize-mode-inwards", "plasma-auto-tiler-resize-mode-inwards", "Enter split resize mode (shrink)", "Meta+Shift+R", "exact", `${COSMIC_REF} Resizing(Inwards)`),
+    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "exact", `${COSMIC_REF} ToggleStacking (reserved)`),
+]);
+
+const HYPRLAND_ROWS: readonly CatalogRow[] = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${HYPRLAND_REF} mainMod+left/right/up/down focus`),
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "compatibility-alias", `${HYPRLAND_REF} no HJKL default; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "compatibility-alias", `${HYPRLAND_REF} no keyboard move default; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${HYPRLAND_REF} no keyboard move default; project parity alias`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
+    ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
+    moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
+    deferredWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`),
+]);
+
+const BSPWM_ROWS: readonly CatalogRow[] = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+{h,j,k,l} bspc node -f {west,south,north,east}`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+shift+{h,j,k,l} bspc node -s`),
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} ships no arrow focus; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
+    ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
+    moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
+    deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
+    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "canonical-example", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local`),
+    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "canonical-example", `${BSPWM_REF} super+bracketright bspc desktop -f next.local`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "canonical-example", `${BSPWM_REF} super+f bspc node -t fullscreen`),
+    ...directional("resize-expand", "Resize window", "Meta+Alt", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+{h,j,k,l} bspc node -z`),
+    ...directional("resize-contract", "Resize window", "Meta+Alt+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+shift+{h,j,k,l} bspc node -z`),
+]);
+
+export const PROFILE_CATALOGS: Readonly<Record<ProfileKey, ProfileCatalog>> = Object.freeze({
+    cosmic: Object.freeze({ key: "cosmic", name: "COSMIC", rows: COSMIC_ROWS }),
+    hyprland: Object.freeze({ key: "hyprland", name: "Hyprland", rows: HYPRLAND_ROWS }),
+    bspwm: Object.freeze({ key: "bspwm", name: "bspwm", rows: BSPWM_ROWS }),
+});
+
+// Action IDs with an implemented controller callback in this unit. Only rows
+// whose actionId is in this set are registered from the selected catalog; all
+// other catalog rows are documented-only (Unit 02 implementations, or reserved
+// such as Meta+0 deferred). Kept beside `profileActions` in `start()` so the
+// registration contract stays in one place and tests can derive the exact
+// expected registered set from the catalog.
+export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
+    new Set([
+        ...["focus", "move"].flatMap((family) =>
+            ["left", "down", "up", "right"].flatMap((direction) => [
+                `${family}-${direction}`,
+                `${family}-${direction}-arrow`,
+            ]),
+        ),
+        "float-toggle",
+        "maximize",
+        "move-workspace-0",
+        ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
+            `workspace-${index}`,
+            `move-workspace-${index}`,
+        ]),
+    ]),
+);
+
+// Absent/null/empty selects the cosmic default without a diagnostic; a valid
+// profile name selects its own catalog; anything else selects cosmic with a
+// diagnostic. Deterministic and pure for the tests.
+export function selectProfile(value: unknown): {
+    readonly profile: ProfileCatalog;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "string" && (PROFILE_KEYS as readonly string[]).includes(value)) {
+        return { profile: PROFILE_CATALOGS[value as ProfileKey], diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze([]) };
+    }
+    return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze(["profile-invalid:fallback-cosmic"]) };
+}
+
+export interface SequenceConflict {
+    readonly sequence: string;
+    readonly actionIds: readonly [string, string];
+}
+
+export interface ShortcutIdConflict {
+    readonly shortcutId: string;
+    readonly actionIds: readonly [string, string];
+}
+
+export interface ProfileValidation {
+    readonly ok: boolean;
+    readonly duplicateSequences: readonly SequenceConflict[];
+    readonly shortcutIdConflicts: readonly ShortcutIdConflict[];
+}
+
+// Deterministic in-profile validator. Deferred rows (Meta+0) are never active
+// sequences and do not participate. Every duplicate effective sequence names
+// both conflicting action IDs, and every duplicate shortcut name reports its
+// conflicting action IDs, so registration failures stay attributable.
+export function validateProfile(catalog: ProfileCatalog): ProfileValidation {
+    const duplicateSequences: SequenceConflict[] = [];
+    const sequenceOwners = new Map<string, string>();
+    for (const row of catalog.rows) {
+        if (row.classification === "deferred") {
+            continue;
+        }
+        const owner = sequenceOwners.get(row.sequence);
+        if (owner !== undefined) {
+            duplicateSequences.push({ sequence: row.sequence, actionIds: [owner, row.actionId] });
+        } else {
+            sequenceOwners.set(row.sequence, row.actionId);
+        }
+    }
+    const shortcutIdConflicts: ShortcutIdConflict[] = [];
+    const idOwners = new Map<string, string>();
+    for (const row of catalog.rows) {
+        const owner = idOwners.get(row.shortcutId);
+        if (owner !== undefined) {
+            shortcutIdConflicts.push({ shortcutId: row.shortcutId, actionIds: [owner, row.actionId] });
+        } else {
+            idOwners.set(row.shortcutId, row.actionId);
+        }
+    }
+    return {
+        ok: duplicateSequences.length === 0 && shortcutIdConflicts.length === 0,
+        duplicateSequences: Object.freeze(duplicateSequences),
+        shortcutIdConflicts: Object.freeze(shortcutIdConflicts),
+    };
+}
+
+// User-override seam. A value set here takes precedence over the selected
+// profile baseline and over the cosmic profile default. It is a pure model
+// layer: no KGlobalAccel introspection or migration is claimed or implemented
+// in this change (spec I / plan Unit 01 acceptance 4).
+export class ShortcutOverrides {
+    private readonly values = new Map<string, string>();
+
+    get(actionId: string): string | undefined {
+        return this.values.get(actionId);
+    }
+
+    set(actionId: string, sequence: string): void {
+        this.values.set(actionId, sequence);
+    }
+
+    clear(): void {
+        this.values.clear();
+    }
+
+    get snapshot(): ReadonlyMap<string, string> {
+        return new Map(this.values);
+    }
+}
+
+// Precedence: user override > selected baseline > profile default (cosmic).
+// Returns null only when no layer defines the action.
+export function resolveSequence(
+    profile: ProfileCatalog,
+    actionId: string,
+    overrides?: ShortcutOverrides,
+): string | null {
+    const override = overrides?.get(actionId);
+    if (override !== undefined) {
+        return override;
+    }
+    const baseline = profile.rows.find((row) => row.actionId === actionId && row.classification !== "deferred");
+    if (baseline !== undefined) {
+        return baseline.sequence;
+    }
+    const fallback = PROFILE_CATALOGS[DEFAULT_PROFILE].rows.find(
+        (row) => row.actionId === actionId && row.classification !== "deferred",
+    );
+    return fallback === undefined ? null : fallback.sequence;
+}
 
 type BoundaryKind = "workspace-window-list" | "tile-children" | "tile-occupancy" | "split-result";
 
@@ -147,6 +489,7 @@ export interface ControllerEnvironment {
     readonly yieldOnce: (callback: () => void) => boolean;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly registerShortcut: (name: string, text: string, sequence: string, handler: () => void) => boolean;
+    readonly readConfig: (key: string, defaultValue: unknown) => unknown;
     readonly log: (message: string) => void;
 }
 
@@ -959,102 +1302,55 @@ export class TileController {
                 "Meta+Alt+Down",
                 () => this.armKeyboardInsertion("down"),
             );
-            const leftRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-left",
-                "Focus window left",
-                "Meta+H",
-                () => this.focusNeighbor("left"),
-            );
-            const downRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-down",
-                "Focus window down",
-                "Meta+J",
-                () => this.focusNeighbor("down"),
-            );
-            const upRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-up",
-                "Focus window up",
-                "Meta+K",
-                () => this.focusNeighbor("up"),
-            );
-            const rightRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-right",
-                "Focus window right",
-                "Meta+Alt+Ctrl+L",
-                () => this.focusNeighbor("right"),
-            );
-            const focusLeftArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-left-arrow",
-                "Focus window left (arrow)",
-                "Meta+Left",
-                () => this.focusNeighbor("left"),
-            );
-            const focusDownArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-down-arrow",
-                "Focus window down (arrow)",
-                "Meta+Down",
-                () => this.focusNeighbor("down"),
-            );
-            const focusUpArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-up-arrow",
-                "Focus window up (arrow)",
-                "Meta+Up",
-                () => this.focusNeighbor("up"),
-            );
-            const focusRightArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-focus-right-arrow",
-                "Focus window right (arrow)",
-                "Meta+Right",
-                () => this.focusNeighbor("right"),
-            );
-            const moveLeftRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-left",
-                "Move window left",
-                "Meta+Shift+H",
-                () => this.moveActiveWindow("left"),
-            );
-            const moveDownRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-down",
-                "Move window down",
-                "Meta+Shift+J",
-                () => this.moveActiveWindow("down"),
-            );
-            const moveUpRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-up",
-                "Move window up",
-                "Meta+Shift+K",
-                () => this.moveActiveWindow("up"),
-            );
-            const moveRightRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-right",
-                "Move window right",
-                "Meta+Shift+L",
-                () => this.moveActiveWindow("right"),
-            );
-            const moveLeftArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-left-arrow",
-                "Move window left (arrow)",
-                "Meta+Shift+Left",
-                () => this.moveActiveWindow("left"),
-            );
-            const moveDownArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-down-arrow",
-                "Move window down (arrow)",
-                "Meta+Shift+Down",
-                () => this.moveActiveWindow("down"),
-            );
-            const moveUpArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-up-arrow",
-                "Move window up (arrow)",
-                "Meta+Shift+Up",
-                () => this.moveActiveWindow("up"),
-            );
-            const moveRightArrowRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-right-arrow",
-                "Move window right (arrow)",
-                "Meta+Shift+Right",
-                () => this.moveActiveWindow("right"),
-            );
+            const profileActions: Record<string, () => void> = {
+                "focus-left": () => this.focusNeighbor("left"),
+                "focus-down": () => this.focusNeighbor("down"),
+                "focus-up": () => this.focusNeighbor("up"),
+                "focus-right": () => this.focusNeighbor("right"),
+                "focus-left-arrow": () => this.focusNeighbor("left"),
+                "focus-down-arrow": () => this.focusNeighbor("down"),
+                "focus-up-arrow": () => this.focusNeighbor("up"),
+                "focus-right-arrow": () => this.focusNeighbor("right"),
+                "move-left": () => this.moveActiveWindow("left"),
+                "move-down": () => this.moveActiveWindow("down"),
+                "move-up": () => this.moveActiveWindow("up"),
+                "move-right": () => this.moveActiveWindow("right"),
+                "move-left-arrow": () => this.moveActiveWindow("left"),
+                "move-down-arrow": () => this.moveActiveWindow("down"),
+                "move-up-arrow": () => this.moveActiveWindow("up"),
+                "move-right-arrow": () => this.moveActiveWindow("right"),
+                "float-toggle": () => this.floatActiveWindow(),
+                "maximize": () => this.maximizeActiveWindow(),
+            };
+            for (let index = 1; index <= 9; index += 1) {
+                profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
+                profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
+            }
+            profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+            const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
+            for (const diagnostic of selected.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            // Catalog-driven registration of the selected profile's rows. Deferred
+            // rows (Meta+0) and rows without a controller callback (Unit 02) are
+            // never registered; every registered alias keeps its distinct shortcut
+            // ID from the catalog.
+            const registrationResults: boolean[] = [];
+            for (const row of selected.profile.rows) {
+                if (row.classification === "deferred") {
+                    continue;
+                }
+                if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
+                    continue;
+                }
+                const callback = profileActions[row.actionId];
+                if (callback === undefined) {
+                    continue;
+                }
+                registrationResults.push(
+                    this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback),
+                );
+            }
             const detachRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-detach",
                 "Detach window from tile",
@@ -1067,23 +1363,11 @@ export class TileController {
                 "Meta+Alt+Shift+Space",
                 () => this.attachActiveWindow(),
             );
-            const floatRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-float-toggle",
-                "Float or tile active window",
-                "Meta+G",
-                () => this.floatActiveWindow(),
-            );
             const stickyRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-sticky-toggle",
                 "Toggle sticky floating on all desktops",
                 "Meta+Shift+G",
                 () => this.stickyActiveWindow(),
-            );
-            const maximizeRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-maximize",
-                "Maximize active window in its workspace",
-                "Meta+M",
-                () => this.maximizeActiveWindow(),
             );
             const fillScopeRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-fill-scope",
@@ -1115,73 +1399,20 @@ export class TileController {
                 "Meta+Alt+4",
                 () => this.applyPreset("dwindle"),
             );
-            const workspaceRegistrations: boolean[] = [];
-            for (let index = 1; index <= 9; index += 1) {
-                workspaceRegistrations.push(
-                    this.environment.registerShortcut(
-                        `plasma-auto-tiler-workspace-${index}`,
-                        `Focus workspace ${index}`,
-                        `Meta+${index}`,
-                        () => this.navigateWorkspace(index),
-                    ),
-                );
-            }
-            for (let index = 1; index <= 9; index += 1) {
-                workspaceRegistrations.push(
-                    this.environment.registerShortcut(
-                        `plasma-auto-tiler-move-workspace-${index}`,
-                        `Move window to workspace ${index}`,
-                        `Meta+Shift+${index}`,
-                        () => this.moveActiveToWorkspace(index),
-                    ),
-                );
-            }
-            const appendRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-workspace-append",
-                "Append and focus a new workspace",
-                "Meta+0",
-                () => this.appendWorkspace(),
-            );
-            const moveAppendRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-move-workspace-append",
-                "Move window to a newly appended workspace",
-                "Meta+Shift+0",
-                () => this.moveActiveToWorkspace(0),
-            );
-            const workspaceRegistrationsOk =
-                workspaceRegistrations.every((registered) => registered) && appendRegistered && moveAppendRegistered;
             if (
                 !insertionRegistered ||
                 !insertionLeftRegistered ||
                 !insertionUpRegistered ||
                 !insertionDownRegistered ||
-                !leftRegistered ||
-                !downRegistered ||
-                !upRegistered ||
-                !rightRegistered ||
-                !focusLeftArrowRegistered ||
-                !focusDownArrowRegistered ||
-                !focusUpArrowRegistered ||
-                !focusRightArrowRegistered ||
-                !moveLeftRegistered ||
-                !moveDownRegistered ||
-                !moveUpRegistered ||
-                !moveRightRegistered ||
-                !moveLeftArrowRegistered ||
-                !moveDownArrowRegistered ||
-                !moveUpArrowRegistered ||
-                !moveRightArrowRegistered ||
+                !registrationResults.every((registered) => registered) ||
                 !detachRegistered ||
                 !attachRegistered ||
-                !floatRegistered ||
                 !stickyRegistered ||
-                !maximizeRegistered ||
                 !fillScopeRegistered ||
                 !columnsRegistered ||
                 !rowsRegistered ||
                 !gridRegistered ||
-                !dwindleRegistered ||
-                !workspaceRegistrationsOk
+                !dwindleRegistered
             ) {
                 this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
                 return;
@@ -1271,6 +1502,18 @@ export class TileController {
                 this.diagnostic("focus-rejected:no-active-window");
                 return;
             }
+            if (isWindow(active) && active.fullScreen === true) {
+                this.diagnostic("focus-rejected:fullscreen");
+                return;
+            }
+            if (isWindow(active) && active.onAllDesktops === true) {
+                this.diagnostic("focus-rejected:sticky");
+                return;
+            }
+            if (isWindow(active) && isNativelyMaximized(active)) {
+                this.diagnostic("focus-rejected:maximized");
+                return;
+            }
             const scope = this.scopeForWindow(active);
             if (scope === null) {
                 this.diagnostic("focus-rejected:desktop-output-scope");
@@ -1357,6 +1600,14 @@ export class TileController {
                 this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
                 return;
             }
+            if (isWindow(active) && active.onAllDesktops === true) {
+                this.diagnostic("move-rejected:sticky");
+                return;
+            }
+            if (isWindow(active) && isNativelyMaximized(active)) {
+                this.diagnostic("move-rejected:maximized");
+                return;
+            }
             const scope = this.scopeForWindow(active);
             if (scope === null) {
                 this.diagnostic("move-rejected:desktop-output-scope");
@@ -1438,6 +1689,180 @@ export class TileController {
             }
             this.swapToOccupiedTarget(scope, active, source, target, direction);
         }, (reason) => this.disabled(reason));
+    }
+
+    // Direct (non-modal) split resize step. Meta+Ctrl+H/J/K/L moves the nearest
+    // relevant ancestor split's shared edge by RESIZE_STEP_FRACTION of the
+    // parent extent in the pressed compass direction: H/L operate the nearest
+    // horizontal ancestor, J/K the nearest vertical one. Only the two adjacent
+    // child regions are adjusted via their Tile relativeGeometry; the parent
+    // geometry is never written and no structural or window geometry mutation
+    // occurs. KWin's documented CustomTile::setRelativeGeometry sibling
+    // adjustment (kwin-api-surface.md 146-158) is the accepted basis for the
+    // two writes. Refuses atomically at the 15% work-area-equivalent floor and
+    // rolls back the first write when the second fails, so no partial result is
+    // ever applied.
+    // Unit 02 retains this dirty-prototype split resize step; its binding
+    // becomes the approved profile resize mode. Kept public so the preserved
+    // implementation stays reachable while no catalog row references it yet.
+    public resizeActiveWindow(direction: Direction): void {
+        this.gate.run(() => {
+            this.diagnostic("resize-invoked");
+            const active = this.environment.activeWindow();
+            if (active === null) {
+                this.diagnostic("resize-rejected:no-active-window");
+                return;
+            }
+            if (isWindow(active) && active.fullScreen === true) {
+                this.diagnostic("resize-rejected:fullscreen");
+                return;
+            }
+            if (isWindow(active) && active.onAllDesktops === true) {
+                this.diagnostic("resize-rejected:sticky");
+                return;
+            }
+            if (isWindow(active) && isNativelyMaximized(active)) {
+                this.diagnostic("resize-rejected:maximized");
+                return;
+            }
+            const scope = this.scopeForWindow(active);
+            if (scope === null) {
+                this.diagnostic("resize-rejected:desktop-output-scope");
+                return;
+            }
+            if (!windowInScope(active, scope)) {
+                this.diagnostic("resize-rejected:active-window-eligibility");
+                return;
+            }
+            const topology = this.topologyForScope(scope, (reason) => {
+                this.diagnostic(`resize-rejected:${reason}`);
+            });
+            if (topology === null) {
+                return;
+            }
+            if (active.tile === null || !isTile(active.tile)) {
+                this.diagnostic("resize-rejected:active-tile-association");
+                return;
+            }
+            const focused = operationLeafForTile(topology, active.tile);
+            if (
+                focused === null ||
+                focused.leaf.isLayout ||
+                focused.windows.length === 0 ||
+                windowIndex(focused.windows, active) < 0
+            ) {
+                this.diagnostic("resize-rejected:focused-occupancy-validity");
+                return;
+            }
+            const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
+            const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
+            const split = this.nearestSplitAncestor(active.tile, expectedLayoutDirection);
+            if (split === null) {
+                this.diagnostic("resize-rejected:no-parent");
+                return;
+            }
+            const decoded = decodeSequential(split.tiles, isCustomTile, 2);
+            if (!decoded.ok) {
+                this.diagnostic("resize-rejected:no-parent");
+                return;
+            }
+            const ordered = orderedChildren(decoded.value, axis);
+            if (ordered === null) {
+                this.diagnostic("resize-rejected:no-parent");
+                return;
+            }
+            const first = ordered[0];
+            const second = ordered[1];
+            const firstGeometry = first.relativeGeometry;
+            const secondGeometry = second.relativeGeometry;
+            const parentGeometry = split.relativeGeometry;
+            const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
+            if (!(parentExtent > 0)) {
+                this.diagnostic("resize-rejected:no-parent");
+                return;
+            }
+            const delta = RESIZE_STEP_FRACTION * parentExtent;
+            const signedDelta = direction === "left" || direction === "up" ? -delta : delta;
+            const firstExtent = axis === "x" ? firstGeometry.width : firstGeometry.height;
+            const secondExtent = axis === "x" ? secondGeometry.width : secondGeometry.height;
+            const firstProposed = firstExtent + signedDelta;
+            const secondProposed = secondExtent - signedDelta;
+            if (firstProposed <= 0 || secondProposed <= 0) {
+                this.diagnostic("resize-rejected:no-parent");
+                return;
+            }
+            if (this.resizeWouldViolateMinimum(scope, split, firstProposed, secondProposed, axis)) {
+                this.diagnostic("resize-rejected:at-floor");
+                return;
+            }
+            const firstTarget: RectCapability =
+                axis === "x"
+                    ? { x: firstGeometry.x, y: firstGeometry.y, width: firstProposed, height: firstGeometry.height }
+                    : { x: firstGeometry.x, y: firstGeometry.y, width: firstGeometry.width, height: firstProposed };
+            const secondTarget: RectCapability =
+                axis === "x"
+                    ? { x: secondGeometry.x + signedDelta, y: secondGeometry.y, width: secondProposed, height: secondGeometry.height }
+                    : { x: secondGeometry.x, y: secondGeometry.y + signedDelta, width: secondGeometry.width, height: secondProposed };
+            const firstWritten = setTileRelativeGeometry(first, firstTarget);
+            if (!firstWritten) {
+                this.diagnostic("resize-rejected:write-failed");
+                return;
+            }
+            const secondWritten = setTileRelativeGeometry(second, secondTarget);
+            if (!secondWritten) {
+                setTileRelativeGeometry(first, firstGeometry);
+                this.diagnostic("resize-rejected:write-failed");
+                return;
+            }
+            this.diagnostic("resize-completed");
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Nearest ancestor that is a layout CustomTile split along the expected
+    // axis. Walks the parent chain from the focused leaf to the root.
+    private nearestSplitAncestor(tile: TileCapability, expectedLayoutDirection: number): CustomTileCapability | null {
+        let current: object | null = tile.parent;
+        while (current !== null) {
+            if (isCustomTile(current) && current.isLayout && current.layoutDirection === expectedLayoutDirection) {
+                return current;
+            }
+            if (!isTile(current)) {
+                return null;
+            }
+            current = current.parent;
+        }
+        return null;
+    }
+
+    // Whether the proposed post-step child extents (screen-relative along the
+    // split axis) fall below KWin's minimum tile size. The floor is
+    // MINIMUM_TILE_FRACTION of the per-output working area extent on the axis,
+    // scaled to screen-relative units through the split's own absolute extent.
+    // An unreadable working area never refuses: the preflight must not invent a
+    // floor it cannot prove.
+    private resizeWouldViolateMinimum(
+        scope: CurrentScope,
+        split: CustomTileCapability,
+        firstProposed: number,
+        secondProposed: number,
+        axis: SplitAxis,
+    ): boolean {
+        const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+        if (!isRect(workArea)) {
+            return false;
+        }
+        const workExtent = axis === "x" ? workArea.width : workArea.height;
+        if (!(workExtent > 0)) {
+            return false;
+        }
+        const absoluteExtent = axis === "x" ? split.absoluteGeometry.width : split.absoluteGeometry.height;
+        const relativeExtent = axis === "x" ? split.relativeGeometry.width : split.relativeGeometry.height;
+        if (!(absoluteExtent > 0) || !(relativeExtent > 0)) {
+            return false;
+        }
+        const scale = absoluteExtent / relativeExtent;
+        const floor = MINIMUM_TILE_FRACTION * workExtent;
+        return firstProposed * scale < floor || secondProposed * scale < floor;
     }
 
     // Directional occupied-target swap: when the nearest ranked non-layout
