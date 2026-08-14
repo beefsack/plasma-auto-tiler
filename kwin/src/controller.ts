@@ -104,7 +104,21 @@ const MAX_YIELD_REARM_PER_PHASE = 2;
 // the validator rejects such in-profile duplicate sequences.
 
 export type ProfileKey = "cosmic" | "hyprland" | "bspwm";
-export type RowClassification = "exact" | "canonical-example" | "compatibility-alias" | "deferred";
+export type RowClassification =
+    | "exact"
+    | "canonical-example"
+    | "compatibility-alias"
+    | "deferred"
+    // Present in the catalog as a truthful component requirement (needs a KWin
+    // capability, an external Plasma component, or a workspace-mode unit), but
+    // never a registered or resolvable sequence in this change.
+    | "component-requirement";
+
+// Classifications that never register and never resolve to a live sequence.
+export const UNRESOLVABLE_CLASSIFICATIONS: ReadonlyArray<RowClassification> = Object.freeze([
+    "deferred",
+    "component-requirement",
+]);
 
 export interface CatalogRow {
     readonly actionId: string;
@@ -180,13 +194,30 @@ export function outputTuple(output: OutputCapability): string {
 // unconsumed slot with the same tuple, so a surviving output keeps its key and
 // a colliding tuple (two outputs indistinguishable by the scriptable API) gets
 // a distinct first-seen key. Keys are session-only and never persisted.
+//
+// Resolution is tuple-based, never dependent on QJS object identity: KWin can
+// expose the same physical output through distinct wrappers (workspace.screens,
+// a window's `output` property, `workspace.activeScreen`), so a foreign wrapper
+// resolves through the current rebuild's tuple map. A stale or unknown output
+// (no matching current rebuild entry) resolves to undefined and is reported
+// once per session.
 export class SessionOutputKeys {
     private readonly slots: Array<{ readonly key: string; readonly tuple: string }> = [];
     private readonly byOutput = new Map<OutputCapability, string>();
+    // Current rebuild's known tuples in first-seen slot order (spec E). The
+    // first entry is the deterministic resolution for a colliding tuple.
+    private readonly tupleKeys = new Map<string, string[]>();
+    // Tuples already reported as unknown/stale this session (diagnostics dedupe).
+    private readonly reportedUnknown = new Set<string>();
     private next = 0;
+
+    constructor(
+        private readonly reportUnknown?: (tuple: string) => void,
+    ) {}
 
     rebuild(outputs: readonly OutputCapability[]): void {
         this.byOutput.clear();
+        this.tupleKeys.clear();
         const consumed = new Set<number>();
         for (const output of outputs) {
             const tuple = outputTuple(output);
@@ -211,11 +242,36 @@ export class SessionOutputKeys {
             }
             consumed.add(matchedIndex);
             this.byOutput.set(output, entry.key);
+            const keys = this.tupleKeys.get(tuple);
+            if (keys === undefined) {
+                this.tupleKeys.set(tuple, [entry.key]);
+            } else if (!keys.includes(entry.key)) {
+                keys.push(entry.key);
+            }
         }
     }
 
     keyFor(output: OutputCapability): string | undefined {
-        return this.byOutput.get(output);
+        const direct = this.byOutput.get(output);
+        if (direct !== undefined) {
+            return direct;
+        }
+        // A distinct wrapper of a currently connected output matches by the
+        // physical tuple. A colliding tuple resolves deterministically to the
+        // first-seen current key; the rebuild's slots already disambiguated
+        // the outputs at first-seen order (spec E collision).
+        const tuple = outputTuple(output);
+        const keys = this.tupleKeys.get(tuple);
+        if (keys !== undefined && keys.length > 0) {
+            return keys[0];
+        }
+        // Stale (disconnected) or never-seen output: safe undefined resolution,
+        // reported once per session tuple.
+        if (!this.reportedUnknown.has(tuple)) {
+            this.reportedUnknown.add(tuple);
+            this.reportUnknown?.(tuple);
+        }
+        return undefined;
     }
 }
 
@@ -337,18 +393,18 @@ const COSMIC_ROWS: readonly CatalogRow[] = Object.freeze([
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
     deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
-    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "exact", `${COSMIC_REF} Fullscreen`),
+    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "component-requirement", `${COSMIC_REF} Fullscreen (needs a KWin capability component)`),
     catalogRow("resize-mode-outwards", "plasma-auto-tiler-resize-mode-outwards", "Enter split resize mode (grow)", "Meta+R", "exact", `${COSMIC_REF} Resizing(Outwards)`),
     catalogRow("resize-mode-inwards", "plasma-auto-tiler-resize-mode-inwards", "Enter split resize mode (shrink)", "Meta+Shift+R", "exact", `${COSMIC_REF} Resizing(Inwards)`),
-    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "exact", `${COSMIC_REF} ToggleStacking (reserved)`),
+    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "component-requirement", `${COSMIC_REF} ToggleStacking (reserved; needs a stacking component)`),
 ]);
 
 const HYPRLAND_ROWS: readonly CatalogRow[] = Object.freeze([
@@ -370,10 +426,10 @@ const BSPWM_ROWS: readonly CatalogRow[] = Object.freeze([
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
     deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
-    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "canonical-example", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local`),
-    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "canonical-example", `${BSPWM_REF} super+bracketright bspc desktop -f next.local`),
+    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
+    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
-    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "canonical-example", `${BSPWM_REF} super+f bspc node -t fullscreen`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "component-requirement", `${BSPWM_REF} super+f bspc node -t fullscreen (needs a KWin capability component)`),
     ...directional("resize-expand", "Resize window", "Meta+Alt", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+{h,j,k,l} bspc node -z`),
     ...directional("resize-contract", "Resize window", "Meta+Alt+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+shift+{h,j,k,l} bspc node -z`),
 ]);
@@ -387,9 +443,10 @@ export const PROFILE_CATALOGS: Readonly<Record<ProfileKey, ProfileCatalog>> = Ob
 // Action IDs with an implemented controller callback in this unit. Only rows
 // whose actionId is in this set are registered from the selected catalog; all
 // other catalog rows are explicit component requirements, never registered as
-// false equivalents: `fullscreen`, `previous-workspace*`, `next-workspace*`,
-// and the reserved `group-toggle` (COSMIC ToggleStacking) need either a KWin
-// capability, an external Plasma component, or a workspace-mode unit; `Meta+0`
+// false equivalents. Rows classified `component-requirement` (`fullscreen`,
+// `previous-workspace*`, `next-workspace*`, and the reserved `group-toggle`)
+// need either a KWin capability, an external Plasma component, or a
+// workspace-mode unit and are never registered or sequence-resolvable; `Meta+0`
 // is deliberately deferred. Kept beside `profileActions` in `start()` so the
 // registration contract stays in one place and tests can derive the exact
 // expected registered set from the catalog.
@@ -456,7 +513,9 @@ export function validateProfile(catalog: ProfileCatalog): ProfileValidation {
     const duplicateSequences: SequenceConflict[] = [];
     const sequenceOwners = new Map<string, string>();
     for (const row of catalog.rows) {
-        if (row.classification === "deferred") {
+        // Deferred and component-requirement rows never register, so they have
+        // no effective sequence and cannot collide.
+        if (row.classification === "deferred" || row.classification === "component-requirement") {
             continue;
         }
         const owner = sequenceOwners.get(row.sequence);
@@ -525,7 +584,10 @@ export class ShortcutOverrides {
 }
 
 // Precedence: user override > selected baseline > profile default (cosmic).
-// Returns null only when no layer defines the action.
+// Returns null only when no layer defines the action. Deferred and
+// component-requirement rows are never resolvable: neither Meta+0 nor the
+// unimplemented fullscreen/previous-workspace/next-workspace/group actions can
+// be claimed as a live sequence by any layer.
 export function resolveSequence(
     profile: ProfileCatalog,
     actionId: string,
@@ -535,12 +597,14 @@ export function resolveSequence(
     if (override !== undefined) {
         return override;
     }
-    const baseline = profile.rows.find((row) => row.actionId === actionId && row.classification !== "deferred");
+    const baseline = profile.rows.find(
+        (row) => row.actionId === actionId && !UNRESOLVABLE_CLASSIFICATIONS.includes(row.classification),
+    );
     if (baseline !== undefined) {
         return baseline.sequence;
     }
     const fallback = PROFILE_CATALOGS[DEFAULT_PROFILE].rows.find(
-        (row) => row.actionId === actionId && row.classification !== "deferred",
+        (row) => row.actionId === actionId && !UNRESOLVABLE_CLASSIFICATIONS.includes(row.classification),
     );
     return fallback === undefined ? null : fallback.sequence;
 }
@@ -1348,8 +1412,11 @@ export class TileController {
     // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
     private workspaceMode: WorkspaceMode = DEFAULT_WORKSPACE_MODE;
     // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
-    // at startup and on screensChanged; never persisted.
-    private readonly outputKeys = new SessionOutputKeys();
+    // at startup and on screensChanged; never persisted. A stale or unknown
+    // output wrapper is reported once per session tuple.
+    private readonly outputKeys = new SessionOutputKeys(() => {
+        this.diagnostic("workspace-output-key-unavailable");
+    });
     // The output argument of the most recent `currentDesktopChanged` event
     // (spec F), preserved through the typed boundary. Session-only; the Unit 05
     // per-output scope re-resolution consumes it.
@@ -1656,9 +1723,11 @@ export class TileController {
                 this.diagnostic(diagnostic);
             }
             // Catalog-driven registration of the selected profile's rows.
-            // Deferred rows (Meta+0) and rows without a controller callback
-            // (Unit 02) are never registered; every registered alias keeps its
-            // distinct shortcut ID from the catalog. A false registerShortcut
+            // Deferred rows (Meta+0), component-requirement rows (unimplemented
+            // fullscreen/previous-workspace/next-workspace/group), and rows
+            // without a controller callback are never registered; every
+            // registered alias keeps its distinct shortcut ID from the catalog.
+            // A false registerShortcut
             // result is reported per row as evidence of attempted registration
             // only - KWin-local registration never displaces or reassigns a
             // Plasma-global sequence and reports no activation collision (spec
@@ -1677,7 +1746,7 @@ export class TileController {
             // live evidence before claiming activation.
             const registrationResults: boolean[] = [];
             for (const row of selected.profile.rows) {
-                if (row.classification === "deferred") {
+                if (row.classification === "deferred" || row.classification === "component-requirement") {
                     continue;
                 }
                 if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
@@ -7216,6 +7285,13 @@ export class TileController {
         if (!armed) {
             this.pendingMoves.delete(window);
             this.adoptMovedWindow(window, targetScope);
+            // The armed path's follow write (`setCurrentDesktop`) happens after
+            // the collapse and the deferred adoption is scheduled; the
+            // synchronous fallback runs the adoption inline and must still
+            // honor move-follow on the moved window's output. Adoption runs
+            // first so the destination placement is settled before the current
+            // desktop switches to it.
+            this.setCurrentDesktop(target, sourceScope.output);
             return;
         }
         this.diagnostic("workspace-move-pending");
@@ -7375,23 +7451,35 @@ export class TileController {
             return;
         }
         const desktops = this.liveDesktops();
-        if (desktops === null || desktops.length <= 1) {
-            // A singleton list has nothing to reconcile, but the shared set
-            // still tracks the live ordered list so the snapshot is accurate.
-            if (this.workspaceMode === "shared" && desktops !== null) {
-                this.rebuildSharedMapping(desktops);
-            }
+        if (desktops === null) {
             return;
         }
         if (this.workspaceMode === "per-output-local") {
+            // Spec D1 single-output degeneracy: with one connected output this
+            // is today's model, which never reconciles a singleton list (no
+            // startup trailing empty). Across multiple outputs a singleton
+            // list still needs one owned trailing empty per connected output,
+            // so reconciliation runs; pre-existing desktops are never removed.
+            if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
+                return;
+            }
             this.reconcileLocalWorkspaces(desktops, visible);
             return;
         }
         if (this.workspaceMode === "global-unique") {
+            if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
+                return;
+            }
             this.reconcileGlobalUnique(desktops, visible);
             return;
         }
         this.rebuildSharedMapping(desktops);
+        if (desktops.length <= 1) {
+            // A singleton shared list has nothing to remove or replenish (the
+            // shared trailing empty requires at least two live desktops), and
+            // the mapping above already tracked the live ordered list.
+            return;
+        }
         const occupied = this.occupiedDesktopIds();
         let highestOccupied = 0;
         for (let position = 0; position < desktops.length; position += 1) {

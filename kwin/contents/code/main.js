@@ -1026,6 +1026,10 @@
   var FLOAT_WORK_AREA_FRACTION = 0.6;
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var MAX_YIELD_REARM_PER_PHASE = 2;
+  var UNRESOLVABLE_CLASSIFICATIONS = Object.freeze([
+    "deferred",
+    "component-requirement"
+  ]);
   var DEFAULT_PROFILE = "cosmic";
   var SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
   var PROFILE_KEYS = Object.freeze(["cosmic", "hyprland", "bspwm"]);
@@ -1052,13 +1056,20 @@
     return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
   }
   var SessionOutputKeys = class {
-    constructor() {
+    constructor(reportUnknown) {
+      this.reportUnknown = reportUnknown;
       this.slots = [];
       this.byOutput = /* @__PURE__ */ new Map();
+      // Current rebuild's known tuples in first-seen slot order (spec E). The
+      // first entry is the deterministic resolution for a colliding tuple.
+      this.tupleKeys = /* @__PURE__ */ new Map();
+      // Tuples already reported as unknown/stale this session (diagnostics dedupe).
+      this.reportedUnknown = /* @__PURE__ */ new Set();
       this.next = 0;
     }
     rebuild(outputs) {
       this.byOutput.clear();
+      this.tupleKeys.clear();
       const consumed = /* @__PURE__ */ new Set();
       for (const output of outputs) {
         const tuple = outputTuple(output);
@@ -1083,10 +1094,30 @@
         }
         consumed.add(matchedIndex);
         this.byOutput.set(output, entry.key);
+        const keys = this.tupleKeys.get(tuple);
+        if (keys === void 0) {
+          this.tupleKeys.set(tuple, [entry.key]);
+        } else if (!keys.includes(entry.key)) {
+          keys.push(entry.key);
+        }
       }
     }
     keyFor(output) {
-      return this.byOutput.get(output);
+      var _a;
+      const direct = this.byOutput.get(output);
+      if (direct !== void 0) {
+        return direct;
+      }
+      const tuple = outputTuple(output);
+      const keys = this.tupleKeys.get(tuple);
+      if (keys !== void 0 && keys.length > 0) {
+        return keys[0];
+      }
+      if (!this.reportedUnknown.has(tuple)) {
+        this.reportedUnknown.add(tuple);
+        (_a = this.reportUnknown) == null ? void 0 : _a.call(this, tuple);
+      }
+      return void 0;
     }
   };
   var COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
@@ -1177,18 +1208,18 @@
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
     deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
-    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "exact", `${COSMIC_REF} PreviousWorkspace`),
-    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "exact", `${COSMIC_REF} NextWorkspace`),
-    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "exact", `${COSMIC_REF} Fullscreen`),
+    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "component-requirement", `${COSMIC_REF} NextWorkspace (needs a workspace-mode unit)`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "component-requirement", `${COSMIC_REF} Fullscreen (needs a KWin capability component)`),
     catalogRow("resize-mode-outwards", "plasma-auto-tiler-resize-mode-outwards", "Enter split resize mode (grow)", "Meta+R", "exact", `${COSMIC_REF} Resizing(Outwards)`),
     catalogRow("resize-mode-inwards", "plasma-auto-tiler-resize-mode-inwards", "Enter split resize mode (shrink)", "Meta+Shift+R", "exact", `${COSMIC_REF} Resizing(Inwards)`),
-    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "exact", `${COSMIC_REF} ToggleStacking (reserved)`)
+    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "component-requirement", `${COSMIC_REF} ToggleStacking (reserved; needs a stacking component)`)
   ]);
   var HYPRLAND_ROWS = Object.freeze([
     ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${HYPRLAND_REF} mainMod+left/right/up/down focus`),
@@ -1208,10 +1239,10 @@
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
     deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
-    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "canonical-example", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local`),
-    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "canonical-example", `${BSPWM_REF} super+bracketright bspc desktop -f next.local`),
+    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
+    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
-    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "canonical-example", `${BSPWM_REF} super+f bspc node -t fullscreen`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "component-requirement", `${BSPWM_REF} super+f bspc node -t fullscreen (needs a KWin capability component)`),
     ...directional("resize-expand", "Resize window", "Meta+Alt", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+{h,j,k,l} bspc node -z`),
     ...directional("resize-contract", "Resize window", "Meta+Alt+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+shift+{h,j,k,l} bspc node -z`)
   ]);
@@ -1255,7 +1286,7 @@
     const duplicateSequences = [];
     const sequenceOwners = /* @__PURE__ */ new Map();
     for (const row of catalog.rows) {
-      if (row.classification === "deferred") {
+      if (row.classification === "deferred" || row.classification === "component-requirement") {
         continue;
       }
       const owner = sequenceOwners.get(row.sequence);
@@ -1698,8 +1729,11 @@
       // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
       this.workspaceMode = DEFAULT_WORKSPACE_MODE;
       // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
-      // at startup and on screensChanged; never persisted.
-      this.outputKeys = new SessionOutputKeys();
+      // at startup and on screensChanged; never persisted. A stale or unknown
+      // output wrapper is reported once per session tuple.
+      this.outputKeys = new SessionOutputKeys(() => {
+        this.diagnostic("workspace-output-key-unavailable");
+      });
       // The output argument of the most recent `currentDesktopChanged` event
       // (spec F), preserved through the typed boundary. Session-only; the Unit 05
       // per-output scope re-resolution consumes it.
@@ -1962,7 +1996,7 @@
         }
         const registrationResults = [];
         for (const row of selected.profile.rows) {
-          if (row.classification === "deferred") {
+          if (row.classification === "deferred" || row.classification === "component-requirement") {
             continue;
           }
           if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
@@ -6766,6 +6800,7 @@
       if (!armed) {
         this.pendingMoves.delete(window);
         this.adoptMovedWindow(window, targetScope);
+        this.setCurrentDesktop(target, sourceScope.output);
         return;
       }
       this.diagnostic("workspace-move-pending");
@@ -6920,21 +6955,27 @@
         return;
       }
       const desktops = this.liveDesktops();
-      if (desktops === null || desktops.length <= 1) {
-        if (this.workspaceMode === "shared" && desktops !== null) {
-          this.rebuildSharedMapping(desktops);
-        }
+      if (desktops === null) {
         return;
       }
       if (this.workspaceMode === "per-output-local") {
+        if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
+          return;
+        }
         this.reconcileLocalWorkspaces(desktops, visible);
         return;
       }
       if (this.workspaceMode === "global-unique") {
+        if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
+          return;
+        }
         this.reconcileGlobalUnique(desktops, visible);
         return;
       }
       this.rebuildSharedMapping(desktops);
+      if (desktops.length <= 1) {
+        return;
+      }
       const occupied = this.occupiedDesktopIds();
       let highestOccupied = 0;
       for (let position = 0; position < desktops.length; position += 1) {

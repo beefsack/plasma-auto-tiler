@@ -253,6 +253,13 @@ change global-unique semantics.
 
 ## Unit 07 - Shared mode
 
+Implementation status: accepted 2026-08-14. Shared mode maintains one ordered
+global desktop-id set and synchronizes each connected output through the
+per-screen desktop seam for selection and move-follow. Its one shared trailing
+empty is session-owned; cleanup is visibility-safe and hotplug only
+synchronizes, never deletes. Static two-output, failure, idempotence, and
+state-refusal coverage passed. Live KWin behavior remains unproven.
+
 Dependencies: Unit 06. Scope: add only the one shared ordered desktop set and
 synchronize all outputs for navigation and move-follow. Retain automatic shared
 trailing-empty maintenance and Meta+Shift+0 move-append; keep Meta+0 unbound.
@@ -273,6 +280,14 @@ or overwrites a desktop outside the shared mapping. Reuse bounded deferred
 intent handling rather than adding an out-of-process workaround.
 
 ## Unit 08 - Integration, review, and documentation
+
+Implementation status: accepted 2026-08-14. The three workspace modes,
+profile catalog, dynamic lifecycle, and documentation were reconciled. Focused
+independent review found and the bounded correction pass resolved singleton
+multi-output reconciliation, output-wrapper identity, synchronous tiled
+move-follow, and unimplemented catalog-row truthfulness. Result approval and
+the completion transaction remain pending; this active change must not yet be
+archived or removed from the backlog.
 
 Dependencies: Units 01-07. Scope: run the complete static/unit suite, inspect
 the aggregate shortcut gate and all mode dispatches, update user-facing project
@@ -310,7 +325,8 @@ planning or implementation without later authorization.
 
 ## Pending approval and blocked dependency
 
-- Approve the amended profile-first plan before implementation.
+- User result approval is pending. Do not archive this change or remove related
+  backlog entries before that approval.
 - Full selected-profile support that overrides Plasma conflicts is blocked on a
   separately approved installer/KCM migration component. Script-local v1 must
   be described as partial activation where Plasma already owns a sequence.

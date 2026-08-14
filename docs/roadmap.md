@@ -152,18 +152,23 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 - **Decided semantics:** workspaces created on demand and removed when empty
   and inactive, with pin/persist opt-in (decision 7, reference doc line 210;
   Hyprland `persistent` [H-WS], COSMIC "pin workspaces" [C-Bas], bspwm fixed
-  [B1]).
+  [B1]). Implemented statically as the three-mode `workspaceMode` model
+  (`per-output-local` default, `global-unique`, `shared`) in
+  [multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
-  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0`
-  navigates to a newly appended workspace; `Meta+Shift+0` moves the focused
-  window to a newly appended workspace (backlog P2 `move-window-to-workspace`).
-- **Implementation:** drive `org.kde.KWin.VirtualDesktopManager` (count/ids/
-  current/names, api-surface capability 10) for creation/removal; move windows
-  across desktops via the scripting desktop surface.
-- **Main KWin risk:** whether a script can create/remove desktops and move
-  windows across them is `unproven-until-live`; auto-remove of an
-  empty-non-active-non-visible desktop is `unproven-until-live`.
-- **Status:** `DECIDED`; create/remove surface `PARKED`.
+  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0` is
+  deferred and unbound in every mode; `Meta+Shift+0` moves the focused window to
+  a newly appended workspace (backlog P2 `move-window-to-workspace`).
+- **Implementation:** statically implemented in the controller via the
+  documented scripting surface (`createDesktop`/`removeDesktop`,
+  `setCurrentDesktopForScreen`, `Window.desktops`); the script keeps a
+  session-only output-to-desktop map and automatic trailing-empty maintenance
+  per mode. Live-host confirmation remains separate.
+- **Main KWin risk:** static tests cover create/remove and the auto-remove of
+  an owned empty non-active-non-visible desktop, but live KWin/Plasma behavior
+  remains `unproven-until-live`.
+- **Status:** `DECIDED`; create/remove statically implemented; live
+  confirmation `unproven-until-live`.
 
 ### 7. Full keyboard shortcut scheme, including split resizing
 
@@ -172,6 +177,12 @@ Resolves backlog P3 `focus-right-keybinding`. Replaces
 (`kwin/src/controller.ts:835-840`). The full directional scheme is H/J/K/L
 first, arrows as aliases, `Shift` for move, per COSMIC shipped-defaults
 precedent with Hyprland-style `move = focus + Shift` (reference doc line 164).
+Registration is catalog-driven under the selected profile (default `cosmic`;
+config key `shortcutProfile`), so the selected-profile catalog replaces the
+earlier blended project shortcut decision: only validated catalog rows
+register, and rows colliding with Plasma stay shadowed until the separately
+gated installer/KCM migration exists
+([multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/)).
 
 | Action | Identifier | Sequence | Precedent |
 |---|---|---|---|
@@ -184,12 +195,12 @@ precedent with Hyprland-style `move = focus + Shift` (reference doc line 164).
 | Split resize step | (within mode) | `Meta+H/J/K/L` or arrows grow/shrink split ratio; `Esc`/`Return` exit | Hyprland `splitratio` delta [H-Dw] |
 | Float/tile toggle | `plasma-auto-tiler-float-toggle` | `Meta+G` | COSMIC `Super+G` [C-KR] |
 | Sticky toggle | `plasma-auto-tiler-sticky-toggle` | `Meta+Shift+G` | our choice (decision 12) |
-| Group toggle | `plasma-auto-tiler-group-toggle` | `Meta+S` | COSMIC `Super+S` [C-Bas] |
-| Group next/prev | `plasma-auto-tiler-group-{next,prev}` | `Meta+Tab` / `Meta+Shift+Tab` | our choice (decision 15) |
+| Group toggle | `plasma-auto-tiler-group-toggle` | `Meta+S` (component requirement; not registered) | COSMIC `Super+S` [C-Bas] |
+| Group next/prev | `plasma-auto-tiler-group-{next,prev}` | `Meta+Tab` / `Meta+Shift+Tab` (component requirement; not registered) | our choice (decision 15) |
 | Maximize | `plasma-auto-tiler-maximize` | `Meta+M` | COSMIC `Super+M` [C-KR] |
-| Fullscreen | `plasma-auto-tiler-fullscreen` | `Meta+F11` | COSMIC `Super+F11` [C-KR] |
+| Fullscreen | `plasma-auto-tiler-fullscreen` | `Meta+F11` (component requirement; not registered) | COSMIC `Super+F11` [C-KR] |
 | Focus workspace | `plasma-auto-tiler-workspace-{1..9}` | `Meta+1..9` | Hyprland `mainMod+[0-9]` [H-Ex] |
-| Append + focus workspace | `plasma-auto-tiler-workspace-append` | `Meta+0` | backlog P2 |
+| Append + focus workspace | `plasma-auto-tiler-workspace-append` | `Meta+0` (deferred; unbound in every profile) | deferred intent |
 | Move to workspace | `plasma-auto-tiler-move-workspace-{1..9}` | `Meta+Shift+1..9` | Hyprland example [H-Ex] |
 | Move to appended workspace | `plasma-auto-tiler-move-workspace-append` | `Meta+Shift+0` | backlog P2 |
 | Detach / attach | `plasma-auto-tiler-detach` / `-attach` | `Meta+Shift+Space` / `Meta+Alt+Shift+Space` | existing (controller.ts:913-924) |
@@ -203,6 +214,11 @@ precedent with Hyprland-style `move = focus + Shift` (reference doc line 164).
 - **Main KWin risk:** `Meta+L`, `Meta+M`, `Meta+F11`, `Meta+S`, `Meta+Tab` may
   collide with KWin/Plasma built-ins; only `Meta+L` (lock screen) is a
   well-known default, the rest are `unproven-until-live`.
+- **Not registered in this change:** `group-toggle`, `group-{next,prev}`, and
+  `fullscreen` are component requirements only - they are catalogued (never
+  implemented) and never register or resolve in any profile; previous/next
+  workspace needs a workspace-mode unit. Registration of these bindings awaits
+  the corresponding feature components (features 3, 5).
 - **Status:** `DECIDED`; built-in collisions `unproven-until-live`.
 
 ### 8. Active window border and curved corners for ALL windows
@@ -290,7 +306,7 @@ Each preserves its decision; only implementation viability needs a KWin test.
 |---|---|---|
 | PARKED-1 | Drop overlay input coupling (feature 4) | Drag events do not reach the script yet (handover section 5). The C2 effect overlay stays decided; the drag-to-target wiring cannot be implemented until signal delivery is proven. |
 | PARKED-2 | Multi-window tile stability + group header (feature 5) | Multi-window-per-tile stability is `unknown` with an evacuation-design TODO (handover section 12); the QML header overlay must be proven to render over shared-geometry members. |
-| PARKED-3 | Dynamic workspace create/remove (feature 6) | Whether a KWin script can create/remove desktops and move windows across them is `unproven-until-live`; a spike against `VirtualDesktopManager` is required before Meta+0 / Meta+Shift+0 append. |
+| PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
 | PARKED-4 | All-window corner clipping (feature 8) | Whether a QML `SceneEffect` can clip rounded corners uniformly on XWayland/non-Qt windows is `unproven-until-live`; fallback is a native effect (composition.md Path 4). |
 
 ## Further feature ideas (PROPOSED, not decided)

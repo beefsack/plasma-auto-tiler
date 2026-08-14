@@ -6980,6 +6980,13 @@ describe("TileController binding profile catalog", () => {
         ...workspacePinned(),
         ...moveWorkspacePinned(),
         ["move-workspace-0", "Meta+Shift+0"],
+        ["resize-mode-outwards", "Meta+R"],
+        ["resize-mode-inwards", "Meta+Shift+R"],
+    ];
+
+    // Unimplemented catalog rows that must never register or resolve: they are
+    // truthful component requirements, not exact/additive implemented actions.
+    const COSMIC_PINNED_COMPONENT_REQUIREMENTS: ReadonlyArray<readonly [string, string]> = [
         ["previous-workspace-up", "Meta+Ctrl+Up"],
         ["previous-workspace-left", "Meta+Ctrl+Left"],
         ["previous-workspace-h", "Meta+Ctrl+H"],
@@ -6989,8 +6996,6 @@ describe("TileController binding profile catalog", () => {
         ["next-workspace-j", "Meta+Ctrl+J"],
         ["next-workspace-l", "Meta+Ctrl+L"],
         ["fullscreen", "Meta+F11"],
-        ["resize-mode-outwards", "Meta+R"],
-        ["resize-mode-inwards", "Meta+Shift+R"],
         ["group-toggle", "Meta+S"],
     ];
 
@@ -7032,10 +7037,7 @@ describe("TileController binding profile catalog", () => {
         ...workspacePinned(),
         ...moveWorkspacePinned(),
         ["move-workspace-0", "Meta+Shift+0"],
-        ["previous-workspace", "Meta+BracketLeft"],
-        ["next-workspace", "Meta+BracketRight"],
         ["float-toggle", "Meta+S"],
-        ["fullscreen", "Meta+F"],
         ["resize-expand-left", "Meta+Alt+H"],
         ["resize-expand-down", "Meta+Alt+J"],
         ["resize-expand-up", "Meta+Alt+K"],
@@ -7044,6 +7046,14 @@ describe("TileController binding profile catalog", () => {
         ["resize-contract-down", "Meta+Alt+Shift+J"],
         ["resize-contract-up", "Meta+Alt+Shift+K"],
         ["resize-contract-right", "Meta+Alt+Shift+L"],
+    ];
+
+    // bspwm's prev/next-workspace and fullscreen rows are unimplemented
+    // component requirements, never registered or sequence-resolvable.
+    const BSPWM_PINNED_COMPONENT_REQUIREMENTS: ReadonlyArray<readonly [string, string]> = [
+        ["previous-workspace", "Meta+BracketLeft"],
+        ["next-workspace", "Meta+BracketRight"],
+        ["fullscreen", "Meta+F"],
     ];
 
     // Project-required arrow aliases for the directional families. bspwm's
@@ -7074,25 +7084,38 @@ describe("TileController binding profile catalog", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "exact"), COSMIC_PINNED_EXACT);
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "compatibility-alias"), []);
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "deferred"), [["workspace-0", "Meta+0"]]);
+        // Unimplemented rows are truthfully classified component requirements,
+        // never exact rows and never resolvable.
+        assert.deepEqual(
+            projected(PROFILE_CATALOGS.cosmic, "component-requirement"),
+            COSMIC_PINNED_COMPONENT_REQUIREMENTS,
+        );
     });
 
     it("pins the hyprland catalog to its upstream default plus explicitly-classified parity aliases", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "exact"), HYPRLAND_PINNED_EXACT);
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "compatibility-alias"), HYPRLAND_PINNED_ALIASES);
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "deferred"), [["workspace-0", "Meta+0"]]);
+        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "component-requirement"), []);
     });
 
     it("pins the bspwm catalog to its canonical sxhkdrc rows plus project parity arrow aliases", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "canonical-example"), BSPWM_PINNED_CANONICAL);
         assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "compatibility-alias"), BSPWM_PINNED_ALIASES);
         assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "deferred"), [["workspace-0", "Meta+0"]]);
+        assert.deepEqual(
+            projected(PROFILE_CATALOGS.bspwm, "component-requirement"),
+            BSPWM_PINNED_COMPONENT_REQUIREMENTS,
+        );
     });
 
     it("classifies every row of every shipped profile", () => {
         for (const profile of Object.values(PROFILE_CATALOGS)) {
             for (const row of profile.rows) {
                 assert.equal(
-                    ["exact", "canonical-example", "compatibility-alias", "deferred"].includes(row.classification),
+                    ["exact", "canonical-example", "compatibility-alias", "deferred", "component-requirement"].includes(
+                        row.classification,
+                    ),
                     true,
                     `${profile.key}:${row.shortcutId}`,
                 );
@@ -7171,6 +7194,43 @@ describe("TileController binding profile catalog", () => {
         assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "maximize"), "Meta+M");
         // Unknown actions resolve to null.
         assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "no-such-action"), null);
+    });
+
+    it("never registers or resolves unimplemented component-requirement rows, in any profile", () => {
+        // Truthfulness regression: fullscreen, previous/next-workspace, and
+        // group rows used to be catalogued as exact/canonical-example (implying
+        // implemented and additive) while registration silently skipped them.
+        // They are now truthfully component requirements: never registered,
+        // never sequence-resolvable, and never reported as registered.
+        for (const profile of Object.values(PROFILE_CATALOGS)) {
+            const rows = profile.rows.filter((row) => row.classification === "component-requirement");
+            assert.ok(rows.length > 0 || profile.key === "hyprland", profile.key);
+            const harness = new Harness();
+            harness.configValues.set("shortcutProfile", profile.key);
+            new TileController(harness.environment()).start();
+            for (const row of rows) {
+                assert.equal(
+                    harness.shortcuts.some((entry) => entry.name === row.shortcutId),
+                    false,
+                    `${profile.key}:${row.shortcutId} must never register`,
+                );
+                assert.equal(
+                    harness.shortcuts.some((entry) => entry.sequence === row.sequence && entry.name !== row.shortcutId),
+                    false,
+                    `${profile.key}:${row.actionId} sequence must not be claimed by another row`,
+                );
+                // The model layer cannot resolve the action to any live
+                // sequence either: no baseline, no profile default.
+                assert.equal(resolveSequence(profile, row.actionId), null, `${profile.key}:${row.actionId}`);
+            }
+        }
+        // The registered-set derivation excludes every component-requirement
+        // row, so no registration diagnostic or catalog claim can name them.
+        for (const row of PROFILE_CATALOGS.cosmic.rows) {
+            if (row.classification === "component-requirement") {
+                assert.equal(REGISTERED_PROFILE_ACTION_IDS.has(row.actionId), false, row.actionId);
+            }
+        }
     });
 
     it("registers the selected profile's catalog rows and never registers Meta+0", () => {
@@ -11059,6 +11119,35 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(controller.isEnabled, true);
     });
 
+    it("honors move-follow when the event-loop yield is unavailable (synchronous fallback)", () => {
+        // Regression: the synchronous yieldOnce fallback ran the destination
+        // adoption but omitted the follow write, so a tiled move completed
+        // without switching the current desktop when yieldOnce was unavailable
+        // or failed. The fallback must follow on the moved window's output.
+        const { harness, controller, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        harness.yieldResult = false;
+        const writesBefore = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2");
+        assert.equal(harness.yields.length, 0);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        // The follow write reaches the moved window's output through the
+        // per-output seam even though the yield could not be armed.
+        const newWrites = harness.currentDesktopForScreenWrites.slice(writesBefore);
+        assert.equal(newWrites.length, 1);
+        assert.equal((newWrites[0]?.desktop as { id: string }).id, "desktop-2");
+        assert.equal(newWrites[0]?.output, focused.output);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.equal(controller.isEnabled, true);
+    });
+
     it("defers cleanup while a cross-workspace move is unsettled and retries after it settles", () => {
         const { harness, root, target, focused } = setup();
         harness.desktopsList = [
@@ -11983,6 +12072,84 @@ describe("TileController workspace mode and per-output seams (Unit 04)", () => {
         assert.equal(other.keyFor(b), keyB);
     });
 
+    it("resolves distinct equivalent output wrappers by tuple, never by object identity", () => {
+        // KWin can expose the same physical output through distinct QJS wrappers
+        // (workspace.screens, a window's `output` property, workspace.activeScreen).
+        // A foreign wrapper with the same physical tuple resolves to the same
+        // key as the rebuild's own object, and a colliding tuple resolves to the
+        // first-seen key deterministically.
+        const registry = new SessionOutputKeys();
+        const e = { ...OUTPUT };
+        const l = { ...OUTPUT };
+        registry.rebuild([e, l]);
+        const keyE = registry.keyFor(e);
+        const keyL = registry.keyFor(l);
+        // Distinct equivalent objects (spread copies) for both outputs resolve
+        // deterministically with no identity dependency. The colliding tuple
+        // cannot distinguish the two physical outputs, so every foreign wrapper
+        // of that tuple resolves to the first-seen key (spec E collision).
+        assert.equal(registry.keyFor({ ...e }), keyE);
+        assert.equal(registry.keyFor({ ...e }), keyE);
+        assert.equal(registry.keyFor({ ...l }), keyE);
+        assert.equal(registry.keyFor({ ...l }), keyE);
+        // The rebuild's own identity objects still resolve to their distinct
+        // first-seen keys.
+        assert.equal(registry.keyFor(e), keyE);
+        assert.equal(registry.keyFor(l), keyL);
+        // Distinct equivalent objects with distinct tuples keep distinct keys.
+        const a = { ...OUTPUT, name: "screen-a" };
+        const b = { ...OUTPUT, name: "screen-b" };
+        const registry2 = new SessionOutputKeys();
+        registry2.rebuild([a, b]);
+        const keyA = registry2.keyFor(a);
+        const keyB = registry2.keyFor(b);
+        assert.equal(registry2.keyFor({ ...a }), keyA);
+        assert.equal(registry2.keyFor({ ...b }), keyB);
+        // A foreign wrapper of a colliding same-tuple pair resolves to the
+        // first-seen key (spec E collision is inherently ambiguous).
+        const registry3 = new SessionOutputKeys();
+        const e3 = { ...OUTPUT, name: "screen-a" };
+        const l3 = { ...OUTPUT, name: "screen-a" };
+        registry3.rebuild([e3, l3]);
+        const keyE3 = registry3.keyFor(e3);
+        const keyL3 = registry3.keyFor(l3);
+        assert.notEqual(keyE3, undefined);
+        assert.notEqual(keyL3, undefined);
+        assert.notEqual(keyE3, keyL3);
+        assert.equal(registry3.keyFor({ ...e3 }), keyE3);
+    });
+
+    it("resolves a stale or unknown output safely to undefined with one diagnostic per tuple", () => {
+        // A wrapper whose tuple matches no current rebuild entry (a disconnected
+        // output or one never seen) resolves to undefined and is reported once
+        // per session tuple through the diagnostic callback.
+        const reported: string[] = [];
+        const registry = new SessionOutputKeys((tuple) => {
+            reported.push(tuple);
+        });
+        const a = { ...OUTPUT, name: "screen-a" };
+        const b = { ...OUTPUT, name: "screen-b" };
+        registry.rebuild([a, b]);
+        assert.notEqual(registry.keyFor(a), undefined);
+        // A stale wrapper for a disconnected output resolves to undefined; the
+        // still-connected output keeps resolving by identity.
+        const stale = { ...a };
+        registry.rebuild([b]);
+        assert.notEqual(registry.keyFor(b), undefined);
+        assert.equal(registry.keyFor(stale), undefined);
+        assert.equal(registry.keyFor({ ...a }), undefined);
+        // An unknown tuple (never seen) is also a safe undefined.
+        assert.equal(registry.keyFor({ ...OUTPUT, name: "screen-z" }), undefined);
+        assert.equal(registry.keyFor({ ...OUTPUT, name: "screen-z" }), undefined);
+        // Two distinct unknown/stale tuples were reported exactly once each.
+        assert.equal(reported.length, 2);
+        assert.equal(reported[0], outputTuple(stale));
+        assert.equal(reported[1], outputTuple({ ...OUTPUT, name: "screen-z" }));
+        // Connected-output lookups never emit an unknown diagnostic.
+        assert.notEqual(registry.keyFor(b), undefined);
+        assert.equal(reported.length, 2);
+    });
+
     it("exposes deterministic session output keys from the controller and keeps them across screensChanged", () => {
         const e = { ...OUTPUT };
         const l = { ...OUTPUT };
@@ -11998,6 +12165,39 @@ describe("TileController workspace mode and per-output seams (Unit 04)", () => {
         harness.screensChanged?.();
         assert.equal(controller.outputKeyFor(e), keyE);
         assert.equal(controller.outputKeyFor(l), keyL);
+    });
+
+    it("resolves distinct window/activeScreen output wrappers through the controller and reports stale ones once", () => {
+        // A window's `output` property and `workspace.activeScreen` can be
+        // distinct QJS wrappers of the physical outputs observed in
+        // `workspace.screens`. The controller resolves them by physical tuple
+        // (never object identity) and reports a stale/unknown output wrapper
+        // with one diagnostic per session tuple.
+        const e = { ...OUTPUT };
+        const l = { ...OUTPUT };
+        const harness = new Harness();
+        harness.screensList = [e, l];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const keyE = controller.outputKeyFor(e);
+        const keyL = controller.outputKeyFor(l);
+        assert.notEqual(keyE, undefined);
+        assert.notEqual(keyL, undefined);
+        // A distinct wrapper object with the same physical tuple as a connected
+        // screen resolves to that screen's deterministic first-seen key.
+        const foreignE = { ...e };
+        assert.equal(controller.outputKeyFor(foreignE), keyE);
+        assert.equal(controller.outputKeyFor({ ...e }), keyE);
+        // The rebuild's own identity objects keep their distinct first-seen
+        // keys even under a same-tuple collision.
+        assert.equal(controller.outputKeyFor(e), keyE);
+        assert.equal(controller.outputKeyFor(l), keyL);
+        // A stale wrapper (no matching connected tuple) is a safe undefined and
+        // emits exactly one diagnostic for its tuple.
+        const stale = { ...e, name: "screen-removed" };
+        assert.equal(controller.outputKeyFor(stale), undefined);
+        assert.equal(controller.outputKeyFor({ ...stale }), undefined);
+        assert.equal(countEvent(harness.logs, "workspace-output-key-unavailable"), 1);
     });
 
     it("migrates startup state non-destructively: pre-existing desktops stay unowned and unremoved, with one automatic owned trailing empty", () => {
@@ -12161,6 +12361,40 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         const [eAgain, lAgain] = twoLocalLists(controller);
         assert.deepEqual([...eAgain], ["desktop-1", "desktop-2", "desktop-3"]);
         assert.deepEqual([...lAgain], ["desktop-4"]);
+    });
+
+    it("reconciles a one-desktop two-output startup with one owned trailing empty per output", () => {
+        // Regression: the singleton global-desktop guard used to skip
+        // per-output-local reconciliation entirely, so a fresh two-output
+        // session with a single pre-existing desktop created no trailing empty
+        // on either output. Spec D1 requires one owned trailing empty per
+        // connected output, and pre-existing desktops are never removed.
+        const OUTPUT_E = { ...OUTPUT, name: "screen-e", serialNumber: "11" };
+        const OUTPUT_L = { ...OUTPUT, name: "screen-l", serialNumber: "22" };
+        const harness = new Harness();
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.deepEqual(
+            (harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id),
+            ["desktop-1", "desktop-2", "desktop-3"],
+        );
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-2", "desktop-3"]);
+        const [eIds, lIds] = twoLocalLists(controller);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2"]);
+        assert.deepEqual([...lIds], ["desktop-3"]);
+        assert.equal(new Set([...eIds, ...lIds]).size, eIds.length + lIds.length);
+        const creates = harness.createDesktopCalls.length;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, 0);
     });
 
     it("keeps two-output local sets distinct and navigates only the active output's list", () => {

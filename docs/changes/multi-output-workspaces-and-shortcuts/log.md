@@ -118,3 +118,25 @@
   `bash scripts/start-test.test.sh` (248 checks); `bash
   scripts/dogfood-install.test.sh` (108 checks); and reproducible `npm run
   build`. No live KWin/Plasma mutation was performed.
+- Unit 07 accepted: shared mode holds one ordered global desktop-id set and
+  synchronizes every connected output for navigation and eligible move-follow.
+  Meta+Shift+0 reuses or creates one shared destination then follows on all
+  outputs; Meta+0 remains absent. Shared cleanup retains only script-owned
+  trailing empties and rejects current, visible, or pre-existing desktops.
+  Hotplug synchronizes a new output without deleting desktops.
+- Independent review of `d3165d8..018fd45` found singleton multi-output
+  reconciliation, QJS output-wrapper identity, synchronous tiled move-follow,
+  and unimplemented catalog-row truthfulness gaps. The bounded correction pass
+  resolved them: tuple fallback diagnoses stale outputs, multi-output singleton
+  reconciliation creates owned trailing empties, the synchronous fallback
+  follows, and unsupported rows are component requirements that never resolve
+  or register. No DBus, helper, persistence, live mutation, or structural
+  safety violation was found.
+- Unit 08 accepted: documentation now records `per-output-local` as the
+  `workspaceMode` default, the three mode semantics, session-only output
+  identity, profile catalog selection, Meta+0 deferral, and the installer/KCM
+  migration boundary. Roadmap and backlog stale dynamic-workspace and blended
+  shortcut statements were updated without archiving entries. Final static
+  verification passed: typecheck; 692 tests; 248 lifecycle checks; 108
+  installer checks; and two reproducible builds. User result approval remains
+  pending; no archive or backlog removal was performed.

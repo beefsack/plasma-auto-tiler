@@ -73,6 +73,14 @@ before claiming activation. `Meta+0` (workspace-append) is deferred and never
 registered in any profile; `Meta+Shift+0` (move-workspace-append) remains a
 catalog row.
 
+Some catalog rows are present only as truthful component requirements and are
+never registered or sequence-resolvable in any profile: `fullscreen`
+(Meta+F11 on `cosmic`, Meta+F on `bspwm`), `previous-workspace` /
+`next-workspace`, and `group-toggle`. They need a KWin capability, an external
+Plasma component, or a workspace-mode unit and are catalogued with the
+`component-requirement` classification - they are not implemented and never
+appear in the registered shortcut set below.
+
 | Identifier | Shortcut |
 |---|---|
 | plasma-auto-tiler-insert-right | Meta+Alt+Right |
@@ -141,6 +149,26 @@ as owned and existing desktops are never removed. Cleanup only ever removes an
 owned trailing empty desktop after the highest occupied workspace, keeping
 exactly one trailing empty desktop, and never removes a non-owned, current, or
 per-output-visible desktop.
+
+The config key `workspaceMode` selects the multi-output workspace model
+(default `per-output-local`; invalid values fall back to it with a diagnostic):
+
+- `per-output-local` (default): each output owns an independent ordered set of
+  logical workspaces, so `Meta+n` switches only the active output. With one
+  output this is today's model. Each output's logical workspace 1 is a distinct
+  desktop from every other output's, so N outputs x M workspaces appear as N*M
+  desktops in Plasma's pager/overview.
+- `global-unique`: desktops are global; each output shows an ordered assigned
+  subset, and `Meta+n` selects the nth assigned desktop of the active output,
+  moving a target shown elsewhere to that output.
+- `shared`: one logical workspace set synchronized across every output;
+  `Meta+n` switches all outputs to the same desktop.
+
+Output identity is session-local: outputs are matched by their
+manufacturer/model/serial/name tuple, so an identical-tuple output pair is
+disambiguated by first-seen order (stable within a session, not across a
+plug/replug reorder) and no per-output mapping survives a restart. This is a
+documented limitation, not an error.
 
 ### Disable
 
