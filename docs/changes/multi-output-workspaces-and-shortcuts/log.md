@@ -140,3 +140,19 @@
   verification passed: typecheck; 692 tests; 248 lifecycle checks; 108
   installer checks; and two reproducible builds. User result approval remains
   pending; no archive or backlog removal was performed.
+
+## 2026-08-14 (amendment)
+
+- User approval amended the previously deferred Meta+0 behavior. Meta+0 now
+  registers as stable `plasma-auto-tiler-workspace-0`, `Meta+0`, in every
+  cosmic/hyprland/bspwm profile unless an exact in-profile conflict exists,
+  and focuses or creates the mode-defined trailing empty: active output only
+  for per-output-local and global-unique, shared-and-synchronized for shared.
+  Repeated invocation while already trailing empty is idempotent; once
+  occupied, automatic reconciliation creates exactly one replacement trailing
+  empty by mode. There is no hard workspace-count bound. Meta+Shift+0 stays
+  unchanged, and the KWin-local collision limitation is retained.
+- Implementation and static verification of the amended Meta+0 behavior are
+  complete: the accepted-unit and deferral records above remain part of the
+  change history, and result/user approval remains pending. No archive or
+  backlog removal was performed.

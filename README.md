@@ -69,8 +69,9 @@ shadowed until a separately gated installer/KCM migration exists. That migration
 is not implemented here; it must assign a displaced Plasma action only to the
 selected reference environment's documented equivalent (otherwise record it
 unassigned), take an atomic snapshot with rollback, and require live evidence
-before claiming activation. `Meta+0` (workspace-append) is deferred and never
-registered in any profile; `Meta+Shift+0` (move-workspace-append) remains a
+before claiming activation. `Meta+0` (workspace-append/focus) registers in every
+profile as `plasma-auto-tiler-workspace-0` unless an exact in-profile conflict
+exists; `Meta+Shift+0` (move-workspace-append) remains a
 catalog row.
 
 Some catalog rows are present only as truthful component requirements and are
@@ -113,7 +114,7 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-apply-balanced-grid | Meta+Alt+3 |
 | plasma-auto-tiler-apply-dwindle | Meta+Alt+4 |
 | plasma-auto-tiler-workspace-1..9 | Meta+1..9 |
-| plasma-auto-tiler-workspace-append | unbound (deferred) |
+| plasma-auto-tiler-workspace-0 | Meta+0 |
 | plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
 
@@ -140,8 +141,9 @@ At startup, windows that are already on all desktops are treated as session-loca
 sticky floating windows; this heuristic cannot distinguish a user-pinned window
 from an application-requested one, so it applies only within the session.
 
-`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` is unbound
-(deferred); `Meta+Shift+1..9` moves the focused window to the existing
+`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` focuses or creates
+the trailing empty workspace (idempotent when already trailing empty, no hard
+count bound); `Meta+Shift+1..9` moves the focused window to the existing
 workspace and follows it; `Meta+Shift+0` appends a workspace, moves the focused
 window, and follows it. Workspaces appended by the controller are
 session-local script-owned desktops: on a session restart no desktop is treated

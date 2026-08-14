@@ -25,9 +25,13 @@ and user on 2026-08-14.
   `ControllerEnvironment`, and read `workspaceMode` with default
   `per-output-local`. Do not introduce JSON persistence. This is sufficient
   unless typechecking or KWin packaging evidence contradicts the global API.
-- `Meta+0` remains unbound with no controller handler or deferred intent.
-  Meta+Shift+0 remains move-to-newly-appended-and-follow only where the selected
-  profile defines it. Future Meta+0 support remains deferred beyond this change.
+- `Meta+0` registers as `plasma-auto-tiler-workspace-0` in every profile unless
+  an exact in-profile conflict exists. It focuses or creates the mode-defined
+  trailing empty on the active output (per-output-local, global-unique) or
+  synchronizes every output to the shared trailing empty (shared), idempotently
+  when already trailing empty, with no hard workspace-count bound. Meta+Shift+0
+  remains move-to-newly-appended-and-follow where the selected profile defines
+  it.
 - KWin `registerShortcut` is KWin-local registration, not Plasma-global
   reassignment. An installer/KCM migration is a gated later dependency for
   collision takeover, displaced-action reassignment, rollback, and live proof.
@@ -56,14 +60,16 @@ Acceptance and reproducible evidence:
 
 1. Fixture tests prove exact equality to pinned upstream COSMIC and Hyprland
    defaults and the pinned bspwm example, except explicitly classified aliases
-   and Meta+0 deferred rows.
+   and Meta+0 rows, which register as `plasma-auto-tiler-workspace-0` unless an
+   exact in-profile conflict exists.
 2. Tests prove absent/invalid profile selects `cosmic`, and valid profile names
    select their own catalog.
 3. Deterministic tests reject every duplicate effective sequence inside a
    profile, identify both action IDs, and ensure no shipped profile duplicates.
 4. Tests prove user-customized shortcut values survive reload/profile change and
    take precedence without overwriting the catalog-owned default.
-5. Tests prove aliases register under distinct IDs and Meta+0 never registers.
+5. Tests prove aliases register under distinct IDs and Meta+0 registers as
+   `plasma-auto-tiler-workspace-0`.
 6. `npm run typecheck` and targeted controller tests pass.
 
 Risks and stop conditions: stop if an upstream fixture cannot be pinned and
@@ -116,9 +122,9 @@ component. Escalate the component boundary rather than inventing a binding.
 Implementation status: accepted 2026-08-14. Selected catalog rows register
 under stable KWin-local IDs on restart/reload, catalog and individual
 registration failures diagnose clearly, and the aggregate gate is catalog-aware.
-`Meta+0` has neither registration nor controller append-handler surface;
-`Meta+Shift+0` remains independently registered. The regenerated bundle and
-static lifecycle/install checks pass. The installer/KCM migration remains a
+`Meta+0` registers as `plasma-auto-tiler-workspace-0` with a controller
+append/focus handler; `Meta+Shift+0` remains independently registered. The
+regenerated bundle and static lifecycle/install checks pass. The installer/KCM migration remains a
 documented, separately gated dependency, not an implementation.
 
 Dependencies: Unit 02. Scope: register validated effective catalog rows as
@@ -196,7 +202,7 @@ Dependencies: Unit 04. Scope: implement mode dispatch and complete only
 `per-output-local`: outputKey-to-ordered-desktop-id mapping, screens/desktops
 reconciliation, automatic one-trailing-empty maintenance, safe owned-desktop
 cleanup, navigation, move-follow, and deferred move-append keyed by active
-output. Register Meta+Shift+0 only; do not register or retain a Meta+0 handler.
+output. Register Meta+0 as `plasma-auto-tiler-workspace-0` plus Meta+Shift+0.
 Update the aggregate shortcut-registration gate and its test to require only
 the remaining approved workspace registrations.
 
@@ -210,9 +216,10 @@ Acceptance and reproducible evidence:
    other output.
 2. Reconciliation creates exactly one local trailing empty desktop and creates
    no duplicate on repeat.
-3. Meta+Shift+0 moves an eligible active window to the local trailing empty and
-   follows; it creates exactly one destination if absent. Meta+0 has no
-   registration in every mode, and the aggregate gate passes without it.
+3. Meta+0 focuses or creates the active output's local trailing empty and is
+   idempotent when already trailing empty. Meta+Shift+0 moves an eligible
+   active window to the local trailing empty and follows; it creates exactly
+   one destination if absent. The aggregate gate passes with Meta+0 registered.
 4. Sticky, maximized, and fullscreen move refusal, hotplug cleanup candidacy,
    and desktop rename/reorder invariants are covered.
 5. `npm run typecheck` and `npm test` pass.
@@ -241,8 +248,8 @@ Acceptance and reproducible evidence:
 1. Two-output tests with E `[1,2,4]` and L `[3,5,6]` select E's 3rd = 4 and
    L's 2nd = 5 using per-output desktop writes.
 2. A target visible on another output applies the specified swap before follow.
-3. Meta+Shift+0 appends/assigns once only when no trailing empty exists;
-   Meta+0 remains absent.
+3. Meta+0 focuses or creates the active output's assigned trailing empty;
+   Meta+Shift+0 appends/assigns once only when no trailing empty exists.
 4. Cleanup rejects assigned, visible, current, and pre-existing desktops.
 5. `npm run typecheck` and `npm test` pass.
 
@@ -262,15 +269,17 @@ state-refusal coverage passed. Live KWin behavior remains unproven.
 
 Dependencies: Unit 06. Scope: add only the one shared ordered desktop set and
 synchronize all outputs for navigation and move-follow. Retain automatic shared
-trailing-empty maintenance and Meta+Shift+0 move-append; keep Meta+0 unbound.
+trailing-empty maintenance, Meta+0 append/focus, and Meta+Shift+0 move-append.
 
 Likely files: `kwin/src/controller.ts`, `kwin/tests/controller.test.ts`.
 
 Acceptance and reproducible evidence:
 
 1. Two-output tests prove Meta+2 writes the same desktop id to E and L.
-2. Meta+Shift+n and Meta+Shift+0 move the eligible active window then synchronize
-   all outputs; sticky/maximized/fullscreen refusal remains unchanged.
+2. Meta+0 focuses or creates the shared trailing empty and synchronizes all
+   outputs, idempotently when already trailing empty. Meta+Shift+n and
+   Meta+Shift+0 move the eligible active window then synchronize all outputs;
+   sticky/maximized/fullscreen refusal remains unchanged.
 3. Reconciliation keeps one shared trailing empty and cleanup never removes a
    current or pre-existing desktop.
 4. `npm run typecheck` and `npm test` pass.
@@ -302,14 +311,15 @@ Acceptance and reproducible evidence:
 
 1. `npm run typecheck` and `npm test` pass from `kwin`.
 2. The final test matrix maps every spec H criterion, including exact fixture
-   equality, zero in-profile duplicate sequences, unbound Meta+0, separable
+   equality, zero in-profile duplicate sequences, registered Meta+0, separable
    Meta+Shift+0, all three modes, and two-output behavior, to a named test.
 3. Focused review finds no unapproved DBus/external helper or live mutation, no
    persisted JSON, no stale dual-write resize logic, and no violation of the
    structural safety contract.
 4. Documentation states profile precedence, `cosmic` default, exact/default
    classifications, KWin-local collision limitation, `workspaceMode` values,
-   session-local output identity limitation, and Meta+0 deferred status.
+   session-local output identity limitation, and Meta+0 registered status and
+   per-mode append/focus semantics.
 
 Risks and stop conditions: no live KWin/Plasma mutation is authorized by this
 plan. If static tests cannot emulate an API edge, record the gap for separate

@@ -4,7 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const EXPECTED_SHORTCUT_COUNT = 51;
+const EXPECTED_SHORTCUT_COUNT = 52;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
@@ -132,9 +132,11 @@ describe("shipped artifact smoke execution", () => {
         const cosmic = new Map(
             stub.registeredShortcuts.map(([name, , sequence]) => [name, sequence] as const),
         );
-        // Spec H.15/H.16: the deferred Meta+0 row is never registered, the
-        // Meta+Shift+0 move row is, and the catalog-driven cosmic focus-right is
-        // Meta+L (never the old Meta+Alt+Ctrl+L blend).
+        // Spec H.15/H.16: Meta+0 registers under the stable workspace-0 ID (the
+        // legacy append ID never registers), the Meta+Shift+0 move row stays
+        // registered, and the catalog-driven cosmic focus-right is Meta+L (never
+        // the old Meta+Alt+Ctrl+L blend).
+        assert.equal(cosmic.get("plasma-auto-tiler-workspace-0"), "Meta+0");
         assert.ok(!names.includes("plasma-auto-tiler-workspace-append"));
         assert.equal(cosmic.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
         assert.equal(cosmic.get("plasma-auto-tiler-focus-right"), "Meta+L");

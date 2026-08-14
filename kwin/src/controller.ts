@@ -99,9 +99,9 @@ const MAX_YIELD_REARM_PER_PHASE = 2;
 // for that action; `canonical-example` is a canonical shipped example config
 // (bspwm ships no WM-enforced bindings, so its `examples/sxhkdrc` is the
 // baseline); `compatibility-alias` is a project-added parity binding the
-// reference does not ship; `deferred` is deliberately unbound in this change
-// (only Meta+0). Rows never silently displace an exact row of the same profile;
-// the validator rejects such in-profile duplicate sequences.
+// reference does not ship; `deferred` is deliberately unbound in this change.
+// Rows never silently displace an exact row of the same profile; the validator
+// rejects such in-profile duplicate sequences.
 
 export type ProfileKey = "cosmic" | "hyprland" | "bspwm";
 export type RowClassification =
@@ -359,16 +359,20 @@ function workspaceRows(
     return rows;
 }
 
-// The Meta+0 deferred row is present in every profile catalog but never
-// registers and never gets a handler surface.
-function deferredWorkspaceZeroRow(reference: string): CatalogRow {
+// The Meta+0 row is present in every profile catalog and registers as the
+// stable `plasma-auto-tiler-workspace-0` shortcut unless an exact in-profile
+// sequence collision exists (the validator rejects duplicates). It focuses or
+// creates the mode-defined trailing empty (spec C/D); the upstream reference
+// actions it maps to are `LastWorkspace` (COSMIC), `focus workspace 10`
+// (Hyprland), and `bspc desktop -f '^10'` (bspwm example).
+function workspaceZeroRow(reference: string, classification: RowClassification): CatalogRow {
     return catalogRow(
         "workspace-0",
-        "plasma-auto-tiler-workspace-append",
-        "Append and focus a new workspace",
+        "plasma-auto-tiler-workspace-0",
+        "Focus or create the trailing empty workspace",
         "Meta+0",
-        "deferred",
-        `deferred: ${reference}`,
+        classification,
+        reference,
     );
 }
 
@@ -392,7 +396,7 @@ const COSMIC_ROWS: readonly CatalogRow[] = Object.freeze([
     catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
-    deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
+    workspaceZeroRow(`${COSMIC_REF} Super+0 LastWorkspace`, "exact"),
     catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
@@ -415,7 +419,7 @@ const HYPRLAND_ROWS: readonly CatalogRow[] = Object.freeze([
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
     ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
     moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
-    deferredWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`),
+    workspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`, "exact"),
 ]);
 
 const BSPWM_ROWS: readonly CatalogRow[] = Object.freeze([
@@ -425,7 +429,7 @@ const BSPWM_ROWS: readonly CatalogRow[] = Object.freeze([
     ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
-    deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
+    workspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`, "canonical-example"),
     catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
     catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
@@ -446,10 +450,10 @@ export const PROFILE_CATALOGS: Readonly<Record<ProfileKey, ProfileCatalog>> = Ob
 // false equivalents. Rows classified `component-requirement` (`fullscreen`,
 // `previous-workspace*`, `next-workspace*`, and the reserved `group-toggle`)
 // need either a KWin capability, an external Plasma component, or a
-// workspace-mode unit and are never registered or sequence-resolvable; `Meta+0`
-// is deliberately deferred. Kept beside `profileActions` in `start()` so the
-// registration contract stays in one place and tests can derive the exact
-// expected registered set from the catalog.
+// workspace-mode unit and are never registered or sequence-resolvable; the
+// `workspace-0` Meta+0 row is implemented and registered. Kept beside
+// `profileActions` in `start()` so the registration contract stays in one place
+// and tests can derive the exact expected registered set from the catalog.
 export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
     new Set([
         ...["focus", "move"].flatMap((family) =>
@@ -466,6 +470,7 @@ export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
             ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`),
         ),
         "move-workspace-0",
+        "workspace-0",
         ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
             `workspace-${index}`,
             `move-workspace-${index}`,
@@ -505,10 +510,13 @@ export interface ProfileValidation {
     readonly shortcutIdConflicts: readonly ShortcutIdConflict[];
 }
 
-// Deterministic in-profile validator. Deferred rows (Meta+0) are never active
-// sequences and do not participate. Every duplicate effective sequence names
-// both conflicting action IDs, and every duplicate shortcut name reports its
-// conflicting action IDs, so registration failures stay attributable.
+// Deterministic in-profile validator. Deferred and component-requirement rows
+// are never active sequences and do not participate. Every duplicate effective
+// sequence names both conflicting action IDs, and every duplicate shortcut name
+// reports its conflicting action IDs, so registration failures stay
+// attributable. A shipped profile that also bound `Meta+0` to another row would
+// be rejected here, which is the exact in-profile collision guard for the
+// stable `plasma-auto-tiler-workspace-0` registration.
 export function validateProfile(catalog: ProfileCatalog): ProfileValidation {
     const duplicateSequences: SequenceConflict[] = [];
     const sequenceOwners = new Map<string, string>();
@@ -585,9 +593,10 @@ export class ShortcutOverrides {
 
 // Precedence: user override > selected baseline > profile default (cosmic).
 // Returns null only when no layer defines the action. Deferred and
-// component-requirement rows are never resolvable: neither Meta+0 nor the
-// unimplemented fullscreen/previous-workspace/next-workspace/group actions can
-// be claimed as a live sequence by any layer.
+// component-requirement rows are never resolvable: neither the unbound rows nor
+// the unimplemented fullscreen/previous-workspace/next-workspace/group actions
+// can be claimed as a live sequence by any layer. The implemented `workspace-0`
+// Meta+0 row resolves like any exact/canonical row.
 export function resolveSequence(
     profile: ProfileCatalog,
     actionId: string,
@@ -735,14 +744,15 @@ export interface PendingRebuild {
 }
 
 // A deferred script-owned trailing-empty creation request. A user Meta+Shift+0
-// (move) that would have to create the trailing empty while a live drag,
-// pending reconstruction, or unsettled move makes the desktop list unsafe to
-// mutate is queued instead of acting, and is retried through the existing
-// settle seams (drag finish, reconstruction drop, adoption, desktopsChanged).
-// Every request is re-validated against current context before it runs so a
-// stale request can never act after the context changed. Meta+0 is deferred
-// and has no navigate-append surface in this change (spec I, plan Unit 03), so
-// no navigate intent exists.
+// (move) or Meta+0 (focus/create) request that would have to create the
+// trailing empty while a live drag, pending reconstruction, or unsettled move
+// makes the desktop list unsafe to mutate is queued instead of acting, and is
+// retried through the existing settle seams (drag finish, reconstruction drop,
+// adoption, desktopsChanged). Every request is re-validated against current
+// context before it runs so a stale request can never act after the context
+// changed. Meta+0 shares this bounded drain: the whole focus/create invocation
+// defers while a drag, reconstruction, or unsettled move is live, never acting
+// or navigating mid-mutation.
 
 interface DecodedLeaf {
     readonly tile: TileCapability;
@@ -1400,6 +1410,9 @@ export class TileController {
     // Deferred Meta+Shift+0 trailing-empty creation windows. Bounded like the
     // other controller queues.
     private readonly pendingDesktopIntents: WindowCapability[] = [];
+    // Deferred Meta+0 trailing-empty focus/creation outputs, drained through the
+    // same bounded settle queue as the Meta+Shift+0 intents (spec F).
+    private readonly pendingWorkspaceZeroOutputs: OutputCapability[] = [];
     // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
     // KWin scripting cannot observe a held key or a bare next-key modal input,
     // so entry is a deterministic toggle and the mode is driven only through
@@ -1710,6 +1723,7 @@ export class TileController {
                 profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
             }
             profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+            profileActions["workspace-0"] = () => this.workspaceZero();
             const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
             for (const diagnostic of selected.diagnostics) {
                 this.diagnostic(diagnostic);
@@ -1723,11 +1737,12 @@ export class TileController {
                 this.diagnostic(diagnostic);
             }
             // Catalog-driven registration of the selected profile's rows.
-            // Deferred rows (Meta+0), component-requirement rows (unimplemented
+            // Deferred rows, component-requirement rows (unimplemented
             // fullscreen/previous-workspace/next-workspace/group), and rows
             // without a controller callback are never registered; every
-            // registered alias keeps its distinct shortcut ID from the catalog.
-            // A false registerShortcut
+            // registered alias keeps its distinct shortcut ID from the catalog,
+            // including the implemented `workspace-0` row under the stable
+            // `plasma-auto-tiler-workspace-0` ID. A false registerShortcut
             // result is reported per row as evidence of attempted registration
             // only - KWin-local registration never displaces or reassigns a
             // Plasma-global sequence and reports no activation collision (spec
@@ -6908,10 +6923,138 @@ export class TileController {
         this.synchronizeShared(current);
     }
 
-    // Meta+0 is deferred and unbound (spec I): there is no navigate-append
-    // handler surface here. Automatic trailing-empty maintenance is
-    // reconciliation-owned (cleanupDesktops), and Meta+Shift+0 owns the only
-    // remaining user path that appends a trailing desktop.
+    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): focus or create the
+    // mode-defined trailing empty. per-output-local and global-unique act on the
+    // active output only; shared focuses the shared trailing empty and
+    // synchronizes every connected output. Repeated invocation while the target
+    // is already trailing empty is idempotent. While a drag, reconstruction, or
+    // unsettled move is live the whole invocation is queued through the existing
+    // settle queue and completed after the settle seam (spec F bounded drain).
+    private workspaceZero(): void {
+        this.gate.run(() => {
+            this.diagnostic("workspace-zero-invoked");
+            const output = this.activeOutputForWorkspace();
+            this.finishWorkspaceZero(output);
+        }, (reason) => this.disabled(reason));
+    }
+
+    // Execute one Meta+0 request against the current context. A live drag,
+    // pending reconstruction, or unsettled move defers the whole invocation
+    // through the existing settle queue (spec F bounded drain); the queued
+    // output is re-resolved against the fresh context on execution. The active
+    // output is resolved once per invocation (spec D common); per-output-local
+    // and global-unique fail safely when no output key exists and act only on
+    // that output, and shared is output-agnostic. Creation or set-current
+    // failure is reported by the existing surfaces and never leaves a partial
+    // desktop (non-destructive).
+    private finishWorkspaceZero(output: OutputCapability | null): void {
+        if (this.workspaceMutationDeferred()) {
+            if (output !== null) {
+                this.deferWorkspaceZero(output);
+            }
+            return;
+        }
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        if (this.workspaceMode === "shared") {
+            this.finishSharedWorkspaceZero(desktops, output);
+            return;
+        }
+        if (output === null) {
+            this.diagnostic("workspace-zero-absent:no-active-output");
+            return;
+        }
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            this.diagnostic("workspace-zero-absent:output-key");
+            return;
+        }
+        let target: VirtualDesktopCapability | null;
+        if (this.workspaceMode === "per-output-local") {
+            this.rebuildLocalMapping(desktops);
+            target = this.trailingOwnedEmptyForOutput(output);
+            if (target === null) {
+                target = this.appendTrailingForOutput(output);
+            }
+        } else {
+            target = this.trailingOwnedEmptyForGlobalUnique(output);
+            if (target === null) {
+                target = this.appendDesktopForGlobalUnique(output);
+            }
+        }
+        if (target === null) {
+            return;
+        }
+        this.focusTrailingEmpty(target, output);
+    }
+
+    // Shared-mode Meta+0: focus/create the shared trailing empty and
+    // synchronize every connected output (spec D3). Idempotent when the shared
+    // set is already trailing empty; the no-op is detected against the active
+    // output's current (or the global current when no output is known) and the
+    // synchronization still re-asserts every output.
+    private finishSharedWorkspaceZero(
+        desktops: readonly VirtualDesktopCapability[],
+        output: OutputCapability | null,
+    ): void {
+        this.rebuildSharedMapping(desktops);
+        let target = this.trailingOwnedEmptyDesktop();
+        if (target === null) {
+            target = this.appendDesktop();
+            if (target !== null) {
+                this.rebuildSharedMapping();
+            }
+        }
+        if (target === null) {
+            return;
+        }
+        const current = output !== null ? this.currentDesktopIdForOutput(output) : this.currentDesktopIdGlobal();
+        if (current === target.id) {
+            this.diagnostic("workspace-zero-no-op:already-trailing-empty");
+        } else {
+            this.diagnostic("workspace-zero-completed");
+        }
+        this.synchronizeShared(target);
+    }
+
+    // Focus the mode-defined trailing empty on the active output through the
+    // per-output seam (per-output-local and global-unique). A target already
+    // current on the active output is an idempotent no-op that never creates or
+    // removes a desktop.
+    private focusTrailingEmpty(target: VirtualDesktopCapability, output: OutputCapability): void {
+        if (this.currentDesktopIdForOutput(output) === target.id) {
+            this.diagnostic("workspace-zero-no-op:already-trailing-empty");
+            return;
+        }
+        this.setCurrentDesktop(target, output);
+        this.diagnostic("workspace-zero-completed");
+    }
+
+    private currentDesktopIdForOutput(output: OutputCapability): string | null {
+        try {
+            const current = this.environment.currentDesktopForOutput(output);
+            if (isVirtualDesktop(current)) {
+                return current.id;
+            }
+        } catch (error) {
+            void error;
+        }
+        return null;
+    }
+
+    private currentDesktopIdGlobal(): string | null {
+        try {
+            const current = this.environment.currentDesktop();
+            if (isVirtualDesktop(current)) {
+                return current.id;
+            }
+        } catch (error) {
+            void error;
+        }
+        return null;
+    }
 
     // The script-owned trailing empty that reconciliation would retain: the
     // trailing-most owned empty desktop after every occupied desktop, or null
@@ -6970,6 +7113,19 @@ export class TileController {
         this.diagnostic("workspace-create-deferred:move");
     }
 
+    // Queue a deferred Meta+0 focus/creation request for the active output. The
+    // queue is bounded and each entry is re-validated on execution; the output
+    // is re-resolved against the current context then, never acted on stale.
+    private deferWorkspaceZero(output: OutputCapability): void {
+        if (
+            this.pendingWorkspaceZeroOutputs.length < MAX_SEQUENTIAL_LENGTH &&
+            !this.pendingWorkspaceZeroOutputs.includes(output)
+        ) {
+            this.pendingWorkspaceZeroOutputs.push(output);
+        }
+        this.diagnostic("workspace-zero-deferred");
+    }
+
     // Run every queued trailing-empty creation request, in order, once the
     // desktop list is safe to mutate. A request that is still unsafe is kept
     // queued; a request whose context became stale is cancelled.
@@ -6984,6 +7140,24 @@ export class TileController {
         this.pendingDesktopIntents.length = 0;
         for (const window of pending) {
             this.finishMoveToTrailing(window);
+        }
+        this.drainPendingWorkspaceZero();
+    }
+
+    // Run every queued Meta+0 request, in order, once the desktop list is safe
+    // to mutate. A request still unsafe is kept queued; a request whose output
+    // became stale fails safely on execution.
+    private drainPendingWorkspaceZero(): void {
+        if (!this.gate.isEnabled) {
+            return;
+        }
+        if (this.workspaceMutationDeferred()) {
+            return;
+        }
+        const pending = this.pendingWorkspaceZeroOutputs.slice();
+        this.pendingWorkspaceZeroOutputs.length = 0;
+        for (const output of pending) {
+            this.finishWorkspaceZero(output);
         }
     }
 

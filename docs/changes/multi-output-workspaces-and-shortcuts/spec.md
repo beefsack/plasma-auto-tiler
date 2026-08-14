@@ -82,7 +82,7 @@ decision). `H/J/K/L` map to left/down/up/right, matching COSMIC.
 | Resize left/down/up/right (HJKL) | (none) | Meta+Ctrl+H/J/K/L | [B1] node -z top/left/bottom/right; [H-Disp] resizeactive |
 | Resize left/down/up/right (arrows) | (none) | Meta+Ctrl+Left/Down/Up/Right | [C-KR] Super+R/Super+Shift+R as the idiom; arrows for parity |
 | Workspace 1..9 (select) | Meta+1..9 | Meta+1..9 | [C-KR] Super+1..9 Workspace(N); [H-Disp] workspace |
-| Workspace 0 (append/focus trailing empty) | Meta+0 | Deferred: unbound | deferred intent; no handler in this change |
+| Workspace 0 (append/focus trailing empty) | Meta+0 | Meta+0 | per-mode append/focus (D); registers as `plasma-auto-tiler-workspace-0` |
 | Move window to workspace 1..9 | Meta+Shift+1..9 | Meta+Shift+1..9 | [C-KR] Super+Shift+1..9 MoveToWorkspace(N); [H-Disp] movetoworkspace |
 | Move window to workspace 0 (move-append) | Meta+Shift+0 | Meta+Shift+0 | current moveActiveToWorkspace(0) |
 | Previous/next workspace | (none) | Component requirement: unbound, not registered | [C-KR] Super+Ctrl+arrows PreviousWorkspace/NextWorkspace; needs a workspace-mode unit |
@@ -115,13 +115,17 @@ Notes:
   registered as false equivalents in any profile. They need a KWin capability,
   an external Plasma component, or a workspace-mode unit (see C table and the
   catalog `component-requirement` classification).
-- `Meta+0` is deliberately unbound in every mode for this change. It must not
-  register a shortcut or invoke an append/focus handler. Trailing-empty
-  maintenance still runs automatically where the mode requires it. Future
-  `Meta+0` support is deferred to a later change.
+- `Meta+0` (stable ID `plasma-auto-tiler-workspace-0`) is registered in every
+  mode and in every profile unless an exact in-profile conflict exists. It
+  focuses or creates the mode-defined trailing empty: on the active output
+  only for `per-output-local` and `global-unique`, and synchronized across all
+  connected outputs for `shared`. Repeated invocation while the target is
+  already the trailing empty is idempotent, and once occupied automatic
+  reconciliation creates exactly one replacement trailing empty. There is no
+  hard workspace-count bound. Registration is KWin-local and stays subject to
+  the collision limitation in G.
 - `Meta+Shift+0` remains in scope independently as move-to-newly-appended-and-
-  follow. It is separately registered and handled from `Meta+0` in the shipped
-  controller, so it does not require a `Meta+0` handler.
+  follow. It is separately registered and handled from `Meta+0`.
 
 ## D. Workspace mode semantics
 
@@ -141,7 +145,8 @@ Common to all modes:
   every output regardless of that output's current desktop.
 - Trailing-empty maintenance remains automatic in the mode-defined scope; it
   may create or retain the one required trailing empty workspace during
-  reconciliation. `Meta+0` does not invoke it in this change.
+  reconciliation. `Meta+0` focuses the mode-defined trailing empty, creating it
+  when absent, and is idempotent when the target is already trailing empty.
 - `Meta+Shift+0` appends one workspace in the mode-defined scope when needed,
   moves the active eligible window there, and follows it; see per-mode.
 - `floating`: workspace selection never retile, resize, maximize, or otherwise
@@ -170,10 +175,12 @@ Common to all modes:
   `navigateWorkspace` (controller.ts:5990-5994).
 - `trailing empty`: reconciliation retains one trailing empty desktop per
   output, creating an owned desktop on that output's list when necessary.
+- `Meta+0`: focus the active output's owned trailing empty desktop, creating
+  and recording one if reconciliation has not yet done so. It is idempotent
+  when the active output is already trailing empty.
 - `move-append Meta+Shift+0`: resolve the trailing empty desktop for the active
   output, creating and recording one if reconciliation has not yet done so;
-  write the eligible active window's single membership and follow it. It does
-  not depend on a `Meta+0` registration.
+  write the eligible active window's single membership and follow it.
 - `trailing empty`: per-output reconciliation. Cleanup may remove only owned,
   empty, non-current, non-visible-on-any-output desktops (extends current
   `cleanupDesktops`, controller.ts:6412-6512, with a per-output scope). The
@@ -198,6 +205,9 @@ Common to all modes:
   current monitor, swapping the current workspace to a different monitor if
   necessary", [H-Disp]) - the desktop moves to the active output.
 - `trailing empty`: each assigned subset retains one trailing empty desktop.
+- `Meta+0`: focus the active output's assigned trailing empty desktop, creating
+  and assigning one when absent. It is idempotent when the active output is
+  already trailing empty.
 - `move-append Meta+Shift+0`: create and assign one new global desktop only
   when no trailing empty exists, then move-follow the eligible active window.
 - `move-follow Meta+Shift+n`: resolve the nth entry of the active output's
@@ -218,6 +228,9 @@ Common to all modes:
   iterating `setCurrentDesktopForScreen(target, output)` over
   `workspace.screens` ([KWin-API]); all outputs show the same logical workspace.
 - `trailing empty`: the shared set retains one trailing empty desktop.
+- `Meta+0`: focus the shared trailing empty desktop, creating it when absent,
+  and synchronize all outputs to it. It is idempotent when the shared set is
+  already trailing empty.
 - `move-append Meta+Shift+0`: create one shared desktop only when no trailing
   empty exists, move the eligible active window to it, and switch all outputs
   to it.
@@ -266,7 +279,8 @@ Common to all modes:
   the signal is authoritative for which output switched ([KWin-API] signal).
 - `move-append` deferral: reuse the existing `workspaceMutationDeferred` and
    pending-intent machinery (controller.ts:6082-6114), now keyed by the active
-   output. There is no deferred intent or handler for `Meta+0`.
+   output. `Meta+0` append/focus and `Meta+Shift+0` move-append share this
+   bounded drain; `Meta+0` focuses or creates the mode-defined trailing empty.
 - `global-unique state`: maintain `outputKey -> VirtualDesktop.id[]` for the
   assigned ordered subset, plus `desktopId -> outputKey` as its inverse. An
   assignment is script state, not a KWin desktop property. A desktop visible on
@@ -339,8 +353,9 @@ seam with fake outputs/desktops; no live host is required.
 3. Reconciliation with no trailing empty on `E` creates exactly one owned
    desktop, appends it to `E`'s ordered list, and leaves `L` unchanged. A second
    reconciliation creates no duplicate.
-4. `Meta+0` is absent from registered shortcuts and invoking its former handler
-   is impossible through the controller shortcut surface in every mode.
+4. `Meta+0` registers as `plasma-auto-tiler-workspace-0` in every mode; on `E`
+   it focuses or creates `E`'s trailing empty only, and a repeat invocation
+   while the target is already trailing empty creates no desktop.
 5. Meta+Shift+0 with focus on an eligible window on `E` moves it to `E`'s
    existing trailing empty desktop and follows; if none exists, it creates one
    only once. `L` remains unchanged.
@@ -369,8 +384,9 @@ seam with fake outputs/desktops; no live host is required.
     profile and reports the conflicting action IDs; component-requirement rows
     are never active sequences (they never register or resolve).
 15. Profile registration: each alias uses a distinct shortcut ID; user-customized
-    KGlobalAccel rows survive reload and profile switching; Meta+0 is absent in
-    every profile, and no unimplemented `fullscreen`, `previous-workspace*`,
+    KGlobalAccel rows survive reload and profile switching; Meta+0 registers in
+    every profile as `plasma-auto-tiler-workspace-0` unless an exact in-profile
+    conflict exists, and no unimplemented `fullscreen`, `previous-workspace*`,
     `next-workspace*`, or `group-toggle` row registers in any profile. The
     aggregate registration gate is only evidence of attempted registration,
     never evidence that a colliding Plasma global is activated.
@@ -384,9 +400,10 @@ User exact examples:
   editor on logical 2; laptop shows terminals on its logical 1 and chat on its
   logical 2. Meta+1 then Meta+2 on the external cycles its own two workspaces
   without touching the laptop.
-- Example 2 (move-append): automatic reconciliation maintains a fresh empty
-  workspace "3" on the laptop only; Meta+Shift+0 moves the focused window
-  there. Meta+0 is unbound.
+- Example 2 (append/focus): automatic reconciliation maintains a fresh empty
+  workspace "3" on the laptop only; Meta+0 focuses it, Meta+Shift+0 moves the
+  focused window there, and once occupied reconciliation creates exactly one
+  replacement trailing empty on the laptop.
 
 ## I. Migration from shipped d6467e8 and dirty prototype
 
@@ -405,9 +422,10 @@ Changes:
 - Workspace navigation moves from global-positional to per-output-local
   (mode A default). Single-output behaviour is unchanged; only the
   multi-output meaning changes.
-- Remove the Meta+0 registration and handler from this change. Automatic
+- Register Meta+0 as `plasma-auto-tiler-workspace-0` with a per-mode
+  append/focus handler and no hard workspace-count bound. Automatic
   trailing-empty maintenance remains; Meta+Shift+0 remains move-append and
-  follow. A later change may reintroduce Meta+0 after separate approval.
+  follow.
 - Replace the blended registrations with selected-profile catalog entries. Keep
   dirty prototype action code only where it implements an approved selected
   profile action; no removal occurs merely during planning.
@@ -428,9 +446,9 @@ open decision (G).
 
 - Combined directional move/swap is resolved: retain one action, as specified
   in C. Do not add a separate pure-swap binding in this change.
-- `Meta+0` append/focus is deferred and unbound in every mode. It is planned for
-  later design and approval; its future behavior, including any workspace-count
-  bound, is not an implementation acceptance criterion of this change.
+- `Meta+0` append/focus is restored and registered in every mode as
+  `plasma-auto-tiler-workspace-0` with the per-mode semantics in D. It has no
+  hard workspace-count bound.
 - The first deliverable is a truthful script-local profile layer with `cosmic`
   selected by default, complete pinned fixtures, collision validation, action
   implementations within the controller boundary, and KWin-local registration.

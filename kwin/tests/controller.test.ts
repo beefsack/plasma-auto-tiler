@@ -1490,8 +1490,8 @@ describe("TileController keyboard focus", () => {
     ];
     // Expected registration is catalog-driven: the selected profile's own
     // non-deferred rows whose actionId has an implemented callback, in catalog
-    // order, plus the fixed project-only rows. Meta+0 is deferred and never
-    // registered; Meta+Shift+0 (move-workspace-0) is a registered catalog row.
+    // order, plus the fixed project-only rows. Meta+0 (workspace-0) and
+    // Meta+Shift+0 (move-workspace-0) are both registered catalog rows.
     const catalogActionCatalog: ReadonlyArray<readonly [string, string, string]> = PROFILE_CATALOGS.cosmic.rows
         .filter((row) => row.classification !== "deferred" && REGISTERED_PROFILE_ACTION_IDS.has(row.actionId))
         .map((row) => [row.shortcutId, row.text, row.sequence] as const);
@@ -6980,6 +6980,7 @@ describe("TileController binding profile catalog", () => {
         ...workspacePinned(),
         ...moveWorkspacePinned(),
         ["move-workspace-0", "Meta+Shift+0"],
+        ["workspace-0", "Meta+0"],
         ["resize-mode-outwards", "Meta+R"],
         ["resize-mode-inwards", "Meta+Shift+R"],
     ];
@@ -7008,6 +7009,7 @@ describe("TileController binding profile catalog", () => {
         ...workspacePinned(),
         ...moveWorkspacePinned(),
         ["move-workspace-0", "Meta+Shift+0"],
+        ["workspace-0", "Meta+0"],
     ];
 
     const HYPRLAND_PINNED_ALIASES: ReadonlyArray<readonly [string, string]> = [
@@ -7037,6 +7039,7 @@ describe("TileController binding profile catalog", () => {
         ...workspacePinned(),
         ...moveWorkspacePinned(),
         ["move-workspace-0", "Meta+Shift+0"],
+        ["workspace-0", "Meta+0"],
         ["float-toggle", "Meta+S"],
         ["resize-expand-left", "Meta+Alt+H"],
         ["resize-expand-down", "Meta+Alt+J"],
@@ -7080,10 +7083,10 @@ describe("TileController binding profile catalog", () => {
             .map((row) => [row.actionId, row.sequence] as const);
     }
 
-    it("pins the cosmic catalog exactly to its upstream fixture, with only Meta+0 deferred", () => {
+    it("pins the cosmic catalog exactly to its upstream fixture with Meta+0 active", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "exact"), COSMIC_PINNED_EXACT);
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "compatibility-alias"), []);
-        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "deferred"), [["workspace-0", "Meta+0"]]);
+        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "deferred"), []);
         // Unimplemented rows are truthfully classified component requirements,
         // never exact rows and never resolvable.
         assert.deepEqual(
@@ -7095,14 +7098,14 @@ describe("TileController binding profile catalog", () => {
     it("pins the hyprland catalog to its upstream default plus explicitly-classified parity aliases", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "exact"), HYPRLAND_PINNED_EXACT);
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "compatibility-alias"), HYPRLAND_PINNED_ALIASES);
-        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "deferred"), [["workspace-0", "Meta+0"]]);
+        assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "deferred"), []);
         assert.deepEqual(projected(PROFILE_CATALOGS.hyprland, "component-requirement"), []);
     });
 
     it("pins the bspwm catalog to its canonical sxhkdrc rows plus project parity arrow aliases", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "canonical-example"), BSPWM_PINNED_CANONICAL);
         assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "compatibility-alias"), BSPWM_PINNED_ALIASES);
-        assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "deferred"), [["workspace-0", "Meta+0"]]);
+        assert.deepEqual(projected(PROFILE_CATALOGS.bspwm, "deferred"), []);
         assert.deepEqual(
             projected(PROFILE_CATALOGS.bspwm, "component-requirement"),
             BSPWM_PINNED_COMPONENT_REQUIREMENTS,
@@ -7233,14 +7236,14 @@ describe("TileController binding profile catalog", () => {
         }
     });
 
-    it("registers the selected profile's catalog rows and never registers Meta+0", () => {
+    it("registers the selected profile's catalog rows, including Meta+0 under its stable ID", () => {
         const cosmic = new Harness();
         new TileController(cosmic.environment()).start();
         const cosmicSequences = new Map(cosmic.shortcuts.map((entry) => [entry.name, entry.sequence]));
         assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-left"), "Meta+H");
         assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
         assert.equal(cosmicSequences.get("plasma-auto-tiler-move-left"), "Meta+Shift+H");
-        assert.equal(cosmicSequences.has("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(cosmicSequences.get("plasma-auto-tiler-workspace-0"), "Meta+0");
         assert.equal(cosmicSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
         assert.equal(countEvent(cosmic.logs, "profile-invalid:fallback-cosmic"), 0);
 
@@ -7251,7 +7254,7 @@ describe("TileController binding profile catalog", () => {
         assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right-arrow"), "Meta+Right");
         assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
         assert.equal(hyprlandSequences.get("plasma-auto-tiler-float-toggle"), "Meta+V");
-        assert.equal(hyprlandSequences.has("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(hyprlandSequences.get("plasma-auto-tiler-workspace-0"), "Meta+0");
         assert.equal(hyprlandSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
 
         const invalid = new Harness();
@@ -7262,14 +7265,14 @@ describe("TileController binding profile catalog", () => {
         assert.equal(countEvent(invalid.logs, "profile-invalid:fallback-cosmic"), 1);
     });
 
-    it("registers every alias under a distinct shortcut ID and Meta+0 never registers in any profile", () => {
+    it("registers every alias under a distinct shortcut ID and Meta+0 under the stable ID in every profile", () => {
         for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
             const harness = new Harness();
             harness.configValues.set("shortcutProfile", key);
             new TileController(harness.environment()).start();
             const names = harness.shortcuts.map((entry) => entry.name);
             assert.equal(new Set(names).size, names.length, key);
-            assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false, key);
+            assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true, key);
             assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
         }
     });
@@ -7327,8 +7330,8 @@ describe("TileController binding profile catalog", () => {
         new TileController(restart.environment()).start();
         assert.deepEqual(restart.shortcuts.map((entry) => entry.name), firstNames);
         assert.ok(firstNames.includes("plasma-auto-tiler-focus-left"));
+        assert.ok(firstNames.includes("plasma-auto-tiler-workspace-0"));
         assert.ok(firstNames.includes("plasma-auto-tiler-move-workspace-append"));
-        assert.ok(!firstNames.includes("plasma-auto-tiler-workspace-append"));
         // A user override set before a profile switch still wins, and the
         // catalog-owned default is never mutated.
         const overrides = new ShortcutOverrides();
@@ -7406,6 +7409,38 @@ describe("TileController binding profile catalog", () => {
             );
         }
     });
+
+    it("registers Meta+0 under the stable ID in every profile and never registers a legacy append ID", () => {
+        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
+            const harness = new Harness();
+            harness.configValues.set("shortcutProfile", key);
+            new TileController(harness.environment()).start();
+            const meta0 = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-workspace-0");
+            assert.ok(meta0, `${key}: stable Meta+0 ID must register`);
+            assert.equal(meta0?.sequence, "Meta+0", key);
+            assert.equal(
+                harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
+                false,
+                key,
+            );
+        }
+    });
+
+    it("preserves a user override under the stable Meta+0 ID across profile switches", () => {
+        // A user-customized value for `workspace-0` survives a reload and a
+        // profile switch and takes precedence over the catalog-owned default,
+        // exactly like every other implemented action (plan Unit 01 acceptance 4).
+        const overrides = new ShortcutOverrides();
+        overrides.set("workspace-0", "Meta+Alt+0");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "workspace-0", overrides), "Meta+Alt+0");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "workspace-0", overrides), "Meta+Alt+0");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.bspwm, "workspace-0", overrides), "Meta+Alt+0");
+        // Without an override the catalog default (Meta+0) wins and is never
+        // mutated by the override layer.
+        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "workspace-0"), "Meta+0");
+        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "workspace-0"), "Meta+0");
+        assert.equal(PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "workspace-0")?.sequence, "Meta+0");
+    });
 });
 
 describe("TileController shortcut registration", () => {
@@ -7440,7 +7475,7 @@ describe("TileController shortcut registration", () => {
         }
     });
 
-    it("registers exactly the catalog-driven all-or-nothing action set with no Meta+0", () => {
+    it("registers exactly the catalog-driven all-or-nothing action set, including Meta+0", () => {
         const { harness } = setup();
         const expected = new Set<string>([
             ...PROFILE_CATALOGS.cosmic.rows
@@ -7461,7 +7496,7 @@ describe("TileController shortcut registration", () => {
         ]);
         const names = harness.shortcuts.map((entry) => entry.name).sort();
         assert.deepEqual(names, [...expected].sort());
-        assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false);
+        assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true);
         assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true);
     });
 
@@ -10958,17 +10993,20 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
     });
 
-    it("Meta+0 is unbound and never has a controller navigate-append surface", () => {
-        // Spec H.4/H.15: the deferred Meta+0 row never registers and the former
-        // appendWorkspace handler is removed, so no workspace-append shortcut
-        // can exist in any profile.
+    it("Meta+0 registers as the stable workspace-0 shortcut in every profile", () => {
+        // Spec C/H.4/H.15: the Meta+0 row registers as
+        // `plasma-auto-tiler-workspace-0` in every profile and drives the
+        // append/focus controller handler; Meta+Shift+0 stays separately
+        // registered as move-append.
         for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
             const harness = new Harness();
             harness.configValues.set("shortcutProfile", key);
             new TileController(harness.environment()).start();
             const names = harness.shortcuts.map((entry) => entry.name);
-            assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false, key);
+            assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true, key);
             assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
+            const meta0 = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-workspace-0");
+            assert.equal(meta0?.sequence, "Meta+0", key);
         }
     });
 
@@ -11411,6 +11449,155 @@ describe("TileController dynamic virtual desktops", () => {
             "desktop-2",
         ]);
         void controller;
+    });
+
+    it("defers Meta+0 creation during a live drag and completes after drag finish", () => {
+        // Meta+0 shares the existing settle queue: a required trailing-empty
+        // creation during a live drag is queued and completed after drag
+        // finish, never acting mid-drag (spec F bounded drain).
+        const { harness, focused } = setup();
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-deferred"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        focused.move = false;
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
+    });
+
+    it("defers a focus-only Meta+0 during a live drag and completes after drag finish", () => {
+        // The whole Meta+0 invocation is queued while a drag is live, even when
+        // no creation is needed: it never navigates away from a drag and never
+        // mutates the desktop list mid-drag.
+        const { harness, focused } = setup();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        const creates = harness.createDesktopCalls.length;
+        const completedBefore = countEvent(harness.logs, "workspace-zero-completed");
+        focused.move = true;
+        focused.interactiveMoveResizeStarted.emit();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-deferred"), 1);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-1");
+        focused.move = false;
+        focused.interactiveMoveResizeFinished.emit();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), completedBefore + 1);
+    });
+
+    it("defers Meta+0 creation while a reconstruction is pending and completes after it settles", () => {
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const left = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const right = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const first = window();
+        const second = window();
+        root.tiles = [left, right];
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first, second];
+        for (const leaf of [left, right]) {
+            leaf.remove = () => {
+                root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+                return true;
+            };
+        }
+        installDwindleSplitter(root);
+        attachTileWriter(first);
+        attachTileWriter(second);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-deferred"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.ok(countEvent(harness.logs, "ownership-taken") >= 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
+        void controller;
+    });
+
+    it("Meta+0 creation or set-current failure is non-destructive and reason-logged", () => {
+        // A createDesktop throw aborts before any write: no desktop is owned,
+        // no current changes, and the existing desktop set is retained.
+        const create = setup();
+        create.harness.createDesktopThrows = new Error("create-failed");
+        invokeShortcut(create.harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(create.harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(create.harness.createDesktopCalls.length, 0);
+        assert.equal(create.harness.currentDesktopWrites.length, 0);
+        assert.deepEqual(create.controller.ownedDesktopIdSnapshot(), []);
+        assert.equal(create.controller.isEnabled, true);
+        // A set-current throw after a successful create still owns the created
+        // desktop and leaves every other desktop untouched (non-destructive).
+        const set = setup();
+        set.harness.setCurrentDesktopThrows = new Error("set-failed");
+        invokeShortcut(set.harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(set.harness.logs, "workspace-navigate-failed:set-failed"), 1);
+        assert.deepEqual(set.controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
+        assert.equal(set.harness.createDesktopCalls.length, 1);
+        assert.equal(set.controller.isEnabled, true);
+    });
+
+    it("Meta+0 fails safely when the active output has no key and never mutates", () => {
+        // A stale/unknown output wrapper resolves to no key (spec E); Meta+0
+        // reports the missing key and never creates or writes.
+        const { harness } = setup();
+        harness.active = window({ output: { ...OUTPUT, name: "screen-unknown" } });
+        const writes = harness.currentDesktopForScreenWrites.length;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-absent:output-key"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, creates);
+    });
+
+    it("Meta+0 focuses while Meta+Shift+0 still moves into the trailing empty (Shift+0 regression)", () => {
+        // Meta+Shift+0 remains move-append-and-follow unchanged: after Meta+0
+        // created and focused the trailing empty, Shift+0 on an eligible window
+        // still moves it there and follows. The two registered actions stay
+        // separable (spec C note).
+        const { harness, root, target, focused } = setup();
+        target.unmanage = (_value) => {
+            focused.tile = null;
+            target.windows = [];
+            return true;
+        };
+        target.remove = () => {
+            root.tiles = [];
+            return true;
+        };
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        harness.currentDesktop = DESKTOP;
+        harness.currentDesktopValue = DESKTOP;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-2",
+        ]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-replenished"), 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
     });
 
     it("Shift+0 moves into the trailing empty then appends a replacement after it settles", () => {
@@ -12482,8 +12669,8 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.deepEqual([...lIds], ["desktop-4"]);
         assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
         assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
-            false,
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
+            true,
         );
     });
 
@@ -12647,6 +12834,95 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal((last?.desktop as { id: string }).id, "desktop-5");
         assert.equal(last?.output, OUTPUT_L);
     });
+
+    it("Meta+0 focuses the active output's existing local trailing empty only, leaving the other output unchanged", () => {
+        // Spec D1/H.4: startup reconciliation already created E's trailing empty
+        // (desktop-3); Meta+0 focuses it through the per-output seam on E only.
+        // No desktop is created and L's current desktop is untouched.
+        const { harness, wE } = twoOutputSetup();
+        const creates = harness.createDesktopCalls.length;
+        harness.active = wE;
+        harness.currentDesktopByOutput.clear();
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-3");
+        assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
+        assert.equal((last?.desktop as { id: string }).id, "desktop-3");
+        assert.equal(last?.output, OUTPUT_E);
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
+    });
+
+    it("Meta+0 is idempotent when the active output is already at its trailing empty", () => {
+        const { harness, wE } = twoOutputSetup();
+        harness.active = wE;
+        harness.currentDesktop = { id: "desktop-3", x11DesktopNumber: 3 };
+        harness.currentDesktopValue = { id: "desktop-3", x11DesktopNumber: 3 };
+        harness.currentDesktopByOutput.clear();
+        const writes = harness.currentDesktopForScreenWrites.length;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-no-op:already-trailing-empty"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("Meta+0 creates exactly one owned trailing empty when the active output's local set lacks one", () => {
+        // A single-output fresh session has no automatic trailing empty (the
+        // single-output degeneracy of spec D1), so Meta+0 must create and focus
+        // exactly one owned desktop and never removes a pre-existing desktop.
+        const { harness, controller, focused } = setup();
+        const creates = harness.createDesktopCalls.length;
+        assert.equal(creates, 0);
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id).includes("desktop-1"), true);
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-1"]);
+        assert.equal(harness.removedDesktops.length, 0);
+        // A repeat while already at the new trailing empty is idempotent.
+        harness.currentDesktop = { id: "desktop-2", x11DesktopNumber: 2 };
+        harness.currentDesktopValue = { id: "desktop-2", x11DesktopNumber: 2 };
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-no-op:already-trailing-empty"), 1);
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("occupying the focused trailing empty creates exactly one replacement on reconciliation", () => {
+        // Once the trailing empty is occupied, automatic reconciliation creates
+        // exactly one replacement (spec D1); a repeated reconciliation creates
+        // no duplicate and L's list is unchanged.
+        const { harness, controller } = twoOutputSetup();
+        harness.windows = [];
+        harness.currentDesktopByOutput.clear();
+        const creates = harness.createDesktopCalls.length;
+        const trailing = { id: "desktop-3", x11DesktopNumber: 3 };
+        const incoming = window({ desktops: [trailing], output: OUTPUT_E });
+        harness.windows = [incoming];
+        harness.emitAdded(incoming);
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        const [eIds, lIds] = twoLocalLists(controller);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2", "desktop-3", "desktop-5"]);
+        assert.deepEqual([...lIds], ["desktop-4"]);
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("Meta+0 creation failure is non-destructive and reason-logged (per-output-local)", () => {
+        const { harness, controller } = setup();
+        harness.createDesktopThrows = new Error("create-failed");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(harness.createDesktopCalls.length, 0);
+        assert.equal(harness.currentDesktopWrites.length, 0);
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
+        assert.equal(controller.isEnabled, true);
+    });
 });
 
 describe("TileController global-unique workspaces (Unit 06)", () => {
@@ -12712,11 +12988,11 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         return { harness, controller, keyE, keyL, wE, wL };
     }
 
-    it("Meta+0 stays absent: no navigate-append shortcut is ever registered", () => {
+    it("Meta+0 registers as the stable workspace-0 shortcut alongside Meta+Shift+0", () => {
         const { harness } = globalUniqueSetup();
         assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
-            false,
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
+            true,
         );
         assert.equal(
             harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
@@ -12972,6 +13248,63 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         );
         assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-8"]);
     });
+
+    it("Meta+0 focuses the active subset's assigned trailing empty without creating or touching the other output", () => {
+        // Spec D2: E's assigned subset is [1,2,4,7]; its assigned trailing
+        // empty is the owned desktop-7. Meta+0 focuses it on E only, creates
+        // nothing, and L's current desktop stays unchanged.
+        const { harness, wE } = globalUniqueSetup();
+        harness.active = wE;
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.delete(OUTPUT_L);
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-7");
+        assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
+        assert.equal((last?.desktop as { id: string }).id, "desktop-7");
+        assert.equal(last?.output, OUTPUT_E);
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
+    });
+
+    it("Meta+0 is idempotent when the active output is already at its assigned trailing empty (global-unique)", () => {
+        const { harness, wE } = globalUniqueSetup();
+        harness.active = wE;
+        harness.currentDesktopByOutput.set(OUTPUT_E, { id: "desktop-7" });
+        harness.currentDesktopByOutput.delete(OUTPUT_L);
+        const writes = harness.currentDesktopForScreenWrites.length;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-no-op:already-trailing-empty"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.equal(harness.createDesktopCalls.length, creates);
+    });
+
+    it("Meta+0 creates and assigns exactly one desktop when the active subset lacks a trailing empty (global-unique)", () => {
+        // Re-seed so E's subset holds no owned desktop: no trailing empty
+        // exists, so Meta+0 creates exactly one owned desktop, assigns it to E,
+        // focuses it, and leaves L unchanged.
+        const { harness, controller, keyE, keyL, wE } = globalUniqueSetup();
+        controller.seedGlobalUniqueAssignment({
+            [keyE]: ["desktop-1", "desktop-2", "desktop-4"],
+            [keyL]: ["desktop-3", "desktop-5", "desktop-6", "desktop-7", "desktop-8"],
+        });
+        harness.active = wE;
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.delete(OUTPUT_L);
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-9");
+        assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(snapshot[keyE]?.slice().sort(), ["desktop-1", "desktop-2", "desktop-4", "desktop-9"]);
+        assert.deepEqual(
+            snapshot[keyL]?.slice().sort(),
+            ["desktop-3", "desktop-5", "desktop-6", "desktop-7", "desktop-8"],
+        );
+    });
 });
 
 describe("TileController shared workspaces (Unit 07)", () => {
@@ -13038,11 +13371,11 @@ describe("TileController shared workspaces (Unit 07)", () => {
         return [(e as { id: string }).id, (l as { id: string }).id];
     }
 
-    it("Meta+0 stays absent and Meta+Shift+0 remains registered (shared)", () => {
+    it("Meta+0 registers as the stable workspace-0 shortcut and Meta+Shift+0 remains registered (shared)", () => {
         const { harness } = sharedSetup();
         assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
-            false,
+            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
+            true,
         );
         assert.equal(
             harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
@@ -13310,5 +13643,89 @@ describe("TileController shared workspaces (Unit 07)", () => {
         assert.equal(harness.currentDesktopForScreenWrites.length, writes);
         assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-1"]);
         assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1"]);
+    });
+
+    it("Meta+0 focuses the shared trailing empty and synchronizes every output (spec D3)", () => {
+        // The shared set is [1,2,3]; Meta+0 focuses the shared owned trailing
+        // empty desktop-3 and synchronizes both E and L to it, creating nothing.
+        const { harness, controller } = sharedSetup();
+        bothOnDesktopOne(harness);
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-3", "desktop-3"]);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
+    });
+
+    it("Meta+0 is idempotent when the shared set is already trailing empty (shared)", () => {
+        const { harness, controller } = sharedSetup();
+        harness.currentDesktop = { id: "desktop-3" };
+        harness.currentDesktopValue = { id: "desktop-3" };
+        harness.currentDesktopByOutput.set(OUTPUT_E, { id: "desktop-3" });
+        harness.currentDesktopByOutput.set(OUTPUT_L, { id: "desktop-3" });
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-zero-no-op:already-trailing-empty"), 1);
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-3", "desktop-3"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
+    });
+
+    it("Meta+0 creates exactly one shared desktop when no trailing empty exists and synchronizes all outputs", () => {
+        // A single pre-existing desktop: startup cleanup does not create a
+        // shared trailing empty (cleanup requires at least two live desktops),
+        // so Meta+0 creates the shared destination exactly once and
+        // synchronizes every connected output to it.
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1"]);
+        harness.active = null;
+        harness.activeScreenValue = OUTPUT_E;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-2"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2"]);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("Meta+0 shared create failure is non-destructive and reason-logged", () => {
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        harness.activeScreenValue = OUTPUT_E;
+        harness.createDesktopThrows = new Error("create-failed");
+        const writes = harness.currentDesktopForScreenWrites.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(harness.currentDesktopForScreenWrites.length, writes);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1"]);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("Meta+0 shared sync write failure is reported per output and never corrupts state", () => {
+        const { harness, controller } = sharedSetup();
+        harness.active = null;
+        harness.setCurrentDesktopThrows = new Error("sync-failed");
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(countEvent(harness.logs, "workspace-navigate-failed:sync-failed"), 2);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2", "desktop-3"]);
     });
 });

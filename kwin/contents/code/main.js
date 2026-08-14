@@ -1178,14 +1178,14 @@
     }
     return rows;
   }
-  function deferredWorkspaceZeroRow(reference) {
+  function workspaceZeroRow(reference, classification) {
     return catalogRow(
       "workspace-0",
-      "plasma-auto-tiler-workspace-append",
-      "Append and focus a new workspace",
+      "plasma-auto-tiler-workspace-0",
+      "Focus or create the trailing empty workspace",
       "Meta+0",
-      "deferred",
-      `deferred: ${reference}`
+      classification,
+      reference
     );
   }
   function moveWorkspaceZeroRow(reference, classification = "exact") {
@@ -1207,7 +1207,7 @@
     catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
-    deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
+    workspaceZeroRow(`${COSMIC_REF} Super+0 LastWorkspace`, "exact"),
     catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
@@ -1229,7 +1229,7 @@
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
     ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
     moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
-    deferredWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`)
+    workspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`, "exact")
   ]);
   var BSPWM_ROWS = Object.freeze([
     ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+{h,j,k,l} bspc node -f {west,south,north,east}`),
@@ -1238,7 +1238,7 @@
     ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
-    deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
+    workspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`, "canonical-example"),
     catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
     catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
@@ -1267,6 +1267,7 @@
         (kind) => ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`)
       ),
       "move-workspace-0",
+      "workspace-0",
       ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
         `workspace-${index}`,
         `move-workspace-${index}`
@@ -1717,6 +1718,9 @@
       // Deferred Meta+Shift+0 trailing-empty creation windows. Bounded like the
       // other controller queues.
       this.pendingDesktopIntents = [];
+      // Deferred Meta+0 trailing-empty focus/creation outputs, drained through the
+      // same bounded settle queue as the Meta+Shift+0 intents (spec F).
+      this.pendingWorkspaceZeroOutputs = [];
       // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
       // KWin scripting cannot observe a held key or a bare next-key modal input,
       // so entry is a deterministic toggle and the mode is driven only through
@@ -1987,6 +1991,7 @@
           profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
         }
         profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+        profileActions["workspace-0"] = () => this.workspaceZero();
         const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
         for (const diagnostic of selected.diagnostics) {
           this.diagnostic(diagnostic);
@@ -6459,10 +6464,130 @@
       }
       this.synchronizeShared(current);
     }
-    // Meta+0 is deferred and unbound (spec I): there is no navigate-append
-    // handler surface here. Automatic trailing-empty maintenance is
-    // reconciliation-owned (cleanupDesktops), and Meta+Shift+0 owns the only
-    // remaining user path that appends a trailing desktop.
+    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): focus or create the
+    // mode-defined trailing empty. per-output-local and global-unique act on the
+    // active output only; shared focuses the shared trailing empty and
+    // synchronizes every connected output. Repeated invocation while the target
+    // is already trailing empty is idempotent. While a drag, reconstruction, or
+    // unsettled move is live the whole invocation is queued through the existing
+    // settle queue and completed after the settle seam (spec F bounded drain).
+    workspaceZero() {
+      this.gate.run(() => {
+        this.diagnostic("workspace-zero-invoked");
+        const output = this.activeOutputForWorkspace();
+        this.finishWorkspaceZero(output);
+      }, (reason) => this.disabled(reason));
+    }
+    // Execute one Meta+0 request against the current context. A live drag,
+    // pending reconstruction, or unsettled move defers the whole invocation
+    // through the existing settle queue (spec F bounded drain); the queued
+    // output is re-resolved against the fresh context on execution. The active
+    // output is resolved once per invocation (spec D common); per-output-local
+    // and global-unique fail safely when no output key exists and act only on
+    // that output, and shared is output-agnostic. Creation or set-current
+    // failure is reported by the existing surfaces and never leaves a partial
+    // desktop (non-destructive).
+    finishWorkspaceZero(output) {
+      if (this.workspaceMutationDeferred()) {
+        if (output !== null) {
+          this.deferWorkspaceZero(output);
+        }
+        return;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return;
+      }
+      if (this.workspaceMode === "shared") {
+        this.finishSharedWorkspaceZero(desktops, output);
+        return;
+      }
+      if (output === null) {
+        this.diagnostic("workspace-zero-absent:no-active-output");
+        return;
+      }
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        this.diagnostic("workspace-zero-absent:output-key");
+        return;
+      }
+      let target;
+      if (this.workspaceMode === "per-output-local") {
+        this.rebuildLocalMapping(desktops);
+        target = this.trailingOwnedEmptyForOutput(output);
+        if (target === null) {
+          target = this.appendTrailingForOutput(output);
+        }
+      } else {
+        target = this.trailingOwnedEmptyForGlobalUnique(output);
+        if (target === null) {
+          target = this.appendDesktopForGlobalUnique(output);
+        }
+      }
+      if (target === null) {
+        return;
+      }
+      this.focusTrailingEmpty(target, output);
+    }
+    // Shared-mode Meta+0: focus/create the shared trailing empty and
+    // synchronize every connected output (spec D3). Idempotent when the shared
+    // set is already trailing empty; the no-op is detected against the active
+    // output's current (or the global current when no output is known) and the
+    // synchronization still re-asserts every output.
+    finishSharedWorkspaceZero(desktops, output) {
+      this.rebuildSharedMapping(desktops);
+      let target = this.trailingOwnedEmptyDesktop();
+      if (target === null) {
+        target = this.appendDesktop();
+        if (target !== null) {
+          this.rebuildSharedMapping();
+        }
+      }
+      if (target === null) {
+        return;
+      }
+      const current = output !== null ? this.currentDesktopIdForOutput(output) : this.currentDesktopIdGlobal();
+      if (current === target.id) {
+        this.diagnostic("workspace-zero-no-op:already-trailing-empty");
+      } else {
+        this.diagnostic("workspace-zero-completed");
+      }
+      this.synchronizeShared(target);
+    }
+    // Focus the mode-defined trailing empty on the active output through the
+    // per-output seam (per-output-local and global-unique). A target already
+    // current on the active output is an idempotent no-op that never creates or
+    // removes a desktop.
+    focusTrailingEmpty(target, output) {
+      if (this.currentDesktopIdForOutput(output) === target.id) {
+        this.diagnostic("workspace-zero-no-op:already-trailing-empty");
+        return;
+      }
+      this.setCurrentDesktop(target, output);
+      this.diagnostic("workspace-zero-completed");
+    }
+    currentDesktopIdForOutput(output) {
+      try {
+        const current = this.environment.currentDesktopForOutput(output);
+        if (isVirtualDesktop(current)) {
+          return current.id;
+        }
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
+    currentDesktopIdGlobal() {
+      try {
+        const current = this.environment.currentDesktop();
+        if (isVirtualDesktop(current)) {
+          return current.id;
+        }
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
     // The script-owned trailing empty that reconciliation would retain: the
     // trailing-most owned empty desktop after every occupied desktop, or null
     // when none exists. The trailing-most candidate is the one cleanup keeps,
@@ -6517,6 +6642,15 @@
       }
       this.diagnostic("workspace-create-deferred:move");
     }
+    // Queue a deferred Meta+0 focus/creation request for the active output. The
+    // queue is bounded and each entry is re-validated on execution; the output
+    // is re-resolved against the current context then, never acted on stale.
+    deferWorkspaceZero(output) {
+      if (this.pendingWorkspaceZeroOutputs.length < MAX_SEQUENTIAL_LENGTH && !this.pendingWorkspaceZeroOutputs.includes(output)) {
+        this.pendingWorkspaceZeroOutputs.push(output);
+      }
+      this.diagnostic("workspace-zero-deferred");
+    }
     // Run every queued trailing-empty creation request, in order, once the
     // desktop list is safe to mutate. A request that is still unsafe is kept
     // queued; a request whose context became stale is cancelled.
@@ -6531,6 +6665,23 @@
       this.pendingDesktopIntents.length = 0;
       for (const window of pending) {
         this.finishMoveToTrailing(window);
+      }
+      this.drainPendingWorkspaceZero();
+    }
+    // Run every queued Meta+0 request, in order, once the desktop list is safe
+    // to mutate. A request still unsafe is kept queued; a request whose output
+    // became stale fails safely on execution.
+    drainPendingWorkspaceZero() {
+      if (!this.gate.isEnabled) {
+        return;
+      }
+      if (this.workspaceMutationDeferred()) {
+        return;
+      }
+      const pending = this.pendingWorkspaceZeroOutputs.slice();
+      this.pendingWorkspaceZeroOutputs.length = 0;
+      for (const output of pending) {
+        this.finishWorkspaceZero(output);
       }
     }
     // Execute a deferred Meta+Shift+0 request: re-validate the captured window

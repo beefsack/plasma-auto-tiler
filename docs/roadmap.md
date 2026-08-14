@@ -156,9 +156,11 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   (`per-output-local` default, `global-unique`, `shared`) in
   [multi-output-workspaces-and-shortcuts](changes/multi-output-workspaces-and-shortcuts/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
-  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0` is
-  deferred and unbound in every mode; `Meta+Shift+0` moves the focused window to
-  a newly appended workspace (backlog P2 `move-window-to-workspace`).
+  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0` focuses
+  or creates the mode-defined trailing empty (registered as
+  `plasma-auto-tiler-workspace-0` in every profile unless an exact in-profile
+  conflict); `Meta+Shift+0` moves the focused window to a newly appended
+  workspace (backlog P2 `move-window-to-workspace`).
 - **Implementation:** statically implemented in the controller via the
   documented scripting surface (`createDesktop`/`removeDesktop`,
   `setCurrentDesktopForScreen`, `Window.desktops`); the script keeps a
@@ -200,7 +202,7 @@ gated installer/KCM migration exists
 | Maximize | `plasma-auto-tiler-maximize` | `Meta+M` | COSMIC `Super+M` [C-KR] |
 | Fullscreen | `plasma-auto-tiler-fullscreen` | `Meta+F11` (component requirement; not registered) | COSMIC `Super+F11` [C-KR] |
 | Focus workspace | `plasma-auto-tiler-workspace-{1..9}` | `Meta+1..9` | Hyprland `mainMod+[0-9]` [H-Ex] |
-| Append + focus workspace | `plasma-auto-tiler-workspace-append` | `Meta+0` (deferred; unbound in every profile) | deferred intent |
+| Append + focus workspace | `plasma-auto-tiler-workspace-0` | `Meta+0` | registered; per-mode append/focus trailing empty |
 | Move to workspace | `plasma-auto-tiler-move-workspace-{1..9}` | `Meta+Shift+1..9` | Hyprland example [H-Ex] |
 | Move to appended workspace | `plasma-auto-tiler-move-workspace-append` | `Meta+Shift+0` | backlog P2 |
 | Detach / attach | `plasma-auto-tiler-detach` / `-attach` | `Meta+Shift+Space` / `Meta+Alt+Shift+Space` | existing (controller.ts:913-924) |
