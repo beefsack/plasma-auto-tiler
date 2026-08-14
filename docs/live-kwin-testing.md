@@ -142,7 +142,10 @@ validation ladder above.
   warnings/errors before the exact idempotent stop/unload; it never falls back
   to the historical (pre-cursor) epoch when a current attempt exists. Running
   it is a live KWin mutation and still requires one explicit, bounded
-  authorization under the Safety Boundary.
+  authorization under the Safety Boundary. An INT/TERM interruption during a
+  `start` removes its un-reported attempt evidence temp file (it does not leak
+  in `/tmp`) and re-raises the signal, so the outcome is reported by the
+  caller as unknown rather than by start-test.sh as a readiness failure.
 - `scripts/start-test.sh status` is read-only. It reports the exact plugin load
   state from `isScriptLoaded`, labels controller running/callback delivery as
   unproven, reports whether this KWin process's journal has readiness evidence,
@@ -211,23 +214,44 @@ validation ladder above.
 manual start launcher in one nonce-owned interactive run; the low-level
 `start-test.sh` commands above remain the manual reference.
 
-- `bash scripts/live-test.sh run` runs a full preflight (typecheck, build,
-  tests, and a critical static scan), then a read-only dogfood/direct status
-  check. It fails closed if the controller is already loaded or its state
-  cannot be safely owned. It records the exact installed-plugin enable state
-  and, if enabled, disables only that plugin through the existing dogfood
-  command. It captures the current KWin PID and journal cursor, then invokes
-  `start-test.sh start` (it never duplicates the D-Bus lifecycle). On success
-  it prints status/diagnostics/desktops plus a concise checklist and
-  foreground-follows the same-PID `plasma-auto-tiler` and `kwin_scripting`
-  logs into the nonce-owned evidence directory until Ctrl-C/TERM.
+- `bash scripts/live-test.sh run` runs a concise full preflight (typecheck,
+  build, tests, and a critical static scan; one pass/fail line per step with
+  each step's combined output retained in
+  `typecheck.txt`/`build.txt`/`tests.txt`/`static-scan.txt`), then a
+  read-only dogfood/direct status check. It fails closed if the controller is
+  already loaded or its state cannot be safely owned. It records the exact
+  installed-plugin enable state and, if enabled, disables only that plugin
+  through the existing dogfood command. It captures the current KWin PID and
+  journal cursor, then invokes `start-test.sh start` (it never duplicates the
+  D-Bus lifecycle). Before the bounded readiness wait it states the actual
+  upper bound derived from the `start-test.sh` contract. The exact combined
+  stdout+stderr of that single start invocation is retained at `start.txt`
+  and streamed to the terminal with its true exit status preserved under
+  pipefail. On success it prints status/diagnostics/desktops plus a concise
+  checklist and foreground-follows the same-PID `plasma-auto-tiler` and
+  `kwin_scripting` logs into the nonce-owned evidence directory until
+  Ctrl-C/TERM.
 - `bash scripts/live-test.sh run --quick` skips the full test suite but still
   typechecks, builds the current bundle, and runs the critical static scan.
+  `--verbose` streams each preflight step's output to the terminal while
+  still retaining it; `--quick` and `--verbose` combine in either order.
 - On EXIT/INT/TERM it stops only the script it loaded, prints final
   status/diagnostics/desktops, and restores the installed-plugin enable state
-  only when this run changed it and verified the restore. On a failed start it
-  performs the same cleanup/restoration, prints the retained attempt
-  diagnostics, and never retries.
+  only when this run changed it and verified the restore. Cleanup runs the
+  exact `start-test.sh stop` whenever a start attempt began, even before
+  readiness was confirmed, and retains `final-stop.txt`; `RUNNING` (confirmed
+  running) is tracked separately from `START_ATTEMPTED`. On an ordinary start
+  failure it performs the same cleanup/restoration, prints the start
+  exit/signal status, the `start.txt` path, and a bounded current-attempt
+  diagnostics tail from that run's own transcript (never historical
+  diagnostics as current), and never retries.
+- An INT/TERM interruption during the start wait writes an
+  `interrupted-during-start:<signal>` marker into the evidence directory and
+  reports the startup outcome as unknown/interrupted - not readiness failed.
+  `manifest.txt` retains the nonce, KWin PID, journal cursor, mode, prior
+  plugin state, start attempt/result/exit, and cleanup result via atomic
+  writes, so the critical states survive external stdout-only redirection;
+  it holds no personal data.
 - One run lock per nonce: an existing (even stale) lock is refused, never
   deleted, and stale evidence is never removed automatically. Evidence is
   written under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>` and

@@ -11,7 +11,9 @@ what the script performs; `install` builds the bundle first.
 ### Live test
 
 The primary repeated live path is `scripts/live-test.sh run`: one nonce-owned
-interactive run that preflights (typecheck, build, tests, static scan), then
+interactive run that runs a concise preflight (typecheck, build, tests,
+static scan; one pass/fail line per step with each step's combined output
+retained in `typecheck.txt`/`build.txt`/`tests.txt`/`static-scan.txt`), then
 records and disables the installed plugin if enabled, loads and runs the
 controller through `start-test.sh`, prints status/diagnostics/desktops plus a
 checklist, and foreground-follows the same-KWin-PID `plasma-auto-tiler` and
@@ -19,19 +21,29 @@ checklist, and foreground-follows the same-KWin-PID `plasma-auto-tiler` and
 Ctrl-C.
 
 ```sh
-bash scripts/live-test.sh run          # full preflight
-bash scripts/live-test.sh run --quick  # skip the full test suite
+bash scripts/live-test.sh run                  # full preflight
+bash scripts/live-test.sh run --quick          # skip the full test suite
+bash scripts/live-test.sh run --verbose        # stream preflight step output
+bash scripts/live-test.sh run --quick --verbose
 ```
 
 Ctrl-C or SIGTERM stops only the script that run loaded, prints final
 status/diagnostics/desktops, and restores the installed-plugin enable state
 only when the run changed it and verified the restore. Evidence is retained
-under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. A failed
-start reports the exact attempt diagnostics and never retries. The run never
-mutates shortcut records (drift is reported, not auto-applied) and never
-rolls back Custom Tile topology changes or persisted shortcuts made during
-the session. Read `docs/live-kwin-testing.md` before any live run; the
-low-level `scripts/start-test.sh` commands remain the manual reference.
+under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. The exact
+combined stdout+stderr of `start-test.sh start` is retained at `start.txt`;
+an ordinary start failure prints the exit/signal status, the transcript
+path, and a bounded current-attempt diagnostics tail and never retries. An
+interruption during start writes an `interrupted-during-start:<signal>`
+marker and reports the startup outcome as unknown/interrupted rather than
+readiness failed, and cleanup still runs the exact stop once a start attempt
+began. A `manifest.txt` retains the nonce, KWin PID, journal cursor, mode,
+prior plugin state, start attempt/result/exit, and cleanup result even when
+stdout is redirected away. The run never mutates shortcut records (drift is
+reported, not auto-applied) and never rolls back Custom Tile topology changes
+or persisted shortcuts made during the session. Read
+`docs/live-kwin-testing.md` before any live run; the low-level
+`scripts/start-test.sh` commands remain the manual reference.
 
 ### Prerequisites
 

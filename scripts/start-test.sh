@@ -257,6 +257,18 @@ fail_start_readiness() {
   exit 1
 }
 
+# A signal during start leaves the attempt-owned evidence temp file
+# un-reported and the start outcome unknown. Remove the temp file so it does
+# not leak in /tmp and no historical or partial diagnostics are ever
+# presented as current, then re-raise the signal. No supervisor is added;
+# the runner owns interruption reporting and cleanup.
+signal_during_start() {
+  local sig="$1"
+  [[ -n "${EVIDENCE_FILE:-}" ]] && rm -f "$EVIDENCE_FILE"
+  trap - INT TERM
+  kill -"$sig" "$$"
+}
+
 find_kwin_pid() {
   local pid command candidate=""
   while IFS=' ' read -r pid command; do
@@ -377,6 +389,9 @@ cmd_start() {
   require_tools npm busctl jq journalctl pgrep
   read_plugin_id
 
+  trap 'signal_during_start INT' INT
+  trap 'signal_during_start TERM' TERM
+
   if ! ( cd "$KWIN_DIR" && npm run build ); then
     echo "error: npm run build failed in $KWIN_DIR" >&2
     exit 1
@@ -467,6 +482,7 @@ cmd_start() {
     }
     if jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null 2>&1; then
       rm -f "$EVIDENCE_FILE"
+      trap - INT TERM
       echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; controller readiness confirmed"
       echo
       echo "stop it:"
