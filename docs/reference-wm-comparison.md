@@ -16,6 +16,7 @@ against a primary source).
 | Tag | Source |
 |---|---|
 | [B1] | bspwm(1) man page source, `doc/bspwm.1.asciidoc`, https://github.com/baskerville/bspwm/blob/master/doc/bspwm.1.asciidoc |
+| [B1-EX] | bspwm example config, baskerville/bspwm master `examples/sxhkdrc` (pinned static fixture, retrieved 2026-08-14; static evidence, not a live run), https://github.com/baskerville/bspwm/blob/master/examples/sxhkdrc |
 | [H-Disp] | Hyprland Dispatchers, https://wiki.hypr.land/Configuring/Basics/Dispatchers/ |
 | [H-Var] | Hyprland Variables, https://wiki.hypr.land/Configuring/Basics/Variables/ |
 | [H-Binds] | Hyprland Binds, https://wiki.hypr.land/Configuring/Basics/Binds/ |
@@ -217,5 +218,4 @@ for KWin), matching all three but with Hyprland's game-content nuance deferred.
 - COSMIC drag-to-dock/drop-split mechanics and any drop preview: community-documented only.
 - COSMIC floating default geometry, maximize semantics, gap/rounding numeric settings, and auto-create/remove of empty workspaces: not primary-documented.
 - Hyprland "no overlay drop preview" and bspwm "no dynamic workspaces": negative inferences.
-- bspwm example sxhkdrc contents: not fetched this session.
 - All KWin-targeted behaviours above are `unproven-until-live`.

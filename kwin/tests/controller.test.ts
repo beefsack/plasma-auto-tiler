@@ -1,5 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import {
@@ -7516,6 +7517,42 @@ describe("TileController binding profile catalog", () => {
             expected.push(`workspace-${index}`, `move-workspace-${index}`);
         }
         assert.deepEqual([...REGISTERED_PROFILE_ACTION_IDS], expected);
+    });
+
+    it("declares every catalog reference source tag in the comparison document", () => {
+        // The catalog rows are the single enumerated source: the leading
+        // `[TAG]` of every row reference must resolve to a primary-source tag
+        // parsed from the document's Primary source list, so neither side is a
+        // duplicated literal list here.
+        const lines = readFileSync("../docs/reference-wm-comparison.md", "utf8").split("\n");
+        const sectionStart = lines.findIndex((line) => line.trim() === "## Primary source list");
+        assert.notEqual(sectionStart, -1, "missing ## Primary source list section");
+        const declared = new Set<string>();
+        for (const line of lines.slice(sectionStart + 1)) {
+            if (line.trim().startsWith("---")) {
+                break;
+            }
+            const match = /^\|\s*\[([^\]]+)\]\s*\|/.exec(line);
+            if (match !== null) {
+                declared.add(match[1]!);
+            }
+        }
+        const catalogTags = new Set<string>();
+        for (const profile of Object.values(PROFILE_CATALOGS)) {
+            for (const row of profile.rows) {
+                const match = /^\[([^\]]+)\]/.exec(row.reference);
+                if (match !== null) {
+                    catalogTags.add(match[1]!);
+                }
+            }
+        }
+        assert.ok(catalogTags.size > 0, "catalog must expose reference source tags");
+        for (const tag of [...catalogTags].sort()) {
+            assert.ok(
+                declared.has(tag),
+                `catalog reference source tag not declared in docs/reference-wm-comparison.md: ${tag}`,
+            );
+        }
     });
 });
 
