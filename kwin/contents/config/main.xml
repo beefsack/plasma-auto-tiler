@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+    <kcfgfile name=""/>
+    <group name="">
+        <entry name="tilingAlgorithm" type="Enum">
+            <label>The preset the automatic takeover applies when it adopts a scope</label>
+            <default>dwindle</default>
+            <choices>
+                <choice name="columns" value="columns"/>
+                <choice name="rows" value="rows"/>
+                <choice name="balanced-grid" value="balanced-grid"/>
+                <choice name="dwindle" value="dwindle"/>
+            </choices>
+        </entry>
+        <entry name="workspaceMode" type="Enum">
+            <label>The multi-output workspace model</label>
+            <default>per-output-local</default>
+            <choices>
+                <choice name="per-output-local" value="per-output-local"/>
+                <choice name="global-unique" value="global-unique"/>
+                <choice name="shared" value="shared"/>
+            </choices>
+        </entry>
+        <entry name="shortcutProfile" type="Enum">
+            <label>The startup shortcut profile</label>
+            <default>cosmic</default>
+            <choices>
+                <choice name="cosmic" value="cosmic"/>
+                <choice name="hyprland" value="hyprland"/>
+                <choice name="bspwm" value="bspwm"/>
+            </choices>
+        </entry>
+    </group>
+</kcfg>

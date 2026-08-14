@@ -3,7 +3,12 @@
 // requested leaf count. No KWin or Qt types are referenced and nothing is
 // executed. Project "horizontal" maps to KWin Horizontal and "vertical" to
 // KWin Vertical per the pinned declaration and existing split seam.
-import { buildBlueprintByDepth, buildDwindleBlueprint, type OrientationAtDepth } from "./layout-blueprint";
+import {
+    buildBlueprintByDepth,
+    buildDwindleBlueprint,
+    type Blueprint,
+    type OrientationAtDepth,
+} from "./layout-blueprint";
 import {
     compileBlueprintInstructions,
     type BlueprintInstructions,
@@ -85,4 +90,21 @@ export function buildPreset(kind: PresetKind, count: number): Result<BlueprintIn
     }
     freezeDeep(instructions.value);
     return Object.freeze({ ok: true, value: instructions.value });
+}
+
+// Deterministic raw blueprint for a preset kind and leaf count: dwindle uses
+// its own alternating chain, every other kind the balanced generator with the
+// preset's orientation rule. Pure and repeatable, so the automatic takeover's
+// shape matching and reconstruction both derive from the same catalog.
+export function presetBlueprint(kind: PresetKind, count: number): Result<Blueprint> {
+    if (!isPresetKind(kind)) {
+        return reject(
+            "invalid-preset-kind",
+            "preset kind must be columns, rows, balanced-grid, or dwindle",
+        );
+    }
+    if (kind === "dwindle") {
+        return buildDwindleBlueprint(count);
+    }
+    return buildBlueprintByDepth(count, presetOrientation(kind));
 }

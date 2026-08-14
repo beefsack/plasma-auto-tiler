@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ConfigModule</class>
+ <widget class="QWidget" name="ConfigModule">
+  <layout class="QFormLayout" name="formLayout">
+   <item row="0" column="0">
+    <widget class="QLabel" name="label_tilingAlgorithm">
+     <property name="text">
+      <string>The preset the automatic takeover applies when it adopts a scope</string>
+     </property>
+    </widget>
+   </item>
+   <item row="0" column="1">
+    <widget class="QComboBox" name="kcfg_tilingAlgorithm"/>
+   </item>
+   <item row="1" column="0">
+    <widget class="QLabel" name="label_workspaceMode">
+     <property name="text">
+      <string>The multi-output workspace model</string>
+     </property>
+    </widget>
+   </item>
+   <item row="1" column="1">
+    <widget class="QComboBox" name="kcfg_workspaceMode"/>
+   </item>
+   <item row="2" column="0">
+    <widget class="QLabel" name="label_shortcutProfile">
+     <property name="text">
+      <string>The startup shortcut profile</string>
+     </property>
+    </widget>
+   </item>
+   <item row="2" column="1">
+    <widget class="QComboBox" name="kcfg_shortcutProfile"/>
+   </item>
+  </layout>
+ </widget>
+ <resources/>
+ <connections/>
+</ui>

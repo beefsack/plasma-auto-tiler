@@ -31,7 +31,7 @@ import {
     type WindowCapability,
 } from "./boundary";
 import { customTileSplitSeam } from "./custom-tile-split";
-import { buildDwindleBlueprint, type Blueprint, type Orientation } from "./layout-blueprint";
+import { type Blueprint, type Orientation } from "./layout-blueprint";
 import { executeBlueprintInstructions } from "./layout-executor";
 import { type BlueprintPath } from "./layout-instructions";
 import {
@@ -52,7 +52,7 @@ import {
     type SplitAxis,
     type WindowRef,
 } from "./logic";
-import { buildPreset, type PresetKind } from "./preset-catalog";
+import { buildPreset, presetBlueprint, PRESET_KINDS, type PresetKind } from "./preset-catalog";
 import {
     collapseToRootLeaf,
     type ResetSeam,
@@ -177,6 +177,36 @@ export function parseWorkspaceMode(value: unknown): {
     return {
         mode: DEFAULT_WORKSPACE_MODE,
         diagnostics: Object.freeze(["workspace-mode-invalid:fallback-per-output-local"]),
+    };
+}
+
+// ==== Tiling algorithm configuration ====
+//
+// `tilingAlgorithm` selects the preset the automatic takeover builds when it
+// adopts a scope: dwindle (the historical automatic shape) or one of the
+// balanced presets. The value is read once at startup; a valid preset drives
+// the takeover's shape match and reconstruction, while every manual preset
+// shortcut keeps its own fixed preset. Missing/empty selects the dwindle
+// default without a diagnostic; an invalid value falls back to the default
+// with a diagnostic. Deterministic and pure for the tests.
+export type TilingAlgorithm = PresetKind;
+export const DEFAULT_TILING_ALGORITHM: TilingAlgorithm = "dwindle";
+export const TILING_ALGORITHM_CONFIG_KEY = "tilingAlgorithm";
+export const TILING_ALGORITHMS: readonly TilingAlgorithm[] = PRESET_KINDS;
+
+export function parseTilingAlgorithm(value: unknown): {
+    readonly algorithm: TilingAlgorithm;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "string" && (TILING_ALGORITHMS as readonly string[]).includes(value)) {
+        return { algorithm: value as TilingAlgorithm, diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { algorithm: DEFAULT_TILING_ALGORITHM, diagnostics: Object.freeze([]) };
+    }
+    return {
+        algorithm: DEFAULT_TILING_ALGORITHM,
+        diagnostics: Object.freeze(["tiling-algorithm-invalid:fallback-dwindle"]),
     };
 }
 
@@ -1290,19 +1320,19 @@ function layoutDirectionFor(orientation: Orientation): number {
     return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
 }
 
-// Structural dwindle-shape match: a live custom-tile subtree must realize the
-// blueprint node with orientation alternating from a horizontal root at depth
-// zero. The two children are accepted in either decoded order because the
-// executor's "left"/"right" path mapping follows the split-return order.
-function dwindleNodeMatches(tile: CustomTileCapability, node: Blueprint, depth: number): boolean {
+// Structural preset-shape match: a live custom-tile subtree must realize the
+// blueprint node with the node's own orientation (the deterministic
+// orientation of the configured preset at that position). The two children are
+// accepted in either decoded order because the executor's "left"/"right" path
+// mapping follows the split-return order.
+function presetNodeMatches(tile: CustomTileCapability, node: Blueprint): boolean {
     if (node.kind === "leaf") {
         return !tile.isLayout;
     }
     if (!tile.isLayout) {
         return false;
     }
-    const expected = depth % 2 === 0 ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
-    if (tile.layoutDirection !== expected) {
+    if (tile.layoutDirection !== layoutDirectionFor(node.orientation)) {
         return false;
     }
     const children = decodeSequential(tile.tiles, isCustomTile, 2);
@@ -1315,10 +1345,8 @@ function dwindleNodeMatches(tile: CustomTileCapability, node: Blueprint, depth: 
         return false;
     }
     return (
-        (dwindleNodeMatches(first, node.left, depth + 1) &&
-            dwindleNodeMatches(second, node.right, depth + 1)) ||
-        (dwindleNodeMatches(first, node.right, depth + 1) &&
-            dwindleNodeMatches(second, node.left, depth + 1))
+        (presetNodeMatches(first, node.left) && presetNodeMatches(second, node.right)) ||
+        (presetNodeMatches(first, node.right) && presetNodeMatches(second, node.left))
     );
 }
 
@@ -1466,6 +1494,11 @@ export class TileController {
     // startup; invalid input falls back to the default with a diagnostic. The
     // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
     private workspaceMode: WorkspaceMode = DEFAULT_WORKSPACE_MODE;
+    // Parsed `tilingAlgorithm` configuration. Set from readConfig at startup;
+    // invalid input falls back to the dwindle default with a diagnostic. The
+    // automatic takeover below builds its shape and reconstruction from this
+    // value; manual preset shortcuts keep their fixed presets.
+    private tilingAlgorithm: TilingAlgorithm = DEFAULT_TILING_ALGORITHM;
     // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
     // at startup and on screensChanged; never persisted. A stale or unknown
     // output wrapper is reported once per session tuple.
@@ -1535,6 +1568,12 @@ export class TileController {
     // Unit 05 mode dispatch; the value is set once at startup.
     workspaceModeSnapshot(): WorkspaceMode {
         return this.workspaceMode;
+    }
+
+    // Parsed tiling algorithm. Read-only snapshot for tests; the value is set
+    // once at startup and drives the automatic takeover shape.
+    tilingAlgorithmSnapshot(): TilingAlgorithm {
+        return this.tilingAlgorithm;
     }
 
     // Deterministic session output key for the given output (spec E), or
@@ -1700,6 +1739,18 @@ export class TileController {
                 this.diagnostic(diagnostic);
             }
             this.workspaceMode = mode.mode;
+            // Parsed `tilingAlgorithm`: the default is dwindle; a valid value
+            // selects its own preset; anything else falls back with a
+            // diagnostic. Parsed before the first takeover so the startup
+            // ownership adoption builds the selected preset's shape, never the
+            // default's.
+            const algorithm = parseTilingAlgorithm(
+                this.environment.readConfig(TILING_ALGORITHM_CONFIG_KEY, DEFAULT_TILING_ALGORITHM),
+            );
+            for (const diagnostic of algorithm.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            this.tilingAlgorithm = algorithm.algorithm;
             // Build the per-mode mapping and its one trailing empty per
             // connected output from the current screens/desktops before any
             // keyboard or lifecycle event resolves a workspace.
@@ -3921,7 +3972,7 @@ export class TileController {
         }
         this.owedInvariantScopes.clear();
         for (const scope of owed) {
-            this.dwindleEnsureInvariant(scope);
+            this.presetEnsureInvariant(scope);
         }
     }
 
@@ -4595,7 +4646,7 @@ export class TileController {
                 // structural mutation.
                 const scope = this.scopeForWindow(window);
                 if (scope !== null && this.isOwned(scope)) {
-                    this.dwindleEnsureInvariant(scope);
+                    this.presetEnsureInvariant(scope);
                 }
             }
         }, (reason) => this.disabled(reason));
@@ -5698,14 +5749,15 @@ export class TileController {
         this.diagnostic(`ownership-inert:${reason}`);
     }
 
-    // Adopt session-local ownership of the anchored scope with ratio-free
-    // dwindle. A valid selected overlay takes precedence and leaves the scope
-    // overlay-managed. The owned population is every eligible in-scope window
-    // from the proven window collection excluding explicitly detached windows.
-    // When the scope's tree already realizes the dwindle blueprint for that
-    // count it is adopted unchanged; otherwise a full reconstruction starts:
-    // a synchronous removals-only collapse to a single leaf followed by a
-    // non-timer event-loop yield before the deferred split reconstruction.
+    // Adopt session-local ownership of the anchored scope with the configured
+    // preset (`tilingAlgorithm`). A valid selected overlay takes precedence and
+    // leaves the scope overlay-managed. The owned population is every eligible
+    // in-scope window from the proven window collection excluding explicitly
+    // detached windows. When the scope's tree already realizes the preset
+    // blueprint for that count it is adopted unchanged; otherwise a full
+    // reconstruction starts: a synchronous removals-only collapse to a single
+    // leaf followed by a non-timer event-loop yield before the deferred split
+    // reconstruction.
     private ensureManaged(scope: CurrentScope): void {
         if (this.isOwned(scope) || this.isInert(scope)) {
             return;
@@ -5725,7 +5777,7 @@ export class TileController {
             this.diagnostic("ownership-taken");
             return;
         }
-        if (this.dwindleMatches(scope, population)) {
+        if (this.presetMatches(scope, population)) {
             this.diagnostic("ownership-taken");
             return;
         }
@@ -5766,17 +5818,17 @@ export class TileController {
         return owned;
     }
 
-    // Whether the scope's current tree already realizes the ratio-free dwindle
+    // Whether the scope's current tree already realizes the configured preset
     // blueprint for the owned population. A population of one is realized by
     // exactly one usable leaf (a non-layout tile or a zero-child layout root)
     // occupied by the sole owned window, regardless of the root wrapper; higher
-    // counts require the exact dwindle chain with alternating orientation. In
-    // every case the occupancy must be a bijection between the usable leaves
-    // and the population: each leaf holds exactly one owned window whose
-    // recorded `tile` is that leaf, and every owned window occupies exactly one
-    // leaf. An empty population is never realized, so an empty owned scope
-    // never matches.
-    private dwindleMatches(scope: CurrentScope, population: readonly WindowCapability[]): boolean {
+    // counts require the exact preset tree with its deterministic branch
+    // orientations. In every case the occupancy must be a bijection between
+    // the usable leaves and the population: each leaf holds exactly one owned
+    // window whose recorded `tile` is that leaf, and every owned window
+    // occupies exactly one leaf. An empty population is never realized, so an
+    // empty owned scope never matches.
+    private presetMatches(scope: CurrentScope, population: readonly WindowCapability[]): boolean {
         const count = population.length;
         if (count === 0) {
             return false;
@@ -5792,11 +5844,11 @@ export class TileController {
             }
             return dwindleBijectionTreeMatches(scope, root, population);
         }
-        const blueprint = buildDwindleBlueprint(count);
+        const blueprint = presetBlueprint(this.tilingAlgorithm, count);
         if (!blueprint.ok) {
             return false;
         }
-        if (!dwindleNodeMatches(root, blueprint.value, 0)) {
+        if (!presetNodeMatches(root, blueprint.value)) {
             return false;
         }
         return dwindleBijectionTreeMatches(scope, root, population);
@@ -5965,7 +6017,7 @@ export class TileController {
             this.dropPendingRebuild(scope, pending);
             return;
         }
-        if (this.dwindleMatches(scope, population)) {
+        if (this.presetMatches(scope, population)) {
             this.dropPendingRebuild(scope, pending);
             return;
         }
@@ -5987,8 +6039,8 @@ export class TileController {
             }
             return;
         }
-        // Phase two: the splits-only dwindle rebuild in one synchronous batch.
-        if (this.rebuildDwindle(scope, population)) {
+        // Phase two: the splits-only preset rebuild in one synchronous batch.
+        if (this.rebuildPreset(scope, population)) {
             this.diagnostic("ownership-taken");
         } else {
             this.markInert(scope, "rebuild-failed");
@@ -6000,7 +6052,7 @@ export class TileController {
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
     // next structural call and is never retained across one.
-    private dwindleTileAtPath(scope: CurrentScope, path: BlueprintPath): CustomTileCapability | null {
+    private presetTileAtPath(scope: CurrentScope, path: BlueprintPath): CustomTileCapability | null {
         const root = this.environment.rootTile(scope.output, scope.desktop);
         if (!isCustomTile(root)) {
             return null;
@@ -6023,8 +6075,8 @@ export class TileController {
         return current;
     }
 
-    // Full dwindle reconstruction, phase two body: a single synchronous
-    // splits-only batch realizing the ratio-free dwindle blueprint for the
+    // Full preset reconstruction, phase two body: a single synchronous
+    // splits-only batch realizing the configured preset blueprint for the
     // current owned population on the freshly resolved single-leaf root, then
     // guarded assignments of the population to the ordinal leaves. Every split
     // re-resolves the scope root and fresh-decodes the tree around the call,
@@ -6032,19 +6084,19 @@ export class TileController {
     // retained, so no tile handle survives from one structural call to the
     // next. The whole split reconstruction finishes in one dispatch, never one
     // frame per tile.
-    private rebuildDwindle(
+    private rebuildPreset(
         scope: CurrentScope,
         population: readonly WindowCapability[],
     ): boolean {
         if (population.length === 0) {
             return false;
         }
-        const compiled = buildPreset("dwindle", population.length);
+        const compiled = buildPreset(this.tilingAlgorithm, population.length);
         if (!compiled.ok) {
             return false;
         }
         for (const instruction of compiled.value.splits) {
-            const target = this.dwindleTileAtPath(scope, instruction.targetPath);
+            const target = this.presetTileAtPath(scope, instruction.targetPath);
             if (target === null) {
                 return false;
             }
@@ -6064,7 +6116,7 @@ export class TileController {
         }
         const leaves: TileCapability[] = [];
         for (const leafPath of compiled.value.leafPaths) {
-            const leaf = this.dwindleTileAtPath(scope, leafPath.path);
+            const leaf = this.presetTileAtPath(scope, leafPath.path);
             if (leaf === null) {
                 return false;
             }
@@ -6127,13 +6179,13 @@ export class TileController {
         this.detachedWindows.add(window);
     }
 
-    // Re-establish the dwindle invariant for an owned scope after a managed
-    // count change: when the current tree no longer realizes the dwindle
+    // Re-establish the configured preset invariant for an owned scope after a
+    // managed count change: when the current tree no longer realizes the preset
     // blueprint for the current population, start a full reconstruction. A
     // scope with no owned population or an authoritative valid overlay is
     // untouched. The scope root is decoded exactly once per check and shared by
     // the occupancy-bijection predicate and the canonical-shape predicate.
-    private dwindleEnsureInvariant(scope: CurrentScope): void {
+    private presetEnsureInvariant(scope: CurrentScope): void {
         if (!this.isOwned(scope) || this.isInert(scope)) {
             return;
         }
@@ -6169,29 +6221,29 @@ export class TileController {
             this.startReconstruction(scope);
             return;
         }
-        if (!this.dwindleShapeMatches(root, population)) {
+        if (!this.presetShapeMatches(root, population)) {
             this.diagnostic("ownership-accepted:non-canonical:bijection-intact");
         }
     }
 
-    // Canonical dwindle-shape predicate for the already-resolved scope root:
-    // whether the tree realizes the ratio-free dwindle blueprint for the
+    // Canonical preset-shape predicate for the already-resolved scope root:
+    // whether the tree realizes the configured preset blueprint for the
     // population count. A population of one is realized by exactly one usable
     // leaf (a non-layout tile or a zero-child layout root); higher counts
-    // require the exact dwindle chain with alternating orientation. Only the
-    // shape is checked here; occupancy is the separate bijection predicate. The
-    // root is never re-read.
-    private dwindleShapeMatches(root: CustomTileCapability, population: readonly WindowCapability[]): boolean {
+    // require the exact preset tree with its deterministic branch
+    // orientations. Only the shape is checked here; occupancy is the separate
+    // bijection predicate. The root is never re-read.
+    private presetShapeMatches(root: CustomTileCapability, population: readonly WindowCapability[]): boolean {
         const count = population.length;
         if (count === 1) {
             const leaves = decodeUsableLeaves(root);
             return leaves !== null && leaves.length === 1;
         }
-        const blueprint = buildDwindleBlueprint(count);
+        const blueprint = presetBlueprint(this.tilingAlgorithm, count);
         if (!blueprint.ok) {
             return false;
         }
-        return dwindleNodeMatches(root, blueprint.value, 0);
+        return presetNodeMatches(root, blueprint.value);
     }
 
     // The deepest right-spine non-layout custom tile under the scope root (the
@@ -6283,7 +6335,7 @@ export class TileController {
             return;
         }
         this.dwindleInsert(window, scope);
-        this.dwindleEnsureInvariant(scope);
+        this.presetEnsureInvariant(scope);
     }
 
     // One dwindle insertion: split the deepest leaf with depth-derived
@@ -6355,7 +6407,7 @@ export class TileController {
             } catch (error) {
                 void error;
             }
-            if (!assigned || !this.dwindleMatches(scope, this.ownedPopulation(scope))) {
+            if (!assigned || !this.presetMatches(scope, this.ownedPopulation(scope))) {
                 this.markInert(scope, "occupied-root-assign-failed");
                 return;
             }
@@ -6801,7 +6853,7 @@ export class TileController {
             // damaged tree: defer to the invariant recovery instead of marking
             // the scope inert, so the owed check re-settles the population.
             this.diagnostic("ownership-remove-failed:leaf-count");
-            this.dwindleEnsureInvariant(scope);
+            this.presetEnsureInvariant(scope);
             return null;
         }
         this.diagnostic("ownership-remove-collapsed");
@@ -6809,7 +6861,7 @@ export class TileController {
         // removing the first chain window's leaf leaves a single-child root);
         // the invariant check starts a reconstruction in this same removals-only
         // dispatch and defers the split reconstruction.
-        this.dwindleEnsureInvariant(scope);
+        this.presetEnsureInvariant(scope);
         return after;
     }
 

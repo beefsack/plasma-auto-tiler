@@ -269,49 +269,6 @@
     }
   };
 
-  // src/layout-blueprint.ts
-  function reject(kind, message) {
-    return { ok: false, reason: { kind, message } };
-  }
-  function buildBlueprintByDepth(count, orientationAtDepth) {
-    if (!Number.isInteger(count) || count <= 0) {
-      return reject(
-        "invalid-leaf-count",
-        "leaf count must be a positive integer"
-      );
-    }
-    return { ok: true, value: buildNode(count, orientationAtDepth, 0, 0) };
-  }
-  function buildNode(count, orientationAtDepth, startOrdinal, depth) {
-    if (count === 1) {
-      return { kind: "leaf", ordinal: startOrdinal };
-    }
-    const leftCount = Math.floor(count / 2);
-    const rightCount = count - leftCount;
-    const orientation = orientationAtDepth(depth);
-    const left = buildNode(leftCount, orientationAtDepth, startOrdinal, depth + 1);
-    const right = buildNode(rightCount, orientationAtDepth, startOrdinal + leftCount, depth + 1);
-    return { kind: "branch", orientation, left, right };
-  }
-  function buildDwindleBlueprint(count) {
-    if (!Number.isInteger(count) || count <= 0) {
-      return reject(
-        "invalid-leaf-count",
-        "leaf count must be a positive integer"
-      );
-    }
-    return { ok: true, value: buildDwindleNode(count, 0, 0) };
-  }
-  function buildDwindleNode(count, startOrdinal, depth) {
-    if (count === 1) {
-      return { kind: "leaf", ordinal: startOrdinal };
-    }
-    const orientation = depth % 2 === 0 ? "horizontal" : "vertical";
-    const left = { kind: "leaf", ordinal: startOrdinal };
-    const right = buildDwindleNode(count - 1, startOrdinal + 1, depth + 1);
-    return { kind: "branch", orientation, left, right };
-  }
-
   // src/layout-executor.ts
   function failed(completedSplits, mutationPossible) {
     return {
@@ -440,7 +397,7 @@
   function sameScope2(a, b) {
     return a.output === b.output && a.desktopId === b.desktopId;
   }
-  function reject2(kind, message) {
+  function reject(kind, message) {
     return { ok: false, reason: { kind, message } };
   }
   function isValidRect(rect) {
@@ -598,15 +555,15 @@
   }
   function classifyDirection(point, rect) {
     if (!isValidPoint(point)) {
-      return reject2("invalid-numbers", "pointer coordinates must be finite");
+      return reject("invalid-numbers", "pointer coordinates must be finite");
     }
     if (!isValidRect(rect)) {
-      return reject2("invalid-geometry", "rect must have positive finite width and height");
+      return reject("invalid-geometry", "rect must have positive finite width and height");
     }
     const fx = (point.x - rect.x) / rect.width;
     const fy = (point.y - rect.y) / rect.height;
     if (fx < 0 || fx >= 1 || fy < 0 || fy >= 1) {
-      return reject2("pointer-outside", "pointer is outside the rect (half-open containment)");
+      return reject("pointer-outside", "pointer is outside the rect (half-open containment)");
     }
     const dx = fx - 0.5;
     const dy = fy - 0.5;
@@ -632,38 +589,38 @@
   }
   function planKeyboardInsertion(request) {
     if (!isValidRect(request.focusedLeaf.geometry)) {
-      return reject2("invalid-geometry", "focused leaf geometry must be positive and finite");
+      return reject("invalid-geometry", "focused leaf geometry must be positive and finite");
     }
     if (request.focusedLeaf.isLayout) {
-      return reject2("ineligible-target", "focused leaf must not be a layout container");
+      return reject("ineligible-target", "focused leaf must not be a layout container");
     }
     if (request.focusedLeaf.windows.length === 0) {
-      return reject2("empty-target", "focused leaf is empty");
+      return reject("empty-target", "focused leaf is empty");
     }
     if (!request.focusedLeaf.windows.some((window) => window.id === request.focusedWindow.id)) {
-      return reject2("mismatched-state", "focused window is not associated with the focused leaf");
+      return reject("mismatched-state", "focused window is not associated with the focused leaf");
     }
     if (request.focusedLeaf.windows.some((window) => !isEligibleWindow(window))) {
-      return reject2("ineligible-target", "focused leaf contains an ineligible window");
+      return reject("ineligible-target", "focused leaf contains an ineligible window");
     }
     if (!isEligibleWindow(request.incoming)) {
-      return reject2("ineligible-window", "incoming window is not eligible");
+      return reject("ineligible-window", "incoming window is not eligible");
     }
     if (request.incoming.id === request.focusedWindow.id) {
-      return reject2("same-window", "incoming window is the focused window");
+      return reject("same-window", "incoming window is the focused window");
     }
     if (request.focusedLeaf.windows.some((window) => window.id === request.incoming.id)) {
-      return reject2("same-leaf", "incoming window already occupies the focused leaf");
+      return reject("same-leaf", "incoming window already occupies the focused leaf");
     }
     if (request.record !== null) {
       if (!sameScope2(request.record.scope, request.scope)) {
-        return reject2("cross-scope", "recorded scope differs from the current scope");
+        return reject("cross-scope", "recorded scope differs from the current scope");
       }
       if (request.record.leafId !== request.focusedLeaf.id) {
-        return reject2("stale-state", "recorded leaf no longer matches the focused leaf");
+        return reject("stale-state", "recorded leaf no longer matches the focused leaf");
       }
       if (request.record.windowId !== request.focusedWindow.id) {
-        return reject2("stale-state", "recorded window no longer matches the focused window");
+        return reject("stale-state", "recorded window no longer matches the focused window");
       }
     }
     return {
@@ -682,47 +639,47 @@
   }
   function planGeometryDrop(request) {
     if (!isValidPoint(request.pointer)) {
-      return reject2("invalid-numbers", "pointer coordinates must be finite");
+      return reject("invalid-numbers", "pointer coordinates must be finite");
     }
     if (!isValidRect(request.originLeaf.geometry)) {
-      return reject2("invalid-geometry", "origin leaf geometry must be positive and finite");
+      return reject("invalid-geometry", "origin leaf geometry must be positive and finite");
     }
     if (!isValidRect(request.targetLeaf.geometry)) {
-      return reject2("invalid-geometry", "target leaf geometry must be positive and finite");
+      return reject("invalid-geometry", "target leaf geometry must be positive and finite");
     }
     if (request.originLeaf.id === request.targetLeaf.id) {
-      return reject2("same-leaf", "origin and target leaf are the same");
+      return reject("same-leaf", "origin and target leaf are the same");
     }
     if (request.targetLeaf.isLayout) {
-      return reject2("ineligible-target", "target leaf must not be a layout container");
+      return reject("ineligible-target", "target leaf must not be a layout container");
     }
     if (request.targetLeaf.windows.length > 2) {
-      return reject2("invalid-leaf-count", "geometry drop target must hold the dragged window plus at most one occupant");
+      return reject("invalid-leaf-count", "geometry drop target must hold the dragged window plus at most one occupant");
     }
     if (request.targetLeaf.windows.length === 2 && !request.targetLeaf.windows.some((window) => window.id === request.draggedWindow.id)) {
-      return reject2("invalid-leaf-count", "a two-window target must hold the dragged window plus one occupant");
+      return reject("invalid-leaf-count", "a two-window target must hold the dragged window plus one occupant");
     }
     if (request.targetLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
-      return reject2("mismatched-state", "dragged window must appear at most once in the target leaf");
+      return reject("mismatched-state", "dragged window must appear at most once in the target leaf");
     }
     if (request.targetLeaf.windows.some((window) => !isEligibleWindow(window))) {
-      return reject2("ineligible-target", "target leaf contains an ineligible window");
+      return reject("ineligible-target", "target leaf contains an ineligible window");
     }
     if (!isEligibleWindow(request.draggedWindow)) {
-      return reject2("ineligible-window", "dragged window is not eligible");
+      return reject("ineligible-window", "dragged window is not eligible");
     }
     if (request.originLeaf.windows.filter((window) => window.id === request.draggedWindow.id).length > 1) {
-      return reject2("mismatched-state", "dragged window must appear at most once in the origin leaf");
+      return reject("mismatched-state", "dragged window must appear at most once in the origin leaf");
     }
     if (request.record !== null) {
       if (!sameScope2(request.record.scope, request.scope)) {
-        return reject2("cross-scope", "recorded scope differs from the current scope");
+        return reject("cross-scope", "recorded scope differs from the current scope");
       }
       if (request.record.originLeafId !== request.originLeaf.id) {
-        return reject2("stale-state", "recorded origin leaf no longer matches the origin leaf");
+        return reject("stale-state", "recorded origin leaf no longer matches the origin leaf");
       }
       if (request.record.windowId !== request.draggedWindow.id) {
-        return reject2("stale-state", "recorded window no longer matches the dragged window");
+        return reject("stale-state", "recorded window no longer matches the dragged window");
       }
     }
     if (request.targetLeaf.windows.length === 0) {
@@ -739,7 +696,7 @@
     }
     const oppositeWindow = request.targetLeaf.windows.find((window) => window.id !== request.draggedWindow.id);
     if (oppositeWindow === void 0) {
-      return reject2("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
+      return reject("invalid-leaf-count", "geometry drop target must hold exactly one occupant besides the dragged window");
     }
     const classified = classifyDirection(request.pointer, request.targetLeaf.geometry);
     if (!classified.ok) {
@@ -770,15 +727,15 @@
   }
   function planAutomaticPlacement(request) {
     if (!isEligibleWindow(request.window)) {
-      return reject2("ineligible-window", "window is not eligible");
+      return reject("ineligible-window", "window is not eligible");
     }
     const emptyLeaves = [];
     for (const leaf of request.leaves) {
       if (!isValidRect(leaf.geometry)) {
-        return reject2("invalid-geometry", "leaf geometry must be positive and finite");
+        return reject("invalid-geometry", "leaf geometry must be positive and finite");
       }
       if (leaf.windows.some((window) => window.id === request.window.id)) {
-        return reject2("same-window", "window already occupies a leaf");
+        return reject("same-window", "window already occupies a leaf");
       }
       if (leaf.isLayout) {
         continue;
@@ -789,7 +746,7 @@
     }
     const selected = firstByOrder(emptyLeaves);
     if (selected === null) {
-      return reject2("no-target", "no retained empty leaf is available");
+      return reject("no-target", "no retained empty leaf is available");
     }
     return {
       ok: true,
@@ -801,6 +758,49 @@
         assignmentOnly: true
       }
     };
+  }
+
+  // src/layout-blueprint.ts
+  function reject2(kind, message) {
+    return { ok: false, reason: { kind, message } };
+  }
+  function buildBlueprintByDepth(count, orientationAtDepth) {
+    if (!Number.isInteger(count) || count <= 0) {
+      return reject2(
+        "invalid-leaf-count",
+        "leaf count must be a positive integer"
+      );
+    }
+    return { ok: true, value: buildNode(count, orientationAtDepth, 0, 0) };
+  }
+  function buildNode(count, orientationAtDepth, startOrdinal, depth) {
+    if (count === 1) {
+      return { kind: "leaf", ordinal: startOrdinal };
+    }
+    const leftCount = Math.floor(count / 2);
+    const rightCount = count - leftCount;
+    const orientation = orientationAtDepth(depth);
+    const left = buildNode(leftCount, orientationAtDepth, startOrdinal, depth + 1);
+    const right = buildNode(rightCount, orientationAtDepth, startOrdinal + leftCount, depth + 1);
+    return { kind: "branch", orientation, left, right };
+  }
+  function buildDwindleBlueprint(count) {
+    if (!Number.isInteger(count) || count <= 0) {
+      return reject2(
+        "invalid-leaf-count",
+        "leaf count must be a positive integer"
+      );
+    }
+    return { ok: true, value: buildDwindleNode(count, 0, 0) };
+  }
+  function buildDwindleNode(count, startOrdinal, depth) {
+    if (count === 1) {
+      return { kind: "leaf", ordinal: startOrdinal };
+    }
+    const orientation = depth % 2 === 0 ? "horizontal" : "vertical";
+    const left = { kind: "leaf", ordinal: startOrdinal };
+    const right = buildDwindleNode(count - 1, startOrdinal + 1, depth + 1);
+    return { kind: "branch", orientation, left, right };
   }
 
   // src/layout-instructions.ts
@@ -908,6 +908,18 @@
     }
     freezeDeep(instructions.value);
     return Object.freeze({ ok: true, value: instructions.value });
+  }
+  function presetBlueprint(kind, count) {
+    if (!isPresetKind(kind)) {
+      return reject4(
+        "invalid-preset-kind",
+        "preset kind must be columns, rows, balanced-grid, or dwindle"
+      );
+    }
+    if (kind === "dwindle") {
+      return buildDwindleBlueprint(count);
+    }
+    return buildBlueprintByDepth(count, presetOrientation(kind));
   }
 
   // src/topology-reset.ts
@@ -1051,6 +1063,21 @@
     return {
       mode: DEFAULT_WORKSPACE_MODE,
       diagnostics: Object.freeze(["workspace-mode-invalid:fallback-per-output-local"])
+    };
+  }
+  var DEFAULT_TILING_ALGORITHM = "dwindle";
+  var TILING_ALGORITHM_CONFIG_KEY = "tilingAlgorithm";
+  var TILING_ALGORITHMS = PRESET_KINDS;
+  function parseTilingAlgorithm(value) {
+    if (typeof value === "string" && TILING_ALGORITHMS.includes(value)) {
+      return { algorithm: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { algorithm: DEFAULT_TILING_ALGORITHM, diagnostics: Object.freeze([]) };
+    }
+    return {
+      algorithm: DEFAULT_TILING_ALGORITHM,
+      diagnostics: Object.freeze(["tiling-algorithm-invalid:fallback-dwindle"])
     };
   }
   function outputTuple(output) {
@@ -1610,15 +1637,14 @@
   function layoutDirectionFor(orientation) {
     return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
   }
-  function dwindleNodeMatches(tile, node, depth) {
+  function presetNodeMatches(tile, node) {
     if (node.kind === "leaf") {
       return !tile.isLayout;
     }
     if (!tile.isLayout) {
       return false;
     }
-    const expected = depth % 2 === 0 ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
-    if (tile.layoutDirection !== expected) {
+    if (tile.layoutDirection !== layoutDirectionFor(node.orientation)) {
       return false;
     }
     const children = decodeSequential(tile.tiles, isCustomTile, 2);
@@ -1630,7 +1656,7 @@
     if (first === void 0 || second === void 0) {
       return false;
     }
-    return dwindleNodeMatches(first, node.left, depth + 1) && dwindleNodeMatches(second, node.right, depth + 1) || dwindleNodeMatches(first, node.right, depth + 1) && dwindleNodeMatches(second, node.left, depth + 1);
+    return presetNodeMatches(first, node.left) && presetNodeMatches(second, node.right) || presetNodeMatches(first, node.right) && presetNodeMatches(second, node.left);
   }
   function dwindleOccupancyMatches(scope, leaves, population) {
     if (leaves.length !== population.length) {
@@ -1756,6 +1782,11 @@
       // startup; invalid input falls back to the default with a diagnostic. The
       // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
       this.workspaceMode = DEFAULT_WORKSPACE_MODE;
+      // Parsed `tilingAlgorithm` configuration. Set from readConfig at startup;
+      // invalid input falls back to the dwindle default with a diagnostic. The
+      // automatic takeover below builds its shape and reconstruction from this
+      // value; manual preset shortcuts keep their fixed presets.
+      this.tilingAlgorithm = DEFAULT_TILING_ALGORITHM;
       // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
       // at startup and on screensChanged; never persisted. A stale or unknown
       // output wrapper is reported once per session tuple.
@@ -1809,6 +1840,11 @@
     // Unit 05 mode dispatch; the value is set once at startup.
     workspaceModeSnapshot() {
       return this.workspaceMode;
+    }
+    // Parsed tiling algorithm. Read-only snapshot for tests; the value is set
+    // once at startup and drives the automatic takeover shape.
+    tilingAlgorithmSnapshot() {
+      return this.tilingAlgorithm;
     }
     // Deterministic session output key for the given output (spec E), or
     // undefined before any rebuild observed it. Session-only; never persisted.
@@ -1953,6 +1989,13 @@
           this.diagnostic(diagnostic);
         }
         this.workspaceMode = mode.mode;
+        const algorithm = parseTilingAlgorithm(
+          this.environment.readConfig(TILING_ALGORITHM_CONFIG_KEY, DEFAULT_TILING_ALGORITHM)
+        );
+        for (const diagnostic of algorithm.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.tilingAlgorithm = algorithm.algorithm;
         this.cleanupDesktops();
         this.adoptStartupFloatingWindows();
         this.attachExistingInteractiveWindows(true);
@@ -3816,7 +3859,7 @@
       }
       this.owedInvariantScopes.clear();
       for (const scope of owed) {
-        this.dwindleEnsureInvariant(scope);
+        this.presetEnsureInvariant(scope);
       }
     }
     // screensChanged -> rebuild the deterministic session output keys, then
@@ -4399,7 +4442,7 @@
         if (this.exitMaximize(window)) {
           const scope = this.scopeForWindow(window);
           if (scope !== null && this.isOwned(scope)) {
-            this.dwindleEnsureInvariant(scope);
+            this.presetEnsureInvariant(scope);
           }
         }
       }, (reason) => this.disabled(reason));
@@ -5370,14 +5413,15 @@
       byDesktop.set(scope.desktop.id, { scope, inert: true });
       this.diagnostic(`ownership-inert:${reason}`);
     }
-    // Adopt session-local ownership of the anchored scope with ratio-free
-    // dwindle. A valid selected overlay takes precedence and leaves the scope
-    // overlay-managed. The owned population is every eligible in-scope window
-    // from the proven window collection excluding explicitly detached windows.
-    // When the scope's tree already realizes the dwindle blueprint for that
-    // count it is adopted unchanged; otherwise a full reconstruction starts:
-    // a synchronous removals-only collapse to a single leaf followed by a
-    // non-timer event-loop yield before the deferred split reconstruction.
+    // Adopt session-local ownership of the anchored scope with the configured
+    // preset (`tilingAlgorithm`). A valid selected overlay takes precedence and
+    // leaves the scope overlay-managed. The owned population is every eligible
+    // in-scope window from the proven window collection excluding explicitly
+    // detached windows. When the scope's tree already realizes the preset
+    // blueprint for that count it is adopted unchanged; otherwise a full
+    // reconstruction starts: a synchronous removals-only collapse to a single
+    // leaf followed by a non-timer event-loop yield before the deferred split
+    // reconstruction.
     ensureManaged(scope) {
       if (this.isOwned(scope) || this.isInert(scope)) {
         return;
@@ -5394,7 +5438,7 @@
         this.diagnostic("ownership-taken");
         return;
       }
-      if (this.dwindleMatches(scope, population)) {
+      if (this.presetMatches(scope, population)) {
         this.diagnostic("ownership-taken");
         return;
       }
@@ -5429,17 +5473,17 @@
       }
       return owned;
     }
-    // Whether the scope's current tree already realizes the ratio-free dwindle
+    // Whether the scope's current tree already realizes the configured preset
     // blueprint for the owned population. A population of one is realized by
     // exactly one usable leaf (a non-layout tile or a zero-child layout root)
     // occupied by the sole owned window, regardless of the root wrapper; higher
-    // counts require the exact dwindle chain with alternating orientation. In
-    // every case the occupancy must be a bijection between the usable leaves
-    // and the population: each leaf holds exactly one owned window whose
-    // recorded `tile` is that leaf, and every owned window occupies exactly one
-    // leaf. An empty population is never realized, so an empty owned scope
-    // never matches.
-    dwindleMatches(scope, population) {
+    // counts require the exact preset tree with its deterministic branch
+    // orientations. In every case the occupancy must be a bijection between
+    // the usable leaves and the population: each leaf holds exactly one owned
+    // window whose recorded `tile` is that leaf, and every owned window
+    // occupies exactly one leaf. An empty population is never realized, so an
+    // empty owned scope never matches.
+    presetMatches(scope, population) {
       const count = population.length;
       if (count === 0) {
         return false;
@@ -5455,11 +5499,11 @@
         }
         return dwindleBijectionTreeMatches(scope, root, population);
       }
-      const blueprint = buildDwindleBlueprint(count);
+      const blueprint = presetBlueprint(this.tilingAlgorithm, count);
       if (!blueprint.ok) {
         return false;
       }
-      if (!dwindleNodeMatches(root, blueprint.value, 0)) {
+      if (!presetNodeMatches(root, blueprint.value)) {
         return false;
       }
       return dwindleBijectionTreeMatches(scope, root, population);
@@ -5625,7 +5669,7 @@
         this.dropPendingRebuild(scope, pending);
         return;
       }
-      if (this.dwindleMatches(scope, population)) {
+      if (this.presetMatches(scope, population)) {
         this.dropPendingRebuild(scope, pending);
         return;
       }
@@ -5644,7 +5688,7 @@
         }
         return;
       }
-      if (this.rebuildDwindle(scope, population)) {
+      if (this.rebuildPreset(scope, population)) {
         this.diagnostic("ownership-taken");
       } else {
         this.markInert(scope, "rebuild-failed");
@@ -5655,7 +5699,7 @@
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
     // next structural call and is never retained across one.
-    dwindleTileAtPath(scope, path) {
+    presetTileAtPath(scope, path) {
       const root = this.environment.rootTile(scope.output, scope.desktop);
       if (!isCustomTile(root)) {
         return null;
@@ -5677,8 +5721,8 @@
       }
       return current;
     }
-    // Full dwindle reconstruction, phase two body: a single synchronous
-    // splits-only batch realizing the ratio-free dwindle blueprint for the
+    // Full preset reconstruction, phase two body: a single synchronous
+    // splits-only batch realizing the configured preset blueprint for the
     // current owned population on the freshly resolved single-leaf root, then
     // guarded assignments of the population to the ordinal leaves. Every split
     // re-resolves the scope root and fresh-decodes the tree around the call,
@@ -5686,16 +5730,16 @@
     // retained, so no tile handle survives from one structural call to the
     // next. The whole split reconstruction finishes in one dispatch, never one
     // frame per tile.
-    rebuildDwindle(scope, population) {
+    rebuildPreset(scope, population) {
       if (population.length === 0) {
         return false;
       }
-      const compiled = buildPreset("dwindle", population.length);
+      const compiled = buildPreset(this.tilingAlgorithm, population.length);
       if (!compiled.ok) {
         return false;
       }
       for (const instruction of compiled.value.splits) {
-        const target = this.dwindleTileAtPath(scope, instruction.targetPath);
+        const target = this.presetTileAtPath(scope, instruction.targetPath);
         if (target === null) {
           return false;
         }
@@ -5713,7 +5757,7 @@
       }
       const leaves = [];
       for (const leafPath of compiled.value.leafPaths) {
-        const leaf = this.dwindleTileAtPath(scope, leafPath.path);
+        const leaf = this.presetTileAtPath(scope, leafPath.path);
         if (leaf === null) {
           return false;
         }
@@ -5769,13 +5813,13 @@
       }
       this.detachedWindows.add(window);
     }
-    // Re-establish the dwindle invariant for an owned scope after a managed
-    // count change: when the current tree no longer realizes the dwindle
+    // Re-establish the configured preset invariant for an owned scope after a
+    // managed count change: when the current tree no longer realizes the preset
     // blueprint for the current population, start a full reconstruction. A
     // scope with no owned population or an authoritative valid overlay is
     // untouched. The scope root is decoded exactly once per check and shared by
     // the occupancy-bijection predicate and the canonical-shape predicate.
-    dwindleEnsureInvariant(scope) {
+    presetEnsureInvariant(scope) {
       if (!this.isOwned(scope) || this.isInert(scope)) {
         return;
       }
@@ -5808,28 +5852,28 @@
         this.startReconstruction(scope);
         return;
       }
-      if (!this.dwindleShapeMatches(root, population)) {
+      if (!this.presetShapeMatches(root, population)) {
         this.diagnostic("ownership-accepted:non-canonical:bijection-intact");
       }
     }
-    // Canonical dwindle-shape predicate for the already-resolved scope root:
-    // whether the tree realizes the ratio-free dwindle blueprint for the
+    // Canonical preset-shape predicate for the already-resolved scope root:
+    // whether the tree realizes the configured preset blueprint for the
     // population count. A population of one is realized by exactly one usable
     // leaf (a non-layout tile or a zero-child layout root); higher counts
-    // require the exact dwindle chain with alternating orientation. Only the
-    // shape is checked here; occupancy is the separate bijection predicate. The
-    // root is never re-read.
-    dwindleShapeMatches(root, population) {
+    // require the exact preset tree with its deterministic branch
+    // orientations. Only the shape is checked here; occupancy is the separate
+    // bijection predicate. The root is never re-read.
+    presetShapeMatches(root, population) {
       const count = population.length;
       if (count === 1) {
         const leaves = decodeUsableLeaves(root);
         return leaves !== null && leaves.length === 1;
       }
-      const blueprint = buildDwindleBlueprint(count);
+      const blueprint = presetBlueprint(this.tilingAlgorithm, count);
       if (!blueprint.ok) {
         return false;
       }
-      return dwindleNodeMatches(root, blueprint.value, 0);
+      return presetNodeMatches(root, blueprint.value);
     }
     // The deepest right-spine non-layout custom tile under the scope root (the
     // dwindle insertion point) with its depth. The dwindle chain recurses into
@@ -5910,7 +5954,7 @@
         return;
       }
       this.dwindleInsert(window, scope);
-      this.dwindleEnsureInvariant(scope);
+      this.presetEnsureInvariant(scope);
     }
     // One dwindle insertion: split the deepest leaf with depth-derived
     // orientation, keep its sole eligible occupant on the first child, and
@@ -5960,7 +6004,7 @@
         } catch (error) {
           void error;
         }
-        if (!assigned || !this.dwindleMatches(scope, this.ownedPopulation(scope))) {
+        if (!assigned || !this.presetMatches(scope, this.ownedPopulation(scope))) {
           this.markInert(scope, "occupied-root-assign-failed");
           return;
         }
@@ -6325,11 +6369,11 @@
       }
       if (after.length !== topology.length - 1) {
         this.diagnostic("ownership-remove-failed:leaf-count");
-        this.dwindleEnsureInvariant(scope);
+        this.presetEnsureInvariant(scope);
         return null;
       }
       this.diagnostic("ownership-remove-collapsed");
-      this.dwindleEnsureInvariant(scope);
+      this.presetEnsureInvariant(scope);
       return after;
     }
     dwindleMaybeRemove(window) {

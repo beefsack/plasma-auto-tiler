@@ -27,4 +27,37 @@ describe("production bundle compatibility", () => {
         assert.doesNotMatch(bundle, /Promise\.(?:allSettled|any)\(/);
         assert.doesNotMatch(bundle, /\.(?:trimStart|trimEnd|matchAll|replaceAll)\(/);
     });
+
+    it("links the generic scripted-KCM metadata to the KConfigXT schema", () => {
+        const metadata = readFileSync("metadata.json", "utf8");
+        const schema = readFileSync("contents/config/main.xml", "utf8");
+        assert.match(metadata, /"X-KDE-ConfigModule"\s*:\s*"kwin\/effects\/configs\/kcm_kwin4_genericscripted"/);
+        assert.match(schema, /<entry name="tilingAlgorithm" type="Enum">/);
+        assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
+        assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
+    });
+
+    it("declares the startup defaults in the KConfigXT schema", () => {
+        const schema = readFileSync("contents/config/main.xml", "utf8");
+        assert.match(schema, /<default>dwindle<\/default>/);
+        assert.match(schema, /<default>per-output-local<\/default>/);
+        assert.match(schema, /<default>cosmic<\/default>/);
+        for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
+            assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
+        }
+        for (const mode of ["per-output-local", "global-unique", "shared"]) {
+            assert.match(schema, new RegExp(`<choice name="${mode}" value="${mode}"\\/>`));
+        }
+        for (const profile of ["cosmic", "hyprland", "bspwm"]) {
+            assert.match(schema, new RegExp(`<choice name="${profile}" value="${profile}"\\/>`));
+        }
+    });
+
+    it("declares the standard KCM UI with kcfg_ bound comboboxes", () => {
+        const ui = readFileSync("contents/ui/config.ui", "utf8");
+        assert.match(ui, /<widget class="QWidget"/);
+        for (const entry of ["tilingAlgorithm", "workspaceMode", "shortcutProfile"]) {
+            assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
+        }
+    });
 });

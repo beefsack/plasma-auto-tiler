@@ -3,16 +3,19 @@ import assert from "node:assert/strict";
 
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import {
+    DEFAULT_TILING_ALGORITHM,
     DEFAULT_WORKSPACE_MODE,
     PROFILE_CATALOGS,
     REGISTERED_PROFILE_ACTION_IDS,
     SessionOutputKeys,
     ShortcutOverrides,
+    TILING_ALGORITHMS,
     TileController,
     WORKSPACE_MODE_CONFIG_KEY,
     WORKSPACE_MODES,
     catalogValidationDiagnostics,
     outputTuple,
+    parseTilingAlgorithm,
     parseWorkspaceMode,
     validateProfile,
     resolveSequence,
@@ -24,6 +27,7 @@ import {
 } from "../src/controller";
 import { buildDwindleBlueprint, type Blueprint } from "../src/layout-blueprint";
 import { DIRECTIONS, type Direction, type Point } from "../src/logic";
+import { PRESET_KINDS, presetBlueprint } from "../src/preset-catalog";
 
 const RECT = { x: 0, y: 0, width: 100, height: 100 };
 const OUTPUT = {
@@ -7755,6 +7759,180 @@ function assertDwindleShape(tile: TestTile, blueprint: Blueprint, depth: number)
     assertDwindleShape(left, blueprint.left, depth + 1);
     assertDwindleShape(right, blueprint.right, depth + 1);
 }
+
+// Structural shape check for any preset blueprint: the live tree must realize
+// the blueprint exactly, with the first decoded child as the left subtree and
+// the second as the right subtree, and each branch carrying the orientation the
+// blueprint node itself declares.
+function assertPresetShape(tile: TestTile, blueprint: Blueprint): void {
+    if (blueprint.kind === "leaf") {
+        assert.equal(tile.isLayout, false);
+        return;
+    }
+    assert.equal(tile.isLayout, true);
+    assert.equal(tile.layoutDirection, blueprint.orientation === "horizontal" ? 1 : 2);
+    const children = tile.tiles as TestTile[];
+    assert.equal(children.length, 2);
+    const left = children[0];
+    const right = children[1];
+    assert.ok(left !== undefined && right !== undefined);
+    assertPresetShape(left, blueprint.left);
+    assertPresetShape(right, blueprint.right);
+}
+
+// Startup takeover reconstruction harness: a layout root holding one empty leaf
+// and every window but the last occupying its own leaf, so the last window is
+// floating and the occupancy bijection fails, forcing the two-phase
+// collapse/rebuild adoption. `preset` is written into the config before start.
+function takeoverTilingSetup(
+    preset: string | undefined,
+    windowCount: number,
+): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly removed: { count: number };
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const leaves = Array.from({ length: windowCount }, () => tile());
+    const windows = Array.from({ length: windowCount }, () => window());
+    for (let index = 0; index < windowCount; index += 1) {
+        const leaf = leaves[index];
+        const subject = windows[index];
+        if (leaf === undefined || subject === undefined) {
+            break;
+        }
+        if (index < windowCount - 1) {
+            leaf.windows = [subject];
+            subject.tile = leaf;
+        }
+    }
+    root.tiles = leaves;
+    harness.root = root;
+    harness.active = windows[0] as TestWindow;
+    harness.windows = windows;
+    if (preset !== undefined) {
+        harness.configValues.set("tilingAlgorithm", preset);
+    }
+    const removed = { count: 0 };
+    for (const leaf of leaves) {
+        leaf.remove = () => {
+            removed.count += 1;
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+            return true;
+        };
+    }
+    installDwindleSplitter(root);
+    for (const subject of windows) {
+        attachTileWriter(subject);
+    }
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, removed };
+}
+
+describe("parseTilingAlgorithm", () => {
+    it("defaults to dwindle for a missing, null, or empty value without a diagnostic", () => {
+        for (const value of [undefined, null, ""]) {
+            const parsed = parseTilingAlgorithm(value);
+            assert.equal(parsed.algorithm, DEFAULT_TILING_ALGORITHM);
+            assert.equal(parsed.algorithm, "dwindle");
+            assert.deepEqual(parsed.diagnostics, []);
+        }
+    });
+
+    it("passes through every valid preset unchanged without a diagnostic", () => {
+        for (const value of TILING_ALGORITHMS) {
+            const parsed = parseTilingAlgorithm(value);
+            assert.equal(parsed.algorithm, value);
+            assert.deepEqual(parsed.diagnostics, []);
+        }
+    });
+
+    it("falls back to dwindle with a diagnostic for an invalid value", () => {
+        for (const value of ["bogus", "dwindle-mirror", 42, { algorithm: "dwindle" }]) {
+            const parsed = parseTilingAlgorithm(value);
+            assert.equal(parsed.algorithm, "dwindle");
+            assert.deepEqual(parsed.diagnostics, ["tiling-algorithm-invalid:fallback-dwindle"]);
+        }
+    });
+});
+
+describe("TileController tiling algorithm takeover", () => {
+    it("rebuilds an adopted scope with the configured preset shape for every valid preset", () => {
+        for (const preset of PRESET_KINDS) {
+            const state = takeoverTilingSetup(preset, 4);
+            assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+            assert.equal(state.harness.flushNextYield(), true);
+            assert.equal(countEvent(state.harness.logs, "ownership-collapsed"), 1);
+            assert.equal(state.harness.flushNextYield(), true);
+            assert.equal(countEvent(state.harness.logs, "ownership-taken"), 1);
+            assert.equal(state.controller.tilingAlgorithmSnapshot(), preset);
+            const blueprint = presetBlueprint(preset, 4);
+            assert.equal(blueprint.ok, true);
+            if (blueprint.ok) {
+                assertPresetShape(state.root, blueprint.value);
+            }
+        }
+    });
+
+    it("defaults the takeover to the dwindle preset when tilingAlgorithm is absent", () => {
+        const state = takeoverTilingSetup(undefined, 3);
+        assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-collapsed"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 1);
+        assert.equal(state.controller.tilingAlgorithmSnapshot(), "dwindle");
+        const blueprint = presetBlueprint("dwindle", 3);
+        assert.equal(blueprint.ok, true);
+        if (blueprint.ok) {
+            assertPresetShape(state.root, blueprint.value);
+        }
+    });
+
+    it("falls back to the dwindle preset with a diagnostic for an invalid tilingAlgorithm", () => {
+        const state = takeoverTilingSetup("bogus", 3);
+        assert.equal(countEvent(state.harness.logs, "tiling-algorithm-invalid:fallback-dwindle"), 1);
+        assert.equal(state.controller.tilingAlgorithmSnapshot(), "dwindle");
+        assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-collapsed"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 1);
+        const blueprint = presetBlueprint("dwindle", 3);
+        assert.equal(blueprint.ok, true);
+        if (blueprint.ok) {
+            assertPresetShape(state.root, blueprint.value);
+        }
+    });
+
+    it("does not change the manual apply-dwindle shortcut when tilingAlgorithm is configured", () => {
+        const harness = new Harness();
+        harness.configValues.set("tilingAlgorithm", "columns");
+        const root = tile(RECT, true);
+        const source = tile();
+        const early = tile({ x: 200, y: 0, width: 100, height: 100 });
+        const late = tile({ x: 300, y: 0, width: 100, height: 100 });
+        const active = window({ tile: source });
+        const earlyWindow = window({ tile: early });
+        const lateWindow = window({ tile: late });
+        source.windows = [active];
+        early.windows = [earlyWindow];
+        late.windows = [lateWindow];
+        root.tiles = [early, source, late];
+        harness.root = root;
+        harness.active = active;
+        harness.windows = [active, earlyWindow, lateWindow];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(controller.tilingAlgorithmSnapshot(), "columns");
+        invokeShortcut(harness, "plasma-auto-tiler-apply-dwindle");
+        assert.equal(countEvent(harness.logs, "preset-invoked:dwindle"), 1);
+        assert.equal(countEvent(harness.logs, "preset-invoked:columns"), 0);
+    });
+});
 
 describe("TileController automatic dwindle ownership", () => {
     it("adopts a stable scope on controller start without any structural call", () => {

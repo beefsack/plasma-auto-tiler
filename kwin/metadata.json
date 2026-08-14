@@ -8,5 +8,6 @@
     "License": "GPL-2.0-or-later",
     "Icon": "preferences-system-windows"
   },
-  "X-Plasma-API": "javascript"
+  "X-Plasma-API": "javascript",
+  "X-KDE-ConfigModule": "kwin/effects/configs/kcm_kwin4_genericscripted"
 }
