@@ -59,8 +59,19 @@ bash scripts/dogfood-install.sh status
 
 ### Shortcut catalog
 
-The controller registers these 49 shortcuts (identifiers and sequences as
-authored in `kwin/src/controller.ts`):
+Shortcut registration is catalog-driven under the selected profile (default
+`cosmic`; config key `shortcutProfile`). Every implemented catalog row registers
+under a stable `plasma-auto-tiler-*` shortcut ID, so reload/restart re-registers
+the same IDs and a user-customized KGlobalAccel sequence survives without being
+silently overwritten. This is KWin-local registration: it never displaces or
+reassigns a Plasma-global binding, and a row that collides with Plasma stays
+shadowed until a separately gated installer/KCM migration exists. That migration
+is not implemented here; it must assign a displaced Plasma action only to the
+selected reference environment's documented equivalent (otherwise record it
+unassigned), take an atomic snapshot with rollback, and require live evidence
+before claiming activation. `Meta+0` (workspace-append) is deferred and never
+registered in any profile; `Meta+Shift+0` (move-workspace-append) remains a
+catalog row.
 
 | Identifier | Shortcut |
 |---|---|
@@ -71,7 +82,7 @@ authored in `kwin/src/controller.ts`):
 | plasma-auto-tiler-focus-left | Meta+H |
 | plasma-auto-tiler-focus-down | Meta+J |
 | plasma-auto-tiler-focus-up | Meta+K |
-| plasma-auto-tiler-focus-right | Meta+Alt+Ctrl+L |
+| plasma-auto-tiler-focus-right | Meta+L |
 | plasma-auto-tiler-focus-left-arrow | Meta+Left |
 | plasma-auto-tiler-focus-down-arrow | Meta+Down |
 | plasma-auto-tiler-focus-up-arrow | Meta+Up |
@@ -94,9 +105,14 @@ authored in `kwin/src/controller.ts`):
 | plasma-auto-tiler-apply-balanced-grid | Meta+Alt+3 |
 | plasma-auto-tiler-apply-dwindle | Meta+Alt+4 |
 | plasma-auto-tiler-workspace-1..9 | Meta+1..9 |
-| plasma-auto-tiler-workspace-append | Meta+0 |
+| plasma-auto-tiler-workspace-append | unbound (deferred) |
 | plasma-auto-tiler-move-workspace-1..9 | Meta+Shift+1..9 |
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
+
+Sequences above are the `cosmic` profile default; `hyprland` and `bspwm`
+select different catalog rows for shared actions (for example
+`plasma-auto-tiler-float-toggle` is Meta+V on `hyprland` and Meta+S on
+`bspwm`).
 
 ### What this does to your session
 
@@ -116,10 +132,10 @@ At startup, windows that are already on all desktops are treated as session-loca
 sticky floating windows; this heuristic cannot distinguish a user-pinned window
 from an application-requested one, so it applies only within the session.
 
-`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` always appends a
-new workspace and focuses it; `Meta+Shift+1..9` moves the focused window to the
-existing workspace and follows it; `Meta+Shift+0` appends a workspace, moves the
-focused window, and follows it. Workspaces appended by the controller are
+`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` is unbound
+(deferred); `Meta+Shift+1..9` moves the focused window to the existing
+workspace and follows it; `Meta+Shift+0` appends a workspace, moves the focused
+window, and follows it. Workspaces appended by the controller are
 session-local script-owned desktops: on a session restart no desktop is treated
 as owned and existing desktops are never removed. Cleanup only ever removes an
 owned trailing empty desktop after the highest occupied workspace, keeping

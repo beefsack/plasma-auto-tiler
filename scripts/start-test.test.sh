@@ -226,7 +226,7 @@ READY_JOURNAL='{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}
 # array, default field the second.
 RECONCILE_MISMATCH_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[402653258],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[402653259],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[402653260],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[436207688],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[436207690],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[436207692],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-attach","Attach window to available tile","kwin","KWin","default","Default Context",[436207648],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]],["plasma-auto-tiler-apply-dwindle","Apply dwindle in focused leaf","kwin","KWin","default","Default Context",[402653236],[]],["plasma-auto-tiler-fill-scope","Fill available tiles with windows","kwin","KWin","default","Default Context",[419430404],[]]]]}'
 
-RECONCILE_MATCHED_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[268435528],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[268435530],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[268435531],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[469762124],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[301989960],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[301989962],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[301989963],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[301989964],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-attach","Attach window to available tile","kwin","KWin","default","Default Context",[436207648],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]],["plasma-auto-tiler-apply-dwindle","Apply dwindle in focused leaf","kwin","KWin","default","Default Context",[402653236],[]],["plasma-auto-tiler-fill-scope","Fill available tiles with windows","kwin","KWin","default","Default Context",[419430404],[]]]]}'
+RECONCILE_MATCHED_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[268435528],[]],["plasma-auto-tiler-focus-down","Focus window down","kwin","KWin","default","Default Context",[268435530],[]],["plasma-auto-tiler-focus-up","Focus window up","kwin","KWin","default","Default Context",[268435531],[]],["plasma-auto-tiler-focus-right","Focus window right","kwin","KWin","default","Default Context",[268435532],[]],["plasma-auto-tiler-move-left","Move window left","kwin","KWin","default","Default Context",[301989960],[]],["plasma-auto-tiler-move-down","Move window down","kwin","KWin","default","Default Context",[301989962],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[301989963],[]],["plasma-auto-tiler-move-right","Move window right","kwin","KWin","default","Default Context",[301989964],[]],["plasma-auto-tiler-insert-right","Insert next window right of focused leaf","kwin","KWin","default","Default Context",[419430420],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-attach","Attach window to available tile","kwin","KWin","default","Default Context",[436207648],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-apply-rows","Apply rows in focused leaf","kwin","KWin","default","Default Context",[402653234],[]],["plasma-auto-tiler-apply-balanced-grid","Apply balanced grid in focused leaf","kwin","KWin","default","Default Context",[402653235],[]],["plasma-auto-tiler-apply-dwindle","Apply dwindle in focused leaf","kwin","KWin","default","Default Context",[402653236],[]],["plasma-auto-tiler-fill-scope","Fill available tiles with windows","kwin","KWin","default","Default Context",[419430404],[]]]]}'
 
 append_arrow_records() {
   jq -c '.data[0] += [
@@ -642,7 +642,7 @@ assert_contains "setShortcutKeys asa(ai)u -> a(ai)"
 assert_contains "matched: 19"
 assert_contains "mismatched: 8"
 assert_contains 'action "plasma-auto-tiler-focus-left" active "402653256" expected "268435528"'
-assert_contains 'action "plasma-auto-tiler-focus-right" active "402653260" expected "469762124"'
+assert_contains 'action "plasma-auto-tiler-focus-right" active "402653260" expected "268435532"'
 assert_contains "missing: 0"
 assert_contains "unrelated target conflicts: 0"
 assert_contains "run 'reconcile-shortcuts --apply'"
@@ -825,7 +825,49 @@ else
   PASS=$((PASS + 1))
 fi
 
-# The lifecycle catalog must exactly cover the controller registrations/default strings.
+# The lifecycle catalog must exactly cover the controller registrations/default
+# strings. Fixed project-only rows are literal registerShortcut calls; the
+# focus/move directional rows are catalog-driven under the default (cosmic)
+# profile, so their expected sequences are derived from the controller catalog
+# source and Qt-encoded exactly like KGlobalAccel exposes them. This replaces
+# the legacy hardcoded literal list (Unit 03): sequences come from the catalog,
+# never from a hand-maintained table.
+
+# Qt 6 key codes for the sequences the lifecycle catalog covers, in the pinned
+# integer encoding (modifier bits OR key code) the live collector verified.
+qt_key_code() {
+  case "$1" in
+    0|1|2|3|4|5|6|7|8|9) printf '%d' "$((48 + $1))";;
+    H) printf '72';; J) printf '74';; K) printf '75';; L) printf '76';;
+    G) printf '71';; M) printf '77';; R) printf '82';; S) printf '83';; V) printf '86';; F) printf '70';;
+    Space) printf '32';; Return) printf '16777220';; F11) printf '16777265';;
+    Left) printf '16777234';; Up) printf '16777235';; Right) printf '16777236';; Down) printf '16777237';;
+    *) return 1;;
+  esac
+}
+
+encode_sequence() {
+  local seq="$1" mods=0 part key code
+  local -a parts
+  IFS='+' read -r -a parts <<<"$seq"
+  for part in "${parts[@]}"; do
+    case "$part" in
+      Meta) mods=$((mods + 268435456));;
+      Shift) mods=$((mods + 33554432));;
+      Ctrl) mods=$((mods + 67108864));;
+      Alt) mods=$((mods + 134217728));;
+      *) key="$part";;
+    esac
+  done
+  code="$(qt_key_code "$key")" || return 1
+  printf '%d\n' "$((mods + code))"
+}
+
+# Key expansion tables matching HJKL_KEYS and ARROW_KEYS in controller.ts.
+HJKL_KEYS_LIST=("left H" "down J" "up K" "right L")
+ARROW_KEYS_LIST=("left Left" "down Down" "up Up" "right Right")
+
+# Fixed project-only rows: literal registerShortcut calls in the controller.
 while IFS=$'\t' read -r action sequence shortcut; do
   if ! grep -Fq "[$action]=\"$sequence\"" "$SCRIPT"; then
     echo "FAIL: lifecycle catalog lacks $action=$sequence" >&2
@@ -841,22 +883,6 @@ plasma-auto-tiler-insert-right	419430420	Meta+Alt+Right
 plasma-auto-tiler-insert-left	419430418	Meta+Alt+Left
 plasma-auto-tiler-insert-up	419430419	Meta+Alt+Up
 plasma-auto-tiler-insert-down	419430421	Meta+Alt+Down
-plasma-auto-tiler-focus-left	268435528	Meta+H
-plasma-auto-tiler-focus-down	268435530	Meta+J
-plasma-auto-tiler-focus-up	268435531	Meta+K
-plasma-auto-tiler-focus-right	469762124	Meta+Alt+Ctrl+L
-plasma-auto-tiler-focus-left-arrow	285212690	Meta+Left
-plasma-auto-tiler-focus-down-arrow	285212693	Meta+Down
-plasma-auto-tiler-focus-up-arrow	285212691	Meta+Up
-plasma-auto-tiler-focus-right-arrow	285212692	Meta+Right
-plasma-auto-tiler-move-left	301989960	Meta+Shift+H
-plasma-auto-tiler-move-down	301989962	Meta+Shift+J
-plasma-auto-tiler-move-up	301989963	Meta+Shift+K
-plasma-auto-tiler-move-right	301989964	Meta+Shift+L
-plasma-auto-tiler-move-left-arrow	318767122	Meta+Shift+Left
-plasma-auto-tiler-move-down-arrow	318767125	Meta+Shift+Down
-plasma-auto-tiler-move-up-arrow	318767123	Meta+Shift+Up
-plasma-auto-tiler-move-right-arrow	318767124	Meta+Shift+Right
 plasma-auto-tiler-detach	301989920	Meta+Shift+Space
 plasma-auto-tiler-attach	436207648	Meta+Alt+Shift+Space
 plasma-auto-tiler-fill-scope	419430404	Meta+Alt+Return
@@ -865,6 +891,43 @@ plasma-auto-tiler-apply-rows	402653234	Meta+Alt+2
 plasma-auto-tiler-apply-balanced-grid	402653235	Meta+Alt+3
 plasma-auto-tiler-apply-dwindle	402653236	Meta+Alt+4
 EOF
+
+# Catalog-driven focus/move directional rows: derive expected sequences from
+# the cosmic catalog's directional(...) rows and require the lifecycle catalog
+# to match the Qt-encoded sequence. Any future catalog sequence change is
+# caught here instead of drifting silently.
+COSMIC_ROWS_SRC="$(sed -n '/const COSMIC_ROWS/,/^const HYPRLAND_ROWS/p' "$CONTROLLER" | sed '$d')"
+while IFS= read -r line; do
+  if [[ "$line" != *"directional("* ]]; then
+    continue
+  fi
+  if [[ "$line" =~ directional\(\"([^\"]+)\",[[:space:]]*\"[^\"]*\",[[:space:]]*\"([^\"]*)\",[[:space:]]*\"([^\"]*)\",[[:space:]]*([A-Za-z_]+), ]]; then
+    prefix="${BASH_REMATCH[1]}"
+    modifiers="${BASH_REMATCH[2]}"
+    suffix="${BASH_REMATCH[3]}"
+    keys_name="${BASH_REMATCH[4]}"
+    if [[ "$keys_name" == "HJKL_KEYS" ]]; then
+      keys_list=("${HJKL_KEYS_LIST[@]}")
+    else
+      keys_list=("${ARROW_KEYS_LIST[@]}")
+    fi
+    for entry in "${keys_list[@]}"; do
+      dir="${entry%% *}"
+      key="${entry##* }"
+      action="plasma-auto-tiler-${prefix}-${dir}"
+      if [[ -n "$suffix" ]]; then
+        action="${action}-${suffix}"
+      fi
+      sequence="$(encode_sequence "${modifiers}+${key}")"
+      if ! grep -Fq "[$action]=\"$sequence\"" "$SCRIPT"; then
+        echo "FAIL: lifecycle catalog lacks $action=$sequence" >&2
+        FAIL=$((FAIL + 1))
+      else
+        PASS=$((PASS + 1))
+      fi
+    done
+  fi
+done <<<"$COSMIC_ROWS_SRC"
 
 # reconcile-shortcuts: unknown argument fails closed
 setup_state '-- cursor: cursor-1' ""

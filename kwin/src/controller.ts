@@ -394,6 +394,23 @@ export function validateProfile(catalog: ProfileCatalog): ProfileValidation {
     };
 }
 
+// Registration-time catalog diagnostics: one per duplicate effective sequence
+// and one per duplicate shortcut ID, each naming both conflicting action IDs.
+// Pure and deterministic for the tests; every shipped profile emits none.
+export function catalogValidationDiagnostics(catalog: ProfileCatalog): readonly string[] {
+    const validation = validateProfile(catalog);
+    const diagnostics: string[] = [];
+    for (const conflict of validation.duplicateSequences) {
+        diagnostics.push(
+            `shortcut-catalog-collision:${conflict.sequence}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`,
+        );
+    }
+    for (const conflict of validation.shortcutIdConflicts) {
+        diagnostics.push(`shortcut-id-conflict:${conflict.shortcutId}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`);
+    }
+    return Object.freeze(diagnostics);
+}
+
 // User-override seam. A value set here takes precedence over the selected
 // profile baseline and over the cosmic profile default. It is a pure model
 // layer: no KGlobalAccel introspection or migration is claimed or implemented
@@ -547,17 +564,15 @@ export interface PendingRebuild {
     dragFinalSnapshot?: boolean;
 }
 
-// A deferred script-owned trailing-empty creation request. A user Meta+0
-// (navigate) or Meta+Shift+0 (move) that would have to create the trailing
-// empty while a live drag, pending reconstruction, or unsettled move makes the
-// desktop list unsafe to mutate is queued instead of acting, and is retried
-// through the existing settle seams (drag finish, reconstruction drop,
-// adoption, desktopsChanged). Every request is re-validated against current
-// context before it runs so a stale request can never act after the context
-// changed.
-type PendingDesktopIntent =
-    | { readonly kind: "navigate" }
-    | { readonly kind: "move"; readonly window: WindowCapability };
+// A deferred script-owned trailing-empty creation request. A user Meta+Shift+0
+// (move) that would have to create the trailing empty while a live drag,
+// pending reconstruction, or unsettled move makes the desktop list unsafe to
+// mutate is queued instead of acting, and is retried through the existing
+// settle seams (drag finish, reconstruction drop, adoption, desktopsChanged).
+// Every request is re-validated against current context before it runs so a
+// stale request can never act after the context changed. Meta+0 is deferred
+// and has no navigate-append surface in this change (spec I, plan Unit 03), so
+// no navigate intent exists.
 
 interface DecodedLeaf {
     readonly tile: TileCapability;
@@ -1212,9 +1227,9 @@ export class TileController {
     // idempotent, so the guard only prevents a nested re-entry, never skips
     // owed work.
     private reconcilingDesktops = false;
-    // Deferred user trailing-empty creation requests (see PendingDesktopIntent).
-    // Bounded like the other controller queues.
-    private readonly pendingDesktopIntents: PendingDesktopIntent[] = [];
+    // Deferred Meta+Shift+0 trailing-empty creation windows. Bounded like the
+    // other controller queues.
+    private readonly pendingDesktopIntents: WindowCapability[] = [];
     // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
     // KWin scripting cannot observe a held key or a bare next-key modal input,
     // so entry is a deterministic toggle and the mode is driven only through
@@ -1363,10 +1378,34 @@ export class TileController {
             for (const diagnostic of selected.diagnostics) {
                 this.diagnostic(diagnostic);
             }
-            // Catalog-driven registration of the selected profile's rows. Deferred
-            // rows (Meta+0) and rows without a controller callback (Unit 02) are
-            // never registered; every registered alias keeps its distinct shortcut
-            // ID from the catalog.
+            // Deterministic catalog validation before any row registers: a
+            // duplicate effective sequence or duplicate shortcut ID is a
+            // catalog defect, reported with both conflicting action IDs. Every
+            // shipped profile validates clean; these diagnostics exist so an
+            // accidental collision is never silent.
+            for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
+                this.diagnostic(diagnostic);
+            }
+            // Catalog-driven registration of the selected profile's rows.
+            // Deferred rows (Meta+0) and rows without a controller callback
+            // (Unit 02) are never registered; every registered alias keeps its
+            // distinct shortcut ID from the catalog. A false registerShortcut
+            // result is reported per row as evidence of attempted registration
+            // only - KWin-local registration never displaces or reassigns a
+            // Plasma-global sequence and reports no activation collision (spec
+            // H.15/H.16). Each row re-registers under the same stable shortcut
+            // ID on reload/restart, so KGlobalAccel keeps the same row and any
+            // user-customized sequence survives; this is a pure
+            // model/diagnostic boundary, not KGlobalAccel introspection.
+            // Rows that collide with Plasma-global bindings remain shadowed on
+            // stock Plasma. Full takeover, displaced-action reassignment,
+            // snapshot, collision detection, and rollback semantics are a
+            // separately gated installer/KCM migration (plan Unit 03), never
+            // claimed by this script-local layer. That migration must assign a
+            // displaced Plasma action only to the selected reference
+            // environment's documented equivalent and otherwise record it
+            // unassigned, require an atomic snapshot with rollback, and demand
+            // live evidence before claiming activation.
             const registrationResults: boolean[] = [];
             for (const row of selected.profile.rows) {
                 if (row.classification === "deferred") {
@@ -1379,9 +1418,11 @@ export class TileController {
                 if (callback === undefined) {
                     continue;
                 }
-                registrationResults.push(
-                    this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback),
-                );
+                const registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback);
+                registrationResults.push(registered);
+                if (!registered) {
+                    this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
+                }
             }
             const detachRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-detach",
@@ -6321,44 +6362,10 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Meta+0: focus the existing script-owned trailing empty when present,
-    // otherwise append a desktop and navigate to it. Repeated Meta+0 on the
-    // trailing empty never creates a duplicate, and a focused trailing empty
-    // that stays empty stays exactly one: nothing is appended until occupancy
-    // moves the highest occupied workspace past it, at which point
-    // reconciliation replenishes a replacement. When the trailing empty is
-    // missing but the desktop list cannot be mutated yet (live drag, pending
-    // reconstruction, unsettled move), the navigate request is deferred and
-    // retried through the existing settle seams.
-    appendWorkspace(): void {
-        this.gate.run(() => {
-            this.diagnostic("workspace-append-invoked");
-            this.navigateToOrCreateTrailingEmpty();
-        }, (reason) => this.disabled(reason));
-    }
-
-    // Focus the existing script-owned trailing empty, or create it and focus
-    // it. The create is deferred while the desktop list is unsafe to mutate.
-    private navigateToOrCreateTrailingEmpty(): void {
-        const existing = this.trailingOwnedEmptyDesktop();
-        if (existing !== null) {
-            this.setCurrentDesktop(existing);
-            this.diagnostic("workspace-append-focused-existing");
-            return;
-        }
-        if (this.workspaceMutationDeferred()) {
-            this.deferDesktopIntent({ kind: "navigate" });
-            return;
-        }
-        const created = this.appendDesktop();
-        if (created === null) {
-            return;
-        }
-        this.setCurrentDesktop(created);
-        this.diagnostic("workspace-append-completed");
-        this.cleanupDesktops();
-        this.drainPendingDesktopIntents();
-    }
+    // Meta+0 is deferred and unbound (spec I): there is no navigate-append
+    // handler surface here. Automatic trailing-empty maintenance is
+    // reconciliation-owned (cleanupDesktops), and Meta+Shift+0 owns the only
+    // remaining user path that appends a trailing desktop.
 
     // The script-owned trailing empty that reconciliation would retain: the
     // trailing-most owned empty desktop after every occupied desktop, or null
@@ -6407,13 +6414,14 @@ export class TileController {
         return this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0;
     }
 
-    // Queue a user trailing-empty creation request for later execution. The
-    // queue is bounded and each entry is re-validated on execution.
-    private deferDesktopIntent(intent: PendingDesktopIntent): void {
+    // Queue a deferred Meta+Shift+0 trailing-empty creation request for later
+    // execution. The queue is bounded and each entry is re-validated on
+    // execution.
+    private deferDesktopIntent(window: WindowCapability): void {
         if (this.pendingDesktopIntents.length < MAX_SEQUENTIAL_LENGTH) {
-            this.pendingDesktopIntents.push(intent);
+            this.pendingDesktopIntents.push(window);
         }
-        this.diagnostic(intent.kind === "navigate" ? "workspace-create-deferred:navigate" : "workspace-create-deferred:move");
+        this.diagnostic("workspace-create-deferred:move");
     }
 
     // Run every queued trailing-empty creation request, in order, once the
@@ -6428,12 +6436,8 @@ export class TileController {
         }
         const pending = this.pendingDesktopIntents.slice();
         this.pendingDesktopIntents.length = 0;
-        for (const intent of pending) {
-            if (intent.kind === "navigate") {
-                this.navigateToOrCreateTrailingEmpty();
-            } else {
-                this.finishMoveToTrailing(intent.window);
-            }
+        for (const window of pending) {
+            this.finishMoveToTrailing(window);
         }
     }
 
@@ -6453,7 +6457,7 @@ export class TileController {
         let target = this.trailingOwnedEmptyDesktop();
         if (target === null) {
             if (this.workspaceMutationDeferred()) {
-                this.deferDesktopIntent({ kind: "move", window });
+                this.deferDesktopIntent(window);
                 return;
             }
             target = this.appendDesktop();
@@ -6566,7 +6570,7 @@ export class TileController {
                 target = this.trailingOwnedEmptyDesktop();
                 if (target === null) {
                     if (this.workspaceMutationDeferred()) {
-                        this.deferDesktopIntent({ kind: "move", window: active });
+                        this.deferDesktopIntent(active);
                         return;
                     }
                     target = this.appendDesktop();

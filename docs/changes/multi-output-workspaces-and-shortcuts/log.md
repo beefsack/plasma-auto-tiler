@@ -58,3 +58,22 @@
 - Unit 02 deferred checkpoint: the committed generated bundle still predates
   source changes, so full artifact smoke cannot pass until Unit 03's approved
   registration/rebuild checkpoint. No generated file was hand-edited.
+- Unit 03 accepted: catalog registration now reports deterministic catalog
+  collisions and individual registration failures, while retaining stable IDs
+  across script restart/reload. The controller has no Meta+0 append handler or
+  registration surface; Meta+Shift+0 remains separate. The lifecycle check now
+  derives directional registrations from the COSMIC catalog rather than stale
+  literals, and the generated bundle was reproduced only through `npm run
+  build`.
+- Unit 03 migration boundary: README and controller diagnostics state that
+  KWin-local registration cannot reassign or displace Plasma globals. Collision
+  takeover remains gated on a separately approved installer/KCM component with
+  selected-reference equivalent mapping or unassigned state, atomic snapshot,
+  rollback, collision detection, and live activation evidence. No DBus,
+  `kglobalshortcutsrc`, installer/KCM migration, or live-session mutation was
+  added to the KWin script.
+- Unit 03 verification passed: `npm run typecheck`; `npm test` (641 tests);
+  `bash scripts/start-test.test.sh` (248 checks); `bash
+  scripts/dogfood-install.test.sh` (108 checks); and a repeated `npm run build`
+  with no generated-bundle diff. Live KWin behavior and Plasma-global collision
+  activation remain unproven and outside authorization.

@@ -113,6 +113,14 @@ component. Escalate the component boundary rather than inventing a binding.
 
 ## Unit 03 - KWin-local registration and global-migration boundary
 
+Implementation status: accepted 2026-08-14. Selected catalog rows register
+under stable KWin-local IDs on restart/reload, catalog and individual
+registration failures diagnose clearly, and the aggregate gate is catalog-aware.
+`Meta+0` has neither registration nor controller append-handler surface;
+`Meta+Shift+0` remains independently registered. The regenerated bundle and
+static lifecycle/install checks pass. The installer/KCM migration remains a
+documented, separately gated dependency, not an implementation.
+
 Dependencies: Unit 02. Scope: register validated effective catalog rows as
 distinct KWin script shortcut IDs, document the collision status, and expose
 profile/readConfig reconfigure semantics. Keep this strictly separate from

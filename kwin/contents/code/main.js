@@ -1021,10 +1021,219 @@
   var VERTICAL_LAYOUT_DIRECTION2 = 2;
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
   var MINIMUM_TILE_FRACTION = 0.15;
+  var RESIZE_STEP_FRACTION = 0.05;
   var WORK_AREA_CLIENT_AREA_OPTION = 5;
   var FLOAT_WORK_AREA_FRACTION = 0.6;
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var MAX_YIELD_REARM_PER_PHASE = 2;
+  var DEFAULT_PROFILE = "cosmic";
+  var SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
+  var PROFILE_KEYS = Object.freeze(["cosmic", "hyprland", "bspwm"]);
+  var COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
+  var HYPRLAND_REF = "[H-Ex] Hyprland example/hyprland.lua";
+  var BSPWM_REF = "[B1-EX] bspwm examples/sxhkdrc";
+  var HJKL_KEYS = Object.freeze([
+    ["left", "H"],
+    ["down", "J"],
+    ["up", "K"],
+    ["right", "L"]
+  ]);
+  var ARROW_KEYS = Object.freeze([
+    ["left", "Left"],
+    ["down", "Down"],
+    ["up", "Up"],
+    ["right", "Right"]
+  ]);
+  function catalogRow(actionId, shortcutId, text, sequence, classification, reference) {
+    return Object.freeze({ actionId, shortcutId, text, sequence, classification, reference });
+  }
+  function directional(actionPrefix, textPrefix, modifiers, suffix, keys, classification, reference) {
+    return keys.map(
+      ([direction, key]) => catalogRow(
+        `${actionPrefix}-${direction}${suffix === "" ? "" : `-${suffix}`}`,
+        `plasma-auto-tiler-${actionPrefix}-${direction}${suffix === "" ? "" : `-${suffix}`}`,
+        `${textPrefix} ${direction}${suffix === "" ? "" : ` (${suffix})`}`,
+        `${modifiers}+${key}`,
+        classification,
+        reference
+      )
+    );
+  }
+  function workspaceRows(classification, reference) {
+    const rows = [];
+    for (let index = 1; index <= 9; index += 1) {
+      rows.push(
+        catalogRow(
+          `workspace-${index}`,
+          `plasma-auto-tiler-workspace-${index}`,
+          `Focus workspace ${index}`,
+          `Meta+${index}`,
+          classification,
+          reference
+        )
+      );
+    }
+    for (let index = 1; index <= 9; index += 1) {
+      rows.push(
+        catalogRow(
+          `move-workspace-${index}`,
+          `plasma-auto-tiler-move-workspace-${index}`,
+          `Move window to workspace ${index}`,
+          `Meta+Shift+${index}`,
+          classification,
+          reference
+        )
+      );
+    }
+    return rows;
+  }
+  function deferredWorkspaceZeroRow(reference) {
+    return catalogRow(
+      "workspace-0",
+      "plasma-auto-tiler-workspace-append",
+      "Append and focus a new workspace",
+      "Meta+0",
+      "deferred",
+      `deferred: ${reference}`
+    );
+  }
+  function moveWorkspaceZeroRow(reference, classification = "exact") {
+    return catalogRow(
+      "move-workspace-0",
+      "plasma-auto-tiler-move-workspace-append",
+      "Move window to a newly appended workspace",
+      "Meta+Shift+0",
+      classification,
+      reference
+    );
+  }
+  var COSMIC_ROWS = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "exact", `${COSMIC_REF} Move(Left/Down/Up/Right)`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Move(Left/Down/Up/Right)`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+G", "exact", `${COSMIC_REF} ToggleWindowFloating`),
+    catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
+    ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
+    moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
+    deferredWorkspaceZeroRow(`${COSMIC_REF} LastWorkspace`),
+    catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-h", "plasma-auto-tiler-previous-workspace-h", "Previous workspace", "Meta+Ctrl+H", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("previous-workspace-k", "plasma-auto-tiler-previous-workspace-k", "Previous workspace", "Meta+Ctrl+K", "exact", `${COSMIC_REF} PreviousWorkspace`),
+    catalogRow("next-workspace-down", "plasma-auto-tiler-next-workspace-down", "Next workspace", "Meta+Ctrl+Down", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-right", "plasma-auto-tiler-next-workspace-right", "Next workspace", "Meta+Ctrl+Right", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-j", "plasma-auto-tiler-next-workspace-j", "Next workspace", "Meta+Ctrl+J", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("next-workspace-l", "plasma-auto-tiler-next-workspace-l", "Next workspace", "Meta+Ctrl+L", "exact", `${COSMIC_REF} NextWorkspace`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F11", "exact", `${COSMIC_REF} Fullscreen`),
+    catalogRow("resize-mode-outwards", "plasma-auto-tiler-resize-mode-outwards", "Enter split resize mode (grow)", "Meta+R", "exact", `${COSMIC_REF} Resizing(Outwards)`),
+    catalogRow("resize-mode-inwards", "plasma-auto-tiler-resize-mode-inwards", "Enter split resize mode (shrink)", "Meta+Shift+R", "exact", `${COSMIC_REF} Resizing(Inwards)`),
+    catalogRow("group-toggle", "plasma-auto-tiler-group-toggle", "Toggle stacking group", "Meta+S", "exact", `${COSMIC_REF} ToggleStacking (reserved)`)
+  ]);
+  var HYPRLAND_ROWS = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${HYPRLAND_REF} mainMod+left/right/up/down focus`),
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "compatibility-alias", `${HYPRLAND_REF} no HJKL default; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "compatibility-alias", `${HYPRLAND_REF} no keyboard move default; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${HYPRLAND_REF} no keyboard move default; project parity alias`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
+    ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
+    moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
+    deferredWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`)
+  ]);
+  var BSPWM_ROWS = Object.freeze([
+    ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+{h,j,k,l} bspc node -f {west,south,north,east}`),
+    ...directional("move", "Move window", "Meta+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+shift+{h,j,k,l} bspc node -s`),
+    ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} ships no arrow focus; project parity alias`),
+    ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
+    ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
+    moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
+    deferredWorkspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`),
+    catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "canonical-example", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local`),
+    catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "canonical-example", `${BSPWM_REF} super+bracketright bspc desktop -f next.local`),
+    catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+S", "canonical-example", `${BSPWM_REF} super+s bspc node -t floating`),
+    catalogRow("fullscreen", "plasma-auto-tiler-fullscreen", "Toggle fullscreen active window", "Meta+F", "canonical-example", `${BSPWM_REF} super+f bspc node -t fullscreen`),
+    ...directional("resize-expand", "Resize window", "Meta+Alt", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+{h,j,k,l} bspc node -z`),
+    ...directional("resize-contract", "Resize window", "Meta+Alt+Shift", "", HJKL_KEYS, "canonical-example", `${BSPWM_REF} super+alt+shift+{h,j,k,l} bspc node -z`)
+  ]);
+  var PROFILE_CATALOGS = Object.freeze({
+    cosmic: Object.freeze({ key: "cosmic", name: "COSMIC", rows: COSMIC_ROWS }),
+    hyprland: Object.freeze({ key: "hyprland", name: "Hyprland", rows: HYPRLAND_ROWS }),
+    bspwm: Object.freeze({ key: "bspwm", name: "bspwm", rows: BSPWM_ROWS })
+  });
+  var REGISTERED_PROFILE_ACTION_IDS = Object.freeze(
+    /* @__PURE__ */ new Set([
+      ...["focus", "move"].flatMap(
+        (family) => ["left", "down", "up", "right"].flatMap((direction) => [
+          `${family}-${direction}`,
+          `${family}-${direction}-arrow`
+        ])
+      ),
+      "float-toggle",
+      "maximize",
+      "resize-mode-outwards",
+      "resize-mode-inwards",
+      ...["expand", "contract"].flatMap(
+        (kind) => ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`)
+      ),
+      "move-workspace-0",
+      ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
+        `workspace-${index}`,
+        `move-workspace-${index}`
+      ])
+    ])
+  );
+  function selectProfile(value) {
+    if (typeof value === "string" && PROFILE_KEYS.includes(value)) {
+      return { profile: PROFILE_CATALOGS[value], diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze([]) };
+    }
+    return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze(["profile-invalid:fallback-cosmic"]) };
+  }
+  function validateProfile(catalog) {
+    const duplicateSequences = [];
+    const sequenceOwners = /* @__PURE__ */ new Map();
+    for (const row of catalog.rows) {
+      if (row.classification === "deferred") {
+        continue;
+      }
+      const owner = sequenceOwners.get(row.sequence);
+      if (owner !== void 0) {
+        duplicateSequences.push({ sequence: row.sequence, actionIds: [owner, row.actionId] });
+      } else {
+        sequenceOwners.set(row.sequence, row.actionId);
+      }
+    }
+    const shortcutIdConflicts = [];
+    const idOwners = /* @__PURE__ */ new Map();
+    for (const row of catalog.rows) {
+      const owner = idOwners.get(row.shortcutId);
+      if (owner !== void 0) {
+        shortcutIdConflicts.push({ shortcutId: row.shortcutId, actionIds: [owner, row.actionId] });
+      } else {
+        idOwners.set(row.shortcutId, row.actionId);
+      }
+    }
+    return {
+      ok: duplicateSequences.length === 0 && shortcutIdConflicts.length === 0,
+      duplicateSequences: Object.freeze(duplicateSequences),
+      shortcutIdConflicts: Object.freeze(shortcutIdConflicts)
+    };
+  }
+  function catalogValidationDiagnostics(catalog) {
+    const validation = validateProfile(catalog);
+    const diagnostics = [];
+    for (const conflict of validation.duplicateSequences) {
+      diagnostics.push(
+        `shortcut-catalog-collision:${conflict.sequence}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`
+      );
+    }
+    for (const conflict of validation.shortcutIdConflicts) {
+      diagnostics.push(`shortcut-id-conflict:${conflict.shortcutId}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`);
+    }
+    return Object.freeze(diagnostics);
+  }
   function windowInScope(window, scope) {
     if (!isWindow(window)) {
       return false;
@@ -1414,9 +1623,16 @@
       // idempotent, so the guard only prevents a nested re-entry, never skips
       // owed work.
       this.reconcilingDesktops = false;
-      // Deferred user trailing-empty creation requests (see PendingDesktopIntent).
-      // Bounded like the other controller queues.
+      // Deferred Meta+Shift+0 trailing-empty creation windows. Bounded like the
+      // other controller queues.
       this.pendingDesktopIntents = [];
+      // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
+      // KWin scripting cannot observe a held key or a bare next-key modal input,
+      // so entry is a deterministic toggle and the mode is driven only through
+      // the separately registered directional focus rows (spec I). While active,
+      // those directional keys dispatch a resize step instead of a focus step.
+      this.resizeModeActive = false;
+      this.resizeModeDirection = "outwards";
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -1426,6 +1642,11 @@
     }
     get hasActiveDrag() {
       return this.drag.current !== void 0;
+    }
+    // Read-only mode snapshot for tests: entry/inverse/switch/exit are
+    // deterministic and observable without mutating topology or assignments.
+    resizeModeSnapshot() {
+      return { active: this.resizeModeActive, direction: this.resizeModeDirection };
     }
     // Narrow read/self-validation seam for a future bounded assignment-only
     // reflow. The overlay for the exact scope is returned only when its
@@ -1502,102 +1723,66 @@
           "Meta+Alt+Down",
           () => this.armKeyboardInsertion("down")
         );
-        const leftRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-left",
-          "Focus window left",
-          "Meta+H",
-          () => this.focusNeighbor("left")
-        );
-        const downRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-down",
-          "Focus window down",
-          "Meta+J",
-          () => this.focusNeighbor("down")
-        );
-        const upRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-up",
-          "Focus window up",
-          "Meta+K",
-          () => this.focusNeighbor("up")
-        );
-        const rightRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-right",
-          "Focus window right",
-          "Meta+Alt+Ctrl+L",
-          () => this.focusNeighbor("right")
-        );
-        const focusLeftArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-left-arrow",
-          "Focus window left (arrow)",
-          "Meta+Left",
-          () => this.focusNeighbor("left")
-        );
-        const focusDownArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-down-arrow",
-          "Focus window down (arrow)",
-          "Meta+Down",
-          () => this.focusNeighbor("down")
-        );
-        const focusUpArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-up-arrow",
-          "Focus window up (arrow)",
-          "Meta+Up",
-          () => this.focusNeighbor("up")
-        );
-        const focusRightArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-focus-right-arrow",
-          "Focus window right (arrow)",
-          "Meta+Right",
-          () => this.focusNeighbor("right")
-        );
-        const moveLeftRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-left",
-          "Move window left",
-          "Meta+Shift+H",
-          () => this.moveActiveWindow("left")
-        );
-        const moveDownRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-down",
-          "Move window down",
-          "Meta+Shift+J",
-          () => this.moveActiveWindow("down")
-        );
-        const moveUpRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-up",
-          "Move window up",
-          "Meta+Shift+K",
-          () => this.moveActiveWindow("up")
-        );
-        const moveRightRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-right",
-          "Move window right",
-          "Meta+Shift+L",
-          () => this.moveActiveWindow("right")
-        );
-        const moveLeftArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-left-arrow",
-          "Move window left (arrow)",
-          "Meta+Shift+Left",
-          () => this.moveActiveWindow("left")
-        );
-        const moveDownArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-down-arrow",
-          "Move window down (arrow)",
-          "Meta+Shift+Down",
-          () => this.moveActiveWindow("down")
-        );
-        const moveUpArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-up-arrow",
-          "Move window up (arrow)",
-          "Meta+Shift+Up",
-          () => this.moveActiveWindow("up")
-        );
-        const moveRightArrowRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-right-arrow",
-          "Move window right (arrow)",
-          "Meta+Shift+Right",
-          () => this.moveActiveWindow("right")
-        );
+        const profileActions = {
+          "focus-left": () => this.focusOrResize("left"),
+          "focus-down": () => this.focusOrResize("down"),
+          "focus-up": () => this.focusOrResize("up"),
+          "focus-right": () => this.focusOrResize("right"),
+          "focus-left-arrow": () => this.focusOrResize("left"),
+          "focus-down-arrow": () => this.focusOrResize("down"),
+          "focus-up-arrow": () => this.focusOrResize("up"),
+          "focus-right-arrow": () => this.focusOrResize("right"),
+          "move-left": () => this.moveActiveWindow("left"),
+          "move-down": () => this.moveActiveWindow("down"),
+          "move-up": () => this.moveActiveWindow("up"),
+          "move-right": () => this.moveActiveWindow("right"),
+          "move-left-arrow": () => this.moveActiveWindow("left"),
+          "move-down-arrow": () => this.moveActiveWindow("down"),
+          "move-up-arrow": () => this.moveActiveWindow("up"),
+          "move-right-arrow": () => this.moveActiveWindow("right"),
+          "float-toggle": () => this.floatActiveWindow(),
+          "maximize": () => this.maximizeActiveWindow(),
+          "resize-mode-outwards": () => this.enterOrExitResizeMode("outwards"),
+          "resize-mode-inwards": () => this.enterOrExitResizeMode("inwards"),
+          "resize-expand-left": () => this.resizeActiveWindow("left", "outwards"),
+          "resize-expand-down": () => this.resizeActiveWindow("down", "outwards"),
+          "resize-expand-up": () => this.resizeActiveWindow("up", "outwards"),
+          "resize-expand-right": () => this.resizeActiveWindow("right", "outwards"),
+          "resize-contract-left": () => this.resizeActiveWindow("left", "inwards"),
+          "resize-contract-down": () => this.resizeActiveWindow("down", "inwards"),
+          "resize-contract-up": () => this.resizeActiveWindow("up", "inwards"),
+          "resize-contract-right": () => this.resizeActiveWindow("right", "inwards")
+        };
+        for (let index = 1; index <= 9; index += 1) {
+          profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
+          profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
+        }
+        profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+        const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
+        for (const diagnostic of selected.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
+          this.diagnostic(diagnostic);
+        }
+        const registrationResults = [];
+        for (const row of selected.profile.rows) {
+          if (row.classification === "deferred") {
+            continue;
+          }
+          if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
+            continue;
+          }
+          const callback = profileActions[row.actionId];
+          if (callback === void 0) {
+            continue;
+          }
+          const registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback);
+          registrationResults.push(registered);
+          if (!registered) {
+            this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
+          }
+        }
         const detachRegistered = this.environment.registerShortcut(
           "plasma-auto-tiler-detach",
           "Detach window from tile",
@@ -1610,23 +1795,11 @@
           "Meta+Alt+Shift+Space",
           () => this.attachActiveWindow()
         );
-        const floatRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-float-toggle",
-          "Float or tile active window",
-          "Meta+G",
-          () => this.floatActiveWindow()
-        );
         const stickyRegistered = this.environment.registerShortcut(
           "plasma-auto-tiler-sticky-toggle",
           "Toggle sticky floating on all desktops",
           "Meta+Shift+G",
           () => this.stickyActiveWindow()
-        );
-        const maximizeRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-maximize",
-          "Maximize active window in its workspace",
-          "Meta+M",
-          () => this.maximizeActiveWindow()
         );
         const fillScopeRegistered = this.environment.registerShortcut(
           "plasma-auto-tiler-fill-scope",
@@ -1658,41 +1831,7 @@
           "Meta+Alt+4",
           () => this.applyPreset("dwindle")
         );
-        const workspaceRegistrations = [];
-        for (let index = 1; index <= 9; index += 1) {
-          workspaceRegistrations.push(
-            this.environment.registerShortcut(
-              `plasma-auto-tiler-workspace-${index}`,
-              `Focus workspace ${index}`,
-              `Meta+${index}`,
-              () => this.navigateWorkspace(index)
-            )
-          );
-        }
-        for (let index = 1; index <= 9; index += 1) {
-          workspaceRegistrations.push(
-            this.environment.registerShortcut(
-              `plasma-auto-tiler-move-workspace-${index}`,
-              `Move window to workspace ${index}`,
-              `Meta+Shift+${index}`,
-              () => this.moveActiveToWorkspace(index)
-            )
-          );
-        }
-        const appendRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-workspace-append",
-          "Append and focus a new workspace",
-          "Meta+0",
-          () => this.appendWorkspace()
-        );
-        const moveAppendRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-move-workspace-append",
-          "Move window to a newly appended workspace",
-          "Meta+Shift+0",
-          () => this.moveActiveToWorkspace(0)
-        );
-        const workspaceRegistrationsOk = workspaceRegistrations.every((registered) => registered) && appendRegistered && moveAppendRegistered;
-        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !leftRegistered || !downRegistered || !upRegistered || !rightRegistered || !focusLeftArrowRegistered || !focusDownArrowRegistered || !focusUpArrowRegistered || !focusRightArrowRegistered || !moveLeftRegistered || !moveDownRegistered || !moveUpRegistered || !moveRightRegistered || !moveLeftArrowRegistered || !moveDownArrowRegistered || !moveUpArrowRegistered || !moveRightArrowRegistered || !detachRegistered || !attachRegistered || !floatRegistered || !stickyRegistered || !maximizeRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered || !workspaceRegistrationsOk) {
+        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !registrationResults.every((registered) => registered) || !detachRegistered || !attachRegistered || !stickyRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered) {
           this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
           return;
         }
@@ -1779,6 +1918,18 @@
           this.diagnostic("focus-rejected:no-active-window");
           return;
         }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("focus-rejected:fullscreen");
+          return;
+        }
+        if (isWindow(active) && active.onAllDesktops === true) {
+          this.diagnostic("focus-rejected:sticky");
+          return;
+        }
+        if (isWindow(active) && isNativelyMaximized(active)) {
+          this.diagnostic("focus-rejected:maximized");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("focus-rejected:desktop-output-scope");
@@ -1854,6 +2005,14 @@
           this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
           return;
         }
+        if (isWindow(active) && active.onAllDesktops === true) {
+          this.diagnostic("move-rejected:sticky");
+          return;
+        }
+        if (isWindow(active) && isNativelyMaximized(active)) {
+          this.diagnostic("move-rejected:maximized");
+          return;
+        }
         const scope = this.scopeForWindow(active);
         if (scope === null) {
           this.diagnostic("move-rejected:desktop-output-scope");
@@ -1925,6 +2084,232 @@
         }
         this.swapToOccupiedTarget(scope, active, source, target, direction);
       }, (reason) => this.disabled(reason));
+    }
+    // Directional focus dispatch, COSMIC resize-mode aware. While the catalog
+    // resize mode is active the separately registered directional focus rows
+    // drive a resize step instead of a focus step; otherwise they focus.
+    // Exactly one directional shortcut fires per key press (each alias keeps a
+    // distinct shortcut ID), so a resize step never runs twice for one press.
+    focusOrResize(direction) {
+      if (this.resizeModeActive) {
+        this.resizeActiveWindow(direction, this.resizeModeDirection);
+      } else {
+        this.focusNeighbor(direction);
+      }
+    }
+    // COSMIC split resize mode (spec C / catalog resize-mode-* rows). KWin
+    // scripting cannot observe a held key or register an arbitrary next-key
+    // modal input, so entry is a deterministic toggle: activating the same
+    // binding again exits the mode, and activating the other binding switches
+    // the direction (matching COSMIC's Resizing(Outwards)/Resizing(Inwards)
+    // alternate/inverse meaning). While active the mode only consumes the
+    // separately registered directional focus rows via `focusOrResize`.
+    enterOrExitResizeMode(mode) {
+      this.gate.run(() => {
+        if (this.resizeModeActive && this.resizeModeDirection === mode) {
+          this.resizeModeActive = false;
+          this.diagnostic("resize-mode-exited");
+          return;
+        }
+        const entering = !this.resizeModeActive;
+        this.resizeModeDirection = mode;
+        this.resizeModeActive = true;
+        this.diagnostic(entering ? `resize-mode-entered:${mode}` : `resize-mode-switched:${mode}`);
+      }, (reason) => this.disabled(reason));
+    }
+    // One safe split-resize step of the active window. `mode` is outwards
+    // (COSMIC Resizing(Outwards), bspwm resize-expand): the focused window
+    // grows toward the pressed direction. `mode` is inwards (Resizing(Inwards),
+    // bspwm resize-contract): the focused window shrinks, the shared edge on
+    // the opposite side moving inward.
+    //
+    // The nearest matching-orientation ancestor where the focused leaf has a
+    // sibling on the mode-mapped pressed side is resolved (COSMIC nested-split
+    // rule, cosmic-comp shell/layout/tiling/mod.rs resize()); the shared edge
+    // moves by RESIZE_STEP_FRACTION of that ancestor's extent. Exactly one
+    // guarded Tile.relativeGeometry write on the focused tile is made: the
+    // documented CustomTile::setRelativeGeometry source setter adjusts the
+    // adjacent sibling's shared edge and refuses atomically when the sibling
+    // would fall below its minimum (customtile.cpp:53-177, kwin-api-surface.md
+    // 153-158). A fresh whole-root decode and a two-extent postcondition prove
+    // the result before `resize-completed` is claimed; there is no window
+    // geometry write, no structural call, and no dual-write rollback path.
+    resizeActiveWindow(direction, mode) {
+      this.gate.run(() => {
+        this.diagnostic("resize-invoked");
+        const active = this.environment.activeWindow();
+        if (active === null) {
+          this.diagnostic("resize-rejected:no-active-window");
+          return;
+        }
+        if (isWindow(active) && active.fullScreen === true) {
+          this.diagnostic("resize-rejected:fullscreen");
+          return;
+        }
+        if (isWindow(active) && active.onAllDesktops === true) {
+          this.diagnostic("resize-rejected:sticky");
+          return;
+        }
+        if (isWindow(active) && isNativelyMaximized(active)) {
+          this.diagnostic("resize-rejected:maximized");
+          return;
+        }
+        const scope = this.scopeForWindow(active);
+        if (scope === null) {
+          this.diagnostic("resize-rejected:desktop-output-scope");
+          return;
+        }
+        if (!windowInScope(active, scope)) {
+          this.diagnostic("resize-rejected:active-window-eligibility");
+          return;
+        }
+        const topology = this.topologyForScope(scope, (reason) => {
+          this.diagnostic(`resize-rejected:${reason}`);
+        });
+        if (topology === null) {
+          return;
+        }
+        if (active.tile === null || !isTile(active.tile)) {
+          this.diagnostic("resize-rejected:active-tile-association");
+          return;
+        }
+        const focused = operationLeafForTile(topology, active.tile);
+        if (focused === null || focused.leaf.isLayout || focused.windows.length === 0 || windowIndex(focused.windows, active) < 0) {
+          this.diagnostic("resize-rejected:focused-occupancy-validity");
+          return;
+        }
+        const axis = direction === "left" || direction === "right" ? "x" : "y";
+        const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
+        const target = this.resolveResizeSplit(active.tile, expectedLayoutDirection, direction, mode);
+        if (target === null) {
+          this.diagnostic("resize-rejected:no-parent");
+          return;
+        }
+        const parentGeometry = target.split.relativeGeometry;
+        const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
+        const focusedGeometry = target.focused.relativeGeometry;
+        const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
+        if (!(parentExtent > 0) || !(focusedExtent > 0)) {
+          this.diagnostic("resize-rejected:no-parent");
+          return;
+        }
+        const delta = RESIZE_STEP_FRACTION * parentExtent;
+        const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
+        const neighborProposed = parentExtent - focusedProposed;
+        if (focusedProposed <= 0 || neighborProposed <= 0) {
+          this.diagnostic("resize-rejected:no-parent");
+          return;
+        }
+        if (this.resizeWouldViolateMinimum(scope, target.split, focusedProposed, neighborProposed, axis)) {
+          this.diagnostic("resize-rejected:at-floor");
+          return;
+        }
+        const positionShift = target.focused === target.first ? 0 : mode === "outwards" ? -delta : delta;
+        const focusedTarget = axis === "x" ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height } : { x: focusedGeometry.x, y: focusedGeometry.y + positionShift, width: focusedGeometry.width, height: focusedProposed };
+        const written = setTileRelativeGeometry(target.focused, focusedTarget);
+        if (!written) {
+          this.diagnostic("resize-rejected:write-failed");
+          return;
+        }
+        const fresh = this.topologyForScope(scope);
+        if (fresh === null) {
+          this.diagnostic("resize-rejected:post-decode");
+          return;
+        }
+        const freshActive = operationLeafForTile(fresh, active.tile);
+        if (freshActive === null || freshActive.leaf.isLayout || windowIndex(freshActive.windows, active) < 0) {
+          this.diagnostic("resize-rejected:postcondition");
+          return;
+        }
+        const freshChildren = decodeSequential(target.split.tiles, isCustomTile, 2);
+        if (!freshChildren.ok) {
+          this.diagnostic("resize-rejected:postcondition");
+          return;
+        }
+        const freshOrdered = orderedChildren(freshChildren.value, axis);
+        if (freshOrdered === null || freshOrdered[0] !== target.first || freshOrdered[1] !== target.second) {
+          this.diagnostic("resize-rejected:postcondition");
+          return;
+        }
+        const freshFocusedGeometry = target.focused.relativeGeometry;
+        const freshNeighborGeometry = target.neighbor.relativeGeometry;
+        const freshFocusedExtent = axis === "x" ? freshFocusedGeometry.width : freshFocusedGeometry.height;
+        const freshNeighborExtent = axis === "x" ? freshNeighborGeometry.width : freshNeighborGeometry.height;
+        if (Math.abs(freshFocusedExtent - focusedProposed) > RELATIVE_GEOMETRY_EPSILON || Math.abs(freshNeighborExtent - neighborProposed) > RELATIVE_GEOMETRY_EPSILON) {
+          this.diagnostic("resize-rejected:postcondition");
+          return;
+        }
+        this.diagnostic("resize-completed");
+      }, (reason) => this.disabled(reason));
+    }
+    // COSMIC resize target resolution: the nearest matching-orientation
+    // ancestor split where the current positioned node (the focused leaf,
+    // then each climbed ancestor) is a direct child and has a sibling on the
+    // mode-mapped pressed side. Outwards uses the sibling in the pressed
+    // direction (grow); inwards uses the sibling opposite the pressed
+    // direction (the flipped edge, shrink). A node at the outer edge of a
+    // matching split climbs to the next ancestor, exactly like cosmic-comp
+    // (shell/layout/tiling/mod.rs resize()); no climb target returns null.
+    resolveResizeSplit(focusedTile, expectedLayoutDirection, direction, mode) {
+      const axis = direction === "left" || direction === "right" ? "x" : "y";
+      let node = focusedTile;
+      while (node !== null) {
+        const parent = node.parent;
+        if (parent === null) {
+          return null;
+        }
+        if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
+          const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
+          if (decoded.ok) {
+            const ordered = orderedChildren(decoded.value, axis);
+            if (ordered !== null) {
+              const [first, second] = ordered;
+              const side = first === node ? "first" : second === node ? "second" : null;
+              if (side !== null) {
+                const pressedTowardNeighbor = side === "first" && (direction === "right" || direction === "down") || side === "second" && (direction === "left" || direction === "up");
+                if (mode === "outwards" === pressedTowardNeighbor) {
+                  return {
+                    split: parent,
+                    first,
+                    second,
+                    focused: side === "first" ? first : second,
+                    neighbor: side === "first" ? second : first
+                  };
+                }
+              }
+            }
+          }
+        }
+        if (!isTile(node)) {
+          return null;
+        }
+        node = parent;
+      }
+      return null;
+    }
+    // Whether the proposed post-step child extents (screen-relative along the
+    // split axis) fall below KWin's minimum tile size. The floor is
+    // MINIMUM_TILE_FRACTION of the per-output working area extent on the axis,
+    // scaled to screen-relative units through the split's own absolute extent.
+    // An unreadable working area never refuses: the preflight must not invent a
+    // floor it cannot prove.
+    resizeWouldViolateMinimum(scope, split, firstProposed, secondProposed, axis) {
+      const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+      if (!isRect(workArea)) {
+        return false;
+      }
+      const workExtent = axis === "x" ? workArea.width : workArea.height;
+      if (!(workExtent > 0)) {
+        return false;
+      }
+      const absoluteExtent = axis === "x" ? split.absoluteGeometry.width : split.absoluteGeometry.height;
+      const relativeExtent = axis === "x" ? split.relativeGeometry.width : split.relativeGeometry.height;
+      if (!(absoluteExtent > 0) || !(relativeExtent > 0)) {
+        return false;
+      }
+      const scale = absoluteExtent / relativeExtent;
+      const floor = MINIMUM_TILE_FRACTION * workExtent;
+      return firstProposed * scale < floor || secondProposed * scale < floor;
     }
     // Directional occupied-target swap: when the nearest ranked non-layout
     // directional leaf is occupied, its exactly-one eligible in-scope occupant
@@ -5650,43 +6035,10 @@
         this.diagnostic(`workspace-navigate-completed:${index}`);
       }, (reason) => this.disabled(reason));
     }
-    // Meta+0: focus the existing script-owned trailing empty when present,
-    // otherwise append a desktop and navigate to it. Repeated Meta+0 on the
-    // trailing empty never creates a duplicate, and a focused trailing empty
-    // that stays empty stays exactly one: nothing is appended until occupancy
-    // moves the highest occupied workspace past it, at which point
-    // reconciliation replenishes a replacement. When the trailing empty is
-    // missing but the desktop list cannot be mutated yet (live drag, pending
-    // reconstruction, unsettled move), the navigate request is deferred and
-    // retried through the existing settle seams.
-    appendWorkspace() {
-      this.gate.run(() => {
-        this.diagnostic("workspace-append-invoked");
-        this.navigateToOrCreateTrailingEmpty();
-      }, (reason) => this.disabled(reason));
-    }
-    // Focus the existing script-owned trailing empty, or create it and focus
-    // it. The create is deferred while the desktop list is unsafe to mutate.
-    navigateToOrCreateTrailingEmpty() {
-      const existing = this.trailingOwnedEmptyDesktop();
-      if (existing !== null) {
-        this.setCurrentDesktop(existing);
-        this.diagnostic("workspace-append-focused-existing");
-        return;
-      }
-      if (this.workspaceMutationDeferred()) {
-        this.deferDesktopIntent({ kind: "navigate" });
-        return;
-      }
-      const created = this.appendDesktop();
-      if (created === null) {
-        return;
-      }
-      this.setCurrentDesktop(created);
-      this.diagnostic("workspace-append-completed");
-      this.cleanupDesktops();
-      this.drainPendingDesktopIntents();
-    }
+    // Meta+0 is deferred and unbound (spec I): there is no navigate-append
+    // handler surface here. Automatic trailing-empty maintenance is
+    // reconciliation-owned (cleanupDesktops), and Meta+Shift+0 owns the only
+    // remaining user path that appends a trailing desktop.
     // The script-owned trailing empty that reconciliation would retain: the
     // trailing-most owned empty desktop after every occupied desktop, or null
     // when none exists. The trailing-most candidate is the one cleanup keeps,
@@ -5732,13 +6084,14 @@
     workspaceMutationDeferred() {
       return this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0;
     }
-    // Queue a user trailing-empty creation request for later execution. The
-    // queue is bounded and each entry is re-validated on execution.
-    deferDesktopIntent(intent) {
+    // Queue a deferred Meta+Shift+0 trailing-empty creation request for later
+    // execution. The queue is bounded and each entry is re-validated on
+    // execution.
+    deferDesktopIntent(window) {
       if (this.pendingDesktopIntents.length < MAX_SEQUENTIAL_LENGTH) {
-        this.pendingDesktopIntents.push(intent);
+        this.pendingDesktopIntents.push(window);
       }
-      this.diagnostic(intent.kind === "navigate" ? "workspace-create-deferred:navigate" : "workspace-create-deferred:move");
+      this.diagnostic("workspace-create-deferred:move");
     }
     // Run every queued trailing-empty creation request, in order, once the
     // desktop list is safe to mutate. A request that is still unsafe is kept
@@ -5752,12 +6105,8 @@
       }
       const pending = this.pendingDesktopIntents.slice();
       this.pendingDesktopIntents.length = 0;
-      for (const intent of pending) {
-        if (intent.kind === "navigate") {
-          this.navigateToOrCreateTrailingEmpty();
-        } else {
-          this.finishMoveToTrailing(intent.window);
-        }
+      for (const window of pending) {
+        this.finishMoveToTrailing(window);
       }
     }
     // Execute a deferred Meta+Shift+0 request: re-validate the captured window
@@ -5776,7 +6125,7 @@
       let target = this.trailingOwnedEmptyDesktop();
       if (target === null) {
         if (this.workspaceMutationDeferred()) {
-          this.deferDesktopIntent({ kind: "move", window });
+          this.deferDesktopIntent(window);
           return;
         }
         target = this.appendDesktop();
@@ -5878,7 +6227,7 @@
           target = this.trailingOwnedEmptyDesktop();
           if (target === null) {
             if (this.workspaceMutationDeferred()) {
-              this.deferDesktopIntent({ kind: "move", window: active });
+              this.deferDesktopIntent(active);
               return;
             }
             target = this.appendDesktop();
@@ -6423,6 +6772,7 @@
       };
     },
     registerShortcut,
+    readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message)
   });
   controller.start();

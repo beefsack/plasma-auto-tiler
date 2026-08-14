@@ -4,7 +4,7 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const EXPECTED_SHORTCUT_COUNT = 49;
+const EXPECTED_SHORTCUT_COUNT = 51;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
@@ -128,6 +128,15 @@ describe("shipped artifact smoke execution", () => {
         const names = stub.registeredShortcuts.map(([name]) => name);
         assert.ok(names.includes("plasma-auto-tiler-float-toggle"));
         assert.ok(names.includes("plasma-auto-tiler-sticky-toggle"));
+        const cosmic = new Map(
+            stub.registeredShortcuts.map(([name, , sequence]) => [name, sequence] as const),
+        );
+        // Spec H.15/H.16: the deferred Meta+0 row is never registered, the
+        // Meta+Shift+0 move row is, and the catalog-driven cosmic focus-right is
+        // Meta+L (never the old Meta+Alt+Ctrl+L blend).
+        assert.ok(!names.includes("plasma-auto-tiler-workspace-append"));
+        assert.equal(cosmic.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
+        assert.equal(cosmic.get("plasma-auto-tiler-focus-right"), "Meta+L");
         assert.ok(stub.diagnostics.includes(SHORTCUT_REGISTERED_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(STARTUP_HANDLERS_READY_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(DRAG_ATTACH_SUMMARY_DIAGNOSTIC));
