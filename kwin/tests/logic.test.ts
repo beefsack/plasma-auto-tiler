@@ -13,6 +13,7 @@ import {
     pickTargetLeaf,
     planAutomaticPlacement,
     planCancellation,
+    planDesktopCleanup,
     planDragPlacement,
     planEqualSplit,
     planGeometryDrop,
@@ -21,6 +22,7 @@ import {
     sameScope,
     type AutomaticRequest,
     type Direction,
+    type DesktopCleanupRequest,
     type DragRequest,
     type GeometryDropPlan,
     type GeometryDropRequest,
@@ -995,5 +997,67 @@ describe("planEqualSplit and equalAlongAxis", () => {
         assert.equal(equalAlongAxis({ x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.5, height: 1 }, "x"), true);
         assert.equal(equalAlongAxis({ x: 0, y: 0, width: 0.5, height: 1 }, { x: 0.5, y: 0, width: 0.75, height: 1 }, "x"), false);
         assert.equal(equalAlongAxis({ x: 0, y: 0, width: 1, height: 0.5 }, { x: 0, y: 0.5, width: 1, height: 0.5 }, "y"), true);
+    });
+});
+
+function cleanupRequest(overrides: Partial<DesktopCleanupRequest>): DesktopCleanupRequest {
+    return {
+        orderedIds: ["a", "b", "c"],
+        ownedIds: new Set(["a", "b", "c"]),
+        visibleIds: new Set(["a"]),
+        occupiedIds: new Set(),
+        protectedTrailingIds: new Set(),
+        ...overrides,
+    };
+}
+
+describe("planDesktopCleanup: deterministic at-most-one removal selection", () => {
+    it("selects the removable middle entry when it is owned, empty, invisible, and unprotected", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({})));
+        assert.equal(plan.kind, "desktop-cleanup-removal");
+        assert.equal(plan.id, "b");
+    });
+
+    it("skips visible desktops", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({ visibleIds: new Set(["a", "b"]) })));
+        assert.equal(plan.id, "c");
+    });
+
+    it("skips occupied desktops", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({ occupiedIds: new Set(["b"]) })));
+        assert.equal(plan.id, "c");
+    });
+
+    it("skips unowned desktops", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({ ownedIds: new Set(["a", "c"]) })));
+        assert.equal(plan.id, "c");
+    });
+
+    it("skips protected trailing desktops", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({ protectedTrailingIds: new Set(["b"]) })));
+        assert.equal(plan.id, "c");
+    });
+
+    it("selects none when only one global desktop remains", () => {
+        expectRejection(planDesktopCleanup(cleanupRequest({ orderedIds: ["a"] })), "no-target");
+    });
+
+    it("selects none when no owned empty invisible unprotected desktop is eligible", () => {
+        expectRejection(planDesktopCleanup(cleanupRequest({ visibleIds: new Set(["a", "b", "c"]) })), "no-target");
+        expectRejection(planDesktopCleanup(cleanupRequest({ ownedIds: new Set() })), "no-target");
+    });
+
+    it("selects the same earliest eligible desktop across repeated fresh equivalent snapshots", () => {
+        const first = expectOk(planDesktopCleanup(cleanupRequest({})));
+        const second = expectOk(planDesktopCleanup(cleanupRequest({})));
+        const third = expectOk(planDesktopCleanup(cleanupRequest({})));
+        assert.equal(first.id, "b");
+        assert.equal(second.id, "b");
+        assert.equal(third.id, "b");
+    });
+
+    it("selects the earliest eligible desktop in stable snapshot order", () => {
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({ visibleIds: new Set() })));
+        assert.equal(plan.id, "a");
     });
 });

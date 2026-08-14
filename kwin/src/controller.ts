@@ -40,6 +40,7 @@ import {
     findNeighborLeaf,
     pickDropLeaf,
     planAutomaticPlacement,
+    planDesktopCleanup,
     planEqualSplit,
     planGeometryDrop,
     planKeyboardInsertion,
@@ -4195,12 +4196,12 @@ export class TileController {
         if (isOutput(output)) {
             this.recentDesktopChangeOutput = output;
         }
-        this.handleScopeChange();
+        this.handleScopeChange(true);
         void previous;
         void current;
     }
 
-    private handleScopeChange(): void {
+    private handleScopeChange(switchCleanup = false): void {
         this.gate.run(() => {
             this.clearPending();
             this.clearDrag();
@@ -4210,7 +4211,7 @@ export class TileController {
             // A current-desktop change can move the sole trailing owned empty
             // into or out of occupancy (for example a pager move onto it), so
             // reconcile. Cleanup defers while a drag or reconstruction is live.
-            this.cleanupDesktops();
+            this.cleanupDesktops(switchCleanup);
             this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
@@ -7629,6 +7630,9 @@ export class TileController {
             return null;
         }
         const occupied = this.occupiedDesktopIds();
+        if (occupied === null) {
+            return null;
+        }
         let highestOccupied = 0;
         for (let position = 0; position < desktops.length; position += 1) {
             const desktop = desktops[position];
@@ -8164,7 +8168,7 @@ export class TileController {
     // user-owned desktops are never removed. Deferral keeps the list untouched
     // while a drag, reconstruction, or unsettled move is live, and the
     // reconciliation guard keeps create/remove re-entry inert.
-    private cleanupDesktops(): void {
+    private cleanupDesktops(switchCleanup = false): void {
         if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
         }
@@ -8180,14 +8184,19 @@ export class TileController {
             this.diagnostic("workspace-cleanup-deferred:move-unsettled");
             return;
         }
-        const visible = this.visibleDesktopIds();
-        if (visible === null) {
-            this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
-            return;
-        }
+        const visibleSnapshot = this.visibleDesktopIds();
         const desktops = this.liveDesktops();
         if (desktops === null) {
             return;
+        }
+        const visible = visibleSnapshot ?? new Set(desktops.map((desktop) => desktop.id));
+        if (visibleSnapshot === null) {
+            this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+        }
+        const occupiedSnapshot = this.occupiedDesktopIds();
+        const occupied = occupiedSnapshot ?? new Set(desktops.map((desktop) => desktop.id));
+        if (occupiedSnapshot === null) {
+            this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
         }
         if (this.workspaceMode === "per-output-local") {
             // Spec D1 single-output degeneracy: with one connected output this
@@ -8198,14 +8207,20 @@ export class TileController {
             if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
                 return;
             }
-            this.reconcileLocalWorkspaces(desktops, visible);
+            this.reconcileLocalWorkspaces(desktops, visible, occupied);
+            if (switchCleanup) {
+                this.cleanupAfterWorkspaceSwitch();
+            }
             return;
         }
         if (this.workspaceMode === "global-unique") {
             if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
                 return;
             }
-            this.reconcileGlobalUnique(desktops, visible);
+            this.reconcileGlobalUnique(desktops, visible, occupied);
+            if (switchCleanup) {
+                this.cleanupAfterWorkspaceSwitch();
+            }
             return;
         }
         this.rebuildSharedMapping(desktops);
@@ -8215,7 +8230,6 @@ export class TileController {
             // the mapping above already tracked the live ordered list.
             return;
         }
-        const occupied = this.occupiedDesktopIds();
         let highestOccupied = 0;
         for (let position = 0; position < desktops.length; position += 1) {
             const desktop = desktops[position];
@@ -8254,6 +8268,9 @@ export class TileController {
                 this.diagnostic("workspace-cleanup-replenished");
             }
             this.rebuildSharedMapping();
+            if (switchCleanup) {
+                this.cleanupAfterWorkspaceSwitch();
+            }
             return;
         }
         // Excess owned empty trailing desktops: remove every one before the
@@ -8275,18 +8292,162 @@ export class TileController {
                 if (visible.has(entry.desktop.id)) {
                     continue;
                 }
-                try {
-                    this.environment.removeDesktop(entry.desktop);
-                    this.ownedDesktopIds.delete(entry.desktop.id);
-                    this.diagnostic("workspace-cleanup-removed");
-                } catch (error) {
-                    this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
-                }
+                this.removeOwnedEmptyShared(entry.desktop.id, desktops, visible, lastIndex);
             }
         } finally {
             this.reconcilingDesktops = false;
         }
         this.rebuildSharedMapping();
+        if (switchCleanup) {
+            this.cleanupAfterWorkspaceSwitch();
+        }
+    }
+
+    // A completed workspace switch is the only point at which controller-owned
+    // empty desktops away from a mode's trailing capacity may be removed.
+    // Every pass rereads all mutable KWin state before selecting one candidate.
+    private cleanupAfterWorkspaceSwitch(): void {
+        this.reconcilingDesktops = true;
+        try {
+            while (true) {
+                const desktops = this.liveDesktops();
+                if (desktops === null) {
+                    return;
+                }
+                const visible = this.visibleDesktopIds();
+                if (visible === null) {
+                    this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+                    return;
+                }
+                const occupied = this.occupiedDesktopIds();
+                if (occupied === null) {
+                    this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
+                    return;
+                }
+                const protectedTrailing = this.protectedTrailingIdsForSwitchCleanup(desktops, occupied);
+                if (protectedTrailing === null) {
+                    this.diagnostic("workspace-cleanup-deferred:mapping-unknown");
+                    return;
+                }
+                const selection = planDesktopCleanup({
+                    orderedIds: desktops.map((desktop) => desktop.id),
+                    ownedIds: this.ownedDesktopIds,
+                    visibleIds: visible,
+                    occupiedIds: occupied,
+                    protectedTrailingIds: protectedTrailing,
+                });
+                if (!selection.ok) {
+                    return;
+                }
+                const lastIndex = desktops.length - 1;
+                const removed = this.workspaceMode === "per-output-local"
+                    ? this.removeOwnedEmptyDesktop(selection.value.id, desktops, visible, lastIndex)
+                    : this.workspaceMode === "global-unique"
+                      ? this.removeOwnedEmptyGlobalUnique(selection.value.id, desktops, visible, lastIndex)
+                      : this.removeOwnedEmptyShared(selection.value.id, desktops, visible, lastIndex);
+                if (!removed) {
+                    return;
+                }
+            }
+        } finally {
+            this.reconcilingDesktops = false;
+        }
+    }
+
+    // Derive every active mode/domain's required trailing owned empty. A missing
+    // mapping or trailing capacity is uncertain, so switch cleanup does nothing.
+    private protectedTrailingIdsForSwitchCleanup(
+        desktops: readonly VirtualDesktopCapability[],
+        occupied: ReadonlySet<string>,
+    ): Set<string> | null {
+        const protectedIds = new Set<string>();
+        if (this.workspaceMode === "per-output-local") {
+            this.rebuildLocalMapping(desktops);
+            const keys = this.connectedOutputKeys();
+            if (keys.length === 0) {
+                return null;
+            }
+            for (const key of keys) {
+                const id = this.trailingOwnedEmptyId(this.localWorkspaces.get(key), occupied);
+                if (id === null) {
+                    return null;
+                }
+                protectedIds.add(id);
+            }
+            return protectedIds;
+        }
+        if (this.workspaceMode === "global-unique") {
+            const keys = this.rebuildGlobalUniqueMapping(desktops);
+            if (keys === null) {
+                return null;
+            }
+            for (const key of keys) {
+                const id = this.trailingOwnedEmptyId(this.globalUniqueOrdered(desktops, key).map((desktop) => desktop.id), occupied);
+                if (id === null) {
+                    return null;
+                }
+                protectedIds.add(id);
+            }
+            return protectedIds;
+        }
+        this.rebuildSharedMapping(desktops);
+        const id = this.trailingOwnedEmptyId(this.sharedWorkspaces, occupied);
+        if (id === null) {
+            return null;
+        }
+        protectedIds.add(id);
+        return protectedIds;
+    }
+
+    private trailingOwnedEmptyId(ids: readonly string[] | undefined, occupied: ReadonlySet<string>): string | null {
+        if (ids === undefined) {
+            return null;
+        }
+        let highestOccupied = 0;
+        for (let position = 0; position < ids.length; position += 1) {
+            const id = ids[position];
+            if (id !== undefined && occupied.has(id)) {
+                highestOccupied = position + 1;
+            }
+        }
+        let trailing: string | null = null;
+        for (let position = 0; position < ids.length; position += 1) {
+            const id = ids[position];
+            if (id === undefined || !this.ownedDesktopIds.has(id) || occupied.has(id) || position + 1 <= highestOccupied) {
+                continue;
+            }
+            trailing = id;
+        }
+        return trailing;
+    }
+
+    private removeOwnedEmptyShared(
+        id: string,
+        desktops: readonly VirtualDesktopCapability[],
+        visible: ReadonlySet<string>,
+        lastIndex: number,
+    ): boolean {
+        if (visible.has(id)) {
+            return false;
+        }
+        const position = desktops.findIndex((desktop) => desktop.id === id);
+        if (position === lastIndex) {
+            return false;
+        }
+        const desktop = desktops[position];
+        if (desktop === undefined) {
+            return false;
+        }
+        try {
+            this.environment.removeDesktop(desktop);
+            this.ownedDesktopIds.delete(id);
+            this.rebuildSharedMapping();
+            this.diagnostic("workspace-cleanup-removed");
+            return true;
+        } catch (error) {
+            this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
+            return false;
+        }
     }
 
     // ---- per-output-local workspace mapping (Unit 05, spec D1) ----
@@ -8318,13 +8479,13 @@ export class TileController {
     private reconcileLocalWorkspaces(
         desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
+        occupied: ReadonlySet<string>,
     ): void {
         this.rebuildLocalMapping(desktops);
         if (this.localWorkspaces.size === 0) {
             return;
         }
         const lastIndex = desktops.length - 1;
-        const occupied = this.occupiedDesktopIds();
         const kept = new Set<string>();
         const connectedOwned = new Set<string>();
         for (const key of this.localWorkspaces.keys()) {
@@ -8556,6 +8717,9 @@ export class TileController {
         }
         const byId = new Map(desktops.map((desktop) => [desktop.id, desktop] as const));
         const occupied = this.occupiedDesktopIds();
+        if (occupied === null) {
+            return null;
+        }
         let highestOccupied = 0;
         for (let position = 0; position < list.length; position += 1) {
             const id = list[position];
@@ -8842,7 +9006,11 @@ export class TileController {
             return null;
         }
         const subset = this.globalUniqueOrdered(desktops, key);
-        const trailing = this.trailingOwnedEmptiesInSubset(subset, this.occupiedDesktopIds());
+        const occupied = this.occupiedDesktopIds();
+        if (occupied === null) {
+            return null;
+        }
+        const trailing = this.trailingOwnedEmptiesInSubset(subset, occupied);
         return trailing[trailing.length - 1]?.desktop ?? null;
     }
 
@@ -8870,41 +9038,12 @@ export class TileController {
     private reconcileGlobalUnique(
         desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
+        occupied: ReadonlySet<string>,
     ): void {
-        const keys = this.connectedOutputKeys();
-        const connected = new Set(keys);
-        if (this.globalUniquePrimary === undefined || !connected.has(this.globalUniquePrimary)) {
-            this.globalUniquePrimary = keys[0];
+        const keys = this.rebuildGlobalUniqueMapping(desktops);
+        if (keys === null) {
+            return;
         }
-        for (const key of [...this.globalUniqueAssigned.keys()]) {
-            if (!connected.has(key)) {
-                for (const id of [...(this.globalUniqueAssigned.get(key) ?? [])]) {
-                    this.unassignGlobalUnique(id);
-                }
-                this.globalUniqueAssigned.delete(key);
-            }
-        }
-        for (const desktop of desktops) {
-            if (this.globalUniqueInverse.has(desktop.id)) {
-                continue;
-            }
-            if (this.globalUniquePrimary === undefined) {
-                continue;
-            }
-            this.assignGlobalUnique(desktop.id, this.globalUniquePrimary);
-        }
-        for (const key of keys) {
-            const list = this.globalUniqueAssigned.get(key);
-            if (list === undefined) {
-                continue;
-            }
-            const liveIds = new Set(desktops.map((desktop) => desktop.id));
-            const filtered = list.filter((id) => liveIds.has(id));
-            if (filtered.length !== list.length) {
-                this.globalUniqueAssigned.set(key, filtered);
-            }
-        }
-        const occupied = this.occupiedDesktopIds();
         const lastIndex = desktops.length - 1;
         for (const key of keys) {
             const subset = this.globalUniqueOrdered(desktops, key);
@@ -8942,6 +9081,49 @@ export class TileController {
             }
             this.removeOwnedEmptyGlobalUnique(id, desktops, visible, lastIndex);
         }
+    }
+
+    // Rebuild global-unique assignment from the current live desktop list. A
+    // switch cleanup uses this separately from capacity reconciliation so every
+    // candidate is planned against a fresh mode mapping.
+    private rebuildGlobalUniqueMapping(desktops: readonly VirtualDesktopCapability[]): string[] | null {
+        const keys = this.connectedOutputKeys();
+        if (keys.length === 0) {
+            return null;
+        }
+        const connected = new Set(keys);
+        if (this.globalUniquePrimary === undefined || !connected.has(this.globalUniquePrimary)) {
+            this.globalUniquePrimary = keys[0];
+        }
+        for (const key of [...this.globalUniqueAssigned.keys()]) {
+            if (!connected.has(key)) {
+                for (const id of [...(this.globalUniqueAssigned.get(key) ?? [])]) {
+                    this.unassignGlobalUnique(id);
+                }
+                this.globalUniqueAssigned.delete(key);
+            }
+        }
+        for (const desktop of desktops) {
+            if (this.globalUniqueInverse.has(desktop.id)) {
+                continue;
+            }
+            if (this.globalUniquePrimary === undefined) {
+                continue;
+            }
+            this.assignGlobalUnique(desktop.id, this.globalUniquePrimary);
+        }
+        for (const key of keys) {
+            const list = this.globalUniqueAssigned.get(key);
+            if (list === undefined) {
+                continue;
+            }
+            const liveIds = new Set(desktops.map((desktop) => desktop.id));
+            const filtered = list.filter((id) => liveIds.has(id));
+            if (filtered.length !== list.length) {
+                this.globalUniqueAssigned.set(key, filtered);
+            }
+        }
+        return keys;
     }
 
     // Remove one script-owned, empty, non-current, non-visible-on-any-output,
@@ -8986,8 +9168,8 @@ export class TileController {
     }
 
     // Desktop ids currently visible on any output (per-output current desktop)
-    // plus the global current desktop. Returns null when outputs cannot be
-    // enumerated or a per-output read fails, so cleanup can defer safely.
+    // plus the global current desktop. Returns null unless every read is valid,
+    // so cleanup never removes from a partial visibility snapshot.
     private visibleDesktopIds(): Set<string> | null {
         let raw: unknown;
         try {
@@ -9007,34 +9189,36 @@ export class TileController {
             } catch (error) {
                 return null;
             }
-            if (isVirtualDesktop(current)) {
-                visible.add(current.id);
+            if (!isVirtualDesktop(current)) {
+                return null;
             }
+            visible.add(current.id);
         }
         try {
             const global = this.environment.currentDesktop();
-            if (isVirtualDesktop(global)) {
-                visible.add(global.id);
+            if (!isVirtualDesktop(global)) {
+                return null;
             }
+            visible.add(global.id);
         } catch (error) {
             return null;
         }
         return visible;
     }
 
-    // Desktop ids that hold at least one non-sticky window. A window without a
-    // readable `onAllDesktops` is treated as not-sticky.
-    private occupiedDesktopIds(): Set<string> {
+    // Desktop ids that hold at least one non-sticky window. Returns null unless
+    // the entire window list and every non-sticky membership list are readable.
+    private occupiedDesktopIds(): Set<string> | null {
         const occupied = new Set<string>();
-        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+        let raw: unknown;
+        try {
+            raw = this.environment.windowList();
+        } catch (error) {
+            return null;
+        }
+        const windows = decodeSequential(raw, isWindow, MAX_SEQUENTIAL_LENGTH);
         if (!windows.ok) {
-            const desktops = this.liveDesktops();
-            if (desktops !== null) {
-                for (const desktop of desktops) {
-                    occupied.add(desktop.id);
-                }
-            }
-            return occupied;
+            return null;
         }
         for (const window of windows.value) {
             if (window.onAllDesktops === true) {
@@ -9042,7 +9226,7 @@ export class TileController {
             }
             const members = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
             if (!members.ok) {
-                continue;
+                return null;
             }
             for (const desktop of members.value) {
                 occupied.add(desktop.id);

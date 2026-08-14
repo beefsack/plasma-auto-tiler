@@ -819,3 +819,57 @@ export function planAutomaticPlacement(request: AutomaticRequest): Result<Automa
         },
     };
 }
+
+// ==== Desktop cleanup removal selection ====
+//
+// Pure selection of at most one removable virtual desktop from an ordered
+// snapshot of the live global desktop list. The controller reads all state
+// fresh per call, resolves the opaque desktop capabilities to ids, and passes
+// the four id sets here; this planner only decides which id may be removed. An
+// entry is removable only when it is controller-owned, empty (no occupying
+// windows), invisible on every output, and not protected as trailing capacity
+// or the last global desktop. The ordered snapshot is the single determinism
+// source: repeated calls with fresh equivalent snapshots select the same
+// earliest eligible entry in stable order, never a set-member tie-break.
+
+export interface DesktopCleanupRequest {
+    readonly orderedIds: readonly string[];
+    readonly ownedIds: ReadonlySet<string>;
+    readonly visibleIds: ReadonlySet<string>;
+    readonly occupiedIds: ReadonlySet<string>;
+    readonly protectedTrailingIds: ReadonlySet<string>;
+}
+
+export interface DesktopCleanupPlan {
+    readonly kind: "desktop-cleanup-removal";
+    readonly id: string;
+}
+
+// Selects at most one removable desktop in snapshot order. None is selected
+// when the snapshot holds a single global desktop or no entry is owned,
+// empty, invisible, and unprotected; the caller then leaves the desktop list
+// unchanged.
+export function planDesktopCleanup(request: DesktopCleanupRequest): Result<DesktopCleanupPlan> {
+    if (request.orderedIds.length <= 1) {
+        return reject("no-target", "no removable desktop when only one global desktop remains");
+    }
+    for (const id of request.orderedIds) {
+        if (!request.ownedIds.has(id)) {
+            continue;
+        }
+        if (request.occupiedIds.has(id)) {
+            continue;
+        }
+        if (request.visibleIds.has(id)) {
+            continue;
+        }
+        if (request.protectedTrailingIds.has(id)) {
+            continue;
+        }
+        return {
+            ok: true,
+            value: { kind: "desktop-cleanup-removal", id },
+        };
+    }
+    return reject("no-target", "no owned empty invisible unprotected desktop is removable");
+}

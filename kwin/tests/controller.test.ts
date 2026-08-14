@@ -244,7 +244,9 @@ class Harness {
     desktopChanged: ((previous: unknown, current: unknown, output: unknown) => void) | undefined;
     desktopsChanged: (() => void) | undefined;
     desktopsList: unknown = [DESKTOP];
+    desktopReads = 0;
     screensList: unknown = [OUTPUT];
+    readonly screenReadValues: unknown[] = [];
     activeScreenValue: unknown = null;
     currentDesktopValue: unknown = DESKTOP;
     createDesktopThrows: Error | undefined;
@@ -259,6 +261,7 @@ class Harness {
     currentDesktopForOutputOverride: ((output: unknown) => unknown) | undefined;
     readonly createDesktopCalls: Array<{ position: number; name: string }> = [];
     readonly removedDesktops: unknown[] = [];
+    onDesktopRemoved: ((desktop: unknown) => void) | undefined;
     readonly currentDesktopWrites: unknown[] = [];
     readonly currentDesktopForScreenWrites: Array<{ desktop: unknown; output: unknown }> = [];
     // Per-output current desktop recorded from setCurrentDesktopForScreen writes
@@ -307,12 +310,13 @@ class Harness {
                 this.desktopChanged = handler;
             },
             desktops: () => {
+                this.desktopReads += 1;
                 if (this.desktopsThrows !== undefined) {
                     throw this.desktopsThrows;
                 }
                 return this.desktopsList;
             },
-            screens: () => this.screensList,
+            screens: () => this.screenReadValues.shift() ?? this.screensList,
             activeScreen: () => this.activeScreenValue,
             currentDesktop: () => this.currentDesktopValue,
             createDesktop: (position, name) => {
@@ -340,6 +344,7 @@ class Harness {
                         (entry) => (entry as { id: string }).id !== (desktop as { id: string }).id,
                     );
                 }
+                this.onDesktopRemoved?.(desktop);
             },
             setCurrentDesktop: (desktop) => {
                 if (this.setCurrentDesktopThrows !== undefined) {
@@ -650,6 +655,73 @@ function ownTrailingEmpty(harness: Harness): void {
     harness.currentDesktop = DESKTOP;
     harness.currentDesktopValue = DESKTOP;
     harness.emitDesktopsChanged();
+}
+
+function prepareExcessOwnedEmpty(harness: Harness): string {
+    ownTrailingEmpty(harness);
+    invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
+    invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+    (harness.active as TestWindow).desktops = [DESKTOP];
+    harness.currentDesktop = DESKTOP;
+    harness.currentDesktopValue = DESKTOP;
+    harness.removedDesktops.length = 0;
+    return (harness.desktopsList as Array<{ readonly id: string }>)[1]?.id ?? "";
+}
+
+function modeCleanupSetup(mode: "per-output-local" | "global-unique" | "shared"): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly focused: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const target = tile();
+    const focused = window({ tile: target });
+    target.windows = [focused];
+    root.tiles = [target];
+    harness.root = root;
+    harness.active = focused;
+    harness.windows = [focused];
+    harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, mode);
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, focused };
+}
+
+function ownCleanupDesktops(controller: TileController, ids: readonly string[]): void {
+    const inspectable = controller as unknown as {
+        ownedDesktopIds: Set<string>;
+        localWorkspaces: Map<string, string[]>;
+    };
+    for (const id of ids) {
+        inspectable.ownedDesktopIds.add(id);
+    }
+    const key = controller.outputKeyFor(OUTPUT);
+    if (key !== undefined) {
+        inspectable.localWorkspaces.set(key, ["desktop-1", ...ids]);
+    }
+}
+
+function configureSwitchCleanupScenario(
+    harness: Harness,
+    controller: TileController,
+    owned = ["desktop-middle", "desktop-trailing"],
+): void {
+    const desktop1 = { id: "desktop-1", x11DesktopNumber: 1 };
+    const middle = { id: "desktop-middle", x11DesktopNumber: 2 };
+    const occupied = { id: "desktop-occupied", x11DesktopNumber: 3 };
+    const trailing = { id: "desktop-trailing", x11DesktopNumber: 4 };
+    harness.desktopsList = [desktop1, middle, occupied, trailing];
+    harness.currentDesktop = desktop1;
+    harness.currentDesktopValue = desktop1;
+    harness.currentDesktopForOutputOverride = () => desktop1;
+    harness.windows = [harness.active, window({ desktops: [occupied] })];
+    ownCleanupDesktops(controller, owned);
+    const inspectable = controller as unknown as { localWorkspaces: Map<string, string[]> };
+    const key = controller.outputKeyFor(OUTPUT);
+    if (key !== undefined) {
+        inspectable.localWorkspaces.set(key, ["desktop-1", "desktop-middle", "desktop-occupied", "desktop-trailing"]);
+    }
 }
 
 function focusSetup(direction: "left" | "down" | "up" | "right"): {
@@ -12177,6 +12249,353 @@ describe("TileController floating and sticky windows", () => {
 });
 
 describe("TileController dynamic virtual desktops", () => {
+    it("requests enhanced cleanup only after a completed current-desktop switch", () => {
+        const { harness, controller } = setup();
+        const cleanupCalls: boolean[] = [];
+        const inspectable = controller as unknown as {
+            cleanupDesktops: (switchCleanup?: boolean) => void;
+        };
+        inspectable.cleanupDesktops = (switchCleanup = false) => {
+            cleanupCalls.push(switchCleanup);
+        };
+
+        harness.emitCurrentDesktopChanged(DESKTOP, DESKTOP, OUTPUT);
+        assert.deepEqual(cleanupCalls, [true]);
+
+        cleanupCalls.length = 0;
+        harness.screensChanged?.();
+        assert.deepEqual(cleanupCalls, [false], "output/screen changes use ordinary cleanup");
+
+        cleanupCalls.length = 0;
+        harness.emitAdded(window());
+        assert.deepEqual(cleanupCalls, [false], "window changes use ordinary cleanup");
+
+        cleanupCalls.length = 0;
+        harness.emitDesktopsChanged();
+        assert.deepEqual(cleanupCalls, [false], "desktop scope changes use ordinary cleanup");
+    });
+
+    for (const mode of ["per-output-local", "global-unique", "shared"] as const) {
+        it(`removes an owned middle empty after a switch in ${mode} mode while retaining trailing capacity`, () => {
+            const { harness, controller } = modeCleanupSetup(mode);
+            configureSwitchCleanupScenario(harness, controller);
+            harness.removedDesktops.length = 0;
+
+            harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+
+            assert.deepEqual(
+                harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+                ["desktop-middle"],
+            );
+            assert.deepEqual(
+                (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+                ["desktop-1", "desktop-occupied", "desktop-trailing"],
+            );
+            assert.equal(controller.ownedDesktopIdSnapshot().includes("desktop-trailing"), true);
+            if (mode === "per-output-local") {
+                assert.deepEqual(Object.values(controller.localWorkspaceSnapshot()), [
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                ]);
+            } else if (mode === "global-unique") {
+                assert.deepEqual(Object.values(controller.globalUniqueAssignmentSnapshot()), [
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                ]);
+            } else {
+                assert.deepEqual(controller.sharedWorkspaceSnapshot(), [
+                    "desktop-1",
+                    "desktop-occupied",
+                    "desktop-trailing",
+                ]);
+            }
+        });
+    }
+
+    it("re-reads desktops, mapping, visibility, and occupancy between switch-cleanup removals", () => {
+        const { harness, controller } = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(harness, controller, [
+            "desktop-middle",
+            "desktop-middle-2",
+            "desktop-middle-3",
+            "desktop-trailing",
+        ]);
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-middle", x11DesktopNumber: 2 },
+            { id: "desktop-middle-2", x11DesktopNumber: 3 },
+            { id: "desktop-middle-3", x11DesktopNumber: 4 },
+            { id: "desktop-occupied", x11DesktopNumber: 5 },
+            { id: "desktop-trailing", x11DesktopNumber: 6 },
+        ];
+        const inspectable = controller as unknown as {
+            ownedDesktopIds: Set<string>;
+            localWorkspaces: Map<string, string[]>;
+        };
+        const key = controller.outputKeyFor(OUTPUT);
+        if (key !== undefined) {
+            inspectable.localWorkspaces.set(key, [
+                "desktop-1",
+                "desktop-middle",
+                "desktop-middle-2",
+                "desktop-middle-3",
+                "desktop-occupied",
+                "desktop-trailing",
+            ]);
+        }
+        harness.onDesktopRemoved = (desktop) => {
+            if ((desktop as { id: string }).id === "desktop-middle") {
+                const added = { id: "desktop-added", x11DesktopNumber: 4 };
+                harness.desktopsList = [
+                    { id: "desktop-1", x11DesktopNumber: 1 },
+                    { id: "desktop-middle-2", x11DesktopNumber: 3 },
+                    { id: "desktop-middle-3", x11DesktopNumber: 4 },
+                    added,
+                    { id: "desktop-occupied", x11DesktopNumber: 6 },
+                    { id: "desktop-trailing", x11DesktopNumber: 7 },
+                ];
+                inspectable.ownedDesktopIds.add(added.id);
+                if (key !== undefined) {
+                    inspectable.localWorkspaces.set(key, [
+                        "desktop-1",
+                        "desktop-middle-2",
+                        "desktop-middle-3",
+                        "desktop-added",
+                        "desktop-occupied",
+                        "desktop-trailing",
+                    ]);
+                }
+                harness.currentDesktopValue = { id: "desktop-middle-3" };
+                harness.windows = [
+                    harness.active,
+                    window({ desktops: [{ id: "desktop-middle-2" }] }),
+                    window({ desktops: [{ id: "desktop-occupied" }] }),
+                ];
+            }
+            if ((desktop as { id: string }).id === "desktop-added") {
+                harness.currentDesktopValue = { id: "desktop-1" };
+                harness.windows = [harness.active, window({ desktops: [{ id: "desktop-occupied" }] })];
+                if (key !== undefined) {
+                    inspectable.localWorkspaces.set(key, [
+                        "desktop-1",
+                        "desktop-middle-2",
+                        "desktop-middle-3",
+                        "desktop-occupied",
+                    ]);
+                }
+            }
+        };
+
+        harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+
+        assert.deepEqual(
+            harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+            ["desktop-middle", "desktop-added"],
+        );
+        assert.deepEqual(
+            (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+            ["desktop-1", "desktop-middle-2", "desktop-middle-3", "desktop-occupied", "desktop-trailing"],
+        );
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:mapping-unknown"), 1);
+    });
+
+    for (const mode of ["per-output-local", "global-unique"] as const) {
+        it(`keeps a switch-cleanup candidate visible on another output in ${mode} mode`, () => {
+            const { harness, controller } = modeCleanupSetup(mode);
+            configureSwitchCleanupScenario(harness, controller);
+            const other = { ...OUTPUT, name: "screen-2" };
+            harness.screensList = [OUTPUT, other];
+            harness.currentDesktopForOutputOverride = (output) =>
+                output === other ? { id: "desktop-middle" } : { id: "desktop-1" };
+
+            harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+
+            assert.equal(harness.removedDesktops.length, 0);
+        });
+    }
+
+    for (const mode of ["per-output-local", "global-unique"] as const) {
+        it(`defers middle-empty switch cleanup when ${mode} mapping becomes invalid`, () => {
+            const { harness, controller } = modeCleanupSetup(mode);
+            configureSwitchCleanupScenario(harness, controller);
+            const inspectable = controller as unknown as {
+                cleanupAfterWorkspaceSwitch: () => void;
+            };
+            harness.screenReadValues.push(harness.screensList, {}, ...(mode === "per-output-local" ? [{}] : []));
+
+            inspectable.cleanupAfterWorkspaceSwitch();
+
+            assert.equal(harness.removedDesktops.length, 0);
+            assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:mapping-unknown"), 1);
+        });
+    }
+
+    it("keeps switch-cleanup candidates visible on another output", () => {
+        const { harness, controller } = modeCleanupSetup("shared");
+        configureSwitchCleanupScenario(harness, controller);
+        const other = { ...OUTPUT, name: "screen-2" };
+        harness.screensList = [OUTPUT, other];
+        harness.currentDesktopForOutputOverride = (output) =>
+            output === other ? { id: "desktop-middle" } : { id: "desktop-1" };
+
+        harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("protects unowned, occupied, floating, and uncertain switch-cleanup snapshots", () => {
+        const unowned = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(unowned.harness, unowned.controller, ["desktop-trailing"]);
+        unowned.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+        assert.equal(unowned.harness.removedDesktops.length, 0, "unowned middle desktop remains");
+
+        const occupied = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(occupied.harness, occupied.controller);
+        occupied.harness.windows = [
+            occupied.harness.active,
+            window({ desktops: [{ id: "desktop-middle" }], tile: null }),
+            window({ desktops: [{ id: "desktop-occupied" }] }),
+        ];
+        occupied.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+        assert.equal(occupied.harness.removedDesktops.length, 0, "floating membership occupies its desktop");
+
+        const uncertain = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(uncertain.harness, uncertain.controller);
+        uncertain.harness.screensList = {};
+        uncertain.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+        assert.equal(uncertain.harness.removedDesktops.length, 0, "unreadable visibility stops cleanup");
+    });
+
+    it("ignores sticky-only membership during switch cleanup", () => {
+        const { harness, controller } = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(harness, controller);
+        harness.windows = [
+            harness.active,
+            window({ onAllDesktops: true, desktops: [{ id: "desktop-middle" }] }),
+            window({ desktops: [{ id: "desktop-occupied" }] }),
+        ];
+
+        harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+
+        assert.deepEqual(
+            harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+            ["desktop-middle"],
+        );
+    });
+
+    it("keeps required trailing capacity and the final global desktop after a switch", () => {
+        const trailing = modeCleanupSetup("shared");
+        trailing.harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-trailing", x11DesktopNumber: 2 },
+        ];
+        trailing.harness.currentDesktop = { id: "desktop-1" };
+        trailing.harness.currentDesktopValue = { id: "desktop-1" };
+        trailing.harness.currentDesktopForOutputOverride = () => ({ id: "desktop-1" });
+        ownCleanupDesktops(trailing.controller, ["desktop-trailing"]);
+        trailing.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+        assert.equal(trailing.harness.removedDesktops.length, 0);
+
+        const finalDesktop = modeCleanupSetup("shared");
+        finalDesktop.harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        finalDesktop.harness.currentDesktop = { id: "desktop-1" };
+        finalDesktop.harness.currentDesktopValue = { id: "desktop-1" };
+        finalDesktop.harness.currentDesktopForOutputOverride = () => ({ id: "desktop-1" });
+        ownCleanupDesktops(finalDesktop.controller, ["desktop-1"]);
+        finalDesktop.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
+        assert.equal(finalDesktop.harness.removedDesktops.length, 0);
+    });
+
+    it("does not remove a middle owned empty on a non-switch trigger", () => {
+        const { harness, controller } = modeCleanupSetup("per-output-local");
+        configureSwitchCleanupScenario(harness, controller);
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("keeps an owned empty visible on another output", () => {
+        const { harness } = setup();
+        const candidate = prepareExcessOwnedEmpty(harness);
+        const secondOutput = { ...OUTPUT, name: "screen-2" };
+        harness.screensList = [OUTPUT, secondOutput];
+        harness.currentDesktopForOutputOverride = (output) =>
+            output === secondOutput ? { id: candidate } : DESKTOP;
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("defers cleanup when an output current desktop is unreadable", () => {
+        const { harness } = setup();
+        prepareExcessOwnedEmpty(harness);
+        harness.currentDesktopForOutputOverride = () => null;
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:output-visibility-unknown"), 1);
+    });
+
+    it("defers cleanup when the global current desktop is invalid", () => {
+        const { harness } = setup();
+        prepareExcessOwnedEmpty(harness);
+        harness.currentDesktopValue = null;
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:output-visibility-unknown"), 1);
+    });
+
+    it("treats floating non-sticky windows as desktop occupancy", () => {
+        const { harness } = setup();
+        const candidate = prepareExcessOwnedEmpty(harness);
+        harness.windows = [
+            harness.active,
+            window({ tile: null, desktops: [{ id: candidate }] }),
+        ];
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("excludes sticky windows from desktop occupancy", () => {
+        const { harness } = setup();
+        const candidate = prepareExcessOwnedEmpty(harness);
+        harness.windows = [
+            harness.active,
+            window({ onAllDesktops: true, desktops: [{ id: candidate }] }),
+        ];
+
+        harness.emitDesktopsChanged();
+
+        assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), [candidate]);
+    });
+
+    it("defers cleanup when the window list is invalid", () => {
+        const { harness } = setup();
+        prepareExcessOwnedEmpty(harness);
+        harness.windows = {};
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:window-occupancy-unknown"), 1);
+    });
+
+    it("defers cleanup when a non-sticky window membership is invalid", () => {
+        const { harness } = setup();
+        prepareExcessOwnedEmpty(harness);
+        harness.windows = [harness.active, window({ desktops: {} })];
+
+        harness.emitDesktopsChanged();
+
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(countEvent(harness.logs, "workspace-cleanup-deferred:window-occupancy-unknown"), 1);
+    });
+
     it("navigates to an existing 1-based index and never creates on an absent index", () => {
         const { harness } = setup();
         harness.desktopsList = [
