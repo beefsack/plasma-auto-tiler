@@ -43,6 +43,7 @@ import {
     planGeometryDrop,
     planKeyboardInsertion,
     rectCenter,
+    RELATIVE_GEOMETRY_EPSILON,
     type Leaf,
     type Direction,
     type Point,
@@ -296,8 +297,11 @@ export const PROFILE_CATALOGS: Readonly<Record<ProfileKey, ProfileCatalog>> = Ob
 
 // Action IDs with an implemented controller callback in this unit. Only rows
 // whose actionId is in this set are registered from the selected catalog; all
-// other catalog rows are documented-only (Unit 02 implementations, or reserved
-// such as Meta+0 deferred). Kept beside `profileActions` in `start()` so the
+// other catalog rows are explicit component requirements, never registered as
+// false equivalents: `fullscreen`, `previous-workspace*`, `next-workspace*`,
+// and the reserved `group-toggle` (COSMIC ToggleStacking) need either a KWin
+// capability, an external Plasma component, or a workspace-mode unit; `Meta+0`
+// is deliberately deferred. Kept beside `profileActions` in `start()` so the
 // registration contract stays in one place and tests can derive the exact
 // expected registered set from the catalog.
 export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
@@ -310,6 +314,11 @@ export const REGISTERED_PROFILE_ACTION_IDS: ReadonlySet<string> = Object.freeze(
         ),
         "float-toggle",
         "maximize",
+        "resize-mode-outwards",
+        "resize-mode-inwards",
+        ...["expand", "contract"].flatMap((kind) =>
+            ["left", "down", "up", "right"].map((direction) => `resize-${kind}-${direction}`),
+        ),
         "move-workspace-0",
         ...[1, 2, 3, 4, 5, 6, 7, 8, 9].flatMap((index) => [
             `workspace-${index}`,
@@ -1206,6 +1215,13 @@ export class TileController {
     // Deferred user trailing-empty creation requests (see PendingDesktopIntent).
     // Bounded like the other controller queues.
     private readonly pendingDesktopIntents: PendingDesktopIntent[] = [];
+    // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
+    // KWin scripting cannot observe a held key or a bare next-key modal input,
+    // so entry is a deterministic toggle and the mode is driven only through
+    // the separately registered directional focus rows (spec I). While active,
+    // those directional keys dispatch a resize step instead of a focus step.
+    private resizeModeActive = false;
+    private resizeModeDirection: "outwards" | "inwards" = "outwards";
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -1219,6 +1235,12 @@ export class TileController {
 
     get hasActiveDrag(): boolean {
         return this.drag.current !== undefined;
+    }
+
+    // Read-only mode snapshot for tests: entry/inverse/switch/exit are
+    // deterministic and observable without mutating topology or assignments.
+    resizeModeSnapshot(): { readonly active: boolean; readonly direction: "outwards" | "inwards" } {
+        return { active: this.resizeModeActive, direction: this.resizeModeDirection };
     }
 
     // Narrow read/self-validation seam for a future bounded assignment-only
@@ -1303,14 +1325,14 @@ export class TileController {
                 () => this.armKeyboardInsertion("down"),
             );
             const profileActions: Record<string, () => void> = {
-                "focus-left": () => this.focusNeighbor("left"),
-                "focus-down": () => this.focusNeighbor("down"),
-                "focus-up": () => this.focusNeighbor("up"),
-                "focus-right": () => this.focusNeighbor("right"),
-                "focus-left-arrow": () => this.focusNeighbor("left"),
-                "focus-down-arrow": () => this.focusNeighbor("down"),
-                "focus-up-arrow": () => this.focusNeighbor("up"),
-                "focus-right-arrow": () => this.focusNeighbor("right"),
+                "focus-left": () => this.focusOrResize("left"),
+                "focus-down": () => this.focusOrResize("down"),
+                "focus-up": () => this.focusOrResize("up"),
+                "focus-right": () => this.focusOrResize("right"),
+                "focus-left-arrow": () => this.focusOrResize("left"),
+                "focus-down-arrow": () => this.focusOrResize("down"),
+                "focus-up-arrow": () => this.focusOrResize("up"),
+                "focus-right-arrow": () => this.focusOrResize("right"),
                 "move-left": () => this.moveActiveWindow("left"),
                 "move-down": () => this.moveActiveWindow("down"),
                 "move-up": () => this.moveActiveWindow("up"),
@@ -1321,6 +1343,16 @@ export class TileController {
                 "move-right-arrow": () => this.moveActiveWindow("right"),
                 "float-toggle": () => this.floatActiveWindow(),
                 "maximize": () => this.maximizeActiveWindow(),
+                "resize-mode-outwards": () => this.enterOrExitResizeMode("outwards"),
+                "resize-mode-inwards": () => this.enterOrExitResizeMode("inwards"),
+                "resize-expand-left": () => this.resizeActiveWindow("left", "outwards"),
+                "resize-expand-down": () => this.resizeActiveWindow("down", "outwards"),
+                "resize-expand-up": () => this.resizeActiveWindow("up", "outwards"),
+                "resize-expand-right": () => this.resizeActiveWindow("right", "outwards"),
+                "resize-contract-left": () => this.resizeActiveWindow("left", "inwards"),
+                "resize-contract-down": () => this.resizeActiveWindow("down", "inwards"),
+                "resize-contract-up": () => this.resizeActiveWindow("up", "inwards"),
+                "resize-contract-right": () => this.resizeActiveWindow("right", "inwards"),
             };
             for (let index = 1; index <= 9; index += 1) {
                 profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
@@ -1691,21 +1723,58 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Direct (non-modal) split resize step. Meta+Ctrl+H/J/K/L moves the nearest
-    // relevant ancestor split's shared edge by RESIZE_STEP_FRACTION of the
-    // parent extent in the pressed compass direction: H/L operate the nearest
-    // horizontal ancestor, J/K the nearest vertical one. Only the two adjacent
-    // child regions are adjusted via their Tile relativeGeometry; the parent
-    // geometry is never written and no structural or window geometry mutation
-    // occurs. KWin's documented CustomTile::setRelativeGeometry sibling
-    // adjustment (kwin-api-surface.md 146-158) is the accepted basis for the
-    // two writes. Refuses atomically at the 15% work-area-equivalent floor and
-    // rolls back the first write when the second fails, so no partial result is
-    // ever applied.
-    // Unit 02 retains this dirty-prototype split resize step; its binding
-    // becomes the approved profile resize mode. Kept public so the preserved
-    // implementation stays reachable while no catalog row references it yet.
-    public resizeActiveWindow(direction: Direction): void {
+    // Directional focus dispatch, COSMIC resize-mode aware. While the catalog
+    // resize mode is active the separately registered directional focus rows
+    // drive a resize step instead of a focus step; otherwise they focus.
+    // Exactly one directional shortcut fires per key press (each alias keeps a
+    // distinct shortcut ID), so a resize step never runs twice for one press.
+    private focusOrResize(direction: Direction): void {
+        if (this.resizeModeActive) {
+            this.resizeActiveWindow(direction, this.resizeModeDirection);
+        } else {
+            this.focusNeighbor(direction);
+        }
+    }
+
+    // COSMIC split resize mode (spec C / catalog resize-mode-* rows). KWin
+    // scripting cannot observe a held key or register an arbitrary next-key
+    // modal input, so entry is a deterministic toggle: activating the same
+    // binding again exits the mode, and activating the other binding switches
+    // the direction (matching COSMIC's Resizing(Outwards)/Resizing(Inwards)
+    // alternate/inverse meaning). While active the mode only consumes the
+    // separately registered directional focus rows via `focusOrResize`.
+    private enterOrExitResizeMode(mode: "outwards" | "inwards"): void {
+        this.gate.run(() => {
+            if (this.resizeModeActive && this.resizeModeDirection === mode) {
+                this.resizeModeActive = false;
+                this.diagnostic("resize-mode-exited");
+                return;
+            }
+            const entering = !this.resizeModeActive;
+            this.resizeModeDirection = mode;
+            this.resizeModeActive = true;
+            this.diagnostic(entering ? `resize-mode-entered:${mode}` : `resize-mode-switched:${mode}`);
+        }, (reason) => this.disabled(reason));
+    }
+
+    // One safe split-resize step of the active window. `mode` is outwards
+    // (COSMIC Resizing(Outwards), bspwm resize-expand): the focused window
+    // grows toward the pressed direction. `mode` is inwards (Resizing(Inwards),
+    // bspwm resize-contract): the focused window shrinks, the shared edge on
+    // the opposite side moving inward.
+    //
+    // The nearest matching-orientation ancestor where the focused leaf has a
+    // sibling on the mode-mapped pressed side is resolved (COSMIC nested-split
+    // rule, cosmic-comp shell/layout/tiling/mod.rs resize()); the shared edge
+    // moves by RESIZE_STEP_FRACTION of that ancestor's extent. Exactly one
+    // guarded Tile.relativeGeometry write on the focused tile is made: the
+    // documented CustomTile::setRelativeGeometry source setter adjusts the
+    // adjacent sibling's shared edge and refuses atomically when the sibling
+    // would fall below its minimum (customtile.cpp:53-177, kwin-api-surface.md
+    // 153-158). A fresh whole-root decode and a two-extent postcondition prove
+    // the result before `resize-completed` is claimed; there is no window
+    // geometry write, no structural call, and no dual-write rollback path.
+    public resizeActiveWindow(direction: Direction, mode: "outwards" | "inwards"): void {
         this.gate.run(() => {
             this.diagnostic("resize-invoked");
             const active = this.environment.activeWindow();
@@ -1756,80 +1825,132 @@ export class TileController {
             }
             const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
             const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
-            const split = this.nearestSplitAncestor(active.tile, expectedLayoutDirection);
-            if (split === null) {
+            const target = this.resolveResizeSplit(active.tile, expectedLayoutDirection, direction, mode);
+            if (target === null) {
                 this.diagnostic("resize-rejected:no-parent");
                 return;
             }
-            const decoded = decodeSequential(split.tiles, isCustomTile, 2);
-            if (!decoded.ok) {
-                this.diagnostic("resize-rejected:no-parent");
-                return;
-            }
-            const ordered = orderedChildren(decoded.value, axis);
-            if (ordered === null) {
-                this.diagnostic("resize-rejected:no-parent");
-                return;
-            }
-            const first = ordered[0];
-            const second = ordered[1];
-            const firstGeometry = first.relativeGeometry;
-            const secondGeometry = second.relativeGeometry;
-            const parentGeometry = split.relativeGeometry;
+            const parentGeometry = target.split.relativeGeometry;
             const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
-            if (!(parentExtent > 0)) {
+            const focusedGeometry = target.focused.relativeGeometry;
+            const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
+            if (!(parentExtent > 0) || !(focusedExtent > 0)) {
                 this.diagnostic("resize-rejected:no-parent");
                 return;
             }
             const delta = RESIZE_STEP_FRACTION * parentExtent;
-            const signedDelta = direction === "left" || direction === "up" ? -delta : delta;
-            const firstExtent = axis === "x" ? firstGeometry.width : firstGeometry.height;
-            const secondExtent = axis === "x" ? secondGeometry.width : secondGeometry.height;
-            const firstProposed = firstExtent + signedDelta;
-            const secondProposed = secondExtent - signedDelta;
-            if (firstProposed <= 0 || secondProposed <= 0) {
+            const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
+            const neighborProposed = parentExtent - focusedProposed;
+            if (focusedProposed <= 0 || neighborProposed <= 0) {
                 this.diagnostic("resize-rejected:no-parent");
                 return;
             }
-            if (this.resizeWouldViolateMinimum(scope, split, firstProposed, secondProposed, axis)) {
+            if (this.resizeWouldViolateMinimum(scope, target.split, focusedProposed, neighborProposed, axis)) {
                 this.diagnostic("resize-rejected:at-floor");
                 return;
             }
-            const firstTarget: RectCapability =
+            // Only the shared edge changes: the near-side child keeps its
+            // near edge fixed, the far-side child keeps its far edge fixed.
+            const positionShift = target.focused === target.first ? 0 : mode === "outwards" ? -delta : delta;
+            const focusedTarget: RectCapability =
                 axis === "x"
-                    ? { x: firstGeometry.x, y: firstGeometry.y, width: firstProposed, height: firstGeometry.height }
-                    : { x: firstGeometry.x, y: firstGeometry.y, width: firstGeometry.width, height: firstProposed };
-            const secondTarget: RectCapability =
-                axis === "x"
-                    ? { x: secondGeometry.x + signedDelta, y: secondGeometry.y, width: secondProposed, height: secondGeometry.height }
-                    : { x: secondGeometry.x, y: secondGeometry.y + signedDelta, width: secondGeometry.width, height: secondProposed };
-            const firstWritten = setTileRelativeGeometry(first, firstTarget);
-            if (!firstWritten) {
+                    ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height }
+                    : { x: focusedGeometry.x, y: focusedGeometry.y + positionShift, width: focusedGeometry.width, height: focusedProposed };
+            const written = setTileRelativeGeometry(target.focused, focusedTarget);
+            if (!written) {
                 this.diagnostic("resize-rejected:write-failed");
                 return;
             }
-            const secondWritten = setTileRelativeGeometry(second, secondTarget);
-            if (!secondWritten) {
-                setTileRelativeGeometry(first, firstGeometry);
-                this.diagnostic("resize-rejected:write-failed");
+            // Fresh whole-root decode: the tree still decodes and the active
+            // window still occupies its leaf, proving no structural or
+            // occupancy drift. The split still has the same two ordered
+            // children, and both child extents match the proposal within the
+            // documented tolerance, proving the shared edge moved as intended
+            // (a clamped or refused sibling adjustment reports a mismatch).
+            const fresh = this.topologyForScope(scope);
+            if (fresh === null) {
+                this.diagnostic("resize-rejected:post-decode");
+                return;
+            }
+            const freshActive = operationLeafForTile(fresh, active.tile);
+            if (freshActive === null || freshActive.leaf.isLayout || windowIndex(freshActive.windows, active) < 0) {
+                this.diagnostic("resize-rejected:postcondition");
+                return;
+            }
+            const freshChildren = decodeSequential(target.split.tiles, isCustomTile, 2);
+            if (!freshChildren.ok) {
+                this.diagnostic("resize-rejected:postcondition");
+                return;
+            }
+            const freshOrdered = orderedChildren(freshChildren.value, axis);
+            if (freshOrdered === null || freshOrdered[0] !== target.first || freshOrdered[1] !== target.second) {
+                this.diagnostic("resize-rejected:postcondition");
+                return;
+            }
+            const freshFocusedGeometry = target.focused.relativeGeometry;
+            const freshNeighborGeometry = target.neighbor.relativeGeometry;
+            const freshFocusedExtent = axis === "x" ? freshFocusedGeometry.width : freshFocusedGeometry.height;
+            const freshNeighborExtent = axis === "x" ? freshNeighborGeometry.width : freshNeighborGeometry.height;
+            if (
+                Math.abs(freshFocusedExtent - focusedProposed) > RELATIVE_GEOMETRY_EPSILON ||
+                Math.abs(freshNeighborExtent - neighborProposed) > RELATIVE_GEOMETRY_EPSILON
+            ) {
+                this.diagnostic("resize-rejected:postcondition");
                 return;
             }
             this.diagnostic("resize-completed");
         }, (reason) => this.disabled(reason));
     }
 
-    // Nearest ancestor that is a layout CustomTile split along the expected
-    // axis. Walks the parent chain from the focused leaf to the root.
-    private nearestSplitAncestor(tile: TileCapability, expectedLayoutDirection: number): CustomTileCapability | null {
-        let current: object | null = tile.parent;
-        while (current !== null) {
-            if (isCustomTile(current) && current.isLayout && current.layoutDirection === expectedLayoutDirection) {
-                return current;
-            }
-            if (!isTile(current)) {
+    // COSMIC resize target resolution: the nearest matching-orientation
+    // ancestor split where the current positioned node (the focused leaf,
+    // then each climbed ancestor) is a direct child and has a sibling on the
+    // mode-mapped pressed side. Outwards uses the sibling in the pressed
+    // direction (grow); inwards uses the sibling opposite the pressed
+    // direction (the flipped edge, shrink). A node at the outer edge of a
+    // matching split climbs to the next ancestor, exactly like cosmic-comp
+    // (shell/layout/tiling/mod.rs resize()); no climb target returns null.
+    private resolveResizeSplit(
+        focusedTile: TileCapability,
+        expectedLayoutDirection: number,
+        direction: Direction,
+        mode: "outwards" | "inwards",
+    ): { readonly split: CustomTileCapability; readonly first: CustomTileCapability; readonly second: CustomTileCapability; readonly focused: CustomTileCapability; readonly neighbor: CustomTileCapability } | null {
+        const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
+        let node: object | null = focusedTile;
+        while (node !== null) {
+            const parent: object | null = (node as TileCapability).parent;
+            if (parent === null) {
                 return null;
             }
-            current = current.parent;
+            if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
+                const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
+                if (decoded.ok) {
+                    const ordered = orderedChildren(decoded.value, axis);
+                    if (ordered !== null) {
+                        const [first, second] = ordered;
+                        const side = first === node ? "first" : second === node ? "second" : null;
+                        if (side !== null) {
+                            const pressedTowardNeighbor =
+                                (side === "first" && (direction === "right" || direction === "down")) ||
+                                (side === "second" && (direction === "left" || direction === "up"));
+                            if ((mode === "outwards") === pressedTowardNeighbor) {
+                                return {
+                                    split: parent,
+                                    first,
+                                    second,
+                                    focused: side === "first" ? first : second,
+                                    neighbor: side === "first" ? second : first,
+                                };
+                            }
+                        }
+                    }
+                }
+            }
+            if (!isTile(node)) {
+                return null;
+            }
+            node = parent;
         }
         return null;
     }

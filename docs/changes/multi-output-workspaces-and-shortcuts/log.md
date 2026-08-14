@@ -42,3 +42,19 @@
   catalog-driven registration loop. It must be updated only with the Unit 03
   KWin-local registration and migration-boundary work; no lifecycle script was
   changed in Unit 01.
+- Unit 02 accepted: corrected the dirty resize prototype to a one-write,
+  fresh-postcondition implementation. COSMIC `Meta+R` enters outward resize
+  mode and `Meta+Shift+R` enters/switches inward mode; re-entering the active
+  mode exits deterministically. Registered directional focus HJKL/arrow rows
+  operate the mode. bspwm canonical resize rows map directly to outward/inward
+  actions. No Meta+Ctrl resize defaults, structural calls, or window-geometry
+  writes were retained.
+- Unit 02 static evidence: focused-tile `relativeGeometry` writes use KWin
+  `CustomTile::setRelativeGeometry` sibling adjustment and its 15% floor;
+  source evidence is recorded in
+  `docs/changes/integrated-plasma-structural-feasibility/research/kwin-api-surface.md:153-158`.
+  Static typecheck and 367 controller tests passed. Live KWin confirmation is
+  intentionally unproven because no live mutation was authorized.
+- Unit 02 deferred checkpoint: the committed generated bundle still predates
+  source changes, so full artifact smoke cannot pass until Unit 03's approved
+  registration/rebuild checkpoint. No generated file was hand-edited.

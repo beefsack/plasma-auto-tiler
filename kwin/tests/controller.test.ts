@@ -6022,6 +6022,110 @@ function runNormalizeDrag(state: ReturnType<typeof normalizeSetup>): void {
     state.dragged.interactiveMoveResizeFinished.emit();
 }
 
+// Keyboard split-resize fixture. Root is a two-child layout split along the
+// chosen axis; the focused window sits on the near (first) or far (second)
+// child. The focused child's relativeGeometry setter models the documented
+// KWin CustomTile::setRelativeGeometry sibling adjustment: "adjust" moves the
+// sibling's shared edge (the fixture's intent, not live proof), "throw" models
+// a failing write, and "no-adjust" models a write that does not reach the
+// sibling so the post-decode extent check reports a mismatch. `writes` counts
+// geometry writes to the focused child so a test can prove exactly one write.
+function resizeSetup(
+    axis: "x" | "y" = "x",
+    focusedSide: "first" | "second" = "first",
+    setterMode: "adjust" | "throw" | "no-adjust" = "adjust",
+    profile: "cosmic" | "hyprland" | "bspwm" = "cosmic",
+): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly first: TestTile;
+    readonly second: TestTile;
+    readonly focused: TestWindow;
+    readonly neighbor: TestWindow;
+    readonly writes: number[];
+} {
+    const harness = new Harness();
+    const root = tile({ x: 0, y: 0, width: 200, height: 200 }, true);
+    root.layoutDirection = axis === "x" ? 1 : 2;
+    const firstGeometry =
+        axis === "x"
+            ? { x: 0, y: 0, width: 100, height: 200 }
+            : { x: 0, y: 0, width: 200, height: 100 };
+    const secondGeometry =
+        axis === "x"
+            ? { x: 100, y: 0, width: 100, height: 200 }
+            : { x: 0, y: 100, width: 200, height: 100 };
+    const first = tile(firstGeometry);
+    const second = tile(secondGeometry);
+    first.parent = root;
+    second.parent = root;
+    root.tiles = [first, second];
+    const focusedTile = focusedSide === "first" ? first : second;
+    const neighborTile = focusedSide === "first" ? second : first;
+    const focused = window({ tile: focusedTile, caption: "focused" });
+    const neighbor = window({ tile: neighborTile, caption: "neighbor" });
+    focusedTile.windows = [focused];
+    neighborTile.windows = [neighbor];
+    harness.root = root;
+    harness.active = focused;
+    harness.windows = [focused, neighbor];
+    const writes: number[] = [];
+    let state = focusedTile.relativeGeometry;
+    Object.defineProperty(focusedTile, "relativeGeometry", {
+        configurable: true,
+        get: () => state,
+        set: (next: typeof RECT) => {
+            writes.push(1);
+            if (setterMode === "throw") {
+                throw new Error("relativeGeometry write failed");
+            }
+            state = next;
+            focusedTile.absoluteGeometry = next;
+            if (setterMode === "adjust") {
+                const neighborState = neighborTile.relativeGeometry;
+                // The documented setter adjusts the sibling at the shared edge:
+                // a near-side focused tile moves the shared edge at its far
+                // edge, a far-side focused tile at its near edge.
+                const updated =
+                    axis === "x"
+                        ? focusedSide === "first"
+                            ? {
+                                  x: next.x + next.width,
+                                  y: neighborState.y,
+                                  width: neighborState.x + neighborState.width - (next.x + next.width),
+                                  height: neighborState.height,
+                              }
+                            : {
+                                  x: neighborState.x,
+                                  y: neighborState.y,
+                                  width: next.x - neighborState.x,
+                                  height: neighborState.height,
+                              }
+                        : focusedSide === "first"
+                            ? {
+                                  x: neighborState.x,
+                                  y: next.y + next.height,
+                                  width: neighborState.width,
+                                  height: neighborState.y + neighborState.height - (next.y + next.height),
+                              }
+                            : {
+                                  x: neighborState.x,
+                                  y: neighborState.y,
+                                  width: neighborState.width,
+                                  height: next.y - neighborState.y,
+                              };
+                neighborTile.relativeGeometry = updated;
+                neighborTile.absoluteGeometry = updated;
+            }
+        },
+    });
+    harness.configValues.set("shortcutProfile", profile);
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, first, second, focused, neighbor, writes };
+}
+
 describe("TileController drag reflow normalization", () => {
     it("equalizes the two reflow leaves to 50/50 relative geometry after origin collapse", () => {
         const state = normalizeSetup();
@@ -6105,6 +6209,312 @@ describe("TileController drag reflow normalization", () => {
         assert.equal(countEvent(state.harness.logs, "drag-reflow-normalize-failed:mismatch"), 1);
         assert.equal(countEvent(state.harness.logs, "drag-reflow-normalized"), 0);
         assert.equal(state.controller.isEnabled, true);
+    });
+});
+
+describe("TileController COSMIC split resize mode", () => {
+    const resizeEnter = "plasma-auto-tiler-resize-mode-outwards";
+    const resizeEnterInverse = "plasma-auto-tiler-resize-mode-inwards";
+
+    it("enters outwards mode, enters the inverse inwards mode, switches, and exits deterministically", () => {
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnter);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-entered:outwards"), 1);
+        assert.deepEqual(state.controller.resizeModeSnapshot(), { active: true, direction: "outwards" });
+
+        invokeShortcut(state.harness, resizeEnterInverse);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-switched:inwards"), 1);
+        assert.deepEqual(state.controller.resizeModeSnapshot(), { active: true, direction: "inwards" });
+
+        invokeShortcut(state.harness, resizeEnterInverse);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-exited"), 1);
+        assert.deepEqual(state.controller.resizeModeSnapshot(), { active: false, direction: "inwards" });
+
+        invokeShortcut(state.harness, resizeEnterInverse);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-entered:inwards"), 1);
+        invokeShortcut(state.harness, resizeEnter);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-switched:outwards"), 1);
+        assert.deepEqual(state.controller.resizeModeSnapshot(), { active: true, direction: "outwards" });
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("drives one resize step through the HJKL focus alias while outwards mode is active", () => {
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(countEvent(state.harness.logs, "focus-invoked"), 0);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 110);
+        assert.equal(state.second.relativeGeometry.x, 110);
+        assert.equal(state.second.relativeGeometry.width, 90);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("drives one resize step through the arrow focus alias while outwards mode is active", () => {
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right-arrow");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 110);
+        assert.equal(state.second.relativeGeometry.width, 90);
+    });
+
+    it("grows the far-side focused window leftward in outwards mode and shrinks it in inwards mode", () => {
+        const grown = resizeSetup("x", "second");
+        invokeShortcut(grown.harness, resizeEnter);
+        invokeShortcut(grown.harness, "plasma-auto-tiler-focus-left");
+        assert.equal(countEvent(grown.harness.logs, "resize-completed"), 1);
+        assert.equal(grown.writes.length, 1);
+        assert.equal(grown.second.relativeGeometry.x, 90);
+        assert.equal(grown.second.relativeGeometry.width, 110);
+        assert.equal(grown.first.relativeGeometry.width, 90);
+
+        const shrunk = resizeSetup("x", "second");
+        invokeShortcut(shrunk.harness, resizeEnterInverse);
+        invokeShortcut(shrunk.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(shrunk.harness.logs, "resize-completed"), 1);
+        assert.equal(shrunk.writes.length, 1);
+        assert.equal(shrunk.second.relativeGeometry.x, 110);
+        assert.equal(shrunk.second.relativeGeometry.width, 90);
+        assert.equal(shrunk.first.relativeGeometry.width, 110);
+    });
+
+    it("shrinks the near-side focused window in inwards mode (COSMIC flipped-edge semantics)", () => {
+        // Inwards flips the pressed edge: pressing left on the near-side
+        // focused window targets the shared edge with its right sibling and
+        // shrinks the focused window.
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnterInverse);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-left");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 90);
+        assert.equal(state.second.relativeGeometry.x, 90);
+        assert.equal(state.second.relativeGeometry.width, 110);
+    });
+
+    it("resizes a vertical split on up/down directions", () => {
+        const state = resizeSetup("y");
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-down");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.height, 110);
+        assert.equal(state.second.relativeGeometry.y, 110);
+        assert.equal(state.second.relativeGeometry.height, 90);
+    });
+
+    it("restores normal focus after the mode is exited (cancel/exit)", () => {
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, resizeEnter);
+        assert.equal(countEvent(state.harness.logs, "resize-mode-exited"), 1);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(state.harness.logs, "focus-invoked"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 0);
+    });
+
+    it("never runs two resize steps for one directional press (no duplicate callback effect)", () => {
+        const state = resizeSetup();
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 110);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right-arrow");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 2);
+        assert.equal(state.writes.length, 2);
+        assert.equal(state.first.relativeGeometry.width, 120);
+    });
+
+    it("refuses below the 15% floor without any geometry write", () => {
+        const state = resizeSetup();
+        state.first.relativeGeometry = { x: 0, y: 0, width: 20, height: 200 };
+        state.writes.length = 0;
+        invokeShortcut(state.harness, resizeEnterInverse);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-left");
+        assert.equal(countEvent(state.harness.logs, "resize-rejected:at-floor"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 0);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("reports a failed geometry write without a second write or rollback and stays enabled", () => {
+        const state = resizeSetup("x", "first", "throw");
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(state.harness.logs, "resize-rejected:write-failed"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 100);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("reports a postcondition mismatch when the sibling does not adjust, without a rollback write", () => {
+        const state = resizeSetup("x", "first", "no-adjust");
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(state.harness.logs, "resize-rejected:postcondition"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 110);
+        assert.equal(state.second.relativeGeometry.width, 100);
+        assert.equal(state.controller.isEnabled, true);
+    });
+
+    it("rejects every ineligible active window with the fixed resize diagnostics", () => {
+        const cases: ReadonlyArray<{
+            readonly reason: string;
+            readonly configure: (state: ReturnType<typeof resizeSetup>) => void;
+        }> = [
+            {
+                reason: "resize-rejected:no-active-window",
+                configure: (state) => {
+                    state.harness.active = null;
+                },
+            },
+            {
+                reason: "resize-rejected:fullscreen",
+                configure: (state) => {
+                    setFullscreen(state.focused, true);
+                },
+            },
+            {
+                reason: "resize-rejected:sticky",
+                configure: (state) => {
+                    setSticky(state.focused, true);
+                },
+            },
+            {
+                reason: "resize-rejected:maximized",
+                configure: (state) => {
+                    setMaximized(state.focused, 2);
+                },
+            },
+            {
+                reason: "resize-rejected:desktop-output-scope",
+                configure: (state) => {
+                    state.harness.currentDesktop = null;
+                },
+            },
+            {
+                reason: "resize-rejected:active-window-eligibility",
+                configure: (state) => {
+                    state.focused.resizeable = false;
+                },
+            },
+            {
+                reason: "resize-rejected:active-tile-association",
+                configure: (state) => {
+                    state.focused.tile = null;
+                },
+            },
+            {
+                reason: "resize-rejected:focused-occupancy-validity",
+                configure: (state) => {
+                    state.first.windows = [];
+                },
+            },
+        ];
+        for (const entry of cases) {
+            const state = resizeSetup("x", "first");
+            invokeShortcut(state.harness, resizeEnter);
+            entry.configure(state);
+            invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+            assert.equal(countEvent(state.harness.logs, entry.reason), 1, entry.reason);
+            assert.equal(countEvent(state.harness.logs, "resize-completed"), 0, entry.reason);
+            assert.equal(state.writes.length, 0, entry.reason);
+            assert.equal(state.controller.isEnabled, true, entry.reason);
+        }
+    });
+
+    it("climbs to an outer split when the focused leaf has no sibling in the pressed direction", () => {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 300, height: 100 }, true);
+        root.layoutDirection = 1;
+        const inner = tile({ x: 0, y: 0, width: 200, height: 100 }, true);
+        inner.layoutDirection = 1;
+        inner.parent = root;
+        const third = tile({ x: 200, y: 0, width: 100, height: 100 });
+        third.parent = root;
+        root.tiles = [inner, third];
+        const focusedLeaf = tile({ x: 100, y: 0, width: 100, height: 100 });
+        const midLeaf = tile({ x: 0, y: 0, width: 100, height: 100 });
+        focusedLeaf.parent = inner;
+        midLeaf.parent = inner;
+        inner.tiles = [midLeaf, focusedLeaf];
+        const focused = window({ tile: focusedLeaf, caption: "focused" });
+        const mid = window({ tile: midLeaf, caption: "mid" });
+        const thirdWin = window({ tile: third, caption: "third" });
+        focusedLeaf.windows = [focused];
+        midLeaf.windows = [mid];
+        third.windows = [thirdWin];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused, mid, thirdWin];
+        const writes: number[] = [];
+        let innerState = inner.relativeGeometry;
+        Object.defineProperty(inner, "relativeGeometry", {
+            configurable: true,
+            get: () => innerState,
+            set: (next: typeof RECT) => {
+                writes.push(1);
+                innerState = next;
+                inner.absoluteGeometry = next;
+                const thirdState = third.relativeGeometry;
+                const updated = {
+                    x: next.x + next.width,
+                    y: thirdState.y,
+                    width: thirdState.x + thirdState.width - (next.x + next.width),
+                    height: thirdState.height,
+                };
+                third.relativeGeometry = updated;
+                third.absoluteGeometry = updated;
+            },
+        });
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, resizeEnter);
+        invokeShortcut(harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(harness.logs, "resize-completed"), 1);
+        assert.equal(writes.length, 1);
+        assert.equal(inner.relativeGeometry.width, 215);
+        assert.equal(third.relativeGeometry.x, 215);
+        assert.equal(third.relativeGeometry.width, 85);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("resolves no split when the focused window has no sibling at any matching ancestor", () => {
+        const state = resizeSetup("x", "first");
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-left");
+        assert.equal(countEvent(state.harness.logs, "resize-rejected:no-parent"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 0);
+    });
+});
+
+describe("TileController bspwm direct resize bindings", () => {
+    it("grows the focused window with each resize-expand direction row", () => {
+        const state = resizeSetup("x", "first", "adjust", "bspwm");
+        invokeShortcut(state.harness, "plasma-auto-tiler-resize-expand-right");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.first.relativeGeometry.width, 110);
+        assert.equal(state.second.relativeGeometry.width, 90);
+    });
+
+    it("shrinks the focused window with each resize-contract direction row", () => {
+        const state = resizeSetup("x", "second", "adjust", "bspwm");
+        invokeShortcut(state.harness, "plasma-auto-tiler-resize-contract-right");
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.equal(state.second.relativeGeometry.x, 110);
+        assert.equal(state.second.relativeGeometry.width, 90);
+        assert.equal(state.first.relativeGeometry.width, 110);
     });
 });
 
@@ -6740,6 +7150,32 @@ describe("TileController binding profile catalog", () => {
             assert.equal(new Set(names).size, names.length, key);
             assert.equal(names.includes("plasma-auto-tiler-workspace-append"), false, key);
             assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
+        }
+    });
+
+    it("never registers profile actions without a controller implementation as false equivalents", () => {
+        const componentRequirements = [
+            "plasma-auto-tiler-fullscreen",
+            "plasma-auto-tiler-group-toggle",
+            "plasma-auto-tiler-previous-workspace-up",
+            "plasma-auto-tiler-previous-workspace-left",
+            "plasma-auto-tiler-previous-workspace-h",
+            "plasma-auto-tiler-previous-workspace-k",
+            "plasma-auto-tiler-next-workspace-down",
+            "plasma-auto-tiler-next-workspace-right",
+            "plasma-auto-tiler-next-workspace-j",
+            "plasma-auto-tiler-next-workspace-l",
+            "plasma-auto-tiler-previous-workspace",
+            "plasma-auto-tiler-next-workspace",
+        ];
+        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
+            const harness = new Harness();
+            harness.configValues.set("shortcutProfile", key);
+            new TileController(harness.environment()).start();
+            const names = harness.shortcuts.map((entry) => entry.name);
+            for (const shortcutId of componentRequirements) {
+                assert.equal(names.includes(shortcutId), false, `${key}:${shortcutId}`);
+            }
         }
     });
 

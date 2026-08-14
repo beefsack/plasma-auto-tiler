@@ -74,6 +74,14 @@ unapproved DBus/config mutation.
 
 ## Unit 02 - Profile action implementations and compatibility aliases
 
+Implementation status: accepted 2026-08-14. COSMIC resize mode uses its exact
+`Meta+R` and `Meta+Shift+R` entries and the separately registered directional
+focus aliases while active; no Meta+Ctrl resize default is registered. Resize
+uses one guarded tile-relative-geometry write and fresh postcondition decode.
+Static source evidence establishes sibling adjustment, but live KWin behavior
+remains unproven. The generated bundle remains deferred to Unit 03's
+registration checkpoint.
+
 Dependencies: Unit 01. Scope: implement only actions required by the selected
 profile catalogs that can be truthfully supported inside the controller. Start
 with exact COSMIC actions, including Meta+R / Meta+Shift+R resize mode if it is
