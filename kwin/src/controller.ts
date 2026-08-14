@@ -1349,6 +1349,18 @@ export class TileController {
     // (spec F), preserved through the typed boundary. Session-only; the Unit 05
     // per-output scope re-resolution consumes it.
     private recentDesktopChangeOutput: OutputCapability | null = null;
+    // Per-output-local mode (spec D1, Unit 05): outputKey -> ordered local
+    // desktop id list. Logical workspace n on output X resolves to the nth id of
+    // X's list; a same logical number on output Y is a distinct global desktop.
+    // Session-only, rebuilt idempotently from the live global list on every
+    // reconciliation, never persisted (spec E session persistence). Empty for
+    // every non-per-output-local mode.
+    private readonly localWorkspaces = new Map<string, string[]>();
+    // The session's primary output key (the first-seen output). Pre-existing
+    // (non-script-owned) desktops resolve into this output's local list only
+    // (the single-output degeneracy of spec D1); a later output never adopts a
+    // pre-existing desktop merely because it is visible (spec E hotplug).
+    private localSessionPrimary: string | undefined;
 
     constructor(private readonly environment: ControllerEnvironment) {}
 
@@ -1394,6 +1406,16 @@ export class TileController {
     // desktops are never present (spec B ownership).
     ownedDesktopIdSnapshot(): readonly string[] {
         return Object.freeze([...this.ownedDesktopIds]);
+    }
+
+    // Per-output-local mapping snapshot for tests: outputKey -> ordered local
+    // desktop id list. Present only in per-output-local mode; read-only copies.
+    localWorkspaceSnapshot(): Readonly<Record<string, readonly string[]>> {
+        const snapshot: Record<string, readonly string[]> = {};
+        for (const [key, ids] of this.localWorkspaces) {
+            snapshot[key] = Object.freeze([...ids]);
+        }
+        return snapshot;
     }
 
     // Narrow read/self-validation seam for a future bounded assignment-only
@@ -1456,6 +1478,10 @@ export class TileController {
             // Deterministic session output keys from the current screens, so
             // every mode sees a key for each output before any event fires.
             this.rebuildOutputKeys();
+            // Build the per-output-local mapping and its one trailing empty per
+            // connected output from the current screens/desktops before any
+            // keyboard or lifecycle event resolves a workspace.
+            this.cleanupDesktops();
             this.adoptStartupFloatingWindows();
             this.attachExistingInteractiveWindows(true);
             const insertionRegistered = this.environment.registerShortcut(
@@ -6538,10 +6564,16 @@ export class TileController {
     }
 
     // Meta+1..9: navigate to the existing desktop at the given 1-based index.
-    // An absent index is a specific no-op and never creates a desktop.
+    // An absent index is a specific no-op and never creates a desktop. In
+    // per-output-local mode the target resolves against the active output's
+    // local list and writes through the per-output seam only.
     navigateWorkspace(index: number): void {
         this.gate.run(() => {
             this.diagnostic(`workspace-navigate-invoked:${index}`);
+            if (this.workspaceMode === "per-output-local") {
+                this.navigateLocalWorkspace(index);
+                return;
+            }
             const desktops = this.liveDesktops();
             if (desktops === null) {
                 return;
@@ -6554,6 +6586,50 @@ export class TileController {
             this.setCurrentDesktop(target);
             this.diagnostic(`workspace-navigate-completed:${index}`);
         }, (reason) => this.disabled(reason));
+    }
+
+    // Per-output-local navigation (spec D1): resolve logical index n against the
+    // focused window's output local list and write
+    // `setCurrentDesktopForScreen(target, output)`; the other outputs are never
+    // touched. With no focused window the migrated single-output global
+    // active-screen fallback is preserved, so a desktop change never fails or
+    // recurses when focus is elsewhere. The mapping is refreshed from the live
+    // list first (idempotent, never creates) so a pre-existing desktop added
+    // since the last reconciliation still resolves.
+    private navigateLocalWorkspace(index: number): void {
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        this.rebuildLocalMapping(desktops);
+        const output = this.activeOutput();
+        if (output !== null) {
+            const key = this.outputKeys.keyFor(output);
+            const list = key === undefined ? undefined : this.localWorkspaces.get(key);
+            if (list === undefined) {
+                return;
+            }
+            const id = list[index - 1];
+            if (id === undefined) {
+                this.diagnostic(`workspace-navigate-absent:${index}`);
+                return;
+            }
+            const target = desktops.find((desktop) => desktop.id === id);
+            if (target === undefined) {
+                this.diagnostic(`workspace-navigate-absent:${index}`);
+                return;
+            }
+            this.setCurrentDesktop(target, output);
+            this.diagnostic(`workspace-navigate-completed:${index}`);
+            return;
+        }
+        const target = desktops[index - 1];
+        if (target === undefined) {
+            this.diagnostic(`workspace-navigate-absent:${index}`);
+            return;
+        }
+        this.setCurrentDesktop(target);
+        this.diagnostic(`workspace-navigate-completed:${index}`);
     }
 
     // Meta+0 is deferred and unbound (spec I): there is no navigate-append
@@ -6648,13 +6724,26 @@ export class TileController {
             this.diagnostic("workspace-move-deferred-cancelled:scope");
             return;
         }
-        let target = this.trailingOwnedEmptyDesktop();
-        if (target === null) {
-            if (this.workspaceMutationDeferred()) {
-                this.deferDesktopIntent(window);
-                return;
+        let target: VirtualDesktopCapability | null;
+        if (this.workspaceMode === "per-output-local") {
+            this.rebuildLocalMapping();
+            target = this.trailingOwnedEmptyForOutput(scope.output);
+            if (target === null) {
+                if (this.workspaceMutationDeferred()) {
+                    this.deferDesktopIntent(window);
+                    return;
+                }
+                target = this.appendTrailingForOutput(scope.output);
             }
-            target = this.appendDesktop();
+        } else {
+            target = this.trailingOwnedEmptyDesktop();
+            if (target === null) {
+                if (this.workspaceMutationDeferred()) {
+                    this.deferDesktopIntent(window);
+                    return;
+                }
+                target = this.appendDesktop();
+            }
         }
         if (target === null) {
             return;
@@ -6755,31 +6844,55 @@ export class TileController {
                 this.diagnostic("workspace-move-refused:sticky");
                 return;
             }
+            if (this.workspaceMode === "per-output-local") {
+                this.rebuildLocalMapping();
+            }
             let target: VirtualDesktopCapability | null;
             if (index === 0) {
-                // Move into the script-owned trailing empty. When it is missing
-                // and the desktop list cannot be mutated yet (live drag, pending
-                // reconstruction, unsettled move), the whole move is deferred so
-                // no window moves before its required target exists.
-                target = this.trailingOwnedEmptyDesktop();
-                if (target === null) {
-                    if (this.workspaceMutationDeferred()) {
-                        this.deferDesktopIntent(active);
-                        return;
+                // Move into the script-owned trailing empty of the active
+                // output's local list (per-output-local) or the global trailing
+                // empty (other modes). When it is missing and the desktop list
+                // cannot be mutated yet (live drag, pending reconstruction,
+                // unsettled move), the whole move is deferred so no window moves
+                // before its required target exists.
+                if (this.workspaceMode === "per-output-local") {
+                    target = this.trailingOwnedEmptyForOutput(scope.output);
+                    if (target === null) {
+                        if (this.workspaceMutationDeferred()) {
+                            this.deferDesktopIntent(active);
+                            return;
+                        }
+                        target = this.appendTrailingForOutput(scope.output);
                     }
-                    target = this.appendDesktop();
+                } else {
+                    target = this.trailingOwnedEmptyDesktop();
+                    if (target === null) {
+                        if (this.workspaceMutationDeferred()) {
+                            this.deferDesktopIntent(active);
+                            return;
+                        }
+                        target = this.appendDesktop();
+                    }
                 }
             } else {
-                const desktops = this.liveDesktops();
-                if (desktops === null) {
-                    return;
+                if (this.workspaceMode === "per-output-local") {
+                    target = this.localTargetForOutput(scope.output, index);
+                    if (target === null) {
+                        this.diagnostic(`workspace-move-absent:${index}`);
+                        return;
+                    }
+                } else {
+                    const desktops = this.liveDesktops();
+                    if (desktops === null) {
+                        return;
+                    }
+                    const entry = desktops[index - 1];
+                    if (entry === undefined) {
+                        this.diagnostic(`workspace-move-absent:${index}`);
+                        return;
+                    }
+                    target = entry;
                 }
-                const entry = desktops[index - 1];
-                if (entry === undefined) {
-                    this.diagnostic(`workspace-move-absent:${index}`);
-                    return;
-                }
-                target = entry;
             }
             if (target === null) {
                 return;
@@ -6993,6 +7106,10 @@ export class TileController {
         if (desktops === null || desktops.length <= 1) {
             return;
         }
+        if (this.workspaceMode === "per-output-local") {
+            this.reconcileLocalWorkspaces(desktops, visible);
+            return;
+        }
         const occupied = this.occupiedDesktopIds();
         let highestOccupied = 0;
         for (let position = 0; position < desktops.length; position += 1) {
@@ -7068,6 +7185,325 @@ export class TileController {
         } finally {
             this.reconcilingDesktops = false;
         }
+    }
+
+    // ---- per-output-local workspace mapping (Unit 05, spec D1) ----
+    //
+    // Each connected output owns an independent ordered local desktop id list;
+    // logical workspace n resolves to the nth id of the active output's list.
+    // The mapping is rebuilt idempotently from the live global list and is
+    // keyed by the deterministic session output keys (spec E), so a desktop
+    // rename/reorder never changes it and a surviving output keeps its mapping
+    // across hotplug. Pre-existing (non-script-owned) desktops resolve into the
+    // session's first-seen output's list only; the other outputs never adopt a
+    // pre-existing desktop. Same-tuple outputs are disambiguated by first-seen
+    // order, which is stable within a session but not across a plug/replug
+    // reorder (documented limitation, spec E collision).
+
+    // Per-output-local reconciliation: rebuild the mapping, then retain exactly
+    // one script-owned trailing empty per connected output and remove excess
+    // owned empties, including the still-empty owned desktops of a removed
+    // output (they are invisible on every output, so they are cleanup
+    // candidates; a replug of the same tuple gets a fresh set). Every connected
+    // output whose local list lacks a trailing empty gets exactly one owned
+    // trailing empty created automatically (spec D1/H.3, spec E fresh set for a
+    // new output) - including an initial session and a replugged new output -
+    // so the required trailing empty never depends on a prior Meta+Shift+0.
+    // Pre-existing, occupied, current, visible, and last-global desktops are
+    // never removed, and a pre-existing desktop is never marked owned. Deferral
+    // and the reconciliation guard are inherited from cleanupDesktops, so no
+    // desktop is removed during a drag, reconstruction, or unsettled move.
+    private reconcileLocalWorkspaces(
+        desktops: readonly VirtualDesktopCapability[],
+        visible: ReadonlySet<string>,
+    ): void {
+        this.rebuildLocalMapping(desktops);
+        if (this.localWorkspaces.size === 0) {
+            return;
+        }
+        const lastIndex = desktops.length - 1;
+        const occupied = this.occupiedDesktopIds();
+        const kept = new Set<string>();
+        const connectedOwned = new Set<string>();
+        for (const key of this.localWorkspaces.keys()) {
+            const list = this.localWorkspaces.get(key) ?? [];
+            for (const id of list) {
+                if (this.ownedDesktopIds.has(id)) {
+                    connectedOwned.add(id);
+                }
+            }
+            let highestOccupied = 0;
+            for (let position = 0; position < list.length; position += 1) {
+                const id = list[position];
+                if (id !== undefined && occupied.has(id)) {
+                    highestOccupied = position + 1;
+                }
+            }
+            const trailing: Array<{ readonly id: string; readonly position: number }> = [];
+            for (let position = 0; position < list.length; position += 1) {
+                const id = list[position];
+                if (id === undefined) {
+                    continue;
+                }
+                if (!this.ownedDesktopIds.has(id)) {
+                    continue;
+                }
+                if (occupied.has(id)) {
+                    continue;
+                }
+                if (position + 1 <= highestOccupied) {
+                    continue;
+                }
+                trailing.push({ id, position });
+            }
+            if (trailing.length === 0) {
+                const created = this.appendDesktopForOutputKey(key);
+                if (created !== null) {
+                    kept.add(created.id);
+                    this.diagnostic("workspace-cleanup-replenished");
+                }
+                continue;
+            }
+            const keep = trailing[trailing.length - 1];
+            if (keep !== undefined) {
+                kept.add(keep.id);
+            }
+            this.reconcilingDesktops = true;
+            try {
+                for (const entry of trailing) {
+                    if (entry.id === keep?.id) {
+                        continue;
+                    }
+                    this.removeOwnedEmptyDesktop(entry.id, desktops, visible, lastIndex);
+                }
+            } finally {
+                this.reconcilingDesktops = false;
+            }
+        }
+        // A disconnected output's still-empty owned desktops are cleanup
+        // candidates (spec E hotplug): empty, invisible on every output,
+        // non-current, and never the last global desktop. Connected-output
+        // owned desktops are preserved even when not trailing (they keep their
+        // position in their output's list). Deferred by the same lifecycle
+        // checks that guard the connected-output pass above.
+        for (const id of [...this.ownedDesktopIds]) {
+            if (connectedOwned.has(id)) {
+                continue;
+            }
+            if (kept.has(id)) {
+                continue;
+            }
+            if (occupied.has(id)) {
+                continue;
+            }
+            this.removeOwnedEmptyDesktop(id, desktops, visible, lastIndex);
+        }
+    }
+
+    // Read-only rebuild of the per-output-local mapping from the current live
+    // screens/desktops. Never creates or removes a desktop, so navigation and
+    // move resolution can refresh the mapping before resolving without ever
+    // mutating on a no-op. Preserves each output's existing ordered list
+    // (filtered to live ids) and resolves every non-script-owned desktop into
+    // the session primary output's list.
+    private rebuildLocalMapping(
+        provided?: readonly VirtualDesktopCapability[],
+    ): void {
+        if (this.workspaceMode !== "per-output-local") {
+            return;
+        }
+        const keys = this.connectedOutputKeys();
+        if (keys.length === 0) {
+            return;
+        }
+        const desktops = provided ?? this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        if (this.localSessionPrimary === undefined) {
+            this.localSessionPrimary = keys[0];
+        }
+        const liveIds = new Set(desktops.map((desktop) => desktop.id));
+        for (const key of [...this.localWorkspaces.keys()]) {
+            if (!keys.includes(key)) {
+                this.localWorkspaces.delete(key);
+            }
+        }
+        for (const key of keys) {
+            const list = this.localWorkspaces.get(key) ?? [];
+            this.localWorkspaces.set(key, list.filter((id) => liveIds.has(id)));
+        }
+        const primary = this.localSessionPrimary;
+        if (primary !== undefined && keys.includes(primary)) {
+            const list = this.localWorkspaces.get(primary) ?? [];
+            const assigned = new Set([...this.localWorkspaces.values()].flat());
+            for (const desktop of desktops) {
+                if (this.ownedDesktopIds.has(desktop.id)) {
+                    continue;
+                }
+                if (assigned.has(desktop.id)) {
+                    continue;
+                }
+                list.push(desktop.id);
+            }
+            this.localWorkspaces.set(primary, list);
+        }
+    }
+
+    // Connected output keys in current screens order, from the deterministic
+    // session keys. An unavailable screens surface yields no keys (read-only).
+    private connectedOutputKeys(): string[] {
+        let raw: unknown;
+        try {
+            raw = this.environment.screens();
+        } catch (error) {
+            void error;
+            return [];
+        }
+        const decoded = decodeSequential(raw, isOutput, MAX_SEQUENTIAL_LENGTH);
+        if (!decoded.ok) {
+            return [];
+        }
+        const keys: string[] = [];
+        for (const output of decoded.value) {
+            const key = this.outputKeys.keyFor(output);
+            if (key !== undefined) {
+                keys.push(key);
+            }
+        }
+        return keys;
+    }
+
+    // Remove one script-owned, empty, non-current, non-visible-on-any-output,
+    // non-last-global desktop. Returns whether it was removed; a throwing
+    // remove is reported and preserved. Always a plain removeDesktop call -
+    // never a structural tiling mutation.
+    private removeOwnedEmptyDesktop(
+        id: string,
+        desktops: readonly VirtualDesktopCapability[],
+        visible: ReadonlySet<string>,
+        lastIndex: number,
+    ): boolean {
+        if (visible.has(id)) {
+            return false;
+        }
+        const position = desktops.findIndex((desktop) => desktop.id === id);
+        if (position === lastIndex) {
+            return false;
+        }
+        const desktop = desktops[position];
+        if (desktop === undefined) {
+            return false;
+        }
+        try {
+            this.environment.removeDesktop(desktop);
+            this.ownedDesktopIds.delete(id);
+            for (const list of this.localWorkspaces.values()) {
+                const position = list.indexOf(id);
+                if (position >= 0) {
+                    list.splice(position, 1);
+                }
+            }
+            this.diagnostic("workspace-cleanup-removed");
+            return true;
+        } catch (error) {
+            this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
+            return false;
+        }
+    }
+
+    // Append one owned desktop and record it in the given output's local list.
+    // Used by both Meta+Shift+0 and the trailing-empty replenish so every
+    // script-owned desktop belongs to exactly one output's list.
+    private appendDesktopForOutputKey(key: string): VirtualDesktopCapability | null {
+        const created = this.appendDesktop();
+        if (created !== null) {
+            const list = this.localWorkspaces.get(key) ?? [];
+            list.push(created.id);
+            this.localWorkspaces.set(key, list);
+        }
+        return created;
+    }
+
+    // The ordered local desktop id list of an output in per-output-local mode,
+    // or null when the output has no key or list yet.
+    private localListForOutput(output: OutputCapability): readonly string[] | null {
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            return null;
+        }
+        return this.localWorkspaces.get(key) ?? null;
+    }
+
+    // The script-owned trailing empty of an output's local list (the
+    // trailing-most owned empty after the highest occupied local position), or
+    // null when the output owns no desktop or has no such empty. Never creates.
+    private trailingOwnedEmptyForOutput(output: OutputCapability): VirtualDesktopCapability | null {
+        const list = this.localListForOutput(output);
+        if (list === null) {
+            return null;
+        }
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return null;
+        }
+        const byId = new Map(desktops.map((desktop) => [desktop.id, desktop] as const));
+        const occupied = this.occupiedDesktopIds();
+        let highestOccupied = 0;
+        for (let position = 0; position < list.length; position += 1) {
+            const id = list[position];
+            if (id !== undefined && occupied.has(id)) {
+                highestOccupied = position + 1;
+            }
+        }
+        let candidate: VirtualDesktopCapability | null = null;
+        for (let position = 0; position < list.length; position += 1) {
+            const id = list[position];
+            if (id === undefined) {
+                continue;
+            }
+            if (!this.ownedDesktopIds.has(id)) {
+                continue;
+            }
+            if (occupied.has(id)) {
+                continue;
+            }
+            if (position + 1 <= highestOccupied) {
+                continue;
+            }
+            const desktop = byId.get(id);
+            if (desktop !== undefined) {
+                candidate = desktop;
+            }
+        }
+        return candidate;
+    }
+
+    // The local desktop at 1-based logical index n of an output's list, or null
+    // when absent or unresolvable. Never creates (absent n is a specific no-op).
+    private localTargetForOutput(output: OutputCapability, index: number): VirtualDesktopCapability | null {
+        const list = this.localListForOutput(output);
+        if (list === null) {
+            return null;
+        }
+        const id = list[index - 1];
+        if (id === undefined) {
+            return null;
+        }
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return null;
+        }
+        return desktops.find((desktop) => desktop.id === id) ?? null;
+    }
+
+    // Append one owned desktop for an output's local list (Meta+Shift+0 path).
+    private appendTrailingForOutput(output: OutputCapability): VirtualDesktopCapability | null {
+        const key = this.outputKeys.keyFor(output);
+        if (key === undefined) {
+            return null;
+        }
+        return this.appendDesktopForOutputKey(key);
     }
 
     // Desktop ids currently visible on any output (per-output current desktop)

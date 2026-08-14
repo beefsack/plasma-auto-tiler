@@ -93,3 +93,16 @@
   controller); `bash scripts/start-test.test.sh` (248 checks). Live KWin
   behavior and Plasma-global collision activation remain unproven and outside
   authorization.
+- Unit 05 accepted: default `per-output-local` keeps a session-only
+  `outputKey -> desktop-id[]` map backed by distinct global KWin desktops.
+  Reconciliation provides a script-owned trailing empty per connected output;
+  Meta+1..9 and Meta+Shift+1..9/0 resolve against the active output only and
+  follow through `setCurrentDesktopForScreen`. Meta+0 remains unbound. Cleanup
+  is restricted to script-owned, empty, non-current, non-visible desktops and
+  defers while drag, reconstruction, or a move is unsettled. Same-tuple output
+  collisions use first-seen ordering; the N*M global pager limitation is
+  accepted and unchanged.
+- Unit 05 verification passed: `npm run typecheck`; `npm test` (660 tests);
+  `bash scripts/start-test.test.sh` (248 checks); `bash
+  scripts/dogfood-install.test.sh` (108 checks); and two reproducible
+  `npm run build` runs. No live KWin/Plasma mutation was performed.

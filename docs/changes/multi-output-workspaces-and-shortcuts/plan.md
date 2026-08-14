@@ -186,6 +186,12 @@ decision if the conventional seam is unavailable.
 
 ## Unit 05 - Per-output-local default
 
+Implementation status: accepted 2026-08-14. The default mode holds a
+session-only `outputKey -> desktop-id[]` map, creates distinct per-output
+backing desktops and trailing empties, and routes selection and move-follow to
+the active output. Static two-output, lifecycle, and safety coverage passed;
+the accepted global-desktop pager limitation remains.
+
 Dependencies: Unit 04. Scope: implement mode dispatch and complete only
 `per-output-local`: outputKey-to-ordered-desktop-id mapping, screens/desktops
 reconciliation, automatic one-trailing-empty maintenance, safe owned-desktop
