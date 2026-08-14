@@ -5286,6 +5286,48 @@ describe("TileController interactive drag", () => {
         assert.equal(controller.isEnabled, true);
     });
 
+    it("restores the captured origin when KWin clears the dragged tile and the drop split is undersized", () => {
+        const { harness, controller, root, rows, row0Win, row2Win, splits } = rowsDropSetup();
+        const [row0, row1, row2, row3] = rows;
+        assert.equal(row2.absoluteGeometry.height, 245);
+        assert.equal((harness.clientArea as typeof RECT).height, 980);
+        const startupYields = harness.yields.length;
+        // Model live KWin: the origin is captured while the dragged window
+        // still holds row0, then KWin clears the dragged window's tile before
+        // the finish hook, exactly as observed in the live runner.
+        startDrag(row0Win);
+        row0.manage = (value: unknown): boolean => {
+            (value as TestWindow).tile = row0;
+            return true;
+        };
+        row0Win.tile = null;
+        row0Win.frameGeometry = { x: 768, y: 656, width: 100, height: 100 };
+        harness.cursor = { x: 768, y: 656 };
+        row0Win.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-refused:undersized-split"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-restored"), 1);
+        assert.equal(row0Win.tile, row0);
+        assert.deepEqual(row0.windows, [row0Win]);
+        assert.deepEqual(row2.windows, [row2Win]);
+        assert.deepEqual(row0.absoluteGeometry, { x: 0, y: 44, width: 1536, height: 245 });
+        assert.equal(splits.length, 0);
+        assert.deepEqual(root.tiles, [row0, row1, row2, row3]);
+        assert.equal(row2.isLayout, false);
+        assert.deepEqual(row2.tiles, []);
+        assert.equal(collectLeaves(root).length, 4);
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-deferred"), 0);
+        assert.equal(countEvent(harness.logs, "ownership-remove-collapsed"), 0);
+        // rowsDropSetup arms one startup reconstruction yield (ownership-pending)
+        // because its flat four-row tree is not canonical dwindle. The undersized
+        // refusal must queue no yield of its own, so the count is unchanged from
+        // that startup baseline.
+        assert.equal(harness.yields.length, startupYields);
+        assert.equal(controller.hasActiveDrag, false);
+        assert.equal(controller.isEnabled, true);
+    });
+
     it("keeps a passing drop split contiguous, non-overlapping, and summing the full working extent", () => {
         const { harness, controller, root, rows, row0Win, splits } = rowsDropSetup();
         const row2 = rows[2];
@@ -7621,6 +7663,43 @@ function installCapacityRejectingSplitter(tile: TestTile, state: { rejecting: bo
     };
 }
 
+// Install a splitter that mirrors KWin's `CustomTile::split()` inline mutation
+// under the minimum-geometry boundary. Unlike `installCapacityRejectingSplitter`
+// (which returns an invalid pair without realizing the split), this splitter
+// realizes the split in the live tree *before* the controller can validate the
+// returned children: while `state.rejecting` is true it turns the tile into a
+// layout whose first child carries zero extent on the split axis (KWin's
+// below-minimum empty child). A controller that splits before preflighting
+// therefore leaves the tree mutated even though `orderedChildren` then rejects
+// the pair.
+function installInlineMutatingRejectingSplitter(tile: TestTile, state: { rejecting: boolean }): void {
+    tile.split = (direction) => {
+        const horizontal = direction === 1;
+        const validA = makeTile(
+            horizontal ? { x: 0, y: 0, width: 50, height: 100 } : { x: 0, y: 0, width: 100, height: 50 },
+        );
+        const validB = makeTile(
+            horizontal ? { x: 50, y: 0, width: 50, height: 100 } : { x: 0, y: 50, width: 100, height: 50 },
+        );
+        tile.isLayout = true;
+        tile.layoutDirection = direction;
+        tile.windows = [];
+        if (state.rejecting) {
+            const empty = makeTile(
+                horizontal ? { x: 0, y: 0, width: 0, height: 100 } : { x: 0, y: 0, width: 100, height: 0 },
+            );
+            installDwindleSplitter(empty);
+            installDwindleSplitter(validB);
+            tile.tiles = [empty, validB];
+            return [empty, validB];
+        }
+        installDwindleSplitter(validA);
+        installDwindleSplitter(validB);
+        tile.tiles = [validA, validB];
+        return [validA, validB];
+    };
+}
+
 function makeTile(geometry = RECT, isLayout = false): TestTile {
     return tile(geometry, isLayout);
 }
@@ -9582,6 +9661,185 @@ describe("TileController automatic dwindle ownership", () => {
         assert.equal(new Set(occupied).size, 4);
         assert.equal(harness.yields.length, 0);
         assert.equal(harness.scheduled.length, 0);
+    });
+});
+
+describe("TileController automatic dwindle insertion preflight", () => {
+    it("refuses an undersized automatic insertion before splitting, leaving the tree unmutated and the newcomer floating", () => {
+        const harness = new Harness();
+        // A dwindle(1) scope whose single leaf (20px wide in a 100px working
+        // area) halves to 10px on a horizontal split, below the 15% working
+        // width floor (15px), so the intended insertion is genuinely undersized.
+        const root = tile({ x: 0, y: 0, width: 20, height: 100 });
+        const first = window({ tile: root });
+        root.windows = [first];
+        const seam = { rejecting: true };
+        installInlineMutatingRejectingSplitter(root, seam);
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first];
+        attachTileWriter(first);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const second = window();
+        harness.windows = [first, second];
+        attachTileWriter(second);
+        harness.emitAdded(second);
+
+        // The intended leaf must be preflighted before any split, so a refused
+        // insertion mutates nothing. Pre-change the split ran first and realized
+        // an empty child inline, so the tree below is a layout holding a
+        // zero-width leaf and this first assertion fails.
+        assert.equal(root.isLayout, false, "the intended leaf must not be split before the refusal");
+        assert.deepEqual(root.tiles, []);
+        assert.deepEqual(root.windows, [first]);
+        assert.equal(first.tile, root);
+        // Only the newcomer stays floating: no gap, no inert scope.
+        assert.equal(second.tile, null, "the impossible newcomer stays floating");
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        // The refusal must not rely on a failed split plus reconstruction
+        // recovery, so no reconstruction is armed and no yield is queued.
+        assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
+        assert.equal(harness.yields.length, 0);
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("still splits the insertion when the working area is unreadable instead of inventing a floor", () => {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 20, height: 100 });
+        const first = window({ tile: root });
+        root.windows = [first];
+        installDwindleSplitter(root);
+        harness.root = root;
+        harness.active = first;
+        harness.windows = [first];
+        attachTileWriter(first);
+        // No readable working area: the preflight must not invent a minimum
+        // floor, so the insertion proceeds exactly as before the change.
+        harness.clientArea = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const second = window();
+        harness.windows = [first, second];
+        attachTileWriter(second);
+        harness.emitAdded(second);
+
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
+        assert.equal(root.isLayout, true);
+        const children = root.tiles as TestTile[];
+        assert.equal(children.length, 2);
+        assert.equal(first.tile, children[0]);
+        assert.equal(second.tile, children[1]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("falls back to the closest eligible leaf when the intended right-spine leaf is undersized", () => {
+        const harness = new Harness();
+        // A dwindle(2) scope H[a, b] whose right-spine leaf `b` (50x20) is too
+        // short to split vertically (20/2 = 10 < 15% of the 100px working
+        // height), while `a` (50x100) is eligible. The insertion falls back to
+        // splitting `a` under its own depth-one (vertical) orientation.
+        const root = tile(RECT, true);
+        root.layoutDirection = 1;
+        const a = tile({ x: 0, y: 0, width: 50, height: 100 });
+        const b = tile({ x: 50, y: 0, width: 50, height: 20 });
+        const aWin = window({ tile: a, caption: "a" });
+        const bWin = window({ tile: b, caption: "b" });
+        a.windows = [aWin];
+        b.windows = [bWin];
+        root.tiles = [a, b];
+        installDwindleSplitter(a);
+        installDwindleSplitter(b);
+        harness.root = root;
+        harness.active = aWin;
+        harness.windows = [aWin, bWin];
+        attachTileWriter(aWin);
+        attachTileWriter(bWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const incoming = window();
+        harness.windows = [aWin, bWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+
+        // The undersized intended leaf `b` is untouched; the eligible `a` is
+        // split vertically and receives the newcomer on its second child.
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
+        assert.equal(b.isLayout, false);
+        assert.deepEqual(b.tiles, []);
+        assert.equal(bWin.tile, b);
+        assert.equal(a.isLayout, true);
+        assert.equal(a.layoutDirection, 2);
+        const aChildren = a.tiles as TestTile[];
+        assert.equal(aChildren.length, 2);
+        assert.equal(aWin.tile, aChildren[0]);
+        assert.equal(incoming.tile, aChildren[1]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(harness.yields.length, 0);
+    });
+
+    it("resolves an equal-distance fallback tie to the earlier compareLeaves leaf", () => {
+        const harness = new Harness();
+        // A dwindle(3) tree H[V[A1, A2], M] whose right-spine leaf `M` (50x20,
+        // depth one, vertical) is undersized. In compareLeaves order the leaves
+        // are A1 (x:0,y:0), M (x:50,y:0), A2 (x:0,y:50): M sits at the middle index, so A1
+        // and A2 are both one index away. Both are eligible (depth two,
+        // horizontal, 50px wide), so the earlier A1 wins the tie.
+        const root = tile(RECT, true);
+        root.layoutDirection = 1;
+        const left = tile({ x: 0, y: 0, width: 50, height: 100 }, true);
+        left.layoutDirection = 2;
+        const a1 = tile({ x: 0, y: 0, width: 50, height: 50 });
+        const a2 = tile({ x: 0, y: 50, width: 50, height: 50 });
+        const m = tile({ x: 50, y: 0, width: 50, height: 20 });
+        const a1Win = window({ tile: a1, caption: "a1" });
+        const a2Win = window({ tile: a2, caption: "a2" });
+        const mWin = window({ tile: m, caption: "m" });
+        a1.windows = [a1Win];
+        a2.windows = [a2Win];
+        m.windows = [mWin];
+        left.tiles = [a1, a2];
+        root.tiles = [left, m];
+        installDwindleSplitter(a1);
+        installDwindleSplitter(a2);
+        installDwindleSplitter(m);
+        harness.root = root;
+        harness.active = a1Win;
+        harness.windows = [a1Win, a2Win, mWin];
+        attachTileWriter(a1Win);
+        attachTileWriter(a2Win);
+        attachTileWriter(mWin);
+        const controller = new TileController(harness.environment());
+        controller.start();
+        assert.equal(countEvent(harness.logs, "ownership-taken"), 1);
+
+        const incoming = window();
+        harness.windows = [a1Win, a2Win, mWin, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+
+        // The earlier compareLeaves candidate A1 wins the equal-distance tie;
+        // M and A2 are untouched.
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
+        assert.equal(m.isLayout, false);
+        assert.equal(a2.isLayout, false);
+        assert.equal(mWin.tile, m);
+        assert.equal(a2Win.tile, a2);
+        assert.equal(a1.isLayout, true);
+        assert.equal(a1.layoutDirection, 1);
+        const a1Children = a1.tiles as TestTile[];
+        assert.equal(a1Children.length, 2);
+        assert.equal(a1Win.tile, a1Children[0]);
+        assert.equal(incoming.tile, a1Children[1]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+        assert.equal(harness.yields.length, 0);
     });
 });
 

@@ -1452,6 +1452,30 @@
     }
     return leaves;
   }
+  function dwindleLeafDepths(root) {
+    const depths = /* @__PURE__ */ new Map();
+    const walk = (tile, depth) => {
+      if (!tile.isLayout) {
+        depths.set(tile, depth);
+        return true;
+      }
+      const children = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      if (!children.ok) {
+        return false;
+      }
+      if (children.value.length === 0) {
+        depths.set(tile, depth);
+        return true;
+      }
+      for (const child of children.value) {
+        if (child === void 0 || !walk(child, depth + 1)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    return walk(root, 0) ? depths : null;
+  }
   function collectPresetLeaves(root) {
     if (!isCustomTile(root)) {
       return null;
@@ -4998,7 +5022,7 @@
         return;
       }
       if (this.splitWouldViolateMinimum(scope, target, direction)) {
-        this.diagnostic("drag-refused:undersized-split");
+        this.bailDrag("drag-refused:undersized-split", drag);
         return;
       }
       if (!this.splitDropTarget(target, occupant, drag, direction)) {
@@ -5018,7 +5042,15 @@
     // area never refuses: the preflight must not invent a floor it cannot prove.
     splitWouldViolateMinimum(scope, target, direction) {
       const axis = direction === "left" || direction === "right" ? "x" : "y";
-      const leafExtent = axis === "x" ? target.leaf.geometry.width : target.leaf.geometry.height;
+      return this.splitAxisWouldViolateMinimum(scope, target.leaf.geometry, axis);
+    }
+    // Whether an equal 50/50 split of a leaf with the given geometry along the
+    // split axis would put either half below KWin's minimum tile size. The floor
+    // is MINIMUM_TILE_FRACTION of the per-output working area extent on the
+    // axis. An unreadable working area never refuses: the preflight must not
+    // invent a floor it cannot prove.
+    splitAxisWouldViolateMinimum(scope, geometry, axis) {
+      const leafExtent = axis === "x" ? geometry.width : geometry.height;
       const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
       if (!isRect(workArea)) {
         return false;
@@ -5888,7 +5920,7 @@
     // geometry-order rejection is a capacity failure that leaves the scope
     // retryable.
     dwindleInsert(window, scope) {
-      var _a;
+      var _a, _b;
       if (((_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) !== void 0) {
         return;
       }
@@ -5944,10 +5976,26 @@
         this.markInert(scope, "insert-occupant-missing");
         return;
       }
-      const orientation = deepest.depth % 2 === 0 ? "horizontal" : "vertical";
+      const intended = operationLeafForTile(topology, deepest.tile);
+      const intendedGeometry = (_b = intended == null ? void 0 : intended.leaf.geometry) != null ? _b : deepest.tile.absoluteGeometry;
+      const intendedAxis = deepest.depth % 2 === 0 ? "x" : "y";
+      let target;
+      if (!this.splitAxisWouldViolateMinimum(scope, intendedGeometry, intendedAxis)) {
+        target = { tile: deepest.tile, depth: deepest.depth, occupant };
+      } else {
+        const fallback = this.dwindleInsertionFallback(scope, topology, deepest);
+        if (fallback === null) {
+          this.floatingWindows.add(window);
+          this.floatScopes.set(window, scope.scope);
+          this.diagnostic("ownership-add-refused:no-eligible-leaf");
+          return;
+        }
+        target = fallback;
+      }
+      const orientation = target.depth % 2 === 0 ? "horizontal" : "vertical";
       let split;
       try {
-        split = splitCustomTile(deepest.tile, layoutDirectionFor(orientation));
+        split = splitCustomTile(target.tile, layoutDirectionFor(orientation));
       } catch (error) {
         void error;
         this.markInert(scope, "insert-split-threw");
@@ -5968,7 +6016,7 @@
       let occupantAssigned = false;
       let incomingAssigned = false;
       try {
-        occupantAssigned = assignWindowToTile(occupant, children[0]);
+        occupantAssigned = assignWindowToTile(target.occupant, children[0]);
         incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1]);
       } catch (error) {
         void error;
@@ -6005,6 +6053,54 @@
       }
       const decoded = decodeSequential(deepest.tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
       return decoded.ok ? { tile: deepest.tile, windows: decoded.value } : null;
+    }
+    // Select the eligible fallback insertion leaf when the intended right-spine
+    // leaf cannot split under its own dwindle orientation without violating
+    // KWin's minimum floor. Candidates are the scope's usable leaves in stable
+    // ascending compareLeaves order; the winner is the eligible leaf at the
+    // minimum absolute index distance from the intended leaf, with the earlier
+    // compareLeaves leaf winning an equal-distance tie. The intended leaf is
+    // not required to be an endpoint. Null when no candidate can split.
+    dwindleInsertionFallback(scope, topology, deepest) {
+      const root = this.environment.rootTile(scope.output, scope.desktop);
+      if (!isCustomTile(root)) {
+        return null;
+      }
+      const depths = dwindleLeafDepths(root);
+      if (depths === null) {
+        return null;
+      }
+      const candidates = [...topology].sort((a, b) => compareLeaves(a.leaf, b.leaf));
+      const intendedIndex = candidates.findIndex((entry) => entry.decoded.tile === deepest.tile);
+      const ranked = candidates.map((entry, index) => ({ entry, index, distance: Math.abs(index - intendedIndex) })).filter((item) => item.entry.decoded.tile !== deepest.tile).sort((a, b) => a.distance - b.distance || a.index - b.index);
+      for (const item of ranked) {
+        const entry = item.entry;
+        if (!isCustomTile(entry.decoded.tile)) {
+          continue;
+        }
+        const tile = entry.decoded.tile;
+        const depth = depths.get(tile);
+        if (depth === void 0) {
+          continue;
+        }
+        const orientation = depth % 2 === 0 ? "horizontal" : "vertical";
+        const axis = orientation === "horizontal" ? "x" : "y";
+        if (this.splitAxisWouldViolateMinimum(scope, entry.leaf.geometry, axis)) {
+          continue;
+        }
+        const occupants = entry.windows.filter(
+          (value) => windowInScope(value, scope) && value.tile === tile
+        );
+        if (occupants.length !== 1) {
+          continue;
+        }
+        const occupant = occupants[0];
+        if (occupant === void 0) {
+          continue;
+        }
+        return { tile, depth, occupant };
+      }
+      return null;
     }
     // Owned-scope removal: after the established overlay reflow, a provably
     // freed leaf of an owned scope collapses with exactly one guarded remove
