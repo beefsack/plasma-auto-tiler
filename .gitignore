@@ -16,6 +16,7 @@ devenv.local.yaml
 
 # Added by the kwin TypeScript package
 
+/dist
 /kwin/node_modules
 /kwin/contents/code/main.js
 /kwin/dist

@@ -300,14 +300,15 @@ gated installer/KCM migration exists
 - **Decided composition:** the active border is a standalone native C++ effect.
   The initial core distribution is one KPackage archive for KDE Store and an
   identical GitHub Release artifact ([Current Decisions](decisions.md#core-distribution)).
-- **Package artifact work:** no package artifact is built or delivered. Add the
-  required package and ZIP tooling to `devenv.nix` before use and restart the
-  session after that change.
+- **Package artifact work:** one reproducible KPackage archive and SHA-256
+  sidecar are statically delivered for both KDE Store and GitHub Release
+  publication; publication remains manual. See the [archived
+  evidence](changes/archive/2026-08-15-kpackage-distribution/plan.md).
 - **Parked user decision:** select only the policy for conflicting Plasma-global
   shortcut migration. No agent may make that decision from static evidence.
-- **Status:** settings, dry-run, and active-border implementation are statically
-  `completed`; archive evidence is retained separately; shortcut migration
-  remains `PARKED`.
+- **Status:** settings, dry-run, active-border implementation, and the
+  reproducible KPackage artifact are statically `completed`; manual publication
+  and shortcut migration remain `PARKED`.
 
 ## Feasibility spikes (PARKED)
 
@@ -333,7 +334,7 @@ agents cannot perform host mutations.
 | Floor-aware rebalancing | In a nested compositor, prove safe single and multi-ancestor ratio writes with fresh decode, then make the opt-in decision. | `PARKED` |
 | Reference precedents | Validate intended behavior at actual bspwm, Hyprland, and COSMIC runtimes rather than source/documentation alone. | `PARKED` |
 | Active border and rounded corners | Run staged user acceptance for the statically completed experimental standalone border effect. | `unproven-until-live` |
-| KPackage artifact | Build the selected archive for KDE Store and an identical GitHub Release artifact; add required package and ZIP tooling to `devenv.nix` before use and restart after that change. | `PARKED` |
+| KPackage artifact | Publish the statically delivered reproducible archive to KDE Store and as the identical GitHub Release artifact. | `PARKED` |
 | Shortcut migration | Select the Plasma-global shortcut migration policy. | `PARKED` |
 
 ## Further feature ideas (PROPOSED, not decided)

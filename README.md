@@ -8,6 +8,25 @@ Package and manage the `plasma-auto-tiler-kwin` KWin script from this
 repository with `scripts/dogfood-install.sh`. There is no build step other than
 what the script performs; `install` builds the bundle first.
 
+### Distribution archive
+
+Create the reproducible KPackage release artifact and its checksum sidecar:
+
+```sh
+bash scripts/build-kpackage.sh
+sha256sum -c dist/plasma-auto-tiler-kwin.kwinscript.sha256
+```
+
+The command writes `dist/plasma-auto-tiler-kwin.kwinscript` and
+`dist/plasma-auto-tiler-kwin.kwinscript.sha256`; both are ignored. The current
+archive is 69642 bytes with SHA-256
+`99afa2657f6707c6e19399ff7fd6a7d872baf333a03e495cad471e53f616fd75` and
+contains only `metadata.json`, `contents/code/main.js`,
+`contents/config/main.xml`, and `contents/ui/config.ui`. Use
+`--output-dir <dir>` to write elsewhere. The build validates only in disposable
+temporary roots; it does not install, enable, configure, or reconfigure a live
+KWin session.
+
 ### Live test
 
 The primary repeated live path is `scripts/live-test.sh run`: one nonce-owned
