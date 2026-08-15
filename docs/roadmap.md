@@ -125,16 +125,16 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   reference doc line 209); its nearest grounded analogue is bspwm's
   `presel_feedback` area [B1], with drop-time reflow per Hyprland [H-Disp].
   Live-reflow-as-preview stays deferred (handover section 6).
-- **Implementation boundary:** the script can compute the target tile by
-  hit-testing `RootTile::pick(cursorPos)` (api-surface capability 6). First
-  prove the documented ordinary-script rectangle outline during a controlled
-  drag; do not choose a QML carrier, bridge, or declarative conversion before
-  that result ([drop-overlay feasibility](changes/archive/2026-08-14-drop-overlay-feasibility/research/feasibility.md)).
+- **Implementation boundary:** the default-off plain rectangle outline is
+  statically delivered in `83c605a`, using cursor-derived target selection and
+  the existing supported outline API; it makes no rich-preview or structural
+  mutation claim ([drag destination outline](changes/archive/2026-08-15-drag-destination-outline/plan.md)). Do not choose a QML carrier, bridge, or declarative conversion before live input and outline evidence.
 - **Main KWin risk:** drag events do not yet reach the script (handover
   section 5); motion delivery, cleanup, stacking, and XWayland behavior remain
   `unproven-until-live`.
-- **Status:** intended feedback `DECIDED`; carrier and input coupling `PARKED`
-  (see Feasibility spikes).
+- **Status:** intended feedback `DECIDED`; default-off plain outline statically
+  completed; rich carrier and live input/cadence acceptance `PARKED` (see
+  Feasibility spikes).
 
 ### 5. Stacked / grouped windows and group indicator UI
 
@@ -174,10 +174,12 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   documented scripting surface (`createDesktop`/`removeDesktop`,
   `setCurrentDesktopForScreen`, `Window.desktops`); the script keeps a
   session-only output-to-desktop map and automatic trailing-empty maintenance
-  per mode. Live-host confirmation remains separate.
-- **Main KWin risk:** static tests cover create/remove and the auto-remove of
-  an owned empty non-active-non-visible desktop, but live KWin/Plasma behavior
-  remains `unproven-until-live`.
+  per mode. Switch-only cleanup of eligible invisible empty workspaces is
+  statically delivered in `d6d52a5`
+  ([empty-workspace switch cleanup](changes/archive/2026-08-15-empty-workspace-switch-cleanup/plan.md)); live multi-output and pager confirmation remains separate.
+- **Main KWin risk:** static tests cover create/remove and switch-only removal
+  of an owned empty non-active-non-visible desktop, but live KWin/Plasma
+  multi-output and pager behavior remains `unproven-until-live`.
 - **Status:** `DECIDED`; create/remove statically implemented; live
   confirmation `unproven-until-live`.
 
@@ -239,25 +241,23 @@ gated installer/KCM migration exists
   non-Qt clients (Ghostty). Active colour follows focus (Hyprland active/
   inactive border [H-Var]; COSMIC "Active hint" [C-Bas]; bspwm border colour
   [B1] - decision 9, reference doc line 212).
-- **Feasibility and mechanism:** only a compositor-level `KWin/Effect` reaches
-  every window regardless of client engine, because effects operate on
-  `EffectWindow` (api-surface capability 6 note). Script geometry writes cannot
-  draw borders or corners. The effect is a QML `SceneEffect` in the same system
-  package (composition.md C2); if QML cannot clip per-window corners on
-  XWayland content, a native C++ effect compiled against pinned KWin is the
-  fallback (composition.md Path 4).
+- **Feasibility and mechanism:** script geometry writes cannot draw borders or
+  corners. Declarative active-border research finds that `SceneEffect` replaces
+  the scene, making a declarative border a full scene-reconstruction task rather
+  than a transparent overlay; it is parked, not a selected carrier
+  ([research](changes/archive/2026-08-15-active-border-declarative-feasibility/research/feasibility.md)). Native C++ compositor effects remain the leading path, not a carrier selection or proof of rounding.
 - **Documented limitation:** the effect is compositing-gated and direct-scanout
   / fullscreen surfaces may bypass it, so borders/corners may not appear on
   fullscreen games (consistent with feature 9). KWin's own native "Rounded
   corners" effect is community-known but not primary-verified in this repo
   (`unverified`).
-- **Distribution mechanism:** shipped as a `KWin/Effect` KPackage in the one
-  system package (decision 16); enabled via Desktop Effects KCM or by the
-  installer.
-- **Main KWin risk:** per-window corner clipping of XWayland content is
-  `unproven-until-live`.
-- **Status:** intended all-window treatment `DECIDED`; QML versus native
-  carrier and the complete client matrix `PARKED`.
+- **Toolchain and live gate:** select the native effect/toolchain and dependency
+  scope before implementation. If that changes `devenv.nix`, restart the session
+  before assuming the dependencies are available. Then prove discovery,
+  enablement, reload, geometry, stacking, cleanup, and the complete Qt, CSD,
+  non-Qt, XWayland, maximized, and fullscreen matrix.
+- **Status:** intended all-window treatment `DECIDED`; active border, rounded
+  corners, carrier selection, and the complete client matrix `PARKED`.
 
 ### 9. Fullscreen games never tiled / resized / disturbed
 
@@ -298,6 +298,12 @@ gated installer/KCM migration exists
 - **Parked composition:** do not select one package, a QML effect, native C++,
   or a script/effect bridge until the rectangle-outline and visual carrier
   spikes establish the supported path.
+- **Package artifact blocker:** package-feasibility research defines a future
+  deterministic four-file artifact only; no package artifact is built or
+  delivered. The selected install path must first accept its archive extension,
+  and `kpackagetool6` plus ZIP creation/inspection tooling must be added to
+  `devenv.nix`; restart the session before using newly declared dependencies
+  ([research](changes/archive/2026-08-15-distribution-package-feasibility/research/feasibility.md)).
 - **Parked user decision:** select the distribution channel and policy for
   conflicting Plasma-global shortcut migration. No agent may make either
   decision from static evidence.
@@ -310,10 +316,10 @@ Each preserves its decision; only implementation viability needs a KWin test.
 
 | Spike | Feature | Why parked |
 |---|---|---|
-| PARKED-1 | Drop rectangle outline (feature 4) | Run the minimal ordinary-script outline during a controlled drag, then use the result to decide whether rich QML is needed or supported; do not infer a bridge from documentation alone. |
+| PARKED-1 | Drop rectangle outline (feature 4) | The default-off plain outline is statically delivered; prove live drag input, outline behavior, XWayland, and cadence before deciding whether rich QML is needed or supported. |
 | PARKED-2 | Multi-window tile stability (feature 5) | Prove shared-tile membership and recovery before deciding group behavior or header design; header carrier validation is a separate later proof. |
 | PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
-| PARKED-4 | All-window border/corner carrier (feature 8) | Prove geometry, stacking, activation, cleanup, and rounding across Qt, CSD, non-Qt, XWayland, maximized, and fullscreen clients before selecting QML or native C++. |
+| PARKED-4 | All-window border/corner carrier (feature 8) | Declarative active-border research is archived and parked at the scene-reconstruction boundary. Select the native effect/toolchain and dependencies, restart after any `devenv.nix` change, then prove the full client matrix before selecting a carrier. |
 
 ## Pending Live Acceptance And Parked Decisions
 
@@ -324,8 +330,11 @@ agents cannot perform host mutations.
 |---|---|---|
 | Delivered KCM/config and split targets | Exercise generic KCM rendering, configuration reload, and automatic split-target selection on the target host. | `unproven-until-live` |
 | Core behavior | Stage live acceptance for resize, float/sticky, fullscreen, maximize, workspace modes/shortcuts, and two-output isolation. | `unproven-until-live` |
+| Switch-only empty-workspace cleanup | Confirm delivered cleanup behavior across live multi-output and pager states. | `unproven-until-live` |
 | Floor-aware rebalancing | In a nested compositor, prove safe single and multi-ancestor ratio writes with fresh decode, then make the opt-in decision. | `PARKED` |
 | Reference precedents | Validate intended behavior at actual bspwm, Hyprland, and COSMIC runtimes rather than source/documentation alone. | `PARKED` |
+| Active border and rounded corners | Select the native effect/toolchain and dependency scope, then run the full staged live client matrix; restart after any `devenv.nix` change. | `PARKED` |
+| Package artifact | Confirm archive extension/install behavior and add the required package and ZIP tooling to `devenv.nix`; restart before using newly declared dependencies. | `PARKED` |
 | Distribution and shortcuts | Select a distribution channel and the Plasma-global shortcut migration policy. | `PARKED` |
 
 ## Further feature ideas (PROPOSED, not decided)
