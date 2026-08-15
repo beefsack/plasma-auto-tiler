@@ -7,6 +7,7 @@
 
   packages = with pkgs; [
     cmake
+    clang-tools
     ninja
     pkg-config
     zip

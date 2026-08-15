@@ -17,6 +17,20 @@ Git history and archived change records.
 - **Reconsider when:** Native-effect APIs or packaging constraints make this
   path impractical.
 
+## Native C++ Safety Policy
+
+- **Decision:** Use C++ only where the KWin platform ABI requires it, with the
+  smallest public-API adapter/effect surface. The simple active border has no
+  Rust bridge.
+- **Constraints:** C++ changes must not use manual ownership, `new`/`delete`,
+  threads, custom shaders, or scene/window-texture manipulation without
+  separate approval. They require compiler warnings as errors, `clang-tidy`
+  static analysis, deterministic `clang-format` formatting, and focused tests.
+- **Consequences:** Native C++ remains isolated and its ABI rebuild risk stays
+  explicit for KWin/Plasma upgrades.
+- **Reconsider when:** A separately approved platform requirement needs a
+  broader native surface or an excluded capability.
+
 ## Rounded Corners
 
 - **Decision:** Rely on Plasma 6.5+ decoration-driven rounded corners.
