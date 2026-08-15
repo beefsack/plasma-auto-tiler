@@ -4,4 +4,14 @@
   languages.rust.enable = true;
   languages.javascript.enable = true;
   languages.javascript.package = pkgs.nodejs_24;
+
+  packages = with pkgs; [
+    cmake
+    ninja
+    pkg-config
+    zip
+    kdePackages.extra-cmake-modules
+    kdePackages.kwin.dev
+    kdePackages.kpackage
+  ];
 }
