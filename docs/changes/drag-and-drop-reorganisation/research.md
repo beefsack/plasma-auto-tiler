@@ -3,9 +3,9 @@
 Research for the drag-and-drop reorganisation change. This document records
 prior findings A1-A4, their cited KWin 6.7.3 source locations, the explicit
 consequence, the uninvestigated plugin-ownership question, the open
-architecture decision, and the later documented-API findings B1-B5 below.
-Research only: no specification, plan, log, or state document exists for this
-change yet.
+architecture decision, and the later documented-API findings B1-B5 below. It
+predates the later `spec.md`, `plan.md`, and `state.md`; it remains historical
+research rather than live acceptance evidence.
 
 ## Source Pin
 
@@ -219,8 +219,8 @@ uses function-valued stub signals for the shipped bundle.
 
 ## Scope Limits
 
-- Research only. `spec.md`, `plan.md`, `log.md`, and `state.md` are NOT created
-  by this research.
+- Historical research scope only. This research did not create the later
+  `spec.md`, `plan.md`, or `state.md` artifacts.
 - No edits to `kwin/contents/code/main.js`, production code, `devenv.nix`,
   `docs/principles.md`, `docs/decisions.md`, host settings, or protected
   untracked files.

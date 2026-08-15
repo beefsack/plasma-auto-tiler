@@ -128,12 +128,14 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 - **Implementation boundary:** the default-off plain rectangle outline is
   statically delivered in `83c605a`, using cursor-derived target selection and
   the existing supported outline API; it makes no rich-preview or structural
-  mutation claim ([drag destination outline](changes/archive/2026-08-15-drag-destination-outline/plan.md)). Do not choose a QML carrier, bridge, or declarative conversion before live input and outline evidence.
-- **Main KWin risk:** drag events do not yet reach the script (handover
-  section 5); motion delivery, cleanup, stacking, and XWayland behavior remain
-  `unproven-until-live`.
-- **Status:** intended feedback `DECIDED`; default-off plain outline statically
-  completed; rich carrier and live input/cadence acceptance `PARKED` (see
+  mutation claim ([drag destination outline](changes/archive/2026-08-15-drag-destination-outline/plan.md)). Finish-only post-drop reflow and attach diagnostics are also statically delivered in [drag-and-drop reorganisation](changes/drag-and-drop-reorganisation/plan.md), but require user journal evidence before any KWin signal-delivery or reflow acceptance claim. Do not choose a QML carrier, bridge, or declarative conversion before live input and outline evidence.
+- **Main KWin risk:** the former zero-event observation was a false attachment
+  guard, not proof of KWin non-delivery; documented per-window signal
+  attachment and delivery, motion cleanup, stacking, and XWayland behavior
+  remain `unproven-until-live`.
+- **Status:** intended feedback `DECIDED`; default-off plain outline and
+  finish-only post-drop reflow are statically completed; live input, signal
+  delivery, reflow, cadence, and rich-carrier acceptance remain `PARKED` (see
   Feasibility spikes).
 
 ### 5. Stacked / grouped windows and group indicator UI
