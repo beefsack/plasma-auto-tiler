@@ -5,17 +5,20 @@ Git history and archived change records.
 
 ## Active Window Border
 
-- **Decision:** Use a standalone native C++ KWin effect for the active-window
-  border, with the required `devenv.nix` toolchain work.
-- **Rationale:** The declarative path requires scene reconstruction; a native
-  effect is the smallest supported route for the border.
-- **Scope:** This selects the implementation direction only. It does not claim
-  an effect, toolchain change, package, or live behavior is delivered.
-- **Consequences:** Declare required system dependencies in `devenv.nix` before
-  use and restart the development session after that file changes. Live KWin
+- **Decision:** Adopt the Experimental border only fallback: a standalone,
+  OpenGL-only native C++ KWin active-window-border effect with no external
+  dependency.
+- **Rationale:** This is the sole bounded fallback after research established no
+  supported backend-portable attachment route. It is explicitly experimental,
+  not a portable production rendering path.
+- **Scope:** The disabled-by-default effect capability-gates rendering and is a
+  clean no-op on unsupported renderers. It owns exactly one direct-value
+  `KWin::OutlinedBorderItem` with automatic lifetime and exactly one approved
+  scene attachment. This selects no package, live behavior, or group feature.
+- **Consequences:** The KWin/Plasma ABI rebuild risk remains explicit. Live KWin
   acceptance remains user-run.
-- **Reconsider when:** Native-effect APIs or packaging constraints make this
-  path impractical.
+- **Reconsider when:** KWin provides a supported backend-portable per-window
+  border attachment API.
 
 ## Native C++ Safety Policy
 
@@ -23,9 +26,16 @@ Git history and archived change records.
   smallest public-API adapter/effect surface. The simple active border has no
   Rust bridge.
 - **Constraints:** C++ changes must not use manual ownership, `new`/`delete`,
-  threads, custom shaders, or scene/window-texture manipulation without
-  separate approval. They require compiler warnings as errors, `clang-tidy`
-  static analysis, deterministic `clang-format` formatting, and focused tests.
+  threads, custom shaders, manual GL resources or ownership, QPainter
+  rendering, clipping, window-texture changes or manipulation, input, or
+  broader scene manipulation without separate approval. The sole approved
+  scene exception is exactly one effect-owned direct-value
+  `KWin::OutlinedBorderItem` with automatic lifetime and one scene attachment
+  for the eligible active-window border. It permits no heap allocation, smart
+  ownership, raw owning pointer, or other renderer or resource exception. The
+  capability gate must leave unsupported renderers as a clean no-op. Compiler
+  warnings as errors, `clang-tidy` static analysis, deterministic
+  `clang-format` formatting, and focused tests remain required.
 - **Consequences:** Native C++ remains isolated and its ABI rebuild risk stays
   explicit for KWin/Plasma upgrades.
 - **Reconsider when:** A separately approved platform requirement needs a
@@ -45,16 +55,19 @@ Git history and archived change records.
 
 ## Grouped Windows
 
-- **Decision:** Keep grouped/tabbed windows as a future goal after the active
-  border, gated by a live multi-window Custom Tile stability proof.
-- **Rationale:** Group behavior depends on recoverable shared-tile membership
-  under real KWin window lifecycle behavior.
-- **Scope:** No group interaction, carrier, controls, bindings, or implementation
-  is selected.
-- **Consequences:** Do not begin group design or implementation before both
-  prerequisites are satisfied.
-- **Reconsider when:** The live proof changes the feasible Custom Tile model or
-  product priorities change.
+- **Decision:** Keep grouped/tabbed windows parked for compositor-owned KWin
+  core support and the existing user-run multi-window Custom Tile stability
+  proof.
+- **Rationale:** Group behavior requires compositor-owned lifecycle, focus,
+  input, hit-test, and shared-container behavior that an active-border effect
+  cannot provide.
+- **Scope:** Grouped windows must not share the active-border carrier. The
+  Custom Tile proof is necessary but insufficient; no group interaction,
+  carrier, controls, bindings, or implementation is selected.
+- **Consequences:** Do not begin group design or implementation before the core
+  support and proof gates are met.
+- **Reconsider when:** KWin core support and the live proof establish a feasible
+  compositor-owned group model.
 
 ## Core Distribution
 

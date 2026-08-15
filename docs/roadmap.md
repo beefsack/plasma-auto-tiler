@@ -55,7 +55,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 | 13 | Maximize = `Meta+M` (per workspace, not sticky); fullscreen = `Meta+F11` (distinct). | COSMIC `Super+M` maximize / `Super+F11` fullscreen [C-KB] [C-KR]; Hyprland `fullscreen_state` 0/1/2/3 separates maximize from fullscreen [H-Disp]. |
 | 14 | Split resizing via a resize mode: `Meta+R` enters, `H/J/K/L` (or arrows) step the focused split ratio, `Esc`/`Return` exits. | COSMIC `Super+R` resize [C-KB]; Hyprland `splitratio` delta/exact [H-Dw]; ratio written through `tile.relativeGeometry` (api-surface capability 3). |
 | 15 | `PARKED`: grouped/tabbed windows remain a future goal after active-border delivery and a live multi-window Custom Tile stability proof; group behavior, bindings, and header design remain unselected. | COSMIC offers stack precedent [C-Bas], but it cannot establish KWin shared-tile behavior or choose this product's group interaction. See [Current Decisions](decisions.md#grouped-windows). |
-| 16 | `REVISITED - DECIDED`: the active border uses a standalone native C++ effect; Plasma 6.5+ decoration-driven corners are relied on; initial core distribution is one KPackage archive for KDE Store and an identical GitHub Release artifact. | These select product direction only. No effect, toolchain change, package, publication, or migration policy is claimed as delivered. See [Current Decisions](decisions.md). |
+| 16 | `REVISITED - DECIDED`: the active border uses a standalone native C++ effect; Plasma 6.5+ decoration-driven corners are relied on; initial core distribution is one KPackage archive for KDE Store and an identical GitHub Release artifact. | The experimental disabled-by-default OpenGL-only effect and its toolchain are statically complete; user-run live acceptance, packaging, publication, and migration policy remain separate. See [Current Decisions](decisions.md). |
 
 ## Feature-by-feature roadmap
 
@@ -253,12 +253,13 @@ gated installer/KCM migration exists
 - **Documented limitation:** direct scanout or fullscreen surfaces may bypass a
   composited border. Decoration-driven corner coverage follows Plasma's
   supported decoration behavior rather than the native effect.
-- **Toolchain and live gate:** required toolchain dependencies belong in
-  `devenv.nix`; restart the session after that file changes before using them.
-  Then prove effect discovery, enablement, reload, geometry, stacking, cleanup,
-  and supported-client behavior through user-run live acceptance.
-- **Status:** product direction `DECIDED`; effect, toolchain work, package, and
-  live acceptance `PARKED`.
+- **Toolchain and live gate:** the required toolchain work and static effect
+  verification are complete. Prove effect discovery, enablement, reload,
+  geometry, stacking, cleanup, and supported-client behavior through user-run
+  live acceptance only.
+- **Status:** product direction `DECIDED`; experimental effect and toolchain
+  `COMPLETED` statically; package `PARKED`; live acceptance
+  `unproven-until-live`.
 
 ### 9. Fullscreen games never tiled / resized / disturbed
 
@@ -304,8 +305,9 @@ gated installer/KCM migration exists
   session after that change.
 - **Parked user decision:** select only the policy for conflicting Plasma-global
   shortcut migration. No agent may make that decision from static evidence.
-- **Status:** settings and dry-run `completed`; active-border implementation,
-  archive work, and shortcut migration `PARKED`.
+- **Status:** settings, dry-run, and active-border implementation are statically
+  `completed`; archive evidence is retained separately; shortcut migration
+  remains `PARKED`.
 
 ## Feasibility spikes (PARKED)
 
@@ -316,7 +318,7 @@ Each preserves its decision; only implementation viability needs a KWin test.
 | PARKED-1 | Drop rectangle outline (feature 4) | The default-off plain outline is statically delivered; prove live drag input, outline behavior, XWayland, and cadence before deciding whether rich QML is needed or supported. |
 | PARKED-2 | Multi-window tile stability (feature 5) | After active-border delivery, prove shared-tile membership and recovery before group behavior or header design; header carrier validation is a separate later proof. |
 | PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
-| PARKED-4 | Active-window border effect (feature 8) | Declarative research is archived at the scene-reconstruction boundary. Implement the selected standalone native C++ effect after required toolchain work, restart after any `devenv.nix` change, then prove supported-client behavior. |
+| PARKED-4 | Active-window border effect (feature 8) | The experimental standalone native C++ effect is statically complete; retained [evidence](changes/archive/2026-08-15-active-window-border-effect/plan.md) covers the toolchain and static checks. Only user-run supported-client behavior remains. |
 
 ## Pending Live Acceptance And Parked Decisions
 
@@ -330,7 +332,7 @@ agents cannot perform host mutations.
 | Switch-only empty-workspace cleanup | Confirm delivered cleanup behavior across live multi-output and pager states. | `unproven-until-live` |
 | Floor-aware rebalancing | In a nested compositor, prove safe single and multi-ancestor ratio writes with fresh decode, then make the opt-in decision. | `PARKED` |
 | Reference precedents | Validate intended behavior at actual bspwm, Hyprland, and COSMIC runtimes rather than source/documentation alone. | `PARKED` |
-| Active border and rounded corners | Complete required native-effect toolchain work, then run staged live acceptance for the standalone border effect; restart after any `devenv.nix` change. | `PARKED` |
+| Active border and rounded corners | Run staged user acceptance for the statically completed experimental standalone border effect. | `unproven-until-live` |
 | KPackage artifact | Build the selected archive for KDE Store and an identical GitHub Release artifact; add required package and ZIP tooling to `devenv.nix` before use and restart after that change. | `PARKED` |
 | Shortcut migration | Select the Plasma-global shortcut migration policy. | `PARKED` |
 

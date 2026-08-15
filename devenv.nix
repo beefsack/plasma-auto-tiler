@@ -15,4 +15,8 @@
     kdePackages.kwin.dev
     kdePackages.kpackage
   ];
+
+  enterShell = ''
+    export PATH=${pkgs.clang-tools}/bin:$PATH
+  '';
 }
