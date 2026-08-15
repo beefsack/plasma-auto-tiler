@@ -49,7 +49,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 
 | # | Decision | Justification |
 |---|---|---|
-| 11 | `plasma-auto-tiler-focus-right` becomes `Meta+L`, completing the `Meta+H/J/K/L` focus set; the collision with KDE's default lock-screen binding is flagged as a user decision (see Open questions). | Resolves backlog P3 `focus-right-keybinding`; H/J/K/L is the established vim-style scheme already used for the other three directions; COSMIC/Hyprland default to arrows and give no guidance on a KDE built-in collision. [C-KB] [H-Ex] |
+| 11 | `plasma-auto-tiler-focus-right` targets `Meta+L`, completing the `Meta+H/J/K/L` focus set; the collision with KDE's default lock-screen binding is flagged as a user decision (see Open questions). | The P3 `focus-right-keybinding` entry remains paused pending that user decision; H/J/K/L is the established vim-style scheme already used for the other three directions; COSMIC/Hyprland default to arrows and give no guidance on a KDE built-in collision. [C-KB] [H-Ex] |
 | 12 | Float/tile toggle = `Meta+G`; sticky toggle = `Meta+Shift+G`, and sticky implies floating. | COSMIC `Super+G` = `ToggleWindowFloating` [C-KB] [C-KR]; Hyprland example `mainMod+V` float [H-Ex]; COSMIC sticky is "excluded from tiling" [C-302]. No reference-WM default binding exists for sticky, so `Meta+Shift+G` is our own mirror of `Meta+G`. |
 | 13 | Maximize = `Meta+M` (per workspace, not sticky); fullscreen = `Meta+F11` (distinct). | COSMIC `Super+M` maximize / `Super+F11` fullscreen [C-KB] [C-KR]; Hyprland `fullscreen_state` 0/1/2/3 separates maximize from fullscreen [H-Disp]. |
 | 14 | Split resizing via a resize mode: `Meta+R` enters, `H/J/K/L` (or arrows) step the focused split ratio, `Esc`/`Return` exits. | COSMIC `Super+R` resize [C-KB]; Hyprland `splitratio` delta/exact [H-Dw]; ratio written through `tile.relativeGeometry` (api-surface capability 3). |
@@ -185,7 +185,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 
 ### 7. Full keyboard shortcut scheme, including split resizing
 
-Resolves backlog P3 `focus-right-keybinding`. Replaces
+Documents the target for paused backlog P3 `focus-right-keybinding`. Replaces
 `plasma-auto-tiler-focus-right` = `Meta+Alt+Ctrl+L` with `Meta+L`
 (`kwin/src/controller.ts:835-840`). The full directional scheme is H/J/K/L
 first, arrows as aliases, `Shift` for move, per COSMIC shipped-defaults
