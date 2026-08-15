@@ -10,8 +10,9 @@ Every KWin-targeted claim stays `unproven-until-live` even where in-repo static
 evidence supports API availability.
 
 Live KWin/Plasma mutations are user-run only: agents cannot perform them.
-Carrier, distribution, shortcut-migration, and opt-in decisions remain parked
-until the corresponding live evidence or user decision is available.
+Unresolved shortcut-migration and opt-in decisions remain parked until the
+corresponding live evidence or user decision is available. Active user-approved
+decisions are recorded in [Current Decisions](decisions.md).
 
 ## Status labels
 
@@ -53,8 +54,8 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 | 12 | Float/tile toggle = `Meta+G`; sticky toggle = `Meta+Shift+G`, and sticky implies floating. | COSMIC `Super+G` = `ToggleWindowFloating` [C-KB] [C-KR]; Hyprland example `mainMod+V` float [H-Ex]; COSMIC sticky is "excluded from tiling" [C-302]. No reference-WM default binding exists for sticky, so `Meta+Shift+G` is our own mirror of `Meta+G`. |
 | 13 | Maximize = `Meta+M` (per workspace, not sticky); fullscreen = `Meta+F11` (distinct). | COSMIC `Super+M` maximize / `Super+F11` fullscreen [C-KB] [C-KR]; Hyprland `fullscreen_state` 0/1/2/3 separates maximize from fullscreen [H-Disp]. |
 | 14 | Split resizing via a resize mode: `Meta+R` enters, `H/J/K/L` (or arrows) step the focused split ratio, `Esc`/`Return` exits. | COSMIC `Super+R` resize [C-KB]; Hyprland `splitratio` delta/exact [H-Dw]; ratio written through `tile.relativeGeometry` (api-surface capability 3). |
-| 15 | `PARKED`: group/stack behavior, bindings, and header design await multi-window tile stability proof. | COSMIC offers stack precedent [C-Bas], but it cannot establish KWin shared-tile behavior or choose this product's group interaction. |
-| 16 | `REVISITED - PARKED`: generic KCM settings are delivered, but the visual carrier, distribution channel, and Plasma-global shortcut migration are not selected. | Static package research does not prove a supported script/effect bridge, complete client coverage, or a user-acceptable shortcut migration. |
+| 15 | `PARKED`: grouped/tabbed windows remain a future goal after active-border delivery and a live multi-window Custom Tile stability proof; group behavior, bindings, and header design remain unselected. | COSMIC offers stack precedent [C-Bas], but it cannot establish KWin shared-tile behavior or choose this product's group interaction. See [Current Decisions](decisions.md#grouped-windows). |
+| 16 | `REVISITED - DECIDED`: the active border uses a standalone native C++ effect; Plasma 6.5+ decoration-driven corners are relied on; initial core distribution is one KPackage archive for KDE Store and an identical GitHub Release artifact. | These select product direction only. No effect, toolchain change, package, publication, or migration policy is claimed as delivered. See [Current Decisions](decisions.md). |
 
 ## Feature-by-feature roadmap
 
@@ -140,18 +141,20 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
 
 ### 5. Stacked / grouped windows and group indicator UI
 
-- **Parked product design:** tabbed groups are a candidate tile-level construct
-  (decision 5, reference doc line 208), but member presentation, controls, and
-  bindings are not selected. The former shared-geometry proposal cannot be
-  treated as a remedy for geometry-floor overflow before live stability proof.
+- **Parked product design:** grouped/tabbed windows are a future goal after
+  active-border delivery and the live multi-window Custom Tile stability proof.
+  Member presentation, controls, and bindings are not selected. The former
+  shared-geometry proposal cannot be treated as a remedy for geometry-floor
+  overflow before that proof ([Current Decisions](decisions.md#grouped-windows)).
 - **Group indicator UI:** a header bar is a future product design, not yet a
   selected QML implementation. KWin provides no native tab/stack UI (handover
   section 12), and carrier selection follows the separate live proof.
 - **Bindings:** no group binding is selected; `Meta+S` and the `Meta+Tab` pair
   are only prior candidates (see parked decision 15).
 - **Implementation boundary:** do not assign a second window to a Custom Tile
-  until a live stability spike proves cardinality, geometry, stacking, focus,
-  close, reconstruction, maximize, fullscreen, and float recovery
+  until active-border delivery and a live stability spike prove cardinality,
+  geometry, stacking, focus, close, reconstruction, maximize, fullscreen, and
+  float recovery
   ([stacked-window feasibility](changes/archive/2026-08-14-stacked-window-feasibility/research/feasibility.md)).
 - **Main KWin risk:** multi-window-per-tile stability is `unknown` and the
   pinned source carries an evacuation-design TODO (handover section 12).
@@ -236,30 +239,26 @@ gated installer/KCM migration exists
   the corresponding feature components (features 3, 5).
 - **Status:** `DECIDED`; built-in collisions `unproven-until-live`.
 
-### 8. Active window border and curved corners for ALL windows
+### 8. Active window border and rounded corners
 
-- **Decided semantics:** an active-window border (focus-coloured) plus rounded
-  corners, applied uniformly to every managed window including X11/XWayland and
-  non-Qt clients (Ghostty). Active colour follows focus (Hyprland active/
-  inactive border [H-Var]; COSMIC "Active hint" [C-Bas]; bspwm border colour
-  [B1] - decision 9, reference doc line 212).
+- **Decided semantics:** use a standalone native C++ KWin effect for the
+  focus-coloured active-window border (Hyprland active/inactive border [H-Var];
+  COSMIC "Active hint" [C-Bas]; bspwm border colour [B1]). Rely on Plasma 6.5+
+  decoration-driven rounded corners. Universal compositor-enforced rounding for
+  CSD, non-Qt, and XWayland clients is a product non-goal for now
+  ([Current Decisions](decisions.md#active-window-border)).
 - **Feasibility and mechanism:** script geometry writes cannot draw borders or
-  corners. Declarative active-border research finds that `SceneEffect` replaces
-  the scene, making a declarative border a full scene-reconstruction task rather
-  than a transparent overlay; it is parked, not a selected carrier
-  ([research](changes/archive/2026-08-15-active-border-declarative-feasibility/research/feasibility.md)). Native C++ compositor effects remain the leading path, not a carrier selection or proof of rounding.
-- **Documented limitation:** the effect is compositing-gated and direct-scanout
-  / fullscreen surfaces may bypass it, so borders/corners may not appear on
-  fullscreen games (consistent with feature 9). KWin's own native "Rounded
-  corners" effect is community-known but not primary-verified in this repo
-  (`unverified`).
-- **Toolchain and live gate:** select the native effect/toolchain and dependency
-  scope before implementation. If that changes `devenv.nix`, restart the session
-  before assuming the dependencies are available. Then prove discovery,
-  enablement, reload, geometry, stacking, cleanup, and the complete Qt, CSD,
-  non-Qt, XWayland, maximized, and fullscreen matrix.
-- **Status:** intended all-window treatment `DECIDED`; active border, rounded
-  corners, carrier selection, and the complete client matrix `PARKED`.
+  corners. Declarative active-border research is archived because `SceneEffect`
+  requires scene reconstruction; the selected direction is the native effect.
+- **Documented limitation:** direct scanout or fullscreen surfaces may bypass a
+  composited border. Decoration-driven corner coverage follows Plasma's
+  supported decoration behavior rather than the native effect.
+- **Toolchain and live gate:** required toolchain dependencies belong in
+  `devenv.nix`; restart the session after that file changes before using them.
+  Then prove effect discovery, enablement, reload, geometry, stacking, cleanup,
+  and supported-client behavior through user-run live acceptance.
+- **Status:** product direction `DECIDED`; effect, toolchain work, package, and
+  live acceptance `PARKED`.
 
 ### 9. Fullscreen games never tiled / resized / disturbed
 
@@ -297,20 +296,16 @@ gated installer/KCM migration exists
   the installer dry-run is delivered in `f5e6907` and is inspection-only. The
   latter did not select a release channel, apply mode, uninstall policy, or
   shortcut migration ([installer evidence](changes/archive/2026-08-14-installer-dry-run/plan.md)).
-- **Parked composition:** do not select one package, a QML effect, native C++,
-  or a script/effect bridge until the rectangle-outline and visual carrier
-  spikes establish the supported path.
-- **Package artifact blocker:** package-feasibility research defines a future
-  deterministic four-file artifact only; no package artifact is built or
-  delivered. The selected install path must first accept its archive extension,
-  and `kpackagetool6` plus ZIP creation/inspection tooling must be added to
-  `devenv.nix`; restart the session before using newly declared dependencies
-  ([research](changes/archive/2026-08-15-distribution-package-feasibility/research/feasibility.md)).
-- **Parked user decision:** select the distribution channel and policy for
-  conflicting Plasma-global shortcut migration. No agent may make either
-  decision from static evidence.
-- **Status:** settings and dry-run `completed`; composition, distribution, and
-  shortcut migration `PARKED`.
+- **Decided composition:** the active border is a standalone native C++ effect.
+  The initial core distribution is one KPackage archive for KDE Store and an
+  identical GitHub Release artifact ([Current Decisions](decisions.md#core-distribution)).
+- **Package artifact work:** no package artifact is built or delivered. Add the
+  required package and ZIP tooling to `devenv.nix` before use and restart the
+  session after that change.
+- **Parked user decision:** select only the policy for conflicting Plasma-global
+  shortcut migration. No agent may make that decision from static evidence.
+- **Status:** settings and dry-run `completed`; active-border implementation,
+  archive work, and shortcut migration `PARKED`.
 
 ## Feasibility spikes (PARKED)
 
@@ -319,9 +314,9 @@ Each preserves its decision; only implementation viability needs a KWin test.
 | Spike | Feature | Why parked |
 |---|---|---|
 | PARKED-1 | Drop rectangle outline (feature 4) | The default-off plain outline is statically delivered; prove live drag input, outline behavior, XWayland, and cadence before deciding whether rich QML is needed or supported. |
-| PARKED-2 | Multi-window tile stability (feature 5) | Prove shared-tile membership and recovery before deciding group behavior or header design; header carrier validation is a separate later proof. |
+| PARKED-2 | Multi-window tile stability (feature 5) | After active-border delivery, prove shared-tile membership and recovery before group behavior or header design; header carrier validation is a separate later proof. |
 | PARKED-3 | Dynamic workspace create/remove (feature 6) | The static three-mode implementation in [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/) covers create/remove; the spike would only confirm live-host behavior, which stays `unproven-until-live`. |
-| PARKED-4 | All-window border/corner carrier (feature 8) | Declarative active-border research is archived and parked at the scene-reconstruction boundary. Select the native effect/toolchain and dependencies, restart after any `devenv.nix` change, then prove the full client matrix before selecting a carrier. |
+| PARKED-4 | Active-window border effect (feature 8) | Declarative research is archived at the scene-reconstruction boundary. Implement the selected standalone native C++ effect after required toolchain work, restart after any `devenv.nix` change, then prove supported-client behavior. |
 
 ## Pending Live Acceptance And Parked Decisions
 
@@ -335,9 +330,9 @@ agents cannot perform host mutations.
 | Switch-only empty-workspace cleanup | Confirm delivered cleanup behavior across live multi-output and pager states. | `unproven-until-live` |
 | Floor-aware rebalancing | In a nested compositor, prove safe single and multi-ancestor ratio writes with fresh decode, then make the opt-in decision. | `PARKED` |
 | Reference precedents | Validate intended behavior at actual bspwm, Hyprland, and COSMIC runtimes rather than source/documentation alone. | `PARKED` |
-| Active border and rounded corners | Select the native effect/toolchain and dependency scope, then run the full staged live client matrix; restart after any `devenv.nix` change. | `PARKED` |
-| Package artifact | Confirm archive extension/install behavior and add the required package and ZIP tooling to `devenv.nix`; restart before using newly declared dependencies. | `PARKED` |
-| Distribution and shortcuts | Select a distribution channel and the Plasma-global shortcut migration policy. | `PARKED` |
+| Active border and rounded corners | Complete required native-effect toolchain work, then run staged live acceptance for the standalone border effect; restart after any `devenv.nix` change. | `PARKED` |
+| KPackage artifact | Build the selected archive for KDE Store and an identical GitHub Release artifact; add required package and ZIP tooling to `devenv.nix` before use and restart after that change. | `PARKED` |
+| Shortcut migration | Select the Plasma-global shortcut migration policy. | `PARKED` |
 
 ## Further feature ideas (PROPOSED, not decided)
 
