@@ -43,13 +43,20 @@ Git history and archived change records.
 
 ## Native Effect Live Validation
 
-- **Decision:** Live native-effect validation is nested-only/private and never
-  launches or mutates host KWin; visual acceptance is manual.
-- **Scope:** The user-run runner uses a visible nested Wayland backend, private
-  environment and D-Bus state, and an absolute read-only host Wayland socket.
-  It does not select host KWin, service, configuration, or plugin paths.
-- **Consequences:** Native-effect lifecycle evidence is limited to nested
-  `/Effects`; host behavior is neither exercised nor accepted.
+- **Decision:** Nested-only/private live validation is the default and preserves
+  all current guarantees: it never launches or mutates host KWin, and visual
+  acceptance is manual. Host validation is a separate, user-run path only, never
+  a host mode in the nested runner.
+- **Scope:** The separate host path is gated by read-only feasibility, exact
+  target KWin ABI/package/build identity, dynamic discovery and load/unload
+  without restarting or replacing KWin, exact state snapshot, bounded user-local
+  install/load scope, retained evidence, and guaranteed rollback. Agents may
+  implement and statically/fake-verify tooling but never execute host KWin
+  mutations. sudo/system plugin paths, broad cleanup, host KWin
+  restart/replacement, and automatic primary-session mutation are prohibited.
+- **Consequences:** Host lifecycle evidence is user-run and separate; it is
+  neither exercised by the nested path nor accepted without the bounded host
+  lifecycle and rollback guarantees above.
 - **Reconsider when:** The user explicitly approves a different validation
   boundary.
 
