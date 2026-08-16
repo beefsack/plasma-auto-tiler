@@ -404,7 +404,7 @@ wait_for_effect_load() {
   for i in $(seq 1 400); do
     if grep -Fxq "loadEffect $PLUGIN_ID" "$WORK/transitions.log" && \
        grep -Fxq "isEffectLoaded $PLUGIN_ID true" "$WORK/transitions.log" && \
-       grep -Fq -- "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.KWin.Effects.loadEffect $PLUGIN_ID" "$WORK/calls.log"; then
+       grep -Fq -- "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.loadEffect $PLUGIN_ID" "$WORK/calls.log"; then
       return 0
     fi
     "$REAL_SLEEP" 0.05
@@ -532,20 +532,54 @@ if [[ " $* " == *" --user "* ]]; then
 fi
 method=""
 effect=""
+object_path=""
 prev=""
 for a in "$@"; do
   if [[ "$prev" == "--method" ]]; then method="$a"; fi
+  if [[ "$prev" == "--object-path" ]]; then object_path="$a"; fi
   prev="$a"
   effect="$a"
 done
+# Hardened /Effects boundary: an /Effects call must carry exactly one of the
+# five source-aligned full method tuples (org.kde.kwin.Effects.<method>) before
+# suffix dispatch may accept it. The old org.kde.KWin.Effects.* interface and
+# any other method on /Effects are rejected.
+if [[ "$object_path" == "/Effects" ]] && \
+   [[ "$method" != "org.kde.kwin.Effects.supportInformation" && \
+      "$method" != "org.kde.kwin.Effects.isEffectSupported" && \
+      "$method" != "org.kde.kwin.Effects.loadEffect" && \
+      "$method" != "org.kde.kwin.Effects.isEffectLoaded" && \
+      "$method" != "org.kde.kwin.Effects.unloadEffect" ]]; then
+  printf 'gdbus: error: rejected /Effects method %s\n' "$method" >&2
+  exit 1
+fi
 case "$method" in
   *supportInformation)
     printf 'supportInformation %s\n' "$effect" >> "${FAKE_TRANSITION_LOG:?}"
-    if [[ -f "$state/effect-unsupported" ]]; then
-      echo "gdbus: error: GDBus.Error:org.kde.KWin.Effects.NoSuchEffect" >&2
-      exit 1
+    if [[ -f "$state/effects-unavailable-permanent" || -f "$state/effects-unavailable-transient" ]]; then
+      n="$(cat "$state/effects-query-count" 2>/dev/null || printf '0')"
+      n=$((n + 1))
+      printf '%s\n' "$n" > "$state/effects-query-count"
+      if [[ -f "$state/effects-unavailable-permanent" ]]; then
+        echo "gdbus: error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: /Effects unavailable" >&2
+        exit 1
+      fi
+      limit="$(cat "$state/effects-unavailable-transient")"
+      if [[ "$n" -le "$limit" ]]; then
+        echo "gdbus: error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: /Effects unavailable" >&2
+        exit 1
+      fi
     fi
     printf "KWin 6.7.3\n"
+    ;;
+  *isEffectSupported)
+    if [[ -f "$state/effect-unsupported" ]]; then
+      printf 'isEffectSupported %s false\n' "$effect" >> "${FAKE_TRANSITION_LOG:?}"
+      printf '(false,)\n'
+    else
+      printf 'isEffectSupported %s true\n' "$effect" >> "${FAKE_TRANSITION_LOG:?}"
+      printf '(true,)\n'
+    fi
     ;;
   *isEffectLoaded)
     if [[ -f "$state/effect-loaded" ]]; then
@@ -563,8 +597,12 @@ case "$method" in
     ;;
   *loadEffect)
     printf 'loadEffect %s\n' "$effect" >> "${FAKE_TRANSITION_LOG:?}"
-    touch "$state/effect-loaded"
-    printf '()\n'
+    if [[ -f "$state/load-effect-fails" ]]; then
+      printf '(false,)\n'
+    else
+      touch "$state/effect-loaded"
+      printf '(true,)\n'
+    fi
     ;;
   *Properties.Get)
     if [[ " $* " == *" compositingType "* ]]; then
@@ -899,11 +937,29 @@ reset_state
 FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_ENV_LOG="$WORK/env.log" \
   FAKE_TRANSITION_LOG="$WORK/transitions.log" "$FAKE_BIN/gdbus" \
   call --address unix:path=/x --dest org.kde.KWin --object-path /Effects \
-  --method org.kde.KWin.Effects.loadEffect "$PLUGIN_ID" >/dev/null 2>&1
+  --method org.kde.kwin.Effects.loadEffect "$PLUGIN_ID" >/dev/null 2>&1
 if [[ "$(wc -l < "$WORK/transitions.log")" -eq 1 ]]; then
   PASS=$((PASS + 1))
 else
   echo "FAIL: harness self-check failed (fake gdbus did not record a transition)" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+# The fake /Effects boundary rejects the old full interface org.kde.KWin.Effects
+# before suffix dispatch can accept it: no transition is recorded and the call
+# fails, while the exact lowercase tuple is accepted (proven by the self-check).
+reset_state
+set +e
+FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_ENV_LOG="$WORK/env.log" \
+  FAKE_TRANSITION_LOG="$WORK/transitions.log" "$FAKE_BIN/gdbus" \
+  call --address unix:path=/x --dest org.kde.KWin --object-path /Effects \
+  --method org.kde.KWin.Effects.loadEffect "$PLUGIN_ID" >/dev/null 2>&1
+REJECT_STATUS=$?
+set -e
+if [[ "$REJECT_STATUS" -ne 0 && "$(wc -l < "$WORK/transitions.log")" -eq 0 ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: fake gdbus did not reject the old /Effects interface (status $REJECT_STATUS)" >&2
   FAIL=$((FAIL + 1))
 fi
 
@@ -965,6 +1021,18 @@ EXIT=$?
 set -e
 check_exit 1
 assert_contains "missing required tool"
+assert_calls_not_contains "kwin_wayland --wayland-display"
+
+# the retained evidence root is printed to stderr immediately after creation,
+# so an early failure still reveals the exact evidence location.
+reset_state
+set +e
+env $(runner_env) CMAKE_BIN="/nonexistent/cmake" "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1
+assert_contains "missing required tool"
+assert_contains "EVIDENCE_ROOT=$EVIDENCE_ROOT"
 assert_calls_not_contains "kwin_wayland --wayland-display"
 
 # missing tool: weston-terminal refused before any launch
@@ -1232,6 +1300,7 @@ else
   PASS=$((PASS + 1))
 fi
 assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID true
 isEffectLoaded $PLUGIN_ID false
 loadEffect $PLUGIN_ID
 isEffectLoaded $PLUGIN_ID true
@@ -1244,12 +1313,30 @@ assert_calls_not_contains "--system"
 assert_file_line "$EVIDENCE_ROOT/manifest.txt" "lifecycle: renderer transition result=verified renderer=gl2"
 assert_file_line_before "$EVIDENCE_ROOT/transitions.log" \
   "dbus: renderer transition result=verified renderer=gl2" \
-  "dbus: request method=supportInformation"
+  "dbus: effects readiness result=verified"
 assert_calls_line_before \
   "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Compositor --method org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType" \
-  "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.KWin.Effects.supportInformation $PLUGIN_ID"
+  "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.supportInformation $PLUGIN_ID"
+# Exact source-aligned /Effects method tuples for the successful lifecycle, each
+# carrying the lowercase org.kde.kwin.Effects interface the runner emits:
+# readiness (supportInformation), support (isEffectSupported), initial-state
+# (isEffectLoaded false), load (loadEffect), loaded-state (isEffectLoaded true),
+# unload (unloadEffect), and post-unload (isEffectLoaded false). The three
+# isEffectLoaded occurrences are exactly the initial, loaded-state, and
+# post-unload calls; their ordering is proven by the assert_transitions check.
+assert_calls_count "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.supportInformation $PLUGIN_ID" 1
+assert_calls_count "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.isEffectSupported $PLUGIN_ID" 1
+assert_calls_count "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.isEffectLoaded $PLUGIN_ID" 3
+assert_calls_count "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.loadEffect $PLUGIN_ID" 1
+assert_calls_count "gdbus call --address unix:path=$EVIDENCE_ROOT/run/private-bus --dest org.kde.KWin --object-path /Effects --method org.kde.kwin.Effects.unloadEffect $PLUGIN_ID" 1
+assert_calls_not_contains "org.kde.KWin.Effects"
 assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: request method=loadEffect address=unix:path=$EVIDENCE_ROOT/run/private-bus plugin=$PLUGIN_ID"
 assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: result method=unloadEffect status=0 response=\(\)"
+assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: result method=loadEffect status=0 response=\(true\,\)"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stdout.log"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stderr.log"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "effects readiness attempts=1 status=0"
+assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: effects readiness result=verified"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=client-a result=already-stopped"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=client-b result=already-stopped"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=nested result=gone"
@@ -1284,12 +1371,16 @@ assert_calls_count "ps -o pid= -o pgid= -p $CLIENT_PID2" 1
 assert_kill_log_not_contains "kill -TERM -- -$CLIENT_PGID1"
 assert_kill_log_not_contains "kill -TERM -- -$CLIENT_PGID2"
 
-# unsupported effect refuses before load
+# explicit isEffectSupported=false is classified as unsupported, before load
 reset_state
 touch "$WORK/state/effect-unsupported"
 run_script run
 check_exit 1
+assert_contains "effect unsupported"
 assert_calls_not_contains "loadEffect"
+assert_calls_not_contains "isEffectLoaded"
+assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID false"
 
 # OpenGL unsupported refuses before load
 reset_state
@@ -1372,6 +1463,79 @@ assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "stderr_file=$EVIDENCE_ROOT/c
 assert_file "$EVIDENCE_ROOT/compositing-readiness.stdout.log"
 assert_file "$EVIDENCE_ROOT/compositing-readiness.stderr.log"
 assert_file_contains "$EVIDENCE_ROOT/compositing-readiness.stderr.log" "compositingType unavailable"
+
+# transient /Effects unavailability then success: the runner retries under a
+# bounded budget and reaches plugin interaction only after endpoint readiness;
+# decisive probe evidence and attempts are retained separately from compositor
+# readiness, and lifecycle ordering (support, isEffectSupported, load) holds.
+reset_state
+printf '2\n' > "$WORK/state/effects-unavailable-transient"
+run_bg run
+wait_for_clients
+wait_for "$WORK/state/nested-ready"
+touch "$WORK/state/client-stop"
+wait_runner
+check_exit 0
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "effects readiness attempts=3 status=0"
+assert_file_contains "$EVIDENCE_ROOT/effects-readiness.stdout.log" "KWin 6.7.3"
+assert_calls_count "org.kde.kwin.Effects.supportInformation $PLUGIN_ID" 3
+assert_calls_line_before \
+  "org.kde.kwin.Effects.supportInformation $PLUGIN_ID" \
+  "org.kde.kwin.Effects.isEffectSupported $PLUGIN_ID"
+assert_calls_line_before \
+  "org.kde.kwin.Effects.isEffectSupported $PLUGIN_ID" \
+  "org.kde.kwin.Effects.loadEffect $PLUGIN_ID"
+
+# permanent /Effects unavailability: bounded exhaustion reports unavailable,
+# never unsupported; decisive status/stdout/stderr and attempt count are
+# retained, and no plugin interaction occurs.
+reset_state
+touch "$WORK/state/effects-unavailable-permanent"
+run_script run
+check_exit 1
+assert_contains "nested /Effects unavailable (query exhausted)"
+assert_calls_not_contains "loadEffect"
+assert_calls_not_contains "isEffectSupported"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stdout.log"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stderr.log"
+assert_file_contains "$EVIDENCE_ROOT/effects-readiness.stderr.log" "/Effects unavailable"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "effects readiness attempts=20 status=1"
+
+# nested exit during /Effects readiness: fail promptly on the recorded nested
+# PID exiting, no false success, no plugin interaction, and the decisive
+# last-probe readiness record with its evidence files is retained.
+reset_state
+touch "$WORK/state/effects-unavailable-permanent"
+run_bg run
+wait_for "$WORK/state/nested-ready"
+wait_for_calls "org.kde.kwin.Effects.supportInformation $PLUGIN_ID"
+touch "$WORK/state/nested-exit-during-readiness"
+wait_runner
+check_exit 1
+assert_contains "exited during /Effects readiness"
+assert_calls_not_contains "loadEffect"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "effects readiness attempts="
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "status=1"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "stdout_file=$EVIDENCE_ROOT/effects-readiness.stdout.log"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "stderr_file=$EVIDENCE_ROOT/effects-readiness.stderr.log"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stdout.log"
+assert_file "$EVIDENCE_ROOT/effects-readiness.stderr.log"
+assert_file_contains "$EVIDENCE_ROOT/effects-readiness.stderr.log" "/Effects unavailable"
+
+# loadEffect=false is an explicit rejection, distinct from endpoint failure:
+# the load boolean is retained and no unload or post-load state is claimed.
+reset_state
+touch "$WORK/state/load-effect-fails"
+run_script run
+check_exit 1
+assert_contains "effect load rejected"
+assert_calls_contains "loadEffect"
+assert_calls_not_contains "unloadEffect"
+assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: result method=loadEffect status=0 response=\(false\,\)"
+assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID true
+isEffectLoaded $PLUGIN_ID false
+loadEffect $PLUGIN_ID"
 
 # dbus-run-session observes a sanitized, deterministic XDG_DATA_DIRS while the
 # nested KWin observes the exact captured caller value restored for the private
@@ -1605,6 +1769,7 @@ wait_for_clients
 wait_runner
 check_exit 143
 assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID true
 isEffectLoaded $PLUGIN_ID false
 loadEffect $PLUGIN_ID
 isEffectLoaded $PLUGIN_ID true
@@ -1645,6 +1810,7 @@ else
   INT_SESSION_PID=""
   check_exit 130
   assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID true
 isEffectLoaded $PLUGIN_ID false
 loadEffect $PLUGIN_ID
 isEffectLoaded $PLUGIN_ID true

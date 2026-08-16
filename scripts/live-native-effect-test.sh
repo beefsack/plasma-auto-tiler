@@ -47,12 +47,15 @@ __session() {
   local compositing_attempts=0 compositing_probes_done=0 compositing_status=0 compositing_stdout="" compositing_stderr=""
   local compositing_stdout_file="" compositing_stderr_file=""
   local loaded_by_us=0
+  local effect_output="" quoted_effects_response=""
+  local effects_attempts=0 effects_probes_done=0 effects_status=0 effects_stdout="" effects_stderr=""
+  local effects_stdout_file="" effects_stderr_file=""
 
   effects_call() {
     local method="$1"
     "$DBUS_CALL_BIN" call --address "${DBUS_SESSION_BUS_ADDRESS:-}" \
       --dest org.kde.KWin --object-path /Effects \
-      --method "org.kde.KWin.Effects.$method" "$PLUGIN_ID"
+      --method "org.kde.kwin.Effects.$method" "$PLUGIN_ID"
   }
 
   compositing_type_probe() {
@@ -61,6 +64,22 @@ __session() {
       --dest org.kde.KWin --object-path /Compositor \
       --method org.freedesktop.DBus.Properties.Get \
       org.kde.kwin.Compositing compositingType >"$stdout_file" 2>"$stderr_file"
+  }
+
+  effects_support_probe() {
+    local stdout_file="$1" stderr_file="$2"
+    effects_call supportInformation >"$stdout_file" 2>"$stderr_file"
+  }
+
+  effect_bool() {
+    local output="$1"
+    output="${output#"${output%%[![:space:]]*}"}"
+    output="${output%"${output##*[![:space:]]}"}"
+    case "$output" in
+      "(true,)") return 0 ;;
+      "(false,)") return 1 ;;
+      *) return 2 ;;
+    esac
   }
 
   record_compositing_readiness() {
@@ -73,6 +92,18 @@ __session() {
       recorded_status="$compositing_status"
     fi
     mark "compositing readiness attempts=$compositing_probes_done status=$recorded_status renderer=${renderer:-none} stdout_file=$compositing_stdout_file stdout=$quoted_stdout stderr_file=$compositing_stderr_file stderr=$quoted_stderr"
+  }
+
+  record_effects_readiness() {
+    local quoted_stdout="" quoted_stderr="" recorded_status=""
+    printf -v quoted_stdout '%q' "$effects_stdout"
+    printf -v quoted_stderr '%q' "$effects_stderr"
+    if [[ "$effects_probes_done" -eq 0 ]]; then
+      recorded_status="not-run"
+    else
+      recorded_status="$effects_status"
+    fi
+    mark "effects readiness attempts=$effects_probes_done status=$recorded_status stdout_file=$effects_stdout_file stdout=$quoted_stdout stderr_file=$effects_stderr_file stderr=$quoted_stderr"
   }
 
   record_dbus() {
@@ -367,10 +398,61 @@ __session() {
   mark "renderer transition result=verified renderer=$renderer"
   record_dbus "renderer transition result=verified renderer=$renderer response=$quoted_compositing_type"
 
-  # Discover /Effects (support information).
-  if ! effects_request supportInformation >/dev/null; then
-    fail "nested /Effects unavailable or effect unsupported"
+  # Discover /Effects under a bounded short retry budget, distinct from
+  # compositor readiness and from effect support: an exhausted query reports
+  # unavailable, never unsupported.
+  effects_attempts=0
+  effects_probes_done=0
+  effects_status=0
+  effects_stdout=""
+  effects_stderr=""
+  effects_stdout_file="$EVIDENCE_ROOT/effects-readiness.stdout.log"
+  effects_stderr_file="$EVIDENCE_ROOT/effects-readiness.stderr.log"
+  : > "$effects_stdout_file"
+  : > "$effects_stderr_file"
+  while [[ "$effects_attempts" -lt 20 ]]; do
+    effects_attempts=$((effects_attempts + 1))
+    if ! "$KILL_BIN" -0 "$nested_pid" 2>/dev/null; then
+      wait "$nested_pid" 2>/dev/null
+      status=$?
+      record_effects_readiness
+      fail "nested compositor exited during /Effects readiness (status $status)"
+    fi
+    if effects_support_probe "$effects_stdout_file" "$effects_stderr_file"; then
+      effects_status=0
+    else
+      effects_status=$?
+    fi
+    effects_probes_done=$((effects_probes_done + 1))
+    effects_stdout="$(<"$effects_stdout_file")"
+    effects_stderr="$(<"$effects_stderr_file")"
+    if [[ "$effects_status" -eq 0 ]]; then
+      break
+    fi
+    "$SLEEP_BIN" 0.1
+  done
+
+  if [[ "$effects_status" -ne 0 ]]; then
+    record_effects_readiness
+    fail "nested /Effects unavailable (query exhausted)"
   fi
+
+  record_effects_readiness
+  printf -v quoted_effects_response '%q' "$effects_stdout"
+  record_dbus "effects readiness result=verified response=$quoted_effects_response"
+
+  # Support check: isEffectSupported is a real boolean. An explicit false is a
+  # distinct unsupported result, while an unavailable/error query remains an
+  # endpoint/query failure, never unsupported.
+  if ! effect_output="$(effects_request isEffectSupported)"; then
+    fail "could not determine effect support"
+  fi
+  effect_bool "$effect_output"
+  case $? in
+    0) : ;;
+    1) fail "effect unsupported" ;;
+    2) fail "could not determine effect support" ;;
+  esac
 
   # Initial state must be unloaded.
   if ! loaded="$(effects_request isEffectLoaded)"; then
@@ -380,10 +462,18 @@ __session() {
     fail "effect already loaded"
   fi
 
-  # Load the effect.
-  if ! effects_request loadEffect >/dev/null; then
+  # Load the effect. loadEffect is a real boolean: an explicit false is a
+  # distinct rejection, while an unavailable/error query remains an
+  # endpoint/query failure.
+  if ! effect_output="$(effects_request loadEffect)"; then
     fail "effect load failed"
   fi
+  effect_bool "$effect_output"
+  case $? in
+    0) : ;;
+    1) fail "effect load rejected" ;;
+    2) fail "effect load failed" ;;
+  esac
   loaded_by_us=1
 
   # Post-load check.
@@ -495,6 +585,7 @@ run() {
     fi
   fi
   EVIDENCE_ROOT="${EVIDENCE_ROOT:-$(mktemp -d)}"
+  printf 'EVIDENCE_ROOT=%s\n' "$EVIDENCE_ROOT" >&2
 
   # Resolve the repository's exact native plugin source itself, never a
   # harness-injected path or an installed host plugin.

@@ -81,3 +81,15 @@
   `/tmp/opencode/native-effect-readiness-EIAJUw/harness.log` passed 298/0 in 78
   Bash seconds; a fresh independent review found no material defect. No real
   retry or visual acceptance occurred; user retry remains pending.
+- 2026-08-16: a second user retry briefly launched nested KWin but failed at
+  `/Effects`. Static diagnosis found single-shot readiness, conflated
+  query/support state, and an undiscoverable evidence root; later independent
+  review found incorrect uppercase `org.kde.KWin.Effects`. The accepted
+  correction adds bounded `/Effects` readiness/liveness with retained
+  status/stdout/stderr/attempt evidence, immediate evidence-root output,
+  source-aligned `isEffectSupported` and `loadEffect` booleans, exact lowercase
+  `org.kde.kwin.Effects`, a strict fake interface guard, and focused lifecycle
+  tests. Both syntax checks passed. The one suite at
+  `/tmp/opencode/live-native-effect.GHMi1Q` passed 347/0 in 86 Bash seconds;
+  independent review is accepted. No successful real lifecycle or visual
+  acceptance is claimed; user retry remains pending.
