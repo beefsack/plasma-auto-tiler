@@ -358,6 +358,17 @@ wait_for() {
   return 1
 }
 
+wait_for_calls() {
+  local i
+  for i in $(seq 1 400); do
+    if grep -Fq -- "$1" "$WORK/calls.log" 2>/dev/null; then
+      return 0
+    fi
+    "$REAL_SLEEP" 0.05
+  done
+  return 1
+}
+
 wait_for_valid_positive_pid() {
   local file="$1" i pid
   for i in $(seq 1 400); do
@@ -434,8 +445,8 @@ if [[ "${1:-}" == "--version" ]]; then
   exit 0
 fi
 {
-  printf 'KWIN_PID=%s\nKWIN_PGID=%s\nKWIN_HOME=%s\nKWIN_KDEHOME=%s\nKWIN_XDG_CONFIG_HOME=%s\nKWIN_XDG_DATA_HOME=%s\nKWIN_XDG_CACHE_HOME=%s\nKWIN_XDG_STATE_HOME=%s\nKWIN_XDG_RUNTIME_DIR=%s\nKWIN_WAYLAND_DISPLAY=%s\nKWIN_DBUS=%s\nKWIN_QT_PLUGIN_PATH=%s\nKWIN_KWIN_COMPOSE=%s\n' \
-    "$$" "$$" "${HOME-}" "${KDEHOME-}" "${XDG_CONFIG_HOME-}" "${XDG_DATA_HOME-}" "${XDG_CACHE_HOME-}" "${XDG_STATE_HOME-}" "${XDG_RUNTIME_DIR-}" "${WAYLAND_DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" "${QT_PLUGIN_PATH-}" "${KWIN_COMPOSE-}"
+  printf 'KWIN_PID=%s\nKWIN_PGID=%s\nKWIN_HOME=%s\nKWIN_KDEHOME=%s\nKWIN_XDG_CONFIG_HOME=%s\nKWIN_XDG_DATA_HOME=%s\nKWIN_XDG_DATA_DIRS=%s\nKWIN_XDG_DATA_DIRS_SET=%s\nKWIN_XDG_CACHE_HOME=%s\nKWIN_XDG_STATE_HOME=%s\nKWIN_XDG_RUNTIME_DIR=%s\nKWIN_WAYLAND_DISPLAY=%s\nKWIN_DBUS=%s\nKWIN_QT_PLUGIN_PATH=%s\nKWIN_KWIN_COMPOSE=%s\n' \
+    "$$" "$$" "${HOME-}" "${KDEHOME-}" "${XDG_CONFIG_HOME-}" "${XDG_DATA_HOME-}" "${XDG_DATA_DIRS-}" "${XDG_DATA_DIRS+x}" "${XDG_CACHE_HOME-}" "${XDG_STATE_HOME-}" "${XDG_RUNTIME_DIR-}" "${WAYLAND_DISPLAY-}" "${DBUS_SESSION_BUS_ADDRESS-}" "${QT_PLUGIN_PATH-}" "${KWIN_COMPOSE-}"
 } >> "${FAKE_ENV_LOG:?}"
 plugin_dir="${QT_PLUGIN_PATH:-}/kwin/effects/plugins"
 if [[ -f "${EVIDENCE_ROOT:-}/preflight-compositor" ]]; then
@@ -467,6 +478,9 @@ mkdir -p "${XDG_RUNTIME_DIR:?}"
 touch "${XDG_RUNTIME_DIR:?}/$WAYLAND_DISPLAY"
 touch "$state/nested-ready"
   while [[ ! -f "$state/nested-stop" ]]; do
+  if [[ -f "$state/nested-exit-during-readiness" ]]; then
+    exit 0
+  fi
   if [[ -f "$state/nested-leader-exits-with-group" && -f "$state/client-stop" ]]; then
     "${REAL_SLEEP:?}" 300 &
     printf '%s\n' "$!" > "$state/nested-dead-leader-member-pid"
@@ -500,6 +514,7 @@ EOF
   cat > "$FAKE_BIN/dbus-run-session" <<'EOF'
 #!/usr/bin/env bash
 printf 'dbus-run-session %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+printf 'DBUS_RUN_XDG_DATA_DIRS=%s\nDBUS_RUN_XDG_DATA_DIRS_SET=%s\n' "${XDG_DATA_DIRS-}" "${XDG_DATA_DIRS+x}" >> "${FAKE_ENV_LOG:?}"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=${EVIDENCE_ROOT:?}/run/private-bus"
 args=("$@")
 if [[ "${args[0]}" == "--" ]]; then
@@ -553,8 +568,24 @@ case "$method" in
     ;;
   *Properties.Get)
     if [[ " $* " == *" compositingType "* ]]; then
+      if [[ -f "$state/compositing-unavailable-permanent" || -f "$state/compositing-unavailable-transient" ]]; then
+        n="$(cat "$state/compositing-query-count" 2>/dev/null || printf '0')"
+        n=$((n + 1))
+        printf '%s\n' "$n" > "$state/compositing-query-count"
+        if [[ -f "$state/compositing-unavailable-permanent" ]]; then
+          echo "gdbus: error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: compositingType unavailable" >&2
+          exit 1
+        fi
+        limit="$(cat "$state/compositing-unavailable-transient")"
+        if [[ "$n" -le "$limit" ]]; then
+          echo "gdbus: error: GDBus.Error:org.freedesktop.DBus.Error.ServiceUnknown: compositingType unavailable" >&2
+          exit 1
+        fi
+      fi
       if [[ -f "$state/opengl-inactive" ]]; then
         printf "(<'none'>,)\n"
+      elif [[ -f "$state/opengl-gl1" ]]; then
+        printf "(<'gl1'>,)\n"
       else
         printf "(<'gl2'>,)\n"
       fi
@@ -1273,6 +1304,112 @@ touch "$WORK/state/opengl-inactive"
 run_script run
 check_exit 1
 assert_calls_not_contains "loadEffect"
+
+# a real non-OpenGL compositing response (gl1 fallback) fails as non-OpenGL,
+# retaining the decisive probe status/stdout and never loading the plugin.
+reset_state
+touch "$WORK/state/opengl-gl1"
+run_script run
+check_exit 1
+assert_contains "OpenGL compositing not active"
+assert_calls_not_contains "loadEffect"
+assert_file_contains "$EVIDENCE_ROOT/compositing-readiness.stdout.log" "'gl1'"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "compositing readiness attempts=1 status=0 renderer=none"
+
+# transient compositingType unavailability then OpenGL success: the runner
+# retries under a bounded budget and reaches plugin interaction only after a
+# successful OpenGL probe; decisive probe evidence and attempts are retained.
+reset_state
+printf '2\n' > "$WORK/state/compositing-unavailable-transient"
+run_bg run
+wait_for_clients
+wait_for "$WORK/state/nested-ready"
+touch "$WORK/state/client-stop"
+wait_runner
+check_exit 0
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "compositing readiness attempts=3 status=0 renderer=gl2"
+assert_file_contains "$EVIDENCE_ROOT/compositing-readiness.stdout.log" "'gl2'"
+assert_calls_count "org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType" 3
+LAST_QUERY="$(grep -nF "org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType" "$WORK/calls.log" | tail -1 | cut -d: -f1)"
+FIRST_PLUGIN="$(grep -nF "supportInformation" "$WORK/calls.log" | head -1 | cut -d: -f1)"
+if [[ -n "$LAST_QUERY" && -n "$FIRST_PLUGIN" && "$LAST_QUERY" -lt "$FIRST_PLUGIN" ]]; then
+  PASS=$((PASS + 1))
+else
+  fail "successful compositing readiness did not precede plugin discovery"
+fi
+
+# permanent compositingType unavailability: bounded exhaustion reports
+# unavailable, never a returned compositor type; decisive status/stdout/stderr
+# and attempt count are retained, and no plugin interaction occurs.
+reset_state
+touch "$WORK/state/compositing-unavailable-permanent"
+run_script run
+check_exit 1
+assert_contains "query unavailable"
+assert_calls_not_contains "loadEffect"
+assert_file "$EVIDENCE_ROOT/compositing-readiness.stdout.log"
+assert_file "$EVIDENCE_ROOT/compositing-readiness.stderr.log"
+assert_file_contains "$EVIDENCE_ROOT/compositing-readiness.stderr.log" "compositingType unavailable"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "compositing readiness attempts=20 status=1 renderer=none"
+
+# nested exit during compositing readiness: fail promptly on the recorded
+# nested PID exiting, no false success, no plugin interaction, and the decisive
+# last-probe readiness record with its evidence files is retained.
+reset_state
+touch "$WORK/state/compositing-unavailable-permanent"
+run_bg run
+wait_for "$WORK/state/nested-ready"
+wait_for_calls "org.freedesktop.DBus.Properties.Get org.kde.kwin.Compositing compositingType"
+touch "$WORK/state/nested-exit-during-readiness"
+wait_runner
+check_exit 1
+assert_contains "exited during compositing readiness"
+assert_calls_not_contains "loadEffect"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "compositing readiness attempts="
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "status=1 renderer=none"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "stdout_file=$EVIDENCE_ROOT/compositing-readiness.stdout.log"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "stderr_file=$EVIDENCE_ROOT/compositing-readiness.stderr.log"
+assert_file "$EVIDENCE_ROOT/compositing-readiness.stdout.log"
+assert_file "$EVIDENCE_ROOT/compositing-readiness.stderr.log"
+assert_file_contains "$EVIDENCE_ROOT/compositing-readiness.stderr.log" "compositingType unavailable"
+
+# dbus-run-session observes a sanitized, deterministic XDG_DATA_DIRS while the
+# nested KWin observes the exact captured caller value restored for the private
+# session (caller value was set).
+reset_state
+set +e
+env $(runner_env) XDG_DATA_DIRS="/outer/data/dirs/a:/outer/data/dirs/b" "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1 &
+RUNNER_PID=$!
+set -e
+wait_for_clients
+wait_for "$WORK/state/nested-ready"
+touch "$WORK/state/client-stop"
+wait_runner
+check_exit 0
+assert_file_line "$WORK/env.log" "DBUS_RUN_XDG_DATA_DIRS=$EVIDENCE_ROOT/home/.local/share"
+assert_file_line "$WORK/env.log" "DBUS_RUN_XDG_DATA_DIRS_SET=x"
+assert_file_line "$WORK/env.log" "KWIN_XDG_DATA_DIRS=/outer/data/dirs/a:/outer/data/dirs/b"
+assert_file_line "$WORK/env.log" "KWIN_XDG_DATA_DIRS_SET=x"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "xdg_data_dirs_captured_set=1"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "xdg_data_dirs_captured_value=/outer/data/dirs/a:/outer/data/dirs/b"
+
+# dbus-run-session observes the sanitized value while the nested KWin observes
+# the restored unset state (caller XDG_DATA_DIRS was unset).
+reset_state
+set +e
+env -u XDG_DATA_DIRS $(runner_env) "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1 &
+RUNNER_PID=$!
+set -e
+wait_for_clients
+wait_for "$WORK/state/nested-ready"
+touch "$WORK/state/client-stop"
+wait_runner
+check_exit 0
+assert_file_line "$WORK/env.log" "DBUS_RUN_XDG_DATA_DIRS=$EVIDENCE_ROOT/home/.local/share"
+assert_file_line "$WORK/env.log" "KWIN_XDG_DATA_DIRS="
+assert_file_line "$WORK/env.log" "KWIN_XDG_DATA_DIRS_SET="
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "xdg_data_dirs_captured_set=0"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "xdg_data_dirs_captured_value="
 
 # initially loaded refuses before load
 reset_state

@@ -40,3 +40,15 @@
   suite at `/tmp/opencode/unit04-preflight-correction-attempt03-evidence/`
   passed 258/0 in 61 Bash seconds. A fresh independent review found no defect.
   No real nested run or visual acceptance occurred; user retry remains next.
+- Live-runner compositor-readiness correction: a user-run quick attempt reached
+  fail-closed `compositingType: unavailable`. Diagnosis established a socket-
+  versus-private-D-Bus readiness race with hidden probe errors; inherited
+  351-entry `XDG_DATA_DIRS` caused a non-causal private dbus-daemon watch
+  warning. The accepted correction adds bounded private `/Compositor` polling,
+  exact nested liveness checks, retained probe status/stdout/stderr/attempt
+  evidence, valid non-OpenGL distinction, OpenGL-before-plugin ordering,
+  private D-Bus activation `XDG_DATA_DIRS`, and exact nested-child restoration.
+  Both syntax checks passed. The one suite at
+  `/tmp/opencode/native-effect-readiness-EIAJUw/harness.log` passed 298/0 in 78
+  Bash seconds. A fresh independent review found no material defect. No real
+  retry or visual acceptance occurred; user retry remains pending.

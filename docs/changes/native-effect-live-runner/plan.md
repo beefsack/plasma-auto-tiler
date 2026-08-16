@@ -75,6 +75,18 @@ slices use `unit-<n>/attempt-<n>`.
   evidence/` passed 258/0 in 61 Bash seconds. A fresh independent review found
   no defect. No real nested run or visual acceptance occurred; user retry
   remains next.
+- 2026-08-16: a user-run quick attempt reached a fail-closed
+  `compositingType: unavailable` result. Static diagnosis established a
+  socket-versus-private-D-Bus readiness race with hidden probe errors; inherited
+  351-entry `XDG_DATA_DIRS` caused a non-causal private dbus-daemon watch
+  warning. The accepted correction adds bounded private `/Compositor` polling,
+  exact nested liveness checks, retained probe status/stdout/stderr/attempt
+  evidence, valid non-OpenGL distinction, OpenGL-before-plugin ordering, a
+  private D-Bus activation `XDG_DATA_DIRS`, and exact nested-child restoration.
+  Both syntax checks passed; the one suite at
+  `/tmp/opencode/native-effect-readiness-EIAJUw/harness.log` passed 298/0 in 78
+  Bash seconds. A fresh independent review found no material defect. No real
+  retry or visual acceptance has occurred; user retry remains pending.
 
 ## Acceptance-Evidence Map
 

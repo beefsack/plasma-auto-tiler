@@ -69,3 +69,15 @@
   evidence/` passed 258/0 in 61 Bash seconds. A fresh independent review found
   no defect. No real nested run or visual acceptance occurred; user retry
   remains next.
+- 2026-08-16: user-run quick attempt reached fail-closed
+  `compositingType: unavailable`. Diagnosis established a socket-versus-private-
+  D-Bus readiness race and hidden probe errors; inherited 351-entry
+  `XDG_DATA_DIRS` caused the non-causal private dbus-daemon watch warning. The
+  accepted correction adds bounded private `/Compositor` polling, exact nested
+  liveness checks, retained probe status/stdout/stderr/attempt evidence, valid
+  non-OpenGL distinction, OpenGL-before-plugin ordering, private D-Bus
+  activation `XDG_DATA_DIRS`, and exact nested-child restoration. Both syntax
+  checks passed. The one suite at
+  `/tmp/opencode/native-effect-readiness-EIAJUw/harness.log` passed 298/0 in 78
+  Bash seconds; a fresh independent review found no material defect. No real
+  retry or visual acceptance occurred; user retry remains pending.

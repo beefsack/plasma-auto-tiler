@@ -43,7 +43,9 @@ __session() {
   local nested_pid="" nested_pgid=""
   local client_a_pid="" client_a_pgid="" client_b_pid="" client_b_pgid=""
   local loaded="" status="" i="" journal_since="" cleanup_failed=0 nested_ready=0
-  local compositing_type="" renderer="" quoted_compositing_type=""
+  local renderer="" quoted_compositing_type=""
+  local compositing_attempts=0 compositing_probes_done=0 compositing_status=0 compositing_stdout="" compositing_stderr=""
+  local compositing_stdout_file="" compositing_stderr_file=""
   local loaded_by_us=0
 
   effects_call() {
@@ -53,11 +55,24 @@ __session() {
       --method "org.kde.KWin.Effects.$method" "$PLUGIN_ID"
   }
 
-  compositing_type_call() {
+  compositing_type_probe() {
+    local stdout_file="$1" stderr_file="$2"
     "$DBUS_CALL_BIN" call --address "${DBUS_SESSION_BUS_ADDRESS:-}" \
       --dest org.kde.KWin --object-path /Compositor \
       --method org.freedesktop.DBus.Properties.Get \
-      org.kde.kwin.Compositing compositingType 2>/dev/null
+      org.kde.kwin.Compositing compositingType >"$stdout_file" 2>"$stderr_file"
+  }
+
+  record_compositing_readiness() {
+    local quoted_stdout="" quoted_stderr="" recorded_status=""
+    printf -v quoted_stdout '%q' "$compositing_stdout"
+    printf -v quoted_stderr '%q' "$compositing_stderr"
+    if [[ "$compositing_probes_done" -eq 0 ]]; then
+      recorded_status="not-run"
+    else
+      recorded_status="$compositing_status"
+    fi
+    mark "compositing readiness attempts=$compositing_probes_done status=$recorded_status renderer=${renderer:-none} stdout_file=$compositing_stdout_file stdout=$quoted_stdout stderr_file=$compositing_stderr_file stderr=$quoted_stderr"
   }
 
   record_dbus() {
@@ -255,6 +270,15 @@ __session() {
 
   mark "session started"
 
+  # Restore the exact caller XDG_DATA_DIRS state captured before dbus-run-session
+  # sanitized it, so nested KWin and its clients see the caller's environment
+  # rather than the sanitized daemon activation-search path.
+  if [[ "${RUNNER_OUTER_XDG_DATA_DIRS_SET:-0}" -eq 1 ]]; then
+    export XDG_DATA_DIRS="${RUNNER_OUTER_XDG_DATA_DIRS-}"
+  else
+    unset XDG_DATA_DIRS
+  fi
+
   journal_since="${EPOCHREALTIME:-$EPOCHSECONDS}"
   "$SETSID_BIN" "$KWIN_WAYLAND_BIN" --wayland-display "$RUNNER_HOST_SOCKET" --socket "$RUNNER_NESTED_SOCKET" \
     >"$EVIDENCE_ROOT/nested.log" 2>&1 &
@@ -288,19 +312,58 @@ __session() {
   fi
   mark "nested compositor ready"
 
-  # Fail closed unless the forced OpenGL scene is active. The
+  # Fail closed unless the forced OpenGL scene is active. Poll the private
+  # nested /Compositor compositingType under a bounded short retry budget. The
   # org.kde.kwin.Compositing compositingType property is a string whose
   # documented values are none/gl1/gl2/gles; only gl2/gles satisfy the OpenGL
-  # requirement, never none or the gl1 fallback.
-  compositing_type="$(compositing_type_call || true)"
-  case "$compositing_type" in
-    *"'gl2'"*) renderer=gl2 ;;
-    *"'gles'"*) renderer=gles ;;
-    *)
-      fail "OpenGL compositing not active (compositingType: ${compositing_type:-unavailable})"
-      ;;
-  esac
-  printf -v quoted_compositing_type '%q' "$compositing_type"
+  # requirement, never none or the gl1 fallback. Query-unavailable stays
+  # distinct from a valid non-OpenGL response: a returned none/gl1/other fails
+  # as non-OpenGL, while an exhausted unavailable query reports unavailable
+  # rather than a returned compositor type. The plugin is never discovered or
+  # loaded before a successful OpenGL probe.
+  renderer=""
+  compositing_attempts=0
+  compositing_stdout_file="$EVIDENCE_ROOT/compositing-readiness.stdout.log"
+  compositing_stderr_file="$EVIDENCE_ROOT/compositing-readiness.stderr.log"
+  : > "$compositing_stdout_file"
+  : > "$compositing_stderr_file"
+  while [[ "$compositing_attempts" -lt 20 ]]; do
+    compositing_attempts=$((compositing_attempts + 1))
+    if ! "$KILL_BIN" -0 "$nested_pid" 2>/dev/null; then
+      wait "$nested_pid" 2>/dev/null
+      status=$?
+      record_compositing_readiness
+      fail "nested compositor exited during compositing readiness (status $status)"
+    fi
+    if compositing_type_probe "$compositing_stdout_file" "$compositing_stderr_file"; then
+      compositing_status=0
+    else
+      compositing_status=$?
+    fi
+    compositing_probes_done=$((compositing_probes_done + 1))
+    compositing_stdout="$(<"$compositing_stdout_file")"
+    compositing_stderr="$(<"$compositing_stderr_file")"
+    if [[ "$compositing_status" -eq 0 ]]; then
+      case "$compositing_stdout" in
+        *"'gl2'"*) renderer=gl2 ;;
+        *"'gles'"*) renderer=gles ;;
+      esac
+      if [[ -n "$renderer" ]]; then
+        break
+      fi
+      record_compositing_readiness
+      fail "OpenGL compositing not active (compositingType: ${compositing_stdout:-unavailable})"
+    fi
+    "$SLEEP_BIN" 0.1
+  done
+
+  if [[ -z "$renderer" ]]; then
+    record_compositing_readiness
+    fail "nested compositor did not report an OpenGL compositing type (query unavailable)"
+  fi
+
+  record_compositing_readiness
+  printf -v quoted_compositing_type '%q' "$compositing_stdout"
   mark "renderer transition result=verified renderer=$renderer"
   record_dbus "renderer transition result=verified renderer=$renderer response=$quoted_compositing_type"
 
@@ -409,6 +472,7 @@ run() {
   local host_runtime host_display
   local version_line runtime_ver abi_ver plugin_so test_root candidate_root
   local repo_root plugin_src kwin_dir
+  local outer_xdg_data_dirs_set=0 outer_xdg_data_dirs=""
   local -a plugin_sos
 
   # EVIDENCE_ROOT is internal runner state, never a caller-controlled override.
@@ -592,6 +656,21 @@ run() {
   if [[ "$plugin_so" != *"/kwin/effects/plugins/"* ]]; then
     fail "built plugin not under declared kwin/effects/plugins namespace: $plugin_so"
   fi
+
+  # Capture the exact caller XDG_DATA_DIRS state (unset vs set/value), then hand
+  # dbus-run-session a sanitized, deterministic activation-search environment so
+  # its daemon does not inherit the oversized Nix/devenv service list. The
+  # private session restores the captured state before nested KWin launches.
+  outer_xdg_data_dirs_set=0
+  if [[ -n "${XDG_DATA_DIRS+x}" ]]; then
+    outer_xdg_data_dirs_set=1
+    outer_xdg_data_dirs="${XDG_DATA_DIRS}"
+  fi
+  printf 'xdg_data_dirs_captured_set=%s\n' "$outer_xdg_data_dirs_set" >> "$EVIDENCE_ROOT/manifest.txt"
+  printf 'xdg_data_dirs_captured_value=%s\n' "${outer_xdg_data_dirs-}" >> "$EVIDENCE_ROOT/manifest.txt"
+  export RUNNER_OUTER_XDG_DATA_DIRS_SET="$outer_xdg_data_dirs_set"
+  export RUNNER_OUTER_XDG_DATA_DIRS="${outer_xdg_data_dirs-}"
+  export XDG_DATA_DIRS="$XDG_DATA_HOME"
 
   exec "$DBUS_RUN_BIN" -- "$BASH_BIN" "$SELF" __session
 }
