@@ -17,6 +17,20 @@ EXIT=0
 TIMEOUT_PID=""
 INT_SESSION_PID=""
 WATCHDOG_PID=""
+CURRENT_PHASE="setup"
+
+# Targeted phase selector: set LIVE_NATIVE_PHASE=<name> to run only that phase
+# (e.g. LIVE_NATIVE_PHASE=int-maps-to-term). Unset runs the full suite. Returns
+# non-zero when the phase is not selected, so a phase body is gated with
+# `if phase <name>; then ... fi`.
+phase() {
+  CURRENT_PHASE="$1"
+  [[ -z "${LIVE_NATIVE_PHASE:-}" || "$1" == "${LIVE_NATIVE_PHASE:-}" ]]
+}
+
+record_failure() {
+  FAIL=$((FAIL + 1))
+}
 
 valid_positive_pid() {
   [[ "$1" =~ ^[1-9][0-9]*$ ]]
@@ -91,6 +105,8 @@ harness_cleanup() {
   fi
   if [[ "${HARNESS_DEBUG_ON_FAILURE:-}" == "1" && "$exit_status" -ne 0 ]]; then
     printf '%s\n' '===== HARNESS DEBUG ON FAILURE BEGIN =====' >&2
+    printf '%s\n' '----- current phase -----' >&2
+    printf '%s\n' "${CURRENT_PHASE:-unset}" >&2
     printf '%s\n' '----- runner output -----' >&2
     cat "$OUTPUT" >&2
     printf '%s\n' '----- fake calls log -----' >&2
@@ -98,7 +114,7 @@ harness_cleanup() {
     for file in "$EVIDENCE_ROOT/owned-pids" "$EVIDENCE_ROOT/manifest.txt" \
       "$WORK/state/nested-pid" "$WORK/state/setsid-nested-pid" \
       "$WORK/state/setsid-client-pids" "$WORK/state/nested-pgid-mismatch" \
-      "$WORK/state/client-pgid-mismatch" "$WORK/state/ps-result"; do
+      "$WORK/state/client-pgid-mismatch" "$WORK/state/ps-result" "$WORK/kill.log"; do
       if [[ -f "$file" ]]; then
         printf '%s\n' "----- ${file##*/} -----" >&2
         cat "$file" >&2
@@ -119,7 +135,7 @@ BASH_PATH="$(command -v bash)"
 
 fail() {
   echo "FAIL: $1" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 }
 
 check_exit() {
@@ -128,7 +144,7 @@ check_exit() {
     echo "FAIL: expected exit $expected, got $EXIT" >&2
     echo "--- output ---" >&2
     cat "$OUTPUT" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   else
     PASS=$((PASS + 1))
   fi
@@ -142,7 +158,7 @@ assert_contains() {
     echo "FAIL: output does not contain '$needle'" >&2
     echo "--- output ---" >&2
     cat "$OUTPUT" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -152,7 +168,7 @@ assert_not_contains() {
     echo "FAIL: output unexpectedly contains '$needle'" >&2
     echo "--- output ---" >&2
     cat "$OUTPUT" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   else
     PASS=$((PASS + 1))
   fi
@@ -164,7 +180,7 @@ assert_calls_contains() {
   else
     echo "FAIL: calls.log does not contain '$1'" >&2
     cat "$WORK/calls.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -172,7 +188,7 @@ assert_calls_not_contains() {
   if grep -Fq -- "$1" "$WORK/calls.log"; then
     echo "FAIL: calls.log unexpectedly contains '$1'" >&2
     cat "$WORK/calls.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   else
     PASS=$((PASS + 1))
   fi
@@ -186,7 +202,7 @@ assert_calls_count() {
   else
     echo "FAIL: calls.log contains '$needle' $count time(s), expected $expected" >&2
     cat "$WORK/calls.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -196,7 +212,7 @@ assert_kill_log_contains() {
   else
     echo "FAIL: kill.log does not contain '$1'" >&2
     cat "$WORK/kill.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -204,7 +220,7 @@ assert_kill_log_not_contains() {
   if grep -Fq -- "$1" "$WORK/kill.log"; then
     echo "FAIL: kill.log unexpectedly contains '$1'" >&2
     cat "$WORK/kill.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   else
     PASS=$((PASS + 1))
   fi
@@ -220,7 +236,7 @@ assert_calls_line_before() {
   else
     echo "FAIL: expected '$first' before '$second'" >&2
     cat "$WORK/calls.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -229,7 +245,7 @@ assert_file() {
     PASS=$((PASS + 1))
   else
     echo "FAIL: expected file '$1'" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -240,7 +256,7 @@ assert_file_contains() {
   else
     echo "FAIL: '$file' does not contain '$needle'" >&2
     [[ -f "$file" ]] && cat "$file" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -251,7 +267,7 @@ assert_file_line() {
   else
     echo "FAIL: '$file' does not contain exact line '$line'" >&2
     [[ -f "$file" ]] && cat "$file" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -265,7 +281,7 @@ assert_file_line_before() {
   else
     echo "FAIL: expected '$first' before '$second' in '$file'" >&2
     [[ -f "$file" ]] && cat "$file" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -279,7 +295,7 @@ assert_file_size_between() {
     fi
   fi
   echo "FAIL: '$file' size is not between $min and $max bytes" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 }
 
 assert_not_exists() {
@@ -287,7 +303,7 @@ assert_not_exists() {
     PASS=$((PASS + 1))
   else
     echo "FAIL: unexpected path '$1'" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -304,7 +320,7 @@ assert_env_private() {
   if [[ "$count" -ne "$expected_count" ]]; then
     echo "FAIL: $key captured $count value(s), expected $expected_count" >&2
     cat "$WORK/env.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
     return
   fi
   while IFS= read -r line; do
@@ -312,7 +328,7 @@ assert_env_private() {
     if [[ -z "$value" || "$value" != "$EVIDENCE_ROOT/"* ]]; then
       echo "FAIL: $key is not under the private evidence root: '$value'" >&2
       cat "$WORK/env.log" >&2
-      FAIL=$((FAIL + 1))
+      record_failure
       return
     fi
   done < <(grep "^$key=" "$WORK/env.log")
@@ -323,13 +339,13 @@ assert_all_private() {
   local key="$1"
   if ! grep -q "^$key=" "$WORK/env.log"; then
     echo "FAIL: $key was never captured" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
     return
   fi
   if grep "^$key=" "$WORK/env.log" | grep -qv "^$key=$EVIDENCE_ROOT/"; then
     echo "FAIL: $key has a non-private value" >&2
     cat "$WORK/env.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
     return
   fi
   PASS=$((PASS + 1))
@@ -345,7 +361,7 @@ assert_transitions() {
     printf '%s\n' "$expected" >&2
     echo "actual:" >&2
     cat "$WORK/transitions.log" >&2
-    FAIL=$((FAIL + 1))
+    record_failure
   fi
 }
 
@@ -513,20 +529,62 @@ EOF
 
   cat > "$FAKE_BIN/dbus-run-session" <<'EOF'
 #!/usr/bin/env bash
+state="${FAKE_STATE_DIR:?}"
 printf 'dbus-run-session %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
 printf 'DBUS_RUN_XDG_DATA_DIRS=%s\nDBUS_RUN_XDG_DATA_DIRS_SET=%s\n' "${XDG_DATA_DIRS-}" "${XDG_DATA_DIRS+x}" >> "${FAKE_ENV_LOG:?}"
 export DBUS_SESSION_BUS_ADDRESS="unix:path=${EVIDENCE_ROOT:?}/run/private-bus"
+printf '%s\n' "$$" > "$state/dbus-run-session-wrapper-pid"
+
+# Distinct daemon child (the private dbus-daemon): the bus is available while
+# it lives and is torn down by the supervisor only after the app completes. It
+# never probes live processes or resets signals.
+"${REAL_SLEEP:?}" 86400 &
+daemon_pid=$!
+: > "$state/private-bus-alive"
+
+terminate_daemon() {
+  "${REAL_KILL_BIN:?}" -TERM -- "$daemon_pid" 2>/dev/null || true
+  wait "$daemon_pid" 2>/dev/null || true
+  rm -f "$state/private-bus-alive"
+}
+
+if [[ -f "$state/dbus-run-block-fork" ]]; then
+  while [[ ! -f "$state/dbus-run-release-fork" ]]; do "${REAL_SLEEP:?}" 0.05; done
+fi
+if [[ -f "$state/dbus-run-exit-error" ]]; then
+  terminate_daemon
+  exit 127
+fi
 args=("$@")
 if [[ "${args[0]}" == "--" ]]; then
   args=("${args[@]:1}")
 fi
-exec "${args[@]}"
+# App child: a direct background child of the supervisor. Its SIGINT is ignored
+# (POSIX asynchronous-list) while TERM remains deliverable; the bus stays
+# available until the app completes its cleanup.
+"${args[@]}" &
+app_pid=$!
+printf '%s\n' "$app_pid" > "$state/inner-runner-pid"
+if wait "$app_pid"; then
+  app_status=0
+else
+  app_status=$?
+fi
+if [[ -f "$state/dbus-run-delay-after-app" ]]; then
+  while [[ ! -f "$state/dbus-run-release-after-app" ]]; do "${REAL_SLEEP:?}" 0.05; done
+fi
+terminate_daemon
+exit "$app_status"
 EOF
 
   cat > "$FAKE_BIN/gdbus" <<'EOF'
 #!/usr/bin/env bash
 state="${FAKE_STATE_DIR:?}"
 printf 'gdbus %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+if [[ ! -f "$state/private-bus-alive" ]]; then
+  printf 'gdbus: error: GDBus.Error:org.freedesktop.DBus.Error.NoReply: private bus unavailable\n' >&2
+  exit 1
+fi
 if [[ " $* " == *" --user "* ]]; then
   printf 'gdbus-used-user\n' >> "$state/dbus-user-violation"
 fi
@@ -725,8 +783,10 @@ EOF
 state="${FAKE_STATE_DIR:?}"
 printf 'ps %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
 pid=""
+specs=""
 prev=""
 for arg in "$@"; do
+  if [[ "$prev" == "-o" ]]; then specs="$specs $arg"; fi
   if [[ "$prev" == "-p" ]]; then pid="$arg"; break; fi
   prev="$arg"
 done
@@ -740,6 +800,23 @@ if ! "${REAL_KILL_BIN:?}" -0 "$pid" 2>/dev/null; then
     "$pid" "" "" "1" > "$state/ps-result"
   exit 1
 fi
+# Inner-runner parent query (pid, ppid): the parent is the dbus-run-session
+# wrapper (session leader), overridable to model a direct-child mismatch.
+if [[ "$specs" == *"ppid="* ]]; then
+  emitted_pid="$pid"
+  emitted_ppid=""
+  if [[ -f "$state/inner-runner-pid" && "$(<"$state/inner-runner-pid")" == "$pid" ]] && \
+     [[ -f "$state/dbus-run-session-wrapper-pid" ]] && [[ ! -f "$state/inner-runner-ppid-mismatch" ]]; then
+    emitted_ppid="$(<"$state/dbus-run-session-wrapper-pid")"
+  else
+    emitted_ppid="$((pid + 1))"
+  fi
+  printf 'requested_pid=%s\nemitted_pid=%s\nemitted_ppid=%s\nexit_status=%s\n' \
+    "$pid" "$emitted_pid" "$emitted_ppid" "0" > "$state/ps-result"
+  printf ' %s %s\n' "$emitted_pid" "$emitted_ppid"
+  exit 0
+fi
+# Owned-group query (pid, pgid): failure modeling applies only here.
 if [[ -f "$state/ps-probe-fail" ]]; then
   printf 'requested_pid=%s\nemitted_pid=%s\nemitted_pgid=%s\nexit_status=%s\n' \
     "$pid" "" "" "42" > "$state/ps-result"
@@ -943,6 +1020,7 @@ done
 # transitions, environment, and process groups before any runner contract is
 # exercised.
 reset_state
+: > "$WORK/state/private-bus-alive"
 FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_ENV_LOG="$WORK/env.log" \
   FAKE_TRANSITION_LOG="$WORK/transitions.log" "$FAKE_BIN/gdbus" \
   call --address unix:path=/x --dest org.kde.KWin --object-path /Effects \
@@ -951,13 +1029,14 @@ if [[ "$(wc -l < "$WORK/transitions.log")" -eq 1 ]]; then
   PASS=$((PASS + 1))
 else
   echo "FAIL: harness self-check failed (fake gdbus did not record a transition)" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 fi
 
 # The fake /Effects boundary rejects the old full interface org.kde.KWin.Effects
 # before suffix dispatch can accept it: no transition is recorded and the call
 # fails, while the exact lowercase tuple is accepted (proven by the self-check).
 reset_state
+: > "$WORK/state/private-bus-alive"
 set +e
 FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" FAKE_ENV_LOG="$WORK/env.log" \
   FAKE_TRANSITION_LOG="$WORK/transitions.log" "$FAKE_BIN/gdbus" \
@@ -969,7 +1048,7 @@ if [[ "$REJECT_STATUS" -ne 0 && "$(wc -l < "$WORK/transitions.log")" -eq 0 ]]; t
   PASS=$((PASS + 1))
 else
   echo "FAIL: fake gdbus did not reject the old /Effects interface (status $REJECT_STATUS)" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 fi
 
 if [[ ! -f "$SCRIPT" ]]; then
@@ -983,7 +1062,7 @@ fi
 if grep -nE 'busctl[[:space:]]+--user|pkill|killall' "$SCRIPT" >/dev/null 2>&1; then
   echo "FAIL: runner invokes a disallowed broad/host operation" >&2
   grep -nE 'busctl[[:space:]]+--user|pkill|killall' "$SCRIPT" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 else
   PASS=$((PASS + 1))
 fi
@@ -993,11 +1072,14 @@ fi
 if grep -nE 'SIGKILL|power[- ]loss' "$SCRIPT" | grep -qiE 'clean|recover|restor|handl|remov'; then
   echo "FAIL: runner claims SIGKILL/power-loss cleanup" >&2
   grep -nE 'SIGKILL|power[- ]loss' "$SCRIPT" >&2
-  FAIL=$((FAIL + 1))
+  record_failure
 else
   PASS=$((PASS + 1))
 fi
 
+# A targeted LIVE_NATIVE_PHASE selector runs only that single phase, skipping
+# all non-signal cases and every non-selected signal phase below.
+if [[ -z "${LIVE_NATIVE_PHASE:-}" ]]; then
 # parsing: missing command fails with a clear message
 reset_state
 run_script
@@ -1784,23 +1866,27 @@ assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "ownership group=client-a pid
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-a result=no-recorded-owner"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-b result=not-started"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup failed"
+fi
 
 # interruption during start: no load, owned cleanup, no false success
+if phase "interruption-during-start"; then
 reset_state
 touch "$WORK/state/nested-block-start"
 if [[ -z "$REAL_TIMEOUT" ]]; then
   echo "SKIP interrupt-during-start: timeout not found" >&2
 else
   set +e
-  env $(runner_env) "$REAL_TIMEOUT" --preserve-status -s TERM 3 "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
+  env $(runner_env) "$REAL_TIMEOUT" --preserve-status -s TERM --kill-after=3 3 "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
   check_exit 143
   assert_calls_not_contains "loadEffect"
   assert_not_contains "validated"
 fi
+fi
 
 # nested crash after start: no false success, owned cleanup
+if phase "nested-crash-after-start"; then
 reset_state
 run_bg run
 wait_for "$WORK/state/nested-ready"
@@ -1810,8 +1896,10 @@ check_exit 1
 assert_not_contains "validated"
 assert_calls_contains "unloadEffect"
 assert_kill_log_contains "kill"
+fi
 
 # TERM cleanup: living owned groups are freshly revalidated before termination.
+if phase "term-cleanup"; then
 reset_state
 run_bg run
 wait_for_effect_load
@@ -1836,8 +1924,18 @@ assert_file_line_before "$EVIDENCE_ROOT/manifest.txt" \
   "lifecycle: cleanup request group=client-b pid=$(sed -n 's/^client_b_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^client_b_pgid=//p' "$EVIDENCE_ROOT/owned-pids")" \
   "lifecycle: cleanup request group=nested pid=$(sed -n 's/^nested_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^nested_pgid=//p' "$EVIDENCE_ROOT/owned-pids")"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup complete"
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
+assert_file_line "$EVIDENCE_ROOT/inner-identity" "pid=$INNER_PID"
+assert_kill_log_contains "kill -TERM -- $INNER_PID"
+assert_kill_log_not_contains "kill -TERM -- $SESSION_LEADER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=sent sig=TERM pid=$INNER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner validation pid=$INNER_PID result=verified ppid=$SESSION_LEADER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner session exit status=143"
+fi
 
 # INT cleanup (Ctrl-C): unload and owned termination
+if phase "int-cleanup"; then
 if [[ -z "$REAL_TIMEOUT" ]]; then
   echo "SKIP INT cleanup: timeout not found" >&2
 else
@@ -1878,7 +1976,256 @@ isEffectLoaded $PLUGIN_ID false"
     "lifecycle: cleanup request group=nested pid=$(sed -n 's/^nested_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^nested_pgid=//p' "$EVIDENCE_ROOT/owned-pids")"
   assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup complete"
 fi
+fi
 
+# INT maps to TERM: the outer wrapper forwards exactly one TERM (never INT) to
+# the exact published and validated inner runner PID - never the session
+# leader, the owned session process group, or a decoy. The private bus survives
+# until the inner unload and post-unload complete, then ends after the inner
+# exit; the caller still sees the requested INT status 130.
+if phase "int-maps-to-term"; then
+reset_state
+DECOY=0
+sleep 300 &
+DECOY=$!
+# Monitor mode around this launch only: with the harness default (job control
+# disabled) Bash ignores SIGINT for asynchronous commands, so the runner never
+# exercises its outer INT trap. Enabling monitor mode gives the runner its own
+# process group and a live INT handler; the prior mode is restored immediately
+# so the harness keeps its own background-job semantics for the wait below.
+set -m
+run_bg run
+set +m
+wait_for_effect_load
+wait_for_clients
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
+"$REAL_KILL_BIN" -INT -- "$RUNNER_PID"
+# Deterministic forward evidence: the published app PID must receive exactly
+# one forwarded TERM, recorded before the runner is reaped.
+for i in $(seq 1 400); do
+  if grep -Fq "signal forward result=sent sig=TERM pid=$INNER_PID" "$EVIDENCE_ROOT/manifest.txt" 2>/dev/null; then
+    break
+  fi
+  "$REAL_SLEEP" 0.05
+done
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=sent sig=TERM pid=$INNER_PID"
+wait_runner
+check_exit 130
+assert_kill_log_contains "kill -TERM -- $INNER_PID"
+assert_kill_log_not_contains "kill -INT"
+assert_kill_log_not_contains "kill -TERM -- $SESSION_LEADER_PID"
+assert_kill_log_not_contains "kill -TERM -- -$SESSION_LEADER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner published pid=$INNER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner validation pid=$INNER_PID result=verified ppid=$SESSION_LEADER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner session exit status=143"
+assert_transitions "supportInformation $PLUGIN_ID
+isEffectSupported $PLUGIN_ID true
+isEffectLoaded $PLUGIN_ID false
+loadEffect $PLUGIN_ID
+isEffectLoaded $PLUGIN_ID true
+unloadEffect $PLUGIN_ID
+isEffectLoaded $PLUGIN_ID false"
+if kill -0 "$DECOY" 2>/dev/null; then
+  PASS=$((PASS + 1))
+else
+  fail "outer wrapper terminated the decoy process"
+fi
+if grep -Fq "$DECOY" "$WORK/kill.log"; then
+  fail "outer wrapper signalled the decoy"
+else
+  PASS=$((PASS + 1))
+fi
+kill "$DECOY" 2>/dev/null || true
+fi
+
+# direct-child mismatch: a published PID whose ps-observed parent is not the
+# still-live session leader is refused before any signal; the outer wrapper
+# fails closed and never forwards to an unverified PID.
+if phase "direct-child-mismatch"; then
+reset_state
+touch "$WORK/state/inner-runner-ppid-mismatch"
+run_bg run
+wait_runner
+check_exit 1
+assert_contains "invalid inner runner identity publication"
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner validation pid=$INNER_PID result=refused reason=parent-mismatch"
+assert_kill_log_not_contains "kill -TERM -- $INNER_PID"
+fi
+
+# signal before publication: the outer wrapper holds the first terminal signal
+# while the private bus stays live, then forwards it exactly once as TERM once
+# the inner runner publishes a valid PID.
+if phase "signal-before-publication"; then
+reset_state
+touch "$WORK/state/dbus-run-block-fork"
+run_bg run
+wait_for "$WORK/state/dbus-run-session-wrapper-pid"
+SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
+"$REAL_KILL_BIN" -TERM -- "$RUNNER_PID"
+touch "$WORK/state/dbus-run-release-fork"
+wait_runner
+check_exit 143
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal before inner runner publication sig=TERM"
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=sent sig=TERM pid=$INNER_PID"
+assert_kill_log_contains "kill -TERM -- $INNER_PID"
+assert_kill_log_not_contains "kill -TERM -- $SESSION_LEADER_PID"
+fi
+
+# signal before publication that never publishes: the outer wrapper holds the
+# first signal for the bounded startup interval, then fails closed. With no
+# validated target, the fallback is the exact owned session process group only
+# (never a leader-only signal, a stale PID, or a broad group), with truthful
+# no-unload evidence.
+if phase "signal-before-publication-never-publishes"; then
+reset_state
+touch "$WORK/state/dbus-run-block-fork"
+run_bg run
+wait_for "$WORK/state/dbus-run-session-wrapper-pid"
+SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
+"$REAL_KILL_BIN" -TERM -- "$RUNNER_PID"
+wait_runner
+check_exit 1
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal before inner runner publication sig=TERM"
+assert_contains "inner runner identity never published"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "outer terminate result=owned-session-group-requested pid=$SESSION_LEADER_PID no-unload=true"
+assert_kill_log_contains "kill -TERM -- -$SESSION_LEADER_PID"
+assert_kill_log_not_contains "kill -TERM -- $SESSION_LEADER_PID"
+fi
+
+# first-signal wins: a second INT/TERM during shutdown is recorded and ignored,
+# forwarding the first signal exactly once and returning its conventional code.
+if phase "first-signal-wins"; then
+reset_state
+touch "$WORK/state/dbus-run-delay-after-app"
+# Monitor mode around this launch only: with the harness default (job control
+# disabled) Bash ignores SIGINT for asynchronous commands, so the second INT
+# here would never reach the runner's outer INT trap. Enabling monitor mode
+# gives the runner its own process group and a live INT handler; the prior
+# mode is restored immediately so the harness keeps its own background-job
+# semantics for the wait below.
+set -m
+run_bg run
+set +m
+wait_for_effect_load
+wait_for_clients
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+"$REAL_KILL_BIN" -TERM -- "$RUNNER_PID"
+for i in $(seq 1 200); do
+  "$REAL_KILL_BIN" -0 -- "$INNER_PID" 2>/dev/null || break
+  "$REAL_SLEEP" 0.05
+done
+"$REAL_KILL_BIN" -INT -- "$RUNNER_PID"
+touch "$WORK/state/dbus-run-release-after-app"
+wait_runner
+check_exit 143
+if [[ "$(grep -Fc "kill -TERM -- $INNER_PID" "$WORK/kill.log")" -eq 1 ]]; then
+  PASS=$((PASS + 1))
+else
+  fail "first signal was not forwarded exactly once"
+fi
+assert_kill_log_not_contains "kill -INT -- $INNER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal ignored after first sig=INT first=TERM"
+fi
+
+# already-exited inner runner: a signal arriving after the inner runner exited
+# is recorded as already-exited and the outer wrapper still exits with the
+# mapped code once the owned session leader ends the private bus.
+if phase "already-exited-inner-runner"; then
+reset_state
+touch "$WORK/state/dbus-run-delay-after-app"
+run_bg run
+wait_for_effect_load
+wait_for_clients
+wait_for_session_pid
+INNER_PID="$INT_SESSION_PID"
+INT_SESSION_PID=""
+touch "$WORK/state/client-stop"
+for i in $(seq 1 200); do
+  "$REAL_KILL_BIN" -0 -- "$INNER_PID" 2>/dev/null || break
+  "$REAL_SLEEP" 0.05
+done
+"$REAL_KILL_BIN" -TERM -- "$RUNNER_PID"
+touch "$WORK/state/dbus-run-release-after-app"
+wait_runner
+check_exit 143
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=already-exited sig=TERM pid=$INNER_PID"
+fi
+
+# valid PID then session-exit timeout: after the app received its single
+# validated TERM, a session that does not exit within the bounded window is
+# recorded as failed/unresolved, never group-signalled. The app receives
+# exactly one TERM and the stuck session is released so no fake process is
+# left behind.
+if phase "session-exit-timeout"; then
+reset_state
+touch "$WORK/state/dbus-run-delay-after-app"
+run_bg run
+wait_for_effect_load
+wait_for_clients
+INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
+SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
+"$REAL_KILL_BIN" -TERM -- "$RUNNER_PID"
+for i in $(seq 1 400); do
+  if grep -Fq "signal forward result=failed sig=TERM" "$EVIDENCE_ROOT/manifest.txt" 2>/dev/null; then
+    break
+  fi
+  "$REAL_SLEEP" 0.05
+done
+wait_runner
+check_exit 143
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=sent sig=TERM pid=$INNER_PID"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=session-exit-timeout sig=TERM"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "signal forward result=failed sig=TERM"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "outer terminate result=unresolved reason=validated-inner-runner-established no-group-signal=true pid=$SESSION_LEADER_PID"
+if [[ "$(grep -Fc "kill -TERM -- $INNER_PID" "$WORK/kill.log")" -eq 1 ]]; then
+  PASS=$((PASS + 1))
+else
+  fail "app did not receive exactly one TERM"
+fi
+assert_kill_log_not_contains "kill -TERM -- $SESSION_LEADER_PID"
+assert_kill_log_not_contains "kill -TERM -- -$SESSION_LEADER_PID"
+touch "$WORK/state/dbus-run-release-after-app"
+for i in $(seq 1 100); do
+  if ! "$REAL_KILL_BIN" -0 -- "$SESSION_LEADER_PID" 2>/dev/null && [[ ! -f "$WORK/state/private-bus-alive" ]]; then
+    break
+  fi
+  "$REAL_SLEEP" 0.05
+done
+if "$REAL_KILL_BIN" -0 -- "$SESSION_LEADER_PID" 2>/dev/null || [[ -f "$WORK/state/private-bus-alive" ]]; then
+  fail "stuck session leader or its private bus daemon was left behind"
+else
+  PASS=$((PASS + 1))
+fi
+fi
+
+# outer error: the owned session leader exiting before the inner runner
+# publishes its PID fails closed with evidence, never forwarding any signal.
+if phase "outer-error"; then
+reset_state
+touch "$WORK/state/dbus-run-exit-error"
+run_bg run
+wait_runner
+check_exit 1
+assert_contains "inner session exited before inner runner publication"
+fi
+
+# outer timeout: a published inner runner PID that never appears within the
+# bounded startup wait fails closed; the owned session group is terminated.
+if phase "outer-timeout"; then
+reset_state
+touch "$WORK/state/dbus-run-block-fork"
+run_bg run
+wait_for "$WORK/state/dbus-run-session-wrapper-pid"
+wait_runner
+check_exit 1
+assert_contains "inner runner identity never published"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "outer terminate result=owned-session-group-requested"
+fi
+
+if [[ -z "${LIVE_NATIVE_PHASE:-}" ]]; then
 # owned-only termination: reaped clients are never signalled, the living nested
 # group is signalled once, and the decoy is never targeted.
 reset_state
@@ -2052,6 +2399,7 @@ assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=nested result=
 assert_kill_log_contains "kill -0 -- -$NESTED_PGID"
 assert_kill_log_not_contains "kill -TERM -- -$NESTED_PGID"
 assert_calls_count "ps -o pid= -o pgid= -p $NESTED_PID" 2
+fi
 
 echo "passes: $PASS failures: $FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

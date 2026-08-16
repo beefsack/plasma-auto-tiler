@@ -51,6 +51,7 @@ __session() {
   local effect_output="" quoted_effects_response=""
   local effects_attempts=0 effects_probes_done=0 effects_status=0 effects_stdout="" effects_stderr=""
   local effects_stdout_file="" effects_stderr_file=""
+  local inner_identity_file="" inner_identity_tmp=""
 
   effects_call() {
     local method="$1"
@@ -302,11 +303,21 @@ __session() {
     return "$CLEANUP_RESULT"
   }
 
-  printf 'session_pid=%s\n' "$$" >> "$EVIDENCE_ROOT/manifest.txt"
-
   trap 'cleanup_owned || true' EXIT
   trap 'cleanup_owned || true; exit 143' TERM
-  trap 'cleanup_owned || true; exit 130' INT
+
+  printf 'session_pid=%s\n' "$$" >> "$EVIDENCE_ROOT/manifest.txt"
+
+  # Atomically publish only the inner-runner PID. The outer wrapper validates
+  # the PID against current ps observation (live, distinct from the session
+  # leader, directly parented by the still-live session leader) before any
+  # signal is forwarded. The inner runner's SIGINT is ignored by the background
+  # launch, so only TERM reaches it; INT/TERM both arrive as TERM here.
+  inner_identity_file="$EVIDENCE_ROOT/inner-identity"
+  inner_identity_tmp="$EVIDENCE_ROOT/.inner-identity.tmp"
+  printf 'pid=%s\n' "$$" > "$inner_identity_tmp"
+  mv -f -- "$inner_identity_tmp" "$inner_identity_file"
+  mark "inner identity published pid=$$"
 
   mark "session started"
 
@@ -575,6 +586,10 @@ run() {
   local repo_root plugin_src kwin_dir
   local outer_xdg_data_dirs_set=0 outer_xdg_data_dirs=""
   local -a plugin_sos
+  local inner_session_pid="" inner_runner_pid="" inner_exit=0
+  local pending_signal="" pending_code="" published_pid="" validation_attempts=0
+  local first_signal="" validated_runner_ever=0
+  local i j
 
   # EVIDENCE_ROOT is internal runner state, never a caller-controlled override.
   # The fake harness may supply a pre-created root only through its explicit
@@ -782,7 +797,221 @@ run() {
   export RUNNER_OUTER_XDG_DATA_DIRS="${outer_xdg_data_dirs-}"
   export XDG_DATA_DIRS="$XDG_DATA_HOME"
 
-  exec "$DBUS_RUN_BIN" -- "$BASH_BIN" "$SELF" __session
+  # Outer foreground wrapper: the private dbus-run-session/dbus-daemon and the
+  # inner runner must survive terminal INT/TERM cleanup. The inner runner runs
+  # in its own session so a terminal foreground process-group signal never
+  # reaches the bus daemon or the inner runner directly. This wrapper alone
+  # receives terminal signals and forwards exactly one TERM (the inner runner's
+  # INT is ignored by its background launch) to the validated inner-runner PID,
+  # then waits for the supervisor to end the private bus.
+  inner_mark() {
+    printf 'lifecycle: %s\n' "$*" >> "$EVIDENCE_ROOT/manifest.txt" 2>/dev/null || true
+  }
+
+  published_inner_runner_pid() {
+    local line
+    [[ -f "$EVIDENCE_ROOT/inner-identity" ]] || return 1
+    while IFS= read -r line; do
+      if [[ "$line" == pid=* ]]; then
+        printf '%s\n' "${line#pid=}"
+        return 0
+      fi
+    done < "$EVIDENCE_ROOT/inner-identity"
+    return 1
+  }
+
+  # The inner runner is the direct child of dbus-run-session (the session
+  # leader). A PID is valid to signal only when it is numeric, live, distinct
+  # from the leader, and its ps-observed parent is the still-live leader.
+  validate_inner_runner() {
+    local published_pid="$1"
+    local inspection="" reported_pid="" reported_ppid="" ps_status=0
+    local stdout_file="$EVIDENCE_ROOT/ownership-inner-runner-ps.stdout.log"
+    local stderr_file="$EVIDENCE_ROOT/ownership-inner-runner-ps.stderr.log"
+    local stderr="" quoted_inspection="" quoted_stderr=""
+
+    if [[ ! "$published_pid" =~ ^[1-9][0-9]*$ ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=invalid-pid"
+      return 1
+    fi
+    if [[ "$published_pid" == "$inner_session_pid" ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=is-session-leader leader=$inner_session_pid"
+      return 1
+    fi
+    if ! "$KILL_BIN" -0 -- "$published_pid" 2>/dev/null; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=not-alive"
+      return 1
+    fi
+    if ! "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=session-not-alive leader=$inner_session_pid"
+      return 1
+    fi
+    if ! : > "$stdout_file" 2>/dev/null || ! : > "$stderr_file" 2>/dev/null; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=evidence-preparation-failed"
+      return 1
+    fi
+    "$PS_BIN" -o pid= -o ppid= -p "$published_pid" >"$stdout_file" 2>"$stderr_file"
+    ps_status=$?
+    inspection="$(<"$stdout_file")"
+    IFS= read -r -N 4096 stderr < "$stderr_file" || true
+    printf -v quoted_inspection '%q' "$inspection"
+    printf -v quoted_stderr '%q' "$stderr"
+    inner_mark "inner runner probe pid=$published_pid ps_status=$ps_status stdout_file=$stdout_file stdout=$quoted_inspection stderr_file=$stderr_file stderr=$quoted_stderr"
+    if [[ "$ps_status" -ne 0 ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=ps-failed"
+      return 1
+    fi
+    if [[ ! "$inspection" =~ ^[[:blank:]]*([0-9]+)[[:blank:]]+([0-9]+)[[:blank:]]*$ ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=unprovable-parent"
+      return 1
+    fi
+    reported_pid="${BASH_REMATCH[1]}"
+    reported_ppid="${BASH_REMATCH[2]}"
+    if [[ "$reported_pid" != "$published_pid" ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=pid-mismatch reported_pid=$reported_pid"
+      return 1
+    fi
+    if [[ "$reported_ppid" != "$inner_session_pid" ]]; then
+      inner_mark "inner runner validation pid=$published_pid result=refused reason=parent-mismatch reported_ppid=$reported_ppid leader=$inner_session_pid"
+      return 1
+    fi
+    inner_mark "inner runner validation pid=$published_pid result=verified ppid=$reported_ppid"
+    return 0
+  }
+
+  terminate_inner_session() {
+    local j
+    # Exact owned-session-group fallback only: never a leader-only or broad
+    # group signal. Permitted only while no validated inner-runner PID has
+    # ever been established; after a valid app PID is established, a stuck
+    # session is recorded as unresolved rather than group-signalled, so the
+    # app can never receive a second TERM through its session group.
+    if [[ -n "$inner_session_pid" ]] && "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null; then
+      if [[ "$validated_runner_ever" -eq 1 ]]; then
+        inner_mark "outer terminate result=unresolved reason=validated-inner-runner-established no-group-signal=true pid=$inner_session_pid"
+        return 0
+      fi
+      "$KILL_BIN" -TERM -- "-$inner_session_pid" 2>/dev/null || true
+      inner_mark "outer terminate result=owned-session-group-requested pid=$inner_session_pid no-unload=true"
+      for ((j = 0; j < 100; j++)); do
+        "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null || return 0
+        "$SLEEP_BIN" 0.1
+      done
+    fi
+  }
+
+  forward_signal() {
+    local signame="$1" code="$2" j
+    if [[ -z "$inner_runner_pid" ]]; then
+      inner_mark "signal forward result=refused sig=$signame reason=no-validated-inner-runner"
+      exit 1
+    fi
+    if ! "$KILL_BIN" -0 -- "$inner_runner_pid" 2>/dev/null; then
+      inner_mark "signal forward result=already-exited sig=$signame pid=$inner_runner_pid"
+    elif validate_inner_runner "$inner_runner_pid"; then
+      # Both INT and TERM are forwarded as exactly one TERM to the validated
+      # PID; the inner runner's INT is ignored by its background launch.
+      "$KILL_BIN" -TERM -- "$inner_runner_pid" 2>/dev/null
+      inner_mark "signal forward result=sent sig=TERM pid=$inner_runner_pid"
+    else
+      inner_mark "signal forward result=refused sig=$signame pid=$inner_runner_pid reason=identity-unverified"
+      inner_runner_pid=""
+      exit 1
+    fi
+    for ((j = 0; j < 100; j++)); do
+      "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null || break
+      "$SLEEP_BIN" 0.1
+    done
+    if "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null; then
+      inner_mark "signal forward result=session-exit-timeout sig=$signame"
+      inner_mark "signal forward result=failed sig=$signame"
+    else
+      if wait "$inner_session_pid"; then
+        inner_exit=0
+      else
+        inner_exit=$?
+      fi
+      inner_mark "inner session exit status=$inner_exit"
+    fi
+    exit "$code"
+  }
+
+  handle_signal() {
+    local signame="$1" code="$2"
+    if [[ -n "$first_signal" ]]; then
+      inner_mark "signal ignored after first sig=$signame first=$first_signal"
+      return 0
+    fi
+    first_signal="$signame"
+    if [[ -n "$inner_runner_pid" ]]; then
+      forward_signal "$signame" "$code"
+    else
+      pending_signal="$signame"
+      pending_code="$code"
+      inner_mark "signal before inner runner publication sig=$signame"
+    fi
+  }
+
+  trap 'terminate_inner_session' EXIT
+  trap 'handle_signal INT 130' INT
+  trap 'handle_signal TERM 143' TERM
+
+  # Launch the inner session in its own session, shielded from the terminal's
+  # foreground process group. Job control is disabled, so the backgrounded
+  # setsid is never a process group leader and $! is exactly the session leader.
+  "$SETSID_BIN" "$DBUS_RUN_BIN" -- "$BASH_BIN" "$SELF" __session &
+  inner_session_pid=$!
+  inner_mark "inner session launched pid=$inner_session_pid"
+
+  # Bounded startup wait: the inner runner publishes its PID, which is
+  # validated before any signal is forwarded. A terminal signal arriving
+  # before publication is held - preserving the private bus - and forwarded
+  # only once a valid PID is published.
+  inner_runner_pid=""
+  validation_attempts=0
+  for ((i = 0; i < 100; i++)); do
+    if ! "$KILL_BIN" -0 -- "$inner_session_pid" 2>/dev/null; then
+      if wait "$inner_session_pid"; then
+        inner_exit=0
+      else
+        inner_exit=$?
+      fi
+      fail "inner session exited before inner runner publication (status $inner_exit)"
+    fi
+    published_pid="$(published_inner_runner_pid)"
+    if [[ -n "$published_pid" ]]; then
+      if validate_inner_runner "$published_pid"; then
+        inner_runner_pid="$published_pid"
+        validated_runner_ever=1
+        inner_mark "inner runner published pid=$inner_runner_pid"
+        break
+      fi
+      validation_attempts=$((validation_attempts + 1))
+      if [[ "$validation_attempts" -ge 10 ]]; then
+        fail "invalid inner runner identity publication (pid $published_pid)"
+      fi
+    fi
+    "$SLEEP_BIN" 0.1
+  done
+  if [[ -z "$inner_runner_pid" ]]; then
+    fail "inner runner identity never published"
+  fi
+
+  # A signal deferred during startup is forwarded now that the inner runner is
+  # validated.
+  if [[ -n "$pending_signal" ]]; then
+    forward_signal "$pending_signal" "$pending_code"
+  fi
+
+  if wait "$inner_session_pid"; then
+    inner_exit=0
+  else
+    inner_exit=$?
+  fi
+  inner_mark "inner session exit status=$inner_exit"
+  inner_runner_pid=""
+  inner_session_pid=""
+  exit "$inner_exit"
 }
 
 quick=0

@@ -122,3 +122,28 @@
 - 2026-08-16: Process violation recorded: a prior documentation checkpoint
   enumerated protected working-tree paths. No path details are retained here,
   and no further operation used those paths.
+- 2026-08-17: signal-lifetime correction checkpoint. The targeted
+  `int-maps-to-term` fake phase passed 37/0 in about 4 seconds with both shell
+  syntax checks passing at `/tmp/opencode/unit04-int-maps-to-term/`. Independent
+  review found a post-validation session-group fallback that could re-signal a
+  validated app; the correction records a stuck post-validation session as
+  unresolved rather than group-signalling it. Focused regression phases and
+  syntax checks passed at `/tmp/opencode/unit04-session-exit-timeout-1786890101/`.
+  The CPU-niced full fake suite, bounded at 600 seconds for its documented
+  failure-path duration, stopped after 152 seconds at 418 passes and 1 failure:
+  `first-signal-wins` sends its second INT to a job-control-off background
+  runner, so Bash ignores it and the expected ignored-signal marker is absent.
+  No static/fake acceptance, commit, push, or live test is claimed. The next
+   Lead must resolve that focused harness failure, rerun the full fake suite,
+   independently review the final topology, then reconcile acceptance artifacts.
+- 2026-08-17: static/fake signal gate accepted. The `first-signal-wins` harness
+  launch now enables monitor mode only around the runner, allowing its second
+  INT to exercise the outer ignored-after-first branch without changing
+  production signal behavior. The focused phase passed 29/0 at
+  `/tmp/opencode/unit04-fsw-after.log`; the CPU-niced full fake suite, bounded
+  at 600 seconds, passed once in about 152 seconds with 419 passes and 0
+  failures at `/tmp/opencode/unit04-verify-attempt06-1786891535/`. Both shell
+  syntax checks and `git diff --check` passed. Fresh independent review found
+  no material signal/session topology defect. No live KWin/Plasma action,
+  commit, or push occurred. The user-run controlled-unload rerun remains
+  parked.

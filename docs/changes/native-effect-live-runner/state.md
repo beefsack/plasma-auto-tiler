@@ -91,3 +91,25 @@
   accepted. No unreported visual criterion is inferred as tested. Active gate:
   rerun and end with Ctrl-C from the original host terminal while the nested
   window remains open, proving unload/post-unload and cleanup.
+- Current signal-lifetime correction: the targeted `int-maps-to-term` fake
+  phase passed 37/0 in about 4 seconds with both shell syntax checks passing at
+  `/tmp/opencode/unit04-int-maps-to-term/`. Independent review found a
+  post-validation session-group fallback that could re-signal a validated app.
+  The current correction records such a stuck session as unresolved and adds a
+  passing `session-exit-timeout` regression at
+  `/tmp/opencode/unit04-session-exit-timeout-1786890101/`. The CPU-niced full
+  fake suite, bounded at 600 seconds, failed after 152 seconds with 418 passes
+  and 1 failure: `first-signal-wins` sends its second INT to a job-control-off
+  background runner, so the required ignored-signal marker is absent. No
+   acceptance, commit, or push is authorized. Next: repair that focused harness
+   case, rerun the full fake suite, obtain independent final topology review,
+   reconcile artifacts, and commit/push only if static/fake gates then pass.
+- Static/fake signal gate: accepted. The harness-only `first-signal-wins`
+  monitor-mode launch repair passed 29/0 at `/tmp/opencode/unit04-fsw-after.log`;
+  `int-maps-to-term` and `session-exit-timeout` remain green. Both shell syntax
+  checks and `git diff --check` passed. The CPU-niced full fake suite, bounded
+  at 600 seconds, passed once in about 152 seconds with 419 passes and 0
+  failures at `/tmp/opencode/unit04-verify-attempt06-1786891535/`. A fresh
+  independent signal/session topology review found no material defect. The next
+  outstanding acceptance gap is the parked user-run nested rerun for controlled
+  unload, post-unload, and cleanup evidence; no live action is authorized here.

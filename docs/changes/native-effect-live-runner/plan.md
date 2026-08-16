@@ -123,8 +123,21 @@ slices use `unit-<n>/attempt-<n>`.
   nested window, so KWin exited before normal unload: unload and controlled
   cleanup are not accepted. No unreported visual criterion is inferred as
   tested. Remaining gate: rerun and end with Ctrl-C from the original host
-  terminal while the nested window remains open, proving unload/post-unload and
-  cleanup.
+   terminal while the nested window remains open, proving unload/post-unload and
+   cleanup.
+- 2026-08-17: signal-lifetime static/fake correction accepted. The
+  `first-signal-wins` fake launch enables monitor mode only around its runner
+  launch, so its second INT reaches the outer trap rather than inheriting
+  ignored SIGINT from a job-control-off background launch. The focused phase
+  passed 29/0 at `/tmp/opencode/unit04-fsw-after.log`; the prior
+  `int-maps-to-term` and `session-exit-timeout` phases remain green. Both shell
+  syntax checks and `git diff --check` passed. The CPU-niced full fake suite,
+  bounded at 600 seconds, passed once in about 152 seconds with 419 passes and
+  0 failures at `/tmp/opencode/unit04-verify-attempt06-1786891535/`. A fresh
+  independent signal/session topology review found no material defect. No live
+  KWin/Plasma action occurred. The accepted user nested evidence remains limited
+  to post-load behavior; controlled unload and cleanup require the parked
+  user-run rerun.
 
 ## Acceptance-Evidence Map
 
