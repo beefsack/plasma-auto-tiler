@@ -662,8 +662,17 @@ done
     echo "cmake: build failed" >&2
     exit 1
   fi
-  mkdir -p "$builddir/kwin/effects/plugins"
-    printf 'fake-plugin\n' > "$builddir/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  if [[ -f "$state/plugin-ambiguous" ]]; then
+    mkdir -p "$builddir/bin/kwin/effects/plugins" "$builddir/bin/elsewhere"
+    printf 'fake-plugin\n' > "$builddir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+    printf 'fake-plugin\n' > "$builddir/bin/elsewhere/plasma-auto-tiler-active-border.so"
+  elif [[ -f "$state/plugin-wrong-layout" ]]; then
+    mkdir -p "$builddir/bin/wrong-namespace"
+    printf 'fake-plugin\n' > "$builddir/bin/wrong-namespace/plasma-auto-tiler-active-border.so"
+  else
+    mkdir -p "$builddir/bin/kwin/effects/plugins"
+    printf 'fake-plugin\n' > "$builddir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  fi
     printf 'fake build complete\n'
     exit 0
   fi
@@ -1204,6 +1213,26 @@ run_script run
 check_exit 1
 assert_calls_not_contains "kwin_wayland --wayland-display"
 
+# nonconforming plugin layout (missing the kwin/effects/plugins terminal
+# suffix) refuses before dbus-run-session or the nested launch
+reset_state
+touch "$WORK/state/plugin-wrong-layout"
+run_script run
+check_exit 1
+assert_contains "does not conform"
+assert_calls_not_contains "dbus-run-session"
+assert_calls_not_contains "kwin_wayland --wayland-display"
+
+# an ambiguous plugin location refuses before dbus-run-session or the nested
+# launch
+reset_state
+touch "$WORK/state/plugin-ambiguous"
+run_script run
+check_exit 1
+assert_contains "not uniquely located"
+assert_calls_not_contains "dbus-run-session"
+assert_calls_not_contains "kwin_wayland --wayland-display"
+
 # success: private env roots, runtime 0700, absolute host socket, no --virtual,
 # private child socket, private D-Bus, no busctl --user, exact plugin identity,
 # exact /Effects transitions, two owned client groups, owned-only termination
@@ -1277,6 +1306,12 @@ if [[ -n "$PLUGIN_RESOLVED" && "$PLUGIN_RESOLVED" == "$EXPECTED_PLUGIN" && -f "$
 else
   fail "nested process did not consume the exact private plugin layout: resolved='$PLUGIN_RESOLVED' expected='$EXPECTED_PLUGIN'"
 fi
+# The exact plugin file and its derived Qt search prefix are recorded in the
+# manifest, and the exported QT_PLUGIN_PATH seen by nested KWin is exactly the
+# derived <build>/bin prefix, never the build root.
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "plugin_so=$EVIDENCE_ROOT/build/bin/kwin/effects/plugins/$PLUGIN_ID.so"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "qt_plugin_path=$EVIDENCE_ROOT/build/bin"
+assert_file_line "$WORK/env.log" "KWIN_QT_PLUGIN_PATH=$EVIDENCE_ROOT/build/bin"
 CLIENT_DISPLAYS="$(sed -n 's/^CLIENT_WAYLAND_DISPLAY=//p' "$WORK/env.log")"
 CLIENT_DBUSES="$(sed -n 's/^CLIENT_DBUS=//p' "$WORK/env.log")"
 if [[ "$(wc -l <<<"$CLIENT_DISPLAYS")" -eq 2 && -n "$NESTED_SOCKET" ]] && \
@@ -1371,16 +1406,26 @@ assert_calls_count "ps -o pid= -o pgid= -p $CLIENT_PID2" 1
 assert_kill_log_not_contains "kill -TERM -- -$CLIENT_PGID1"
 assert_kill_log_not_contains "kill -TERM -- -$CLIENT_PGID2"
 
-# explicit isEffectSupported=false is classified as unsupported, before load
+# explicit isEffectSupported=false is classified as a factory-support failure
+# before any load, later effect query, or client launch; the never-started
+# clients record a non-applicable not-started cleanup state in client-a then
+# client-b order and cleanup still completes.
 reset_state
 touch "$WORK/state/effect-unsupported"
 run_script run
 check_exit 1
-assert_contains "effect unsupported"
+assert_contains "factory support check returned false"
 assert_calls_not_contains "loadEffect"
 assert_calls_not_contains "isEffectLoaded"
+assert_calls_not_contains "setsid $FAKE_BIN/weston-terminal"
 assert_transitions "supportInformation $PLUGIN_ID
 isEffectSupported $PLUGIN_ID false"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-a result=not-started"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-b result=not-started"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup complete"
+assert_file_line_before "$EVIDENCE_ROOT/manifest.txt" \
+  "lifecycle: cleanup group=client-a result=not-started" \
+  "lifecycle: cleanup group=client-b result=not-started"
 
 # OpenGL unsupported refuses before load
 reset_state
@@ -1733,6 +1778,12 @@ assert_calls_contains "setsid $FAKE_BIN/weston-terminal"
 assert_calls_contains "ps -o pid= -o pgid= -p $CLIENT_PID"
 assert_kill_log_not_contains "kill -TERM -- -$((CLIENT_PID + 1))"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "ownership group=client-a pid=$CLIENT_PID result=refused reason=pid-pgid-mismatch"
+# The launch-attempted client-a has no safely attributable PGID, so its cleanup
+# records no-recorded-owner and fails the overall cleanup; the never-launched
+# client-b records a non-applicable not-started state.
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-a result=no-recorded-owner"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup group=client-b result=not-started"
+assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup failed"
 
 # interruption during start: no load, owned cleanup, no false success
 reset_state

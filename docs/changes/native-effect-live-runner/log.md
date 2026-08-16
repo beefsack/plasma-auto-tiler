@@ -93,3 +93,19 @@
   `/tmp/opencode/live-native-effect.GHMi1Q` passed 347/0 in 86 Bash seconds;
   independent review is accepted. No successful real lifecycle or visual
   acceptance is claimed; user retry remains pending.
+- 2026-08-16: third user retry evidence at `/tmp/tmp.Ew6l6rZCma` reached
+  `gl2`, completed compositor and `/Effects` readiness, then returned explicit
+  `isEffectSupported=false`. Diagnosis identified private plugin discovery:
+  CMake emitted `build/bin/kwin/effects/plugins/<plugin>.so`, but the runner
+  exported `build` as `QT_PLUGIN_PATH`. The accepted correction derives the
+  exact prefix from the canonical plugin's required suffix, records `plugin_so`
+  and `qt_plugin_path`, aligns fake and real layout, and truthfully separates
+  never-started from attempted-unowned client cleanup. Both syntax checks
+  passed; the single suite at
+  `/tmp/opencode/live-native-effect-plugin-prefix.IeyihO` passed 366/0 in 87
+  Bash seconds; fresh independent review found no material defect. No
+  successful real load or visual acceptance is claimed.
+- 2026-08-16: reconciliation found `kwin/contents/code/main.js` clean and its
+  working-file and `HEAD` hashes both
+  `91023df4a888264968b300920893cadb9391a764`; prior differing hash reports
+  were inconsistent. The file was not touched.

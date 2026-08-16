@@ -42,6 +42,7 @@ __session() {
 
   local nested_pid="" nested_pgid=""
   local client_a_pid="" client_a_pgid="" client_b_pid="" client_b_pgid=""
+  local client_a_started=0 client_b_started=0
   local loaded="" status="" i="" journal_since="" cleanup_failed=0 nested_ready=0
   local renderer="" quoted_compositing_type=""
   local compositing_attempts=0 compositing_probes_done=0 compositing_status=0 compositing_stdout="" compositing_stderr=""
@@ -280,8 +281,16 @@ __session() {
     capture_journal
     # Exact recorded owned groups only: clients first, then the nested
     # launcher. Each group must disappear before cleanup can succeed.
-    terminate_owned_group client-a "$client_a_pid" "$client_a_pgid" || true
-    terminate_owned_group client-b "$client_b_pid" "$client_b_pgid" || true
+    if [[ "$client_a_started" -eq 1 ]]; then
+      terminate_owned_group client-a "$client_a_pid" "$client_a_pgid" || true
+    else
+      mark "cleanup group=client-a result=not-started"
+    fi
+    if [[ "$client_b_started" -eq 1 ]]; then
+      terminate_owned_group client-b "$client_b_pid" "$client_b_pgid" || true
+    else
+      mark "cleanup group=client-b result=not-started"
+    fi
     terminate_owned_group nested "$nested_pid" "$nested_pgid" || true
     if [[ "$cleanup_failed" -eq 0 ]]; then
       mark "cleanup complete"
@@ -442,15 +451,15 @@ __session() {
   record_dbus "effects readiness result=verified response=$quoted_effects_response"
 
   # Support check: isEffectSupported is a real boolean. An explicit false is a
-  # distinct unsupported result, while an unavailable/error query remains an
-  # endpoint/query failure, never unsupported.
+  # distinct factory-support failure, while an unavailable/error query remains
+  # an endpoint/query failure, never unsupported.
   if ! effect_output="$(effects_request isEffectSupported)"; then
     fail "could not determine effect support"
   fi
   effect_bool "$effect_output"
   case $? in
     0) : ;;
-    1) fail "effect unsupported" ;;
+    1) fail "effect factory support check returned false (isEffectSupported=false)" ;;
     2) fail "could not determine effect support" ;;
   esac
 
@@ -486,6 +495,7 @@ __session() {
   mark "effect loaded"
 
   # Two Wayland-native clients, each in its own recorded process group.
+  client_a_started=1
   "$SETSID_BIN" "$WESTON_TERMINAL_BIN" >"$EVIDENCE_ROOT/client-a.log" 2>&1 &
   client_a_pid=$!
   if ! client_a_pgid="$(establish_owned_group client-a "$client_a_pid")"; then
@@ -496,6 +506,7 @@ __session() {
     printf 'client_a_pgid=%s\n' "$client_a_pgid"
   } >> "$EVIDENCE_ROOT/owned-pids"
 
+  client_b_started=1
   "$SETSID_BIN" "$WESTON_TERMINAL_BIN" >"$EVIDENCE_ROOT/client-b.log" 2>&1 &
   client_b_pid=$!
   if ! client_b_pgid="$(establish_owned_group client-b "$client_b_pid")"; then
@@ -560,7 +571,7 @@ __session() {
 run() {
   local quick="${1:-0}" host_socket nested_socket build_dir
   local host_runtime host_display
-  local version_line runtime_ver abi_ver plugin_so test_root candidate_root
+  local version_line runtime_ver abi_ver plugin_so plugin_suffix plugin_prefix test_root candidate_root
   local repo_root plugin_src kwin_dir
   local outer_xdg_data_dirs_set=0 outer_xdg_data_dirs=""
   local -a plugin_sos
@@ -688,7 +699,6 @@ run() {
   export XDG_STATE_HOME="$EVIDENCE_ROOT/state"
   export XDG_RUNTIME_DIR="$runtime_dir"
   export WAYLAND_DISPLAY="$nested_socket"
-  export QT_PLUGIN_PATH="$build_dir"
   export KWIN_COMPOSE="O2"
   export RUNNER_HOST_SOCKET="$host_socket"
   export RUNNER_NESTED_SOCKET="$nested_socket"
@@ -744,9 +754,18 @@ run() {
     fail "built plugin not uniquely located under build directory (found ${#plugin_sos[@]})"
   fi
   plugin_so="${plugin_sos[0]}"
-  if [[ "$plugin_so" != *"/kwin/effects/plugins/"* ]]; then
-    fail "built plugin not under declared kwin/effects/plugins namespace: $plugin_so"
+  plugin_so="$(cd -P -- "$(dirname -- "$plugin_so")" && pwd)/$(basename -- "$plugin_so")" || fail "could not resolve built plugin path"
+  plugin_suffix="/kwin/effects/plugins/${PLUGIN_ID}.so"
+  if [[ "$plugin_so" != *"$plugin_suffix" ]]; then
+    fail "built plugin does not conform to the $plugin_suffix layout: $plugin_so"
   fi
+  plugin_prefix="${plugin_so%"$plugin_suffix"}"
+  if [[ -z "$plugin_prefix" || "$plugin_prefix" != /* ]]; then
+    fail "built plugin search prefix is not absolute: $plugin_prefix"
+  fi
+  export QT_PLUGIN_PATH="$plugin_prefix"
+  printf 'plugin_so=%s\n' "$plugin_so" >> "$EVIDENCE_ROOT/manifest.txt"
+  printf 'qt_plugin_path=%s\n' "$plugin_prefix" >> "$EVIDENCE_ROOT/manifest.txt"
 
   # Capture the exact caller XDG_DATA_DIRS state (unset vs set/value), then hand
   # dbus-run-session a sanitized, deterministic activation-search environment so
