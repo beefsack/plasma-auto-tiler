@@ -25,9 +25,9 @@ resolve_tool() {
   local name="$1" cmd="$2"
   local path="${!name:-}"
   if [[ -z "$path" ]]; then
-    path="$(command -v "$cmd" 2>/dev/null || true)"
+    path="$(type -P "$cmd" 2>/dev/null || true)"
   fi
-  if [[ -z "$path" || ! -x "$path" ]]; then
+  if [[ -z "$path" || "$path" != /* || ! -x "$path" ]]; then
     echo "missing required tool: $name" >&2
     return 1
   fi

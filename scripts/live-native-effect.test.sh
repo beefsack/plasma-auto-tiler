@@ -976,6 +976,31 @@ check_exit 1
 assert_contains "missing required tool"
 assert_calls_not_contains "kwin_wayland --wayland-display"
 
+# missing tool: an explicitly invalid KILL_BIN refuses before any launch
+reset_state
+set +e
+env $(runner_env) KILL_BIN="/nonexistent/kill" "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1
+assert_contains "missing required tool"
+assert_calls_not_contains "kwin_wayland --wayland-display"
+
+# missing tool: a relative-but-executable KILL_BIN refuses before any launch
+reset_state
+mkdir -p "$WORK/rel-bin"
+cp "$FAKE_BIN/kill" "$WORK/rel-bin/kill"
+set +e
+(
+  cd "$WORK/rel-bin"
+  env $(runner_env | grep -v '^KILL_BIN=') KILL_BIN="kill" "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1
+)
+EXIT=$?
+set -e
+check_exit 1
+assert_contains "missing required tool"
+assert_calls_not_contains "kwin_wayland --wayland-display"
+
 # evidence override gate: the requested override refuses without the exact
 # harness-only gate, before build, D-Bus, or nested-process launch.
 reset_state
@@ -1543,6 +1568,36 @@ if grep -Fq "cleanup verify group=client-a result=already-stopped" "$EVIDENCE_RO
   PASS=$((PASS + 1))
 else
   fail "cleanup did not record reaped clients as already stopped"
+fi
+kill "$DECOY" 2>/dev/null || true
+
+# default tool lookup: with KILL_BIN unset, the executable PATH lookup resolves
+# the fake kill. The manifest records the absolute kill_bin, fake-kill boundary
+# observability stays active, and no unattributed process is signalled.
+reset_state
+DECOY=0
+sleep 300 &
+DECOY=$!
+set +e
+env $(runner_env | grep -v '^KILL_BIN=') "$BASH_PATH" "$SCRIPT" run >"$OUTPUT" 2>&1 &
+RUNNER_PID=$!
+set -e
+wait_for_clients
+wait_for "$WORK/state/nested-ready"
+touch "$WORK/state/client-stop"
+wait_runner
+check_exit 0
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "kill_bin=$FAKE_BIN/kill"
+assert_kill_log_contains "kill -0"
+if kill -0 "$DECOY" 2>/dev/null; then
+  PASS=$((PASS + 1))
+else
+  fail "decoy process was terminated by the runner"
+fi
+if grep -Fq "$DECOY" "$WORK/kill.log"; then
+  fail "unrelated process was terminated"
+else
+  PASS=$((PASS + 1))
 fi
 kill "$DECOY" 2>/dev/null || true
 

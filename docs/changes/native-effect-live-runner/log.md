@@ -59,3 +59,13 @@
   3/3. Malformed earlier comprehensive Worker evidence and the reviewer's
   out-of-brief timeout probe are excluded. No real/live run occurred; user-run
   nested visual acceptance remains pending.
+- 2026-08-16: live-runner `KILL_BIN` preflight resolver correction accepted. A
+  user-run quick attempt failed closed at `KILL_BIN` preflight before launch;
+  Bash builtin precedence from `command -v` caused it although coreutils `kill`
+  existed. The correction uses external PATH lookup and requires each candidate
+  to be absolute and executable. Regressions cover default PATH, invalid
+  override, and relative executable override; both syntax checks passed. The
+  fake-tool suite at `/tmp/opencode/unit04-preflight-correction-attempt03-
+  evidence/` passed 258/0 in 61 Bash seconds. A fresh independent review found
+  no defect. No real nested run or visual acceptance occurred; user retry
+  remains next.
