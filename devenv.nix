@@ -12,8 +12,10 @@
     pkg-config
     zip
     kdePackages.extra-cmake-modules
+    kdePackages.kwin
     kdePackages.kwin.dev
     kdePackages.kpackage
+    weston
   ];
 
   enterShell = ''

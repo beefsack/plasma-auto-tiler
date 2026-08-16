@@ -1,0 +1,61 @@
+# Native Effect Live Runner Log
+
+- 2026-08-15: Expanded artifact and nested-only governance decision checkpoint
+  recorded. No implementation, tests, build, live command, staging, commit, or
+  push was performed.
+- 2026-08-15: unit-01 dependency checkpoint accepted after Lead inspection.
+  `devenv.nix` adds only `kdePackages.kwin` and `weston`; it retains
+  `kdePackages.kwin.dev` and all prior package declarations. Non-realizing Nix
+  parse/evaluation checks and `git diff --check` passed. The active session is
+  stale and must be restarted before unit-02 or any implementation
+  verification. No shell was sourced or reloaded, and no new command is claimed
+  available. No runner, build, live test, staging, commit, or push was
+  performed.
+- 2026-08-15: unit-01 restart gate accepted after current-session
+  reconciliation. `kwin_wayland`, `weston`, and `weston-terminal` resolve;
+  KWin runtime is 6.7.3, non-realizing Nix evaluation reports KWin development
+  output `kwin-6.7.3`, and Weston is 15.0.1. No runner, build, live test,
+  staging, commit, or push was performed.
+- 2026-08-15: unit-02 accepted after Lead inspection of the test-only
+  fake-tool contract suite. `bash -n scripts/live-native-effect.test.sh`
+  passed. `bash scripts/live-native-effect.test.sh` exited 1 at the unit-02
+  stage before a production runner existed; no runner, build, live test,
+  staging, commit, or push was performed.
+- 2026-08-15: Lead correction: unit-02 remains in progress. The expected-red
+  baseline is valid, but the suite still lacks required private plugin-path,
+  client socket/D-Bus, missing-tool, plugin-consumption, and ordered cleanup
+  contract assertions.
+- 2026-08-15: unit-02 accepted after final Lead inspection. The completed
+  test-only fake-tool suite retains its syntax-valid expected-red boundary;
+  no runner, build, live test, staging, commit, or push was performed.
+- 2026-08-16: unit-03 attempt-02 correction. The production runner
+  `scripts/live-native-effect-test.sh` exists and runs under the fake-tool
+  suite, superseding the earlier "absent production runner" expected-red
+  rationale. Three reconciliation findings were corrected: (1) the private
+  environment is exported before any CMake build subprocess, after the host
+  Wayland socket is resolved; (2) OpenGL is forced via `KWIN_COMPOSE=O2` and
+  fail-closed by reading the `/Compositor` `compositingType` result; (3) the
+   plan/log/state text no longer claims unit-03 has not begun. Remaining suite
+   red is the first unit-04-owned assertion. No build, live test, staging,
+   commit, or push was performed.
+- 2026-08-16: unit-03 and unit-04 fake/static evidence accepted. Runner hash
+  is `4ae146fc...6244de6`; post-correction harness hash is
+  `7d6a113716e9d2b28d04b7075ae1ab6248d441a20e5f39dae850400ec9292995`.
+  `bash -n` passed. The one-line harness correction run,
+  `nice -n 10 timeout 300 bash scripts/live-native-effect.test.sh`, exited 0
+  in 56s with 247 passes, 0 failures, and zero client-pids errors; curated log:
+  `/tmp/opencode/native-effect-live-harness-correction-1786841439.log`.
+- 2026-08-16: unit-05 fresh independent review accepted with no material
+  defect. Its out-of-brief timeout probe is excluded. The active environment
+  lacks `weston` and `weston-terminal`; no user-live or visual acceptance is
+  claimed before devenv restart or reload and read-only version reconciliation.
+- 2026-08-16: static-delivery checkpoint accepted. After devenv reload,
+  `kwin_wayland` 6.7.3, KWin development output `kwin-6.7.3`, `weston` 15.0.1,
+  and `weston-terminal` are available. Accepted evidence in
+  `/tmp/opencode/native-effect-verify-IZQe7JWE` covers the 247/0 native harness,
+  independent review, and Nix/JS/shell/installer/native-format checks. Accepted
+  evidence in `/tmp/opencode/native-effect-native-verify-M1seuI6L` covers clean
+  configure, two-job build, generated AUTOMOC, wrapped `clang-tidy`, and CTest
+  3/3. Malformed earlier comprehensive Worker evidence and the reviewer's
+  out-of-brief timeout probe are excluded. No real/live run occurred; user-run
+  nested visual acceptance remains pending.

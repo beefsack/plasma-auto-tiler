@@ -41,6 +41,18 @@ Git history and archived change records.
 - **Reconsider when:** A separately approved platform requirement needs a
   broader native surface or an excluded capability.
 
+## Native Effect Live Validation
+
+- **Decision:** Live native-effect validation is nested-only/private and never
+  launches or mutates host KWin; visual acceptance is manual.
+- **Scope:** The user-run runner uses a visible nested Wayland backend, private
+  environment and D-Bus state, and an absolute read-only host Wayland socket.
+  It does not select host KWin, service, configuration, or plugin paths.
+- **Consequences:** Native-effect lifecycle evidence is limited to nested
+  `/Effects`; host behavior is neither exercised nor accepted.
+- **Reconsider when:** The user explicitly approves a different validation
+  boundary.
+
 ## Rounded Corners
 
 - **Decision:** Rely on Plasma 6.5+ decoration-driven rounded corners.
