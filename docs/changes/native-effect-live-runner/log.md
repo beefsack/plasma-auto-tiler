@@ -109,3 +109,16 @@
   working-file and `HEAD` hashes both
   `91023df4a888264968b300920893cadb9391a764`; prior differing hash reports
   were inconsistent. The file was not touched.
+- 2026-08-16: user-reported evidence at `/tmp/tmp.RtDxl1Chxo` reports private
+  support `true`, initial loaded `false`, load `true`, and post-load loaded
+  `true`; exactly two intended terminals displayed; and a blue border visible,
+  following focus, tracking dragging, and tracking resizing. Portal activation
+  was on the private bus, with no evidence of host KWin mutation. Tiling
+  absence is expected because the JavaScript controller is not loaded. The user
+  closed the outer nested window before normal unload, so unload and controlled
+  cleanup are not accepted. No unreported visual criterion is inferred as
+  tested. Remaining gate: rerun and use Ctrl-C from the original host terminal
+  while the nested window remains open to prove unload/post-unload and cleanup.
+- 2026-08-16: Process violation recorded: a prior documentation checkpoint
+  enumerated protected working-tree paths. No path details are retained here,
+  and no further operation used those paths.

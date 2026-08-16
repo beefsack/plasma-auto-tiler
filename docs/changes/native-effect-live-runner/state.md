@@ -80,3 +80,14 @@
   and `HEAD` hashes both equal
   `91023df4a888264968b300920893cadb9391a764`; prior differing hash reports
   were inconsistent. The file was not touched.
+- Live nested-runner user evidence: `/tmp/tmp.RtDxl1Chxo` is user-reported as
+  private support `true`, initial loaded `false`, load `true`, and post-load
+  loaded `true`. Exactly two intended terminals displayed. The user observed a
+  blue border visible, following focus, tracking dragging, and tracking
+  resizing. Portal activation was on the private bus; no evidence establishes
+  host KWin mutation. Tiling absence is expected because this runner does not
+  load the JavaScript controller. The user closed the outer nested window, so
+  KWin exited before normal unload; unload and controlled cleanup are not
+  accepted. No unreported visual criterion is inferred as tested. Active gate:
+  rerun and end with Ctrl-C from the original host terminal while the nested
+  window remains open, proving unload/post-unload and cleanup.

@@ -6,15 +6,21 @@ Git history and archived change records.
 ## Active Window Border
 
 - **Decision:** Adopt the Experimental border only fallback: a standalone,
-  OpenGL-only native C++ KWin active-window-border effect with no external
-  dependency.
+  OpenGL-only native C++ KWin active-window-border effect. Border colour,
+  width, outline radius, and outline gap are configurable; colour inherits the
+  active KDE theme through narrowly scoped required KF6 dependencies by
+  default, falling back to a configured custom colour when inheritance is
+  unavailable.
 - **Rationale:** This is the sole bounded fallback after research established no
   supported backend-portable attachment route. It is explicitly experimental,
   not a portable production rendering path.
 - **Scope:** The disabled-by-default effect capability-gates rendering and is a
   clean no-op on unsupported renderers. It owns exactly one direct-value
   `KWin::OutlinedBorderItem` with automatic lifetime and exactly one approved
-  scene attachment. This selects no package, live behavior, or group feature.
+  scene attachment; the one-item renderer is unchanged. Configurable colour,
+  width, outline radius, and gap affect only the drawn outline, never clipping
+  or reshaping windows. Native border changes hot-apply. This selects no
+  package, live behavior, or group feature.
 - **Consequences:** The KWin/Plasma ABI rebuild risk remains explicit. Live KWin
   acceptance remains user-run.
 - **Reconsider when:** KWin provides a supported backend-portable per-window
@@ -24,7 +30,10 @@ Git history and archived change records.
 
 - **Decision:** Use C++ only where the KWin platform ABI requires it, with the
   smallest public-API adapter/effect surface. The simple active border has no
-  Rust bridge.
+  Rust bridge. The only additional native surfaces are the platform-required
+  native QWidget KCM adapter and narrowly scoped KF6 Config, ColorScheme, KCM,
+  and UI dependencies; the no-renderer and no-ownership broadening limits below
+  remain unchanged.
 - **Constraints:** C++ changes must not use manual ownership, `new`/`delete`,
   threads, custom shaders, manual GL resources or ownership, QPainter
   rendering, clipping, window-texture changes or manipulation, input, or
@@ -66,11 +75,33 @@ Git history and archived change records.
 - **Rationale:** This uses the platform capability rather than extending the
   effect to enforce corners itself.
 - **Scope:** Universal compositor-enforced rounding for CSD, non-Qt, and
-  XWayland clients is a product non-goal for now.
+  XWayland clients is a product non-goal for now. The configurable outline
+  radius affects only the active-border outline geometry, never window corners,
+  clipping, or reshaping.
 - **Consequences:** The native effect is responsible for the active border, not
   universal corner treatment.
 - **Reconsider when:** Decoration-driven corners no longer meet the supported
   Plasma baseline or product requirements change.
+
+## Unified Settings
+
+- **Decision:** One custom native QWidget effect-scoped KCM owns every existing
+  tiling, workspace, shortcut, outline, and active-border setting, placed
+  through the proven Desktop Effects configuration entry.
+- **Rationale:** The generic scripted KCM cannot express the native effect's
+  border and theme settings; a single effect-scoped KCM keeps all product
+  settings in one proven discovery location.
+- **Scope:** The native KCM contains all existing tiling/workspace/shortcut
+  settings plus the new outline and border settings, and replaces the duplicate
+  generic scripted KCM page. Native border changes hot-apply; script settings
+  save with clear reload/session-restart-required messaging for now. Existing
+  script groups/keys/values are preserved with no migration. Instant
+  per-workspace and tray behavior remain out of scope.
+- **Consequences:** One KCM owns the whole settings surface; the generic
+  scripted KCM page is removed once the native KCM ships.
+- **Reconsider when:** A separately approved requirement needs instant
+  per-workspace or tray behavior, or the effect-scoped placement proves
+  insufficient.
 
 ## Grouped Windows
 
@@ -90,13 +121,18 @@ Git history and archived change records.
 
 ## Core Distribution
 
-- **Decision:** The initial core distribution is one KPackage archive published
-  through KDE Store and as an identical GitHub Release artifact.
-- **Rationale:** One shared artifact keeps the initial distribution path simple
-  and consistent.
-- **Scope:** Native distribution packages are deferred until native effects or
-  demand require them.
+- **Decision:** The core distribution retains the script KPackage (published
+  through KDE Store and as an identical GitHub Release artifact) and permits
+  platform-native packages for the native effect and KCM alongside it.
+- **Rationale:** Retaining the script KPackage keeps the established path simple
+  and consistent while the native effect and KCM gain a platform-native package
+  path.
+- **Scope:** The script KPackage remains the retained script artifact.
+  Platform-native packages for the native effect and KCM are approved alongside
+  it. Exact native package formats and publication remain gated.
 - **Consequences:** This selects the release target only; no archive or
-  publication is claimed as delivered.
-- **Reconsider when:** Native-effect delivery requires native packages or user
-  demand justifies platform packages.
+  publication is claimed as delivered. The native effect and KCM gain an
+  approved platform-native package path whose formats and publication are not
+  yet selected.
+- **Reconsider when:** Exact native package formats or publication channels are
+  selected for delivery.

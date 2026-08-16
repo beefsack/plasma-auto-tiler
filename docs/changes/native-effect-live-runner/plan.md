@@ -113,6 +113,18 @@ slices use `unit-<n>/attempt-<n>`.
   366/0 in 87 Bash seconds; fresh independent review found no material defect.
   No successful real load or visual acceptance is claimed; user retry remains
   pending.
+- 2026-08-16: user-reported evidence at `/tmp/tmp.RtDxl1Chxo` reports private
+  support `true`, initial loaded `false`, load `true`, and post-load loaded
+  `true`. The nested session displayed exactly the two intended terminals. The
+  user observed the blue border visible, following focus, tracking dragging,
+  and tracking resizing. Portal activation was on the private bus; no evidence
+  establishes a host KWin mutation. Tiling absence is expected because this
+  runner does not load the JavaScript controller. The user closed the outer
+  nested window, so KWin exited before normal unload: unload and controlled
+  cleanup are not accepted. No unreported visual criterion is inferred as
+  tested. Remaining gate: rerun and end with Ctrl-C from the original host
+  terminal while the nested window remains open, proving unload/post-unload and
+  cleanup.
 
 ## Acceptance-Evidence Map
 
@@ -126,6 +138,10 @@ slices use `unit-<n>/attempt-<n>`.
 | Cleanup | Ordered D-Bus attempt, client-group then nested-group status, and post-cleanup verification states. |
 | Optional journal | Availability result plus exact nested PID and run duration; absence is recorded, never substituted. |
 | Visual result | User-completed manual nested-compositor checklist. |
+
+The accepted user observations are limited to the displayed terminals and blue
+border behavior recorded in the execution checkpoint; no unreported visual
+criterion is inferred as tested.
 
 ## Residual Risks
 
