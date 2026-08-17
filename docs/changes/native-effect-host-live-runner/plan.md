@@ -59,3 +59,48 @@ removal. Broad cleanup is never used.
 The prohibitions are `sudo`, system plugin paths, `/Compositor`, `/Scripting`,
 automatic primary-session mutation, routine in-place KWin termination, broad
 cleanup, unrelated state changes, and agent-executed host mutation.
+
+## Execution Record
+
+| Unit | Status | Evidence |
+|---|---|---|
+| doc-reset | accepted | Committed and pushed as `7064f47`; inspected diff against `82c497c`. |
+| implementation | accepted | `implementation/attempt-01` accepted after `correction-01` fixed and retained the two review findings. |
+| independent-review | accepted | `independent-review/attempt-01` found two concrete issues; its confirmation verified both corrections. |
+| user-attempt | pending | User-run only after static acceptance and review disposition. |
+
+## Acceptance-Evidence Map
+
+| Acceptance items | Evidence | Status |
+|---|---|---|
+| 1 | Exact pins, exact derivation checks, and boundary-1 recheck in `scripts/live-native-effect-test.sh`; focused fake suite passes. | static/fake accepted |
+| 2-5 | Exact `/Effects` support, load/loaded, manual acceptance record, unload/unloaded controls; focused fake suite passes. | static/fake accepted; user evidence pending |
+| 6-9 | Nonce-owned staging, hash-checked normal restoration, boundary-2 and snapshot controls; focused fake suite passes. | static/fake accepted; user evidence pending |
+| 10 | Focused fake suite rejects prohibited interfaces and verifies `/Effects`-only lifecycle calls. | static/fake accepted |
+
+## Residual Risks
+
+- Static/fake verification cannot establish the user-observed lifecycle, both session boundaries, or restoration on the live host.
+- Crash/power-loss rollback and hostile same-user races are explicitly out of scope.
+
+## Review Findings
+
+| Finding | Disposition |
+|---|---|
+| A symlinked `~/.local/share/plasma-auto-tiler-native-effect` parent can redirect staging outside the nonce-owned path. | fixed and confirmation-verified in `implementation/attempt-01/correction-01` |
+| A namespace parent created by staging remains after normal restoration. | fixed and confirmation-verified in `implementation/attempt-01/correction-01` |
+
+## Attempt and Review Counts
+
+| Unit | Attempts | Corrections | Independent reviews |
+|---|---:|---:|---:|
+| implementation | 1 | 1 | 1 |
+
+## Outcome
+
+- Static/fake implementation and its one required independent review are accepted.
+- The `user-attempt` remains pending. It is the sole source of live acceptance evidence and is not authorized for agents.
+
+## Pending User Decisions
+
+- None.
