@@ -58,14 +58,22 @@ Git history and archived change records.
   a host mode in the nested runner.
 - **Scope:** The separate host path is gated by read-only feasibility, exact
   target KWin ABI/package/build identity, dynamic discovery and load/unload
-  without restarting or replacing KWin, exact state snapshot, bounded user-local
-  install/load scope, retained evidence, and guaranteed rollback. Agents may
-  implement and statically/fake-verify tooling but never execute host KWin
-  mutations. sudo/system plugin paths, broad cleanup, host KWin
-  restart/replacement, and automatic primary-session mutation are prohibited.
+  without an in-place restart, exact state snapshot, bounded user-local
+  install/load scope, retained evidence, exact user-supervised normal-path
+  restoration, and second-boundary restoration verification; automatic
+  crash- or power-loss rollback is not guaranteed. It now permits
+  a limited user-run controlled session-boundary protocol: per-attempt user
+  authorization, a temporary nonce-owned user-local session environment entry,
+  two required user-run session boundaries (secondary Wayland session preferred;
+  primary logout/login only a separately authorized fallback), a post-boundary
+  recheck, retained evidence, and second-boundary restoration verification.
+  Agents may implement and statically/fake-verify tooling but never execute
+  host KWin mutations. sudo/system plugin paths, broad cleanup, routine in-place
+  host KWin restart/replacement, and automatic primary-session mutation remain
+  prohibited.
 - **Consequences:** Host lifecycle evidence is user-run and separate; it is
   neither exercised by the nested path nor accepted without the bounded host
-  lifecycle and rollback guarantees above.
+  lifecycle and restoration requirements above.
 - **Reconsider when:** The user explicitly approves a different validation
   boundary.
 

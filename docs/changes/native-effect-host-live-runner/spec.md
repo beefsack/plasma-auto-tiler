@@ -1,126 +1,82 @@
-# Specification: Native Effect Host Live Runner
+# Specification: Native Effect Host Validation
 
 Ownership and approval:
 - Owner: Lead
-- Status: Expanded, approved 2026-08-16 by the user for planning.
+- Status: Reset for review, 2026-08-17.
+- Approved outcome: one safe, user-supervised validation of the exact native
+  effect on this exact currently pinned host.
 
 ## Intent and Scope
 
-Deliver a separate, user-run-only host-validation runner/protocol for the exact
-native active-border effect. It is never a host mode in the nested runner; the
-nested/private validation path remains the default and is unchanged. The host
-runner exercises only the exact plugin lifecycle against the user's running
-host KWin, bounded to a user-local install/load scope, with an exact state
-snapshot and guaranteed rollback.
+Validate the exact `plasma-auto-tiler-active-border` native effect once against
+the currently running host KWin. This is a one-off validation protocol, not a
+reusable or distributable runner and not a multi-host abstraction. The nested
+runner remains separate and unchanged.
 
-The host path proceeds only after read-only feasibility establishes: the
-running host KWin executable/package identity, matching build/development ABI
-provenance, the proven host plugin search path, and dynamic discovery plus
-load/unload without restarting or replacing KWin. It fails closed whenever
-exact compatibility or rollback cannot be established; a displayed semantic
-version alone is insufficient.
+The accepted host ABI/development pin evidence is:
 
-In scope:
+- `out=/nix/store/kfacyll1bnh89q9aqbs54qjgda2c4hkm-kwin-6.7.3`
+- `dev=/nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev`
+- both exact outputs derive from
+  `/nix/store/ak2wg58bdpv0q7z3n5pjz6gj6s18bxm9-kwin-6.7.3.drv`
 
-- Read-only feasibility protocol against the running host KWin and its exact
-  package/build identity and ABI provenance.
-- A separate user-run host runner/protocol (never a host mode in the nested
-  runner) with `--dry-run` and refusal paths.
-- Exact user-local plugin lifecycle only: atomic snapshot/install, hash/path
-  manifest, preservation of prior file/config/load state, unload before
-  removal, restore and verify, and INT/TERM cleanup with no false cleanup
-  success after crash or power loss.
-- Host `/Effects` operations limited strictly to the exact plugin lifecycle.
-- Retained evidence for dry-run, fake contracts, compatibility refusal,
-  discovery, lifecycle, rollback, and failure states.
-- Visual acceptance performed by the user alone on the host.
+The two user-run session boundaries are retained. The trusted single user
+runs every command serially and alone, performs all host mutation, and
+performs both session boundaries. Agents do not execute host mutation or
+session boundaries.
 
-## Constraints
+## Five-Phase Protocol
 
-- The user alone runs host mutation and visual acceptance. Agents perform only
-  source research, implementation, static/fake verification, and read-only
-  protocol evidence; agents never execute host KWin mutations.
-- Host `/Effects` may be used only for the exact plugin lifecycle. No host
-  `/Compositor`, `/Scripting`, unrelated config or effects, service restart,
-  process signals, or KWin replacement are permitted.
-- sudo/system plugin paths, broad cleanup, host KWin restart/replacement, and
-  automatic primary-session mutation are prohibited.
-- Pinned devenv build evidence does not establish host ABI. A target-host build
-  profile/package provenance is required before any host install/load.
-- A disposable VM or secondary session is recommended before the primary host,
-  but is not a false prerequisite where source feasibility and the safeguards
-  above establish a safe user-run path.
-- Displayed semantic version alone is insufficient evidence of compatibility;
-  failure to establish exact compatibility or rollback fails closed.
+1. **Read-only preflight and snapshot:** confirm the exact host runtime and
+   development derivations match the accepted `out -> drv -> dev` pin; record
+   the exact plugin identity and a host configuration snapshot; make no host
+   changes.
+2. **Exact plugin and temporary `environment.d` staging:** stage only the
+   exact plugin in a nonce-owned user-local path and create only its temporary
+   nonce-owned `environment.d` discovery entry; record the owned paths and
+   prior state.
+3. **User boundary 1:** the trusted user alone enters the bounded session
+   boundary before effect discovery or loading.
+4. **Exact `/Effects` validation:** verify support for the exact plugin, load
+   it and verify `load` returns true and loaded state becomes true; the user
+   alone observes and accepts the border behavior; unload it, verify unload
+   succeeds, and verify loaded state becomes false.
+5. **Exact restoration, user boundary 2, and postflight verification:** restore
+   the nonce-owned plugin and temporary discovery entry exactly, perform the
+   second user-run session boundary, and verify that the effect is not loaded,
+   the temporary discovery path no longer exposes it, the host configuration
+   snapshot matches, and no unrelated state changed.
 
-## Non-Goals
+## Safety Constraints
 
-- A host mode in the nested runner.
-- Universal binary compatibility across arbitrary KWin builds.
-- Distribution packaging or automatic publication.
-- Host KWin restart or replacement.
-- System-level installation or sudo-managed plugin paths.
-- Automated visual acceptance.
-- Inference or recovery claims after SIGKILL or power loss.
+- The trusted single user runs commands serially and alone. Only that user
+  performs host mutation, visual observation, and both session boundaries.
+- On an unexpected or ambiguous result, stop. Retain evidence and all
+  nonce-owned paths, query the exact plugin state, discuss and manually recover
+  before removal, and never broad-clean.
+- Automatic crash or power-loss rollback is not claimed. This protocol does
+  not defend against hostile same-user races or arbitrary filesystem
+  corruption.
+- This protocol does not define a generalized persistent state machine or a
+  reusable multi-host abstraction.
+- No `sudo`, system plugin paths, `/Compositor`, `/Scripting`, automatic
+  primary-session mutation, routine in-place KWin termination, broad cleanup,
+  unrelated state changes, or agent-executed host mutation.
 
-## Dependencies
+## Frozen Acceptance Matrix
 
-- Read-only host feasibility: running KWin executable/package identity,
-  matching build/development ABI provenance, and proven host plugin search path
-  plus dynamic load/unload without restart.
-- User approval of this specification and its gated boundaries.
-- Active nested-runner acceptance where it informs the host lifecycle contract.
-- The host runner depends on the exact plugin source and its build metadata;
-  no installed host plugin is assumed.
-
-## Acceptance Criteria
-
-- [ ] `--dry-run` reports the planned snapshot/install/load/unload/restore
-      steps and refusals without mutating the host.
-- [ ] Fake-tool contract tests cover dry-run, refusal, discovery, lifecycle,
-      rollback, and cleanup paths.
-- [ ] Compatibility refusal: the runner fails closed when exact host ABI,
-      package/build identity, or rollback cannot be established; semantic
-      version alone is never accepted.
-- [ ] Discovery and lifecycle: host `/Effects` is used only for the exact
-      plugin's discovery, load, unload-before-removal, and restore, with no
-      host `/Compositor`, `/Scripting`, service restart, process signal, or
-      KWin replacement.
-- [ ] Exact user-local lifecycle: atomic snapshot/install, hash/path manifest,
-      preserved prior file/config/load state, unload before removal, restore
-      and verify, and INT/TERM cleanup without false success after crash or
-      power loss.
-- [ ] The user manually accepts host visual behavior and confirms rollback
-      restored the prior state.
-- [ ] Retained evidence covers dry-run, fake contracts, compatibility refusal,
-      discovery, lifecycle, rollback, and failure states.
-
-## Evidence
-
-| Acceptance area | Required evidence |
+| # | Acceptance item |
 |---|---|
-| Dry-run | Recorded dry-run output with planned steps and refusals; no host mutation. |
-| Fake contracts | Full fake-tool suite output for refusal, discovery, lifecycle, rollback, and cleanup. |
-| Compatibility refusal | Read-only feasibility record: host executable/package identity, ABI provenance, plugin search path, and refusal evidence when exact compatibility or rollback cannot be established. |
-| Discovery and lifecycle | Host `/Effects` transition log scoped to the exact plugin only. |
-| Visual behavior | User-completed host visual acceptance checklist. |
-| Rollback | Restore-and-verify record plus prior file/config/load state snapshot. |
-| Failure evidence | Retained failure output; no false cleanup success after crash or power loss. |
+| 1 | Exact host runtime/development derivation match. |
+| 2 | Exact plugin support after boundary 1. |
+| 3 | Load returns true and loaded state becomes true. |
+| 4 | User-observed border behavior passes. |
+| 5 | Unload succeeds and loaded state becomes false. |
+| 6 | Only the nonce-owned plugin and environment entry change. |
+| 7 | Both are restored exactly. |
+| 8 | After boundary 2, the effect is not loaded and the temporary discovery path no longer exposes it. |
+| 9 | Host configuration snapshot matches pre-test state. |
+| 10 | No prohibited interfaces, paths, or actions are used. |
 
-## Residual Risks
-
-- Exact host ABI/package/build identity may not match any available build; the
-  host path then refuses and provides no acceptance.
-- Even a proven search path and dynamic load/unload do not guarantee rollback
-  under crash or power loss; restore remains best-effort and is never claimed
-  as successful without verification.
-- Host D-Bus may be unreachable during interrupt cleanup, leaving unload and
-  restore unverified.
-- A disposable VM/secondary session reduces but does not eliminate primary-host
-  risk; it remains recommended, not mandatory.
-- Static/fake verification cannot establish user-run host visual acceptance.
-- The user alone owns host mutation; agent tooling cannot make a run accepted.
-
-## Pending Decisions
-
-- None.
+No implementation, live run, host mutation, or acceptance evidence is created
+by this reset transaction.

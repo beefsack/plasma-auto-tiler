@@ -15,10 +15,28 @@ bounded, explicit authorization.
 - Never use broad cleanup. Touch only exact plugin IDs, component/action pairs,
   process groups, desktops, and tiling keys recorded after validated ownership.
   Unrelated stale tiling groups are not cleanup targets.
-- Do not kill, restart, log out of, or reconfigure KWin. Do not invoke actions,
-  create clients or desktops, or modify tiling/configuration outside the one
-  authorized scope. Stop immediately on any ownership, parser, diagnostic, or
-  baseline surprise. Do not retry a live launch within that authorization.
+- Agents must not kill, restart, log out of, or reconfigure KWin. Do not invoke
+  actions, create clients or desktops, or modify tiling/configuration outside
+  the one authorized scope. Stop immediately on any ownership, parser,
+  diagnostic, or baseline surprise. Do not retry a live launch within that
+  authorization.
+
+## Native Effect Host Session-Boundary Exception
+
+- The no-restart rule above is scoped to agents and applies to them unchanged.
+  The single approved exception to the no-restart boundary is the Native Effect
+  Host protocol for the exact native active-border effect, defined in
+  [native-effect-host-live-runner](changes/native-effect-host-live-runner/spec.md).
+- It requires per-attempt user authorization, exact ownership and pre-state
+  snapshot, a temporary nonce-owned user-local session environment entry, two
+  user-run session boundaries (secondary Wayland session preferred; primary
+  logout/login only a separately authorized fallback), retained recovery
+  evidence, and second-boundary restoration verification.
+- There is no routine in-place KWin restart: the only permitted KWin start/stop
+  is the user entering and ending the bounded session. `/Compositor`,
+  `/Scripting`, system paths, sudo, and broad cleanup remain prohibited.
+- The user alone runs session boundaries, host mutation, and visual acceptance;
+  agents never execute host KWin mutations.
 
 ## Nested Compositor Config Isolation
 

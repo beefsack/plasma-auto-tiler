@@ -12,8 +12,8 @@
     pkg-config
     zip
     kdePackages.extra-cmake-modules
-    kdePackages.kwin
-    kdePackages.kwin.dev
+    (builtins.storePath /nix/store/kfacyll1bnh89q9aqbs54qjgda2c4hkm-kwin-6.7.3)
+    (builtins.storePath /nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev)
     kdePackages.kpackage
     weston
   ];
