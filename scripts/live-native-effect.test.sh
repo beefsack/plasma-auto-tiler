@@ -260,6 +260,17 @@ assert_file_contains() {
   fi
 }
 
+assert_file_not_contains() {
+  local file="$1" needle="$2"
+  if [[ -f "$file" ]] && grep -Fq -- "$needle" "$file"; then
+    echo "FAIL: '$file' unexpectedly contains '$needle'" >&2
+    [[ -f "$file" ]] && cat "$file" >&2
+    record_failure
+  else
+    PASS=$((PASS + 1))
+  fi
+}
+
 assert_file_line() {
   local file="$1" line="$2"
   if [[ -f "$file" ]] && grep -Fxq -- "$line" "$file"; then
@@ -1457,6 +1468,8 @@ assert_file_contains "$EVIDENCE_ROOT/transitions.log" "dbus: effects readiness r
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=client-a result=already-stopped"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=client-b result=already-stopped"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=nested result=gone"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: owned-groups-terminated=yes"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: evidence-retained=yes"
 NESTED_PID="$(<"$WORK/state/setsid-nested-pid")"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "ownership probe group=nested pid=$NESTED_PID ps_status=0 stdout_file=$EVIDENCE_ROOT/ownership-nested-ps.stdout.log stdout_capture_bytes="
 assert_not_exists "$WORK/state/effect-loaded"
@@ -1924,6 +1937,8 @@ assert_file_line_before "$EVIDENCE_ROOT/manifest.txt" \
   "lifecycle: cleanup request group=client-b pid=$(sed -n 's/^client_b_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^client_b_pgid=//p' "$EVIDENCE_ROOT/owned-pids")" \
   "lifecycle: cleanup request group=nested pid=$(sed -n 's/^nested_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^nested_pgid=//p' "$EVIDENCE_ROOT/owned-pids")"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup complete"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: owned-groups-terminated=yes"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: evidence-retained=yes"
 INNER_PID="$(sed -n 's/^pid=//p' "$EVIDENCE_ROOT/inner-identity")"
 SESSION_LEADER_PID="$(<"$WORK/state/dbus-run-session-wrapper-pid")"
 assert_file_line "$EVIDENCE_ROOT/inner-identity" "pid=$INNER_PID"
@@ -1975,6 +1990,8 @@ isEffectLoaded $PLUGIN_ID false"
     "lifecycle: cleanup request group=client-b pid=$(sed -n 's/^client_b_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^client_b_pgid=//p' "$EVIDENCE_ROOT/owned-pids")" \
     "lifecycle: cleanup request group=nested pid=$(sed -n 's/^nested_pid=//p' "$EVIDENCE_ROOT/owned-pids") pgid=$(sed -n 's/^nested_pgid=//p' "$EVIDENCE_ROOT/owned-pids")"
   assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup complete"
+  assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: owned-groups-terminated=yes"
+  assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: evidence-retained=yes"
 fi
 fi
 
@@ -2019,6 +2036,8 @@ assert_kill_log_not_contains "kill -TERM -- -$SESSION_LEADER_PID"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner published pid=$INNER_PID"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner runner validation pid=$INNER_PID result=verified ppid=$SESSION_LEADER_PID"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "inner session exit status=143"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: owned-groups-terminated=yes"
+assert_file_line "$EVIDENCE_ROOT/manifest.txt" "checklist: evidence-retained=yes"
 assert_transitions "supportInformation $PLUGIN_ID
 isEffectSupported $PLUGIN_ID true
 isEffectLoaded $PLUGIN_ID false
@@ -2368,6 +2387,8 @@ check_exit 1
 assert_contains "owned cleanup verification failed"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup verify group=nested result=remaining"
 assert_file_contains "$EVIDENCE_ROOT/manifest.txt" "cleanup failed"
+assert_file_not_contains "$EVIDENCE_ROOT/manifest.txt" "checklist: owned-groups-terminated=yes"
+assert_file_not_contains "$EVIDENCE_ROOT/manifest.txt" "checklist: evidence-retained=yes"
 NESTED_PID="$(<"$WORK/state/setsid-nested-pid")"
 if valid_positive_pid "$NESTED_PID" && "$REAL_KILL_BIN" -0 -- "$NESTED_PID" 2>/dev/null; then
   "$REAL_KILL_BIN" -TERM -- "$NESTED_PID" 2>/dev/null || true

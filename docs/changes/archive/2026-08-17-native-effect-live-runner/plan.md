@@ -138,19 +138,43 @@ slices use `unit-<n>/attempt-<n>`.
   KWin/Plasma action occurred. The accepted user nested evidence remains limited
   to post-load behavior; controlled unload and cleanup require the parked
   user-run rerun.
+- 2026-08-17: checklist-retention correction accepted. Prior controlled
+  interrupt evidence at `/tmp/tmp.pl7rtYP5VY/manifest.txt` proves exact
+  private-bus unload, post-unload `isEffectLoaded=false`, client-a -> client-b
+  -> nested cleanup, outer exit 130, and inner TERM cleanup 143, but has no
+  checklist lines after `cleanup complete`. The accepted correction moves only
+  the existing `owned-groups-terminated=yes` and `evidence-retained=yes`
+  checklist entries into the successful `cleanup_owned` branch; it claims no
+  manual visual observations and alters no signal/session/status semantics.
+  Both `bash -n` checks and `git diff --check` passed; focused `term-cleanup`
+  39/0, `int-cleanup` 34/0, `int-maps-to-term` 39/0 at
+  `/tmp/opencode/unit04-checklist-attempt07/focused.log`; bounded full fake
+   suite 429/0 at `/tmp/opencode/unit04-checklist-attempt07/harness.log`. No
+   live KWin/Plasma test, commit, or push occurred. The sole remaining user
+   gate is one Ctrl-C nested-run acceptance attempt while the nested window
+   remains open.
+- 2026-08-17: the user-run controlled-interrupt evidence at
+  `/tmp/tmp.VFLvqvpuYP` completes the nested acceptance. Its private-bus
+  transition record shows support, initial unloaded state, load, loaded state,
+  unload, and post-unload unloaded state on one private address. The manifest
+  records `gl2`, exactly two owned clients, client-a then client-b then nested
+  cleanup, successful cleanup, inner exit 143, and both retained checklist
+  entries. The user confirmed the visual behavior and fish status 130 after the
+  runner. No host KWin mutation is evidenced; portal activity was private-bus
+  activity. The user approved the final result.
 
 ## Acceptance-Evidence Map
 
-| Acceptance area | Required evidence |
+| Acceptance area | Accepted evidence |
 |---|---|
-| Dependency/restart gate | `devenv.nix` scoped diff, evaluation output, and recorded restarted-session prerequisite. |
-| Isolation and topology | Manifest listing private path values, nested/client PIDs and process groups, and no host KWin target. |
-| Exact plugin and renderer | ABI/version preflight output, private build output, plugin identity, and explicit OpenGL result. |
-| Nested effect lifecycle | Nested `/Effects` discovery/load/`isLoaded`/unload request-response transition log. |
-| Clients and output | Exact two `weston-terminal` client PIDs/groups and per-process stdout/stderr. |
-| Cleanup | Ordered D-Bus attempt, client-group then nested-group status, and post-cleanup verification states. |
-| Optional journal | Availability result plus exact nested PID and run duration; absence is recorded, never substituted. |
-| Visual result | User-completed manual nested-compositor checklist. |
+| Dependency/restart gate | Accepted Nix evaluation and restarted-session reconciliation recorded above. |
+| Isolation and topology | `/tmp/tmp.VFLvqvpuYP/manifest.txt` and `owned-pids` record private execution and the nested/client PIDs and groups; the lifecycle targets only its private bus. |
+| Exact plugin and renderer | The user-run manifest records the private plugin path/prefix and `renderer=gl2`; prior accepted native build and ABI evidence remains recorded above. |
+| Nested effect lifecycle | `/tmp/tmp.VFLvqvpuYP/transitions.log` records support, initial unloaded state, load, loaded state, unload, and post-unload unloaded state on the same private D-Bus address. |
+| Clients and output | The user-run manifest and `owned-pids` record exactly client-a and client-b with separate owned groups; their output logs are retained in the evidence root. |
+| Cleanup | The user-run manifest records verified unload, client-a then client-b then nested cleanup, successful verification, inner exit 143, and the two completion checklist entries. |
+| Optional journal | The user-run manifest records the exact nested PID and bounded journal capture; journal output is retained in the evidence root. |
+| Visual result | The user confirmed blue-border focus, drag, and resize behavior and approved the final result. |
 
 The accepted user observations are limited to the displayed terminals and blue
 border behavior recorded in the execution checkpoint; no unreported visual
@@ -165,11 +189,17 @@ criterion is inferred as tested.
 - D-Bus may be unreachable during interrupt cleanup, leaving unload unverified.
 - Process-group verification reduces but cannot prove cleanup after SIGKILL or
   power loss; neither outcome is claimed.
-- Visual correctness remains a manual nested-session judgment.
-- Static/fake acceptance does not establish user-run nested visual acceptance.
-- No real/live runner has been executed; static evidence cannot establish the
-  required visible nested-compositor behavior.
+- This acceptance is nested-only and private-bus only; it does not validate or
+  authorize host KWin mutation or the separately parked host-runner work.
+- The user-run evidence root is external to Git and must remain available for
+  later audit; it is not deleted by this completion transaction.
 
 ## Pending Decisions
 
 - None.
+
+## Final Outcome
+
+- Completed 2026-08-17 after Orchestrator alignment approval and user result
+  approval. The archive location is
+  `docs/changes/archive/2026-08-17-native-effect-live-runner/`.

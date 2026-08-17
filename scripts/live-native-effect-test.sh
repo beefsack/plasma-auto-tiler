@@ -295,6 +295,10 @@ __session() {
     terminate_owned_group nested "$nested_pid" "$nested_pgid" || true
     if [[ "$cleanup_failed" -eq 0 ]]; then
       mark "cleanup complete"
+      {
+        printf 'checklist: owned-groups-terminated=yes\n'
+        printf 'checklist: evidence-retained=yes\n'
+      } >> "$EVIDENCE_ROOT/manifest.txt" 2>/dev/null || true
       CLEANUP_RESULT=0
     else
       mark "cleanup failed"
@@ -571,10 +575,6 @@ __session() {
   if ! cleanup_owned; then
     fail "owned cleanup verification failed"
   fi
-  {
-    printf 'checklist: owned-groups-terminated=yes\n'
-    printf 'checklist: evidence-retained=yes\n'
-  } >> "$EVIDENCE_ROOT/manifest.txt" 2>/dev/null || true
 
   exit 0
 }
