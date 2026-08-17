@@ -49,3 +49,11 @@ Append-only checkpoint record.
 - Files / commit: none
 - Verification: confirmed the namespace-symlink refusal and exact created-namespace restoration only.
 - Notes: this confirmation was not a second independent review.
+
+## 2026-08-18 00:29 +1000
+
+- Role / unit: Lead / implementation and independent-review / commit
+- Result: committed
+- Files / commit: `dc7cacb`
+- Verification: accepted static/fake evidence, review dispositions, and `git diff --check` were inspected before commit.
+- Notes: user-run live attempt remains pending; no host action occurred.
