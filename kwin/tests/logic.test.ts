@@ -1003,16 +1003,14 @@ describe("planEqualSplit and equalAlongAxis", () => {
 function cleanupRequest(overrides: Partial<DesktopCleanupRequest>): DesktopCleanupRequest {
     return {
         orderedIds: ["a", "b", "c"],
-        ownedIds: new Set(["a", "b", "c"]),
         visibleIds: new Set(["a"]),
         occupiedIds: new Set(),
-        protectedTrailingIds: new Set(),
         ...overrides,
     };
 }
 
 describe("planDesktopCleanup: deterministic at-most-one removal selection", () => {
-    it("selects the removable middle entry when it is owned, empty, invisible, and unprotected", () => {
+    it("selects the removable middle entry when it is empty and invisible", () => {
         const plan = expectOk(planDesktopCleanup(cleanupRequest({})));
         assert.equal(plan.kind, "desktop-cleanup-removal");
         assert.equal(plan.id, "b");
@@ -1028,23 +1026,29 @@ describe("planDesktopCleanup: deterministic at-most-one removal selection", () =
         assert.equal(plan.id, "c");
     });
 
-    it("skips unowned desktops", () => {
-        const plan = expectOk(planDesktopCleanup(cleanupRequest({ ownedIds: new Set(["a", "c"]) })));
-        assert.equal(plan.id, "c");
+    it("does not exclude unowned desktops (ownership plays no role in eligibility)", () => {
+        // Under the corrected rule an empty, invisible desktop is removable
+        // regardless of ownership; there is no ownedIds field on the request
+        // at all any more.
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({})));
+        assert.equal(plan.id, "b");
     });
 
-    it("skips protected trailing desktops", () => {
-        const plan = expectOk(planDesktopCleanup(cleanupRequest({ protectedTrailingIds: new Set(["b"]) })));
-        assert.equal(plan.id, "c");
+    it("does not exempt formerly-protected trailing desktops (no reserved-spare exemption)", () => {
+        // Under the corrected rule the middle entry is removable even though
+        // it would previously have been exempted as protected trailing
+        // capacity; there is no protectedTrailingIds field on the request at
+        // all any more.
+        const plan = expectOk(planDesktopCleanup(cleanupRequest({})));
+        assert.equal(plan.id, "b");
     });
 
     it("selects none when only one global desktop remains", () => {
         expectRejection(planDesktopCleanup(cleanupRequest({ orderedIds: ["a"] })), "no-target");
     });
 
-    it("selects none when no owned empty invisible unprotected desktop is eligible", () => {
+    it("selects none when no empty invisible desktop is eligible", () => {
         expectRejection(planDesktopCleanup(cleanupRequest({ visibleIds: new Set(["a", "b", "c"]) })), "no-target");
-        expectRejection(planDesktopCleanup(cleanupRequest({ ownedIds: new Set() })), "no-target");
     });
 
     it("selects the same earliest eligible desktop across repeated fresh equivalent snapshots", () => {

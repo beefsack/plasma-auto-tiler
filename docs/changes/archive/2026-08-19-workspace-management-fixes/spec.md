@@ -11,7 +11,17 @@ Ownership and approval:
   "identified as the user's own active Home-Manager-declared tooling - not
   removed, escalated as a scope-overlap question." See "New finding:
   KGlobalAccel residue collision - IDENTIFIED, NOT residue" and the Q4 entry
-  below.
+  below. **2026-08-18 Bug 2 ruling stint:** confirmed the create-on-demand
+  ruling as unconditional (no reserved-spare reuse), added the replenish-loop
+  removal requirement it implies, rewrote Bug 2's acceptance criteria to be
+  precise and per-mode, and surfaced three new open ambiguities (Q5-Q7,
+  disconnected-output timing, incidental-reuse-vs-literal-create, and
+  removal-trigger scope) that the ruling does not resolve. **2026-08-18 Bug 2
+  Q5-Q7 ruling stint:** the user resolved all three: Q5 remove immediately on
+  disconnect, Q6 always create new (no incidental reuse), Q7 broaden removal
+  to fire on every `cleanupDesktops()` dispatcher event, not only switch. No
+  production code changed this stint either; implementation (Units 4-10)
+  begins next.
 
 ## User rulings (authoritative, 2026-08-18)
 
@@ -28,6 +38,22 @@ Ownership and approval:
   decision" ambiguity previously flagged below from Bug 2's scope; the
   create-on-demand behavior is now the specified target for the Bug 2
   implementation stint (still not implemented this stint).
+- **Q5 answered: remove immediately.** On output disconnect (lid close,
+  connector reseat), desktops on that output are no longer visible on any
+  connected output, so an empty one becomes removable immediately. No grace
+  period, no disconnect-timing state. This resolves Q5 below.
+- **Q6 answered: always create new.** `Meta+0`/`Meta+Shift+0` never reuse an
+  existing empty desktop, even transiently, even if one already exists at
+  press time. This confirms the literal reading already recorded in the
+  acceptance criteria below; incidental-reuse-as-optimization is rejected.
+  This resolves Q6 below.
+- **Q7 answered: broaden to window events.** The survival rule is a
+  continuous property, not a switch-time-only check. Once the replenish loop
+  is deleted, removal must also fire on the broader `cleanupDesktops()`
+  dispatcher events (window close/remove, move, float, drag finish), not only
+  on workspace switch. Closing the last window on a non-visible desktop
+  removes it immediately, without waiting for a switch. This resolves Q7
+  below.
 
 ## Intent and Desired Outcome
 
@@ -397,25 +423,39 @@ workspace mode (`per-output-local`, `global-unique`, `shared`):
   removal-eligibility predicate's dependency on it; this specification does
   not mandate deleting the field or its other uses.
 
-### Consequential decision this rule implies (flagged, not assumed)
+### Consequential decision this rule implies: resolved (2026-08-18, ruling stint)
 
 The archived spec's "trailing empty" concept reserved **one** owned empty
 desktop per mode/domain at all times specifically so `Meta+0` /
 `Meta+Shift+0` always had an already-existing target to jump to or move into,
-without needing to create one synchronously on every invocation when one
-already existed. Under the corrected rule as stated, that reserved spare is
-itself an empty, invisible desktop and therefore no longer protected - it
-would be removed by the next switch-triggered cleanup just like any other
-empty invisible desktop. The literal, direct implication is that `Meta+0` and
-`Meta+Shift+0` must fall back to *creating* a desktop on demand every time no
-suitable target currently exists, rather than relying on a permanently
-pre-reserved spare. This is not an ambiguity in the user's rule - it is a
-logical consequence of it - but it is a real behavioral change to the
-`Meta+0`/`Meta+Shift+0` affordance (create-on-demand instead of
-already-there) beyond the literal "cleanup doesn't remove enough" complaint,
-so it is recorded under Unresolved Questions below for explicit
-Orchestrator/user confirmation before the implementation stint builds it
-either way.
+without needing to create one synchronously on every invocation. Under the
+corrected rule, that reserved spare is itself an empty, invisible desktop and
+therefore no longer protected - it would be removed by the next cleanup pass
+just like any other empty invisible desktop. **The user has confirmed the
+literal implication directly, not just by logical inference:** there is no
+reserved trailing empty workspace at all any more.
+
+- `Meta+0` **always** creates a new workspace at press time and switches the
+  current desktop to it. It never looks up or reuses a pre-existing
+  "trailing empty" desktop, even if one happens to exist at press time.
+- `Meta+Shift+0` **always** creates a new workspace at press time and moves
+  the focused window to it. Same no-reuse rule.
+- This holds identically in all three `workspaceMode` values
+  (`per-output-local`, `global-unique`, `shared`).
+
+**New requirement surfaced by this ruling, not present in the original
+diagnosis:** the codebase's existing "replenish" mechanism - the part of
+`cleanupDesktops()`'s per-mode reconcile step
+(`reconcileLocalWorkspaces`/`reconcileGlobalUnique`/the shared reconcile
+fragment, `kwin/src/controller.ts`, `workspace-cleanup-replenished`
+diagnostic) that automatically recreates a new trailing-empty desktop
+whenever the mode's reserved slot is empty - has no purpose under
+create-on-demand and directly conflicts with the survival rule: it would
+recreate an empty desktop the survival rule says should stay removed. It
+already fought a manual `removeDesktop` attempt live and produced a stray
+extra desktop. The implementation stint must remove or neutralize this
+replenish behavior so nothing in the script recreates a desktop the survival
+rule and create-on-demand model do not call for.
 
 ## Scope
 
@@ -462,25 +502,69 @@ Bug 1 (Q1 resolved by the user's own re-test; implemented 2026-08-18):
   correct (e.g. AZERTY) is preserved: the canonical row is unchanged.
 
 Bug 2:
+
+Cleanup eligibility (survival rule):
 - [ ] `planDesktopCleanup` (or its replacement) accepts an empty, invisible
-  desktop as a removal candidate regardless of `ownedIds` membership.
+  desktop as a removal candidate regardless of `ownedIds` membership. Ownership
+  plays no role in the removal-eligibility predicate.
 - [ ] A desktop that is empty but currently visible on any connected output is
-  never removed.
-- [ ] The last remaining global desktop is never removed.
-- [ ] Focused unit tests demonstrate: an unowned (not script-created) empty
-  invisible desktop is now removed; an owned empty invisible desktop is still
-  removed (regression); an empty desktop visible on any output is preserved
-  in every mode; occupancy (including the existing sticky exclusion) is
+  never removed, in every `workspaceMode` value.
+- [ ] The "protected trailing" reservation (`protectedTrailingIds` /
+  `trailingOwnedEmptyId`) is removed from the removal-eligibility predicate: no
+  empty invisible desktop is exempted from removal for being "the" trailing
+  spare.
+- [ ] The last remaining global desktop is never removed (unchanged floor,
+  independent of the survival rule).
+- [ ] Occupancy (including the existing sticky/`onAllDesktops` exclusion) is
   unchanged.
-- [ ] Live acceptance: on the user's host, starting from the current 12-desktop
-  state, repeated switching between desktops 1 and 2 converges to no more
-  empty invisible desktops accumulating (does not need to assert an exact
-  terminal desktop count, since the currently-owned/orphaned desktops 3-12 are
-  real user-visible state this stint must not destroy without the user's own
-  interaction triggering cleanup).
-- [ ] The `Meta+0`/`Meta+Shift+0` consequential decision (see above) is
-  resolved by explicit Orchestrator/user ruling before implementation, and
-  the resolution is recorded in this spec or superseding decision record.
+
+Replenish-loop removal:
+- [ ] The automatic replenish behavior in `cleanupDesktops()`'s per-mode
+  reconcile step (`reconcileLocalWorkspaces`, `reconcileGlobalUnique`, the
+  shared reconcile fragment) no longer creates a new desktop merely because no
+  trailing-empty slot currently exists, in any `workspaceMode` value. A removed
+  empty desktop stays removed until something else (a create-on-demand
+  shortcut, or the user) creates a new one.
+
+Removal trigger scope (Q7):
+- [ ] Removal is not restricted to `cleanupAfterWorkspaceSwitch`
+  (switch-triggered). The broader `cleanupDesktops()` dispatcher - window
+  add/remove, move, float, drag finish, `desktopsChanged`, reconstruction
+  settle - also removes eligible empty/invisible desktops, not only
+  replenishes. An empty, invisible desktop is removed the moment it becomes
+  eligible under the survival rule, without waiting for a workspace switch
+  (e.g. closing the last window on a non-visible desktop removes it
+  immediately on that close event).
+
+Output disconnect (Q5):
+- [ ] On output disconnect, a desktop that was only visible on the
+  disconnected output is immediately eligible for removal if empty (no grace
+  period, no disconnected-output timing state), evaluated against the
+  post-disconnect set of connected outputs.
+
+Create-on-demand (`Meta+0` / `Meta+Shift+0`):
+- [ ] `Meta+0` always creates a new desktop at press time and switches the
+  current desktop to it. It never looks up or reuses an existing empty
+  desktop, even if one is currently present. Identical behavior in all three
+  `workspaceMode` values.
+- [ ] `Meta+Shift+0` always creates a new desktop at press time and moves the
+  focused window to it, never reusing an existing empty desktop. Identical
+  behavior in all three `workspaceMode` values.
+
+Verification:
+- [ ] Focused unit tests demonstrate, per `workspaceMode` value: an unowned
+  (not script-created) empty invisible desktop is removed; a formerly
+  "protected trailing" empty invisible desktop is removed; an empty desktop
+  visible on any output is preserved; the last-global-desktop floor is
+  preserved; the replenish loop no longer recreates a removed empty desktop;
+  `Meta+0` always creates-and-switches rather than reusing; `Meta+Shift+0`
+  always creates-and-moves rather than reusing.
+- [ ] Live acceptance (subject to the standing constraint that the user's real
+  windows, desktops, and current-desktop must never be disturbed - use a
+  throwaway window on a high empty desktop): a manually removed empty
+  invisible desktop stays removed across subsequent lifecycle events (no
+  replenish); repeated switching converges to no empty invisible desktops
+  accumulating beyond what the user's own actions create.
 
 ## Unresolved Questions
 
@@ -488,8 +572,19 @@ Bug 2:
   reproduces; no further repro attempt was needed. The shifted-symbol
   hypothesis is confirmed by source tracing (see above).
 - **Q2 (Bug 2): resolved.** Create-on-demand, no reserved spare, no
-  exceptions (see "User rulings" above). Still not implemented (Bug 2 is out
-  of scope for this stint).
+  exceptions (see "User rulings" above and "Consequential decision this rule
+  implies" for the confirmed `Meta+0`/`Meta+Shift+0` behavior and the
+  replenish-loop removal requirement it implies). Still not implemented.
+- **Q5 (Bug 2): resolved.** Remove immediately on output disconnect, evaluated
+  against the post-disconnect set of connected outputs. No grace period, no
+  disconnected-output timing state (see "User rulings" above).
+- **Q6 (Bug 2): resolved.** Always create new; never reuse an existing empty
+  desktop, even transiently (see "User rulings" above).
+- **Q7 (Bug 2): resolved.** Broaden to window events: removal fires on every
+  `cleanupDesktops()` dispatcher event (window close/remove, move, float,
+  drag finish, `desktopsChanged`, reconstruction settle), not only on
+  workspace switch (see "User rulings" above and the "Removal trigger scope"
+  acceptance criteria above).
 - **Q3 (non-blocking, informational):** unchanged from the diagnosis stint;
   the `Meta+N` (focus-workspace, non-Shift) residue collision with native
   `Switch to Desktop N` is benign (this script's action wins the physical

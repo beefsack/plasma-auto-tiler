@@ -170,23 +170,44 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   (`per-output-local` default, `global-unique`, `shared`) in
   [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
-  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0` focuses
-  or creates the mode-defined trailing empty (registered as
-  `plasma-auto-tiler-workspace-0` in every profile unless an exact in-profile
-  conflict); `Meta+Shift+0` moves the focused window to a newly appended
-  workspace (backlog P2 `move-window-to-workspace`).
+  [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0`
+  **always creates** a new workspace and switches to it - it never looks up
+  or reuses an existing empty workspace, even if one is already present
+  (registered as `plasma-auto-tiler-workspace-0` in every profile unless an
+  exact in-profile conflict; corrected from the earlier "focus or create the
+  trailing empty" design - see
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/));
+  `Meta+Shift+0` **always creates** a new workspace and moves the focused
+  window to it, same no-reuse rule (backlog P2 `move-window-to-workspace`).
 - **Implementation:** statically implemented in the controller via the
   documented scripting surface (`createDesktop`/`removeDesktop`,
   `setCurrentDesktopForScreen`, `Window.desktops`); the script keeps a
-  session-only output-to-desktop map and automatic trailing-empty maintenance
-  per mode. Switch-only cleanup of eligible invisible empty workspaces is
-  statically delivered in `d6d52a5`
-  ([empty-workspace switch cleanup](changes/archive/2026-08-15-empty-workspace-switch-cleanup/plan.md)); live multi-output and pager confirmation remains separate.
-- **Main KWin risk:** static tests cover create/remove and switch-only removal
-  of an owned empty non-active-non-visible desktop, but live KWin/Plasma
-  multi-output and pager behavior remains `unproven-until-live`.
-- **Status:** `DECIDED`; create/remove statically implemented; live
-  confirmation `unproven-until-live`.
+  session-only output-to-desktop map. There is no reserved or replenished
+  trailing-empty slot: empty-workspace cleanup is ownership-independent (any
+  empty desktop that is invisible on every connected output is a removal
+  candidate, regardless of who created it) and fires on every
+  desktop-lifecycle dispatch event (window add/remove/move/float, drag
+  finish, `desktopsChanged`, output disconnect), not only on workspace
+  switch. This corrected rule, and its live acceptance on the user's real
+  host, is delivered by
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/),
+  superseding the earlier switch-only, ownership-gated cleanup and
+  trailing-empty-reservation design statically delivered in `d6d52a5`
+  ([empty-workspace switch cleanup](changes/archive/2026-08-15-empty-workspace-switch-cleanup/plan.md)).
+- **Main KWin risk:** live-accepted on the user's real host that enabling the
+  plugin's startup sweep removes none of the user's real, populated desktops,
+  and that a freshly created, never-switched-to empty desktop is
+  auto-removed with no replenish (see
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/)).
+  Two specific properties remain covered by static test evidence only, not
+  live proof: an empty desktop that is currently visible is preserved
+  (live-proving it would require switching the user's visible desktop, which
+  is prohibited), and `Meta+0`/`Meta+Shift+0` create-on-demand under an
+  actual physical key press (D-Bus `invokeShortcut` bypasses the xkb layer
+  and proves nothing).
+- **Status:** `DECIDED`; create-on-demand and ownership-independent,
+  broadened-trigger cleanup are implemented and live-accepted on the user's
+  host; the two properties above remain `unproven-until-live`.
 
 ### 7. Full keyboard shortcut scheme, including split resizing
 
@@ -218,7 +239,7 @@ gated installer/KCM migration exists
 | Maximize | `plasma-auto-tiler-maximize` | `Meta+M` | COSMIC `Super+M` [C-KR] |
 | Fullscreen | `plasma-auto-tiler-fullscreen` | `Meta+F11` (component requirement; not registered) | COSMIC `Super+F11` [C-KR] |
 | Focus workspace | `plasma-auto-tiler-workspace-{1..9}` | `Meta+1..9` | Hyprland `mainMod+[0-9]` [H-Ex] |
-| Append + focus workspace | `plasma-auto-tiler-workspace-0` | `Meta+0` | registered; per-mode append/focus trailing empty |
+| Create + switch workspace | `plasma-auto-tiler-workspace-0` | `Meta+0` | registered; always creates and switches to a new workspace, never reuses an existing empty one |
 | Move to workspace | `plasma-auto-tiler-move-workspace-{1..9}` | `Meta+Shift+1..9` | Hyprland example [H-Ex] |
 | Move to appended workspace | `plasma-auto-tiler-move-workspace-append` | `Meta+Shift+0` | backlog P2 |
 | Detach / attach | `plasma-auto-tiler-detach` / `-attach` | `Meta+Shift+Space` / `Meta+Alt+Shift+Space` | existing (controller.ts:913-924) |

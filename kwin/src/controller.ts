@@ -4271,12 +4271,12 @@ export class TileController {
         if (isOutput(output)) {
             this.recentDesktopChangeOutput = output;
         }
-        this.handleScopeChange(true);
+        this.handleScopeChange();
         void previous;
         void current;
     }
 
-    private handleScopeChange(switchCleanup = false): void {
+    private handleScopeChange(): void {
         this.gate.run(() => {
             this.clearPending();
             this.clearDrag();
@@ -4286,7 +4286,7 @@ export class TileController {
             // A current-desktop change can move the sole trailing owned empty
             // into or out of occupancy (for example a pager move onto it), so
             // reconcile. Cleanup defers while a drag or reconstruction is live.
-            this.cleanupDesktops(switchCleanup);
+            this.cleanupDesktops();
             this.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
@@ -7560,13 +7560,13 @@ export class TileController {
         this.synchronizeShared(current);
     }
 
-    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): focus or create the
-    // mode-defined trailing empty. per-output-local and global-unique act on the
-    // active output only; shared focuses the shared trailing empty and
-    // synchronizes every connected output. Repeated invocation while the target
-    // is already trailing empty is idempotent. While a drag, reconstruction, or
-    // unsettled move is live the whole invocation is queued through the existing
-    // settle queue and completed after the settle seam (spec F bounded drain).
+    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): always create a
+    // brand-new desktop and focus it, never reuse an existing one.
+    // per-output-local and global-unique act on the active output only; shared
+    // creates the shared desktop and synchronizes every connected output.
+    // While a drag, reconstruction, or unsettled move is live the whole
+    // invocation is queued through the existing settle queue and completed
+    // after the settle seam (spec F bounded drain).
     private workspaceZero(): void {
         this.gate.run(() => {
             this.diagnostic("workspace-zero-invoked");
@@ -7575,15 +7575,16 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // Execute one Meta+0 request against the current context. A live drag,
-    // pending reconstruction, or unsettled move defers the whole invocation
-    // through the existing settle queue (spec F bounded drain); the queued
-    // output is re-resolved against the fresh context on execution. The active
-    // output is resolved once per invocation (spec D common); per-output-local
-    // and global-unique fail safely when no output key exists and act only on
-    // that output, and shared is output-agnostic. Creation or set-current
-    // failure is reported by the existing surfaces and never leaves a partial
-    // desktop (non-destructive).
+    // Execute one Meta+0 request against the current context: always creates a
+    // new desktop, never reuses an existing one. A live drag, pending
+    // reconstruction, or unsettled move defers the whole invocation through the
+    // existing settle queue (spec F bounded drain); the queued output is
+    // re-resolved against the fresh context on execution. The active output is
+    // resolved once per invocation (spec D common); per-output-local and
+    // global-unique fail safely when no output key exists and act only on that
+    // output, and shared is output-agnostic. Creation or set-current failure is
+    // reported by the existing surfaces and never leaves a partial desktop
+    // (non-destructive).
     private finishWorkspaceZero(output: OutputCapability | null): void {
         if (this.workspaceMutationDeferred()) {
             if (output !== null) {
@@ -7596,7 +7597,7 @@ export class TileController {
             return;
         }
         if (this.workspaceMode === "shared") {
-            this.finishSharedWorkspaceZero(desktops, output);
+            this.finishSharedWorkspaceZero(desktops);
             return;
         }
         if (output === null) {
@@ -7611,15 +7612,9 @@ export class TileController {
         let target: VirtualDesktopCapability | null;
         if (this.workspaceMode === "per-output-local") {
             this.rebuildLocalMapping(desktops);
-            target = this.trailingOwnedEmptyForOutput(output);
-            if (target === null) {
-                target = this.appendTrailingForOutput(output);
-            }
+            target = this.appendTrailingForOutput(output);
         } else {
-            target = this.trailingOwnedEmptyForGlobalUnique(output);
-            if (target === null) {
-                target = this.appendDesktopForGlobalUnique(output);
-            }
+            target = this.appendDesktopForGlobalUnique(output);
         }
         if (target === null) {
             return;
@@ -7627,112 +7622,26 @@ export class TileController {
         this.focusTrailingEmpty(target, output);
     }
 
-    // Shared-mode Meta+0: focus/create the shared trailing empty and
-    // synchronize every connected output (spec D3). Idempotent when the shared
-    // set is already trailing empty; the no-op is detected against the active
-    // output's current (or the global current when no output is known) and the
-    // synchronization still re-asserts every output.
-    private finishSharedWorkspaceZero(
-        desktops: readonly VirtualDesktopCapability[],
-        output: OutputCapability | null,
-    ): void {
+    // Shared-mode Meta+0: always create a new shared desktop and synchronize
+    // every connected output (spec D3), never reuse an existing one.
+    private finishSharedWorkspaceZero(desktops: readonly VirtualDesktopCapability[]): void {
         this.rebuildSharedMapping(desktops);
-        let target = this.trailingOwnedEmptyDesktop();
-        if (target === null) {
-            target = this.appendDesktop();
-            if (target !== null) {
-                this.rebuildSharedMapping();
-            }
+        const target = this.appendDesktop();
+        if (target !== null) {
+            this.rebuildSharedMapping();
         }
         if (target === null) {
             return;
         }
-        const current = output !== null ? this.currentDesktopIdForOutput(output) : this.currentDesktopIdGlobal();
-        if (current === target.id) {
-            this.diagnostic("workspace-zero-no-op:already-trailing-empty");
-        } else {
-            this.diagnostic("workspace-zero-completed");
-        }
+        this.diagnostic("workspace-zero-completed");
         this.synchronizeShared(target);
     }
 
     // Focus the mode-defined trailing empty on the active output through the
-    // per-output seam (per-output-local and global-unique). A target already
-    // current on the active output is an idempotent no-op that never creates or
-    // removes a desktop.
+    // per-output seam (per-output-local and global-unique).
     private focusTrailingEmpty(target: VirtualDesktopCapability, output: OutputCapability): void {
-        if (this.currentDesktopIdForOutput(output) === target.id) {
-            this.diagnostic("workspace-zero-no-op:already-trailing-empty");
-            return;
-        }
         this.setCurrentDesktop(target, output);
         this.diagnostic("workspace-zero-completed");
-    }
-
-    private currentDesktopIdForOutput(output: OutputCapability): string | null {
-        try {
-            const current = this.environment.currentDesktopForOutput(output);
-            if (isVirtualDesktop(current)) {
-                return current.id;
-            }
-        } catch (error) {
-            void error;
-        }
-        return null;
-    }
-
-    private currentDesktopIdGlobal(): string | null {
-        try {
-            const current = this.environment.currentDesktop();
-            if (isVirtualDesktop(current)) {
-                return current.id;
-            }
-        } catch (error) {
-            void error;
-        }
-        return null;
-    }
-
-    // The script-owned trailing empty that reconciliation would retain: the
-    // trailing-most owned empty desktop after every occupied desktop, or null
-    // when none exists. The trailing-most candidate is the one cleanup keeps,
-    // so focusing or moving into it never blocks cleanup of the excess owned
-    // empties before it. Pre-existing and user-owned empty desktops are never
-    // candidates.
-    private trailingOwnedEmptyDesktop(): VirtualDesktopCapability | null {
-        const desktops = this.liveDesktops();
-        if (desktops === null) {
-            return null;
-        }
-        const occupied = this.occupiedDesktopIds();
-        if (occupied === null) {
-            return null;
-        }
-        let highestOccupied = 0;
-        for (let position = 0; position < desktops.length; position += 1) {
-            const desktop = desktops[position];
-            if (desktop !== undefined && occupied.has(desktop.id)) {
-                highestOccupied = position + 1;
-            }
-        }
-        let candidate: VirtualDesktopCapability | null = null;
-        for (let position = 0; position < desktops.length; position += 1) {
-            const desktop = desktops[position];
-            if (desktop === undefined) {
-                continue;
-            }
-            if (!this.ownedDesktopIds.has(desktop.id)) {
-                continue;
-            }
-            if (occupied.has(desktop.id)) {
-                continue;
-            }
-            if (position + 1 <= highestOccupied) {
-                continue;
-            }
-            candidate = desktop;
-        }
-        return candidate;
     }
 
     // Whether the desktop list must not be mutated right now: a live drag, a
@@ -7817,32 +7726,23 @@ export class TileController {
         let target: VirtualDesktopCapability | null;
         if (this.workspaceMode === "per-output-local") {
             this.rebuildLocalMapping();
-            target = this.trailingOwnedEmptyForOutput(scope.output);
-            if (target === null) {
-                if (this.workspaceMutationDeferred()) {
-                    this.deferDesktopIntent(window);
-                    return;
-                }
-                target = this.appendTrailingForOutput(scope.output);
+            if (this.workspaceMutationDeferred()) {
+                this.deferDesktopIntent(window);
+                return;
             }
+            target = this.appendTrailingForOutput(scope.output);
         } else if (this.workspaceMode === "global-unique") {
-            target = this.trailingOwnedEmptyForGlobalUnique(scope.output);
-            if (target === null) {
-                if (this.workspaceMutationDeferred()) {
-                    this.deferDesktopIntent(window);
-                    return;
-                }
-                target = this.appendDesktopForGlobalUnique(scope.output);
+            if (this.workspaceMutationDeferred()) {
+                this.deferDesktopIntent(window);
+                return;
             }
+            target = this.appendDesktopForGlobalUnique(scope.output);
         } else {
-            target = this.trailingOwnedEmptyDesktop();
-            if (target === null) {
-                if (this.workspaceMutationDeferred()) {
-                    this.deferDesktopIntent(window);
-                    return;
-                }
-                target = this.appendDesktop();
+            if (this.workspaceMutationDeferred()) {
+                this.deferDesktopIntent(window);
+                return;
             }
+            target = this.appendDesktop();
         }
         if (target === null) {
             return;
@@ -7954,40 +7854,31 @@ export class TileController {
             }
             let target: VirtualDesktopCapability | null;
             if (index === 0) {
-                // Move into the script-owned trailing empty of the active
-                // output's local list (per-output-local) or its assigned subset
-                // (global-unique), or the global trailing empty (shared). When
-                // it is missing and the desktop list cannot be mutated yet (live
-                // drag, pending reconstruction, unsettled move), the whole move
-                // is deferred so no window moves before its required target
-                // exists.
+                // Move into a brand-new script-owned desktop appended to the
+                // active output's local list (per-output-local), its assigned
+                // subset (global-unique), or the global shared list (shared) -
+                // never reuse an existing desktop. When the desktop list cannot
+                // be mutated yet (live drag, pending reconstruction, unsettled
+                // move), the whole move is deferred so no window moves before
+                // its required target exists.
                 if (this.workspaceMode === "per-output-local") {
-                    target = this.trailingOwnedEmptyForOutput(scope.output);
-                    if (target === null) {
-                        if (this.workspaceMutationDeferred()) {
-                            this.deferDesktopIntent(active);
-                            return;
-                        }
-                        target = this.appendTrailingForOutput(scope.output);
+                    if (this.workspaceMutationDeferred()) {
+                        this.deferDesktopIntent(active);
+                        return;
                     }
+                    target = this.appendTrailingForOutput(scope.output);
                 } else if (this.workspaceMode === "global-unique") {
-                    target = this.trailingOwnedEmptyForGlobalUnique(scope.output);
-                    if (target === null) {
-                        if (this.workspaceMutationDeferred()) {
-                            this.deferDesktopIntent(active);
-                            return;
-                        }
-                        target = this.appendDesktopForGlobalUnique(scope.output);
+                    if (this.workspaceMutationDeferred()) {
+                        this.deferDesktopIntent(active);
+                        return;
                     }
+                    target = this.appendDesktopForGlobalUnique(scope.output);
                 } else {
-                    target = this.trailingOwnedEmptyDesktop();
-                    if (target === null) {
-                        if (this.workspaceMutationDeferred()) {
-                            this.deferDesktopIntent(active);
-                            return;
-                        }
-                        target = this.appendDesktop();
+                    if (this.workspaceMutationDeferred()) {
+                        this.deferDesktopIntent(active);
+                        return;
                     }
+                    target = this.appendDesktop();
                 }
             } else {
                 if (this.workspaceMode === "per-output-local") {
@@ -8234,16 +8125,16 @@ export class TileController {
         return null;
     }
 
-    // Reconcile the desktop list to exactly one trailing script-owned empty
-    // desktop after the highest occupied workspace. Excess owned empty trailing
-    // desktops are removed (only owned, non-current, non-visible-on-another-
-    // output, non-last); a missing trailing empty is replenished by appending
-    // one replacement, which happens only once an owned desktop exists in the
-    // live list (the dynamic-desktop feature is engaged). Pre-existing and
-    // user-owned desktops are never removed. Deferral keeps the list untouched
-    // while a drag, reconstruction, or unsettled move is live, and the
-    // reconciliation guard keeps create/remove re-entry inert.
-    private cleanupDesktops(switchCleanup = false): void {
+    // Rebuild each mode's mapping from the live desktop list, then run
+    // cleanupEligibleDesktops(), the sole removal authority: it removes one
+    // empty, non-current, non-visible-on-another-output desktop per candidate,
+    // never the last global desktop (planDesktopCleanup's own floor). No
+    // trailing empty is created or replenished here - Meta+0/Meta+Shift+0 are
+    // the only paths that create a desktop, and they always create rather than
+    // reuse. Deferral keeps the list untouched while a drag, reconstruction, or
+    // unsettled move is live, and the reconciliation guard keeps create/remove
+    // re-entry inert.
+    private cleanupDesktops(): void {
         if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
         }
@@ -8264,12 +8155,10 @@ export class TileController {
         if (desktops === null) {
             return;
         }
-        const visible = visibleSnapshot ?? new Set(desktops.map((desktop) => desktop.id));
         if (visibleSnapshot === null) {
             this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
         }
         const occupiedSnapshot = this.occupiedDesktopIds();
-        const occupied = occupiedSnapshot ?? new Set(desktops.map((desktop) => desktop.id));
         if (occupiedSnapshot === null) {
             this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
         }
@@ -8282,106 +8171,35 @@ export class TileController {
             if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
                 return;
             }
-            this.reconcileLocalWorkspaces(desktops, visible, occupied);
-            if (switchCleanup) {
-                this.cleanupAfterWorkspaceSwitch();
-            }
+            this.reconcileLocalWorkspaces(desktops);
+            this.cleanupEligibleDesktops();
             return;
         }
         if (this.workspaceMode === "global-unique") {
             if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
                 return;
             }
-            this.reconcileGlobalUnique(desktops, visible, occupied);
-            if (switchCleanup) {
-                this.cleanupAfterWorkspaceSwitch();
-            }
+            this.reconcileGlobalUnique(desktops);
+            this.cleanupEligibleDesktops();
             return;
         }
         this.rebuildSharedMapping(desktops);
         if (desktops.length <= 1) {
-            // A singleton shared list has nothing to remove or replenish (the
-            // shared trailing empty requires at least two live desktops), and
-            // the mapping above already tracked the live ordered list.
+            // A singleton shared list has nothing to remove or replenish (removal
+            // authority is cleanupEligibleDesktops, which itself never removes the
+            // last global desktop), and the mapping above already tracked the live
+            // ordered list.
             return;
         }
-        let highestOccupied = 0;
-        for (let position = 0; position < desktops.length; position += 1) {
-            const desktop = desktops[position];
-            if (desktop !== undefined && occupied.has(desktop.id)) {
-                highestOccupied = position + 1;
-            }
-        }
-        const lastIndex = desktops.length - 1;
-        const trailing: Array<{ readonly desktop: VirtualDesktopCapability; readonly position: number }> = [];
-        for (let position = 0; position < desktops.length; position += 1) {
-            const desktop = desktops[position];
-            if (desktop === undefined) {
-                continue;
-            }
-            if (!this.ownedDesktopIds.has(desktop.id)) {
-                continue;
-            }
-            if (occupied.has(desktop.id)) {
-                continue;
-            }
-            if (position + 1 <= highestOccupied) {
-                continue;
-            }
-            trailing.push({ desktop, position });
-        }
-        if (trailing.length === 0) {
-            // Missing shared trailing empty (spec D3): the shared set retains
-            // exactly one trailing empty, so append one replacement. This runs
-            // even in a fresh all-pre-existing session (the shared set is the
-            // feature's own ordered set, exactly like the per-output-local
-            // trailing-empty retention), and again when Meta+Shift+0 moved a
-            // window into the owned trailing desktop. A create failure is
-            // non-destructive and leaves the valid existing state in place.
-            const created = this.appendDesktop();
-            if (created !== null) {
-                this.diagnostic("workspace-cleanup-replenished");
-            }
-            this.rebuildSharedMapping();
-            if (switchCleanup) {
-                this.cleanupAfterWorkspaceSwitch();
-            }
-            return;
-        }
-        // Excess owned empty trailing desktops: remove every one before the
-        // kept trailing-most replacement. The current desktop, any desktop
-        // visible on another output, and the last desktop are never removed.
-        const keep = trailing[trailing.length - 1];
-        if (keep === undefined) {
-            return;
-        }
-        this.reconcilingDesktops = true;
-        try {
-            for (const entry of trailing) {
-                if (entry.position === keep.position) {
-                    continue;
-                }
-                if (entry.position === lastIndex) {
-                    continue;
-                }
-                if (visible.has(entry.desktop.id)) {
-                    continue;
-                }
-                this.removeOwnedEmptyShared(entry.desktop.id, desktops, visible, lastIndex);
-            }
-        } finally {
-            this.reconcilingDesktops = false;
-        }
-        this.rebuildSharedMapping();
-        if (switchCleanup) {
-            this.cleanupAfterWorkspaceSwitch();
-        }
+        this.cleanupEligibleDesktops();
+        return;
     }
 
-    // A completed workspace switch is the only point at which controller-owned
-    // empty desktops away from a mode's trailing capacity may be removed.
-    // Every pass rereads all mutable KWin state before selecting one candidate.
-    private cleanupAfterWorkspaceSwitch(): void {
+    // Removal of empty, invisible desktops now runs on every cleanupDesktops
+    // dispatch (window add/remove, move, float, drag finish, desktopsChanged,
+    // output changes), not only after a workspace switch. Every pass rereads
+    // all mutable KWin state before selecting one candidate.
+    private cleanupEligibleDesktops(): void {
         this.reconcilingDesktops = true;
         try {
             while (true) {
@@ -8399,27 +8217,19 @@ export class TileController {
                     this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
                     return;
                 }
-                const protectedTrailing = this.protectedTrailingIdsForSwitchCleanup(desktops, occupied);
-                if (protectedTrailing === null) {
-                    this.diagnostic("workspace-cleanup-deferred:mapping-unknown");
-                    return;
-                }
                 const selection = planDesktopCleanup({
                     orderedIds: desktops.map((desktop) => desktop.id),
-                    ownedIds: this.ownedDesktopIds,
                     visibleIds: visible,
                     occupiedIds: occupied,
-                    protectedTrailingIds: protectedTrailing,
                 });
                 if (!selection.ok) {
                     return;
                 }
-                const lastIndex = desktops.length - 1;
                 const removed = this.workspaceMode === "per-output-local"
-                    ? this.removeOwnedEmptyDesktop(selection.value.id, desktops, visible, lastIndex)
+                    ? this.removeOwnedEmptyDesktop(selection.value.id, desktops, visible)
                     : this.workspaceMode === "global-unique"
-                      ? this.removeOwnedEmptyGlobalUnique(selection.value.id, desktops, visible, lastIndex)
-                      : this.removeOwnedEmptyShared(selection.value.id, desktops, visible, lastIndex);
+                      ? this.removeOwnedEmptyGlobalUnique(selection.value.id, desktops, visible)
+                      : this.removeOwnedEmptyShared(selection.value.id, desktops, visible);
                 if (!removed) {
                     return;
                 }
@@ -8429,86 +8239,15 @@ export class TileController {
         }
     }
 
-    // Derive every active mode/domain's required trailing owned empty. A missing
-    // mapping or trailing capacity is uncertain, so switch cleanup does nothing.
-    private protectedTrailingIdsForSwitchCleanup(
-        desktops: readonly VirtualDesktopCapability[],
-        occupied: ReadonlySet<string>,
-    ): Set<string> | null {
-        const protectedIds = new Set<string>();
-        if (this.workspaceMode === "per-output-local") {
-            this.rebuildLocalMapping(desktops);
-            const keys = this.connectedOutputKeys();
-            if (keys.length === 0) {
-                return null;
-            }
-            for (const key of keys) {
-                const id = this.trailingOwnedEmptyId(this.localWorkspaces.get(key), occupied);
-                if (id === null) {
-                    return null;
-                }
-                protectedIds.add(id);
-            }
-            return protectedIds;
-        }
-        if (this.workspaceMode === "global-unique") {
-            const keys = this.rebuildGlobalUniqueMapping(desktops);
-            if (keys === null) {
-                return null;
-            }
-            for (const key of keys) {
-                const id = this.trailingOwnedEmptyId(this.globalUniqueOrdered(desktops, key).map((desktop) => desktop.id), occupied);
-                if (id === null) {
-                    return null;
-                }
-                protectedIds.add(id);
-            }
-            return protectedIds;
-        }
-        this.rebuildSharedMapping(desktops);
-        const id = this.trailingOwnedEmptyId(this.sharedWorkspaces, occupied);
-        if (id === null) {
-            return null;
-        }
-        protectedIds.add(id);
-        return protectedIds;
-    }
-
-    private trailingOwnedEmptyId(ids: readonly string[] | undefined, occupied: ReadonlySet<string>): string | null {
-        if (ids === undefined) {
-            return null;
-        }
-        let highestOccupied = 0;
-        for (let position = 0; position < ids.length; position += 1) {
-            const id = ids[position];
-            if (id !== undefined && occupied.has(id)) {
-                highestOccupied = position + 1;
-            }
-        }
-        let trailing: string | null = null;
-        for (let position = 0; position < ids.length; position += 1) {
-            const id = ids[position];
-            if (id === undefined || !this.ownedDesktopIds.has(id) || occupied.has(id) || position + 1 <= highestOccupied) {
-                continue;
-            }
-            trailing = id;
-        }
-        return trailing;
-    }
-
     private removeOwnedEmptyShared(
         id: string,
         desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
-        lastIndex: number,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
         const position = desktops.findIndex((desktop) => desktop.id === id);
-        if (position === lastIndex) {
-            return false;
-        }
         const desktop = desktops[position];
         if (desktop === undefined) {
             return false;
@@ -8517,7 +8256,7 @@ export class TileController {
             this.environment.removeDesktop(desktop);
             this.ownedDesktopIds.delete(id);
             this.rebuildSharedMapping();
-            this.diagnostic("workspace-cleanup-removed");
+            this.diagnostic(`workspace-cleanup-removed:${id}`);
             return true;
         } catch (error) {
             this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
@@ -8538,104 +8277,13 @@ export class TileController {
     // order, which is stable within a session but not across a plug/replug
     // reorder (documented limitation, spec E collision).
 
-    // Per-output-local reconciliation: rebuild the mapping, then retain exactly
-    // one script-owned trailing empty per connected output and remove excess
-    // owned empties, including the still-empty owned desktops of a removed
-    // output (they are invisible on every output, so they are cleanup
-    // candidates; a replug of the same tuple gets a fresh set). Every connected
-    // output whose local list lacks a trailing empty gets exactly one owned
-    // trailing empty created automatically (spec D1/H.3, spec E fresh set for a
-    // new output) - including an initial session and a replugged new output -
-    // so the required trailing empty never depends on a prior Meta+Shift+0.
-    // Pre-existing, occupied, current, visible, and last-global desktops are
-    // never removed, and a pre-existing desktop is never marked owned. Deferral
-    // and the reconciliation guard are inherited from cleanupDesktops, so no
-    // desktop is removed during a drag, reconstruction, or unsettled move.
-    private reconcileLocalWorkspaces(
-        desktops: readonly VirtualDesktopCapability[],
-        visible: ReadonlySet<string>,
-        occupied: ReadonlySet<string>,
-    ): void {
+    // Per-output-local reconciliation: rebuild the per-output mapping from the
+    // live desktop list. No creation, no removal, and no reserved trailing
+    // empty here - Meta+0/Meta+Shift+0 always create rather than reuse, and
+    // cleanupEligibleDesktops (run unconditionally right after by the caller)
+    // is the sole removal authority.
+    private reconcileLocalWorkspaces(desktops: readonly VirtualDesktopCapability[]): void {
         this.rebuildLocalMapping(desktops);
-        if (this.localWorkspaces.size === 0) {
-            return;
-        }
-        const lastIndex = desktops.length - 1;
-        const kept = new Set<string>();
-        const connectedOwned = new Set<string>();
-        for (const key of this.localWorkspaces.keys()) {
-            const list = this.localWorkspaces.get(key) ?? [];
-            for (const id of list) {
-                if (this.ownedDesktopIds.has(id)) {
-                    connectedOwned.add(id);
-                }
-            }
-            let highestOccupied = 0;
-            for (let position = 0; position < list.length; position += 1) {
-                const id = list[position];
-                if (id !== undefined && occupied.has(id)) {
-                    highestOccupied = position + 1;
-                }
-            }
-            const trailing: Array<{ readonly id: string; readonly position: number }> = [];
-            for (let position = 0; position < list.length; position += 1) {
-                const id = list[position];
-                if (id === undefined) {
-                    continue;
-                }
-                if (!this.ownedDesktopIds.has(id)) {
-                    continue;
-                }
-                if (occupied.has(id)) {
-                    continue;
-                }
-                if (position + 1 <= highestOccupied) {
-                    continue;
-                }
-                trailing.push({ id, position });
-            }
-            if (trailing.length === 0) {
-                const created = this.appendDesktopForOutputKey(key);
-                if (created !== null) {
-                    kept.add(created.id);
-                    this.diagnostic("workspace-cleanup-replenished");
-                }
-                continue;
-            }
-            const keep = trailing[trailing.length - 1];
-            if (keep !== undefined) {
-                kept.add(keep.id);
-            }
-            this.reconcilingDesktops = true;
-            try {
-                for (const entry of trailing) {
-                    if (entry.id === keep?.id) {
-                        continue;
-                    }
-                    this.removeOwnedEmptyDesktop(entry.id, desktops, visible, lastIndex);
-                }
-            } finally {
-                this.reconcilingDesktops = false;
-            }
-        }
-        // A disconnected output's still-empty owned desktops are cleanup
-        // candidates (spec E hotplug): empty, invisible on every output,
-        // non-current, and never the last global desktop. Connected-output
-        // owned desktops are preserved even when not trailing (they keep their
-        // position in their output's list). Deferred by the same lifecycle
-        // checks that guard the connected-output pass above.
-        for (const id of [...this.ownedDesktopIds]) {
-            if (connectedOwned.has(id)) {
-                continue;
-            }
-            if (kept.has(id)) {
-                continue;
-            }
-            if (occupied.has(id)) {
-                continue;
-            }
-            this.removeOwnedEmptyDesktop(id, desktops, visible, lastIndex);
-        }
     }
 
     // Read-only rebuild of the per-output-local mapping from the current live
@@ -8725,15 +8373,11 @@ export class TileController {
         id: string,
         desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
-        lastIndex: number,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
         const position = desktops.findIndex((desktop) => desktop.id === id);
-        if (position === lastIndex) {
-            return false;
-        }
         const desktop = desktops[position];
         if (desktop === undefined) {
             return false;
@@ -8747,7 +8391,7 @@ export class TileController {
                     list.splice(position, 1);
                 }
             }
-            this.diagnostic("workspace-cleanup-removed");
+            this.diagnostic(`workspace-cleanup-removed:${id}`);
             return true;
         } catch (error) {
             this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
@@ -8755,9 +8399,9 @@ export class TileController {
         }
     }
 
-    // Append one owned desktop and record it in the given output's local list.
-    // Used by both Meta+Shift+0 and the trailing-empty replenish so every
-    // script-owned desktop belongs to exactly one output's list.
+    // Append one owned desktop and record it in the given output's local list
+    // (Meta+Shift+0 path). Every script-owned desktop belongs to exactly one
+    // output's list.
     private appendDesktopForOutputKey(key: string): VirtualDesktopCapability | null {
         const created = this.appendDesktop();
         if (created !== null) {
@@ -8776,53 +8420,6 @@ export class TileController {
             return null;
         }
         return this.localWorkspaces.get(key) ?? null;
-    }
-
-    // The script-owned trailing empty of an output's local list (the
-    // trailing-most owned empty after the highest occupied local position), or
-    // null when the output owns no desktop or has no such empty. Never creates.
-    private trailingOwnedEmptyForOutput(output: OutputCapability): VirtualDesktopCapability | null {
-        const list = this.localListForOutput(output);
-        if (list === null) {
-            return null;
-        }
-        const desktops = this.liveDesktops();
-        if (desktops === null) {
-            return null;
-        }
-        const byId = new Map(desktops.map((desktop) => [desktop.id, desktop] as const));
-        const occupied = this.occupiedDesktopIds();
-        if (occupied === null) {
-            return null;
-        }
-        let highestOccupied = 0;
-        for (let position = 0; position < list.length; position += 1) {
-            const id = list[position];
-            if (id !== undefined && occupied.has(id)) {
-                highestOccupied = position + 1;
-            }
-        }
-        let candidate: VirtualDesktopCapability | null = null;
-        for (let position = 0; position < list.length; position += 1) {
-            const id = list[position];
-            if (id === undefined) {
-                continue;
-            }
-            if (!this.ownedDesktopIds.has(id)) {
-                continue;
-            }
-            if (occupied.has(id)) {
-                continue;
-            }
-            if (position + 1 <= highestOccupied) {
-                continue;
-            }
-            const desktop = byId.get(id);
-            if (desktop !== undefined) {
-                candidate = desktop;
-            }
-        }
-        return candidate;
     }
 
     // The local desktop at 1-based logical index n of an output's list, or null
@@ -9035,62 +8632,8 @@ export class TileController {
         return this.globalUniqueOrdered(desktops, key)[index - 1] ?? null;
     }
 
-    // The trailing owned empty entries of an ordered subset: owned, empty, and
-    // after every occupied desktop. The trailing-most entry is the one cleanup
-    // keeps and Meta+Shift+0 moves into.
-    private trailingOwnedEmptiesInSubset(
-        subset: readonly VirtualDesktopCapability[],
-        occupied: ReadonlySet<string>,
-    ): Array<{ readonly desktop: VirtualDesktopCapability; readonly position: number }> {
-        const trailing: Array<{ readonly desktop: VirtualDesktopCapability; readonly position: number }> = [];
-        let highestOccupied = 0;
-        for (let position = 0; position < subset.length; position += 1) {
-            const desktop = subset[position];
-            if (desktop !== undefined && occupied.has(desktop.id)) {
-                highestOccupied = position + 1;
-            }
-        }
-        for (let position = 0; position < subset.length; position += 1) {
-            const desktop = subset[position];
-            if (desktop === undefined) {
-                continue;
-            }
-            if (!this.ownedDesktopIds.has(desktop.id)) {
-                continue;
-            }
-            if (occupied.has(desktop.id)) {
-                continue;
-            }
-            if (position + 1 <= highestOccupied) {
-                continue;
-            }
-            trailing.push({ desktop, position });
-        }
-        return trailing;
-    }
-
-    // The script-owned trailing empty of an output's assigned subset, or null
-    // when none exists. Never creates.
-    private trailingOwnedEmptyForGlobalUnique(output: OutputCapability): VirtualDesktopCapability | null {
-        const key = this.outputKeys.keyFor(output);
-        if (key === undefined) {
-            return null;
-        }
-        const desktops = this.liveDesktops();
-        if (desktops === null) {
-            return null;
-        }
-        const subset = this.globalUniqueOrdered(desktops, key);
-        const occupied = this.occupiedDesktopIds();
-        if (occupied === null) {
-            return null;
-        }
-        const trailing = this.trailingOwnedEmptiesInSubset(subset, occupied);
-        return trailing[trailing.length - 1]?.desktop ?? null;
-    }
-
-    // Append one owned desktop and assign it to the given output (Meta+Shift+0
-    // and trailing-empty replenish paths).
+    // Append one owned desktop and assign it to the given output (Meta+0 and
+    // Meta+Shift+0 paths).
     private appendDesktopForGlobalUnique(output: OutputCapability): VirtualDesktopCapability | null {
         const key = this.outputKeys.keyFor(output);
         if (key === undefined) {
@@ -9103,59 +8646,13 @@ export class TileController {
         return created;
     }
 
-    // Global-unique reconciliation (spec D2/D3, spec E hotplug, spec F). Drops
-    // disconnected outputs (unassigning their desktops), assigns every live
-    // desktop exactly once (unassigned pre-existing desktops to the session
-    // primary output), filters assigned subsets to live ids, retains exactly one
-    // trailing empty per connected output, then removes owned desktops that are
-    // empty, non-current, invisible on every output, and no longer assigned to
-    // any output. Pre-existing desktops are never removed.
-    private reconcileGlobalUnique(
-        desktops: readonly VirtualDesktopCapability[],
-        visible: ReadonlySet<string>,
-        occupied: ReadonlySet<string>,
-    ): void {
-        const keys = this.rebuildGlobalUniqueMapping(desktops);
-        if (keys === null) {
-            return;
-        }
-        const lastIndex = desktops.length - 1;
-        for (const key of keys) {
-            const subset = this.globalUniqueOrdered(desktops, key);
-            const trailing = this.trailingOwnedEmptiesInSubset(subset, occupied);
-            if (trailing.length === 0) {
-                const created = this.appendDesktopForGlobalUniqueKey(key);
-                if (created !== null) {
-                    this.diagnostic("workspace-cleanup-replenished");
-                }
-                continue;
-            }
-            const keep = trailing[trailing.length - 1];
-            if (keep === undefined) {
-                continue;
-            }
-            this.reconcilingDesktops = true;
-            try {
-                for (const entry of trailing) {
-                    if (entry.desktop.id === keep.desktop.id) {
-                        continue;
-                    }
-                    this.removeOwnedEmptyGlobalUnique(entry.desktop.id, desktops, visible, lastIndex);
-                }
-            } finally {
-                this.reconcilingDesktops = false;
-            }
-        }
-        const assigned = new Set(this.globalUniqueInverse.keys());
-        for (const id of [...this.ownedDesktopIds]) {
-            if (assigned.has(id)) {
-                continue;
-            }
-            if (occupied.has(id)) {
-                continue;
-            }
-            this.removeOwnedEmptyGlobalUnique(id, desktops, visible, lastIndex);
-        }
+    // Global-unique reconciliation: rebuild the per-output assignment mapping
+    // from the live desktop list. No creation, no removal, and no reserved
+    // trailing empty here - Meta+0/Meta+Shift+0 always create rather than
+    // reuse, and cleanupEligibleDesktops (run unconditionally right after by
+    // the caller) is the sole removal authority.
+    private reconcileGlobalUnique(desktops: readonly VirtualDesktopCapability[]): void {
+        this.rebuildGlobalUniqueMapping(desktops);
     }
 
     // Rebuild global-unique assignment from the current live desktop list. A
@@ -9208,15 +8705,11 @@ export class TileController {
         id: string,
         desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
-        lastIndex: number,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
         const position = desktops.findIndex((desktop) => desktop.id === id);
-        if (position === lastIndex) {
-            return false;
-        }
         const desktop = desktops[position];
         if (desktop === undefined) {
             return false;
@@ -9225,21 +8718,12 @@ export class TileController {
             this.environment.removeDesktop(desktop);
             this.ownedDesktopIds.delete(id);
             this.unassignGlobalUnique(id);
-            this.diagnostic("workspace-cleanup-removed");
+            this.diagnostic(`workspace-cleanup-removed:${id}`);
             return true;
         } catch (error) {
             this.diagnostic(`workspace-cleanup-remove-failed:${describeWorkspaceFailure(error)}`);
             return false;
         }
-    }
-
-    // Append one owned desktop and assign it to the given connected output key.
-    private appendDesktopForGlobalUniqueKey(key: string): VirtualDesktopCapability | null {
-        const created = this.appendDesktop();
-        if (created !== null) {
-            this.assignGlobalUnique(created.id, key);
-        }
-        return created;
     }
 
     // Desktop ids currently visible on any output (per-output current desktop)
