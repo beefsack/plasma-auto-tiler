@@ -109,8 +109,9 @@ Cross-change:
   ([change](../archive/2026-08-14-unified-settings/plan.md)).
 - Delivered [native-effect-live-runner](../archive/2026-08-17-native-effect-live-runner/plan.md)
   controlled unload/cleanup acceptance and later
-  [native-effect-host-live-runner](../native-effect-host-live-runner/) read-only
-  feasibility for theme, geometry, stacking, and hot-apply live validation.
+  [native-effect-host-live-runner](../archive/2026-08-18-native-effect-host-live-runner/)
+  read-only feasibility for theme, geometry, stacking, and hot-apply live
+  validation.
 
 ## Config Preservation Map
 

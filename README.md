@@ -6,7 +6,9 @@ Guarded Custom Tile automation for KWin.
 
 Package and manage the `plasma-auto-tiler-kwin` KWin script from this
 repository with `scripts/dogfood-install.sh`. There is no build step other than
-what the script performs; `install` builds the bundle first.
+what the script performs; `install` builds the bundle first. The same script
+also builds, stages, and reloads the experimental native active-border
+effect; see [Native effect (dogfood)](#native-effect-dogfood) below.
 
 ### Distribution archive
 
@@ -269,6 +271,58 @@ KWin configuration.
 bash scripts/dogfood-install.sh uninstall
 ```
 
+### Native effect (dogfood)
+
+`scripts/dogfood-install.sh` also builds, stages, and reloads the
+experimental, disabled-by-default native `plasma-auto-tiler-active-border`
+effect on your real Plasma session. The KWin script commands above need no
+session boundary; the native effect needs exactly one logout/login (or new
+session), once, after the first `effect-install` creates its
+`~/.config/plasma-workspace/env/` script. After that one boundary, every
+later rebuild and `effect-reload` is live over D-Bus with no further
+boundary.
+
+```sh
+devenv shell --impure -- bash scripts/dogfood-install.sh effect-install
+bash scripts/dogfood-install.sh effect-status
+bash scripts/dogfood-install.sh effect-reload
+bash scripts/dogfood-install.sh effect-remove
+```
+
+`effect-install` builds the plugin against the pinned KWin ABI (needs `devenv
+shell --impure` for the pinned dev store paths) and stages it under
+`$XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/` (or
+the `$HOME/.local/share` equivalent), then writes a `QT_PLUGIN_PATH` export
+to `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+(sourced by `startplasma-wayland` at session start) so the staged directory
+is discoverable; idempotent. `effect-status` is a staged diagnostic: it
+reports staging, the env script, session delivery (read directly from the
+running `kwin_wayland` process's own environment), D-Bus discovery, and
+D-Bus loaded state, each as a clear pass/fail with guidance, so one run
+after logging back in is conclusive; read-only. `effect-reload` mutates the
+running KWin session via D-Bus: it queries D-Bus for effect support and,
+once supported, unloads and reloads the effect live; before the boundary it
+reports the pending requirement plainly and exits non-zero rather than
+attempting a load. `effect-remove` unstages the plugin, deletes the env
+script, and (migration cleanup) also deletes any legacy `environment.d`
+entry this project wrote previously; idempotent. `effect-install` and
+`effect-remove` never touch KWin configuration or D-Bus. See
+`docs/live-kwin-testing.md` for the full session-boundary contract.
+
+### Eyeball check
+
+After dogfooding, confirm by eye:
+
+- `bash scripts/dogfood-install.sh status` reports installed and enabled,
+  and windows on your session actually tile.
+- `bash scripts/dogfood-install.sh effect-status` reports the effect
+  supported and loaded (after the one-time logout/login).
+- The active window shows the border effect rendering.
+- After a code change, `effect-install` (rebuild) then `effect-reload`
+  completes and the border reflects it, with no session boundary.
+- After `effect-remove`, `effect-status` reports not staged and the border
+  is gone.
+
 ## Scope of each command
 
 - `install` and `uninstall` affect only the local package directory
@@ -278,3 +332,11 @@ bash scripts/dogfood-install.sh uninstall
   reconfiguration; they never modify the installed package.
 - `status` is read-only.
 - `dry-run` is read-only and never mutates anything.
+- `effect-install` and `effect-remove` build/stage/unstage the native effect
+  plugin under its own namespaced user-local directory and create/remove
+  only the project's own `plasma-workspace/env/` script (`effect-remove`
+  also migrates away any legacy `environment.d` entry); they never touch
+  KWin configuration or D-Bus.
+- `effect-reload` reconfigures the running KWin session live via D-Bus
+  `/Effects` `loadEffect`/`unloadEffect`.
+- `effect-status` is read-only.

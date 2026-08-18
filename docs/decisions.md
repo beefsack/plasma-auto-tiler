@@ -52,30 +52,35 @@ Git history and archived change records.
 
 ## Native Effect Live Validation
 
-- **Decision:** Nested-only/private live validation is the default and preserves
-  all current guarantees: it never launches or mutates host KWin, and visual
-  acceptance is manual. Host validation is a separate, user-run path only, never
-  a host mode in the nested runner.
-- **Scope:** The separate host path is gated by read-only feasibility, exact
-  target KWin ABI/package/build identity, dynamic discovery and load/unload
-  without an in-place restart, exact state snapshot, bounded user-local
-  install/load scope, retained evidence, exact user-supervised normal-path
-  restoration, and second-boundary restoration verification; automatic
-  crash- or power-loss rollback is not guaranteed. It now permits
-  a limited user-run controlled session-boundary protocol: per-attempt user
-  authorization, a temporary nonce-owned user-local session environment entry,
-  two required user-run session boundaries (secondary Wayland session preferred;
-  primary logout/login only a separately authorized fallback), a post-boundary
-  recheck, retained evidence, and second-boundary restoration verification.
-  Agents may implement and statically/fake-verify tooling but never execute
-  host KWin mutations. sudo/system plugin paths, broad cleanup, routine in-place
-  host KWin restart/replacement, and automatic primary-session mutation remain
-  prohibited.
-- **Consequences:** Host lifecycle evidence is user-run and separate; it is
-  neither exercised by the nested path nor accepted without the bounded host
-  lifecycle and restoration requirements above.
-- **Reconsider when:** The user explicitly approves a different validation
-  boundary.
+- **Decision:** Nested-only/private live validation remains available and
+  unchanged: it never launches or mutates host KWin, and visual acceptance is
+  manual. Host dogfooding on the user's daily session is now a first-class,
+  standing-authorized path: agents may execute reversible, user-local host
+  operations without per-run authorization, and the user personally performs
+  every session boundary.
+- **Scope:** Standing agent authorization covers building the effect against the
+  pinned KWin ABI; staging and removing the plugin under a stable, namespaced
+  user-local directory; creating and removing exactly one uniquely-named session
+  environment script under `~/.config/plasma-workspace/env/` owned by this
+  project, and removing the superseded `~/.config/environment.d` entry of the
+  same name; KWin `/Effects` D-Bus `loadEffect`/`unloadEffect` and read-only
+  queries; KWin script install, enable, disable, and `reconfigure` via
+  `kpackagetool6`, `kwriteconfig6`, and `qdbus6`; KWin `/Scripting` `loadScript`
+  and `unloadScript` for bounded interactive test runs; and journal and status
+  reads. Every session boundary - logout, login, or starting a session - is
+  user-run only. Prohibited without separate approval: `sudo`, system plugin
+  paths, editing or deleting any Home Manager-managed file, editing any
+  `~/.config/environment.d` entry other than our own, pinning Home Manager
+  generation paths, and broad cleanup of unrelated state.
+- **Consequences:** Discovering the native effect requires exactly one user-run
+  session boundary after the session environment script is first created;
+  thereafter rebuild-and-reload is live over D-Bus and needs no boundary.
+  Restoration is normal-path only: exact removal of what we created. Crash and
+  power-loss rollback, hostile same-user races, and filesystem corruption remain
+  out of scope. Host acceptance is a short eyeball checklist, not an automated
+  evidence framework.
+- **Reconsider when:** The user withdraws standing authorization, or a required
+  operation falls outside the reversible user-local set.
 
 ## Rounded Corners
 

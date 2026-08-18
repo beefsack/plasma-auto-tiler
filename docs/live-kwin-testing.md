@@ -3,40 +3,83 @@
 ## Purpose
 
 Read this guide before planning, authorizing, or running any live KWin/Plasma
-test. It is the authoritative operational contract for this repository. It
-does not grant a live-mutation authorization; every attempt still needs one
-bounded, explicit authorization.
+test. It is the authoritative operational contract for this repository.
+General live KWin/Plasma testing (window journeys, Custom Tile mutation,
+shortcut reconciliation, and everything else in this guide besides the
+dogfood commands below) still needs one bounded, explicit authorization per
+attempt. The narrower, standing-authorized exception for reversible
+user-local KWin script and native-effect dogfood operations is defined in
+Safety Boundary below.
 
 ## Safety Boundary
 
+- Standing authorization: agents may execute, without asking each time, the
+  reversible user-local KWin script and native-effect dogfood operations -
+  builds; staging/removing the native-effect plugin under its stable
+  namespaced user-local directory; creating/removing the project's own
+  uniquely-named `~/.config/plasma-workspace/env/` script (and migrating
+  away the legacy `~/.config/environment.d/` entry of the same name); KWin
+  `/Effects` D-Bus `loadEffect`/`unloadEffect` and read-only queries; KWin
+  script install/enable/disable/reconfigure via `kpackagetool6`,
+  `kwriteconfig6`, and `qdbus6`; and journal and status reads. See
+  `docs/decisions.md#native-effect-live-validation` for the full scope and
+  prohibited list (`sudo`, system plugin paths, Home Manager-managed files,
+  any `environment.d` entry other than our own legacy one being migrated
+  away, pinning Home Manager generation paths, broad cleanup). The user
+  alone performs every session boundary (logout, login, or starting a
+  session).
+- Every other live KWin mutation - window journeys, Custom Tile structural
+  operations, shortcut reconciliation, desktop creation, and everything else
+  in this guide besides the dogfood commands - remains outside standing
+  authorization and needs its own bounded, explicit authorization per
+  attempt.
 - Preserve real windows, desktops, outputs, Krohnkite state, and unrelated
-  configuration. Record a fresh nonce before any mutation and own only resources
-  named by that nonce.
+  configuration. Record a fresh nonce before any non-standing-authorized
+  mutation and own only resources named by that nonce.
 - Never use broad cleanup. Touch only exact plugin IDs, component/action pairs,
   process groups, desktops, and tiling keys recorded after validated ownership.
   Unrelated stale tiling groups are not cleanup targets.
-- Agents must not kill, restart, log out of, or reconfigure KWin. Do not invoke
-  actions, create clients or desktops, or modify tiling/configuration outside
-  the one authorized scope. Stop immediately on any ownership, parser,
-  diagnostic, or baseline surprise. Do not retry a live launch within that
-  authorization.
+- Outside the standing-authorized dogfood operations, agents must not kill,
+  restart, log out of, or reconfigure KWin. Do not invoke actions, create
+  clients or desktops, or modify tiling/configuration outside the one
+  authorized scope. Stop immediately on any ownership, parser, diagnostic, or
+  baseline surprise. Do not retry a live launch within that authorization.
 
 ## Native Effect Host Session-Boundary Exception
 
-- The no-restart rule above is scoped to agents and applies to them unchanged.
-  The single approved exception to the no-restart boundary is the Native Effect
-  Host protocol for the exact native active-border effect, defined in
-  [native-effect-host-live-runner](changes/native-effect-host-live-runner/spec.md).
-- It requires per-attempt user authorization, exact ownership and pre-state
-  snapshot, a temporary nonce-owned user-local session environment entry, two
-  user-run session boundaries (secondary Wayland session preferred; primary
-  logout/login only a separately authorized fallback), retained recovery
-  evidence, and second-boundary restoration verification.
-- There is no routine in-place KWin restart: the only permitted KWin start/stop
-  is the user entering and ending the bounded session. `/Compositor`,
-  `/Scripting`, system paths, sudo, and broad cleanup remain prohibited.
-- The user alone runs session boundaries, host mutation, and visual acceptance;
-  agents never execute host KWin mutations.
+- The standing-authorized dogfood operations in Safety Boundary above are the
+  only approved exception to the general no-restart/no-reconfigure rule; this
+  section states their exact session-boundary shape. See
+  `docs/decisions.md#native-effect-live-validation` for the authoritative
+  policy and [host-dogfooding](changes/host-dogfooding/spec.md) for the
+  delivering change; the narrower, ceremonial
+  [native-effect-host-live-runner](changes/archive/2026-08-18-native-effect-host-live-runner/spec.md)
+  protocol this superseded is retained only as historical record.
+- KWin script path: `scripts/dogfood-install.sh
+  install|enable|disable|uninstall|status` needs no session boundary at any
+  time; `enable`/`disable` reconfigure the running KWin live via D-Bus.
+- Native effect path: discovery needs exactly one user-run session boundary
+  (logout/login, or starting a new session), performed once after
+  `scripts/dogfood-install.sh effect-install` first creates the project's
+  `~/.config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
+  script - sourced by `startplasma-wayland`'s `runEnvironmentScripts()` into
+  its own process environment, which `syncDBusEnvironment()` then hands to
+  `KUpdateLaunchEnvironmentJob`'s session-wide resync, so this mechanism
+  survives that resync rather than being overwritten by it (unlike the
+  earlier `environment.d`-based approach on this host, which never worked at
+  all - see `docs/changes/host-dogfooding/plan.md` Units J-L). After that
+  one boundary, every later rebuild and `effect-reload` is live via `/Effects`
+  `loadEffect`/`unloadEffect` D-Bus calls with no further boundary.
+  `effect-status` is a staged diagnostic (staging, env script, session
+  delivery, D-Bus discovery, D-Bus loaded state, each pass/fail with
+  guidance) and read-only. `effect-remove` unstages the plugin, deletes the
+  project's env script, and also migrates away any legacy `environment.d`
+  entry the project wrote previously.
+- `/Compositor`, `/Scripting`, system plugin paths, `sudo`, and broad cleanup
+  remain prohibited for these operations, matching the general Safety
+  Boundary above.
+- The user alone runs every session boundary; agents never perform or
+  simulate one.
 
 ## Nested Compositor Config Isolation
 
@@ -159,8 +202,12 @@ validation ladder above.
   `shortcut-register-failed:*` reasons, and separate `kwin_scripting`
   warnings/errors before the exact idempotent stop/unload; it never falls back
   to the historical (pre-cursor) epoch when a current attempt exists. Running
-  it is a live KWin mutation and still requires one explicit, bounded
-  authorization under the Safety Boundary. An INT/TERM interruption during a
+  it uses `/Scripting` `loadScript`/`unloadScript` for this bounded
+  interactive test run, standing-authorized under the Safety Boundary above;
+  any further live KWin mutation beyond that bounded run (window journeys,
+  Custom Tile structural work, shortcut reconciliation, desktop creation)
+  remains outside standing authorization and still needs its own explicit,
+  bounded authorization. An INT/TERM interruption during a
   `start` removes its un-reported attempt evidence temp file (it does not leak
   in `/tmp`) and re-raises the signal, so the outcome is reported by the
   caller as unknown rather than by start-test.sh as a readiness failure.
