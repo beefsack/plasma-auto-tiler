@@ -1277,6 +1277,21 @@
     ["up", "Up"],
     ["right", "Right"]
   ]);
+  var SHIFT_DIGIT_SYMBOL_ALIAS = Object.freeze(
+    /* @__PURE__ */ new Map([
+      [1, "!"],
+      [2, "@"],
+      [3, "#"],
+      [4, "$"],
+      [5, "%"],
+      [6, "^"],
+      [7, "&"],
+      [8, "*"],
+      [9, "("],
+      [0, ")"]
+    ])
+  );
+  var SHIFT_DIGIT_ALIAS_REFERENCE = "[PAT-Shift] Meta+<shifted-symbol> compatibility alias for QWERTY-family layouts; see kwin/src/controller.ts SHIFT_DIGIT_SYMBOL_ALIAS";
   function catalogRow(actionId, shortcutId, text, sequence, classification, reference) {
     return Object.freeze({ actionId, shortcutId, text, sequence, classification, reference });
   }
@@ -1317,8 +1332,25 @@
           reference
         )
       );
+      rows.push(
+        catalogRow(
+          `move-workspace-${index}-symbol`,
+          `plasma-auto-tiler-move-workspace-${index}-symbol`,
+          `Move window to workspace ${index} (shifted-symbol alias)`,
+          `Meta+${symbolForDigit(index)}`,
+          "compatibility-alias",
+          SHIFT_DIGIT_ALIAS_REFERENCE
+        )
+      );
     }
     return rows;
+  }
+  function symbolForDigit(digit) {
+    const symbol = SHIFT_DIGIT_SYMBOL_ALIAS.get(digit);
+    if (symbol === void 0) {
+      throw new Error(`symbolForDigit: no shifted-symbol alias mapped for digit ${digit}`);
+    }
+    return symbol;
   }
   function workspaceZeroRow(reference, classification) {
     return catalogRow(
@@ -1340,6 +1372,16 @@
       reference
     );
   }
+  function moveWorkspaceZeroSymbolRow() {
+    return catalogRow(
+      "move-workspace-0-symbol",
+      "plasma-auto-tiler-move-workspace-append-symbol",
+      "Move window to a newly appended workspace (shifted-symbol alias)",
+      `Meta+${symbolForDigit(0)}`,
+      "compatibility-alias",
+      SHIFT_DIGIT_ALIAS_REFERENCE
+    );
+  }
   var COSMIC_ROWS = Object.freeze([
     ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
     ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
@@ -1349,6 +1391,7 @@
     catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${COSMIC_REF} Super+0 LastWorkspace`, "exact"),
     catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
@@ -1371,6 +1414,7 @@
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
     ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
     moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`, "exact")
   ]);
   var BSPWM_ROWS = Object.freeze([
@@ -1380,6 +1424,7 @@
     ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`, "canonical-example"),
     catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
     catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
@@ -1406,9 +1451,9 @@
         ids.push(`resize-${kind}-${direction}`);
       }
     }
-    ids.push("move-workspace-0", "workspace-0");
+    ids.push("move-workspace-0", "move-workspace-0-symbol", "workspace-0");
     for (let index = 1; index <= 9; index += 1) {
-      ids.push(`workspace-${index}`, `move-workspace-${index}`);
+      ids.push(`workspace-${index}`, `move-workspace-${index}`, `move-workspace-${index}-symbol`);
     }
     return ids;
   }
@@ -2201,8 +2246,10 @@
         for (let index = 1; index <= 9; index += 1) {
           profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
           profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
+          profileActions[`move-workspace-${index}-symbol`] = () => this.moveActiveToWorkspace(index);
         }
         profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+        profileActions["move-workspace-0-symbol"] = () => this.moveActiveToWorkspace(0);
         profileActions["workspace-0"] = () => this.workspaceZero();
         const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
         for (const diagnostic of selected.diagnostics) {

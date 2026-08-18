@@ -2,10 +2,11 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Diagnosis and spec drafted 2026-08-18 by Lead. Implementation units
-  below are not yet dispatched; they need Orchestrator approval, and Units 1
-  and 3a specifically need answers before any code is written (spec.md
-  Unresolved Questions Q1, Q2).
+- Status: Diagnosis and spec drafted 2026-08-18 by Lead. Q1 and Q2 answered by
+  the user the same day (spec.md "User rulings"). Units 1-2 (Bug 1) executed
+  and complete same day, done by the Lead directly (no worker-anthropic
+  dispatch used this stint). Units 3-6 (Bug 2) remain undispatched; Bug 2 is
+  out of scope for this stint.
 
 ## Technical Approach
 
@@ -34,41 +35,97 @@ slices use `unit-<n>/attempt-<n>`.
 
 - [x] Diagnosis stint: root cause established for both bugs, spec.md drafted,
   plan.md and log.md created. No implementation units dispatched yet.
-- [ ] Unit 1 - Bug 1 live repro gate
-- [ ] Unit 2 - Bug 1 fix
-- [ ] Unit 3 - Bug 2 decision gate (Q2)
-- [ ] Unit 4 - Bug 2 fix
-- [ ] Unit 5 - Bug 2 live acceptance
-- [ ] Unit 6 - Independent review
+- [x] Unit 1 - Bug 1 live repro gate: satisfied by the user's own re-test
+  (Q1 answered directly, no fresh agent-side repro needed).
+- [x] Unit 2 - Bug 1 fix: shifted-symbol compatibility-alias rows added for
+  `move-workspace-1..9` and `move-workspace-0`; live-registered and confirmed
+  correct via `allShortcutInfos`; full "window actually moves" live proof
+  blocked by a newly discovered, pre-existing KGlobalAccel residue collision
+  (spec.md "New finding"), escalated rather than resolved.
+- [ ] Unit 3 - Bug 2 decision gate (Q2): answered by the user (spec.md "User
+  rulings"), recorded here and in spec.md; Unit 4 itself not started.
+- [ ] Unit 4 - Bug 2 fix (out of scope this stint)
+- [ ] Unit 5 - Bug 2 live acceptance (out of scope this stint)
+- [ ] Unit 6 - Independent review (only Bug 1's diff exists so far; not yet
+  independently reviewed by a second party)
 
 ## Pending User/Orchestrator Decisions
 
-- spec.md Q1: is Bug 1 actually reproducing live right now, or did the report
-  predate the current KWin session? (Gates Unit 2's design; Unit 1 answers
-  this.)
-- spec.md Q2: `Meta+0`/`Meta+Shift+0` strict create-on-demand vs. a narrow
-  reserved-spare exception once the ownership-based cleanup rule is removed.
-  (Gates Unit 4's exact implementation.)
+- spec.md Q1 and Q2: both answered by the user 2026-08-18 (see spec.md "User
+  rulings"). No longer pending.
+- **New, from this stint:** spec.md Q4 - who/what owns the
+  `move-and-switch-to-desktop-*` / `move-to-last-desktop` KGlobalAccel residue
+  in `~/.config/kglobalshortcutsrc`, and is it safe to clear? Needed before
+  Bug 1's alias shortcuts can be proven to actually win the physical key on
+  this host (they are registered correctly today but are shadowed by this
+  residue's lower registration-order tie-break).
 
 ## Acceptance-Criterion Evidence
 
-Not yet applicable; no implementation units have executed.
+Bug 1 (Unit 2), 2026-08-18:
+- Root cause: KWin 6.7.3 source trace (`xkb.cpp`, `keyboard_input.cpp`,
+  `scripting.cpp`, `globalshortcutsregistry.cpp`) plus Node arithmetic
+  reproducing Qt's `QKeySequence` int-combination rules for all ten digits;
+  host layout confirmed `us` (`localectl status`, `setxkbmap -query`).
+- Tests: 805 -> 807 (`npm --prefix kwin test`, all passing); catalog pinned
+  fixtures, `REGISTERED_PROFILE_ACTION_IDS` derivation, and the shipped-bundle
+  smoke test's `EXPECTED_SHORTCUT_COUNT` (52 -> 62) all updated; two new
+  focused invocation tests added confirming the `-symbol` shortcut IDs
+  dispatch identically to their canonical siblings.
+- Typecheck: `npm --prefix kwin run typecheck` clean.
+- Live: bundle reinstalled (`dogfood-install.sh install`), reloaded
+  (`disable`+`enable`), confirmed byte-identical on disk, `shortcut-registered`
+  / `startup-handlers-ready` fired with zero `shortcut-register-failed`.
+  `allShortcutInfos` for all ten new `-symbol` actions matches the
+  mathematically-derived delivered-event integer exactly.
+- **Not obtained:** a live callback firing from an actual key press (blocked
+  by the residue collision above, and by the standing prohibition on
+  synthetic input / asking the user to press keys within this stint).
+- Side effect: reload triggered Bug 2's already-known defect (one extra empty
+  desktop created); documented in spec.md, left in place rather than looped
+  on further (see Residual Risks).
 
 ## Residual Risks
 
-- Bug 1's fix cannot be scoped until Unit 1 answers whether it reproduces
-  live; if it is a genuine Wayland/KWin global-shortcut delivery limitation
-  for this modifier combination rather than a script defect, Unit 2 may need
-  to escalate rather than ship a fix (spec.md says this plainly; do not force
-  a fix onto a platform limitation).
+- **Updated 2026-08-18 (verification stint):** the KGlobalAccel "residue"
+  (spec.md Q4) is identified as the user's own git-committed,
+  Home-Manager-declared `last-desktop` KWin script
+  (`dotfiles-nix/modules/home/displayManager/plasma6.nix`, 2026-08-10),
+  currently declared-enabled but not currently deployed/loaded on this host.
+  It was **not removed** (STOP condition: belongs to a tool the user actively
+  maintains). Live-confirmed via `KGlobalAccel.action(<key>)` (authoritative,
+  not inferred) that it still wins the tie-break for all ten sequences, so
+  Bug 1's fix remains unproven live on this host, and a physical keypress
+  right now would likely do nothing (claimed by a dead action, not this
+  project's live one). **Higher-priority open risk:** Bug 1's fix (and any
+  Bug 2 implementation) may be entirely redundant with tooling the user has
+  already built himself (`last-desktop` script for Bug 1's problem,
+  `pkgs.kdePackages.dynamic-workspaces` for Bug 2's problem, both declared in
+  the same file). This needs an Orchestrator/user scope decision before
+  further Bug 1/Bug 2 work, not just a residue cleanup.
+- Also corrected: the fix's "correct on AZERTY" claim was wrong (spec.md,
+  "Layout verification matrix"). AZERTY is actively harmed (silent collision
+  with `Meta+<digit>` focus-workspace), not merely uncovered. UK and German
+  QWERTZ are each only partially covered by the `-symbol` alias.
+- **New:** any future reload of this script (for Bug 2 work or otherwise)
+  will trigger the same "one extra empty desktop" side effect until Bug 2 is
+  fixed; expect and account for it rather than treating it as a surprise.
 - Bug 2's live acceptance (Unit 5) must not destroy the user's real,
   currently-in-use desktops 1 and 2 or any window on them; only empty,
-  invisible desktops (3-12, or whatever remains empty and invisible at
-  execution time) are cleanup targets.
+  invisible desktops (3-12, plus the one extra from this stint's reload, or
+  whatever remains empty and invisible at execution time) are cleanup
+  targets.
 - Both fixes touch `controller.ts`; Unit 6 exists specifically to catch any
   interaction between the two changes before they are considered complete.
 
 ## Final Outcome
 
-Not yet applicable; this document currently records only the diagnosis-stint
-plan for a future implementation stint.
+Bug 1: fixed and live-deployed 2026-08-18. Root cause confirmed (shifted-symbol
+delivery, not a registration or scripting-capability defect). Fix registers a
+compatibility-alias shortcut per digit under the QWERTY-family shifted symbol,
+alongside the unchanged canonical `Meta+Shift+<digit>` row (correct for
+AZERTY-style layouts). Live-verified through registration; full physical-key
+proof is blocked by an unrelated, pre-existing KGlobalAccel residue collision
+discovered during this stint's own live verification, escalated as spec.md Q4
+rather than resolved. Bug 2 remains unimplemented (out of scope this stint);
+its decision gate (Q2) is answered and recorded.

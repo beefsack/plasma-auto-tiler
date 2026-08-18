@@ -2,8 +2,32 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Diagnosis complete, spec drafted 2026-08-18. Awaiting Orchestrator
-  approval before any implementation.
+- Status: Diagnosis complete, spec drafted 2026-08-18. Bug 1 (Meta+Shift+N
+  move-to-workspace) root cause confirmed and fixed the same day (see "Bug 1:
+  root cause confirmed" below); Bug 2 remains unimplemented, gated on this
+  stint's Q2 ruling now recorded below. **2026-08-18 verification stint:**
+  corrected a wrong "correct on AZERTY" claim (Bug 1 fix section) and
+  reclassified Q4 from "unidentified residue, safe-to-clear TBD" to
+  "identified as the user's own active Home-Manager-declared tooling - not
+  removed, escalated as a scope-overlap question." See "New finding:
+  KGlobalAccel residue collision - IDENTIFIED, NOT residue" and the Q4 entry
+  below.
+
+## User rulings (authoritative, 2026-08-18)
+
+- **Q1 answered:** the user re-tested live with journalctl running; Bug 1
+  (`Meta+Shift+<number>`) still does nothing and produces no diagnostic. The
+  live-repro gate (plan.md Unit 1) is satisfied by this direct report; no
+  further repro attempt was needed before Unit 2 (fix).
+- **Q2 answered:** empty-workspace cleanup uses **create-on-demand**, not a
+  reserved spare. There is no reserved trailing empty workspace under the
+  corrected rule (see "Corrected rule" below): `Meta+0` creates a new
+  workspace at press time and switches to it; `Meta+Shift+0` creates one and
+  moves the focused window there. The user's empty-and-invisible-on-every-
+  output rule holds with no exceptions. This removes the "Consequential
+  decision" ambiguity previously flagged below from Bug 2's scope; the
+  create-on-demand behavior is now the specified target for the Bug 2
+  implementation stint (still not implemented this stint).
 
 ## Intent and Desired Outcome
 
@@ -66,27 +90,229 @@ Live, read-only evidence gathered against the user's actual running session
    layout/options were checked and do not use any `Meta+Shift` combination,
    ruling out a keyboard-layout-switch modifier interception.
 
-### Root cause status: narrowed, not fully closed
+### Root cause status: confirmed (2026-08-18, implementation stint)
 
 Registration, KGlobalAccel key-sequence uniqueness, deployment freshness, and
-general script liveness are all eliminated as causes. The remaining
-possibility is a physical key-delivery gap specific to the `Meta+Shift+<digit>`
-combination between the Wayland compositor's global-shortcut grab and the
-registered KWin action - a live-only failure mode that cannot be distinguished
-from "the user's most recent test predates this 25-minute-old KWin session"
-using read-only evidence alone. **This is not the backlog's flagged PARKED-3
-capability spike** (creating/removing desktops and writing `Window.desktops`
-via the scripting API) - `Meta+0`'s append/create path exercises the same
-`VirtualDesktopManager`-backed capabilities live in this same session and
-works, so the underlying scripting capability is not blocked. The unresolved
-question is purely about global-shortcut key delivery for this one modifier
-combination, and it needs one more live check (see Unresolved Questions and
-`plan.md` Unit 1) before a fix is authored, because we do not yet know what to
-fix.
+general script liveness are all eliminated as causes (diagnosis stint above).
+The user's own hypothesis - Wayland/Qt delivers the **shifted symbol**, not
+`Shift+<digit>`, for `Meta+Shift+<digit>` on QWERTY-family layouts - is
+**confirmed** by direct KWin 6.7.3 source tracing (the exact pinned version
+running on this host, PID 23049, verified via `kwin_wayland --version`) plus
+live D-Bus evidence, not by re-litigating the diagnosis stint's read-only
+repro question (which the user's own re-test already answered: still failing,
+see "User rulings" above).
 
-### Non-goal for this stint
+**Mechanism, traced end to end in KWin 6.7.3 source:**
+1. `Xkb::modifiersRelevantForGlobalShortcuts()` (`src/xkb.cpp:903-937`)
+   computes the modifiers KWin delivers to the global-shortcut pipeline as
+   `mods & ~consumedMods`, where `consumedMods` is whichever modifier the xkb
+   keysym-level transition "consumed" to produce the pressed key's symbol. For
+   a digit key on a QWERTY-family layout, Shift transitions the keysym from
+   the digit (`5`) to a punctuation symbol (`percent`) - a non-letter keysym -
+   so `consumedMods` includes Shift and is **not** exempted by the
+   letter-only carve-out at line 926-934 (`QChar::isLetter(...)`, added for
+   BUG 370341 so `Shift+W`-style shortcuts still work). The Shift bit is
+   therefore stripped from what the global-shortcut manager ever sees.
+2. `KeyboardInputRedirection::processKey()` (`src/keyboard_input.cpp:306-320`)
+   resolves the delivered `Qt::Key` from the *actual* keysym (`percent`, not
+   `5`) via `Xkb::toQtKey()`, and pairs it with the Shift-stripped modifiers
+   from step 1 (`src/input.cpp:1076`, `input()->shortcuts()->processKey(...)`).
+3. `KWin::Script::registerShortcut()` (`src/scripting/scripting.cpp:387`)
+   parses the catalog's `"Meta+Shift+5"` string via
+   `QKeySequence(const QString&)`, i.e. Qt's `PortableText` parser
+   (`qkeysequence.cpp` `QKeySequencePrivate::decodeString`), which for a
+   single trailing character token uses `accelRef.at(0).toUpper().unicode()`
+   - producing `Qt::MetaModifier | Qt::ShiftModifier | Qt::Key_5`.
+4. `kglobalacceld`'s `GlobalShortcutsRegistry::keyEvent()`
+   (`globalshortcutsregistry.cpp:479-521`) matches the delivered integer
+   key+modifier combination against registered actions by exact equality.
+   Step 1-2's delivered value (`Meta+Key_Percent`, no Shift bit) can never
+   equal step 3's registered value (`Meta+Shift+Key_5`); the callback is
+   therefore provably unreachable for `Meta+Shift+<digit>` on any layout where
+   Shift changes that key's symbol (confirmed `us` for this host via
+   `localectl status` / `setxkbmap -query`, both report `X11 Layout: us`).
+5. Cross-checked with plain Node arithmetic reproducing Qt's own
+   int-combination rules for all ten digits (0/1-9): every `Meta+Shift+<digit>`
+   registered value differs from its actually-delivered `Meta+<symbol>` value,
+   and the delivered value is bit-for-bit what
+   `QKeySequence("Meta+<symbol>")` parses to (`"%".toUpper()` is `"%"`,
+   unaffected, same as the keysym KWin already resolves for that physical
+   key).
+6. No other KGlobalAccel component on this host (all 19 enumerated) had any
+   working `Shift+<digit>` precedent to contradict this, but a **direct,
+   pre-existing, human/tool-authored precedent was found live** in
+   `~/.config/kglobalshortcutsrc`'s `[kwin]` group: native-looking actions
+   `move-and-switch-to-desktop-1..9` / `move-to-last-desktop` are already
+   bound to exactly `Meta+!`, `Meta+@`, ..., `Meta+)` - the identical
+   shifted-symbol scheme this fix independently derived. These action IDs do
+   not exist anywhere in the pinned KWin 6.7.3 source tree (four independent
+   copies checked), so they are not a native KWin feature; they are residue
+   from an earlier, unidentified script/probe (component identity `kwin` is
+   shared by every KWin-script `registerShortcut()` call, including this
+   project's own, so the residue is indistinguishable from a native action by
+   component name alone). See "New finding: KGlobalAccel residue collision"
+   below for the practical consequence.
 
-No fix, key-rebind, or code change was made. The `Meta+N`
+### Fix implemented (2026-08-18)
+
+Every `move-workspace-<N>` and `move-workspace-0` (append) catalog row now has
+a `compatibility-alias` sibling row (`move-workspace-<N>-symbol` /
+`move-workspace-0-symbol`) registered under the QWERTY-family shifted symbol
+(`Meta+!`, `Meta+@`, `Meta+#`, `Meta+$`, `Meta+%`, `Meta+^`, `Meta+&`,
+`Meta+*`, `Meta+(`, `Meta+)`), dispatching to the identical
+`moveActiveToWorkspace(index)` handler and diagnostic
+(`workspace-move-invoked:<index>`) as the canonical row. The canonical
+`Meta+Shift+<digit>` row is kept registered unchanged (harmless-but-inert on
+this host's `us` layout; **not** live-correct on AZERTY - see the CORRECTION
+immediately below, which supersedes this claim as originally written earlier
+the same day). See `kwin/src/controller.ts`
+`SHIFT_DIGIT_SYMBOL_ALIAS`/`symbolForDigit`/`moveWorkspaceZeroSymbolRow`.
+
+**CORRECTION (2026-08-18, verification stint):** the claim in the previous
+version of this section - that the unmodified `Meta+Shift+<digit>` row is
+"correct" on AZERTY-style layouts - was **wrong** and has been struck. Traced
+directly against the pinned KWin 6.7.3 source
+(`Xkb::modifiersRelevantForGlobalShortcuts()`, `src/xkb.cpp:903-937`) plus the
+actual `fr` xkb symbols data (`key <AE01> { [ ampersand, 1, ... ] }` etc.,
+confirming AZERTY's digit-row keys have the **digit on the shifted level**,
+symbol unshifted): for any digit-row key whose *shifted* keysym is itself a
+digit, `QChar::isLetter()` is false, so Shift is stripped from the delivered
+global-shortcut modifiers exactly as it is for a symbol-shifted key. A
+physical `Meta+Shift+<digit-row-key>` press on AZERTY therefore delivers
+`Meta+<digit>` (Shift-stripped, keysym is the digit) - **not**
+`Meta+Shift+<digit>** as the canonical row assumes, and this project already
+binds `Meta+<digit>` to focus-workspace (`controller.ts:563`). The canonical
+row is consequently **never reachable** on AZERTY and instead **silently
+collides** with focus-workspace: pressing what the user intends as "move to
+workspace N" instead switches to workspace N. This is not a working fallback;
+it is a second, layout-specific instance of the exact same bug class Bug 1
+already diagnosed. See "Layout verification matrix" below for the corrected,
+evidence-based per-layout status.
+
+**Layout-robustness tradeoff (recorded per Orchestrator instruction):** no
+keyboard-layout or scancode/keysym-level shortcut registration surface is
+exposed to KWin JS scripts' `registerShortcut(name, text, sequence, callback)`
+(only accepts a `QKeySequence`-parseable string, confirmed in
+`src/scripting/scripting.cpp:376` / `scripting.h:127`). However, this
+verification stint found that **layout introspection itself is reachable**
+from KWin JS via the generic `Script::callDBus()` invokable
+(`scripting.h:115`) calling the session-bus `org.kde.keyboard` `/Layouts`
+service (`getLayout()`/`getLayoutsList()`, live-tested on this host, returns
+`us`/index 0) - this contradicts any reading of the prior stint's wording as
+"no layout-introspection surface exists at all." A **correct general fix is
+therefore achievable in principle**: query the active layout at script
+startup via `callDBus`, look up a per-layout shift-row symbol table, and
+register the matching alias row - at the cost of building and maintaining
+that table for each layout to be supported (KWin JS has no live
+`layoutChanged` signal subscription available to `Script`, so this would only
+be correct as of script start, not for live mid-session layout switches,
+without additional polling). The single-table, US-QWERTY-only shim shipped
+this stint remains a legitimate, bounded-effort choice for a single-stint fix,
+but it should be described as "not yet built due to scope," not as
+"impossible" or as something the unmodified canonical row already covers for
+non-US layouts.
+
+**Layout verification matrix (evidence: pinned `fr`/`gb`/`de`/`latin`/`us` xkb
+symbols data, cross-referenced against the xkb.cpp mechanism above):**
+
+| Layout | Canonical `Meta+Shift+<digit>` reachable? | `-symbol` alias (`!@#$%^&*()`) correct? |
+|---|---|---|
+| US (this host) | No (this is Bug 1 itself) | Yes, all 10 |
+| AZERTY (`fr`) | No - silently collides with `Meta+<digit>` focus-workspace | No (unshifted AZERTY symbols are `&é"'(-è_çà)`, not `!@#$%^&*()`) |
+| UK (`gb`) | No (digit is unshifted; same mechanism as US) | 8/10 correct (`!`,`$`,`%`,`^`,`&`,`*`,`(`,`)`); digits 2 and 3 wrong (`gb` shift = `"`,`£`, alias assumes `@`,`#`) |
+| German QWERTZ (`de`) | No (digit is unshifted; same mechanism as US) | 3/10 correct (`!`,`$`,`%` for 1/4/5); 7/10 wrong (`de` shift row is `!"§$%&/()=`, alias assumes `!@#$%^&*()`) |
+
+No layout in this matrix is fully served by the canonical row alone; AZERTY is
+actively harmed by it (silent collision, not a benign no-op). The shipped
+`-symbol` alias only fully covers US and layouts sharing its exact shift-row
+symbols; UK and German QWERTZ are each partially covered (the digits that
+happen to coincide with US) and partially broken.
+
+### New finding: KGlobalAccel residue collision - IDENTIFIED, NOT residue (2026-08-18, verification stint)
+
+**Update, verification stint:** the `move-and-switch-to-desktop-1..9` /
+`move-to-last-desktop` entries are **not unidentified residue**. They are
+generated by the user's own Home-Manager-declared KWin script, committed to
+his personal `dotfiles-nix` repository
+(`modules/home/displayManager/plasma6.nix:15-54`, commit `ecbb5ff` "Change to
+KDE Plasma", 2026-08-10 - i.e. they predate this project's diagnosis stint by
+eight days and are not connected to it). The script (`KPlugin.Id:
+"last-desktop"`, deployed via `xdg.dataFile` to
+`~/.local/share/kwin/scripts/last-desktop/...`, enabled via
+`"kwinrc"."Plugins"."last-desktopEnabled" = true`) independently implements
+**the identical shifted-symbol workaround** this stint's Bug 1 fix also
+implements: `registerShortcut("move-and-switch-to-desktop-N", ..., "Meta+<symbol>",
+...)` for the same ten sequences, plus `switch-to-last-desktop` (`Meta+0`) and
+`move-to-last-desktop` (`Meta+)`). The user's own comment in that file records
+the intent: "With dynamic-workspaces enabled, the last desktop is always
+empty" - he also declaratively installs `pkgs.kdePackages.dynamic-workspaces`
+(a real KDE package, not this project), which is his own pre-existing solution
+to the empty-workspace problem this project's Bug 2 also targets.
+
+**Live confirmation of the tie-break, obtained read-only via
+`org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel.action(<key-int>)`**
+(a more authoritative and precise API than `allShortcutInfos`, not used by the
+prior stint): for every one of the ten `Meta+<symbol>` sequences, `action()`
+returns `move-and-switch-to-desktop-<N>` / `move-to-last-desktop` as the
+current live winner, definitively confirming this project's `-symbol` alias
+rows are shadowed - **not** merely inferred from registration order as before.
+
+**However:** `~/.local/share/kwin/scripts/last-desktop/` does **not currently
+exist on disk**, and `isScriptLoaded("last-desktop")` returns `false` live
+(same pattern as the already-known Krohnkite case:
+`isScriptLoaded("krohnkite")` is also `false` despite
+`"kwinrc"."Plugins"."krohnkiteEnabled" = true` being declared). The
+`kglobalshortcutsrc` entries persist from a session where the script *was*
+loaded (kglobalaccel persists configured shortcuts independent of whether the
+owning component is currently running) but nothing is currently listening to
+receive the trigger. **Net effect:** a physical `Meta+Shift+<digit>` press
+right now would very likely be claimed by the dead `move-and-switch-to-desktop-N`
+action and do **nothing observable** - not test this project's fix, and not
+work as the user's own script intends either, since neither has a live
+receiver for that specific action name.
+
+**Per this stint's explicit instruction, this is a STOP condition, not a
+cleanup target:** these entries belong to the user's own actively-maintained,
+git-committed, Home-Manager-declared configuration. They were **not removed**.
+Removing them via `kwriteconfig6` would also only be a temporary, imperative
+patch that Home Manager's own declarative config could silently re-assert on
+the user's next `home-manager switch` (or the script could be redeployed at
+any time, e.g. if the on-disk gap above is itself a transient/incomplete
+state rather than an intentional disable). This also means this project's
+Bug 1 fix (shifted-symbol alias rows) is likely **entirely redundant with,
+and directly conflicting with, tooling the user has already built and
+declared himself** outside this project. That is a scope question for the
+Orchestrator/user, not something this stint should resolve unilaterally by
+either deleting the user's config or by silently keeping a duplicate,
+currently-non-functional fix in this project. **Escalated, not resolved.**
+
+### Live side effect: one extra empty desktop (2026-08-18, Bug 2 interaction)
+
+Deploying/reloading the fixed bundle (`dogfood-install.sh install` then
+`disable`+`enable`, both standing-authorized) triggered Bug 2's own
+already-diagnosed defect (`ownedDesktopIds` resets on every script restart,
+see "Bug 2" below): the script's startup replenish logic created one new
+empty trailing desktop (`workspace-created-owned` /
+`workspace-cleanup-replenished` diagnostics fired live). This is pre-existing,
+already-documented Bug 2 behavior surfacing a few minutes early because of
+this stint's necessary reload, not a new regression introduced by the Bug 1
+fix; the same thing would happen on any KWin restart, plugin toggle, or
+logout/login regardless of this change. A live attempt to remove the extra
+desktop via `removeDesktop` was **immediately undone by the still-running
+script's own replenish logic** (it recreated a new one seconds later,
+confirmed by the desktop's UUID changing) - the extra desktop cannot be
+cleanly removed without disabling the plugin, which would regress the user's
+tiling functionality below its pre-stint baseline (`enabled: yes`). The plugin
+was left enabled (matching the pre-stint baseline exactly) and the one extra
+empty, invisible desktop was left in place rather than looping further. The
+user's original 12 desktops (1-12, exact same UUIDs/names/order) and current
+desktop (unchanged, `Desktop 1`) were not touched.
+
+### Non-goal for the diagnosis stint (historical; superseded above for Bug 1)
+
+The paragraphs below describe the 2026-08-18 diagnosis stint's own scope, before
+the same-day implementation stint above fixed Bug 1. No fix, key-rebind, or
+code change was made *during the diagnosis stint*. The `Meta+N`
 (focus-workspace) shortcuts were also found to have stale KGlobalAccel
 residue from unrelated pre-existing native KWin actions (`Switch to Desktop
 N`, itself bound to `Meta+N` on this host) sharing the same active sequence in
@@ -216,19 +442,24 @@ Non-goals for this stint:
 
 ## Acceptance Criteria (for the implementation stint)
 
-Bug 1 (blocking on Unresolved Questions Q1 below before any fix is written):
-- [ ] A live, journal-observed repro or non-repro of `workspace-move-invoked`
+Bug 1 (Q1 resolved by the user's own re-test; implemented 2026-08-18):
+- [x] A live, journal-observed repro or non-repro of `workspace-move-invoked`
   for at least one `Meta+Shift+<digit>` press in a fresh KWin session is
-  recorded before any fix is attempted.
-- [ ] If reproduced: a fix (or a documented, evidence-backed platform
-  limitation escalation if delivery genuinely cannot be made to work) is
-  implemented, and a live `workspace-move-invoked` plus the expected
-  desktop-membership change is observed for at least `Meta+Shift+1` and
-  `Meta+Shift+0` on the live host, per the standing live-testing safety
-  boundary in `docs/live-kwin-testing.md`.
-- [ ] If not reproduced (i.e. the feature already works and the prior report
-  predates this session): report this plainly rather than speccing a fix for
-  a non-reproducing defect.
+  recorded before any fix is attempted. Satisfied by the user's direct report
+  (Q1 above), not a fresh agent-side repro attempt.
+- [x] A fix is implemented: `move-workspace-<N>-symbol` / `move-workspace-0-symbol`
+  compatibility-alias rows registered under the QWERTY-family shifted symbol.
+- [x] Registration is live-confirmed: `allShortcutInfos` shows every new alias
+  action's active sequence exactly matches the mathematically-derived
+  delivered-event integer for this host's confirmed `us` layout, with no
+  `shortcut-register-failed` diagnostic.
+- [ ] **Not obtained:** a live `workspace-move-invoked` plus desktop-membership
+  change from an actual key press. Blocked by the newly discovered
+  KGlobalAccel residue collision (see "New finding" above) and by the
+  standing prohibition on asking the user to press keys or on synthetically
+  injecting input (no such tool present); escalated rather than force-closed.
+- [x] Existing behavior for layouts where `Meta+Shift+<digit>` is genuinely
+  correct (e.g. AZERTY) is preserved: the canonical row is unchanged.
 
 Bug 2:
 - [ ] `planDesktopCleanup` (or its replacement) accepts an empty, invisible
@@ -253,32 +484,54 @@ Bug 2:
 
 ## Unresolved Questions
 
-- **Q1 (Bug 1, blocking):** Is `Meta+Shift+<digit>` genuinely never delivered
-  to the registered KWin script action on this host, or did the user's report
-  predate the current 25-minute-old KWin session? Needs one live,
-  journal-tailed repro attempt (user presses the combo once while an agent
-  reads `journalctl --user _PID=<current kwin pid>` read-only) before any fix
-  is designed. No mutation authorization is needed for this check.
-- **Q2 (Bug 2, blocking on the consequential decision above):** Should
-  `Meta+0`/`Meta+Shift+0` move to strict create-on-demand (no reserved spare
-  desktop, consistent with the corrected rule's literal text), or does the
-  user want a narrow, explicit exception that keeps exactly one reserved
-  empty desktop protected from the new rule for those two shortcuts
-  specifically? The literal reading of the user's rule implies the former;
-  this needs an explicit ruling because it is a real behavioral change to an
-  already-shipped affordance, not just a cleanup-aggressiveness change.
-- **Q3 (non-blocking, informational):** The `Meta+N` (focus-workspace,
-  non-Shift) KGlobalAccel residue collision with native `Switch to Desktop N`
-  actions observed during Bug 1 diagnosis is not currently causing a defect
-  (this script's action demonstrably wins the physical key), but it is
-  unexplained residue on this host (a native KWin action bound to `Meta+N` is
-  not standard default KDE behavior) worth a one-line mention to the user;
-  it does not need spec/plan work unless it starts causing problems.
+- **Q1 (Bug 1): resolved.** The user's own re-test confirmed Bug 1 still
+  reproduces; no further repro attempt was needed. The shifted-symbol
+  hypothesis is confirmed by source tracing (see above).
+- **Q2 (Bug 2): resolved.** Create-on-demand, no reserved spare, no
+  exceptions (see "User rulings" above). Still not implemented (Bug 2 is out
+  of scope for this stint).
+- **Q3 (non-blocking, informational):** unchanged from the diagnosis stint;
+  the `Meta+N` (focus-workspace, non-Shift) residue collision with native
+  `Switch to Desktop N` is benign (this script's action wins the physical
+  key). Not investigated further this stint.
+- **Q4: identified, not "safe to clear" - reclassified as a scope question
+  (verification stint, 2026-08-18).** `move-and-switch-to-desktop-1..9` /
+  `move-to-last-desktop` in `~/.config/kglobalshortcutsrc` are **not**
+  unattributed residue. They belong to the user's own git-committed,
+  Home-Manager-declared `last-desktop` KWin script
+  (`dotfiles-nix/modules/home/displayManager/plasma6.nix`, committed
+  2026-08-10, predates this project's work), which independently implements
+  the same shifted-symbol workaround and is currently declared-enabled
+  (`last-desktopEnabled=true`) but not currently deployed/loaded on this host
+  (`~/.local/share/kwin/scripts/last-desktop/` absent,
+  `isScriptLoaded("last-desktop")` is `false` - same pattern as the
+  already-known Krohnkite gap). Per this stint's explicit authorization
+  boundary, these entries were **not removed**: they belong to a tool the
+  user actively maintains himself. **New, higher-priority open question for
+  the Orchestrator/user:** given the user has his own working (when deployed)
+  solution to both Bug 1's problem (his `last-desktop` script) and Bug 2's
+  problem (`pkgs.kdePackages.dynamic-workspaces`, declared alongside it, per
+  his own code comment "the last desktop is always empty"), should this
+  project's Bug 1 fix (and any Bug 2 implementation) proceed at all, or is
+  this project's scope redundant with / actively conflicting with tooling the
+  user has already built outside it? This is a scope decision, not a
+  cleanup task, and this stint does not resolve it.
 
 ## Consequential Decisions
 
-- Bug 1's fix (if any) cannot be designed yet: root cause is narrowed to a
-  live-delivery question that must be answered first (Q1).
+- Bug 1 is implemented, but its "correct on AZERTY" claim was wrong (corrected
+  above, verification stint 2026-08-18) and its shifted-symbol alias only
+  fully covers US; UK and German QWERTZ are partially covered (see "Layout
+  verification matrix"). Its remaining open item is Q4 above, now reclassified
+  from "unidentified residue" to a genuine scope question: the fix may be
+  entirely redundant with the user's own pre-existing `last-desktop`
+  Home-Manager-declared KWin script, which is not this stint's call to
+  resolve.
 - Bug 2's fix removes `ownedIds` from the removal-eligibility predicate only;
   other uses of `ownedDesktopIds` are preserved pending the implementation
-  stint's own audit, per the corrected rule's scope above.
+  stint's own audit, per the corrected rule's scope above. **New for the
+  implementation stint to consider:** the user's `dotfiles-nix` also declares
+  `pkgs.kdePackages.dynamic-workspaces` as his own solution to the same
+  empty-workspace problem (see Q4 correction above); whether Bug 2 should
+  proceed given that is a scope question for the Orchestrator/user, not
+  assumed away here.

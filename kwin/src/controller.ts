@@ -477,6 +477,43 @@ const ARROW_KEYS: ReadonlyArray<readonly [Direction, string]> = Object.freeze([
     ["right", "Right"],
 ]);
 
+// `Meta+Shift+<digit>` never reaches a registered KWin action on QWERTY-family
+// layouts (US and most others): KWin's compositor input path
+// (`Xkb::modifiersRelevantForGlobalShortcuts`, src/xkb.cpp) strips the Shift
+// bit from the delivered global-shortcut event whenever the keysym transition
+// for that physical key "consumes" Shift, which is exactly the digit-row
+// behaviour on these layouts (Shift+5 delivers the `percent` keysym, not
+// `5`); the letter-only exemption in that function (BUG 370341) does not
+// cover digits. The event actually delivered is therefore `Meta+<symbol>`
+// (e.g. `Meta+percent`), never matching a `Meta+Shift+5` registration, and
+// `QKeySequence`'s single-character portable-text parsing
+// (`QKeySequencePrivate::decodeString`) confirms `"%"` parses to the exact
+// same key code XKB delivers. This map is a best-effort compatibility alias
+// for the standard US/QWERTY-family shift row (`!@#$%^&*()`); it is not a
+// layout-independent fix (no keyboard-layout or scancode/keysym-level
+// registration surface is exposed to KWin JS scripts), so a layout whose
+// shift-row symbols differ from this set (e.g. UK GB's Shift+3 `£`) is not
+// covered by the alias and still depends on the canonical `Meta+Shift+<digit>`
+// registration, which itself only matches layouts where the digit is truly on
+// the shifted level (e.g. AZERTY).
+const SHIFT_DIGIT_SYMBOL_ALIAS: ReadonlyMap<number, string> = Object.freeze(
+    new Map<number, string>([
+        [1, "!"],
+        [2, "@"],
+        [3, "#"],
+        [4, "$"],
+        [5, "%"],
+        [6, "^"],
+        [7, "&"],
+        [8, "*"],
+        [9, "("],
+        [0, ")"],
+    ]),
+);
+const SHIFT_DIGIT_ALIAS_REFERENCE =
+    "[PAT-Shift] Meta+<shifted-symbol> compatibility alias for QWERTY-family " +
+    "layouts; see kwin/src/controller.ts SHIFT_DIGIT_SYMBOL_ALIAS";
+
 function catalogRow(
     actionId: string,
     shortcutId: string,
@@ -540,8 +577,29 @@ function workspaceRows(
                 reference,
             ),
         );
+        rows.push(
+            catalogRow(
+                `move-workspace-${index}-symbol`,
+                `plasma-auto-tiler-move-workspace-${index}-symbol`,
+                `Move window to workspace ${index} (shifted-symbol alias)`,
+                `Meta+${symbolForDigit(index)}`,
+                "compatibility-alias",
+                SHIFT_DIGIT_ALIAS_REFERENCE,
+            ),
+        );
     }
     return rows;
+}
+
+// Looks up the QWERTY-family shifted symbol for a digit; throws on an
+// unmapped digit so a catalog typo fails loudly at module load rather than
+// silently registering an empty sequence.
+function symbolForDigit(digit: number): string {
+    const symbol = SHIFT_DIGIT_SYMBOL_ALIAS.get(digit);
+    if (symbol === undefined) {
+        throw new Error(`symbolForDigit: no shifted-symbol alias mapped for digit ${digit}`);
+    }
+    return symbol;
 }
 
 // The Meta+0 row is present in every profile catalog and registers as the
@@ -572,6 +630,18 @@ function moveWorkspaceZeroRow(reference: string, classification: RowClassificati
     );
 }
 
+// Shifted-symbol alias for `move-workspace-0` (see SHIFT_DIGIT_SYMBOL_ALIAS).
+function moveWorkspaceZeroSymbolRow(): CatalogRow {
+    return catalogRow(
+        "move-workspace-0-symbol",
+        "plasma-auto-tiler-move-workspace-append-symbol",
+        "Move window to a newly appended workspace (shifted-symbol alias)",
+        `Meta+${symbolForDigit(0)}`,
+        "compatibility-alias",
+        SHIFT_DIGIT_ALIAS_REFERENCE,
+    );
+}
+
 const COSMIC_ROWS: readonly CatalogRow[] = Object.freeze([
     ...directional("focus", "Focus window", "Meta", "", HJKL_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
     ...directional("focus", "Focus window", "Meta", "arrow", ARROW_KEYS, "exact", `${COSMIC_REF} Focus(Left/Down/Up/Right)`),
@@ -581,6 +651,7 @@ const COSMIC_ROWS: readonly CatalogRow[] = Object.freeze([
     catalogRow("maximize", "plasma-auto-tiler-maximize", "Maximize active window in its workspace", "Meta+M", "exact", `${COSMIC_REF} Maximize`),
     ...workspaceRows("exact", `${COSMIC_REF} Workspace(N) / MoveToWorkspace(N)`),
     moveWorkspaceZeroRow(`${COSMIC_REF} MoveToLastWorkspace`),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${COSMIC_REF} Super+0 LastWorkspace`, "exact"),
     catalogRow("previous-workspace-up", "plasma-auto-tiler-previous-workspace-up", "Previous workspace", "Meta+Ctrl+Up", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
     catalogRow("previous-workspace-left", "plasma-auto-tiler-previous-workspace-left", "Previous workspace", "Meta+Ctrl+Left", "component-requirement", `${COSMIC_REF} PreviousWorkspace (needs a workspace-mode unit)`),
@@ -604,6 +675,7 @@ const HYPRLAND_ROWS: readonly CatalogRow[] = Object.freeze([
     catalogRow("float-toggle", "plasma-auto-tiler-float-toggle", "Float or tile active window", "Meta+V", "exact", `${HYPRLAND_REF} mainMod+V togglefloating`),
     ...workspaceRows("exact", `${HYPRLAND_REF} mainMod+1..9 focus workspace / mainMod+SHIFT+1..9 movetoworkspace`),
     moveWorkspaceZeroRow(`${HYPRLAND_REF} mainMod+SHIFT+0 movetoworkspace 10`),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${HYPRLAND_REF} mainMod+0 focus workspace 10`, "exact"),
 ]);
 
@@ -614,6 +686,7 @@ const BSPWM_ROWS: readonly CatalogRow[] = Object.freeze([
     ...directional("move", "Move window", "Meta+Shift", "arrow", ARROW_KEYS, "compatibility-alias", `${BSPWM_REF} arrow row is move-floating (super+{Left,Down,Up,Right} bspc node -v), not the tiled move/swap action; project parity alias`),
     ...workspaceRows("canonical-example", `${BSPWM_REF} super+{1-9} bspc desktop -f / super+shift+{1-9} bspc node -d`),
     moveWorkspaceZeroRow(`${BSPWM_REF} super+shift+0 bspc node -d '^10'`, "canonical-example"),
+    moveWorkspaceZeroSymbolRow(),
     workspaceZeroRow(`${BSPWM_REF} super+0 bspc desktop -f '^10'`, "canonical-example"),
     catalogRow("previous-workspace", "plasma-auto-tiler-previous-workspace", "Previous workspace", "Meta+BracketLeft", "component-requirement", `${BSPWM_REF} super+bracketleft bspc desktop -f prev.local (needs a workspace-mode unit)`),
     catalogRow("next-workspace", "plasma-auto-tiler-next-workspace", "Next workspace", "Meta+BracketRight", "component-requirement", `${BSPWM_REF} super+bracketright bspc desktop -f next.local (needs a workspace-mode unit)`),
@@ -655,9 +728,9 @@ function registeredProfileActionIdList(): string[] {
             ids.push(`resize-${kind}-${direction}`);
         }
     }
-    ids.push("move-workspace-0", "workspace-0");
+    ids.push("move-workspace-0", "move-workspace-0-symbol", "workspace-0");
     for (let index = 1; index <= 9; index += 1) {
-        ids.push(`workspace-${index}`, `move-workspace-${index}`);
+        ids.push(`workspace-${index}`, `move-workspace-${index}`, `move-workspace-${index}-symbol`);
     }
     return ids;
 }
@@ -2010,8 +2083,10 @@ export class TileController {
             for (let index = 1; index <= 9; index += 1) {
                 profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
                 profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
+                profileActions[`move-workspace-${index}-symbol`] = () => this.moveActiveToWorkspace(index);
             }
             profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
+            profileActions["move-workspace-0-symbol"] = () => this.moveActiveToWorkspace(0);
             profileActions["workspace-0"] = () => this.workspaceZero();
             const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
             for (const diagnostic of selected.diagnostics) {

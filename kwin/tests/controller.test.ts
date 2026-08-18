@@ -7315,6 +7315,22 @@ describe("TileController binding profile catalog", () => {
         [1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => [`workspace-${index}`, `Meta+${index}`] as const);
     const moveWorkspacePinned = (): ReadonlyArray<readonly [string, string]> =>
         [1, 2, 3, 4, 5, 6, 7, 8, 9].map((index) => [`move-workspace-${index}`, `Meta+Shift+${index}`] as const);
+    // Meta+Shift+<digit> never reaches the registered action on QWERTY-family
+    // layouts (see SHIFT_DIGIT_SYMBOL_ALIAS in controller.ts); every
+    // move-workspace-N row carries a compatibility-alias sibling under the
+    // shifted symbol actually delivered on those layouts.
+    const MOVE_WORKSPACE_SYMBOL_ALIASES: ReadonlyArray<readonly [string, string]> = [
+        ["move-workspace-1-symbol", "Meta+!"],
+        ["move-workspace-2-symbol", "Meta+@"],
+        ["move-workspace-3-symbol", "Meta+#"],
+        ["move-workspace-4-symbol", "Meta+$"],
+        ["move-workspace-5-symbol", "Meta+%"],
+        ["move-workspace-6-symbol", "Meta+^"],
+        ["move-workspace-7-symbol", "Meta+&"],
+        ["move-workspace-8-symbol", "Meta+*"],
+        ["move-workspace-9-symbol", "Meta+("],
+    ];
+    const MOVE_WORKSPACE_ZERO_SYMBOL_ALIAS: readonly [string, string] = ["move-workspace-0-symbol", "Meta+)"];
 
     const COSMIC_PINNED_EXACT: ReadonlyArray<readonly [string, string]> = [
         ["focus-left", "Meta+H"],
@@ -7383,6 +7399,8 @@ describe("TileController binding profile catalog", () => {
         ["move-down-arrow", "Meta+Shift+Down"],
         ["move-up-arrow", "Meta+Shift+Up"],
         ["move-right-arrow", "Meta+Shift+Right"],
+        ...MOVE_WORKSPACE_SYMBOL_ALIASES,
+        MOVE_WORKSPACE_ZERO_SYMBOL_ALIAS,
     ];
 
     const BSPWM_PINNED_CANONICAL: ReadonlyArray<readonly [string, string]> = [
@@ -7430,6 +7448,8 @@ describe("TileController binding profile catalog", () => {
         ["move-down-arrow", "Meta+Shift+Down"],
         ["move-up-arrow", "Meta+Shift+Up"],
         ["move-right-arrow", "Meta+Shift+Right"],
+        ...MOVE_WORKSPACE_SYMBOL_ALIASES,
+        MOVE_WORKSPACE_ZERO_SYMBOL_ALIAS,
     ];
 
     function projected(
@@ -7443,7 +7463,10 @@ describe("TileController binding profile catalog", () => {
 
     it("pins the cosmic catalog exactly to its upstream fixture with Meta+0 active", () => {
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "exact"), COSMIC_PINNED_EXACT);
-        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "compatibility-alias"), []);
+        assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "compatibility-alias"), [
+            ...MOVE_WORKSPACE_SYMBOL_ALIASES,
+            MOVE_WORKSPACE_ZERO_SYMBOL_ALIAS,
+        ]);
         assert.deepEqual(projected(PROFILE_CATALOGS.cosmic, "deferred"), []);
         // Unimplemented rows are truthfully classified component requirements,
         // never exact rows and never resolvable.
@@ -7816,9 +7839,9 @@ describe("TileController binding profile catalog", () => {
                 expected.push(`resize-${kind}-${direction}`);
             }
         }
-        expected.push("move-workspace-0", "workspace-0");
+        expected.push("move-workspace-0", "move-workspace-0-symbol", "workspace-0");
         for (let index = 1; index <= 9; index += 1) {
-            expected.push(`workspace-${index}`, `move-workspace-${index}`);
+            expected.push(`workspace-${index}`, `move-workspace-${index}`, `move-workspace-${index}-symbol`);
         }
         assert.deepEqual([...REGISTERED_PROFILE_ACTION_IDS], expected);
     });
@@ -12699,6 +12722,35 @@ describe("TileController dynamic virtual desktops", () => {
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-1");
         assert.equal(countEvent(harness.logs, "workspace-move-no-op:already-there"), 1);
         assert.equal(harness.currentDesktopWrites.length, 0);
+    });
+
+    // Meta+Shift+<digit> never reaches the registered action on QWERTY-family
+    // layouts (SHIFT_DIGIT_SYMBOL_ALIAS in controller.ts): KWin's compositor
+    // input path strips Shift and delivers the shifted symbol instead. Each
+    // move-workspace-N row has a distinct `-symbol` shortcut ID registered
+    // under the delivered symbol sequence and dispatching to the identical
+    // handler; these tests pin that the alias ID is independently invokable
+    // and behaves exactly like the canonical ID, including the
+    // `workspace-move-invoked` diagnostic the live diagnosis depends on.
+    it("moves a tiled window via the shifted-symbol alias shortcut ID, same as the canonical ID", () => {
+        const { harness, focused } = setup();
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+        ];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-2-symbol");
+        assert.equal(countEvent(harness.logs, "workspace-move-invoked:2"), 1);
+        const members = (focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id);
+        assert.deepEqual(members, ["desktop-2"]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
+    });
+
+    it("move-workspace-append-symbol dispatches identically to move-workspace-append", () => {
+        const { harness } = setup();
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append-symbol");
+        assert.equal(countEvent(harness.logs, "workspace-move-invoked:0"), 1);
+        assert.equal(harness.createDesktopCalls.length, 1);
     });
 
     it("collapses the tiled source leaf synchronously and adopts only on the yielded turn", () => {

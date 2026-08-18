@@ -30,6 +30,7 @@ against a primary source).
 | [C-KR] | cosmic-comp default keybindings, https://github.com/pop-os/cosmic-comp/blob/master/data/keybindings.ron |
 | [C-302] | cosmic-epoch issue #302 (sticky windows), https://github.com/pop-os/cosmic-epoch/issues/302 |
 | [C-3377] | cosmic-epoch issue #3377 (floating layering), https://github.com/pop-os/cosmic-epoch/issues/3377 |
+| [PAT-Shift] | Project-internal source, not an external WM reference: KWin 6.7.3 `src/xkb.cpp` `Xkb::modifiersRelevantForGlobalShortcuts`/`toQtKey` strip the Shift modifier from `Meta+Shift+<digit>` global-shortcut delivery on QWERTY-family layouts (the digit key's Shift level produces a non-letter symbol, so Shift is "consumed" and the letter-only exemption for BUG 370341 does not apply); see `docs/changes/workspace-management-fixes/` for the diagnosis and fix. |
 
 ---
 
