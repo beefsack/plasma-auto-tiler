@@ -84,6 +84,16 @@ Commands:
                   script, and (migration cleanup) any legacy environment.d
                   entry this project wrote previously; idempotent
 
+  setup      one-command install: composes install, enable, effect-install,
+             and effect-reload in that order. install/enable are the
+             required half and abort setup on real failure. effect-install
+             and effect-reload are optional and degrade gracefully: a
+             missing build toolchain (e.g. not inside 'devenv shell
+             --impure') or the expected first-run "needs a logout/login"
+             effect-reload outcome are reported, not treated as failures.
+             setup exits 0 whenever install and enable both succeeded, and
+             always prints a per-stage summary plus what remains manual.
+
   --help     show this help and exit
 
 Runtime tool-path overrides: NPM_BIN, KWRITECONFIG6_BIN, KREADCONFIG6_BIN,
@@ -494,6 +504,63 @@ cmd_effect_remove() {
   fi
 }
 
+cmd_setup() {
+  echo "==> [1/4] install"
+  cmd_install
+
+  echo "==> [2/4] enable"
+  cmd_enable
+
+  echo "==> [3/4] effect-install"
+  local effect_install_ok=true
+  if ( cmd_effect_install ); then
+    :
+  else
+    effect_install_ok=false
+    echo "effect-install: skipped (native-effect build tool unavailable or build failed); the KWin-script half above still completed; run 'devenv shell --impure -- bash scripts/dogfood-install.sh effect-install' manually later"
+  fi
+
+  echo "==> [4/4] effect-reload"
+  local effect_reload_ok=true
+  if [[ "$effect_install_ok" == true ]]; then
+    if ( cmd_effect_reload ); then
+      :
+    else
+      effect_reload_ok=false
+    fi
+  else
+    effect_reload_ok=false
+    echo "effect-reload: skipped (effect-install did not succeed)"
+  fi
+
+  echo "==> setup summary"
+  echo "install: ok"
+  echo "enable: ok"
+  if [[ "$effect_install_ok" == true ]]; then
+    echo "effect-install: ok"
+  else
+    echo "effect-install: skipped"
+  fi
+  if [[ "$effect_install_ok" == true && "$effect_reload_ok" == true ]]; then
+    echo "effect-reload: ok"
+  elif [[ "$effect_install_ok" == true ]]; then
+    echo "effect-reload: pending-boundary"
+  else
+    echo "effect-reload: skipped"
+  fi
+
+  echo "what remains manual:"
+  if [[ "$effect_install_ok" != true ]]; then
+    echo "  - the native-effect build did not run; once inside 'devenv shell --impure', rerun 'effect-install' (or 'setup') manually"
+  elif [[ "$effect_reload_ok" != true ]]; then
+    echo "  - effect-reload is pending the expected first-run logout/login boundary; log out and back in once, then run 'effect-reload' (or 'setup') again"
+  else
+    echo "  - the effect is loaded for this session only; it does not survive a reboot or logout/login (EnabledByDefault is false, nothing auto-loads it); after every future reboot or logout/login, re-run 'effect-reload' (or 'setup') again"
+  fi
+
+  return 0
+}
+
 if [[ $# -eq 0 ]]; then
   echo "error: missing command (install, uninstall, enable, disable, status, or dry-run)" >&2
   usage >&2
@@ -578,6 +645,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_effect_remove
+    ;;
+  setup)
+    if [[ $# -ne 1 ]]; then
+      echo "error: 'setup' takes no arguments" >&2
+      exit 1
+    fi
+    cmd_setup
     ;;
   *)
     echo "error: unknown command '$1'" >&2

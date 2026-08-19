@@ -423,9 +423,10 @@ assert_contains "effect-install"
 assert_contains "effect-reload"
 assert_contains "effect-status"
 assert_contains "effect-remove"
+assert_contains "setup"
 
 # parsing: every subcommand rejects extra arguments
-for command in install uninstall enable disable status dry-run effect-install effect-reload effect-status effect-remove; do
+for command in install uninstall enable disable status dry-run effect-install effect-reload effect-status effect-remove setup; do
   run_script "$command" extra
   check_exit 1
   assert_contains "error: '$command' takes no arguments"
@@ -985,6 +986,65 @@ reset_state
 run_script effect-remove
 check_exit 0
 assert_contains "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, and $LEGACY_EFFECT_ENV_FILE not present)"
+
+# setup: full success path (all four stages succeed)
+reset_state
+FAKE_QDBUS_SUPPORTED=true
+FAKE_QDBUS_LOADED=true
+run_script setup
+check_exit 0
+assert_contains "install: ok"
+assert_contains "enable: ok"
+assert_contains "effect-install: ok"
+assert_contains "effect-reload: ok"
+assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_grep_file "[Plugins]" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_file "$EFFECT_STAGED_SO"
+assert_grep_file "loadEffect plasma-auto-tiler-active-border" "$WORK/tools.log"
+
+# setup: cmake unavailable -> effect stage gracefully skipped, whole command
+# still succeeds
+reset_state
+TEST_CMAKE_BIN=""
+TEST_PATH="$FAKE_BIN/core:$(dirname "$BASH_PATH")"
+run_script setup
+check_exit 0
+assert_contains "install: ok"
+assert_contains "enable: ok"
+assert_contains "effect-install: skipped"
+assert_contains "effect-reload: skipped"
+assert_contains "the KWin-script half above still completed"
+assert_contains "devenv shell --impure"
+assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_not_exists "$EFFECT_STAGED_SO"
+
+# setup: effect-install succeeds but effect-reload hits the expected
+# first-run pending-boundary outcome; whole command still succeeds
+reset_state
+FAKE_QDBUS_SUPPORTED=false
+run_script setup
+check_exit 0
+assert_contains "install: ok"
+assert_contains "enable: ok"
+assert_contains "effect-install: ok"
+assert_contains "effect-reload: pending-boundary"
+assert_contains "log out and back in once"
+assert_file "$EFFECT_STAGED_SO"
+assert_not_grep_file "loadEffect" "$WORK/tools.log"
+assert_not_grep_file "unloadEffect" "$WORK/tools.log"
+
+# setup: a real failure in the required install/enable half still fails the
+# whole command
+reset_state
+touch "$WORK/state/npm-fail"
+run_script setup
+check_exit 1
+assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
+assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
+assert_not_grep_file "cmake" "$WORK/cmake.log"
+assert_not_exists "$CONFIG/kwinrc"
 
 echo "passes: $PASS failures: $FAIL"
 if [[ "$FAIL" -gt 0 ]]; then
