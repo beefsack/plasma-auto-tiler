@@ -111,8 +111,8 @@ execution slices use `unit-<n>/attempt-<n>`.
 - [x] unit-01 Fix README.md and docs/backlog.md
 - [x] unit-02 Add `setup` subcommand and its tests
 - [x] unit-03 Apply docs/decisions.md amendment
-- [ ] unit-04 Stage 3 script + tests (kwinrc persistence)
-- [ ] unit-05 Stage 3 README correction
+- [x] unit-04 Stage 3 script + tests (kwinrc persistence)
+- [x] unit-05 Stage 3 README correction
 - [ ] unit-06 Stage 4 script + tests (conditional -DKWin_DIR)
 - [ ] unit-07 Stage 4 README (non-Nix build path)
 
@@ -143,10 +143,10 @@ the new kwinrc key. Recorded, not blocking implementation.
 | `npm --prefix kwin run typecheck` and KWin test suite unaffected | Ran directly by the Lead: typecheck clean on both tsconfigs; `tests 815 / pass 815 / fail 0` - unchanged from baseline, as expected since no file under `kwin/` was touched |
 | Nothing out-of-scope touched | `git status --short` after both commits shows only the three pre-existing untracked paths plus this change's own directory; `git diff --stat` per commit confirms exactly README.md+docs/backlog.md (unit-01) and scripts/dogfood-install.sh+scripts/dogfood-install.test.sh (unit-02) |
 | docs/decisions.md amended verbatim, nothing else in it changed | `docs/decisions.md` diff: only the Scope and Consequences paragraphs of "Native Effect Live Validation" changed, new text verbatim; commit `d35a727` (pushed), separate from any feature commit |
-| effect-install writes the kwinrc key; effect-remove removes it exactly; no autostart hook/`.desktop`/systemd unit | pending unit-04 |
-| Plugin-ID single source of truth + comment + consistency test | pending unit-04 |
-| README.md no longer states an unconditional every-reboot re-run requirement; states what is automatic vs. manual | pending unit-05 |
-| Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | pending unit-04/unit-05; **unverified by design, needs a user-run logout/login this change cannot perform** |
+| effect-install writes the kwinrc key; effect-remove removes it exactly; no autostart hook/`.desktop`/systemd unit | `scripts/dogfood-install.sh` `cmd_effect_install` writes `[Plugins] plasma-auto-tiler-active-borderEnabled=true` via `kwriteconfig6`; `cmd_effect_remove` reads then conditionally deletes via `kwriteconfig6 --delete`, only when present; no autostart/`.desktop`/systemd file anywhere; commit `1aaf894` |
+| Plugin-ID single source of truth + comment + consistency test | `EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"` derives from the one existing `EFFECT_PLUGIN_ID` constant; caution comment added at its declaration; new static test in `scripts/dogfood-install.test.sh` cross-checks `metadata.json`, `CMakeLists.txt`'s `kcoreaddons_add_plugin` target, and the script literal; `bash scripts/dogfood-install.test.sh` 331/0 (was 318/0), independently re-run by the Lead |
+| README.md no longer states an unconditional every-reboot re-run requirement; states what is automatic vs. manual | `README.md` "One-command install", "Native effect (dogfood)" (two passages), "Eyeball check", and "Scope of each command" sections all corrected; commits `20269ca` and `409e03a` (the Lead's own direct fix-forward for a fifth stale sentence the Worker correctly flagged as out of its brief) |
+| Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | `README.md` phrases every auto-load claim as source-verified-but-not-yet-confirmed and points at Eyeball check; see Residual Risks below - **unverified by design, needs a user-run logout/login this change cannot perform** |
 | README.md documents the non-Nix build path honestly (rebuild-every-upgrade, no cross-distro portability, unverified distro names worded as "typically") | pending unit-07 |
 | `-DKWin_DIR=` used only when the pinned path exists, via exactly one conditional; both branches covered in tests; devenv.nix unchanged | pending unit-06 |
 

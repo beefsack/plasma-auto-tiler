@@ -103,3 +103,56 @@ speculation.
   before commit, matched worker's report; `git log`/`git status` after
   confirmed the commit landed clean with no other file touched)
 - Notes: none
+
+## 2026-08-19 (unit-04)
+
+- Role / unit: worker-anthropic / unit-04 / attempt-01
+- Result: accepted first try. `scripts/dogfood-install.sh`: added
+  `EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"` plus a caution comment on
+  the filename-derived plugin-ID fragility; `cmd_effect_install` now writes
+  `[Plugins] plasma-auto-tiler-active-borderEnabled=true` via `kwriteconfig6`
+  as its last mutation (no D-Bus call); `cmd_effect_remove` now reads the key
+  via `kreadconfig6` and deletes it via `kwriteconfig6 --delete` only when
+  present, counted toward `removed`; `usage()` text updated for both
+  commands and the D-Bus/kwinrc-scope closing paragraph.
+  `scripts/dogfood-install.test.sh`: fake `kwriteconfig6` extended
+  additively with `--delete` support; new assertions on the existing
+  effect-install/effect-remove scenarios; new static "plugin ID consistency"
+  test reading `metadata.json`, `CMakeLists.txt`, and the script directly via
+  grep/sed (no fake-tool harness), asserting all three agree and
+  `EFFECT_CONFIG_KEY` is derived, not a second literal.
+- Files / commit: scripts/dogfood-install.sh, scripts/dogfood-install.test.sh;
+  commit `1aaf894` (pushed)
+- Verification: Lead read the full diff directly (`git show HEAD` both
+  files); independently re-ran `bash scripts/dogfood-install.test.sh` ->
+  `passes: 331 failures: 0` (baseline 318/0, matches worker's reported
+  count)
+- Notes: no qdbus/D-Bus call added to effect-install/effect-remove, matching
+  constraint; no autostart/.desktop/systemd file added
+
+## 2026-08-19 (unit-05)
+
+- Role / unit: worker-anthropic / unit-05 / attempt-01
+- Result: accepted first try, plus one Lead follow-up fix. Worker corrected
+  four passages in README.md: "One-command install"'s manual-steps list
+  (collapsed from two items to one, added kwinrc-persistence explanation),
+  "Native effect (dogfood)"'s loaded-state paragraph (two-things-involved
+  framing, explicit not-yet-live-confirmed caveat), "Eyeball check"'s
+  effect-status bullet (expects auto-load, treats non-auto-load as worth
+  investigating), and "Scope of each command"'s effect-install/effect-remove
+  bullet (kwinrc key write/remove, "never uses D-Bus" preserved). Every
+  auto-load claim is worded as source-verified-but-not-live-confirmed,
+  pointing at Eyeball check for user verification - never claimed proven.
+  Worker correctly flagged one further stale sentence in the same section's
+  narrative paragraph ("effect-install and effect-remove never touch KWin
+  configuration or D-Bus") that was outside its exact brief; since the Lead
+  had already loaded that exact passage during earlier scoping (corpus
+  ownership forfeit), the Lead fixed it directly rather than a further
+  dispatch.
+- Files / commit: README.md; commits `20269ca` (worker, pushed) and
+  `409e03a` (Lead direct fix-forward, pushed)
+- Verification: Lead read the full diff of both commits directly; confirmed
+  the env-script one-time-boundary paragraph and the "no further boundary"
+  sentence were preserved verbatim as required; confirmed no claim of live
+  verification anywhere
+- Notes: none
