@@ -198,81 +198,81 @@ Non-goals (explicitly out of scope; do not touch, design, or spec):
 
 ## Acceptance Criteria
 
-- [ ] `README.md` plainly and prominently states the native effect must be
+- [x] `README.md` plainly and prominently states the native effect must be
       `effect-reload`ed again after every reboot or logout/login, because
       `EnabledByDefault` is `false` and nothing auto-loads it.
-- [ ] `README.md:279-283`'s misleading implication is corrected in place; its
+- [x] `README.md:279-283`'s misleading implication is corrected in place; its
       true statement (no further *env-script* boundary after the first) is
       preserved, not deleted.
-- [ ] `README.md` documents the full install process end to end in one
+- [x] `README.md` documents the full install process end to end in one
       place, including the one required logout/login and its scope (native
       effect only, not the KWin script).
-- [ ] `docs/backlog.md:37` matches `docs/changes/host-dogfooding/plan.md`'s
+- [x] `docs/backlog.md:37` matches `docs/changes/host-dogfooding/plan.md`'s
       Final Outcome (Unit N: live end-to-end native-effect loading already
       confirmed on this host; only eyeball visual confirmation remains
       unclaimed).
-- [ ] One new subcommand exists in `scripts/dogfood-install.sh` (name
+- [x] One new subcommand exists in `scripts/dogfood-install.sh` (name
       decided below) that composes exactly `install`, `enable`,
       `effect-install`, `effect-reload`, with no reimplementation of their
       logic, no new install location, and no new host-mutation category.
-- [ ] The new subcommand degrades gracefully when the native-effect half
+- [x] The new subcommand degrades gracefully when the native-effect half
       cannot run: the KWin-script half still completes, is reported clearly,
       and the overall command still exits 0 - it never fails wholesale
       because of the optional half.
-- [ ] The new subcommand's output states exactly what remains manual (the
+- [x] The new subcommand's output states exactly what remains manual (the
       one-time logout/login before the first `effect-reload` can load the
       effect, and the standing per-reboot/per-logout `effect-reload`
       requirement thereafter).
-- [ ] `scripts/dogfood-install.test.sh` covers the new subcommand: full
+- [x] `scripts/dogfood-install.test.sh` covers the new subcommand: full
       success path, graceful degrade when the native-effect build tool is
       unavailable, the expected pending-boundary `effect-reload` outcome,
       and a hard failure in the required `install`/`enable` half.
-- [ ] `bash scripts/dogfood-install.test.sh` passes in full (baseline before
+- [x] `bash scripts/dogfood-install.test.sh` passes in full (baseline before
       this change: 281 passes, 0 failures).
-- [ ] `npm --prefix kwin run typecheck` and the KWin test suite are
+- [x] `npm --prefix kwin run typecheck` and the KWin test suite are
       unaffected (baseline: 815/815 passing, clean typecheck on both
       tsconfigs at HEAD `4a3c044`) - expected, since no file under `kwin/`
       is touched by this change.
-- [ ] Nothing out-of-scope (see Non-goals) is touched.
+- [x] Nothing out-of-scope (see Non-goals) is touched.
 
 Stage 3 (persistent native-effect enablement):
 
-- [ ] `docs/decisions.md`'s "Native Effect Live Validation" Scope and
+- [x] `docs/decisions.md`'s "Native Effect Live Validation" Scope and
       Consequences paragraphs are amended exactly as user-approved, verbatim
       apart from whitespace/line-wrapping; nothing else in that file changes.
-- [ ] `effect-install` writes `[Plugins]
+- [x] `effect-install` writes `[Plugins]
       plasma-auto-tiler-active-borderEnabled=true` via `kwriteconfig6`;
       `effect-remove` removes that exact key; no other kwinrc key or file is
       touched by either.
-- [ ] No autostart hook, `.desktop` file, or systemd unit is created.
-- [ ] The plugin-ID linkage (CMake target name, `metadata.json`
+- [x] No autostart hook, `.desktop` file, or systemd unit is created.
+- [x] The plugin-ID linkage (CMake target name, `metadata.json`
       `KPlugin.Id`, kwinrc key) is guarded by a single source of truth for
       the ID inside `dogfood-install.sh`, an explanatory comment on the
       fragility, and a test asserting all three agree.
-- [ ] `README.md` no longer tells the user to re-run `effect-reload` after
+- [x] `README.md` no longer tells the user to re-run `effect-reload` after
       every reboot as an unconditional requirement; it states plainly what
       Stage 3 makes automatic (persistence via the kwinrc key, once
       discovered) and what remains manual (the one-time discovery boundary;
       rebuild-then-`effect-reload` for a live code change within a session).
-- [ ] `scripts/dogfood-install.test.sh` covers: `effect-install` writes the
+- [x] `scripts/dogfood-install.test.sh` covers: `effect-install` writes the
       key, `effect-remove` removes it, and the plugin-ID consistency check.
-- [ ] Live session-start auto-discovery/auto-load of the persisted effect is
+- [x] Live session-start auto-discovery/auto-load of the persisted effect is
       recorded in `plan.md` as an unverified acceptance criterion (needs a
       user-run logout/login) and is not claimed as proven anywhere.
 
 Stage 4 (non-Nix build path documentation):
 
-- [ ] `README.md` documents installing the distro KWin dev package and
+- [x] `README.md` documents installing the distro KWin dev package and
       running plain `cmake` with no `-DKWin_DIR` override, honestly stating
       a rebuild is needed after every Plasma upgrade and no prebuilt binary
       is portable across distros or KWin versions; distro package names not
       directly verified by `inv-03` are worded as "typically", not fact.
-- [ ] `scripts/dogfood-install.sh`'s `-DKWin_DIR=` override is used only when
+- [x] `scripts/dogfood-install.sh`'s `-DKWin_DIR=` override is used only when
       the pinned path exists on disk; otherwise `cmake` runs without it
       (plain `find_package` resolution), via exactly one conditional.
-- [ ] `scripts/dogfood-install.test.sh` covers both branches of that
+- [x] `scripts/dogfood-install.test.sh` covers both branches of that
       conditional.
-- [ ] `devenv.nix` is unchanged.
+- [x] `devenv.nix` is unchanged.
 
 ## Unresolved Questions
 

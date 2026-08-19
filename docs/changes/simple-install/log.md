@@ -176,3 +176,45 @@ speculation.
   `bash scripts/dogfood-install.test.sh` -> `passes: 336 failures: 0`
   (baseline 331/0, matches worker's reported count)
 - Notes: none
+
+## 2026-08-19 (unit-07)
+
+- Role / unit: worker-anthropic / unit-07 / attempt-01
+- Result: accepted first try. Added a new "### Building without Nix/devenv"
+  section to README.md, placed after "Native effect (dogfood)"'s closing
+  paragraph and before "Eyeball check": explains the pinned -DKWin_DIR=
+  override is layered on top of a plain find_package(KWin REQUIRED) and
+  falls through automatically when the pin is absent; documents plain
+  `cmake -S kwin/native-effect -B kwin/native-effect/build` with no
+  -DKWin_DIR; states KWin C++ effects have no upstream ABI guarantee and
+  need a rebuild after essentially every release; hedges distro dev
+  package names ("typically"/"not directly verified") rather than
+  asserting them as fact.
+- Files / commit: README.md; commit `8709ddd` (pushed)
+- Verification: Lead read the full diff directly; confirmed only the one
+  section was inserted, no other line changed; confirmed the ABI-guarantee
+  and rebuild-every-release language was not softened and distro package
+  names remained hedged
+- Notes: none
+
+## 2026-08-19 (change verification and wrap-up)
+
+- Role / unit: Lead / (final verification)
+- Result: all units unit-01 through unit-07 accepted. Checked off all 22
+  acceptance criteria in spec.md (mechanical `[ ]` -> `[x]` toggle, verified
+  via `git diff` that no other text changed). Ran full verification
+  directly: `bash scripts/dogfood-install.test.sh` -> 336/0 (baseline
+  281/0 at change start); `npm --prefix kwin run typecheck` -> exit 0,
+  clean both tsconfigs; `npm --prefix kwin test` -> 815/815, unchanged;
+  `git diff devenv.nix` -> empty; `git status --short` -> only the three
+  permanently-untracked paths. Updated plan.md's Final Outcome. The change
+  remains open (not archived) pending Orchestrator/user review of this
+  stint's report; live session-start auto-load of the native effect is
+  explicitly recorded as unverified, not claimed proven.
+- Files / commit: docs/changes/simple-install/{spec.md,plan.md,log.md}
+- Verification: as above, all run directly by the Lead
+- Notes: no circuit breaker trips across any of the 7 units; every unit
+  accepted first try; nothing out-of-scope touched (controller.ts/
+  controller.test.ts, devenv.nix, trailing-empty-workspace, Nix/NixOS/HM
+  packaging, build-kpackage.sh reconciliation, native C++ source - all
+  confirmed untouched by diff inspection throughout)

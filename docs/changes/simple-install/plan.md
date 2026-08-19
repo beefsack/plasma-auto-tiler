@@ -114,7 +114,7 @@ execution slices use `unit-<n>/attempt-<n>`.
 - [x] unit-04 Stage 3 script + tests (kwinrc persistence)
 - [x] unit-05 Stage 3 README correction
 - [x] unit-06 Stage 4 script + tests (conditional -DKWin_DIR)
-- [ ] unit-07 Stage 4 README (non-Nix build path)
+- [x] unit-07 Stage 4 README (non-Nix build path)
 
 ## Attempt Accounting
 
@@ -147,7 +147,7 @@ the new kwinrc key. Recorded, not blocking implementation.
 | Plugin-ID single source of truth + comment + consistency test | `EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"` derives from the one existing `EFFECT_PLUGIN_ID` constant; caution comment added at its declaration; new static test in `scripts/dogfood-install.test.sh` cross-checks `metadata.json`, `CMakeLists.txt`'s `kcoreaddons_add_plugin` target, and the script literal; `bash scripts/dogfood-install.test.sh` 331/0 (was 318/0), independently re-run by the Lead |
 | README.md no longer states an unconditional every-reboot re-run requirement; states what is automatic vs. manual | `README.md` "One-command install", "Native effect (dogfood)" (two passages), "Eyeball check", and "Scope of each command" sections all corrected; commits `20269ca` and `409e03a` (the Lead's own direct fix-forward for a fifth stale sentence the Worker correctly flagged as out of its brief) |
 | Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | `README.md` phrases every auto-load claim as source-verified-but-not-yet-confirmed and points at Eyeball check; see Residual Risks below - **unverified by design, needs a user-run logout/login this change cannot perform** |
-| README.md documents the non-Nix build path honestly (rebuild-every-upgrade, no cross-distro portability, unverified distro names worded as "typically") | pending unit-07 |
+| README.md documents the non-Nix build path honestly (rebuild-every-upgrade, no cross-distro portability, unverified distro names worded as "typically") | new `README.md` "Building without Nix/devenv" section, placed after "Native effect (dogfood)" and before "Eyeball check"; distro package names hedged as "typically"/"not directly verified"; ABI-guarantee and rebuild-every-release stated as fact, not softened; commit `8709ddd` |
 | `-DKWin_DIR=` used only when the pinned path exists, via exactly one conditional; both branches covered in tests; devenv.nix unchanged | `scripts/dogfood-install.sh` `KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-<pinned literal>}"`; `cmd_effect_install` adds `-DKWin_DIR=` only when `[[ -d "$KWIN_DEV_CMAKE_DIR" ]]` (one conditional); two new test scenarios cover both branches via the new override; `bash scripts/dogfood-install.test.sh` 336/0 (was 331/0), independently re-run by the Lead; `git diff devenv.nix` empty, confirmed by both Worker and Lead; commit `9b9d63a` |
 
 ## Residual Risks
@@ -174,9 +174,25 @@ the new kwinrc key. Recorded, not blocking implementation.
 
 ## Final Outcome
 
-Stage 1/2 accepted and delivered: `dd5e28b` (Stage 1 docs) and `da12ffc`
-(Stage 2 `setup` subcommand + tests). Full script test suite 318/318 (was
-281/281); KWin typecheck clean on both tsconfigs; KWin test suite 815/815
-unchanged. Stage 3/4 (unit-03 through unit-07) added 2026-08-19 and in
-progress; final outcome for the whole change is recorded once all units are
-accepted.
+All units (unit-01 through unit-07) accepted, first try each, no circuit
+breaker trips. Commits, in order: `dd5e28b` (Stage 1 docs), `da12ffc`
+(Stage 2 `setup` subcommand + tests), `d35a727` (decisions.md amendment,
+own commit), `24ad2c6`/`4238e1e`/`0f0e7a1` (change-doc record-keeping),
+`1aaf894` (Stage 3 script: kwinrc persistence write/remove + plugin-ID
+consistency test), `20269ca` + `409e03a` (Stage 3 README correction, the
+second a Lead direct fix-forward for one passage the Worker correctly
+flagged as outside its brief), `9b9d63a` (Stage 4 script: conditional
+`-DKWin_DIR=`), `8709ddd` (Stage 4 README: non-Nix build path). All pushed
+to `main`.
+
+Final verification (Lead, run directly): `bash
+scripts/dogfood-install.test.sh` -> 336 passes / 0 failures (baseline at
+change start: 281/0; +55 total across both stages). `npm --prefix kwin run
+typecheck` -> exit 0, clean on both tsconfigs. `npm --prefix kwin test` ->
+815/815 passing, unchanged from baseline. `git diff devenv.nix` -> empty.
+`git status --short` -> only the three permanently-untracked paths.
+
+Not verified, and not claimed as verified: live session-start
+auto-discovery/auto-load of the persisted native effect via the new kwinrc
+key at a real logout/login. This is the one acceptance criterion this
+change cannot close itself - see Residual Risks.
