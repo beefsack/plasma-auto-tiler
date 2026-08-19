@@ -1075,4 +1075,8 @@ speculation.
   instruction; a fresh baseline was never taken since no live testing was
   performed). This Lead stint reached its return threshold (three
   independently-accepted Worker slices) and returns `handover` after this
-  entry.
+  entry. Committed and pushed by this Lead at `6a70701 test(workspace): add
+  unit-05 cross-mode regression coverage` (`cb9b121..6a70701`), confirmed
+  via `git push` output, including the
+  `docs/changes/trailing-empty-workspace/` process artifacts alongside the
+  code.
