@@ -63,3 +63,43 @@ speculation.
   kwin test` -> `tests 815 pass 815 fail 0` (unchanged from baseline)
 - Notes: change complete; both units accepted, no circuit breaker trips, no
   out-of-scope files touched
+
+## 2026-08-19 (stage 3/4 scoping)
+
+- Role / unit: Lead / (plan expansion)
+- Result: new Lead took over stages 3-4 of this change under a separate
+  Orchestrator directive that pre-approved the spec.md/plan.md semantic
+  edits. Reconciled baseline: HEAD `4494b0d`, tree clean apart from the
+  three permanently-untracked paths. Read `docs/decisions.md`,
+  `docs/live-kwin-testing.md`, `scripts/dogfood-install.sh` (bounded
+  windows), `scripts/dogfood-install.test.sh` (bounded windows, confirmed
+  `FAKE_CMAKE_LOG` and the `DOGFOOD_*` test-override pattern),
+  `kwin/native-effect/CMakeLists.txt`, `kwin/native-effect/metadata.json`,
+  `README.md` structure. Added unit-03 (decisions.md amendment) through
+  unit-07 (Stage 4 README) to plan.md; added Stage 3/4 scope, acceptance
+  criteria, and two Consequential Decisions (plugin-ID single source of
+  truth reusing `EFFECT_PLUGIN_ID`; `DOGFOOD_KWIN_DEV_CMAKE_DIR` test
+  override) to spec.md.
+- Files / commit: docs/changes/simple-install/{spec.md,plan.md,log.md} (not
+  committed yet - planning only)
+- Verification: n/a (planning artifacts only)
+- Notes: confirmed the pinned KWin dev cmake path
+  (`/nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev`) exists on
+  this host today, so the Stage 4 conditional's "not exists" branch cannot
+  be tested against real host state and needs the new test-only override.
+
+## 2026-08-19 (unit-03)
+
+- Role / unit: worker-anthropic / unit-03 / attempt-01
+- Result: accepted first try. Applied the user-approved wording verbatim to
+  docs/decisions.md's "Native Effect Live Validation" entry: Scope paragraph
+  gained the `[Plugins]` kwinrc enablement-key clause after the
+  kpackagetool6/kwriteconfig6/qdbus6 clause; Consequences paragraph gained
+  the three governance-scope-widening sentences at its end. Re-wrapped only
+  those two paragraphs to match the file's existing ~80-char hard-wrap
+  style. Nothing else in the file changed.
+- Files / commit: docs/decisions.md; commit `d35a727` (pushed)
+- Verification: Lead read the full diff directly (`git diff docs/decisions.md`
+  before commit, matched worker's report; `git log`/`git status` after
+  confirmed the commit landed clean with no other file touched)
+- Notes: none
