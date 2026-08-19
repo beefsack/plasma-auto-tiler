@@ -113,7 +113,7 @@ execution slices use `unit-<n>/attempt-<n>`.
 - [x] unit-03 Apply docs/decisions.md amendment
 - [x] unit-04 Stage 3 script + tests (kwinrc persistence)
 - [x] unit-05 Stage 3 README correction
-- [ ] unit-06 Stage 4 script + tests (conditional -DKWin_DIR)
+- [x] unit-06 Stage 4 script + tests (conditional -DKWin_DIR)
 - [ ] unit-07 Stage 4 README (non-Nix build path)
 
 ## Attempt Accounting
@@ -148,7 +148,7 @@ the new kwinrc key. Recorded, not blocking implementation.
 | README.md no longer states an unconditional every-reboot re-run requirement; states what is automatic vs. manual | `README.md` "One-command install", "Native effect (dogfood)" (two passages), "Eyeball check", and "Scope of each command" sections all corrected; commits `20269ca` and `409e03a` (the Lead's own direct fix-forward for a fifth stale sentence the Worker correctly flagged as out of its brief) |
 | Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | `README.md` phrases every auto-load claim as source-verified-but-not-yet-confirmed and points at Eyeball check; see Residual Risks below - **unverified by design, needs a user-run logout/login this change cannot perform** |
 | README.md documents the non-Nix build path honestly (rebuild-every-upgrade, no cross-distro portability, unverified distro names worded as "typically") | pending unit-07 |
-| `-DKWin_DIR=` used only when the pinned path exists, via exactly one conditional; both branches covered in tests; devenv.nix unchanged | pending unit-06 |
+| `-DKWin_DIR=` used only when the pinned path exists, via exactly one conditional; both branches covered in tests; devenv.nix unchanged | `scripts/dogfood-install.sh` `KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-<pinned literal>}"`; `cmd_effect_install` adds `-DKWin_DIR=` only when `[[ -d "$KWIN_DEV_CMAKE_DIR" ]]` (one conditional); two new test scenarios cover both branches via the new override; `bash scripts/dogfood-install.test.sh` 336/0 (was 331/0), independently re-run by the Lead; `git diff devenv.nix` empty, confirmed by both Worker and Lead; commit `9b9d63a` |
 
 ## Residual Risks
 

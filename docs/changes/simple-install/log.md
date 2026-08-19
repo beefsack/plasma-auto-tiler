@@ -156,3 +156,23 @@ speculation.
   sentence were preserved verbatim as required; confirmed no claim of live
   verification anywhere
 - Notes: none
+
+## 2026-08-19 (unit-06)
+
+- Role / unit: worker-anthropic / unit-06 / attempt-01
+- Result: accepted first try. `scripts/dogfood-install.sh`:
+  `KWIN_DEV_CMAKE_DIR` now reads `DOGFOOD_KWIN_DEV_CMAKE_DIR` (default
+  unchanged); `cmd_effect_install` builds a `cmake_args` array and adds
+  `-DKWin_DIR=` only when `[[ -d "$KWIN_DEV_CMAKE_DIR" ]]` - exactly one new
+  conditional; `usage()` documents the new test-only override.
+  `scripts/dogfood-install.test.sh`: threaded `TEST_KWIN_DEV_CMAKE_DIR`
+  through `reset_state`/`run_script` matching the existing override
+  pattern; two new scenarios cover both branches (pinned path exists ->
+  flag passed; pinned path absent -> flag omitted, build still succeeds).
+- Files / commit: scripts/dogfood-install.sh, scripts/dogfood-install.test.sh;
+  commit `9b9d63a` (pushed)
+- Verification: Lead read the full diff directly (`git show HEAD` both
+  files); confirmed `git diff devenv.nix` is empty; independently re-ran
+  `bash scripts/dogfood-install.test.sh` -> `passes: 336 failures: 0`
+  (baseline 331/0, matches worker's reported count)
+- Notes: none
