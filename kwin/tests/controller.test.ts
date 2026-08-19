@@ -15361,9 +15361,10 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal(last?.output, OUTPUT_L);
     });
 
-    it("Meta+0 always creates a new desktop on the active output only, leaving the other output unchanged", () => {
-        // Meta+0 always creates, never reuses; it acts through the
-        // per-output seam on E only, and L's current desktop is untouched.
+    it("Meta+0 creates a new desktop on the active output only when none exists yet, leaving the other output unchanged", () => {
+        // E has no trailing empty yet at this point in the scenario, so
+        // Meta+0 must create one; it acts through the per-output seam on E
+        // only, and L's current desktop is untouched.
         const { harness, wE } = twoOutputSetup();
         const creates = harness.createDesktopCalls.length;
         harness.active = wE;
@@ -15525,6 +15526,195 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         const [eFinal, lFinal] = twoLocalLists(controller);
         assert.deepEqual([...eFinal], ["desktop-1", "desktop-3"]);
         assert.deepEqual([...lFinal], ["desktop-4", "desktop-5"]);
+    });
+
+    it("three simultaneously connected outputs each develop their own distinct, non-overlapping local trailing empty", () => {
+        // Generalizes twoOutputSetup to three outputs connected and occupied
+        // at once (spec Q-Domain: one trailing empty per connected output,
+        // not per output-pair). All three windows start on the pre-existing
+        // desktop-1, which resolves into E's list (session primary); L and N
+        // start with no desktops of their own, exactly as L does in
+        // twoOutputSetup. Each output's own move-append creates its own
+        // occupied desktop and the same cleanup dispatch replenishes that
+        // output's own trailing empty while also seeding an initial trailing
+        // empty for any other connected output still lacking one.
+        const OUTPUT_N = { ...OUTPUT, name: "screen-n", serialNumber: "33" };
+        const harness = new Harness();
+        harness.screensList = [OUTPUT_E, OUTPUT_L, OUTPUT_N];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        const wN = window({ output: OUTPUT_N });
+        harness.windows = [wE, wL, wN];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        for (const win of [wE, wL, wN]) {
+            makeFloating(harness, win);
+        }
+        // wE's move creates desktop-2 (occupied) and the same cleanup
+        // dispatch replenishes desktop-3 as E's own trailing empty, and
+        // seeds L's and N's own initial trailing empties (desktop-4 and
+        // desktop-5 respectively) since both are connected outputs with no
+        // desktops of their own yet.
+        moveToTrailing(harness, wE);
+        // wL reuses its just-seeded trailing desktop-4 and the same cleanup
+        // dispatch replenishes desktop-6 as L's fresh trailing empty.
+        moveToTrailing(harness, wL);
+        // wN reuses its just-seeded trailing desktop-5 and the same cleanup
+        // dispatch replenishes desktop-7 as N's fresh trailing empty.
+        moveToTrailing(harness, wN);
+
+        const keyE = controller.outputKeyFor(OUTPUT_E) as string;
+        const keyL = controller.outputKeyFor(OUTPUT_L) as string;
+        const keyN = controller.outputKeyFor(OUTPUT_N) as string;
+        assert.equal(new Set([keyE, keyL, keyN]).size, 3);
+
+        const snapshot = controller.localWorkspaceSnapshot();
+        assert.deepEqual([...(snapshot[keyE] ?? [])], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...(snapshot[keyL] ?? [])], ["desktop-4", "desktop-6"]);
+        assert.deepEqual([...(snapshot[keyN] ?? [])], ["desktop-5", "desktop-7"]);
+
+        // The three domains are structurally distinct: no desktop id is a
+        // member of more than one output's local list.
+        const allIds = [...(snapshot[keyE] ?? []), ...(snapshot[keyL] ?? []), ...(snapshot[keyN] ?? [])];
+        assert.equal(new Set(allIds).size, allIds.length);
+
+        // A repeated cleanup dispatch afterward is idempotent: nothing
+        // further is created or removed, matching "reconciliation is stable
+        // across repeated triggers" above but for three simultaneous
+        // domains.
+        const creates = harness.createDesktopCalls.length;
+        const removals = harness.removedDesktops.length;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, removals);
+        const after = controller.localWorkspaceSnapshot();
+        assert.deepEqual([...(after[keyE] ?? [])], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...(after[keyL] ?? [])], ["desktop-4", "desktop-6"]);
+        assert.deepEqual([...(after[keyN] ?? [])], ["desktop-5", "desktop-7"]);
+    });
+
+    it("disconnecting one of three connected outputs removes only its own empty, invisible desktops and leaves the two survivors' local lists and current desktops completely unaffected", () => {
+        // Builds on the same three-output occupied state as the test above,
+        // then disconnects N (matching "marks a removed output's owned
+        // empties..." above, but with a third, uninvolved survivor present).
+        const OUTPUT_N = { ...OUTPUT, name: "screen-n", serialNumber: "33" };
+        const harness = new Harness();
+        harness.screensList = [OUTPUT_E, OUTPUT_L, OUTPUT_N];
+        harness.desktopsList = [DESKTOP_1];
+        harness.nextDesktopNumber = 1;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        const wN = window({ output: OUTPUT_N });
+        harness.windows = [wE, wL, wN];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        for (const win of [wE, wL, wN]) {
+            makeFloating(harness, win);
+        }
+        moveToTrailing(harness, wE);
+        moveToTrailing(harness, wL);
+        moveToTrailing(harness, wN);
+
+        const keyE = controller.outputKeyFor(OUTPUT_E) as string;
+        const keyL = controller.outputKeyFor(OUTPUT_L) as string;
+        const before = controller.localWorkspaceSnapshot();
+        const eBefore = [...(before[keyE] ?? [])];
+        const lBefore = [...(before[keyL] ?? [])];
+        const currentEBefore = harness.currentDesktopByOutput.get(OUTPUT_E);
+        const currentLBefore = harness.currentDesktopByOutput.get(OUTPUT_L);
+
+        harness.removedDesktops.length = 0;
+        const creates = harness.createDesktopCalls.length;
+        // Disconnect N: its own trailing empty (desktop-7) is now empty and
+        // invisible (N is dropped from screens()) and becomes cleanup-
+        // eligible; N's occupied desktop-5 (still holding wN) is not empty,
+        // so it is never removed, purely orphaned out of every domain's
+        // local list. E's and L's own local lists and current desktops are
+        // completely untouched, and no desktop is created purely as a
+        // result of the disconnect (disconnect never replenishes).
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.screensChanged?.();
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id),
+            ["desktop-7"],
+        );
+        assert.equal(harness.createDesktopCalls.length, creates);
+
+        const after = controller.localWorkspaceSnapshot();
+        assert.deepEqual([...(after[keyE] ?? [])], eBefore);
+        assert.deepEqual([...(after[keyL] ?? [])], lBefore);
+        assert.equal(harness.currentDesktopByOutput.get(OUTPUT_E), currentEBefore);
+        assert.equal(harness.currentDesktopByOutput.get(OUTPUT_L), currentLBefore);
+    });
+
+    it("rapid disconnect/reconnect flapping of one output, interleaved with a window occupying its own trailing empty mid-flap, converges to exactly one trailing empty per output with no residual oscillation (per-output-local)", () => {
+        const { harness, controller, wE, wL1 } = twoOutputSetup();
+        makeFloating(harness, wE);
+        moveToTrailing(harness, wE);
+        const [eBefore] = twoLocalLists(controller);
+        assert.deepEqual([...eBefore], ["desktop-1", "desktop-2", "desktop-3"]);
+
+        // Flap L rapidly (disconnect/reconnect back-to-back, nothing else
+        // changed), then, mid-flap and before anything settles, move a
+        // window onto L (seeding its own trailing empty for the first
+        // time), then flap once more.
+        harness.screensList = [OUTPUT_E];
+        harness.screensChanged?.();
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.screensChanged?.();
+        harness.screensList = [OUTPUT_E];
+        harness.screensChanged?.();
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.screensChanged?.();
+        makeFloating(harness, wL1);
+        moveToTrailing(harness, wL1);
+        harness.screensList = [OUTPUT_E];
+        harness.screensChanged?.();
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.screensChanged?.();
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+
+        // E's own domain, never touched by L's flapping, is unaffected.
+        const [eAfter, lAfter] = twoLocalLists(controller);
+        assert.deepEqual([...eAfter], ["desktop-1", "desktop-2", "desktop-3"]);
+        // L converges to exactly its one occupied desktop (wL1's move) plus
+        // exactly one trailing empty: no duplicates, no leftover churn from
+        // the flap itself.
+        assert.equal(lAfter.length, 2);
+        assert.equal(new Set(lAfter).size, 2);
+
+        // A further settle dispatch against this converged state is a pure
+        // no-op: repeated flapping leaves no residual oscillation.
+        const creates = harness.createDesktopCalls.length;
+        const removals = harness.removedDesktops.length;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, removals);
+        const [eFinal, lFinal] = twoLocalLists(controller);
+        assert.deepEqual([...eFinal], eAfter);
+        assert.deepEqual([...lFinal], lAfter);
     });
 });
 
@@ -16096,6 +16286,143 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
             ["desktop-8", "desktop-9"],
         );
     });
+
+    it("a third simultaneously connected output develops its own distinct trailing empty, and disconnecting it folds only its own desktops into the primary output's group, leaving the other survivor's own group and current desktop completely unaffected (global-unique)", () => {
+        // Generalizes globalUniqueSetup to three outputs connected at once
+        // (Q-Domain: one trailing empty per connected output, not per
+        // output-pair). N's own desktops are seeded with deliberately low
+        // x11DesktopNumbers so folding them into E (the primary) on
+        // disconnect never displaces E's own trailing desktop-7 as the
+        // merged group's structurally-last member - that adversarial
+        // ordering interaction is already covered by the "literal-last-wins"
+        // test above; this test isolates the plain multi-output case.
+        const OUTPUT_N = { ...OUTPUT, name: "screen-n", serialNumber: "33" };
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "global-unique");
+        harness.screensList = [OUTPUT_E, OUTPUT_L, OUTPUT_N];
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+            { id: "desktop-3", x11DesktopNumber: 3 },
+            { id: "desktop-4", x11DesktopNumber: 4 },
+            { id: "desktop-5", x11DesktopNumber: 5 },
+            { id: "desktop-6", x11DesktopNumber: 6 },
+            { id: "desktop-7", x11DesktopNumber: 7 },
+            { id: "desktop-8", x11DesktopNumber: 8 },
+            { id: "desktop-9", x11DesktopNumber: -2 },
+            { id: "desktop-10", x11DesktopNumber: -1 },
+        ];
+        harness.nextDesktopNumber = 10;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        const wN = window({ output: OUTPUT_N, desktops: [{ id: "desktop-9" }] });
+        harness.windows = [wE, wL, wN];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const keyE = controller.outputKeyFor(OUTPUT_E) as string;
+        const keyL = controller.outputKeyFor(OUTPUT_L) as string;
+        const keyN = controller.outputKeyFor(OUTPUT_N) as string;
+        assert.equal(new Set([keyE, keyL, keyN]).size, 3);
+        controller.seedGlobalUniqueAssignment({
+            [keyE]: ["desktop-1", "desktop-2", "desktop-4", "desktop-7"],
+            [keyL]: ["desktop-3", "desktop-5", "desktop-6", "desktop-8"],
+            [keyN]: ["desktop-9", "desktop-10"],
+        });
+        harness.currentDesktopByOutput.set(OUTPUT_E, { id: "desktop-1", x11DesktopNumber: 1 });
+        harness.currentDesktopByOutput.set(OUTPUT_L, { id: "desktop-3", x11DesktopNumber: 3 });
+        harness.currentDesktopByOutput.set(OUTPUT_N, { id: "desktop-9", x11DesktopNumber: -2 });
+        harness.currentDesktop = { id: "desktop-1", x11DesktopNumber: 1 };
+        harness.currentDesktopValue = { id: "desktop-1", x11DesktopNumber: 1 };
+
+        // Settle the freshly seeded fixture once (sweeps its own dangling,
+        // never-occupied spare desktops down to current+trailing per
+        // domain) so the disconnect assertions below measure only the
+        // delta caused by N leaving, not the fixture's own first-ever
+        // reconciliation sweep.
+        harness.emitDesktopsChanged();
+
+        // The three domains are structurally distinct: no desktop id is a
+        // member of more than one output's own assignment group.
+        const before = controller.globalUniqueAssignmentSnapshot();
+        const allIds = [...(before[keyE] ?? []), ...(before[keyL] ?? []), ...(before[keyN] ?? [])];
+        assert.equal(new Set(allIds).size, allIds.length);
+        const lBefore = [...(before[keyL] ?? [])].sort();
+        const currentLBefore = harness.currentDesktopByOutput.get(OUTPUT_L);
+
+        harness.removedDesktops.length = 0;
+        const creates = harness.createDesktopCalls.length;
+        // Disconnect N: its occupied desktop-9 (holding wN) is not empty
+        // and is folded into E's group rather than dropped; its empty
+        // desktop-10 folds in too but, being lower-numbered than E's own
+        // desktop-7, never becomes the merged group's trailing position, so
+        // it is removed like any other ordinary empty invisible desktop
+        // (Q-Manual). No desktop is created purely as a result of the
+        // disconnect (disconnect never replenishes). L's own group and
+        // current desktop are completely untouched.
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.currentDesktopByOutput.delete(OUTPUT_N);
+        harness.screensChanged?.();
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
+            ["desktop-10"],
+        );
+        assert.equal(harness.createDesktopCalls.length, creates);
+        const after = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(Object.keys(after).sort(), [keyE, keyL].sort());
+        assert.deepEqual([...(after[keyE] ?? [])].sort(), ["desktop-1", "desktop-7", "desktop-9"]);
+        assert.deepEqual([...(after[keyL] ?? [])].sort(), lBefore);
+        assert.equal(harness.currentDesktopByOutput.get(OUTPUT_L), currentLBefore);
+    });
+
+    it("output replug (disconnect then reconnect the identical output) creates a fresh trailing empty for the returning output, never adopting a spare desktop left over from before it disconnected (global-unique)", () => {
+        const { harness, controller, keyE, keyL } = globalUniqueSetup();
+        const formerLIds = ["desktop-3", "desktop-5", "desktop-6", "desktop-8"];
+        harness.removedDesktops.length = 0;
+        // Disconnect L: its group folds into E, the primary.
+        harness.screensList = [OUTPUT_E];
+        harness.currentDesktopByOutput.delete(OUTPUT_L);
+        harness.screensChanged?.();
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+        const afterDisconnect = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(Object.keys(afterDisconnect), [keyE]);
+        // Reconnect the identical output tuple: matched by first-seen order,
+        // it gets its own session key back (spec E), but with no adopted
+        // spare - reconciliation creates exactly one brand-new desktop as
+        // its trailing empty, distinct from every one of its former ids
+        // (all of which were either removed or folded permanently into E).
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        const creates = harness.createDesktopCalls.length;
+        harness.screensChanged?.();
+        settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+        assert.equal(controller.outputKeyFor(OUTPUT_L), keyL);
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        const replugged = controller.globalUniqueAssignmentSnapshot();
+        assert.equal(replugged[keyL]?.length, 1);
+        const newTrailingId = (replugged[keyL] as readonly string[])[0] as string;
+        assert.equal(formerLIds.includes(newTrailingId), false);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-1");
+    });
 });
 
 describe("TileController shared workspaces (Unit 07)", () => {
@@ -16564,6 +16891,68 @@ describe("TileController shared workspaces (Unit 07)", () => {
         assert.equal(harness.createDesktopCalls.length, creates);
         assert.equal(harness.removedDesktops.length, removals);
         assert.deepEqual([...controller.sharedWorkspaceSnapshot()], snapshot);
+    });
+
+    it("three simultaneously connected outputs all synchronize onto the same single shared desktop, and disconnecting one down to two survivors stays fully synchronized with no spurious create (shared)", () => {
+        // Generalizes sharedSetup to three outputs (Q-Domain: shared has one
+        // global trailing empty regardless of output count; synchronizeShared
+        // forces every connected output onto the same desktop by design).
+        const OUTPUT_N = { ...OUTPUT, name: "screen-n", serialNumber: "33" };
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "shared");
+        harness.screensList = [OUTPUT_E, OUTPUT_L, OUTPUT_N];
+        harness.desktopsList = [DESKTOP_1, DESKTOP_2, { id: "desktop-3", x11DesktopNumber: 3 }];
+        harness.nextDesktopNumber = 3;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const wE = window({ output: OUTPUT_E });
+        const wL = window({ output: OUTPUT_L });
+        const wN = window({ output: OUTPUT_N });
+        harness.windows = [wE, wL, wN];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        (controller as unknown as { ownedDesktopIds: Set<string> }).ownedDesktopIds.add("desktop-3");
+
+        harness.currentDesktop = DESKTOP_1;
+        harness.currentDesktopValue = DESKTOP_1;
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_1);
+        harness.currentDesktopByOutput.set(OUTPUT_N, DESKTOP_1);
+        harness.active = wE;
+        const onAll = (): [string, string, string] => [
+            (harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id,
+            (harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id,
+            (harness.currentDesktopByOutput.get(OUTPUT_N) as { id: string }).id,
+        ];
+        // Meta+2 synchronizes all three connected outputs, not just a pair.
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        assert.deepEqual(onAll(), ["desktop-2", "desktop-2", "desktop-2"]);
+
+        // Disconnect N: no desktop is created purely from the disconnect,
+        // and E's/L's synchronized current desktop is unaffected.
+        harness.removedDesktops.length = 0;
+        const creates = harness.createDesktopCalls.length;
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.currentDesktopByOutput.delete(OUTPUT_N);
+        harness.screensChanged?.();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.deepEqual(
+            [
+                (harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id,
+                (harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id,
+            ],
+            ["desktop-2", "desktop-2"],
+        );
+
+        // Reconnect N: it joins the current shared workspace without
+        // creating a desktop, restoring full three-output synchronization.
+        harness.screensList = [OUTPUT_E, OUTPUT_L, OUTPUT_N];
+        harness.screensChanged?.();
+        assert.deepEqual(onAll(), ["desktop-2", "desktop-2", "desktop-2"]);
+        assert.equal(harness.createDesktopCalls.length, creates);
     });
 });
 

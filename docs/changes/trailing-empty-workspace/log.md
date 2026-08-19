@@ -1080,3 +1080,113 @@ speculation.
   via `git push` output, including the
   `docs/changes/trailing-empty-workspace/` process artifacts alongside the
   code.
+
+## 2026-08-20 (unit-05, closing dispatch: forensic reconciliation + reachability-gap closure)
+
+- Role / unit: Lead (executing directly, no subagent dispatched - explicit
+  narrow exception authorized for this dispatch after two prior Worker-tier
+  dispatches on this unit stalled) / unit-05
+- Result (Task 0, forensic reconciliation): found an uncommitted, unrecorded
+  working-tree diff in `kwin/tests/controller.test.ts` (139 insertions/3
+  deletions), left by a cancelled prior dispatch with no plan.md/log.md
+  trace. Inspected the diff directly before any other action: it added two
+  tests to the "per-output-local workspaces (Unit 05)" block - a
+  3-simultaneous-output occupied scenario and a disconnect-from-three-to-two
+  scenario - and corrected the stale test title at the prior offset
+  `controller.test.ts:15364` ("Meta+0 always creates..." to "Meta+0 creates
+  ... when none exists yet"), a title-and-comment-only change with the
+  assertion body itself untouched. Judged the diff on its merits per
+  instruction: kept in full. Reasoning - both new tests are pure additions
+  (no deletions beyond the one title/comment edit), confined to the declared
+  per-output-local scope, contain zero `ownedDesktopIds` references, and
+  (confirmed by running the full suite before making any other change) pass
+  against the unmodified production controller, meaning their assertions
+  accurately describe real behavior rather than encoding a wrong assumption.
+  The title fix is exactly the "trivial rename and nothing else" case the
+  brief called for. Ran the full baseline suite first to confirm a
+  known-good tree before building on it: 834/834 pass (832 committed
+  baseline + these 2 orphan tests), typecheck clean on both tsconfigs,
+  `main.js` byte-identical to committed `HEAD` (git diff --stat empty),
+  confirming the orphan diff introduced no production drift.
+- Result (gap closure): read plan.md's Progress/Acceptance-Criterion-
+  Evidence/Residual-Risks and this file's latest entry for handover state.
+  Per Orchestrator ruling, treated the first Lead's "no locatable code
+  branch gating on these conditions" claim as a hypothesis, not settled
+  fact, and read the relevant production code directly before writing any
+  test: `rebuildGlobalUniqueMapping` (`controller.ts:8983-9021` at this
+  dispatch's start) to understand exactly how global-unique folds an
+  disconnecting output's desktops into `globalUniquePrimary` (not simply
+  dropping them, unlike per-output-local) and how a newly (re)connecting
+  output never adopts an existing spare (`enforceGlobalTrailingEmpty`
+  always creates fresh, per the existing "newly connected output gets a
+  freshly created trailing empty" test's own precedent). Found the shared
+  block already contained a genuine output-replug test ("hotplug adds a new
+  output at the current shared workspace and never creates a desktop",
+  disconnects then reconnects the identical `OUTPUT_L` tuple) that the first
+  Lead's gap list had missed - refuted that specific claim by direct
+  evidence rather than adding a duplicate test.
+  Added four new tests, each hand-written (no subagent), iterated against
+  the unmodified controller and corrected until every assertion matched
+  real observed behavior (not guessed):
+  1. Global-unique 3-simultaneous-output + disconnect-3-to-2 (combined,
+     "global-unique workspaces (Unit 06)" block): first attempt's raw
+     assertion of `removedDesktops === ["desktop-10"]` failed with an actual
+     of `["desktop-10","desktop-2","desktop-4","desktop-5","desktop-6"]` -
+     root cause was a test-authoring gap, not a production defect: the
+     freshly-seeded fixture had never been settled once before capturing a
+     "before" baseline, so the disconnect-triggered dispatch swept the
+     fixture's own never-occupied spare desktops in the same pass as N's
+     disconnect, conflating two effects. Fixed by adding one
+     `harness.emitDesktopsChanged()` settle call right after seeding/before
+     capturing the baseline (mirroring the settled-precondition style the
+     existing 2-output disconnect test already uses), then correcting the
+     expected post-disconnect `keyE` list to `["desktop-1","desktop-7",
+     "desktop-9"]`. Re-ran; passed.
+  2. Global-unique output replug ("global-unique workspaces (Unit 06)"
+     block): passed on first run; needed one typecheck-only fix (an
+     `array[0]` read typed as `string | undefined`, asserted as `string`
+     with an explicit cast after the adjacent length check already
+     guaranteed a value) - not a logic change.
+  3. Shared 3-simultaneous-output + disconnect-3-to-2 (combined, "shared
+     workspaces (Unit 07)" block): passed on first run.
+  4. Rapid disconnect/reconnect flapping interleaved with occupation
+     ("per-output-local workspaces (Unit 05)" block, placed there per the
+     gap's "anywhere" wording): first attempt's assertion `lAfter.length ===
+     2` failed with an actual of `1` - root cause was a missing settle
+     (`flushNextYield` loop) after the final reconnect in the flap sequence,
+     the same "scope change arms a deferred reconstruction" pattern every
+     other disconnect/reconnect test in this file already accounts for; the
+     test simply hadn't included it yet on the first draft. Fixed by adding
+     the standard settle loop before the final `emitDesktopsChanged()`.
+     Re-ran; passed.
+  Both corrections were pre-run test-authoring mistakes on tests never
+  previously run, not production-code discoveries - `kwin/src/controller.ts`
+  was read for design understanding but never edited or diffed against
+  this dispatch's own changes.
+- Files / commit: `kwin/tests/controller.test.ts` only (orphan diff kept
+  as-is, plus 4 new hand-written tests, plus the one typecheck cast fix);
+  `kwin/contents/code/main.js` confirmed byte-identical to committed `HEAD`
+  throughout (test-only changes, no source edit, `git diff --stat --
+  kwin/contents/code/main.js` empty at every checkpoint);
+  `docs/changes/trailing-empty-workspace/{plan.md,log.md}` (this entry,
+  Progress marked `[x]`, new Acceptance-Criterion Evidence entry, Residual
+  Risks closure note reaffirming the live-runtime oscillation residual
+  explicitly remains open).
+- Verification: full build+esbuild+`node --test` -> 838 tests, 78 suites,
+  838 pass, 0 fail (832 baseline + 6 new: 2 orphan-diff + 4 this dispatch).
+  `npm --prefix kwin run typecheck` -> clean, both tsconfigs (after the one
+  cast fix). `devenv shell --impure -- bash -c "cd scripts && bash
+  dogfood-install.test.sh"` -> 336/336, unchanged. `main.js` confirmed
+  byte-identical to committed `HEAD` after every build in this dispatch.
+- Notes: no real defect found in production code - every new/kept test's
+  final, corrected assertions describe behavior the unmodified controller
+  already produces; nothing was escalated as a defect per the brief's
+  stop-and-report instruction, because nothing qualified. unit-05 marked
+  `[x]` (all its declared acceptance criteria now met: the original core
+  sweep plus the Orchestrator-ruled-in-scope reachability gaps). The
+  live-runtime oscillation residual (proposed three-scenario live-check,
+  `docs/live-kwin-testing.md`-gated, not performed this dispatch or any
+  prior one) is explicitly and deliberately left open, recorded in Residual
+  Risks, and is not resolved by this or any static-only dispatch. No live
+  host mutation was performed. Committed and pushed by this Lead - see
+  commit hash recorded alongside this entry once pushed.

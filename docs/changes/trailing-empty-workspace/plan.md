@@ -114,15 +114,31 @@ does not converge cleanly.
       815/815 pass, typecheck clean; attempt-01's dispatching Lead was
       cancelled mid-flight before returning any report - independently
       reconciled and re-verified by a successor Lead, see Attempt Accounting)
-- [~] unit-05 Cross-mode regression sweep (core dispatched deliverables
-      accepted, attempt-01, no correction round, three worker-anthropic
-      slices each independently diff-inspected by the Lead: adversarial
-      global-unique disconnect ordering test, Q-MultiOutput non-confusability
-      test, mixed-trigger oscillation test per mode; 832/832 pass, typecheck
-      clean, dogfood-install 336/336 unchanged; marked partial, not closed -
-      see Residual Risks for newly discovered reachability gaps (3+-output
-      and replug coverage) not yet addressed and awaiting an Orchestrator
-      routing decision on whether they belong in this unit or a follow-up)
+- [x] unit-05 Cross-mode regression sweep (accepted, attempt-01 core
+      deliverables plus a second successor-Lead dispatch closing the
+      Orchestrator-ruled-in-scope reachability gaps; no correction round on
+      either; 838/838 pass, typecheck clean, dogfood-install 336/336
+      unchanged, `main.js` byte-identical to committed `HEAD`. Closing
+      dispatch reconciled one orphan uncommitted diff (139 insertions/3
+      deletions to `kwin/tests/controller.test.ts`, left by a cancelled prior
+      attempt with no plan.md/log.md record) by direct inspection and a full
+      test run: kept as-is (2 new per-output-local tests - 3-simultaneous-
+      output, disconnect-3-to-2 - plus the misleading-title fix at the old
+      `controller.test.ts:15364`, all correct against unmodified production
+      code). Added 4 further tests closing the remaining gaps: global-unique
+      3-simultaneous-output+disconnect-3-to-2 (combined), global-unique
+      output replug, shared 3-simultaneous-output+disconnect-3-to-2
+      (combined), and one rapid-flap-interleaved-with-occupation test
+      (per-output-local). Refuted one gap claim by direct evidence: shared
+      mode already had a replug test pre-existing at
+      `controller.test.ts:16528` ("hotplug adds a new output..."), so no new
+      shared replug test was added. No production code
+      (`kwin/src/controller.ts`) touched by any of this; no real defect
+      found - every new test passed against the unmodified controller on
+      first correct assertion values (two initial assertion mismatches were
+      fixed as test-authoring errors, not production bugs - see log.md).
+      Live-runtime oscillation residual explicitly remains open, see
+      Residual Risks; no live host action taken this unit)
 - [ ] unit-06 Documentation correction
 - [x] unit-07 Fix trailing-empty-not-appended-on-occupation defect (accepted,
       attempt-02, no correction round; attempt-01 cancelled mid-flight with
@@ -493,6 +509,48 @@ scope is unaffected.
   they are recorded here for an Orchestrator routing decision (additional
   unit-05 slice vs. a new follow-up unit vs. accepted as residual risk) and
   not further pursued in this stint, which is at its return threshold.
+- Reachability-gap closure (unit-05, closing dispatch, now met): the
+  Orchestrator ruled the gaps above in scope for this unit, treating the
+  first Lead's "no locatable code branch" finding as a hypothesis to verify,
+  not a fact. This dispatch first reconciled a cancelled prior attempt's
+  orphan uncommitted diff (139 insertions/3 deletions to
+  `kwin/tests/controller.test.ts`, no plan.md/log.md record) - kept in full
+  after direct inspection and a passing full test run: it added the
+  per-output-local 3-simultaneous-output test and the per-output-local
+  disconnect-3-to-2 test, plus corrected the stale "always creates" title
+  noted above (`controller.test.ts`, old line 15364) to "creates ... when
+  none exists yet" - a trivial title-and-comment-only rename with no
+  assertion change, exactly as instructed. Four further tests were then
+  added, each individually run and iterated against the unmodified
+  production controller until every assertion matched real behavior (two
+  initial assertion mismatches were corrected as test-authoring errors, not
+  production bugs - see log.md for the reasoning): global-unique
+  3-simultaneous-output-plus-disconnect-3-to-2 (combined test, "a third
+  simultaneously connected output develops its own distinct trailing
+  empty..."), global-unique output replug ("output replug (disconnect then
+  reconnect the identical output) creates a fresh trailing empty..."),
+  shared 3-simultaneous-output-plus-disconnect-3-to-2 (combined test, "three
+  simultaneously connected outputs all synchronize..."), and one
+  rapid-flap-interleaved-with-occupation test ("rapid disconnect/reconnect
+  flapping of one output, interleaved with a window occupying its own
+  trailing empty mid-flap..."), added to the per-output-local block per the
+  gap's "anywhere" wording, generalizing the existing per-mode
+  mixed-trigger-oscillation idiom to genuine output flapping rather than
+  same-output repeated dispatch. One gap claim was refuted by direct
+  evidence rather than closed by a new test: shared mode already had an
+  output replug test pre-existing at `controller.test.ts:16528` ("hotplug
+  adds a new output at the current shared workspace and never creates a
+  desktop") disconnecting then reconnecting the identical output tuple - the
+  first Lead's claim that only `per-output-local` had one was incorrect; no
+  duplicate test was added. No production code (`kwin/src/controller.ts`)
+  was touched by any of this closure work, and no real defect was found -
+  every new test's final, corrected assertions describe behavior the
+  unmodified controller already produces. 838/838 pass (832 baseline + 6
+  new), typecheck clean on both tsconfigs, `scripts/dogfood-install.test.sh`
+  336/336 unchanged, `main.js` confirmed byte-identical to committed `HEAD`
+  (test-only diff). The live-runtime oscillation residual from the prior
+  entry is unaffected by this closure (static coverage only) and explicitly
+  remains open - see Residual Risks.
 - Remaining acceptance criteria (docs correction) are unit-06 and remain
   unmet pending that unit. unit-05's originally-declared file scope (the two
   describe blocks) is now fully audited and clean; the newly-discovered
@@ -541,6 +599,16 @@ scope is unaffected.
   live log, would falsify the anti-oscillation design and require
   escalation per the plan's Constraints (no debounce/timer patch permitted
   as a fix).
+- (2026-08-20, unit-05 closing dispatch) The static reachability gaps noted
+  above the prior entry (3+-simultaneous-output, disconnect-3-to-2, replug,
+  and flap coverage) are now closed - see Acceptance-Criterion Evidence. This
+  closure is purely static (`node --test` against the mocked `Harness`) and
+  does not touch, verify, or reduce the live-runtime residual immediately
+  above: whether the anti-oscillation design holds under actual KWin's own
+  event loop, signal re-entrancy, and QML/D-Bus event coalescing remains
+  entirely unverified and explicitly remains open. No live host mutation was
+  performed in this dispatch either; the proposed live-check above is still
+  the concrete next step for the Orchestrator to route through the user.
 - The shared-helper approach (one implementation instead of three) is a
   deliberate deviation from strictly mirroring the pre-Q6 per-mode
   duplication; if review finds mode-specific semantics do not fit a single
