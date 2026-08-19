@@ -7638,12 +7638,13 @@ export class TileController {
     // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): per-output-local
     // reuses the active output's existing trailing empty when one exists
     // (Q-Zero: a no-op when it is already the current desktop on that
-    // output), creating only when none exists. global-unique still always
-    // creates a brand-new desktop and focuses it, never reusing (unit-03,
-    // unchanged here); shared creates the shared desktop and synchronizes
-    // every connected output. While a drag, reconstruction, or unsettled move
-    // is live the whole invocation is queued through the existing settle
-    // queue and completed after the settle seam (spec F bounded drain).
+    // output), creating only when none exists. global-unique (unit-03) reuses
+    // the single global trailing empty the same way, applying the
+    // cross-output swap when it is currently shown elsewhere; shared creates
+    // the shared desktop and synchronizes every connected output. While a
+    // drag, reconstruction, or unsettled move is live the whole invocation is
+    // queued through the existing settle queue and completed after the settle
+    // seam (spec F bounded drain).
     private workspaceZero(): void {
         this.gate.run(() => {
             this.diagnostic("workspace-zero-invoked");
@@ -7688,6 +7689,32 @@ export class TileController {
         }
         if (this.workspaceMode === "per-output-local") {
             this.finishLocalWorkspaceZero(output, desktops);
+            return;
+        }
+        this.finishGlobalWorkspaceZero(output, desktops);
+    }
+
+    // global-unique Meta+0 (unit-03): reuse the single global structurally-
+    // identified trailing empty when one exists, applying the cross-output
+    // swap (globalUniqueSwapIfVisibleElsewhere) so a trailing empty currently
+    // shown on a different output moves to the active output rather than
+    // being duplicated. Q-Zero: if it is already the current desktop on this
+    // output, the whole invocation is a no-op. Only when no trailing empty
+    // exists does this fall back to appendDesktopForGlobalUnique - the same
+    // creation primitive enforceGlobalTrailingEmpty() uses.
+    private finishGlobalWorkspaceZero(
+        output: OutputCapability,
+        desktops: readonly VirtualDesktopCapability[],
+    ): void {
+        void desktops;
+        const existing = this.resolveGlobalTrailingEmpty();
+        if (existing !== null) {
+            if (this.isCurrentOnOutput(output, existing.id)) {
+                this.diagnostic("workspace-zero-no-op:already-there");
+                return;
+            }
+            this.globalUniqueSwapIfVisibleElsewhere(existing, output);
+            this.focusTrailingEmpty(existing, output);
             return;
         }
         const target = this.appendDesktopForGlobalUnique(output);
@@ -7846,7 +7873,16 @@ export class TileController {
                 this.deferDesktopIntent(window);
                 return;
             }
-            target = this.appendDesktopForGlobalUnique(scope.output);
+            // Reuse the single global trailing empty when one exists; only
+            // create (via the same primitive enforceGlobalTrailingEmpty()
+            // uses) when it does not. The swap below moves a trailing empty
+            // currently shown on a different output to this output; the
+            // existing target.id === scope.desktop.id check further down
+            // already handles "already there" as a no-op.
+            target = this.resolveGlobalTrailingEmpty() ?? this.appendDesktopForGlobalUnique(scope.output);
+            if (target !== null) {
+                this.globalUniqueSwapIfVisibleElsewhere(target, scope.output);
+            }
         } else {
             if (this.workspaceMutationDeferred()) {
                 this.deferDesktopIntent(window);
@@ -7965,9 +8001,10 @@ export class TileController {
             let target: VirtualDesktopCapability | null;
             if (index === 0) {
                 // Move into the active output's existing trailing empty when
-                // one exists (per-output-local, Q-Domain reuse), or a
-                // brand-new script-owned desktop otherwise - global-unique
-                // and shared still always create, never reuse (units 03/04,
+                // one exists (per-output-local, Q-Domain reuse; global-unique
+                // reuses the single global trailing empty the same way,
+                // unit-03), or a brand-new script-owned desktop otherwise -
+                // shared still always creates, never reuses (unit-04,
                 // unchanged here). When the desktop list cannot be mutated
                 // yet (live drag, pending reconstruction, unsettled move),
                 // the whole move is deferred so no window moves before its
@@ -7983,7 +8020,10 @@ export class TileController {
                         this.deferDesktopIntent(active);
                         return;
                     }
-                    target = this.appendDesktopForGlobalUnique(scope.output);
+                    target = this.resolveGlobalTrailingEmpty() ?? this.appendDesktopForGlobalUnique(scope.output);
+                    if (target !== null) {
+                        this.globalUniqueSwapIfVisibleElsewhere(target, scope.output);
+                    }
                 } else {
                     if (this.workspaceMutationDeferred()) {
                         this.deferDesktopIntent(active);
@@ -8241,14 +8281,15 @@ export class TileController {
     // trailing-empty invariant (Q-Domain: one structurally-identified trailing
     // empty per connected output) via enforceLocalTrailingEmpties(), which
     // both removes eligible non-trailing empties and appends a replacement
-    // trailing empty in the same domain-scoped pass. global-unique and shared
-    // are unchanged: cleanupEligibleDesktops() removes one empty,
-    // non-current, non-visible-on-another-output desktop per candidate, never
-    // the last global desktop (planDesktopCleanup's own floor), and creates
-    // nothing - Meta+0/Meta+Shift+0 remain the only paths that create a
-    // desktop for those two modes. Deferral keeps the list untouched while a
-    // drag, reconstruction, or unsettled move is live, and the reconciliation
-    // guard keeps create/remove re-entry inert.
+    // trailing empty in the same domain-scoped pass. global-unique (unit-03)
+    // enforces the same invariant for its single global domain via
+    // enforceGlobalTrailingEmpty(). shared is unchanged: cleanupEligibleDesktops()
+    // removes one empty, non-current, non-visible-on-another-output desktop
+    // per candidate, never the last global desktop (planDesktopCleanup's own
+    // floor), and creates nothing - Meta+0/Meta+Shift+0 remain the only paths
+    // that create a desktop for shared mode. Deferral keeps the list untouched
+    // while a drag, reconstruction, or unsettled move is live, and the
+    // reconciliation guard keeps create/remove re-entry inert.
     private cleanupDesktops(): void {
         if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
@@ -8295,7 +8336,7 @@ export class TileController {
                 return;
             }
             this.reconcileGlobalUnique(desktops);
-            this.cleanupEligibleDesktops();
+            this.enforceGlobalTrailingEmpty();
             return;
         }
         this.rebuildSharedMapping(desktops);
@@ -8881,10 +8922,10 @@ export class TileController {
     }
 
     // Global-unique reconciliation: rebuild the per-output assignment mapping
-    // from the live desktop list. No creation, no removal, and no reserved
-    // trailing empty here - Meta+0/Meta+Shift+0 always create rather than
-    // reuse, and cleanupEligibleDesktops (run unconditionally right after by
-    // the caller) is the sole removal authority.
+    // from the live desktop list. No creation or removal here - the mapping
+    // rebuild is read-only; enforceGlobalTrailingEmpty() (run unconditionally
+    // right after by the caller) is the sole removal and trailing-replenish
+    // authority.
     private reconcileGlobalUnique(desktops: readonly VirtualDesktopCapability[]): void {
         this.rebuildGlobalUniqueMapping(desktops);
     }
@@ -8930,6 +8971,76 @@ export class TileController {
             }
         }
         return keys;
+    }
+
+    // Global-unique trailing-empty enforcement (unit-03): the domain is the
+    // entire live desktop list ordered by x11DesktopNumber ascending (which
+    // liveDesktops() already returns), not a per-output subset - there is one
+    // global trailing empty, not one per output. Removes every other
+    // empty+invisible desktop and appends a replacement only when the last
+    // position is not empty, via the shared ensureTrailingEmptyDesktop helper.
+    // A freshly created desktop is assigned to the session primary output so
+    // it is not left unassigned. No orphan sweep is needed here (unlike
+    // per-output-local): every live desktop is always covered by this single
+    // global-domain pass.
+    private enforceGlobalTrailingEmpty(): void {
+        const visible = this.visibleDesktopIds();
+        if (visible === null) {
+            this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+            return;
+        }
+        const occupied = this.occupiedDesktopIds();
+        if (occupied === null) {
+            this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
+            return;
+        }
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        this.reconcilingDesktops = true;
+        try {
+            ensureTrailingEmptyDesktop({
+                orderedIds: desktops.map((desktop) => desktop.id),
+                isEmpty: (id) => !occupied.has(id),
+                isVisible: (id) => visible.has(id),
+                removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, desktops, visible),
+                createDesktop: () => {
+                    const created = this.appendDesktop();
+                    if (created === null) {
+                        return null;
+                    }
+                    if (this.globalUniquePrimary !== undefined) {
+                        this.assignGlobalUnique(created.id, this.globalUniquePrimary);
+                    }
+                    return created.id;
+                },
+            });
+        } finally {
+            this.reconcilingDesktops = false;
+        }
+    }
+
+    // Structurally identify the single global trailing empty, if any: the
+    // desktop at the last position of the live desktop list, only when it is
+    // currently empty. Recomputed fresh on every call - never cached, matching
+    // enforceGlobalTrailingEmpty(). Returns null when there are no live
+    // desktops, the last one is occupied, or state is unreadable; callers
+    // treat null as "no trailing empty to reuse".
+    private resolveGlobalTrailingEmpty(): VirtualDesktopCapability | null {
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return null;
+        }
+        const last = desktops[desktops.length - 1];
+        if (last === undefined) {
+            return null;
+        }
+        const occupied = this.occupiedDesktopIds();
+        if (occupied === null || occupied.has(last.id)) {
+            return null;
+        }
+        return last;
     }
 
     // Remove one script-owned, empty, non-current, non-visible-on-any-output,

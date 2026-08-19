@@ -12448,11 +12448,29 @@ describe("TileController dynamic virtual desktops", () => {
                 ]);
                 return;
             }
-            // global-unique and shared are unchanged by this unit: both
-            // desktop-middle and desktop-trailing are empty and invisible,
-            // and with no reserved trailing capacity or positionally-last
-            // protection cleanup removes both, leaving only the current and
-            // occupied desktops.
+            if (mode === "global-unique") {
+                // global-unique (unit-03) now enforces the same trailing-
+                // empty invariant over its single global domain: desktop-
+                // middle is still removed, but desktop-trailing (the
+                // structurally-last live desktop) survives as the reserved
+                // global trailing empty.
+                assert.deepEqual(
+                    harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+                    ["desktop-middle"],
+                );
+                assert.deepEqual(
+                    (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                );
+                assert.deepEqual(Object.values(controller.globalUniqueAssignmentSnapshot()), [
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                ]);
+                return;
+            }
+            // shared is unchanged by this unit: both desktop-middle and
+            // desktop-trailing are empty and invisible, and with no reserved
+            // trailing capacity cleanup removes both, leaving only the
+            // current and occupied desktops.
             assert.deepEqual(
                 harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
                 ["desktop-middle", "desktop-trailing"],
@@ -12461,13 +12479,7 @@ describe("TileController dynamic virtual desktops", () => {
                 (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
                 ["desktop-1", "desktop-occupied"],
             );
-            if (mode === "global-unique") {
-                assert.deepEqual(Object.values(controller.globalUniqueAssignmentSnapshot()), [
-                    ["desktop-1", "desktop-occupied"],
-                ]);
-            } else {
-                assert.deepEqual(controller.sharedWorkspaceSnapshot(), ["desktop-1", "desktop-occupied"]);
-            }
+            assert.deepEqual(controller.sharedWorkspaceSnapshot(), ["desktop-1", "desktop-occupied"]);
         });
     }
 
@@ -12540,22 +12552,13 @@ describe("TileController dynamic virtual desktops", () => {
 
             harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
 
-            if (mode === "per-output-local") {
-                // desktop-middle is visible on the other output and desktop-
-                // trailing is the structurally-last domain entry (Q-Domain):
-                // both survive, so nothing is removed from OUTPUT's domain.
-                assert.deepEqual(
-                    harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-                    [],
-                );
-                return;
-            }
-            // global-unique is unchanged: desktop-middle is visible on the
-            // other output and survives; desktop-trailing has no reserved-
-            // capacity or positional protection and is still removed.
+            // desktop-middle is visible on the other output and desktop-
+            // trailing is the structurally-last domain entry (Q-Domain, and
+            // for global-unique unit-03 the structurally-last live desktop):
+            // both survive, so nothing is removed.
             assert.deepEqual(
                 harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-                ["desktop-trailing"],
+                [],
             );
         });
     }
@@ -15482,8 +15485,35 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-5", "desktop-6", "desktop-8"]);
     });
 
-    it("Meta+Shift+0 always creates a new desktop and assigns it to the active output's subset, even with an existing trailing empty", () => {
+    it("Meta+Shift+0 reuses the single global trailing empty instead of creating a new desktop (unit-03)", () => {
+        // Meta+Shift+0 now reuses the structurally-identified global trailing
+        // empty (desktop-8, the highest x11DesktopNumber, currently empty)
+        // rather than always creating - unit-03 wires global-unique onto the
+        // same ensureTrailingEmptyDesktop-backed reuse model as per-output-local.
         const { harness, controller, keyL, wL } = globalUniqueSetup();
+        harness.active = wL;
+        wL.desktops = [DESKTOP_3];
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
+        const createsBefore = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, createsBefore);
+        assert.deepEqual((wL.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-8"]);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-8");
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(
+            snapshot[keyL]?.slice().sort(),
+            ["desktop-3", "desktop-5", "desktop-6", "desktop-8"],
+        );
+    });
+
+    it("Meta+Shift+0 creates and assigns exactly one desktop only when the global domain lacks a trailing empty", () => {
+        // The global domain (unit-03) is the entire live desktop list ordered
+        // by x11DesktopNumber, not a per-output subset - occupying desktop-8
+        // (the structurally-last live desktop) is what removes the trailing
+        // empty, not reassigning it away from L's subset.
+        const { harness, controller, keyL, wL } = globalUniqueSetup();
+        const occupant = window({ output: OUTPUT_L, desktops: [DESKTOP_8] });
+        harness.windows = [...(harness.windows as unknown[]), occupant];
         harness.active = wL;
         wL.desktops = [DESKTOP_3];
         harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
@@ -15497,25 +15527,6 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
             snapshot[keyL]?.slice().sort(),
             ["desktop-3", "desktop-5", "desktop-6", "desktop-8", "desktop-9"],
         );
-    });
-
-    it("Meta+Shift+0 creates and assigns exactly one desktop only when the active subset lacks a trailing empty", () => {
-        const { harness, controller, keyE, keyL, wL } = globalUniqueSetup();
-        // Re-seed so L's subset has no owned desktop: no trailing empty exists.
-        controller.seedGlobalUniqueAssignment({
-            [keyE]: ["desktop-1", "desktop-2", "desktop-4", "desktop-7", "desktop-8"],
-            [keyL]: ["desktop-3", "desktop-5", "desktop-6"],
-        });
-        harness.active = wL;
-        wL.desktops = [DESKTOP_3];
-        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_3);
-        const createsBefore = harness.createDesktopCalls.length;
-        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
-        assert.equal(harness.createDesktopCalls.length, createsBefore + 1);
-        assert.deepEqual((wL.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-9"]);
-        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-9");
-        const snapshot = controller.globalUniqueAssignmentSnapshot();
-        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-3", "desktop-5", "desktop-6", "desktop-9"]);
     });
 
     it("refuses sticky, fullscreen, and maximized moves before any write or create", () => {
@@ -15575,16 +15586,17 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         assert.equal(maximized.createDesktopCalls.length, createsMax);
     });
 
-    it("cleanup removes every empty, invisible desktop after a disconnect, with no reserved capacity or ownership requirement", () => {
+    it("cleanup removes every empty, invisible desktop after a disconnect, but reserves the single global trailing empty", () => {
         const { harness, controller, keyL, wL } = globalUniqueSetup();
         // wE and wL both stay floating on desktop-1 and desktop-3 protects the
         // other current desktop, so the screens change arms no reconstruction
         // and cleanup runs immediately (the Unit 05 hotplug pattern).
         wL.desktops = [DESKTOP_3];
         harness.removedDesktops.length = 0;
-        // Disconnect E: only desktop-1 (occupied) and desktop-3 (current on
-        // L) survive; every other empty invisible desktop is removed
-        // regardless of ownership, since there is no reserved capacity.
+        // Disconnect E: desktop-1 (occupied), desktop-3 (current on L), and
+        // desktop-8 (the structurally-last live desktop, still empty -
+        // unit-03's single reserved global trailing empty) all survive; every
+        // other empty invisible desktop is removed regardless of ownership.
         harness.screensList = [OUTPUT_L];
         harness.currentDesktopByOutput.delete(OUTPUT_E);
         harness.screensChanged?.();
@@ -15599,12 +15611,12 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         harness.emitDesktopsChanged();
         assert.deepEqual(
             harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
-            ["desktop-2", "desktop-4", "desktop-5", "desktop-6", "desktop-7", "desktop-8"],
+            ["desktop-2", "desktop-4", "desktop-5", "desktop-6", "desktop-7"],
         );
         const snapshot = controller.globalUniqueAssignmentSnapshot();
         assert.deepEqual(Object.keys(snapshot), [keyL]);
-        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-1", "desktop-3"]);
-        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], []);
+        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-1", "desktop-3", "desktop-8"]);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-8"]);
     });
 
     it("cleanup never removes a current or visible desktop, regardless of ownership", () => {
@@ -15628,38 +15640,46 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-8"]);
     });
 
-    it("Meta+0 always creates a new desktop assigned to the active output's subset only, leaving the other output unchanged", () => {
-        // Meta+0 always creates, never reuses; it acts through the
-        // per-output seam on E only, and L's current desktop stays unchanged.
-        const { harness, controller, keyE, wE } = globalUniqueSetup();
+    it("Meta+0 reuses the single global trailing empty and focuses it on the active output, leaving the other output's current desktop unchanged", () => {
+        // Meta+0 (unit-03) now reuses the structurally-identified global
+        // trailing empty (desktop-8) instead of always creating; it is not
+        // currently shown on any other output, so no swap applies and it is
+        // simply focused on E through the per-output seam. Its assignment
+        // (L's subset) is untouched, matching the swap-only reassignment
+        // model - only globalUniqueSwapIfVisibleElsewhere moves an assignment.
+        const { harness, controller, keyE, keyL, wE } = globalUniqueSetup();
         harness.active = wE;
         harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
         harness.currentDesktopByOutput.delete(OUTPUT_L);
         const creates = harness.createDesktopCalls.length;
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
-        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-9");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-8");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
-        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal(harness.createDesktopCalls.length, creates);
         const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
-        assert.equal((last?.desktop as { id: string }).id, "desktop-9");
+        assert.equal((last?.desktop as { id: string }).id, "desktop-8");
         assert.equal(last?.output, OUTPUT_E);
         assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
         const snapshot = controller.globalUniqueAssignmentSnapshot();
         assert.deepEqual(
             snapshot[keyE]?.slice().sort(),
-            ["desktop-1", "desktop-2", "desktop-4", "desktop-7", "desktop-9"],
+            ["desktop-1", "desktop-2", "desktop-4", "desktop-7"],
+        );
+        assert.deepEqual(
+            snapshot[keyL]?.slice().sort(),
+            ["desktop-3", "desktop-5", "desktop-6", "desktop-8"],
         );
     });
 
-    it("Meta+0 creates and assigns exactly one desktop when the active subset lacks a trailing empty (global-unique)", () => {
-        // Re-seed so E's subset holds no owned desktop: no trailing empty
-        // exists, so Meta+0 creates exactly one owned desktop, assigns it to E,
-        // focuses it, and leaves L unchanged.
+    it("Meta+0 creates and assigns exactly one desktop when the global domain lacks a trailing empty (global-unique)", () => {
+        // Occupying desktop-8 (the structurally-last live desktop) is what
+        // removes the global trailing empty (unit-03's domain is the whole
+        // live list, not a per-output subset) - Meta+0 then creates exactly
+        // one owned desktop, assigns it to E, focuses it, and leaves L
+        // unchanged.
         const { harness, controller, keyE, keyL, wE } = globalUniqueSetup();
-        controller.seedGlobalUniqueAssignment({
-            [keyE]: ["desktop-1", "desktop-2", "desktop-4"],
-            [keyL]: ["desktop-3", "desktop-5", "desktop-6", "desktop-7", "desktop-8"],
-        });
+        const occupant = window({ output: OUTPUT_L, desktops: [DESKTOP_8] });
+        harness.windows = [...(harness.windows as unknown[]), occupant];
         harness.active = wE;
         harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
         harness.currentDesktopByOutput.delete(OUTPUT_L);
@@ -15669,10 +15689,51 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-9");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
         const snapshot = controller.globalUniqueAssignmentSnapshot();
-        assert.deepEqual(snapshot[keyE]?.slice().sort(), ["desktop-1", "desktop-2", "desktop-4", "desktop-9"]);
+        assert.deepEqual(
+            snapshot[keyE]?.slice().sort(),
+            ["desktop-1", "desktop-2", "desktop-4", "desktop-7", "desktop-9"],
+        );
+        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-3", "desktop-5", "desktop-6", "desktop-8"]);
+    });
+
+    it("cleanupDesktops-equivalent dispatch is idempotent against unchanged global-unique state (no net creates/removes)", () => {
+        // Two consecutive dispatches against unchanged state produce zero net
+        // creates/removes - the single-pass ensureTrailingEmptyDesktop-backed
+        // enforcement (unit-03) is structural and re-reads live state on every
+        // call rather than looping or debouncing.
+        const { harness } = globalUniqueSetup();
+        // Settle the fixture's initial empty/invisible desktops first (they
+        // are removed on the first dispatch), then assert the second and
+        // third dispatches against the now-settled state are pure no-ops.
+        harness.emitDesktopsChanged();
+        const creates = harness.createDesktopCalls.length;
+        harness.removedDesktops.length = 0;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, 0);
+    });
+
+    it("Meta+0 reuse applies the cross-output swap when the global trailing empty is currently shown on a different output", () => {
+        // The global trailing empty (desktop-8) is currently L's current
+        // desktop; Meta+0 on E must reuse it via the swap path
+        // (globalUniqueSwapIfVisibleElsewhere) rather than duplicating it -
+        // E's prior current (desktop-1) moves to L, and both desktops'
+        // assignments follow.
+        const { harness, controller, keyE, keyL, wE } = globalUniqueSetup();
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_8);
+        harness.active = wE;
+        const creates = harness.createDesktopCalls.length;
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(countEvent(harness.logs, "workspace-navigate-swap"), 1);
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-8");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-1");
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(snapshot[keyE]?.slice().sort(), ["desktop-2", "desktop-4", "desktop-7", "desktop-8"]);
         assert.deepEqual(
             snapshot[keyL]?.slice().sort(),
-            ["desktop-3", "desktop-5", "desktop-6", "desktop-7", "desktop-8"],
+            ["desktop-1", "desktop-3", "desktop-5", "desktop-6"],
         );
     });
 });
