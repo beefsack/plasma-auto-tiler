@@ -7033,23 +7033,23 @@
       }
       this.finishGlobalWorkspaceZero(output, desktops);
     }
-    // global-unique Meta+0 (unit-03): reuse the single global structurally-
-    // identified trailing empty when one exists, applying the cross-output
-    // swap (globalUniqueSwapIfVisibleElsewhere) so a trailing empty currently
-    // shown on a different output moves to the active output rather than
-    // being duplicated. Q-Zero: if it is already the current desktop on this
-    // output, the whole invocation is a no-op. Only when no trailing empty
-    // exists does this fall back to appendDesktopForGlobalUnique - the same
-    // creation primitive enforceGlobalTrailingEmpty() uses.
+    // global-unique Meta+0: reuse the active output's own structurally-
+    // identified trailing empty (its own globalUniqueAssigned group, ordered
+    // by x11DesktopNumber) when one exists. Never applies the cross-output
+    // swap (globalUniqueSwapIfVisibleElsewhere) - a trailing empty is scoped
+    // to its output's domain and is never reused from a different output.
+    // Q-Zero: if it is already the current desktop on this output, the whole
+    // invocation is a no-op. Only when no trailing empty exists does this
+    // fall back to appendDesktopForGlobalUnique - the same creation primitive
+    // enforceGlobalTrailingEmpty() uses.
     finishGlobalWorkspaceZero(output, desktops) {
-      void desktops;
-      const existing = this.resolveGlobalTrailingEmpty();
+      this.reconcileGlobalUnique(desktops);
+      const existing = this.resolveGlobalTrailingEmpty(output);
       if (existing !== null) {
         if (this.isCurrentOnOutput(output, existing.id)) {
           this.diagnostic("workspace-zero-no-op:already-there");
           return;
         }
-        this.globalUniqueSwapIfVisibleElsewhere(existing, output);
         this.focusTrailingEmpty(existing, output);
         return;
       }
@@ -7189,10 +7189,11 @@
           this.deferDesktopIntent(window);
           return;
         }
-        target = (_b = this.resolveGlobalTrailingEmpty()) != null ? _b : this.appendDesktopForGlobalUnique(scope.output);
-        if (target !== null) {
-          this.globalUniqueSwapIfVisibleElsewhere(target, scope.output);
+        const liveForRebuild = this.liveDesktops();
+        if (liveForRebuild !== null) {
+          this.reconcileGlobalUnique(liveForRebuild);
         }
+        target = (_b = this.resolveGlobalTrailingEmpty(scope.output)) != null ? _b : this.appendDesktopForGlobalUnique(scope.output);
       } else {
         if (this.workspaceMutationDeferred()) {
           this.deferDesktopIntent(window);
@@ -7315,10 +7316,11 @@
               this.deferDesktopIntent(active);
               return;
             }
-            target = (_b = this.resolveGlobalTrailingEmpty()) != null ? _b : this.appendDesktopForGlobalUnique(scope.output);
-            if (target !== null) {
-              this.globalUniqueSwapIfVisibleElsewhere(target, scope.output);
+            const liveForRebuild = this.liveDesktops();
+            if (liveForRebuild !== null) {
+              this.reconcileGlobalUnique(liveForRebuild);
             }
+            target = (_b = this.resolveGlobalTrailingEmpty(scope.output)) != null ? _b : this.appendDesktopForGlobalUnique(scope.output);
           } else {
             if (this.workspaceMutationDeferred()) {
               this.deferDesktopIntent(active);
@@ -8119,6 +8121,15 @@
       }
       return (_a = this.globalUniqueOrdered(desktops, key)[index - 1]) != null ? _a : null;
     }
+    // Append one owned desktop and assign it to the given output key
+    // (Meta+0, Meta+Shift+0, and enforceGlobalTrailingEmpty() paths).
+    appendDesktopForGlobalUniqueKey(key) {
+      const created = this.appendDesktop();
+      if (created !== null) {
+        this.assignGlobalUnique(created.id, key);
+      }
+      return created;
+    }
     // Append one owned desktop and assign it to the given output (Meta+0 and
     // Meta+Shift+0 paths).
     appendDesktopForGlobalUnique(output) {
@@ -8126,11 +8137,7 @@
       if (key === void 0) {
         return null;
       }
-      const created = this.appendDesktop();
-      if (created !== null) {
-        this.assignGlobalUnique(created.id, key);
-      }
-      return created;
+      return this.appendDesktopForGlobalUniqueKey(key);
     }
     // Global-unique reconciliation: rebuild the per-output assignment mapping
     // from the live desktop list. No creation or removal here - the mapping
@@ -8183,16 +8190,18 @@
       }
       return keys;
     }
-    // Global-unique trailing-empty enforcement (unit-03): the domain is the
-    // entire live desktop list ordered by x11DesktopNumber ascending (which
-    // liveDesktops() already returns), not a per-output subset - there is one
-    // global trailing empty, not one per output. Removes every other
-    // empty+invisible desktop and appends a replacement only when the last
-    // position is not empty, via the shared ensureTrailingEmptyDesktop helper.
-    // A freshly created desktop is assigned to the session primary output so
-    // it is not left unassigned. No orphan sweep is needed here (unlike
-    // per-output-local): every live desktop is always covered by this single
-    // global-domain pass.
+    // Global-unique trailing-empty enforcement: the domain is each connected
+    // output's own globalUniqueAssigned group, ordered by x11DesktopNumber
+    // ascending via globalUniqueOrdered - one trailing empty per connected
+    // output, not one shared global trailing empty. Removes every other
+    // empty+invisible desktop within a group and appends a replacement only
+    // when that group's last position is not empty, via the shared
+    // ensureTrailingEmptyDesktop helper, mirroring
+    // enforceLocalTrailingEmpties(). No orphan sweep is needed here (unlike
+    // per-output-local): rebuildGlobalUniqueMapping() unconditionally folds
+    // every live desktop not yet assigned into the primary output's group
+    // whenever at least one output is connected, so every live desktop
+    // always belongs to exactly one connected output's group.
     enforceGlobalTrailingEmpty() {
       const visible = this.visibleDesktopIds();
       if (visible === null) {
@@ -8210,38 +8219,42 @@
       }
       this.reconcilingDesktops = true;
       try {
-        ensureTrailingEmptyDesktop({
-          orderedIds: desktops.map((desktop) => desktop.id),
-          isEmpty: (id) => !occupied.has(id),
-          isVisible: (id) => visible.has(id),
-          removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, desktops, visible),
-          createDesktop: () => {
-            const created = this.appendDesktop();
-            if (created === null) {
-              return null;
+        for (const key of this.connectedOutputKeys()) {
+          const orderedIds = this.globalUniqueOrdered(desktops, key).map((desktop) => desktop.id);
+          ensureTrailingEmptyDesktop({
+            orderedIds,
+            isEmpty: (id) => !occupied.has(id),
+            isVisible: (id) => visible.has(id),
+            removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, desktops, visible),
+            createDesktop: () => {
+              var _a, _b;
+              return (_b = (_a = this.appendDesktopForGlobalUniqueKey(key)) == null ? void 0 : _a.id) != null ? _b : null;
             }
-            if (this.globalUniquePrimary !== void 0) {
-              this.assignGlobalUnique(created.id, this.globalUniquePrimary);
-            }
-            return created.id;
-          }
-        });
+          });
+        }
       } finally {
         this.reconcilingDesktops = false;
       }
     }
-    // Structurally identify the single global trailing empty, if any: the
-    // desktop at the last position of the live desktop list, only when it is
-    // currently empty. Recomputed fresh on every call - never cached, matching
-    // enforceGlobalTrailingEmpty(). Returns null when there are no live
-    // desktops, the last one is occupied, or state is unreadable; callers
+    // Structurally identify a connected output's own trailing empty, if any:
+    // the desktop at the last position of its own globalUniqueAssigned group
+    // (ordered by x11DesktopNumber via globalUniqueOrdered), only when it is
+    // currently empty. Recomputed fresh on every call - never cached,
+    // matching enforceGlobalTrailingEmpty(). Never looks at any other
+    // output's group. Returns null when the output has no key, its group is
+    // empty, its last entry is occupied, or state is unreadable; callers
     // treat null as "no trailing empty to reuse".
-    resolveGlobalTrailingEmpty() {
+    resolveGlobalTrailingEmpty(output) {
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return null;
+      }
       const desktops = this.liveDesktops();
       if (desktops === null) {
         return null;
       }
-      const last = desktops[desktops.length - 1];
+      const ordered = this.globalUniqueOrdered(desktops, key);
+      const last = ordered[ordered.length - 1];
       if (last === void 0) {
         return null;
       }

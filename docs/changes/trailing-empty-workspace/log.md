@@ -275,3 +275,324 @@ speculation.
   correction round on this unit if ever needed, though none is currently
   outstanding. No commits or pushes. Staged (not committed) at end of this
   dispatch - see Progress/staging note below.
+
+## 2026-08-19 (Lead succession, unit-03 scoping)
+
+- Role / unit: Lead / pre-unit-03
+- Result: New Lead succession. Confirmed unit-01 + unit-02 already committed
+  by the user (`git log` shows `HEAD` at `1b34a37 feat(workspace): reuse
+  trailing empty workspace in per-output-local mode`, working tree clean
+  except pre-excluded untracked paths). Own fresh baseline re-verification
+  (not trusting the inherited claim): `npm --prefix kwin run typecheck`
+  clean (0 errors, both tsconfigs); full build+esbuild+`node --test` ->
+  809 tests, 77 suites, 809 pass, 0 fail. Located current global-unique code
+  via targeted grep (no full-file reads): `reconcileGlobalUnique`/
+  `rebuildGlobalUniqueMapping` (`controller.ts:8888-8933`),
+  `removeOwnedEmptyGlobalUnique` (`controller.ts:8938-8961`), the
+  global-unique branch of `cleanupDesktops` (`controller.ts:8293-8300`), the
+  three Meta+0/Meta+Shift+0 call sites that currently always-create for
+  global-unique (`finishWorkspaceZero` ~7693-7697, `finishMoveToTrailing`
+  ~7844-7849, `moveActiveToWorkspace` index-0 branch ~7981-7986), and the
+  "TileController global-unique workspaces (Unit 06)" test block
+  (`controller.test.ts:15282-15680`, 14 `it(...)` cases, ~5 of which encode
+  the old always-create/no-reuse model and will need rewriting - same shape
+  as unit-02's 5-test rewrite).
+  Design finding requiring explicit brief guidance (not covered by any
+  existing Q-ruling, which only addresses per-output-local multi-output):
+  unlike per-output-local's per-output-disjoint domains, global-unique's
+  trailing-empty domain is the single global desktop list, so a reused
+  trailing empty can be currently visible/current on a *different* output
+  than the one invoking Meta+0/Meta+Shift+0. The existing
+  `globalUniqueSwapIfVisibleElsewhere` helper (`controller.ts:8794-8850`)
+  already exists precisely for this class of problem (built for
+  `navigateGlobalUnique` index>0 and the index>0 move-follow branch) and
+  must be reused (not reinvented) at the three reuse call sites to preserve
+  the existing "one current desktop per output, one assigned output per
+  desktop" invariant; specified precisely in the unit-03 Worker brief.
+  Confirmed no orphan-sweep equivalent is needed for global-unique (unlike
+  unit-02's per-output-local case): the domain is defined as the full live
+  desktop list, so every live desktop is always in-domain, and the
+  reintroduced-ownership-gating defect class unit-02 hit does not have an
+  analogous surface here (no parallel per-output domains for a desktop to
+  fall between).
+- Files / commit: `docs/changes/trailing-empty-workspace/log.md` only (this
+  entry, plus the corresponding `plan.md` Progress update). No source files
+  touched. No commit (user-only per commit protocol).
+- Verification: `npm --prefix kwin run typecheck` (clean); full `node
+  --test` run, 809/809 pass, 0 fail (counts only).
+- Notes: No commits, staging, or pushes performed. No live host action this
+  entry. Dispatching a fresh `worker-anthropic` next, scoped to unit-03 per
+  plan.md: `reconcileGlobalUnique`, a new `enforceGlobalTrailingEmpty`
+  helper method, a new `resolveGlobalTrailingEmpty` method, the three
+  Meta+0/Meta+Shift+0 global-unique call sites, and the "global-unique
+  workspaces (Unit 06)" describe block only.
+
+## 2026-08-19 (unit-03, attempt-1, accepted)
+
+- Role / unit: Lead / unit-03, attempt-1 (worker-anthropic)
+- Result: Accepted, no correction round needed. Dispatched `worker-anthropic`
+  scoped to global-unique mode only per plan.md. Worker wired `cleanupDesktops()`'s
+  global-unique branch to a new `enforceGlobalTrailingEmpty()` (mirroring
+  `enforceLocalTrailingEmpties()` but for a single global domain - the entire
+  live desktop list ordered by `x11DesktopNumber`, not a per-output subset,
+  per Q-Domain); added `resolveGlobalTrailingEmpty()` (mirrors
+  `resolveLocalTrailingEmpty()`'s self-contained, no-cache shape); wired
+  reuse-or-create into the three global-unique Meta+0/Meta+Shift+0 call sites
+  (`finishWorkspaceZero` via new `finishGlobalWorkspaceZero`,
+  `finishMoveToTrailing`, `moveActiveToWorkspace` index-0 branch). Per the
+  Lead's brief, all three reuse call sites apply the pre-existing
+  `globalUniqueSwapIfVisibleElsewhere` helper (already used by index>0
+  navigation/move-follow, unmodified) so a reused trailing empty currently
+  shown on a *different* output swaps to the active output rather than being
+  duplicated - this is a genuinely new interaction unique to global-unique's
+  single-domain design (per-output-local never needed it, since its domains
+  are disjoint per output) and was specified precisely in the brief rather
+  than left to Worker invention, given prior sessions' record of ambiguous
+  briefs producing defects. No orphan sweep was added (correctly - unlike
+  per-output-local, global-unique's domain is the entire live desktop list,
+  so no desktop can fall outside it).
+  Lead inspected the actual diff directly (not the summary): confirmed all
+  9 hunks in `controller.ts` fall within the declared scope (the three call
+  sites, `cleanupDesktops`'s global-unique branch, `reconcileGlobalUnique`'s
+  comment, and the two new methods placed beside `removeOwnedEmptyGlobalUnique`);
+  confirmed zero `ownedDesktopIds` references anywhere in the diff (`git diff
+  ... | grep ownedDesktopIds` empty) - no reintroduction of the ownership-
+  gating defect class found in unit-02's first attempt. Confirmed the two
+  necessary adjacent-test fixes outside the Unit 06 block (in "TileController
+  dynamic virtual desktops", a `for (const mode of [...])` parametrized
+  cross-mode cleanup test) are narrow, in-kind fixes to keep pre-existing
+  tests compatible with the new global-unique behavior - the same shape
+  already accepted for unit-02's per-output-local branch of the same tests -
+  not a start on unit-05's full sweep. Inspected the 7 Unit 06 test changes
+  directly (3 rewritten per the brief's must-fix list, 2 more updated for the
+  new reuse semantics, 2 new tests added: cleanup-dispatch idempotency and
+  the cross-output Meta+0 reuse+swap interaction) - all correctly exercise
+  the new behavior with concrete assertions, not weakened/deleted coverage.
+  Lead independently reran typecheck and the full test suite, reproducing
+  the Worker's reported result exactly, and independently reran `npm run
+  build` to confirm `main.js` is a faithful deterministic regeneration (no
+  further diff after rebuild, not hand-edited).
+- Files / commit: `kwin/src/controller.ts` (+159/-24 across 9 hunks, lines
+  7638-8352 and 8881-9008 old-line ranges), `kwin/tests/controller.test.ts`
+  (+189/-93 across 9 hunks: 3 hunks in "dynamic virtual desktops"
+  12448-12564, 6 hunks in "global-unique workspaces (Unit 06)" 15482-15719),
+  `kwin/contents/code/main.js` (regenerated bundle, verified deterministic).
+  No commit (user-only per commit protocol).
+- Verification (Lead's own, independent of Worker-reported):
+  `npm --prefix kwin run typecheck` -> clean, 0 errors, both tsconfigs. Full
+  build+esbuild+`node --test` -> 811 tests, 77 suites, 811 pass, 0 fail
+  (809 baseline + 2 new tests), exit 0 - exact match to Worker's reported
+  811/811.
+- Notes: unit-03 attempt count: 1, accepted first try, no correction round
+  (no Attempt Accounting entry needed per governance - only units exceeding
+  1 attempt/correction/review are recorded). No commits or pushes. No live
+  host action this entry (static verification only). Staged (not committed)
+  at end of this dispatch alongside the corresponding `plan.md`/`log.md`
+  updates - see Progress/staging note below.
+
+## 2026-08-19 (inv-01, investigation, handover)
+
+- Role / unit: Lead / inv-01 (investigation only, no Worker dispatched -
+  bounded, citation-based code reading was sufficient; all reads used
+  offset+limit, no whole-file reads of `controller.ts` or
+  `controller.test.ts`)
+- Result: Investigated a new user ruling that contradicts the settled
+  Q-Domain ruling `unit-03` was built to ("a trailing empty on each output;
+  Meta+0/Meta+Shift+0 only interact with the currently active/focused
+  output's trailing empty"). Findings: `global-unique` mode can structurally
+  express the new ruling (existing per-output `globalUniqueAssigned`
+  partition plus native per-output current-desktop tracking) but landed
+  `unit-03` (`e2105c2`) was built to the old single-global-domain ruling and
+  is now flagged superseded, requiring a rework proposed as new unit
+  `unit-03b` (not a rewrite of `unit-03`'s own record). `shared` mode cannot
+  structurally express the new ruling as stated: `synchronizeShared` forces
+  every connected output onto one synchronized current desktop by design,
+  so there is no per-output domain or per-output navigation to scope
+  Meta+0/Meta+Shift+0 to - escalated as an open product question rather
+  than guessed at. `per-output-local` is unaffected (already matches the
+  new ruling). No conflict found against the seven listed invariants
+  (ownership gating, Q5, Q7, visible-anywhere protection, last-global-
+  desktop floor, literal-last-index identification, anti-oscillation
+  design), beyond noting the last-index identification's *ordered list*
+  changes per domain and the last-desktop floor must stay a whole-session
+  check alongside (not instead of) each domain's own never-zero invariant.
+  Full findings, draft `spec.md` Q-Domain amendment, proposed unit
+  breakdown, and five open questions for the user returned to the
+  Orchestrator via chat and recorded in `plan.md` under "inv-01 Findings and
+  Proposed Revision (DRAFT)".
+- Files / commit: `docs/changes/trailing-empty-workspace/{plan.md,log.md}`
+  edited (this entry and the DRAFT findings/proposal section; Work Units and
+  Pending User Decisions sections themselves left untouched pending
+  Orchestrator approval per plan.md's own governance header). No production
+  code touched (`controller.ts`, `controller.test.ts`, `main.js` untouched -
+  confirmed by `git status` before finishing). No commit (user-only per
+  commit protocol).
+- Verification: n/a (investigation only; no code changed, no tests run).
+- Notes: No live KWin/Plasma testing performed or required. Terminal status:
+  `handover` - this unit's scope (investigation and proposal) is complete;
+  the Orchestrator must take the Q-Domain amendment and the five open
+  questions to the user before `unit-03b` or `unit-04` can be dispatched.
+
+## 2026-08-19 (Lead succession, spec amendment applied, unit-03b scoping)
+
+- Role / unit: Lead / pre-unit-03b
+- Result: New Lead succession. User revised the Q-Domain ruling and the
+  Orchestrator approved the amendment (per dispatch brief). Applied the
+  revised Q-Domain ruling to `spec.md` Resolved Questions (marked the prior
+  Q-Domain entry superseded, added the revised entry verbatim per the
+  Orchestrator's approved wording, updated the Acceptance Criteria and
+  Consequential Decisions passages that referenced the old single-global-
+  domain wording for `global-unique`). Updated `plan.md`: Technical Approach
+  "Mode domains" bullet for `global-unique`; added `unit-03b` to the Work
+  Units table; marked inv-01's DRAFT findings/proposal section APPROVED
+  (historical record, not re-litigated); resolved Pending User Decisions
+  (all five of inv-01's open questions answered by the approved ruling);
+  Progress updated with a `unit-03b` row. No production code touched yet.
+  Confirmed own fresh baseline before any further action: `npm --prefix kwin
+  run typecheck` clean (0 errors, both tsconfigs); repository state otherwise
+  unchanged since the unit-03 Lead's last verified 811/811 (spec/plan.md-only
+  edits do not affect the build).
+  Located current global-unique code via targeted, bounded reads (no
+  whole-file reads): `enforceGlobalTrailingEmpty`/`resolveGlobalTrailingEmpty`
+  (`controller.ts:8986-9044`), `removeOwnedEmptyGlobalUnique`
+  (`controller.ts:9049-`), `reconcileGlobalUnique`/`rebuildGlobalUniqueMapping`
+  (`controller.ts:8929-8974`), `globalUniqueOrdered`/`assignGlobalUnique`/
+  `unassignGlobalUnique` (`controller.ts:8742-8787`), the three reuse call
+  sites `finishGlobalWorkspaceZero` (`controller.ts:7705-7725`),
+  `finishMoveToTrailing` global-unique branch (`controller.ts:7871-7885`),
+  `moveActiveToWorkspace` index-0 branch (`controller.ts:8018-8026`; index>0
+  branch at `8041-8049` confirmed unaffected/unchanged),
+  `globalUniqueSwapIfVisibleElsewhere` (`controller.ts:8835-8889`),
+  `appendDesktopForGlobalUnique` (`controller.ts:8912-8921`), and the mirror
+  per-output-local pattern this rework must follow: `enforceLocalTrailingEmpties`
+  (`controller.ts:8460-8520`), `resolveLocalTrailingEmpty`
+  (`controller.ts:8529-8548`), `appendDesktopForOutputKey`/`appendTrailingForOutput`
+  (`controller.ts:8680-8725`). Confirmed `appendDesktopForGlobalUnique(output)`
+  already resolves a key and assigns per-output (compatible, unchanged);
+  confirmed `resolveGlobalTrailingEmpty`/`enforceGlobalTrailingEmpty` are the
+  two methods actually built for the old single-global-domain shape and must
+  be reworked. Identified a design nuance for the Worker brief: disconnect
+  currently folds a disconnected output's former desktops into the primary
+  output's `globalUniqueAssigned` group automatically via
+  `rebuildGlobalUniqueMapping` (unchanged, out of scope) - the revised per-
+  output `enforceGlobalTrailingEmpty` must not add any special-case logic
+  that deliberately preserves that folded-in desktop as the primary's
+  protected trailing; plain structural last-position identification (already
+  the enforced design elsewhere) is sufficient and requires no new code, but
+  needs an explicit regression test, not just reasoning. Confirmed no orphan
+  sweep should be needed (every live desktop always lands in exactly one
+  connected output's `globalUniqueAssigned` group via the unconditional
+  fallback-to-primary loop in `rebuildGlobalUniqueMapping`), but the Worker
+  brief requires this to be verified, not assumed, per inv-01's instruction.
+  Identified that `finishGlobalWorkspaceZero` does not currently call
+  `reconcileGlobalUnique` before resolving (unlike `finishLocalWorkspaceZero`,
+  which calls `rebuildLocalMapping(desktops)` first), and neither does
+  `finishMoveToTrailing`'s global-unique branch or `moveActiveToWorkspace`'s
+  index-0 branch (unlike their per-output-local siblings, which call
+  `rebuildLocalMapping()`) - now that the domain is assignment-based rather
+  than whole-list-based, mapping freshness at each call site matters; the
+  Worker brief requires mirroring per-output-local's rebuild-before-resolve
+  pattern at all three call sites. Located the "TileController global-unique
+  workspaces (Unit 06)" describe block bounds (`controller.test.ts:15285-15741`,
+  16 `it(...)` cases) and identified by name which currently encode the old
+  single-global-domain/cross-output-swap-adoption model and need rewriting or
+  removal (notably "Meta+0 reuse applies the cross-output swap when the
+  global trailing empty is currently shown on a different output" - this
+  exact behavior is now forbidden and the test must be replaced with a
+  negative assertion that the swap never fires on the trailing-empty path).
+- Files / commit: `docs/changes/trailing-empty-workspace/{spec.md,plan.md,
+  log.md}` only. No source files touched. No commit (user-only per commit
+  protocol).
+- Verification: `npm --prefix kwin run typecheck` (clean, both tsconfigs);
+  no test run this entry (no production code changed yet).
+- Notes: No commits, staging, or pushes performed. No live host action this
+  entry. Dispatching a fresh `worker-anthropic` next, scoped to `unit-03b`
+  per the brief above: `enforceGlobalTrailingEmpty`, `resolveGlobalTrailingEmpty`,
+  the three reuse call sites, a new key-based append helper mirroring
+  `appendDesktopForOutputKey`, and the "global-unique workspaces (Unit 06)"
+  describe block only. `unit-02`'s per-output-local code and tests are out of
+  scope and must not be touched.
+
+## 2026-08-19 (unit-03b, attempt-1, accepted)
+
+- Role / unit: Lead / unit-03b, attempt-1 (worker-anthropic)
+- Result: Accepted, no correction round needed. Dispatched `worker-anthropic`
+  scoped to global-unique mode only per the brief above. Worker rewrote
+  `enforceGlobalTrailingEmpty()` to loop `connectedOutputKeys()` and enforce
+  the trailing-empty invariant once per key using `globalUniqueOrdered(desktops,
+  key)` as that key's domain (mirroring `enforceLocalTrailingEmpties()`
+  exactly); changed `resolveGlobalTrailingEmpty()`'s signature to
+  `(output: OutputCapability)`, resolving within that output's own
+  `globalUniqueOrdered` group only; added a new key-based
+  `appendDesktopForGlobalUniqueKey(key)` primitive and refactored the
+  existing `appendDesktopForGlobalUnique(output)` to delegate to it
+  (mirroring `appendDesktopForOutputKey`/`appendTrailingForOutput`); removed
+  the `globalUniqueSwapIfVisibleElsewhere` call from all three trailing-empty
+  reuse call sites (`finishGlobalWorkspaceZero`, `finishMoveToTrailing`
+  global-unique branch, `moveActiveToWorkspace` index-0 global-unique
+  branch), leaving the helper's only remaining call sites the unchanged
+  `index > 0` navigation/move-follow branches; added mapping-freshness
+  rebuild calls (`reconcileGlobalUnique`) at all three reuse call sites,
+  mirroring per-output-local's existing `rebuildLocalMapping()` calls at the
+  same three sites (now needed because the domain is assignment-based, not
+  whole-list-based). No orphan sweep was added - the Worker independently
+  verified by reading `rebuildGlobalUniqueMapping` that it unconditionally
+  folds every unassigned live desktop into the primary output's group
+  whenever at least one output is connected, so no desktop can fall outside
+  every domain.
+  Lead inspected the actual diff directly (not the summary): confirmed all 8
+  hunks in `controller.ts` (old-line ranges 7694-8033 and 8907-9057) fall
+  entirely within the declared scope (the three call sites, the two rewritten
+  methods, the new key-based append primitive, and their doc comments);
+  confirmed zero `ownedDesktopIds` references anywhere in the diff for either
+  `controller.ts` or `controller.test.ts` (direct `git diff | grep
+  ownedDesktopIds` empty, the one remaining occurrence in the test diff is
+  the pre-existing, unchanged `ownedDesktopIdSnapshot()` accessor) - no
+  reintroduction of the ownership-gating defect class. Confirmed
+  `per-output-local` and `shared` code/tests are untouched (all 7 test hunks
+  fall entirely within the "global-unique workspaces (Unit 06)" describe
+  block, 15285-15778). Inspected the rewritten/added tests directly: the
+  disconnect regression ("cleanup removes every empty, invisible desktop
+  after a disconnect, including the disconnected output's former trailing
+  empty, but reserves the surviving output's own trailing empty") correctly
+  exercises the "not adopted" ruling in the concrete tested scenario (the
+  disconnected output's former trailing, `desktop-7`, gets folded into the
+  surviving output's group by the unchanged `rebuildGlobalUniqueMapping`, but
+  is swept because the surviving output's own `desktop-8` remains
+  structurally last, not `desktop-7`); the new "Meta+0 never applies the
+  cross-output swap on the trailing-empty reuse path..." test asserts zero
+  `workspace-navigate-swap` events and that the other output's current
+  desktop and assignment are left completely untouched; the new "a newly
+  connected output gets a freshly created trailing empty, never an adopted
+  spare desktop" test asserts exactly one new `createDesktop` call. Noted (not
+  a defect, a documented design property inherent to the existing
+  literal-last-index structural-identification rule used everywhere in this
+  change, unchanged by this unit): if a disconnected output's former trailing
+  happened to carry a *higher* `x11DesktopNumber` than the surviving output's
+  own true trailing, pure structural last-position identification would
+  protect it instead - this is the same "whichever is literal-last wins"
+  property Q-Manual already relies on throughout the codebase, not a gap
+  introduced here, and is not tested as a separate adversarial case; flagged
+  for awareness, not a blocking finding.
+  Lead independently reran typecheck (clean, both tsconfigs) and the full
+  build+esbuild+`node --test` suite, reproducing the Worker's reported
+  813/813 exactly (811 baseline + net 2: -1 removed "cross-output swap"
+  test, +3 added). Lead independently reran `npm run build` a second time and
+  confirmed `main.js` regenerates byte-identically (identical diff before and
+  after), confirming it is a faithful, deterministic bundle, not hand-edited.
+- Files / commit: `kwin/src/controller.ts` (+135/-135 net across 8 hunks),
+  `kwin/tests/controller.test.ts` (+129 net, entirely within the "global-unique
+  workspaces (Unit 06)" describe block), `kwin/contents/code/main.js`
+  (regenerated bundle, verified deterministic). No commit (user-only per
+  commit protocol).
+- Verification (Lead's own, independent of Worker-reported):
+  `npm --prefix kwin run typecheck` -> clean, 0 errors, both tsconfigs. Full
+  build+esbuild+`node --test` -> 813 tests, 77 suites, 813 pass, 0 fail,
+  exit 0 - exact match to Worker's reported 813/813.
+- Notes: unit-03b attempt count: 1, accepted first try, no correction round
+  (no Attempt Accounting entry needed per governance). No commits or pushes.
+  No live host action this entry (static verification only). Staged (not
+  committed) alongside `kwin/src/controller.ts`,
+  `kwin/tests/controller.test.ts`, `kwin/contents/code/main.js`,
+  `docs/changes/trailing-empty-workspace/{spec.md,plan.md,log.md}` - see
+  Staging Note in `plan.md`. Terminal status for this dispatch: `accepted`.

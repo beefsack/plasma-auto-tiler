@@ -86,8 +86,8 @@ Non-goals:
 
 - [ ] In every `workspaceMode`, after any sequence of window/desktop
       lifecycle events, exactly one empty trailing workspace exists per
-      relevant domain (per-output in `per-output-local`; one global trailing
-      empty in `global-unique` and `shared`), never zero, never more than one
+      relevant domain (per-output in `per-output-local` and `global-unique`;
+      one global trailing empty in `shared`), never zero, never more than one
       from this mechanism's own action.
 - [ ] The trailing empty is never removed by cleanup while it remains empty,
       regardless of visibility, in addition to the existing "visible
@@ -121,11 +121,39 @@ Non-goals:
 
 ## Resolved Questions
 
-- **Q-Domain (decided)**: One trailing empty per output in
+- **Q-Domain (superseded 2026-08-19)**: One trailing empty per output in
   `per-output-local` mode; one global trailing empty in `global-unique` and
   `shared`. Matches `per-output-local`'s existing independent-per-output-list
   design and the old (pre-Q6) `removeOwnedEmptyDesktop`/reconcile pattern
-  this reverts to.
+  this reverts to. Superseded by the revised ruling immediately below for
+  `global-unique`; `per-output-local` and `shared` are unaffected.
+- **Q-Domain (revised 2026-08-19, supersedes the prior ruling above)**:
+  - `per-output-local`: one trailing empty per connected output. Unchanged
+    from the prior ruling; `unit-02` already satisfies this.
+  - `global-unique`: one trailing empty per connected output, structurally
+    identified within that output's own desktop assignment group
+    (`globalUniqueAssigned` / `rebuildGlobalUniqueMapping`), not within the
+    single global list. `Meta+0` and `Meta+Shift+0` interact only with the
+    currently active/focused output's own trailing empty. They must never
+    reuse-and-swap a trailing empty currently displayed on a different
+    output - `globalUniqueSwapIfVisibleElsewhere` must never fire on the
+    trailing-empty path, with no fallback. It remains in use for ordinary
+    `Meta+1..9` navigation, which is unchanged.
+  - `global-unique` output disconnect: the disconnected output's former
+    trailing empty becomes immediately eligible for removal, with no grace
+    period, consistent with Q5. It is not adopted by a surviving output.
+  - `global-unique` output connect: a newly connected output always gets a
+    freshly created trailing empty. An existing spare empty desktop is never
+    adopted.
+  - `shared`: one global trailing empty. The prior ruling is retained
+    deliberately for this mode. `shared` mode's `synchronizeShared`
+    mechanism forces every connected output onto the same current desktop
+    by design, so there is no per-output domain to hang a per-output
+    trailing empty on; that synchronized-everywhere guarantee is preserved
+    unchanged.
+  - "Currently active/focused output" means the existing
+    `activeOutputForWorkspace()` convention already used throughout the
+    controller. No new notion of active output is introduced.
 - **Q-Zero (decided)**: `Meta+0` is a no-op when the trailing empty is
   already the current desktop - stay put, do not create a second empty. No
   unbounded growth from repeated presses.
@@ -156,7 +184,8 @@ Non-goals:
 
 ## Consequential Decisions
 
-- Q-Domain, Q-Zero, and Q-Manual rulings above are binding for units 02-05:
-  per-output trailing empty in `per-output-local`; global trailing empty in
-  `global-unique`/`shared`; `Meta+0` no-op on current trailing empty;
+- Q-Domain (as revised 2026-08-19), Q-Zero, and Q-Manual rulings above are
+  binding for units 02-06: per-output trailing empty in `per-output-local`
+  and `global-unique` (each scoped to its own assignment group); one global
+  trailing empty in `shared`; `Meta+0` no-op on current trailing empty;
   non-trailing manual empties remain cleanup-eligible when invisible.

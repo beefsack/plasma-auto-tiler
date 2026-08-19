@@ -56,14 +56,17 @@ stale invisible empty and needs to preserve the trailing invariant does both
 in one pass without a second dispatch or timer. No debounce/timer mechanism
 is introduced (per spec constraint).
 
-**Mode domains**, per the current code survey:
+**Mode domains**, per the current code survey, as revised 2026-08-19 (see
+spec.md Q-Domain):
 - `per-output-local`: one domain per connected output (its own ordered local
   desktop-id list).
-- `global-unique`: one domain (the global desktop list ordered by
-  `x11DesktopNumber`).
-- `shared`: one domain (the single shared desktop list).
-
-Pending **Q-Domain** confirmation from the user before unit-02 starts.
+- `global-unique`: one domain per connected output, structurally identified
+  within that output's own `globalUniqueAssigned` assignment group (ordered
+  by `x11DesktopNumber`, via the existing `globalUniqueOrdered` helper), not
+  the single global list. `unit-03`'s original single-global-domain wiring is
+  superseded; reworked by `unit-03b`.
+- `shared`: one domain (the single shared desktop list). Unaffected by the
+  Q-Domain revision.
 
 ## Work Units
 
@@ -72,6 +75,7 @@ Pending **Q-Domain** confirmation from the user before unit-02 starts.
 | unit-01 | Shared "ensure exactly one trailing empty" invariant helper: structural trailing-empty identification, protect-from-cleanup exclusion, post-removal append-if-needed step, with its own idempotency/stability unit tests (no mode wiring yet) | - | `kwin/src/controller.ts` (new helper, not yet called); `kwin/tests/controller.test.ts` (new isolated helper tests) | static: `node --test` on new helper tests only |
 | unit-02 | Wire `per-output-local` mode: cleanup path calls the helper per output; `Meta+0`/`Meta+Shift+0`/`finishWorkspaceZero`/`finishMoveToTrailing` local branches reuse-if-present; rewrite the affected "Unit 05" describe-block assertions | unit-01 | `kwin/src/controller.ts` (`reconcileLocalWorkspaces`, `removeOwnedEmptyDesktop`, `finishWorkspaceZero` local branch, `appendTrailingForOutput` call sites); `kwin/tests/controller.test.ts` ("per-output-local workspaces (Unit 05)" block, lines ~14604-15046) | static: full `node --test`; targeted stability test added |
 | unit-03 | Wire `global-unique` mode: same shape as unit-02 for the global-unique domain and its describe block | unit-01 | `kwin/src/controller.ts` (`reconcileGlobalUnique`, `removeOwnedEmptyGlobalUnique`, global-unique `Meta+0`/`Meta+Shift+0` branches); `kwin/tests/controller.test.ts` ("global-unique workspaces (Unit 06)" block, lines ~15046-15444) | static: full `node --test`; targeted stability test added |
+| unit-03b | Rework `global-unique` mode to the revised Q-Domain ruling (2026-08-19): `enforceGlobalTrailingEmpty`/`resolveGlobalTrailingEmpty` become per-connected-output enforcement scoped to each output's own `globalUniqueAssigned` group (mirroring `enforceLocalTrailingEmpties`/`resolveLocalTrailingEmpty`), using the existing `globalUniqueOrdered` helper for domain order; the three reuse call sites (`finishGlobalWorkspaceZero`, `finishMoveToTrailing`, `moveActiveToWorkspace` index-0 branch) stop calling `globalUniqueSwapIfVisibleElsewhere` on the trailing-empty path only (helper stays in use for ordinary `Meta+1..9` navigation/move-follow); disconnect makes the disconnected output's former trailing immediately eligible for removal, not adopted; connect always creates a fresh trailing, never adopts a spare. Supersedes `unit-03`'s wiring; does not rewrite `unit-03`'s own historical record. | unit-01, supersedes unit-03's wiring | `kwin/src/controller.ts` (`enforceGlobalTrailingEmpty`, `resolveGlobalTrailingEmpty`, `finishGlobalWorkspaceZero`, `finishMoveToTrailing` global-unique branch, `moveActiveToWorkspace` index-0 branch, new key-based append helper mirroring `appendDesktopForOutputKey`); `kwin/tests/controller.test.ts` ("global-unique workspaces (Unit 06)" describe block, lines ~15285-15741) | static: full `node --test`; new disconnect/connect regression tests; typecheck both tsconfigs |
 | unit-04 | Wire `shared` mode: same shape as unit-02/03 for the shared domain and its describe block | unit-01 | `kwin/src/controller.ts` (inline shared reconcile fragment in `cleanupDesktops`, `removeOwnedEmptyShared`, `finishSharedWorkspaceZero`); `kwin/tests/controller.test.ts` ("shared workspaces (Unit 07)" block, lines ~15444-end) | static: full `node --test`; targeted stability test added |
 | unit-05 | Cross-mode regression sweep: rewrite/remove the remaining ~34 "always create, never reuse, no reserved capacity" assertions in the "dynamic virtual desktops" and "workspace mode and per-output seams (Unit 04)" blocks that are not mode-specific; add the multi-output (Q-MultiOutput) and event-ordering oscillation coverage from the spec | unit-02, unit-03, unit-04 | `kwin/tests/controller.test.ts` ("TileController dynamic virtual desktops" and "workspace mode and per-output seams (Unit 04)" blocks) | static: full `node --test`, exact pass count reported and reconciled against the pre-change 802 baseline |
 | unit-06 | Documentation correction: `docs/roadmap.md` lines 174/180/185/242 and the relevant `docs/backlog.md` entry updated to describe the trailing-empty-reuse model | unit-05 | `docs/roadmap.md`, `docs/backlog.md` | static: proofread diff only, run as part of the completion transaction, not before user acceptance of delivered behavior |
@@ -99,7 +103,12 @@ does not converge cleanly.
       round fixed an ownership-gating regression the Lead found by direct
       diff inspection in the orphan sweep and added one new regression
       test; 809/809 pass, typecheck clean)
-- [ ] unit-03 Wire global-unique mode (not started - no diff evidence)
+- [x] unit-03 Wire global-unique mode (accepted, attempt-01, no correction
+      round; 811/811 pass, typecheck clean; wiring now flagged superseded by
+      the revised Q-Domain ruling - see unit-03b)
+- [x] unit-03b Rework global-unique mode to the revised Q-Domain ruling
+      (accepted, attempt-01, no correction round; 813/813 pass, typecheck
+      clean)
 - [ ] unit-04 Wire shared mode (not started - no diff evidence)
 - [ ] unit-05 Cross-mode regression sweep
 - [ ] unit-06 Documentation correction
@@ -123,19 +132,27 @@ does not converge cleanly.
 
 ## Pending User Decisions
 
-None outstanding. User ruled on all three surfaced ambiguities (2026-08-19),
-matching the Lead's recommendation in each case; encoded in `spec.md`
-Resolved Questions:
-- Q-Domain: one trailing empty per output (`per-output-local`); one global
-  trailing empty (`global-unique`, `shared`).
+None outstanding. User ruled on all three original surfaced ambiguities
+(2026-08-19), matching the Lead's recommendation in each case, and later
+issued a revised Q-Domain ruling for `global-unique` (2026-08-19, approved by
+the Orchestrator), answering inv-01's five open questions. All encoded in
+`spec.md` Resolved Questions:
+- Q-Domain (as revised): one trailing empty per output in `per-output-local`
+  (unchanged) and `global-unique` (revised - scoped to each output's own
+  `globalUniqueAssigned` group, no cross-output swap-adoption on the
+  trailing-empty path, disconnect not adopted, connect always fresh); one
+  global trailing empty in `shared` (unchanged, retained deliberately).
 - Q-Zero: `Meta+0` is a no-op when already on the trailing empty.
 - Q-Manual: non-trailing manual empties remain cleanup-eligible when
-  invisible (self-healing, no identity tracking).
+  invisible.
 
 Q-Pager accepted as-is (not contentious). Q-MultiOutput is a test-coverage
 requirement carried into unit-05, not a product decision. Q-Diagnostic-ID
 resolved as a stale brief - the Orchestrator's prior-change addition already
-covers it; nothing folded into scope.
+covers it; nothing folded into scope. `shared` mode's open question (inv-01
+question 1) is resolved: the revised ruling does not reach `shared`; its
+prior one-global-trailing-empty behavior is retained deliberately, `unit-04`
+scope is unaffected.
 
 ## Acceptance-Criterion Evidence
 
@@ -173,9 +190,82 @@ covers it; nothing folded into scope.
   tests unchanged or deliberately updated" - met: 809/809 pass (808 prior +
   1 new orphan-sweep regression test), 0 fail, independently reproduced by
   the Lead via the standard build+esbuild+`node --test` command.
-- Remaining acceptance criteria (global-unique and shared domain wiring,
-  cross-mode sweep, docs correction) are unit-03 through unit-06 and remain
-  unmet pending those units.
+- Global-unique domain acceptance (unit-03, now met): "exactly one trailing
+  empty in the global domain, never zero/never more from this mechanism" and
+  "trailing empty never removed while empty" - met by
+  `enforceGlobalTrailingEmpty` (`controller.ts` beside
+  `removeOwnedEmptyGlobalUnique`) calling `ensureTrailingEmptyDesktop` once
+  for the single global domain (entire live desktop list ordered by
+  `x11DesktopNumber`, per Q-Domain). "Other empty invisible desktops remain
+  removable, ownership-independent" - met; no orphan sweep was needed
+  (domain is the whole live list, so nothing can fall outside it), and no
+  `ownedDesktopIds` reference exists anywhere in the diff (Lead-verified via
+  direct diff grep). "Meta+0/Meta+Shift+0 reuse existing trailing empty,
+  no-op / create-only-if-absent" - met by `resolveGlobalTrailingEmpty` and
+  its use in `finishGlobalWorkspaceZero`/`finishMoveToTrailing`/
+  `moveActiveToWorkspace`'s index-0 branch, including the cross-output swap
+  interaction (via the pre-existing, reused `globalUniqueSwapIfVisibleElsewhere`)
+  when the reused trailing empty is currently shown on a different output -
+  regression-tested at `controller.test.ts:15717-15738`. "No ownership Set
+  introduced or reintroduced" - met, Lead-verified by direct diff inspection.
+  "Repeated cleanupDesktops idempotent" (global-unique) - met, regression-
+  tested at `controller.test.ts:15699-15715`. "802 pre-existing tests
+  unchanged or deliberately updated" - met: 811/811 pass (809 prior + 2 new
+  unit-03 tests), 0 fail, independently reproduced by the Lead.
+- Global-unique domain acceptance, as revised (unit-03b, now met): "one
+  trailing empty per connected output, structurally identified within that
+  output's own domain, never zero/never more from this mechanism" - met by
+  the rewritten `enforceGlobalTrailingEmpty`/`resolveGlobalTrailingEmpty`
+  (`controller.ts`, per-output loop over `connectedOutputKeys()` using
+  `globalUniqueOrdered(desktops, key)` as each domain), mirroring
+  `enforceLocalTrailingEmpties`/`resolveLocalTrailingEmpty`'s shape exactly.
+  "Meta+0/Meta+Shift+0/`moveActiveToWorkspace(0)` scoped to the active
+  output's own trailing empty only, never cross-output swap-adoption" - met;
+  all three reuse call sites no longer call
+  `globalUniqueSwapIfVisibleElsewhere` on the trailing-empty path (confirmed
+  by Lead's own diff read: the call is removed at all three sites and the
+  helper's only remaining call sites are the unchanged `index > 0`
+  navigation/move-follow branches); regression-tested by "Meta+0 never
+  applies the cross-output swap on the trailing-empty reuse path..."
+  (`controller.test.ts`, global-unique Unit 06 block) asserting zero
+  `workspace-navigate-swap` events and no cross-output current-desktop
+  write. "Output disconnect: former trailing immediately eligible for
+  removal, not adopted" - met and regression-tested by the rewritten
+  disconnect test (former E-trailing `desktop-7`, empty, folded by the
+  unchanged `rebuildGlobalUniqueMapping` into L's group, is removed in the
+  same pass because L's own `desktop-8` remains structurally last, not
+  `desktop-7`). "Output connect: always a freshly created trailing, never an
+  adopted spare" - met and regression-tested by the new "a newly connected
+  output gets a freshly created trailing empty, never an adopted spare
+  desktop" test (asserts exactly one new `createDesktop` call, no reuse of
+  any pre-existing spare). "No ownership Set introduced or reintroduced" -
+  met; Lead independently grepped the full diff for `ownedDesktopIds` in
+  both `controller.ts` and `controller.test.ts` and found zero hits beyond
+  the pre-existing, unchanged `ownedDesktopIdSnapshot()` test accessor. "No
+  orphan sweep needed" - the Worker independently verified (not assumed)
+  that `rebuildGlobalUniqueMapping` unconditionally folds every unassigned
+  live desktop into the primary output's group whenever at least one output
+  is connected, so no desktop ever falls outside all domains; no orphan-sweep
+  code was added, matching per-output-local's precedent of only adding one
+  where the mapping-rebuild genuinely drops ids entirely. "Repeated
+  `cleanupDesktops()` idempotent" and "813 tests pass" (811 prior + 2 net:
+  -1 removed cross-output-swap-adoption test, +3 added: no-swap-on-trailing,
+  multi-output-per-output-trailing, connect-fresh-not-adopted) - met: 813/813
+  pass, 0 fail, independently reproduced by the Lead via the standard
+  build+esbuild+`node --test` command; typecheck clean on both tsconfigs,
+  independently reproduced; `main.js` independently confirmed a
+  deterministic, faithful regeneration (identical diff before and after a
+  second fresh `npm run build`). `per-output-local` and `shared` code and
+  tests confirmed untouched by direct diff inspection (all hunks fall within
+  the declared global-unique scope: `controller.ts` lines
+  7694-8033/8907-9057 old-line ranges; `controller.test.ts` entirely within
+  the "global-unique workspaces (Unit 06)" describe block, 15285-15778).
+  `unit-03`'s own acceptance evidence above is left as an accurate
+  historical record of work done against the ruling in force at the time;
+  this entry supersedes it for current behavior.
+- Remaining acceptance criteria (shared domain wiring, cross-mode sweep,
+  docs correction) are unit-04 through unit-06 and remain unmet pending
+  those units.
 
 ## Residual Risks
 
@@ -186,20 +276,185 @@ covers it; nothing folded into scope.
   deliberate deviation from strictly mirroring the pre-Q6 per-mode
   duplication; if review finds mode-specific semantics do not fit a single
   helper cleanly, unit-01 may need to split before unit-02 starts.
+- (2026-08-19, inv-01) The user issued a new ruling on Meta+0/Meta+Shift+0
+  scope that contradicted the Q-Domain ruling `unit-03` was built to. Landed
+  `unit-03` (`e2105c2`, committed) was flagged superseded; the ruling was
+  approved and the rework landed as `unit-03b` (accepted, staged, not yet
+  committed). `unit-03`'s semantic record above is left unchanged (it is an
+  accurate historical record of work done against the ruling that was in
+  force at the time); `unit-03b` is a new unit, not a rewrite of `unit-03`'s
+  history. This risk is now resolved for `global-unique`; `unit-03`'s own
+  commit (`e2105c2`) already landed the superseded wiring, so the repository
+  history retains both the original and the corrected behavior across two
+  commits, which is expected and not a defect.
 
 ## Final Outcome
 
-- Pending - unit-01 and unit-02 accepted and staged (not committed); units
-  03-06 remain. Not yet the change's overall completion transaction.
+- Pending - unit-01, unit-02, unit-03 (all committed, `e2105c2`), and
+  unit-03b (accepted, staged, not yet committed) done; units 04-06 remain.
+  Not yet the change's overall completion transaction.
 
-## Staging Note (2026-08-19)
+## Staging Note (2026-08-19, unit-02)
+
+- unit-01 + unit-02 were committed by the user at `1b34a37 feat(workspace):
+  reuse trailing empty workspace in per-output-local mode`, confirmed as
+  this Lead succession's verified starting `HEAD`.
+
+## Staging Note (2026-08-19, unit-03)
 
 - Staged (`git add`, not committed): `kwin/src/controller.ts`,
   `kwin/tests/controller.test.ts`, `kwin/contents/code/main.js` - the
-  cumulative unit-01 + unit-02 diff vs. `884ff95`, verified 809/809 tests
-  pass and typecheck clean. Proposed conventional-commit subject (subject
-  only, for the user to use if they commit this now, or to hold until
-  units 03-06 land): `feat(workspace): reuse trailing empty workspace in
-  per-output-local mode`. `docs/changes/trailing-empty-workspace/` left
-  untracked (process artifacts, still being edited across remaining
-  units). No commit or push performed - user-only per commit protocol.
+  unit-03 diff vs. `1b34a37` (+159/-24 in `controller.ts`, +189/-93 in
+  `controller.test.ts`, faithful regenerated bundle in `main.js`), verified
+  811/811 tests pass and typecheck clean. Proposed conventional-commit
+  subject (subject only): `feat(workspace): reuse trailing empty workspace
+  in global-unique mode`. `docs/changes/trailing-empty-workspace/` left
+  untracked (process artifacts, still being edited across remaining units).
+  No commit or push performed - user-only per commit protocol.
+- `unit-03` was subsequently committed by the user at `e2105c2 feat(workspace):
+  reuse trailing empty workspace in global-unique mode`, confirmed as this
+  Lead succession's verified starting `HEAD`.
+
+## Staging Note (2026-08-19, unit-03b)
+
+- Staged (`git add`, not committed): `kwin/src/controller.ts`,
+  `kwin/tests/controller.test.ts`, `kwin/contents/code/main.js` - the
+  unit-03b diff vs. `e2105c2` (+135/-135 net in `controller.ts` across 8
+  hunks, all within the declared global-unique scope; +129 net in
+  `controller.test.ts`, entirely within the "global-unique workspaces (Unit
+  06)" describe block; faithful regenerated bundle in `main.js`, confirmed
+  deterministic by a second fresh `npm run build` producing an identical
+  diff), verified 813/813 tests pass (811 prior + net 2: one superseded test
+  removed, three added) and typecheck clean on both tsconfigs. Also staged:
+  `docs/changes/trailing-empty-workspace/{spec.md,plan.md,log.md}` (this
+  Lead's spec amendment and record-keeping, folding in inv-01's
+  previously-staged `log.md`/`plan.md` edits so the user makes one commit,
+  not two). Proposed conventional-commit subject (subject only):
+  `feat(workspace): scope global-unique trailing empty to each output`. No
+  commit or push performed - user-only per commit protocol.
+
+## inv-01 Findings and Proposed Revision (APPROVED 2026-08-19 - Orchestrator
+and user approved the Q-Domain amendment; encoded in `spec.md` and the
+Work Units table above as `unit-03b`. Retained below as the historical
+investigation record.)
+
+Investigation-only unit responding to a new user ruling that contradicts the
+settled Q-Domain ruling `unit-03` was built to. No production code touched.
+Full findings returned to the Orchestrator via chat (2026-08-19). Summary
+retained here for continuity:
+
+- `global-unique` mode: the new ruling ("trailing empty on each output;
+  Meta+0/Meta+Shift+0 scoped to the active output only") is structurally
+  expressible. The mode already partitions the global desktop pool into a
+  per-output assignment (`globalUniqueAssigned`, `controller.ts:8936-8974`)
+  and tracks a genuinely independent native per-output current desktop
+  (`currentDesktopForOutput`/`setCurrentDesktopForScreen`,
+  `controller.ts:889,920`). Landed `unit-03` was built to the old "one
+  global trailing empty" ruling instead: `enforceGlobalTrailingEmpty`
+  (`controller.ts:8986-`) treats the whole live list as one domain, and all
+  three reuse call sites apply `globalUniqueSwapIfVisibleElsewhere`
+  (`controller.ts:8835-`) to *steal* the single global trailing empty from
+  whatever output it is currently shown on - exactly the cross-output
+  interaction the new ruling forbids. This needs a rework, proposed as
+  **`unit-03b`** (new semantic ID, does not reuse or rewrite `unit-03`):
+  - `enforceGlobalTrailingEmpty` -> per-output-domain enforcement, one call
+    per connected output's `globalUniqueAssigned` group, mirroring
+    `enforceLocalTrailingEmpties` (`controller.ts:8321-`) rather than the
+    single-global-domain shape.
+  - `resolveGlobalTrailingEmpty` -> resolves within the active output's own
+    assignment group only.
+  - The three reuse call sites (`finishGlobalWorkspaceZero`,
+    `finishMoveToTrailing` global-unique branch, `moveActiveToWorkspace`
+    index-0 branch) drop the `globalUniqueSwapIfVisibleElsewhere` call for
+    the trailing-empty-reuse path specifically. The helper itself is
+    untouched and stays in use for general (non-zero-index) navigation,
+    which this ruling does not reach.
+  - Worker brief must require the Worker to determine (not assume) whether
+    an orphan-sweep equivalent to unit-02's (`controller.ts:8487-8516`) is
+    now needed, since global-unique's domain is no longer "the whole live
+    list" once split per output.
+  - Depends on: `unit-01` (reusable as-is), Orchestrator/user approval of
+    the Q-Domain amendment below.
+- `shared` mode: the new ruling is **not structurally expressible as
+  stated**. `synchronizeShared` (`controller.ts:7581-7613`) writes the same
+  target desktop to every connected output on every navigation - "one
+  logical workspace set synchronized across every connected output... no
+  output owns a desktop" (`controller.ts:7530-7537`). There is no per-output
+  desktop domain to hang "a trailing empty on each output" on, and no
+  per-output-scoped navigation for Meta+0/Meta+Shift+0 to restrict to -
+  every output already always shows the same desktop. Applying the ruling
+  literally would require redefining what "shared" mode means (breaking its
+  defining synchronized-navigation guarantee), which is a product decision,
+  not an implementation detail - escalated as an open question below, not
+  resolved here. `unit-04` scope cannot be finalized until this is answered.
+- `per-output-local` mode: **unaffected**. It already matches the new ruling
+  exactly - `resolveLocalTrailingEmpty(output)` (`controller.ts:8529-`) and
+  `isCurrentOnOutput` already scope resolution and reuse to one output's own
+  domain, with no cross-output interaction. No rework needed.
+- Invariant check (spec.md Constraints / the seven listed invariants): no
+  direct conflict found. Two notes, not conflicts: (1) "last-index-only"
+  trailing identification is unaffected in *meaning*, only in which ordered
+  list it applies to per domain (per-output-local: local list;
+  global-unique proposed: the output's `globalUniqueAssigned` sublist,
+  ordered the same way the existing navigation code already orders it via
+  `globalUniqueOrdered`; shared: unresolved, see above). (2) `unit-03b`'s
+  per-output domain enforcement must keep the *global* last-remaining-desktop
+  floor as a whole-session check, not a per-output one, in addition to (not
+  instead of) each domain's own never-zero trailing invariant - flagged for
+  the `unit-03b` Worker brief and unit-05 regression coverage, not a design
+  conflict.
+
+### Draft Q-Domain spec amendment (historical draft; superseded by the
+approved wording actually applied to `spec.md` Resolved Questions)
+
+> **Q-Domain (REVISED 2026-08-19, supersedes the prior ruling above pending
+> approval)**: `per-output-local` - one trailing empty per connected output
+> (unchanged). `global-unique` - one trailing empty per connected output,
+> structurally identified within that output's existing per-output desktop
+> assignment group, not the single global list; `Meta+0`/`Meta+Shift+0`
+> interact only with the currently active/focused output's own trailing
+> empty and must not reuse-and-swap a trailing empty currently displayed on
+> a different output (the behavior the now-superseded `unit-03` wiring
+> implemented). `shared` - UNRESOLVED. `shared` mode's `synchronizeShared`
+> mechanism forces every connected output onto the same current desktop
+> simultaneously; there is no per-output desktop domain to hang "one
+> trailing empty per output" on, and no per-output-scoped navigation exists
+> for Meta+0/Meta+Shift+0 to restrict to. The new ruling appears
+> structurally inexpressible for this mode as stated. Awaiting user
+> clarification before `unit-04` scope is finalized.
+
+### Open questions for the user (RESOLVED 2026-08-19 - see the revised
+Q-Domain ruling in `spec.md` and Pending User Decisions above; retained below
+as the historical record of what was asked)
+
+1. Does the new ruling apply to `shared` mode at all? `synchronizeShared`
+   forces every connected output onto one synchronized current desktop by
+   design; honoring the ruling literally there would mean redefining what
+   "shared" mode is (it would stop keeping every output on one desktop).
+   The ruling was given in answer to a narrower `global-unique` question -
+   is `shared` intended to keep its original (old-ruling, one global
+   trailing empty) behavior, or does "shared" mode's definition itself need
+   to change?
+2. For `global-unique`, should `globalUniqueSwapIfVisibleElsewhere`'s
+   "steal from another output" mechanic still ever fire as part of
+   Meta+0/Meta+Shift+0's trailing-empty resolution, or is that exact
+   behavior what the new ruling means to forbid? (Lead's reading: forbid it
+   for the trailing-empty path specifically; general non-zero-index
+   navigation swap is a separate, unaffected mechanism.)
+3. On output disconnect in `global-unique`, the disconnected output's
+   former trailing-empty desktop is folded into the surviving primary
+   output's assignment group by the existing `rebuildGlobalUniqueMapping`
+   (`controller.ts:8936-8974`). Should it then be treated as that primary
+   output's new trailing empty, or as an immediately cleanup-eligible extra
+   (per Q5, no grace period) alongside the primary's own pre-existing
+   trailing empty? Needs an explicit ruling before `unit-03b` starts.
+4. On output connect (hotplug) in `global-unique`, should a fresh trailing
+   empty always be created for the new output, or may an already-empty
+   desktop from the global pool (e.g. one freed by a prior disconnect) be
+   adopted instead of creating a new one?
+5. "Currently active/focused output" - Lead's reading is this already maps
+   to the existing `activeOutputForWorkspace()` convention
+   (`controller.ts:8259-8277`: focused window's output, else
+   `workspace.activeScreen`), used identically today by both
+   `per-output-local` and `global-unique` navigation. Confirming no
+   different definition is intended before `unit-03b` relies on it.
