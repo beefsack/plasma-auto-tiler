@@ -20,6 +20,7 @@ import {
     WORKSPACE_MODE_CONFIG_KEY,
     WORKSPACE_MODES,
     catalogValidationDiagnostics,
+    ensureTrailingEmptyDesktop,
     outputTuple,
     parseAutomaticSplitTarget,
     parseDropOutlinePreview,
@@ -35,6 +36,7 @@ import {
     type CurrentScope,
     type ProfileCatalog,
     type RowClassification,
+    type TrailingEmptyDomainRequest,
 } from "../src/controller";
 import { buildDwindleBlueprint, type Blueprint } from "../src/layout-blueprint";
 import { DIRECTIONS, type Direction, type Point, type Rect } from "../src/logic";
@@ -634,10 +636,18 @@ function setup(): {
     return { harness, controller, root, target, focused };
 }
 
-// Create one owned desktop through Meta+Shift+0 (always-create, never reuse)
-// and then return the focused window to desktop-1, leaving the created
-// desktop owned and empty. Cleanup is never triggered here so the owned empty
-// desktop persists for the caller to manipulate before exercising cleanup.
+// Create one owned trailing empty through Meta+Shift+0 (creating desktop-2,
+// since none exists yet) and move the focused floating window into it, then
+// return the window to desktop-1 and let one more cleanup dispatch settle.
+// Under the trailing-empty reuse model, landing on desktop-2 immediately
+// replenishes a fresh trailing empty desktop-3 (synchronously, since the
+// move is floating), and once the window returns to desktop-1, the vacated
+// non-trailing desktop-2 is removed on the next dispatch, leaving desktop-3
+// as the sole owned trailing empty (Q-Manual: non-trailing empties stay
+// cleanup-eligible). Two desktops are created in total (desktop-2, then its
+// replacement desktop-3), and one is removed (desktop-2); callers that care
+// about the delta since calling this helper should reset
+// harness.removedDesktops afterward.
 function ownTrailingEmpty(harness: Harness): void {
     const focused = harness.active as TestWindow;
     const origin = focused.tile as unknown as TestTile | null;
@@ -653,6 +663,7 @@ function ownTrailingEmpty(harness: Harness): void {
     focused.desktops = [DESKTOP];
     harness.currentDesktop = DESKTOP;
     harness.currentDesktopValue = DESKTOP;
+    harness.emitDesktopsChanged();
 }
 
 // A plain two-desktop scenario with desktop-1 current/visible and desktop-2
@@ -8414,6 +8425,116 @@ describe("selectAutomaticSplitTarget", () => {
     });
 });
 
+describe("ensureTrailingEmptyDesktop", () => {
+    // Minimal fake domain: a mutable ordered id list plus per-id empty flags,
+    // with a fixed visibility set (a desktop is "visible" iff its id is in
+    // `visibleIds`), matching what a real caller would compose from the
+    // existing occupied/visible id sets. No mode wiring - this exercises the
+    // helper directly.
+    interface FakeDomain {
+        ids: string[];
+        empty: Set<string>;
+        visibleIds: Set<string>;
+        removed: string[];
+        created: string[];
+        nextId: number;
+    }
+
+    function makeDomain(ids: string[], emptyIds: string[], visibleIds: string[] = []): FakeDomain {
+        return {
+            ids: [...ids],
+            empty: new Set(emptyIds),
+            visibleIds: new Set(visibleIds),
+            removed: [],
+            created: [],
+            nextId: 0,
+        };
+    }
+
+    function requestFor(domain: FakeDomain): TrailingEmptyDomainRequest {
+        return {
+            orderedIds: domain.ids,
+            isEmpty: (id) => domain.empty.has(id),
+            isVisible: (id) => domain.visibleIds.has(id),
+            removeDesktop: (id) => {
+                const position = domain.ids.indexOf(id);
+                if (position < 0) {
+                    return false;
+                }
+                domain.ids.splice(position, 1);
+                domain.empty.delete(id);
+                domain.removed.push(id);
+                return true;
+            },
+            createDesktop: () => {
+                const id = `created-${domain.nextId}`;
+                domain.nextId += 1;
+                domain.ids.push(id);
+                domain.empty.add(id);
+                domain.created.push(id);
+                return id;
+            },
+        };
+    }
+
+    it("no-ops when the trailing desktop is already empty", () => {
+        const domain = makeDomain(["a", "b", "c"], ["c"]);
+        const result = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(result, { removedIds: [], appendedId: null });
+        assert.deepEqual(domain.ids, ["a", "b", "c"]);
+    });
+
+    it("appends exactly one desktop when the trailing desktop is occupied and no other is empty", () => {
+        const domain = makeDomain(["a", "b", "c"], []);
+        const result = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(result.removedIds, []);
+        assert.equal(result.appendedId, "created-0");
+        assert.deepEqual(domain.ids, ["a", "b", "c", "created-0"]);
+        assert.equal(domain.created.length, 1);
+    });
+
+    it("removes a non-trailing empty-and-invisible desktop and leaves the trailing empty untouched", () => {
+        const domain = makeDomain(["a", "b", "c"], ["b", "c"]);
+        const result = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(result.removedIds, ["b"]);
+        assert.equal(result.appendedId, null);
+        assert.deepEqual(domain.ids, ["a", "c"]);
+    });
+
+    it("removes a non-trailing invisible empty and appends a trailing replacement in one pass", () => {
+        // "b" is empty and invisible (not trailing, since "c" is the last id
+        // and is occupied) -> removed. After removal the new trailing id is
+        // "c", which is occupied -> exactly one append, no second dispatch.
+        const domain = makeDomain(["a", "b", "c"], ["b"]);
+        const result = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(result.removedIds, ["b"]);
+        assert.equal(result.appendedId, "created-0");
+        assert.deepEqual(domain.ids, ["a", "c", "created-0"]);
+    });
+
+    it("is idempotent: repeated calls against settled state produce zero net creates or removes", () => {
+        const domain = makeDomain(["a", "b", "c"], ["b"]);
+        ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(domain.ids, ["a", "c", "created-0"]);
+
+        const second = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(second, { removedIds: [], appendedId: null });
+        const third = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(third, { removedIds: [], appendedId: null });
+        assert.deepEqual(domain.ids, ["a", "c", "created-0"]);
+        assert.equal(domain.removed.length, 1);
+        assert.equal(domain.created.length, 1);
+    });
+
+    it("never removes a visible-but-empty desktop", () => {
+        const domain = makeDomain(["a", "b", "c"], ["b", "c"], ["b"]);
+        const result = ensureTrailingEmptyDesktop(requestFor(domain));
+        assert.deepEqual(result.removedIds, []);
+        assert.equal(result.appendedId, null);
+        assert.deepEqual(domain.ids, ["a", "b", "c"]);
+    });
+});
+
 describe("TileController tiling algorithm takeover", () => {
     it("rebuilds an adopted scope with the configured preset shape for every valid preset", () => {
         for (const preset of PRESET_KINDS) {
@@ -12309,10 +12430,29 @@ describe("TileController dynamic virtual desktops", () => {
 
             harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
 
-            // Both desktop-middle and desktop-trailing are empty and
-            // invisible; with no reserved trailing capacity and no
-            // positionally-last protection, cleanup removes both, leaving
-            // only the current and occupied desktops.
+            if (mode === "per-output-local") {
+                // per-output-local now protects the structurally-identified
+                // trailing (last-positioned) empty desktop (Q-Domain):
+                // desktop-middle is still removed, but desktop-trailing
+                // survives as the output's reserved trailing empty.
+                assert.deepEqual(
+                    harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+                    ["desktop-middle"],
+                );
+                assert.deepEqual(
+                    (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                );
+                assert.deepEqual(Object.values(controller.localWorkspaceSnapshot()), [
+                    ["desktop-1", "desktop-occupied", "desktop-trailing"],
+                ]);
+                return;
+            }
+            // global-unique and shared are unchanged by this unit: both
+            // desktop-middle and desktop-trailing are empty and invisible,
+            // and with no reserved trailing capacity or positionally-last
+            // protection cleanup removes both, leaving only the current and
+            // occupied desktops.
             assert.deepEqual(
                 harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
                 ["desktop-middle", "desktop-trailing"],
@@ -12321,9 +12461,7 @@ describe("TileController dynamic virtual desktops", () => {
                 (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
                 ["desktop-1", "desktop-occupied"],
             );
-            if (mode === "per-output-local") {
-                assert.deepEqual(Object.values(controller.localWorkspaceSnapshot()), [["desktop-1", "desktop-occupied"]]);
-            } else if (mode === "global-unique") {
+            if (mode === "global-unique") {
                 assert.deepEqual(Object.values(controller.globalUniqueAssignmentSnapshot()), [
                     ["desktop-1", "desktop-occupied"],
                 ]);
@@ -12333,7 +12471,13 @@ describe("TileController dynamic virtual desktops", () => {
         });
     }
 
-    it("re-reads desktops, visibility, and occupancy between cleanup removals", () => {
+    it("removes every eligible non-trailing empty invisible desktop in one per-output-local pass, protecting only the trailing one", () => {
+        // enforceLocalTrailingEmpties() computes its removal set from one
+        // fixed occupancy/visibility snapshot per domain and does not loop or
+        // re-read state mid-pass (spec: no debounce/re-reading loop as an
+        // anti-oscillation mechanism) - every eligible non-trailing empty in
+        // the domain is removed together, and the structurally-last entry is
+        // always protected regardless of how many other empties exist.
         const { harness, controller } = modeCleanupSetup("per-output-local");
         configureSwitchCleanupScenario(harness, controller, [
             "desktop-middle",
@@ -12349,10 +12493,7 @@ describe("TileController dynamic virtual desktops", () => {
             { id: "desktop-occupied", x11DesktopNumber: 5 },
             { id: "desktop-trailing", x11DesktopNumber: 6 },
         ];
-        const inspectable = controller as unknown as {
-            ownedDesktopIds: Set<string>;
-            localWorkspaces: Map<string, string[]>;
-        };
+        const inspectable = controller as unknown as { localWorkspaces: Map<string, string[]> };
         const key = controller.outputKeyFor(OUTPUT);
         if (key !== undefined) {
             inspectable.localWorkspaces.set(key, [
@@ -12364,67 +12505,28 @@ describe("TileController dynamic virtual desktops", () => {
                 "desktop-trailing",
             ]);
         }
-        harness.onDesktopRemoved = (desktop) => {
-            if ((desktop as { id: string }).id === "desktop-middle") {
-                const added = { id: "desktop-added", x11DesktopNumber: 4 };
-                harness.desktopsList = [
-                    { id: "desktop-1", x11DesktopNumber: 1 },
-                    { id: "desktop-middle-2", x11DesktopNumber: 3 },
-                    { id: "desktop-middle-3", x11DesktopNumber: 4 },
-                    added,
-                    { id: "desktop-occupied", x11DesktopNumber: 6 },
-                    { id: "desktop-trailing", x11DesktopNumber: 7 },
-                ];
-                inspectable.ownedDesktopIds.add(added.id);
-                if (key !== undefined) {
-                    inspectable.localWorkspaces.set(key, [
-                        "desktop-1",
-                        "desktop-middle-2",
-                        "desktop-middle-3",
-                        "desktop-added",
-                        "desktop-occupied",
-                        "desktop-trailing",
-                    ]);
-                }
-                harness.currentDesktopValue = { id: "desktop-middle-3" };
-                harness.windows = [
-                    harness.active,
-                    window({ desktops: [{ id: "desktop-middle-2" }] }),
-                    window({ desktops: [{ id: "desktop-occupied" }] }),
-                ];
-            }
-            if ((desktop as { id: string }).id === "desktop-added") {
-                harness.currentDesktopValue = { id: "desktop-1" };
-                harness.windows = [harness.active, window({ desktops: [{ id: "desktop-occupied" }] })];
-                if (key !== undefined) {
-                    inspectable.localWorkspaces.set(key, [
-                        "desktop-1",
-                        "desktop-middle-2",
-                        "desktop-middle-3",
-                        "desktop-occupied",
-                    ]);
-                }
-            }
-        };
 
         harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
 
-        // Under the corrected rule the loop keeps re-reading fresh state and
-        // removing every eligible desktop it finds, unconstrained by
-        // ownership, a stale mapping, or reserved trailing capacity:
-        // desktop-middle, then the dynamically-injected desktop-added, then
-        // desktop-middle-2 and desktop-middle-3 (revealed empty and invisible
-        // only once desktop-added's removal moves the current desktop away
-        // from them), and finally desktop-trailing, which has no positional
-        // protection either.
+        // desktop-middle, desktop-middle-2, and desktop-middle-3 are all
+        // empty and invisible in the same snapshot and are removed together;
+        // desktop-trailing is the structurally-last domain entry and is
+        // protected.
         assert.deepEqual(
             harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-middle", "desktop-added", "desktop-middle-2", "desktop-middle-3", "desktop-trailing"],
+            ["desktop-middle", "desktop-middle-2", "desktop-middle-3"],
         );
         assert.deepEqual(
             (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
-            ["desktop-1", "desktop-occupied"],
+            ["desktop-1", "desktop-occupied", "desktop-trailing"],
         );
+        // Repeated dispatches against the settled state are a pure no-op.
+        harness.removedDesktops.length = 0;
+        const creates = harness.createDesktopCalls.length;
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, creates);
     });
 
     for (const mode of ["per-output-local", "global-unique"] as const) {
@@ -12438,9 +12540,19 @@ describe("TileController dynamic virtual desktops", () => {
 
             harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
 
-            // desktop-middle is visible on the other output and survives;
-            // desktop-trailing has no reserved-capacity or positional
-            // protection and is still removed.
+            if (mode === "per-output-local") {
+                // desktop-middle is visible on the other output and desktop-
+                // trailing is the structurally-last domain entry (Q-Domain):
+                // both survive, so nothing is removed from OUTPUT's domain.
+                assert.deepEqual(
+                    harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+                    [],
+                );
+                return;
+            }
+            // global-unique is unchanged: desktop-middle is visible on the
+            // other output and survives; desktop-trailing has no reserved-
+            // capacity or positional protection and is still removed.
             assert.deepEqual(
                 harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
                 ["desktop-trailing"],
@@ -12474,10 +12586,11 @@ describe("TileController dynamic virtual desktops", () => {
         ];
         occupied.harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
         // desktop-middle is occupied by the floating window and survives;
-        // desktop-trailing has no protection and is still removed.
+        // desktop-trailing is the structurally-last domain entry (Q-Domain)
+        // and is protected too, so nothing is removed.
         assert.deepEqual(
             occupied.harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-trailing"],
+            [],
             "floating membership occupies its desktop",
         );
 
@@ -12499,11 +12612,12 @@ describe("TileController dynamic virtual desktops", () => {
 
         harness.emitCurrentDesktopChanged({ id: "desktop-before" }, { id: "desktop-1" }, OUTPUT);
 
-        // Both desktop-middle (sticky-only membership ignored) and
-        // desktop-trailing (no protection) are removed.
+        // desktop-middle (sticky-only membership ignored, so it reads empty)
+        // is removed; desktop-trailing is the structurally-last domain entry
+        // (Q-Domain) and is protected.
         assert.deepEqual(
             harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-middle", "desktop-trailing"],
+            ["desktop-middle"],
         );
     });
 
@@ -12546,9 +12660,11 @@ describe("TileController dynamic virtual desktops", () => {
 
         harness.emitDesktopsChanged();
 
+        // desktop-middle is removed; desktop-trailing is the structurally-
+        // last domain entry (Q-Domain) and is protected.
         assert.deepEqual(
             harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-middle", "desktop-trailing"],
+            ["desktop-middle"],
         );
     });
 
@@ -12606,6 +12722,14 @@ describe("TileController dynamic virtual desktops", () => {
     it("excludes sticky windows from desktop occupancy", () => {
         const { harness } = setup();
         const candidate = prepareExcessOwnedEmpty(harness);
+        // Add a genuine trailing empty desktop-3 after the candidate so the
+        // Q-Domain trailing-empty protection does not mask the
+        // sticky-exclusion behavior under test: the candidate sits mid-domain
+        // and desktop-3 is the protected trailing position.
+        harness.desktopsList = [
+            ...(harness.desktopsList as unknown[]),
+            { id: "desktop-3", x11DesktopNumber: 3 },
+        ] as typeof harness.desktopsList;
         harness.windows = [
             harness.active,
             window({ onAllDesktops: true, desktops: [{ id: candidate }] }),
@@ -12676,44 +12800,35 @@ describe("TileController dynamic virtual desktops", () => {
         }
     });
 
-    it("Meta+Shift+0 always creates a new desktop even when an owned empty already exists, and cleanup removes every empty invisible one", () => {
+    it("Meta+Shift+0 reuses the existing trailing empty rather than creating a new one, and cleanup replenishes it once it is occupied", () => {
         const { harness, focused } = setup();
-        // Meta+Shift+0 creates the first owned desktop and moves the floating
-        // window into it; return the window to desktop-1 so the owned
-        // desktop is empty.
+        // ownTrailingEmpty settles to a single owned trailing empty
+        // desktop-3 (desktop-2 was created, occupied, replenished by
+        // desktop-3, then removed once vacated and invisible - see its own
+        // doc comment).
         ownTrailingEmpty(harness);
         harness.removedDesktops.length = 0;
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
-            "desktop-2",
+            "desktop-3",
         ]);
-        // Meta+Shift+0 again always creates a brand-new desktop (desktop-3),
-        // never reusing the existing owned empty desktop-2, and moves the
-        // window into it. The move's synchronous cleanup pass immediately
-        // removes desktop-2 (now empty and invisible, no reserved capacity or
-        // positional protection).
+        const createsBefore = harness.createDesktopCalls.length;
+        // Meta+Shift+0 reuses the existing trailing empty desktop-3
+        // (Q-Domain) instead of creating a new one, and moves the window
+        // into it. desktop-1 stays present (still the harness's per-output
+        // current desktop, so it is visible and protected), and desktop-3 is
+        // now occupied so its replacement desktop-4 is appended.
         invokeShortcut(harness, "plasma-auto-tiler-workspace-1");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
-        assert.deepEqual(
-            harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-2"],
-        );
+        assert.equal(harness.createDesktopCalls.length, createsBefore + 1);
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-3",
+        ]);
+        assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), []);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-3",
-        ]);
-        // Moving the window back to desktop-1 leaves desktop-3 empty and
-        // invisible; it is removed too, since only the true last remaining
-        // global desktop is protected.
-        harness.removedDesktops.length = 0;
-        focused.desktops = [DESKTOP];
-        harness.currentDesktop = DESKTOP;
-        harness.currentDesktopValue = DESKTOP;
-        harness.emitDesktopsChanged();
-        assert.equal(harness.removedDesktops.length, 1);
-        assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-3");
-        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
-            "desktop-1",
+            "desktop-4",
         ]);
     });
 
@@ -13035,12 +13150,15 @@ describe("TileController dynamic virtual desktops", () => {
     });
 
     it("keeps cleanup nonfatal when removeDesktop throws mid-cleanup", () => {
-        const { harness, controller, focused } = setup();
-        // Reach [desktop-1, desktop-2(owned empty)].
-        ownTrailingEmpty(harness);
-        harness.removedDesktops.length = 0;
-        // desktop-2 is empty and invisible and eligible for removal; make the
-        // removal throw.
+        const { harness, controller } = setup();
+        // desktop-3 is the structurally-last domain entry (Q-Domain trailing
+        // empty, protected); desktop-2 is a removable non-trailing empty
+        // whose throwing removal this test exercises.
+        harness.desktopsList = [
+            { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-2", x11DesktopNumber: 2 },
+            { id: "desktop-3", x11DesktopNumber: 3 },
+        ];
         harness.removeDesktopThrows = new Error("remove-failed");
         harness.emitDesktopsChanged();
         assert.equal(countEvent(harness.logs, "workspace-cleanup-remove-failed:remove-failed"), 1);
@@ -13048,9 +13166,9 @@ describe("TileController dynamic virtual desktops", () => {
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-2",
+            "desktop-3",
         ]);
         assert.equal(controller.isEnabled, true);
-        void focused;
     });
 
     it("defers desktop mutation during a live drag and performs it after drag completion", () => {
@@ -13085,19 +13203,22 @@ describe("TileController dynamic virtual desktops", () => {
             "desktop-2",
         ]);
         // The move's destination adoption settles on its yield, running
-        // cleanup: no replenish exists. desktop-1 stays visible on the
-        // active output (the harness's per-output current desktop reflects
-        // only its own explicit override), so nothing is removed.
+        // cleanup: desktop-1 stays present (still the harness's per-output
+        // current desktop, so it is visible and protected regardless of
+        // occupancy), and desktop-2 (the trailing position) is now occupied,
+        // so cleanup appends its replacement trailing empty desktop-3
+        // (Q-Domain reuse-and-replenish).
         let settled = 0;
         while (harness.yields.length > 0 && settled < 10) {
             harness.flushNextYield();
             settled += 1;
         }
-        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
         assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), []);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-2",
+            "desktop-3",
         ]);
     });
 
@@ -13166,10 +13287,11 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
     });
 
-    it("defers a repeated Meta+0 during a live drag and always creates a new desktop after drag finish", () => {
-        // Meta+0 always creates a new desktop, never reuses one, even during
-        // a live drag: the whole invocation is queued and never navigates
-        // away from the drag or mutates the desktop list mid-drag.
+    it("defers a repeated Meta+0 during a live drag and reuses the existing trailing empty after drag finish", () => {
+        // Meta+0 reuses the active output's existing trailing empty (Q-Zero)
+        // rather than creating a new one, even when the invocation was
+        // deferred by a live drag: the whole invocation is queued and never
+        // navigates away from the drag or mutates the desktop list mid-drag.
         const { harness, focused } = setup();
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
@@ -13185,8 +13307,8 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-1");
         focused.move = false;
         focused.interactiveMoveResizeFinished.emit();
-        assert.equal(harness.createDesktopCalls.length, creates + 1);
-        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-3");
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         assert.equal(countEvent(harness.logs, "workspace-zero-completed"), completedBefore + 1);
     });
 
@@ -13263,11 +13385,13 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(harness.createDesktopCalls.length, creates);
     });
 
-    it("Meta+0 and Meta+Shift+0 each always create their own new desktop, never reusing one another's (Shift+0 regression)", () => {
-        // Meta+0 and Meta+Shift+0 stay separable (spec C note), and neither
-        // ever reuses an existing desktop: after Meta+0 created and focused
-        // desktop-2, Shift+0 on an eligible window creates a distinct
-        // desktop-3 and moves it there.
+    it("Meta+0 and Meta+Shift+0 reuse the same existing trailing empty instead of creating separate ones", () => {
+        // Under the trailing-empty reuse model both Meta+0 and Meta+Shift+0
+        // resolve the same structurally-identified trailing empty
+        // (Q-Domain): Meta+0 creates it first, then Shift+0 reuses it rather
+        // than creating a second one. Once the window lands there, the next
+        // cleanup dispatch appends a replacement trailing empty and removes
+        // the now-empty, invisible source desktop.
         const { harness, root, target, focused } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
@@ -13282,27 +13406,32 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         harness.currentDesktop = DESKTOP;
         harness.currentDesktopValue = DESKTOP;
+        const creates = harness.createDesktopCalls.length;
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, creates);
         assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
-            "desktop-3",
+            "desktop-2",
         ]);
-        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-3");
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         let settled = 0;
         while (harness.yields.length > 0 && settled < 10) {
             harness.flushNextYield();
             settled += 1;
         }
-        assert.equal(harness.createDesktopCalls.length, 2);
-        // desktop-2 (Meta+0's owned empty) is empty and invisible once the
-        // move settles and is removed; desktop-1 stays because it is still
-        // the harness's per-output current desktop.
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        // desktop-1 stays present (still the harness's per-output current
+        // desktop, so it is visible and protected regardless of occupancy);
+        // desktop-2 is now occupied so its replacement desktop-3 is appended
+        // as the new trailing empty.
+        assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), []);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
+            "desktop-2",
             "desktop-3",
         ]);
     });
 
-    it("Shift+0 always creates a new desktop and moves into it (no reuse of an existing empty)", () => {
+    it("Shift+0 creates the first trailing empty, moves into it, and cleanup replenishes the vacated trailing empty once it settles", () => {
         const { harness, root, target, focused } = setup();
         target.unmanage = (_value) => {
             focused.tile = null;
@@ -13313,9 +13442,9 @@ describe("TileController dynamic virtual desktops", () => {
             root.tiles = [];
             return true;
         };
-        // Shift+0 creates a brand-new desktop and moves the tiled window into
-        // it; membership is written synchronously and the destination
-        // adoption is yielded.
+        // Shift+0 creates a brand-new desktop (no existing trailing empty
+        // yet) and moves the tiled window into it; membership is written
+        // synchronously and the destination adoption is yielded.
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
         assert.equal(harness.createDesktopCalls.length, 1);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
@@ -13327,75 +13456,105 @@ describe("TileController dynamic virtual desktops", () => {
             "desktop-2",
         ]);
         assert.equal(harness.flushNextYield(), true);
-        // No replenish exists: the desktop set stays exactly as created, and
-        // desktop-1 stays present (still the harness's per-output current
-        // desktop).
+        // Once the move settles, desktop-1 stays present (still the
+        // harness's per-output current desktop, so it is visible and
+        // protected), and the now-occupied trailing desktop-2 is replenished
+        // with a fresh trailing empty desktop-3.
         let settled = 0;
         while (harness.yields.length > 0 && settled < 10) {
             harness.flushNextYield();
             settled += 1;
         }
-        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
+        assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), []);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-2",
+            "desktop-3",
         ]);
     });
 
-    it("an occupancy event on the owned empty never creates a replacement (no replenish)", () => {
+    it("an occupancy event on the trailing empty appends its replacement (COSMIC-style reuse)", () => {
         const { harness } = setup();
+        // ownTrailingEmpty settles to a single owned trailing empty
+        // desktop-3 (desktop-2 was created, occupied, replenished by
+        // desktop-3, then removed once vacated and invisible).
         ownTrailingEmpty(harness);
-        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.createDesktopCalls.length, 2);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
-            "desktop-2",
+            "desktop-3",
         ]);
-        // A window arrives on the owned empty desktop-2: it is now occupied,
-        // but with no replenish there is nothing to create.
-        harness.currentDesktop = { id: "desktop-2", x11DesktopNumber: 2 };
-        const trailing = { id: "desktop-2", x11DesktopNumber: 2 };
+        // A window arrives on the owned trailing empty desktop-3 by any
+        // means (here, an external window-added event, not through Meta+0 or
+        // Meta+Shift+0): it is now occupied, so the next cleanup dispatch
+        // appends exactly one replacement trailing empty desktop-4.
+        // desktop-1 stays present (the harness's per-output current
+        // desktop), so it is never removed.
+        const trailing = { id: "desktop-3", x11DesktopNumber: 3 };
         const incoming = window({ desktops: [trailing] });
         harness.windows = [...(harness.windows as unknown[]), incoming];
         harness.emitAdded(incoming);
-        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.createDesktopCalls.length, 3);
         let settled = 0;
         while (harness.yields.length > 0 && settled < 10) {
             harness.flushNextYield();
             settled += 1;
         }
-        assert.equal(harness.createDesktopCalls.length, 1);
+        assert.equal(harness.createDesktopCalls.length, 3);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
-            "desktop-2",
+            "desktop-3",
+            "desktop-4",
         ]);
     });
 
     it("reconciliation is idempotent under repeated triggers", () => {
         const { harness } = setup();
         ownTrailingEmpty(harness);
-        assert.equal(harness.createDesktopCalls.length, 1);
-        // The owned empty desktop-2 is empty and invisible with more than one
-        // global desktop present, so the first reconciliation removes it; it
-        // stays removed on repeat, with no duplicate creation or removal.
-        for (let index = 0; index < 4; index += 1) {
-            harness.emitDesktopsChanged();
-        }
-        assert.equal(harness.createDesktopCalls.length, 1);
-        assert.equal(harness.removedDesktops.length, 1);
-        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
-            "desktop-1",
-        ]);
-        // Meta+Shift+0 always creates a new desktop and moves the window into
-        // it; repeated reconciliation afterward stays stable.
-        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
-        assert.equal(harness.createDesktopCalls.length, 2);
-        for (let index = 0; index < 4; index += 1) {
-            harness.emitDesktopsChanged();
-        }
         assert.equal(harness.createDesktopCalls.length, 2);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
             "desktop-3",
+        ]);
+        // The owned trailing empty desktop-3 is protected (Q-Domain):
+        // repeated cleanup dispatches against this unchanged state are a pure
+        // no-op, no net creates or removes (spec anti-oscillation guarantee).
+        const creates0 = harness.createDesktopCalls.length;
+        const removals0 = harness.removedDesktops.length;
+        for (let index = 0; index < 4; index += 1) {
+            harness.emitDesktopsChanged();
+        }
+        assert.equal(harness.createDesktopCalls.length, creates0);
+        assert.equal(harness.removedDesktops.length, removals0);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+        ]);
+        // Meta+Shift+0 now reuses the existing trailing empty desktop-3
+        // rather than creating a new one; the window is still floating (from
+        // ownTrailingEmpty's float-toggle), so the move's cleanup pass runs
+        // synchronously. desktop-1 stays present (still the harness's
+        // per-output current desktop, so it is visible and protected), and
+        // the now-occupied trailing desktop-3 is replenished with desktop-4.
+        invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
+        assert.equal(harness.createDesktopCalls.length, creates0 + 1);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+            "desktop-4",
+        ]);
+        const creates = harness.createDesktopCalls.length;
+        const removals = harness.removedDesktops.length;
+        for (let index = 0; index < 4; index += 1) {
+            harness.emitDesktopsChanged();
+        }
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, removals);
+        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-1",
+            "desktop-3",
+            "desktop-4",
         ]);
     });
 
@@ -13414,7 +13573,7 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(controller.isEnabled, true);
     });
 
-    it("cleanup never deletes a current or visible desktop, but does remove pre-existing empty invisible ones", () => {
+    it("cleanup never deletes a current or visible desktop, but does remove a non-trailing empty invisible one", () => {
         const { harness, focused } = setup();
         const origin = focused.tile as unknown as TestTile | null;
         if (origin !== null) {
@@ -13424,7 +13583,6 @@ describe("TileController dynamic virtual desktops", () => {
                 return true;
             };
         }
-        harness.screensList = [OUTPUT, { ...OUTPUT, name: "screen-2" }];
         harness.desktopsList = [
             { id: "desktop-1", x11DesktopNumber: 1 },
             { id: "desktop-2", x11DesktopNumber: 2 },
@@ -13433,42 +13591,37 @@ describe("TileController dynamic virtual desktops", () => {
         // The harness generates monotonic ids from here so the first create is
         // desktop-4, never colliding with the pre-existing desktops.
         harness.nextDesktopNumber = 3;
-        // Shift+0 always creates a new desktop (desktop-4, no replenish) and
-        // moves the floating window into it; desktop-2 and desktop-3 are
-        // pre-existing and never owned.
+        // Shift+0 reuses the pre-existing trailing empty desktop-3 (no
+        // create): it is the last-positioned desktop in the output's local
+        // domain and is currently empty.
         invokeShortcut(harness, "plasma-auto-tiler-float-toggle");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
         assert.equal(harness.createDesktopCalls.length, 1);
-        // desktop-4 (owned) becomes empty again but is current and visible on
-        // every output: it must not be removed.
-        focused.desktops = [DESKTOP];
-        harness.currentDesktop = { id: "desktop-4", x11DesktopNumber: 4 };
-        harness.currentDesktopValue = { id: "desktop-4", x11DesktopNumber: 4 };
-        harness.emitDesktopsChanged();
-        // Under the corrected rule ownership plays no role: the pre-existing,
-        // unowned, empty, invisible desktop-2 and desktop-3 are removed too;
-        // only the current/visible desktop-4 survives alongside desktop-1
-        // (occupied by the floated window).
+        assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), [
+            "desktop-3",
+        ]);
+        // desktop-1 stays present (still the harness's per-output current
+        // desktop, so it is visible and protected regardless of occupancy);
+        // desktop-2 is empty, invisible, and has no positional protection, so
+        // it is removed; desktop-3 is now occupied so its replacement
+        // desktop-4 is appended as the new trailing empty.
         assert.deepEqual(
             harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-2", "desktop-3"],
+            ["desktop-2"],
         );
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
+            "desktop-3",
             "desktop-4",
         ]);
-        // Once the user navigates away, desktop-4 is no longer visible and is
-        // removed too, since only the true last remaining global desktop is
-        // protected.
+        // Repeated dispatches against the settled state are a pure no-op:
+        // desktop-1 (visible) and desktop-4 (trailing) both stay protected.
         harness.removedDesktops.length = 0;
-        harness.currentDesktop = DESKTOP;
-        harness.currentDesktopValue = DESKTOP;
+        const creates = harness.createDesktopCalls.length;
         harness.emitDesktopsChanged();
-        assert.equal(harness.removedDesktops.length, 1);
-        assert.equal((harness.removedDesktops[0] as { id: string }).id, "desktop-4");
-        assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
-            "desktop-1",
-        ]);
+        harness.emitDesktopsChanged();
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.equal(harness.createDesktopCalls.length, creates);
     });
 });
 
@@ -14517,12 +14670,13 @@ describe("TileController workspace mode and per-output seams (Unit 04)", () => {
         assert.equal(countEvent(harness.logs, "workspace-output-key-unavailable"), 1);
     });
 
-    it("migrates startup state non-destructively: pre-existing desktops stay unowned, unremoved, and no trailing empty is auto-created", () => {
-        // Per-output-local reconciliation only rebuilds the mapping (no
-        // replenish, ever): the pre-existing set is adopted as logical
-        // entries with no owned desktop created. Pre-existing desktops are
-        // never marked owned and never removed, and repeated reconciliation
-        // creates nothing and removes nothing.
+    it("migrates startup state non-destructively: pre-existing desktops resolve into the session primary's list, and the trailing one is protected", () => {
+        // Per-output-local reconciliation rebuilds the mapping and enforces
+        // the trailing-empty invariant (Q-Domain): the pre-existing set is
+        // adopted as logical entries with no owned desktop created.
+        // Pre-existing desktops are never marked owned, and the
+        // structurally-last one is protected as the trailing empty even
+        // though it is invisible.
         const harness = new Harness();
         harness.desktopsList = [
             { id: "desktop-1", x11DesktopNumber: 1 },
@@ -14531,21 +14685,14 @@ describe("TileController workspace mode and per-output seams (Unit 04)", () => {
         harness.nextDesktopNumber = 2;
         const controller = new TileController(harness.environment());
         controller.start();
-        // desktop-2 is empty and invisible at startup (desktop-1 is current);
-        // with no reserved capacity or ownership requirement, the startup
-        // cleanup pass removes it and creates nothing.
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
-        assert.deepEqual(
-            harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
-            ["desktop-2"],
-        );
+        assert.deepEqual(harness.removedDesktops.map((desktop) => (desktop as { id: string }).id), []);
         assert.equal(harness.createDesktopCalls.length, 0);
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
+            "desktop-2",
         ]);
-        // Repeated reconciliation leaves the remaining set untouched (a
-        // single desktop is never removed) and creates nothing.
-        harness.removedDesktops.length = 0;
+        // Repeated reconciliation leaves the set untouched (idempotent).
         harness.emitDesktopsChanged();
         harness.emitDesktopsChanged();
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
@@ -14555,29 +14702,33 @@ describe("TileController workspace mode and per-output seams (Unit 04)", () => {
 
     it("desktop identity is id-based: a renamed/reordered wrapper keeps ownership", () => {
         const { harness, controller } = setup();
+        // ownTrailingEmpty settles to a single owned trailing empty
+        // desktop-3 (desktop-2 was created, occupied, replenished by
+        // desktop-3, then removed once vacated and invisible).
         ownTrailingEmpty(harness);
         harness.removedDesktops.length = 0;
         assert.deepEqual((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id), [
             "desktop-1",
-            "desktop-2",
+            "desktop-3",
         ]);
-        // Make desktop-2 current so cleanup cannot remove it, isolating
+        // Make desktop-3 current so cleanup cannot remove it, isolating
         // identity tracking from removal eligibility (ownership plays no
         // role in removal, but identity is still tracked by id).
-        harness.currentDesktop = { id: "desktop-2", x11DesktopNumber: 2 };
-        harness.currentDesktopValue = { id: "desktop-2", x11DesktopNumber: 2 };
+        harness.currentDesktop = { id: "desktop-3", x11DesktopNumber: 3 };
+        harness.currentDesktopValue = { id: "desktop-3", x11DesktopNumber: 3 };
         // Simulate a rename/reorder: a fresh wrapper for the owned desktop
         // (same id, new number) placed at a different position. Identity is
         // the id string, so ownership is still recognized after the
         // reconciliation rebuild.
         harness.desktopsList = [
-            { id: "desktop-2", x11DesktopNumber: 9 },
+            { id: "desktop-3", x11DesktopNumber: 9 },
             { id: "desktop-1", x11DesktopNumber: 1 },
         ];
+        const createsBefore = harness.createDesktopCalls.length;
         harness.emitDesktopsChanged();
         assert.equal(harness.removedDesktops.length, 0);
-        assert.equal(harness.createDesktopCalls.length, 1);
-        assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
+        assert.equal(harness.createDesktopCalls.length, createsBefore);
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-3"]);
     });
 
     it("preserves one-output logical behavior through the per-output migration", () => {
@@ -14730,10 +14881,14 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
     });
 
     it("keeps two-output local sets distinct and navigates only the active output's list", () => {
-        // Construct the exact spec case: output E locals [desktop-1,
-        // desktop-5], output L locals [desktop-2, desktop-3, desktop-4],
-        // where the same logical number is a distinct global desktop per
-        // output.
+        // Every default test window starts occupying desktop-1 (the shared
+        // test fixture default), so under the trailing-empty reuse model
+        // each Shift+0 below either reuses the target output's existing
+        // empty trailing desktop or creates one when none exists yet, and
+        // each move that vacates a domain's current trailing empty
+        // immediately replenishes it. wE's own move ends up reusing E's own
+        // still-empty desktop-3 (created by an earlier cross-output
+        // replenish) rather than creating a fifth desktop.
         const { harness, controller, wE, wL1, wL2, wL3 } = twoOutputSetup();
         for (const win of [wE, wL1, wL2, wL3]) {
             makeFloating(harness, win);
@@ -14743,15 +14898,15 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         moveToTrailing(harness, wL3);
         moveToTrailing(harness, wE);
         const [eIds, lIds] = twoLocalLists(controller);
-        assert.deepEqual([...eIds], ["desktop-1", "desktop-5"]);
-        assert.deepEqual([...lIds], ["desktop-2", "desktop-3", "desktop-4"]);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-3", "desktop-7"]);
+        assert.deepEqual([...lIds], ["desktop-2", "desktop-4", "desktop-5", "desktop-6"]);
         assert.equal(new Set([...eIds, ...lIds]).size, eIds.length + lIds.length);
 
         // Selection on E changes only E's current desktop.
         harness.active = wE;
         harness.currentDesktopByOutput.delete(OUTPUT_L);
         invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
-        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-5");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-3");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
         assert.equal(
             (harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1]?.output as {
@@ -14764,19 +14919,25 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         harness.active = wL1;
         harness.currentDesktopByOutput.delete(OUTPUT_E);
         invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
-        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-3");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-4");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_E), false);
     });
 
     it("reconciliation is stable across repeated triggers and creates or removes nothing extra", () => {
+        // Every default test window starts occupying desktop-1, so wE's move
+        // creates desktop-2 (occupied) and its replenishment desktop-3
+        // (E's trailing empty); L has no desktops yet, so the same cleanup
+        // dispatch also seeds its own initial trailing empty desktop-4
+        // (Q-Domain: one trailing empty per connected output). wL1's later
+        // move reuses desktop-4 and replenishes desktop-5 as L's trailing.
         const { harness, controller, wE, wL1 } = twoOutputSetup();
         makeFloating(harness, wE);
         makeFloating(harness, wL1);
         moveToTrailing(harness, wE);
         moveToTrailing(harness, wL1);
         let [eIds, lIds] = twoLocalLists(controller);
-        assert.deepEqual([...eIds], ["desktop-1", "desktop-2"]);
-        assert.deepEqual([...lIds], ["desktop-3"]);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...lIds], ["desktop-4", "desktop-5"]);
         const creates = harness.createDesktopCalls.length;
         const removals = harness.removedDesktops.length;
         harness.emitDesktopsChanged();
@@ -14784,17 +14945,22 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal(harness.createDesktopCalls.length, creates);
         assert.equal(harness.removedDesktops.length, removals);
         [eIds, lIds] = twoLocalLists(controller);
-        assert.deepEqual([...eIds], ["desktop-1", "desktop-2"]);
-        assert.deepEqual([...lIds], ["desktop-3"]);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...lIds], ["desktop-4", "desktop-5"]);
     });
 
-    it("Meta+Shift+0 always creates a new desktop on the active output's list and moves into it", () => {
+    it("Meta+Shift+0 creates a new desktop on the active output's list and moves into it, and cleanup seeds L's own trailing empty", () => {
+        // desktop-1 starts occupied by every default test window (wE, wL1,
+        // wL2, wL3), so E's domain has no reusable trailing empty and
+        // Shift+0 creates desktop-2, moves wE in, and the same cleanup
+        // dispatch replenishes desktop-3 as E's new trailing empty and seeds
+        // L's own initial trailing empty desktop-4 (Q-Domain: one trailing
+        // empty per connected output, maintained even for an output with no
+        // moves of its own yet).
         const { harness, controller, wE } = twoOutputSetup();
         makeFloating(harness, wE);
         harness.currentDesktopByOutput.clear();
         moveToTrailing(harness, wE);
-        // The destination is a brand-new desktop appended to E's local list
-        // (never a reuse), and the window moves into it.
         assert.deepEqual((wE.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-2"]);
         assert.equal((harness.currentDesktopByOutput.get(OUTPUT_E) as { id: string }).id, "desktop-2");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_L), false);
@@ -14802,8 +14968,8 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
             assert.equal(write.output, OUTPUT_E);
         }
         const [eIds, lIds] = twoLocalLists(controller);
-        assert.deepEqual([...eIds], ["desktop-1", "desktop-2"]);
-        assert.deepEqual([...lIds], []);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...lIds], ["desktop-4"]);
         assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
         assert.equal(
             harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
@@ -14852,44 +15018,101 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         makeFloating(harness, wL1);
         moveToTrailing(harness, wE);
         moveToTrailing(harness, wL1);
-        // Protect desktop-2 (E's owned desktop) as E's own distinct current
+        // Under the trailing-empty reuse model wE's move replenishes E's
+        // list to [desktop-1, desktop-2, desktop-3] (desktop-2 occupied by
+        // wE, desktop-3 the fresh trailing empty) and wL1's move replenishes
+        // L's list to [desktop-4, desktop-5]. Protect desktop-2 (E's owned,
+        // occupied, non-trailing desktop) as E's own distinct current
         // desktop so it survives while E stays connected, then vacate it
         // externally (as if the window moved without going through the
-        // controller) so it is empty but still shown current on E.
+        // controller) so it is empty but still shown current on E. L's own
+        // real current desktop (desktop-4, where wL1 actually sits) is
+        // preserved unchanged through the override so nothing artificially
+        // protects an unrelated desktop.
+        const survivorRealCurrent = harness.currentDesktopByOutput.get(OUTPUT_L);
         harness.currentDesktopForOutputOverride = (output) =>
             output === OUTPUT_E
                 ? { id: "desktop-2", x11DesktopNumber: 2 }
-                : { id: "desktop-3", x11DesktopNumber: 3 };
-        harness.currentDesktopValue = { id: "desktop-3", x11DesktopNumber: 3 };
+                : (survivorRealCurrent as { id: string; x11DesktopNumber: number });
+        harness.currentDesktopValue = survivorRealCurrent as { id: string; x11DesktopNumber: number };
         wE.desktops = [DESKTOP_1];
         const survivorCurrent = harness.currentDesktopByOutput.get(OUTPUT_L);
         const [, survivorList] = twoLocalLists(controller);
         harness.removedDesktops.length = 0;
         // Disconnect E: its still-empty owned desktop-2 is no longer visible
-        // (E is dropped from screens()) and becomes a cleanup candidate; L's
-        // mapping and current desktop are unchanged and the pre-existing
+        // (E is dropped from screens()) and becomes a cleanup candidate; E's
+        // trailing desktop-3 is also orphaned (its domain is dropped from
+        // the mapping) but stays invisible-empty too, so both are removed;
+        // L's mapping and current desktop are unchanged and the pre-existing
         // desktop-1 is never removed.
         harness.screensList = [OUTPUT_L];
         harness.screensChanged?.();
         assert.deepEqual(
-            harness.removedDesktops.map((entry) => (entry as { id: string }).id),
-            ["desktop-2"],
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
+            ["desktop-2", "desktop-3"],
         );
         const after = controller.localWorkspaceSnapshot();
         const afterLists = Object.values(after);
         assert.deepEqual(afterLists[0] ?? [], survivorList);
         assert.equal(harness.currentDesktopByOutput.get(OUTPUT_L), survivorCurrent);
         // Replug the identical tuple: matched by first-seen order, it gets its
-        // key back. With no replenish, nothing is auto-created; the
-        // pre-existing, unassigned desktop-1 resolves back to E (the session
-        // primary).
+        // key back. With no replenish beyond the trailing-empty invariant,
+        // the pre-existing, unassigned desktop-1 resolves back to E (the
+        // session primary), then E's cleanup dispatch replenishes its own
+        // trailing empty since desktop-1 is occupied (by wL2/wL3, never
+        // moved); L is untouched.
         harness.screensList = [OUTPUT_L, OUTPUT_E];
         harness.screensChanged?.();
         assert.equal(controller.outputKeyFor(OUTPUT_E), "output-0");
         assert.equal(controller.outputKeyFor(OUTPUT_L), "output-1");
         const replug = controller.localWorkspaceSnapshot();
-        assert.deepEqual(Object.values(replug).map((list) => [...list]).sort(), [["desktop-1"], ["desktop-3"]]);
-        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
+        assert.deepEqual(
+            Object.values(replug).map((list) => [...list]).sort(),
+            [["desktop-1", "desktop-6"], ["desktop-4", "desktop-5"]],
+        );
+        assert.deepEqual(
+            [...controller.ownedDesktopIdSnapshot()].sort(),
+            ["desktop-4", "desktop-5", "desktop-6"],
+        );
+    });
+
+    it("removes a non-owned pre-existing desktop left orphaned after its primary output disconnects", () => {
+        // desktop-1 and desktop-2 both pre-exist the controller (never
+        // plugin-created, so never in ownedDesktopIds) and both resolve into
+        // E's list (session primary); neither holds any window. currentDesktop
+        // is null through startup so visibility is unreadable and the startup
+        // cleanup dispatch defers (no create/replenish), matching
+        // twoOutputSetup's own pattern.
+        const harness = new Harness();
+        harness.screensList = [OUTPUT_E, OUTPUT_L];
+        harness.desktopsList = [DESKTOP_1, DESKTOP_2];
+        harness.nextDesktopNumber = 2;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.windows = [];
+        harness.active = null;
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const [eIds] = twoLocalLists(controller);
+        assert.deepEqual([...eIds], ["desktop-1", "desktop-2"]);
+        assert.deepEqual([...controller.ownedDesktopIdSnapshot()], []);
+        // Make current-desktop state readable (desktop-2 current on every
+        // output), then disconnect E (the primary): its whole local list,
+        // including the non-owned desktop-1, is dropped from the mapping
+        // (rebuildLocalMapping). L, the sole remaining connected output,
+        // reports desktop-2 current (matching the global current), so
+        // desktop-1 is empty and invisible on every connected output and
+        // must be removed even though it was never in ownedDesktopIds - the
+        // structural, ownership-independent sweep this fix adds.
+        harness.currentDesktop = DESKTOP_2;
+        harness.currentDesktopValue = DESKTOP_2;
+        harness.removedDesktops.length = 0;
+        harness.screensList = [OUTPUT_L];
+        harness.screensChanged?.();
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id),
+            ["desktop-1"],
+        );
     });
 
     it("keeps per-output local lists id-keyed across a desktop rename/reorder", () => {
@@ -14900,13 +15123,18 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         moveToTrailing(harness, wL1);
         harness.removedDesktops.length = 0;
         const before = controller.localWorkspaceSnapshot();
-        // Simulate a rename/reorder: the same desktop ids with new numbers in a
-        // different global order. Identity is the id string, so the mapping is
-        // unchanged; both desktop-2 (wE) and desktop-3 (wL1) stay occupied, so
-        // no owned desktop is removed.
+        // Under the trailing-empty reuse model each move's cleanup dispatch
+        // replenishes a fresh trailing empty, so E ends up owning
+        // [desktop-1, desktop-2, desktop-3] and L owning [desktop-4,
+        // desktop-5] before the rename. Simulate a rename/reorder: the same
+        // desktop ids, all still present, with new numbers in a different
+        // global order. Identity is the id string, so the mapping is
+        // unchanged and no owned desktop is removed.
         harness.desktopsList = [
             { id: "desktop-3", x11DesktopNumber: 30 },
+            { id: "desktop-5", x11DesktopNumber: 50 },
             { id: "desktop-1", x11DesktopNumber: 1 },
+            { id: "desktop-4", x11DesktopNumber: 40 },
             { id: "desktop-2", x11DesktopNumber: 20 },
         ];
         harness.emitDesktopsChanged();
@@ -14948,10 +15176,13 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
 
     it("selects the active screen's local target with no focused window (activeScreen = L)", () => {
         // Spec D common: with no focused window the active output is
-        // `workspace.activeScreen`. L owns locals [desktop-2, desktop-3,
-        // desktop-4], so Meta+2 selects L's local 2nd (desktop-3) through the
-        // per-output write only; E is never resolved positionally and stays
-        // unchanged.
+        // `workspace.activeScreen`. Under the trailing-empty reuse model
+        // each of L's three moves (wL1, wL2, wL3) occupies L's current
+        // trailing empty and the same cleanup dispatch replenishes a fresh
+        // one, leaving L owning locals [desktop-2, desktop-4, desktop-5,
+        // desktop-6], so Meta+2 selects L's local 2nd (desktop-4) through
+        // the per-output write only; E is never resolved positionally and
+        // stays unchanged.
         const { harness, wE, wL1, wL2, wL3 } = twoOutputSetup();
         for (const win of [wE, wL1, wL2, wL3]) {
             makeFloating(harness, win);
@@ -14964,10 +15195,10 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         harness.activeScreenValue = OUTPUT_L;
         harness.currentDesktopByOutput.delete(OUTPUT_E);
         invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
-        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-3");
+        assert.equal((harness.currentDesktopByOutput.get(OUTPUT_L) as { id: string }).id, "desktop-4");
         assert.equal(harness.currentDesktopByOutput.has(OUTPUT_E), false);
         const last = harness.currentDesktopForScreenWrites[harness.currentDesktopForScreenWrites.length - 1];
-        assert.equal((last?.desktop as { id: string }).id, "desktop-3");
+        assert.equal((last?.desktop as { id: string }).id, "desktop-4");
         assert.equal(last?.output, OUTPUT_L);
     });
 
@@ -15002,25 +15233,30 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-1"]);
         assert.equal(harness.removedDesktops.length, 0);
-        // Meta+0 again always creates a distinct new desktop rather than
-        // reusing the one just created and focused.
+        // Meta+0 again reuses the still-unoccupied trailing empty just
+        // created rather than creating a second one (Q-Domain: exactly one
+        // trailing empty per domain).
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
-        assert.equal(harness.createDesktopCalls.length, creates + 2);
-        assert.deepEqual([...controller.ownedDesktopIdSnapshot()].sort(), ["desktop-2", "desktop-3"]);
-        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-3");
+        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
+        assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
     });
 
-    it("occupying an owned empty desktop never creates a replacement (no replenish)", () => {
-        // With no replenish, occupying an owned empty desktop leaves the
-        // desktop set exactly as it is; nothing is created and L's list is
-        // unchanged.
+    it("occupying an owned empty desktop replenishes its trailing empty once, and repeated cleanup creates or removes nothing further", () => {
+        // Q-Domain: occupying E's trailing desktop-2 replenishes a fresh
+        // trailing empty desktop-3 synchronously as part of the same move
+        // (matching "reconciliation is stable" above); the same cleanup
+        // dispatch also seeds L's own initial trailing empty desktop-4,
+        // since L is a connected output with no desktops of its own yet.
+        // Repeated cleanup dispatches afterward are idempotent: nothing
+        // further is created or removed and both lists are unchanged.
         const { harness, controller, wE } = twoOutputSetup();
         makeFloating(harness, wE);
         harness.currentDesktopByOutput.clear();
         moveToTrailing(harness, wE);
         const [eBefore, lBefore] = twoLocalLists(controller);
-        assert.deepEqual([...eBefore], ["desktop-1", "desktop-2"]);
-        assert.deepEqual([...lBefore], []);
+        assert.deepEqual([...eBefore], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...lBefore], ["desktop-4"]);
         const creates = harness.createDesktopCalls.length;
         harness.emitDesktopsChanged();
         harness.emitDesktopsChanged();

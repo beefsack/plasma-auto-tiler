@@ -1842,6 +1842,32 @@
     }
     return dwindleOccupancyMatches(scope, leaves, population);
   }
+  function ensureTrailingEmptyDesktop(request) {
+    const { orderedIds, isEmpty, isVisible, removeDesktop, createDesktop } = request;
+    const lastId = orderedIds[orderedIds.length - 1];
+    const trailingEmptyId = lastId !== void 0 && isEmpty(lastId) ? lastId : null;
+    const removedIds = [];
+    for (const id of orderedIds) {
+      if (id === trailingEmptyId) {
+        continue;
+      }
+      if (!isEmpty(id) || isVisible(id)) {
+        continue;
+      }
+      if (removeDesktop(id)) {
+        removedIds.push(id);
+      }
+    }
+    const removed = new Set(removedIds);
+    const remainingIds = orderedIds.filter((id) => !removed.has(id));
+    const trailingId = remainingIds[remainingIds.length - 1];
+    const trailingSatisfied = trailingId !== void 0 && isEmpty(trailingId);
+    if (trailingSatisfied) {
+      return { removedIds, appendedId: null };
+    }
+    const appendedId = createDesktop();
+    return { removedIds, appendedId };
+  }
   var TileController = class {
     constructor(environment) {
       this.environment = environment;
@@ -6950,13 +6976,15 @@
       }
       this.synchronizeShared(current);
     }
-    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): always create a
-    // brand-new desktop and focus it, never reuse an existing one.
-    // per-output-local and global-unique act on the active output only; shared
-    // creates the shared desktop and synchronizes every connected output.
-    // While a drag, reconstruction, or unsettled move is live the whole
-    // invocation is queued through the existing settle queue and completed
-    // after the settle seam (spec F bounded drain).
+    // Meta+0 (spec C/D, `plasma-auto-tiler-workspace-0`): per-output-local
+    // reuses the active output's existing trailing empty when one exists
+    // (Q-Zero: a no-op when it is already the current desktop on that
+    // output), creating only when none exists. global-unique still always
+    // creates a brand-new desktop and focuses it, never reusing (unit-03,
+    // unchanged here); shared creates the shared desktop and synchronizes
+    // every connected output. While a drag, reconstruction, or unsettled move
+    // is live the whole invocation is queued through the existing settle
+    // queue and completed after the settle seam (spec F bounded drain).
     workspaceZero() {
       this.gate.run(() => {
         this.diagnostic("workspace-zero-invoked");
@@ -6998,13 +7026,36 @@
         this.diagnostic("workspace-zero-absent:output-key");
         return;
       }
-      let target;
       if (this.workspaceMode === "per-output-local") {
-        this.rebuildLocalMapping(desktops);
-        target = this.appendTrailingForOutput(output);
-      } else {
-        target = this.appendDesktopForGlobalUnique(output);
+        this.finishLocalWorkspaceZero(output, desktops);
+        return;
       }
+      const target = this.appendDesktopForGlobalUnique(output);
+      if (target === null) {
+        return;
+      }
+      this.focusTrailingEmpty(target, output);
+    }
+    // per-output-local Meta+0: rebuild the mapping, then reuse the output's
+    // structurally-identified trailing empty when one exists. Q-Zero: if it
+    // is already the current desktop on this output, the whole invocation is
+    // a no-op (no unbounded growth from repeated presses). Otherwise it is
+    // focused. Only when no trailing empty exists does this fall back to
+    // appendTrailingForOutput - the same creation primitive
+    // enforceLocalTrailingEmpties() uses, so there is exactly one append
+    // path per output domain.
+    finishLocalWorkspaceZero(output, desktops) {
+      this.rebuildLocalMapping(desktops);
+      const existing = this.resolveLocalTrailingEmpty(output);
+      if (existing !== null) {
+        if (this.isCurrentOnOutput(output, existing.id)) {
+          this.diagnostic("workspace-zero-no-op:already-there");
+          return;
+        }
+        this.focusTrailingEmpty(existing, output);
+        return;
+      }
+      const target = this.appendTrailingForOutput(output);
       if (target === null) {
         return;
       }
@@ -7092,6 +7143,7 @@
     // against current context, ensure the trailing empty exists, then move the
     // window into it. A window that is no longer movable cancels the request.
     finishMoveToTrailing(window) {
+      var _a;
       if (!this.isWindowMovableToTrailing(window)) {
         this.diagnostic("workspace-move-deferred-cancelled:stale");
         return;
@@ -7108,7 +7160,7 @@
           this.deferDesktopIntent(window);
           return;
         }
-        target = this.appendTrailingForOutput(scope.output);
+        target = (_a = this.resolveLocalTrailingEmpty(scope.output)) != null ? _a : this.appendTrailingForOutput(scope.output);
       } else if (this.workspaceMode === "global-unique") {
         if (this.workspaceMutationDeferred()) {
           this.deferDesktopIntent(window);
@@ -7201,6 +7253,7 @@
     // specific no-op; fullscreen is refused by the active-action guard.
     moveActiveToWorkspace(index) {
       this.gate.run(() => {
+        var _a;
         this.diagnostic(`workspace-move-invoked:${index}`);
         const activeNow = this.environment.activeWindow();
         if (isWindow(activeNow) && activeNow.fullScreen === true) {
@@ -7230,7 +7283,7 @@
               this.deferDesktopIntent(active);
               return;
             }
-            target = this.appendTrailingForOutput(scope.output);
+            target = (_a = this.resolveLocalTrailingEmpty(scope.output)) != null ? _a : this.appendTrailingForOutput(scope.output);
           } else if (this.workspaceMode === "global-unique") {
             if (this.workspaceMutationDeferred()) {
               this.deferDesktopIntent(active);
@@ -7461,15 +7514,19 @@
       this.diagnostic("workspace-active-screen-unavailable");
       return null;
     }
-    // Rebuild each mode's mapping from the live desktop list, then run
-    // cleanupEligibleDesktops(), the sole removal authority: it removes one
-    // empty, non-current, non-visible-on-another-output desktop per candidate,
-    // never the last global desktop (planDesktopCleanup's own floor). No
-    // trailing empty is created or replenished here - Meta+0/Meta+Shift+0 are
-    // the only paths that create a desktop, and they always create rather than
-    // reuse. Deferral keeps the list untouched while a drag, reconstruction, or
-    // unsettled move is live, and the reconciliation guard keeps create/remove
-    // re-entry inert.
+    // Rebuild each mode's mapping from the live desktop list, then enforce
+    // that mode's removal/replenish authority. per-output-local enforces the
+    // trailing-empty invariant (Q-Domain: one structurally-identified trailing
+    // empty per connected output) via enforceLocalTrailingEmpties(), which
+    // both removes eligible non-trailing empties and appends a replacement
+    // trailing empty in the same domain-scoped pass. global-unique and shared
+    // are unchanged: cleanupEligibleDesktops() removes one empty,
+    // non-current, non-visible-on-another-output desktop per candidate, never
+    // the last global desktop (planDesktopCleanup's own floor), and creates
+    // nothing - Meta+0/Meta+Shift+0 remain the only paths that create a
+    // desktop for those two modes. Deferral keeps the list untouched while a
+    // drag, reconstruction, or unsettled move is live, and the reconciliation
+    // guard keeps create/remove re-entry inert.
     cleanupDesktops() {
       if (!this.gate.isEnabled || this.reconcilingDesktops) {
         return;
@@ -7503,7 +7560,7 @@
           return;
         }
         this.reconcileLocalWorkspaces(desktops);
-        this.cleanupEligibleDesktops();
+        this.enforceLocalTrailingEmpties();
         return;
       }
       if (this.workspaceMode === "global-unique") {
@@ -7593,12 +7650,117 @@
     // order, which is stable within a session but not across a plug/replug
     // reorder (documented limitation, spec E collision).
     // Per-output-local reconciliation: rebuild the per-output mapping from the
-    // live desktop list. No creation, no removal, and no reserved trailing
-    // empty here - Meta+0/Meta+Shift+0 always create rather than reuse, and
-    // cleanupEligibleDesktops (run unconditionally right after by the caller)
-    // is the sole removal authority.
+    // live desktop list. No creation or removal here - the mapping rebuild is
+    // read-only; enforceLocalTrailingEmpties() (run unconditionally right
+    // after by the caller) is the sole removal and trailing-replenish
+    // authority.
     reconcileLocalWorkspaces(desktops) {
       this.rebuildLocalMapping(desktops);
+    }
+    // Enforce the trailing-empty invariant (Q-Domain) for every connected
+    // output's local domain in one cleanupDesktops pass. Each output's ordered
+    // local list is its own domain; the trailing empty is identified
+    // structurally by the shared ensureTrailingEmptyDesktop helper from a copy
+    // of that domain's live list (never cached across dispatches, never an
+    // identity/ownership Set). Removal reuses the existing
+    // removeOwnedEmptyDesktop primitive (identical eligibility to the
+    // ownership-independent cleanup rule, minus the structurally-protected
+    // trailing entry); creation reuses appendDesktopForOutputKey, the same
+    // primitive Meta+0/Meta+Shift+0 fall back to when no trailing empty
+    // exists, so there is exactly one append code path per output domain. A
+    // domain whose last entry is already empty is untouched (idempotent); a
+    // domain with no desktops at all (a freshly connected output) gets its
+    // first owned trailing empty here rather than waiting for a keyboard
+    // shortcut.
+    enforceLocalTrailingEmpties() {
+      var _a, _b;
+      const visible = this.visibleDesktopIds();
+      if (visible === null) {
+        this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+        return;
+      }
+      const occupied = this.occupiedDesktopIds();
+      if (occupied === null) {
+        this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
+        return;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return;
+      }
+      this.reconcilingDesktops = true;
+      try {
+        for (const key of this.connectedOutputKeys()) {
+          const orderedIds = [...(_a = this.localWorkspaces.get(key)) != null ? _a : []];
+          ensureTrailingEmptyDesktop({
+            orderedIds,
+            isEmpty: (id) => !occupied.has(id),
+            isVisible: (id) => visible.has(id),
+            removeDesktop: (id) => this.removeOwnedEmptyDesktop(id, desktops, visible),
+            createDesktop: () => {
+              var _a2, _b2;
+              return (_b2 = (_a2 = this.appendDesktopForOutputKey(key)) == null ? void 0 : _a2.id) != null ? _b2 : null;
+            }
+          });
+        }
+        const assigned = /* @__PURE__ */ new Set();
+        for (const ids of this.localWorkspaces.values()) {
+          for (const id of ids) {
+            assigned.add(id);
+          }
+        }
+        const remaining = (_b = this.liveDesktops()) != null ? _b : [];
+        for (const desktop of remaining) {
+          const id = desktop.id;
+          if (assigned.has(id) || occupied.has(id) || visible.has(id)) {
+            continue;
+          }
+          this.removeOwnedEmptyDesktop(id, remaining, visible);
+        }
+      } finally {
+        this.reconcilingDesktops = false;
+      }
+    }
+    // Structurally identify a connected output's current trailing empty, if
+    // any: the desktop at the last position of its local list, only when it
+    // is currently empty. Recomputed fresh on every call from the live
+    // occupancy snapshot and the current local list - never cached, matching
+    // enforceLocalTrailingEmpties(). Returns null when the output has no
+    // local list yet, its last entry is occupied, or occupancy/desktop state
+    // is unreadable; callers treat null as "no trailing empty to reuse".
+    resolveLocalTrailingEmpty(output) {
+      var _a, _b;
+      const key = this.outputKeys.keyFor(output);
+      if (key === void 0) {
+        return null;
+      }
+      const list = (_a = this.localWorkspaces.get(key)) != null ? _a : [];
+      const lastId = list[list.length - 1];
+      if (lastId === void 0) {
+        return null;
+      }
+      const occupied = this.occupiedDesktopIds();
+      if (occupied === null || occupied.has(lastId)) {
+        return null;
+      }
+      const desktops = this.liveDesktops();
+      if (desktops === null) {
+        return null;
+      }
+      return (_b = desktops.find((desktop) => desktop.id === lastId)) != null ? _b : null;
+    }
+    // Whether the given output's current desktop (per-output current, not the
+    // global current) is already the given id (Q-Zero: Meta+0 is a no-op on
+    // an output already showing its trailing empty).
+    isCurrentOnOutput(output, id) {
+      let current;
+      try {
+        current = this.environment.currentDesktopForOutput(output);
+      } catch (error) {
+        void error;
+        return false;
+      }
+      return isVirtualDesktop(current) && current.id === id;
     }
     // Read-only rebuild of the per-output-local mapping from the current live
     // screens/desktops. Never creates or removes a desktop, so navigation and
