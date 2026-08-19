@@ -378,6 +378,38 @@ when present, and (migration cleanup) also deletes any legacy
 never use D-Bus. See `docs/live-kwin-testing.md` for the full
 session-boundary contract.
 
+### Building without Nix/devenv
+
+`scripts/dogfood-install.sh effect-install` normally runs inside `devenv
+shell --impure` so `cmake` can find KWin's dev package via a pinned Nix
+store path (`-DKWin_DIR=...`), matching the exact KWin build this repo's
+`devenv.nix` targets. `kwin/native-effect/CMakeLists.txt` itself only needs
+a plain `find_package(KWin REQUIRED)` - the pinned override is layered on
+top by the install script and used only when that exact pinned path exists
+on disk; on any other host `cmake` falls through to this plain
+`find_package` resolution automatically, with no script change needed.
+
+To build the native effect on a non-Nix host, install your distribution's
+KWin development package first - typically `kwin` on Arch (headers and
+CMake config ship in the main package), `kwin-devel` on Fedora, `kwin-dev`
+on Debian/Ubuntu, or a Wayland-variant `kwin6-*-devel`-style package on
+openSUSE (verify the exact package name and version for your distribution;
+these are not directly verified against current distro package pages).
+Then run `cmake` directly, with no `-DKWin_DIR` override:
+
+```sh
+cmake -S kwin/native-effect -B kwin/native-effect/build -DBUILD_TESTING=OFF
+cmake --build kwin/native-effect/build
+```
+
+**KWin C++ effects have no upstream API/ABI compatibility guarantee** - this
+is current KWin maintainer policy, not a historical artifact. A rebuild is
+required after essentially every KWin/Plasma release, on every host, Nix or
+not. No prebuilt binary of this effect is portable across distributions or
+KWin versions; always rebuild against the KWin development headers actually
+installed on the target host, and expect to rebuild again after your next
+Plasma upgrade.
+
 ### Eyeball check
 
 After dogfooding, confirm by eye:
