@@ -65,20 +65,27 @@ Git history and archived change records.
   project, and removing the superseded `~/.config/environment.d` entry of the
   same name; KWin `/Effects` D-Bus `loadEffect`/`unloadEffect` and read-only
   queries; KWin script install, enable, disable, and `reconfigure` via
-  `kpackagetool6`, `kwriteconfig6`, and `qdbus6`; KWin `/Scripting` `loadScript`
-  and `unloadScript` for bounded interactive test runs; and journal and status
-  reads. Every session boundary - logout, login, or starting a session - is
-  user-run only. Prohibited without separate approval: `sudo`, system plugin
-  paths, editing or deleting any Home Manager-managed file, editing any
-  `~/.config/environment.d` entry other than our own, pinning Home Manager
-  generation paths, and broad cleanup of unrelated state.
+  `kpackagetool6`, `kwriteconfig6`, and `qdbus6`; writing this project's own
+  `[Plugins]` enablement keys in `~/.config/kwinrc` for both the KWin script and
+  the native effect, which is the upstream-standard KDE mechanism for
+  persistently enabling an effect and is reversible by removing the key; KWin
+  `/Scripting` `loadScript` and `unloadScript` for bounded interactive test
+  runs; and journal and status reads. Every session boundary - logout, login, or
+  starting a session - is user-run only. Prohibited without separate approval:
+  `sudo`, system plugin paths, editing or deleting any Home Manager-managed
+  file, editing any `~/.config/environment.d` entry other than our own, pinning
+  Home Manager generation paths, and broad cleanup of unrelated state.
 - **Consequences:** Discovering the native effect requires exactly one user-run
   session boundary after the session environment script is first created;
   thereafter rebuild-and-reload is live over D-Bus and needs no boundary.
   Restoration is normal-path only: exact removal of what we created. Crash and
   power-loss rollback, hostile same-user races, and filesystem corruption remain
   out of scope. Host acceptance is a short eyeball checklist, not an automated
-  evidence framework.
+  evidence framework. This decision was written to govern live validation and
+  dogfooding. It is now also the governing authorization for the project's
+  ordinary installation path. If installation grows further host-facing steps,
+  this decision should be split into separate validation and installation
+  decisions rather than extended again by analogy.
 - **Reconsider when:** The user withdraws standing authorization, or a required
   operation falls outside the reversible user-local set.
 
