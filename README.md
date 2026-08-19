@@ -90,6 +90,41 @@ devenv dependencies. The script detects each required tool at runtime per
 command and fails with an error naming a missing tool and its `*_BIN` override
 if it is missing or not executable.
 
+### One-command install
+
+The primary path for a fresh checkout is `setup`, which composes exactly the
+`install`, `enable`, `effect-install`, and `effect-reload` commands documented
+individually below into one invocation; the granular commands remain
+available below for finer control or diagnosis.
+
+```sh
+devenv shell --impure -- bash scripts/dogfood-install.sh setup
+```
+
+`setup` always runs `install` then `enable` first; a real failure in either
+aborts the whole command with a non-zero exit, exactly as running that
+command standalone would. It then attempts `effect-install` and
+`effect-reload`. If a native build prerequisite (for example `cmake`) is
+unavailable - for example when not run inside `devenv shell --impure` - it
+skips the native-effect half, reports that plainly, and still completes
+successfully (exit 0) with the KWin script installed and enabled. `setup`
+always ends with a summary naming every stage's outcome and exactly what
+remains manual.
+
+Two things always remain manual, regardless of how many times `setup` is
+run:
+
+1. The first time `effect-install` creates its
+   `~/.config/plasma-workspace/env/` script, the native effect is staged but
+   not yet loadable: log out and back in once (or start a new session), then
+   run `setup` again (or just `effect-reload`) to load it for the first
+   time.
+2. After every later reboot or logout/login - not just the first - the
+   native effect's loaded state resets and `effect-reload` (or `setup`) must
+   be run again. This is a standing, permanent requirement, not a one-time
+   boundary; see [Native effect (dogfood)](#native-effect-dogfood) below for
+   why nothing auto-loads the effect.
+
 ### Install
 
 Builds the bundle and copies the package into
@@ -282,6 +317,17 @@ session), once, after the first `effect-install` creates its
 later rebuild and `effect-reload` is live over D-Bus with no further
 boundary.
 
+**This is only about the env-script delivery mechanism, not the effect's
+loaded state.** The effect's loaded state does not survive a reboot or
+logout/login at all, ever - not just the first time. `kwin/native-effect/
+metadata.json` sets `"EnabledByDefault": false`, no `kwinrc [Plugins]` key is
+ever written for this effect, and no autostart hook exists anywhere in the
+repo, so nothing auto-loads it at session start. `effect-reload` must be
+re-run by hand after **every** reboot or logout/login, not just the first
+one. This is unlike the KWin script above, which re-enables itself
+automatically every session via its `kwinrc` `[Plugins]` setting - no manual
+step is needed for it.
+
 ```sh
 devenv shell --impure -- bash scripts/dogfood-install.sh effect-install
 bash scripts/dogfood-install.sh effect-status
@@ -316,7 +362,9 @@ After dogfooding, confirm by eye:
 - `bash scripts/dogfood-install.sh status` reports installed and enabled,
   and windows on your session actually tile.
 - `bash scripts/dogfood-install.sh effect-status` reports the effect
-  supported and loaded (after the one-time logout/login).
+  supported and loaded (after the one-time logout/login). After any later
+  reboot or logout/login, `effect-status` reporting `[e]` not loaded is
+  expected until `effect-reload` (or `setup`) is re-run - not a bug.
 - The active window shows the border effect rendering.
 - After a code change, `effect-install` (rebuild) then `effect-reload`
   completes and the border reflects it, with no session boundary.
