@@ -997,3 +997,82 @@ speculation.
    output, including the `docs/changes/trailing-empty-workspace/` process
    artifacts alongside the code, per explicit instruction not to leave them
    untracked.
+
+## 2026-08-20 (unit-05, core deliverables accepted)
+
+- Role / unit: Lead / unit-05 (three `worker-anthropic` slices, attempt-01
+  each, no correction rounds)
+- Result: Verified own fresh baseline first: `HEAD` at `cb9b121`, working
+  tree clean except the three pre-excluded untracked paths, 827/827 tests
+  pass, typecheck clean on both tsconfigs, `scripts/dogfood-install.test.sh`
+  336/336. Read `spec.md` and `plan.md` in full for unit-05's declared
+  scope, then audited both declared describe blocks
+  ("TileController dynamic virtual desktops",
+  "TileController workspace mode and per-output seams (Unit 04)") directly:
+  found the spec's ~34 "always create, never reuse, no reserved capacity"
+  stale assertions were already corrected as fallout of units 02/03/03b/04/
+  07's own precondition-restoration fixes before this unit started - a scope
+  reconciliation finding, not new work; the only remaining "always creates"
+  test title found anywhere in the file
+  (`controller.test.ts:15364`, "Meta+0 always creates a new desktop on the
+  active output only...") sits in the per-output-local block, out of
+  unit-05's declared file scope, and is stale wording on an otherwise-
+  correct, spec-compliant assertion (create-only-when-absent) - left
+  untouched, reported rather than silently fixed. Dispatched three
+  `worker-anthropic` slices in series, each scoped to exactly one describe
+  block, each individually diff-inspected directly by the Lead afterward
+  (not the Worker's summary): (1) adversarial global-unique disconnect
+  ordering test (routed from unit-03b) in the "global-unique workspaces
+  (Unit 06)" block; (2) Q-MultiOutput non-confusability test in the
+  "per-output-local workspaces (Unit 05)" block; (3) mixed-dispatcher-
+  trigger-type oscillation test, one case per mode via the existing
+  mode-loop idiom, in the "TileController dynamic virtual desktops" block.
+  All three diffs confirmed pure additions (0 deletions, 212 insertions
+  total across all three, `git diff --stat` independently run after each),
+  confined to their declared single describe block, zero `ownedDesktopIds`
+  references, no production code (`kwin/src/controller.ts`) touched. Also
+  performed the state-space unreachability enumeration requested as this
+  unit's most important input (see `plan.md` Acceptance-Criterion Evidence
+  for the full write-up): classified existing fixtures into
+  fixture-literal-constructed-state versus grown-through-real-operations,
+  and found new, not-yet-covered reachability gaps (no 3+-simultaneous-
+  output scenario for `per-output-local`/`shared`, no disconnect-from-three
+  case anywhere, no replug test for `global-unique`/`shared`) - reported to
+  the Orchestrator as a scope question, not silently added to this unit's
+  own dispatch given the Lead's return threshold, and no equivalent
+  locatable code branch (unlike unit-07's guard) was found gating on those
+  conditions during this unit's own reads of `rebuildGlobalUniqueMapping`/
+  `SessionOutputKeys`/`enforceLocalTrailingEmpties`, so this is reported as
+  a coverage gap, not a confirmed defect.
+- Files / commit: `kwin/tests/controller.test.ts` (+212/-0 across three
+  additive hunks, one per describe block; no other production or test
+  region touched), `kwin/contents/code/main.js` confirmed byte-identical to
+  committed `HEAD` (test-only change, independently verified via
+  `git diff --stat -- kwin/contents/code/main.js` showing no diff after a
+  fresh `npm run build`), `docs/changes/trailing-empty-workspace/
+  {plan.md,log.md}` (this entry and the Progress/Acceptance-Criterion-
+  Evidence/Residual-Risks updates). Committed and pushed by this Lead per
+  the commit protocol - see commit hash below.
+- Verification (Lead's own, independent of each Worker's own reported
+  count): full build+esbuild+`node --test` -> 832 tests, 78 suites, 832
+  pass, 0 fail (827 baseline + 5 new: 1 adversarial, 1 Q-MultiOutput, 3
+  mixed-trigger oscillation cases). `npm --prefix kwin run typecheck` ->
+  clean, both tsconfigs.
+  `devenv shell --impure -- bash -c "cd scripts && bash
+  dogfood-install.test.sh"` -> 336/336, unchanged from baseline (no
+  install-path files touched this unit).
+- Notes: unit-05 marked partial (`[~]`) in Progress, not closed. The three
+  explicitly-dispatched-brief deliverables (adversarial ordering,
+  Q-MultiOutput, oscillation) are accepted with no correction round; the
+  unit is left open pending an Orchestrator decision on the newly
+  discovered 3+-output/replug reachability gaps (additional unit-05 slice,
+  a new follow-up unit, or accepted residual risk). Live-runtime oscillation
+  remains an unverified residual risk regardless of the new static
+  coverage - a concrete live-check proposal (three scenarios, journalctl-
+  monitored) is recorded in `plan.md` Residual Risks for the Orchestrator to
+  route through the user; no live host action was taken or attempted this
+  unit (all inherited baselines are stale per this session's own
+  instruction; a fresh baseline was never taken since no live testing was
+  performed). This Lead stint reached its return threshold (three
+  independently-accepted Worker slices) and returns `handover` after this
+  entry.

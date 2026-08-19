@@ -114,7 +114,15 @@ does not converge cleanly.
       815/815 pass, typecheck clean; attempt-01's dispatching Lead was
       cancelled mid-flight before returning any report - independently
       reconciled and re-verified by a successor Lead, see Attempt Accounting)
-- [ ] unit-05 Cross-mode regression sweep
+- [~] unit-05 Cross-mode regression sweep (core dispatched deliverables
+      accepted, attempt-01, no correction round, three worker-anthropic
+      slices each independently diff-inspected by the Lead: adversarial
+      global-unique disconnect ordering test, Q-MultiOutput non-confusability
+      test, mixed-trigger oscillation test per mode; 832/832 pass, typecheck
+      clean, dogfood-install 336/336 unchanged; marked partial, not closed -
+      see Residual Risks for newly discovered reachability gaps (3+-output
+      and replug coverage) not yet addressed and awaiting an Orchestrator
+      routing decision on whether they belong in this unit or a follow-up)
 - [ ] unit-06 Documentation correction
 - [x] unit-07 Fix trailing-empty-not-appended-on-occupation defect (accepted,
       attempt-02, no correction round; attempt-01 cancelled mid-flight with
@@ -412,14 +420,127 @@ scope is unaffected.
   tsconfigs - met, independently reproduced by the Lead including a
   from-scratch determinism check on `main.js` (diffed two independently
   triggered builds directly, not inferred from `git diff`).
-- Remaining acceptance criteria (cross-mode sweep, docs correction) are
-  unit-05 and unit-06 and remain unmet pending those units.
+- Cross-mode regression sweep (unit-05, core deliverables met): scope
+  reconciliation finding, not a new fix - the spec's ~34 "always create,
+  never reuse" stale assertions in the "TileController dynamic virtual
+  desktops" and "TileController workspace mode and per-output seams (Unit
+  04)" describe blocks were already corrected as fallout of units 02/03/03b/
+  04/07's own precondition-restoration fixes before this unit started; the
+  Lead independently confirmed this by reading all 45 `it()` titles plus
+  representative bodies in both blocks and grepping the full file for
+  `no reserved trailing capacity`/`always creat`/`never reuse`s - the only
+  remaining "always creates" title (`controller.test.ts:15364`, per-output-
+  local block, out of unit-05's own file scope) is stale wording on an
+  otherwise-correct assertion (E genuinely has no trailing empty yet in that
+  fixture, so create-only-when-absent is spec-compliant), not a regression;
+  left untouched as out of scope, reported here rather than silently fixed.
+  Q-MultiOutput coverage requirement (spec.md) - met by a new regression
+  test in the "TileController per-output-local workspaces (Unit 05)" block
+  (`controller.test.ts:15463`, Q-MultiOutput non-confusability: a mid-list
+  empty on output E is removed via a non-switch Q7 trigger without
+  disturbing E's own trailing empty or L's independent trailing empty).
+  Adversarial global-unique disconnect ordering (routed from unit-03b) - met
+  by a new regression test in the "TileController global-unique workspaces
+  (Unit 06)" block (`controller.test.ts:16023`, literal-last-wins: pins the
+  accepted behavior that a disconnected output's higher-numbered former
+  trailing empty can be structurally protected over the survivor's own
+  lower-numbered true trailing empty, and confirms self-heal on the next
+  occupation - not a fix, deliberate coverage of an accepted property).
+  Oscillation coverage (primary technical risk) - partially met by a new
+  mixed-dispatcher-trigger-type regression test per mode in the "TileController
+  dynamic virtual desktops" block (`controller.test.ts:13719`), asserting
+  zero churn at every intermediate step of an interleaved trigger burst
+  around a real occupation event, not just before/after a burst of identical
+  triggers (the prior tests' shape); this closes the static half of the
+  oscillation risk but a live-runtime residual remains - see Residual Risks.
+  All three additions were dispatched as separate `worker-anthropic` slices,
+  each individually diff-inspected directly by the Lead (not the Worker's
+  summary): confirmed pure additive diffs (0 deletions across all three,
+  212 insertions total), confined to their declared single describe block
+  each, zero `ownedDesktopIds` references, no production code touched.
+  Lead independently reran the full build+esbuild+`node --test` suite (832
+  tests, 78 suites, 832 pass, 0 fail - exact match to each Worker's own
+  reported running total) and `npm run typecheck` (clean, both tsconfigs),
+  and reran `scripts/dogfood-install.test.sh` (336/336, unchanged from
+  baseline). `main.js` confirmed byte-identical to committed `HEAD` (test-
+  only diff, no source change, `git diff --stat -- kwin/contents/code/
+  main.js` empty). State-space unreachability enumeration (unit-07's lesson,
+  the most important input for this unit) performed and reported to the
+  Orchestrator via chat, not reproduced here (record-keeping stays out of
+  raw survey content per context discipline); headline finding: entry-state
+  assumptions baked into the existing suite fall into two classes -
+  fixture-literal multi-desktop starts (`configureSwitchCleanupScenario`,
+  `globalUniqueSetup`, `twoOutputSetup`'s initial pre-split desktop-1) that
+  construct a desktop list directly and never exercise the real incremental
+  growth path, versus states reached through genuine operations (`setup()`/
+  `modeCleanupSetup()` post-unit-07, `ownTrailingEmpty()`, `moveToTrailing()`
+  chains) - and the current suite has newly identified, not-yet-covered
+  gaps in the second class: no 3-or-more-simultaneously-connected-output
+  scenario exists for `per-output-local` or `shared` (global-unique has
+  exactly one, a connect-only case, `controller.test.ts:16002`); no
+  disconnect-from-three-outputs-to-two case exists in any mode; no output
+  replug (disconnect then reconnect the *same* physical output tuple, not a
+  new one) test exists for `global-unique` or `shared` (only `per-output-
+  local` has one, `controller.test.ts`'s "marks a removed output's owned
+  empties..." test); no rapid disconnect/reconnect flapping interleaved with
+  occupation events is tested anywhere. These are reachability gaps in test
+  coverage, not confirmed production defects - the Lead found no evidence
+  they hide an actual bug (unlike unit-07's guard, which was an explicit,
+  locatable code branch; no equivalent branch was found gating on output
+  count >= 3 or on replug-vs-fresh-connect during this unit's read of
+  `rebuildGlobalUniqueMapping`/`SessionOutputKeys`/`enforceLocalTrailingEmpties`)
+  - but per the explicit instruction to report rather than silently close,
+  they are recorded here for an Orchestrator routing decision (additional
+  unit-05 slice vs. a new follow-up unit vs. accepted as residual risk) and
+  not further pursued in this stint, which is at its return threshold.
+- Remaining acceptance criteria (docs correction) are unit-06 and remain
+  unmet pending that unit. unit-05's originally-declared file scope (the two
+  describe blocks) is now fully audited and clean; the newly-discovered
+  reachability gaps above were outside that declared scope and are a scope
+  question for the Orchestrator, not an unmet acceptance criterion of the
+  work as dispatched.
 
 ## Residual Risks
 
 - Oscillation risk under Q7's broadened dispatch triggers is the primary
   technical risk of this change; unit-01's stability tests are the main
   mitigation and should be reviewed closely before unit-02 begins.
+- (2026-08-20, unit-05) Oscillation remains the primary UNVERIFIED technical
+  risk at the live-runtime level. Static coverage is now strong: every mode
+  has same-trigger-repeated idempotency tests (units 02-04) plus this unit's
+  new mixed-trigger-type interleaving tests (`controller.test.ts:13719`),
+  and all pass. What static `node --test` coverage structurally cannot
+  verify: real KWin/Plasma dispatch timing, signal re-entrancy, and
+  QML/D-Bus event coalescing behavior that a mocked `Harness` cannot
+  reproduce - i.e., whether the anti-oscillation design holds under actual
+  KWin's own event loop, not a synchronous test-harness stand-in. This
+  residual gap can only be closed by live verification, not another static
+  test. The Lead did not perform any live host mutation in this unit (per
+  brief, and per this session's own instruction that all inherited
+  baselines are stale after a user reboot - no fresh baseline was taken
+  during this stint). Proposed concrete live-check for the Orchestrator to
+  route through the user, after first reading `docs/live-kwin-testing.md`
+  in full and taking a fresh baseline (not this Lead's stale-inherited one):
+  install/reload the built plugin (`scripts/dogfood-install.sh
+  effect-install` once, then `scripts/dogfood-install.sh effect-reload`
+  after each rebuild, per `docs/live-kwin-testing.md:58-71`), then with the
+  KWin script's own diagnostic log stream open (journalctl filtered to the
+  `kwin_wayland` unit/syslog identifier per `docs/live-kwin-testing.md:353-
+  361`, watching for `workspace-cleanup-removed`/desktop-create diagnostic
+  events), exercise in each of the three `workspaceMode`s: (1) rapid
+  repeated Meta+0/Meta+Shift+0 presses with no window movement between
+  them - expect zero extra creates in the log; (2) plug/unplug a second
+  monitor (or KWin's virtual-output equivalent) several times in quick
+  succession while windows are being moved between desktops - expect no
+  create/remove churn beyond what each individual state change legitimately
+  requires; (3) drag a window onto the trailing empty and immediately
+  trigger an unrelated event (switch virtual desktop via the pager, or plug
+  a monitor) before the drag's own settle - expect exactly one replacement
+  desktop, never zero or two. A net desktop count that grows or shrinks
+  beyond what each step's own legitimate action requires, observed in the
+  live log, would falsify the anti-oscillation design and require
+  escalation per the plan's Constraints (no debounce/timer patch permitted
+  as a fix).
 - The shared-helper approach (one implementation instead of three) is a
   deliberate deviation from strictly mirroring the pre-Q6 per-mode
   duplication; if review finds mode-specific semantics do not fit a single

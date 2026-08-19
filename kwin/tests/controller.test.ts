@@ -13714,6 +13714,74 @@ describe("TileController dynamic virtual desktops", () => {
         assert.equal(harness.removedDesktops.length, 0);
         assert.equal(harness.createDesktopCalls.length, creates);
     });
+
+    for (const mode of ["per-output-local", "global-unique", "shared"] as const) {
+        it(`stays stable (no oscillation) under interleaved, mixed dispatcher trigger types around a real occupation, in ${mode} mode`, () => {
+            const { harness, controller } = modeCleanupSetup(mode);
+            const domainSnapshot = (): readonly string[] => {
+                if (mode === "per-output-local") {
+                    return Object.values(controller.localWorkspaceSnapshot())[0] ?? [];
+                }
+                if (mode === "global-unique") {
+                    return Object.values(controller.globalUniqueAssignmentSnapshot())[0] ?? [];
+                }
+                return controller.sharedWorkspaceSnapshot();
+            };
+            // start()'s own fix already appended the sole occupied desktop's
+            // replacement trailing empty (desktop-2); this is the
+            // precondition every step below must not disturb without cause.
+            assert.equal(harness.createDesktopCalls.length, 1);
+
+            // A burst of at least 4 different dispatcher trigger types,
+            // fired back-to-back with nothing else changed, must be a pure
+            // no-op after every single step (not only before/after the
+            // burst as a whole): no caching across dispatches means each
+            // trigger independently recomputes and finds nothing eligible.
+            const assertNoChurn = (label: string, fire: () => void): void => {
+                const createsBefore = harness.createDesktopCalls.length;
+                const removalsBefore = harness.removedDesktops.length;
+                fire();
+                assert.equal(harness.createDesktopCalls.length, createsBefore, `${label}: unexpected create`);
+                assert.equal(harness.removedDesktops.length, removalsBefore, `${label}: unexpected remove`);
+            };
+            assertNoChurn("screensChanged", () => harness.screensChanged?.());
+            assertNoChurn("desktopsChanged", () => harness.emitDesktopsChanged());
+            assertNoChurn("currentDesktopChanged", () =>
+                harness.emitCurrentDesktopChanged(DESKTOP, DESKTOP, OUTPUT),
+            );
+            assertNoChurn("windowAdded", () => harness.emitAdded(window()));
+            assertNoChurn("desktopsChanged (repeat)", () => harness.emitDesktopsChanged());
+            assert.deepEqual(domainSnapshot(), ["desktop-1", "desktop-2"]);
+
+            // Genuinely occupy the current trailing empty (desktop-2), then
+            // immediately fire a different, unrelated trigger type before
+            // any deliberate settle step. Exactly one new desktop must be
+            // appended overall: the occupation event itself performs the
+            // structural re-read and append synchronously (no debounce), so
+            // the very next unrelated trigger must find nothing further to
+            // do.
+            const trailingBeforeOccupation = harness.createDesktopCalls.length;
+            const trailing = { id: "desktop-2", x11DesktopNumber: 2 };
+            const incoming = window({ desktops: [trailing] });
+            harness.windows = [...(harness.windows as unknown[]), incoming];
+            harness.emitAdded(incoming);
+            harness.screensChanged?.();
+            assert.equal(harness.createDesktopCalls.length, trailingBeforeOccupation + 1);
+            assert.equal(harness.removedDesktops.length, 0);
+            assert.deepEqual(domainSnapshot(), ["desktop-1", "desktop-2", "desktop-3"]);
+
+            // A further burst of at least 3 more mixed-type triggers,
+            // post-settle, must produce zero further net creates or
+            // removes: full idempotency under arbitrary trigger mixing, not
+            // only repetition of the same trigger.
+            assertNoChurn("currentDesktopChanged (post-settle)", () =>
+                harness.emitCurrentDesktopChanged(DESKTOP, DESKTOP, OUTPUT),
+            );
+            assertNoChurn("windowAdded (post-settle)", () => harness.emitAdded(window()));
+            assertNoChurn("screensChanged (post-settle)", () => harness.screensChanged?.());
+            assert.deepEqual(domainSnapshot(), ["desktop-1", "desktop-2", "desktop-3"]);
+        });
+    }
 });
 
 describe("TileController per-workspace maximize", () => {
@@ -15391,6 +15459,73 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
         assert.equal(controller.isEnabled, true);
     });
+
+    it("removes E's mid-list empty without disturbing E's own trailing empty or L's independent trailing empty (Q-MultiOutput non-confusability)", () => {
+        // Build E: [desktop-1(occupied by wL2/wL3, never moved), desktop-2
+        // (occupied by wE), desktop-3(E's trailing empty)] and L: [desktop-4
+        // (occupied by wL1), desktop-5(L's trailing empty)], exactly matching
+        // "reconciliation is stable across repeated triggers" above.
+        const { harness, controller, wE, wL1 } = twoOutputSetup();
+        makeFloating(harness, wE);
+        makeFloating(harness, wL1);
+        moveToTrailing(harness, wE);
+        moveToTrailing(harness, wL1);
+        const [eBefore, lBefore] = twoLocalLists(controller);
+        assert.deepEqual([...eBefore], ["desktop-1", "desktop-2", "desktop-3"]);
+        assert.deepEqual([...lBefore], ["desktop-4", "desktop-5"]);
+
+        // Vacate wE from desktop-2 externally (as if moved outside the
+        // controller, mirroring "marks a removed output's owned empties..."
+        // above), leaving desktop-2 empty but mid-list on E's domain (not
+        // E's own trailing desktop-3), and make it invisible on every
+        // connected output by pointing each output's current desktop at its
+        // own domain's trailing empty (Q-Manual: a non-trailing empty stays
+        // cleanup-eligible only when empty and invisible everywhere).
+        wE.desktops = [];
+        harness.currentDesktopForOutputOverride = (output) =>
+            output === OUTPUT_E
+                ? { id: "desktop-3", x11DesktopNumber: 3 }
+                : { id: "desktop-5", x11DesktopNumber: 5 };
+        harness.currentDesktopValue = { id: "desktop-5", x11DesktopNumber: 5 };
+        harness.removedDesktops.length = 0;
+        const creates = harness.createDesktopCalls.length;
+
+        // Trigger cleanup via a non-switch dispatcher (Q7: cleanup fires on
+        // every dispatch trigger, not only a completed desktop switch) - an
+        // unrelated window add, never emitCurrentDesktopChanged.
+        const extra = window({ output: OUTPUT_L });
+        harness.windows = [...(harness.windows as TestWindow[]), extra];
+        harness.emitAdded(extra);
+
+        // Only E's mid-list empty (desktop-2) is removed: an ordinary
+        // non-trailing cleanup-eligible desktop. Nothing is created (nothing
+        // was occupied that needed replenishing).
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id),
+            ["desktop-2"],
+        );
+        assert.equal(harness.createDesktopCalls.length, creates);
+
+        // E's own trailing empty (desktop-3) and L's own trailing empty
+        // (desktop-5) both survive, structurally protected as the last
+        // entry of their own independent per-output domain - the exact
+        // Q-MultiOutput property: E's mid-list removal never touches L's
+        // domain, and the two protections never become adjacent/confusable.
+        const [eAfter, lAfter] = twoLocalLists(controller);
+        assert.deepEqual([...eAfter], ["desktop-1", "desktop-3"]);
+        assert.deepEqual([...lAfter], ["desktop-4", "desktop-5"]);
+
+        // A repeated non-switch dispatch afterward is idempotent: no further
+        // creates or removes, confirming no oscillation from the
+        // multi-output interaction.
+        harness.emitDesktopsChanged();
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, creates);
+        assert.equal(harness.removedDesktops.length, 1);
+        const [eFinal, lFinal] = twoLocalLists(controller);
+        assert.deepEqual([...eFinal], ["desktop-1", "desktop-3"]);
+        assert.deepEqual([...lFinal], ["desktop-4", "desktop-5"]);
+    });
 });
 
 describe("TileController global-unique workspaces (Unit 06)", () => {
@@ -15883,6 +16018,83 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         const snapshot = controller.globalUniqueAssignmentSnapshot();
         assert.equal(snapshot[keyN]?.length, 1);
         assert.equal(harness.createDesktopCalls[harness.createDesktopCalls.length - 1] !== undefined, true);
+    });
+
+    it("literal-last-wins: a disconnect can protect a higher-numbered folded-in trailing empty over the survivor's own lower-numbered trailing empty, and self-heals once occupied (accepted adversarial ordering, not a bug)", () => {
+        const { harness, controller, keyE, keyL, wL } = globalUniqueSetup();
+        // Inverse of the existing disconnect test's ordering: give E the
+        // *higher*-numbered trailing empty (desktop-8) and L the *lower*-
+        // numbered one (desktop-7), so once E's group folds into L's after
+        // disconnect, L's own former trailing (desktop-7) is no longer the
+        // structurally-last member of the merged group.
+        controller.seedGlobalUniqueAssignment({
+            [keyE]: ["desktop-1", "desktop-2", "desktop-4", "desktop-8"],
+            [keyL]: ["desktop-3", "desktop-5", "desktop-6", "desktop-7"],
+        });
+        wL.desktops = [DESKTOP_3];
+        harness.removedDesktops.length = 0;
+        // Disconnect E: rebuildGlobalUniqueMapping folds E's now-unassigned
+        // desktops (including its former trailing, desktop-8) into L's
+        // group. Per globalUniqueOrdered's x11-ascending sort, desktop-8 -
+        // not L's own former trailing desktop-7 - is now the structurally-
+        // last member of the merged group and is protected; desktop-7
+        // becomes an ordinary non-trailing empty and is removed like any
+        // other (Q-Manual, ownership-independent). This is the deliberately
+        // accepted inverse of "cleanup removes every empty ... reserves the
+        // surviving output's own trailing empty": here the folded-in
+        // desktop wins protection over the survivor's own true trailing.
+        // The last-remaining-global-desktop floor is not implicated (many
+        // live desktops remain throughout).
+        harness.screensList = [OUTPUT_L];
+        harness.currentDesktopByOutput.delete(OUTPUT_E);
+        harness.screensChanged?.();
+        let settled = 0;
+        while (harness.yields.length > 0 && settled < 10) {
+            harness.flushNextYield();
+            settled += 1;
+        }
+        harness.emitDesktopsChanged();
+        assert.deepEqual(
+            harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
+            ["desktop-2", "desktop-4", "desktop-5", "desktop-6", "desktop-7"],
+        );
+        const snapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(Object.keys(snapshot), [keyL]);
+        assert.deepEqual(snapshot[keyL]?.slice().sort(), ["desktop-1", "desktop-3", "desktop-8"]);
+
+        // Self-heal: once a window lands on the protected-but-"wrong"
+        // trailing empty (desktop-8), L's group's last position is occupied,
+        // so the next cleanup dispatch appends exactly one new trailing
+        // empty (desktop-9, the next increasing x11 number) - convergence
+        // back to the single-trailing invariant, confirming this is a
+        // temporary, self-correcting property, not a lasting defect.
+        const occupant = window({ output: OUTPUT_L, desktops: [DESKTOP_8] });
+        harness.windows = [...(harness.windows as unknown[]), occupant];
+        const createsBefore = harness.createDesktopCalls.length;
+        harness.removedDesktops.length = 0;
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, createsBefore + 1);
+        assert.equal(harness.removedDesktops.length, 0);
+        const healedSnapshot = controller.globalUniqueAssignmentSnapshot();
+        assert.deepEqual(
+            healedSnapshot[keyL]?.slice().sort(),
+            ["desktop-1", "desktop-3", "desktop-8", "desktop-9"],
+        );
+
+        // A further dispatch against this now-converged state is a pure
+        // no-op - no extra creates/removes.
+        const createsAfterHeal = harness.createDesktopCalls.length;
+        harness.emitDesktopsChanged();
+        assert.equal(harness.createDesktopCalls.length, createsAfterHeal);
+        assert.equal(harness.removedDesktops.length, 0);
+
+        // No ownership Set reintroduced beyond the fixture's own seeding -
+        // every surviving/created desktop is reachable purely through the
+        // structural globalUniqueOrdered domain.
+        assert.deepEqual(
+            [...controller.ownedDesktopIdSnapshot()].sort(),
+            ["desktop-8", "desktop-9"],
+        );
     });
 });
 
