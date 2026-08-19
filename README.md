@@ -360,19 +360,23 @@ shell --impure` for the pinned dev store paths) and stages it under
 the `$HOME/.local/share` equivalent), then writes a `QT_PLUGIN_PATH` export
 to `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
 (sourced by `startplasma-wayland` at session start) so the staged directory
-is discoverable; idempotent. `effect-status` is a staged diagnostic: it
-reports staging, the env script, session delivery (read directly from the
-running `kwin_wayland` process's own environment), D-Bus discovery, and
-D-Bus loaded state, each as a clear pass/fail with guidance, so one run
-after logging back in is conclusive; read-only. `effect-reload` mutates the
-running KWin session via D-Bus: it queries D-Bus for effect support and,
-once supported, unloads and reloads the effect live; before the boundary it
-reports the pending requirement plainly and exits non-zero rather than
-attempting a load. `effect-remove` unstages the plugin, deletes the env
-script, and (migration cleanup) also deletes any legacy `environment.d`
-entry this project wrote previously; idempotent. `effect-install` and
-`effect-remove` never touch KWin configuration or D-Bus. See
-`docs/live-kwin-testing.md` for the full session-boundary contract.
+is discoverable, and finally writes `[Plugins]
+plasma-auto-tiler-active-borderEnabled=true` to `kwinrc` so the effect
+persists across future session starts once discovered; idempotent.
+`effect-status` is a staged diagnostic: it reports staging, the env script,
+session delivery (read directly from the running `kwin_wayland` process's
+own environment), D-Bus discovery, and D-Bus loaded state, each as a clear
+pass/fail with guidance, so one run after logging back in is conclusive;
+read-only. `effect-reload` mutates the running KWin session via D-Bus: it
+queries D-Bus for effect support and, once supported, unloads and reloads
+the effect live; before the boundary it reports the pending requirement
+plainly and exits non-zero rather than attempting a load. `effect-remove`
+unstages the plugin, deletes the env script, removes the `kwinrc` key above
+when present, and (migration cleanup) also deletes any legacy
+`environment.d` entry this project wrote previously; idempotent.
+`effect-install` and `effect-remove` write only that one `kwinrc` key and
+never use D-Bus. See `docs/live-kwin-testing.md` for the full
+session-boundary contract.
 
 ### Eyeball check
 
