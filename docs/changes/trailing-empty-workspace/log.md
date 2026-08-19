@@ -990,9 +990,10 @@ speculation.
   breaker is not tripped and has full headroom, no further dispatch on this
   unit expected unless a defect surfaces later). No live host action this
   entry (static verification only, per brief - this unit was fully
-  deliverable with static tests, no live confirmation was required to reach
-  acceptance). Terminal status for this dispatch: `accepted`. Committed and
-  pushed immediately per the session's updated commit protocol (see commit
-  entry below), including the `docs/changes/trailing-empty-workspace/`
-  process artifacts alongside the code, per explicit instruction not to
-  leave them untracked.
+   deliverable with static tests, no live confirmation was required to reach
+   acceptance). Terminal status for this dispatch: `accepted`. Committed and
+   pushed at `cb9b121 fix(workspace): append replacement trailing empty on
+   first desktop occupation` (`fa0e4a3..cb9b121`), confirmed via `git push`
+   output, including the `docs/changes/trailing-empty-workspace/` process
+   artifacts alongside the code, per explicit instruction not to leave them
+   untracked.
