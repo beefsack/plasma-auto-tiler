@@ -111,19 +111,27 @@ successfully (exit 0) with the KWin script installed and enabled. `setup`
 always ends with a summary naming every stage's outcome and exactly what
 remains manual.
 
-Two things always remain manual, regardless of how many times `setup` is
+One thing always remains manual, regardless of how many times `setup` is
 run:
 
-1. The first time `effect-install` creates its
-   `~/.config/plasma-workspace/env/` script, the native effect is staged but
-   not yet loadable: log out and back in once (or start a new session), then
-   run `setup` again (or just `effect-reload`) to load it for the first
-   time.
-2. After every later reboot or logout/login - not just the first - the
-   native effect's loaded state resets and `effect-reload` (or `setup`) must
-   be run again. This is a standing, permanent requirement, not a one-time
-   boundary; see [Native effect (dogfood)](#native-effect-dogfood) below for
-   why nothing auto-loads the effect.
+- The first time `effect-install` creates its
+  `~/.config/plasma-workspace/env/` script, the native effect is staged but
+  not yet loadable: log out and back in once (or start a new session), then
+  run `setup` again (or just `effect-reload`) to load it for the first
+  time.
+
+After that one-time boundary, `effect-install` also writes a persistent
+`[Plugins] plasma-auto-tiler-active-borderEnabled=true` key to `kwinrc` -
+the same mechanism KWin already uses to auto-enable the KWin script - so the
+effect should auto-load again at every later reboot or logout/login with no
+manual step. This is a source-verified mechanism (KWin's plugin loader reads
+this exact key on every session start), but has not yet been confirmed by
+an actual logout/login on this host; see [Eyeball check](#eyeball-check) to
+verify it yourself. `effect-reload` (or `setup`) remains the manual step
+whenever you rebuild the effect from a code change within an
+already-running session - a live in-session rebuild is never picked up
+automatically. See [Native effect (dogfood)](#native-effect-dogfood) below
+for the full mechanism.
 
 ### Install
 
@@ -317,16 +325,27 @@ session), once, after the first `effect-install` creates its
 later rebuild and `effect-reload` is live over D-Bus with no further
 boundary.
 
-**This is only about the env-script delivery mechanism, not the effect's
-loaded state.** The effect's loaded state does not survive a reboot or
-logout/login at all, ever - not just the first time. `kwin/native-effect/
-metadata.json` sets `"EnabledByDefault": false`, no `kwinrc [Plugins]` key is
-ever written for this effect, and no autostart hook exists anywhere in the
-repo, so nothing auto-loads it at session start. `effect-reload` must be
-re-run by hand after **every** reboot or logout/login, not just the first
-one. This is unlike the KWin script above, which re-enables itself
-automatically every session via its `kwinrc` `[Plugins]` setting - no manual
-step is needed for it.
+**Two related but separate things are involved: the env-script delivery
+mechanism above, and the effect's own enabled state.** The env-script
+mechanism only ever needed the one boundary described above. The effect's
+*enabled state* used to be fully manual: `kwin/native-effect/metadata.json`
+sets `"EnabledByDefault": false`, so KWin never loads it on its own. As of
+this repository, `effect-install` also writes `[Plugins]
+plasma-auto-tiler-active-borderEnabled=true` to `kwinrc` - the same
+`kwriteconfig6`-written `[Plugins]` mechanism the KWin script above already
+uses to re-enable itself every session, and KWin's effect loader reads this
+exact key the same way it reads the KWin script's. So once the effect has
+been discovered (the one-time boundary above), it should also auto-load
+again at every later reboot or logout/login with no manual `effect-reload`.
+This is verified against KWin's own plugin-loader source and a documented
+out-of-tree precedent, but has not yet been confirmed by an actual
+logout/login on this host - see [Eyeball check](#eyeball-check) to verify
+it yourself, and fall back to `effect-reload`/`effect-status` if it does
+not hold. `effect-reload` remains required, exactly as before, whenever you
+rebuild the effect from a code change within an already-running session:
+persistence only covers session starts, never a live in-session rebuild.
+`effect-remove` removes the staged plugin, the env script, and (when
+present) this `kwinrc` key, restoring the pre-install state exactly.
 
 ```sh
 devenv shell --impure -- bash scripts/dogfood-install.sh effect-install
@@ -363,8 +382,14 @@ After dogfooding, confirm by eye:
   and windows on your session actually tile.
 - `bash scripts/dogfood-install.sh effect-status` reports the effect
   supported and loaded (after the one-time logout/login). After any later
-  reboot or logout/login, `effect-status` reporting `[e]` not loaded is
-  expected until `effect-reload` (or `setup`) is re-run - not a bug.
+  reboot or logout/login, the persisted `kwinrc` key should make
+  `effect-status` report loaded again automatically with no manual
+  `effect-reload` - this is the one part of Stage 3 this repository has not
+  yet confirmed with a real logout/login, so a fresh-session
+  `effect-status` check is the actual verification. If it ever reports
+  `[e]` not loaded after a fresh session start, run `effect-reload` (or
+  `setup`) to recover and treat it as worth investigating, not an expected
+  steady state.
 - The active window shows the border effect rendering.
 - After a code change, `effect-install` (rebuild) then `effect-reload`
   completes and the border reflects it, with no session boundary.
@@ -381,10 +406,11 @@ After dogfooding, confirm by eye:
 - `status` is read-only.
 - `dry-run` is read-only and never mutates anything.
 - `effect-install` and `effect-remove` build/stage/unstage the native effect
-  plugin under its own namespaced user-local directory and create/remove
-  only the project's own `plasma-workspace/env/` script (`effect-remove`
-  also migrates away any legacy `environment.d` entry); they never touch
-  KWin configuration or D-Bus.
+  plugin under its own namespaced user-local directory, create/remove only
+  the project's own `plasma-workspace/env/` script (`effect-remove` also
+  migrates away any legacy `environment.d` entry), and write/remove exactly
+  the one `kwinrc [Plugins] plasma-auto-tiler-active-borderEnabled` key
+  (`effect-remove` deletes it only when present); neither ever uses D-Bus.
 - `effect-reload` reconfigures the running KWin session live via D-Bus
   `/Effects` `loadEffect`/`unloadEffect`.
 - `effect-status` is read-only.
