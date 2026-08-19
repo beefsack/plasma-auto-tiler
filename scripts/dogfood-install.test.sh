@@ -246,6 +246,7 @@ reset_state() {
   unset FAKE_QDBUS_SUPPORTED
   unset FAKE_QDBUS_LOADED
   unset TEST_KWIN_ENVIRON_FILE
+  unset TEST_KWIN_DEV_CMAKE_DIR
   # Default to "not running" so effect-status tests never fall through to
   # scanning the real host /proc; individual tests override
   # TEST_KWIN_ENVIRON_FILE to exercise the found/readable/unreadable branches.
@@ -256,7 +257,7 @@ run_script() {
   set +e
   local script="${TEST_SCRIPT:-$SCRIPT}"
   local cmd=(env -u NPM_BIN -u KWRITECONFIG6_BIN -u KREADCONFIG6_BIN -u QDBUS_BIN -u JQ_BIN -u CMAKE_BIN -u XDG_DATA_HOME -u XDG_CONFIG_HOME \
-    -u DOGFOOD_KWIN_ENVIRON_FILE -u DOGFOOD_KWIN_NOT_RUNNING \
+    -u DOGFOOD_KWIN_ENVIRON_FILE -u DOGFOOD_KWIN_NOT_RUNNING -u DOGFOOD_KWIN_DEV_CMAKE_DIR \
     "DOGFOOD_DATA_ROOT=$DATA" "DOGFOOD_CONFIG_ROOT=$CONFIG" "HOME=$FAKE_HOME" "PATH=$TEST_PATH")
   [[ -z "$TEST_NPM_BIN" ]] || cmd+=("NPM_BIN=$TEST_NPM_BIN")
   [[ -z "$TEST_KWRITECONFIG6_BIN" ]] || cmd+=("KWRITECONFIG6_BIN=$TEST_KWRITECONFIG6_BIN")
@@ -269,6 +270,7 @@ run_script() {
   [[ -z "${FAKE_QDBUS_LOADED:-}" ]] || cmd+=("FAKE_QDBUS_LOADED=$FAKE_QDBUS_LOADED")
   [[ -z "${TEST_KWIN_ENVIRON_FILE:-}" ]] || cmd+=("DOGFOOD_KWIN_ENVIRON_FILE=$TEST_KWIN_ENVIRON_FILE")
   [[ -z "${TEST_KWIN_NOT_RUNNING:-}" ]] || cmd+=("DOGFOOD_KWIN_NOT_RUNNING=$TEST_KWIN_NOT_RUNNING")
+  [[ -z "${TEST_KWIN_DEV_CMAKE_DIR:-}" ]] || cmd+=("DOGFOOD_KWIN_DEV_CMAKE_DIR=$TEST_KWIN_DEV_CMAKE_DIR")
   cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" "FAKE_CMAKE_LOG=$WORK/cmake.log" )
   cmd+=( "$BASH_PATH" "$script" "$@" )
   "${cmd[@]}" >"$OUTPUT" 2>&1
@@ -795,6 +797,23 @@ check_exit 0
 assert_cmp "$WORK/env-first.sh" "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in env script after re-run"
 assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
+
+# effect-install: pinned KWin_DIR path exists -> passed to cmake
+reset_state
+mkdir -p "$WORK/fake-kwin-dev-dir"
+TEST_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-dev-dir"
+run_script effect-install
+check_exit 0
+assert_grep_file "-DKWin_DIR=$WORK/fake-kwin-dev-dir" "$WORK/cmake.log"
+
+# effect-install: pinned KWin_DIR path does not exist -> omitted, build still succeeds
+reset_state
+TEST_KWIN_DEV_CMAKE_DIR="$WORK/does-not-exist-kwin-dev-dir"
+run_script effect-install
+check_exit 0
+assert_not_grep_file "-DKWin_DIR=" "$WORK/cmake.log"
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+assert_file "$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
 
 # effect-status: nothing staged, no env script, kwin_wayland not running (the
 # reset_state default) - all five stages fail/unknown with guidance, and it
