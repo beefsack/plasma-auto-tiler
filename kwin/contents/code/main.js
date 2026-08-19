@@ -7582,25 +7582,16 @@
         this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
       }
       if (this.workspaceMode === "per-output-local") {
-        if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
-          return;
-        }
         this.reconcileLocalWorkspaces(desktops);
         this.enforceLocalTrailingEmpties();
         return;
       }
       if (this.workspaceMode === "global-unique") {
-        if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
-          return;
-        }
         this.reconcileGlobalUnique(desktops);
         this.enforceGlobalTrailingEmpty();
         return;
       }
       this.rebuildSharedMapping(desktops);
-      if (desktops.length <= 1) {
-        return;
-      }
       this.enforceSharedTrailingEmpty();
       return;
     }

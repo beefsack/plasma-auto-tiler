@@ -8335,34 +8335,16 @@ export class TileController {
             this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
         }
         if (this.workspaceMode === "per-output-local") {
-            // Spec D1 single-output degeneracy: with one connected output this
-            // is today's model, which never reconciles a singleton list (no
-            // startup trailing empty). Across multiple outputs a singleton
-            // list still needs one owned trailing empty per connected output,
-            // so reconciliation runs; pre-existing desktops are never removed.
-            if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
-                return;
-            }
             this.reconcileLocalWorkspaces(desktops);
             this.enforceLocalTrailingEmpties();
             return;
         }
         if (this.workspaceMode === "global-unique") {
-            if (desktops.length <= 1 && this.connectedOutputKeys().length <= 1) {
-                return;
-            }
             this.reconcileGlobalUnique(desktops);
             this.enforceGlobalTrailingEmpty();
             return;
         }
         this.rebuildSharedMapping(desktops);
-        if (desktops.length <= 1) {
-            // A singleton shared list has nothing to remove or replenish (the
-            // trailing-position exclusion in ensureTrailingEmptyDesktop
-            // itself protects the last global desktop), and the mapping
-            // above already tracked the live ordered list.
-            return;
-        }
         this.enforceSharedTrailingEmpty();
         return;
     }

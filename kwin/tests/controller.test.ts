@@ -12780,6 +12780,11 @@ describe("TileController dynamic virtual desktops", () => {
             { id: "desktop-1", x11DesktopNumber: 1 },
             { id: "desktop-2", x11DesktopNumber: 2 },
         ];
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // the overwrite above replaces the list wholesale, so reset the
+        // stale create count to isolate this test's own assertions.
+        harness.createDesktopCalls.length = 0;
         invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
         assert.equal(harness.currentDesktopWrites.length, 1);
         assert.equal((harness.currentDesktopWrites[0] as { id: string }).id, "desktop-2");
@@ -12901,6 +12906,11 @@ describe("TileController dynamic virtual desktops", () => {
     it("move-workspace-append-symbol dispatches identically to move-workspace-append", () => {
         const { harness } = setup();
         harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // the overwrite above replaces the list wholesale, so reset the
+        // stale create count to isolate this test's own assertion.
+        harness.createDesktopCalls.length = 0;
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append-symbol");
         assert.equal(countEvent(harness.logs, "workspace-move-invoked:0"), 1);
         assert.equal(harness.createDesktopCalls.length, 1);
@@ -13119,12 +13129,20 @@ describe("TileController dynamic virtual desktops", () => {
 
     it("reports an append create failure without navigating or owning", () => {
         const { harness } = setup();
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // restore the pristine single-desktop precondition this test needs
+        // (no reusable trailing empty) before exercising the create-failure
+        // path itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
+        const ownedBeforeShortcut = countEvent(harness.logs, "workspace-created-owned");
         harness.createDesktopThrows = new Error("create-failed");
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
         assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
         assert.equal(harness.createDesktopCalls.length, 0);
         assert.equal(harness.currentDesktopWrites.length, 0);
-        assert.equal(countEvent(harness.logs, "workspace-created-owned"), 0);
+        assert.equal(countEvent(harness.logs, "workspace-created-owned"), ownedBeforeShortcut);
     });
 
     it("reports a failed membership write on a tiled move without navigating or arming", () => {
@@ -13182,6 +13200,14 @@ describe("TileController dynamic virtual desktops", () => {
 
     it("defers desktop mutation during a live drag and performs it after drag completion", () => {
         const { harness, root, target, focused } = setup();
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // restore the pristine single-desktop precondition this test needs
+        // (no reusable trailing empty) before exercising the deferred-create
+        // path itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
+        harness.nextDesktopNumber = 1;
         target.unmanage = (_value) => {
             focused.tile = null;
             target.windows = [];
@@ -13254,6 +13280,14 @@ describe("TileController dynamic virtual desktops", () => {
         const controller = new TileController(harness.environment());
         controller.start();
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        // start() runs cleanupDesktops before this reconstruction is armed
+        // (the sole desktop is occupied by first/second, so the fix appends
+        // its own replacement trailing empty during that pass); restore the
+        // pristine single-desktop precondition this test needs before
+        // exercising the reconstruction-pending deferral itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
+        harness.nextDesktopNumber = 1;
         // Shift+0 while the reconstruction is pending defers the whole move.
         invokeShortcut(harness, "plasma-auto-tiler-move-workspace-append");
         assert.equal(countEvent(harness.logs, "workspace-create-deferred:move"), 1);
@@ -13282,6 +13316,14 @@ describe("TileController dynamic virtual desktops", () => {
         // creation during a live drag is queued and completed after drag
         // finish, never acting mid-drag (spec F bounded drain).
         const { harness, focused } = setup();
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // restore the pristine single-desktop precondition this test needs
+        // (no reusable trailing empty) before exercising the deferred-create
+        // path itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
+        harness.nextDesktopNumber = 1;
         focused.move = true;
         focused.interactiveMoveResizeStarted.emit();
         assert.equal(countEvent(harness.logs, "drag-origin-captured"), 1);
@@ -13344,6 +13386,14 @@ describe("TileController dynamic virtual desktops", () => {
         const controller = new TileController(harness.environment());
         controller.start();
         assert.equal(countEvent(harness.logs, "ownership-pending"), 1);
+        // start() runs cleanupDesktops before this reconstruction is armed
+        // (the sole desktop is occupied by first/second, so the fix appends
+        // its own replacement trailing empty during that pass); restore the
+        // pristine single-desktop precondition this test needs before
+        // exercising the reconstruction-pending deferral itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
+        harness.nextDesktopNumber = 1;
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
         assert.equal(countEvent(harness.logs, "workspace-zero-deferred"), 1);
         assert.equal(harness.createDesktopCalls.length, 0);
@@ -13361,15 +13411,35 @@ describe("TileController dynamic virtual desktops", () => {
 
     it("Meta+0 creation or set-current failure is non-destructive and reason-logged", () => {
         // A createDesktop throw aborts before any write: no desktop is owned,
-        // no current changes, and the existing desktop set is retained.
-        const create = setup();
-        create.harness.createDesktopThrows = new Error("create-failed");
-        invokeShortcut(create.harness, "plasma-auto-tiler-workspace-0");
-        assert.equal(countEvent(create.harness.logs, "workspace-append-create-failed:create-failed"), 1);
-        assert.equal(create.harness.createDesktopCalls.length, 0);
-        assert.equal(create.harness.currentDesktopWrites.length, 0);
-        assert.deepEqual(create.controller.ownedDesktopIdSnapshot(), []);
-        assert.equal(create.controller.isEnabled, true);
+        // no current changes, and the existing desktop set is retained. The
+        // sole desktop is occupied (matching setup()'s fixture), so the fix
+        // means start() itself already attempts, and fails, its own
+        // replacement-trailing-empty append; createDesktopThrows must be set
+        // before start() (a bare Harness, not setup()) so that first attempt
+        // is the one that fails, and the shortcut's own attempt afterward is
+        // measured as a delta against that baseline.
+        const createHarness = new Harness();
+        const createRoot = tile(RECT, true);
+        const createTarget = tile();
+        const createFocused = window({ tile: createTarget });
+        createTarget.windows = [createFocused];
+        createRoot.tiles = [createTarget];
+        createHarness.root = createRoot;
+        createHarness.active = createFocused;
+        createHarness.windows = [createFocused];
+        createHarness.createDesktopThrows = new Error("create-failed");
+        const createController = new TileController(createHarness.environment());
+        createController.start();
+        const failuresBeforeShortcut = countEvent(createHarness.logs, "workspace-append-create-failed:create-failed");
+        invokeShortcut(createHarness, "plasma-auto-tiler-workspace-0");
+        assert.equal(
+            countEvent(createHarness.logs, "workspace-append-create-failed:create-failed"),
+            failuresBeforeShortcut + 1,
+        );
+        assert.equal(createHarness.createDesktopCalls.length, 0);
+        assert.equal(createHarness.currentDesktopWrites.length, 0);
+        assert.deepEqual(createController.ownedDesktopIdSnapshot(), []);
+        assert.equal(createController.isEnabled, true);
         // A set-current throw after a successful create still owns the created
         // desktop and leaves every other desktop untouched (non-destructive).
         const set = setup();
@@ -13569,6 +13639,13 @@ describe("TileController dynamic virtual desktops", () => {
 
     it("a desktop creation failure is non-destructive and reason-logged", () => {
         const { harness, controller } = setup();
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // restore the pristine single-desktop precondition this test needs
+        // (no reusable trailing empty) before exercising the create-failure
+        // path itself.
+        harness.desktopsList = [{ id: "desktop-1", x11DesktopNumber: 1 }];
+        harness.createDesktopCalls.length = 0;
         // Meta+Shift+0 always creates; a create failure never mutates any
         // desktop membership or list state.
         harness.createDesktopThrows = new Error("create-failed");
@@ -13597,6 +13674,11 @@ describe("TileController dynamic virtual desktops", () => {
             { id: "desktop-2", x11DesktopNumber: 2 },
             { id: "desktop-3", x11DesktopNumber: 3 },
         ];
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends its own replacement trailing empty during start();
+        // the overwrite above replaces the list wholesale, so reset the
+        // stale create count to isolate this test's own assertion.
+        harness.createDesktopCalls.length = 0;
         // The harness generates monotonic ids from here so the first create is
         // desktop-4, never colliding with the pre-existing desktops.
         harness.nextDesktopNumber = 3;
@@ -15228,25 +15310,28 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         assert.equal(countEvent(harness.logs, "workspace-zero-completed"), 1);
     });
 
-    it("Meta+0 creates exactly one owned trailing empty when the active output's local set lacks one", () => {
-        // A single-output fresh session has no automatic trailing empty (the
-        // single-output degeneracy of spec D1), so Meta+0 must create and focus
-        // exactly one owned desktop and never removes a pre-existing desktop.
+    it("Meta+0 reuses the owned trailing empty already appended at startup for the sole occupied desktop", () => {
+        // setup()'s focused window occupies the sole startup desktop, so the
+        // fix now appends and owns its own replacement trailing empty
+        // (desktop-2) during start() itself; Meta+0 must reuse it rather
+        // than create a second one, and never removes a pre-existing
+        // desktop.
         const { harness, controller, focused } = setup();
         const creates = harness.createDesktopCalls.length;
-        assert.equal(creates, 0);
+        assert.equal(creates, 1);
+        assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
-        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal(harness.createDesktopCalls.length, creates);
         assert.equal((harness.desktopsList as unknown[]).map((entry) => (entry as { id: string }).id).includes("desktop-1"), true);
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
         assert.deepEqual((focused.desktops as unknown[]).map((entry) => (entry as { id: string }).id), ["desktop-1"]);
         assert.equal(harness.removedDesktops.length, 0);
-        // Meta+0 again reuses the still-unoccupied trailing empty just
-        // created rather than creating a second one (Q-Domain: exactly one
-        // trailing empty per domain).
+        // Meta+0 again reuses the still-unoccupied trailing empty rather
+        // than creating a second one (Q-Domain: exactly one trailing empty
+        // per domain).
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
-        assert.equal(harness.createDesktopCalls.length, creates + 1);
+        assert.equal(harness.createDesktopCalls.length, creates);
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), ["desktop-2"]);
         assert.equal((harness.currentDesktopValue as { id: string }).id, "desktop-2");
     });
@@ -15277,10 +15362,30 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
     });
 
     it("Meta+0 creation failure is non-destructive and reason-logged (per-output-local)", () => {
-        const { harness, controller } = setup();
+        // The sole desktop is occupied (matching setup()'s fixture), so the
+        // fix means start() itself already attempts, and fails, its own
+        // replacement-trailing-empty append; createDesktopThrows must be set
+        // before start() (a bare Harness, not setup()) so that first attempt
+        // is the one that fails, and the shortcut's own attempt afterward is
+        // measured as a delta against that baseline.
+        const harness = new Harness();
+        const root = tile(RECT, true);
+        const target = tile();
+        const focused = window({ tile: target });
+        target.windows = [focused];
+        root.tiles = [target];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused];
         harness.createDesktopThrows = new Error("create-failed");
+        const controller = new TileController(harness.environment());
+        controller.start();
+        const failuresBeforeShortcut = countEvent(harness.logs, "workspace-append-create-failed:create-failed");
         invokeShortcut(harness, "plasma-auto-tiler-workspace-0");
-        assert.equal(countEvent(harness.logs, "workspace-append-create-failed:create-failed"), 1);
+        assert.equal(
+            countEvent(harness.logs, "workspace-append-create-failed:create-failed"),
+            failuresBeforeShortcut + 1,
+        );
         assert.equal(harness.createDesktopCalls.length, 0);
         assert.equal(harness.currentDesktopWrites.length, 0);
         assert.deepEqual(controller.ownedDesktopIdSnapshot(), []);
@@ -16248,4 +16353,122 @@ describe("TileController shared workspaces (Unit 07)", () => {
         assert.equal(harness.removedDesktops.length, removals);
         assert.deepEqual([...controller.sharedWorkspaceSnapshot()], snapshot);
     });
+});
+
+// Live-confirmed regression (unit-07 attempt-02): a fresh single-output,
+// single-desktop session where that desktop is currently empty is correct
+// (nothing to do). But the very first window ever placed on that sole
+// desktop, with no prior Meta+0/Meta+Shift+0, previously failed to append a
+// replacement trailing empty in any mode, because cleanupDesktops() guarded
+// its reconciliation/enforcement calls behind an unconditional
+// desktops.length <= 1 (plus, for per-output-local/global-unique, a single
+// connected output) early return that never inspected occupancy. That guard
+// is now removed; ensureTrailingEmptyDesktop's own structural last-position-
+// if-empty check keeps the true no-op case (step 1 below) a no-op.
+describe("TileController trailing-empty invariant on first occupation (Unit 07 live regression)", () => {
+    function singleDesktopModeSetup(mode: "per-output-local" | "global-unique" | "shared"): {
+        readonly harness: Harness;
+        readonly controller: TileController;
+    } {
+        const harness = new Harness();
+        harness.root = tile(RECT, true);
+        if (mode !== "per-output-local") {
+            harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, mode);
+        }
+        const controller = new TileController(harness.environment());
+        controller.start();
+        return { harness, controller };
+    }
+
+    function modeSnapshot(controller: TileController, mode: "per-output-local" | "global-unique" | "shared"): readonly string[] {
+        if (mode === "per-output-local") {
+            return Object.values(controller.localWorkspaceSnapshot())[0] ?? [];
+        }
+        if (mode === "global-unique") {
+            return Object.values(controller.globalUniqueAssignmentSnapshot())[0] ?? [];
+        }
+        return controller.sharedWorkspaceSnapshot();
+    }
+
+    for (const mode of ["per-output-local", "global-unique", "shared"] as const) {
+        it(`a fresh single-output, single-empty-desktop session creates nothing on start in ${mode} mode`, () => {
+            const { harness } = singleDesktopModeSetup(mode);
+            assert.equal(harness.createDesktopCalls.length, 0);
+            assert.deepEqual((harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id), [
+                "desktop-1",
+            ]);
+        });
+
+        it(`the first window ever placed on the sole desktop appends a replacement trailing empty in ${mode} mode`, () => {
+            const { harness, controller } = singleDesktopModeSetup(mode);
+            const first = window();
+            harness.windows = [first];
+            harness.emitAdded(first);
+            // Placing the first window into the empty root tile arms a
+            // reconstruction (no tile tree exists yet); cleanup defers until
+            // it settles, matching the existing deferred-reconstruction
+            // pattern used elsewhere in this file.
+            let settled = 0;
+            while (harness.yields.length > 0 && settled < 10) {
+                harness.flushNextYield();
+                settled += 1;
+            }
+            assert.equal(harness.createDesktopCalls.length, 1);
+            assert.deepEqual((harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id), [
+                "desktop-1",
+                "desktop-2",
+            ]);
+            assert.deepEqual(modeSnapshot(controller, mode), ["desktop-1", "desktop-2"]);
+        });
+
+        it(`a second window occupying the replacement trailing empty appends another, and the prior one survives, in ${mode} mode`, () => {
+            const { harness, controller } = singleDesktopModeSetup(mode);
+            const first = window();
+            harness.windows = [first];
+            harness.emitAdded(first);
+            let settledFirst = 0;
+            while (harness.yields.length > 0 && settledFirst < 10) {
+                harness.flushNextYield();
+                settledFirst += 1;
+            }
+            assert.equal(harness.createDesktopCalls.length, 1);
+            const trailing = { id: "desktop-2", x11DesktopNumber: 2 };
+            const incoming = window({ desktops: [trailing] });
+            harness.windows = [...(harness.windows as unknown[]), incoming];
+            harness.emitAdded(incoming);
+            let settledSecond = 0;
+            while (harness.yields.length > 0 && settledSecond < 10) {
+                harness.flushNextYield();
+                settledSecond += 1;
+            }
+            assert.equal(harness.createDesktopCalls.length, 2);
+            assert.deepEqual((harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id), [
+                "desktop-1",
+                "desktop-2",
+                "desktop-3",
+            ]);
+            assert.deepEqual(modeSnapshot(controller, mode), ["desktop-1", "desktop-2", "desktop-3"]);
+        });
+
+        it(`repeated cleanup dispatches after the first occupation's append settles are idempotent in ${mode} mode`, () => {
+            const { harness, controller } = singleDesktopModeSetup(mode);
+            const first = window();
+            harness.windows = [first];
+            harness.emitAdded(first);
+            let settled = 0;
+            while (harness.yields.length > 0 && settled < 10) {
+                harness.flushNextYield();
+                settled += 1;
+            }
+            assert.equal(harness.createDesktopCalls.length, 1);
+            const creates = harness.createDesktopCalls.length;
+            const removals = harness.removedDesktops.length;
+            const snapshot = modeSnapshot(controller, mode);
+            harness.emitDesktopsChanged();
+            harness.emitDesktopsChanged();
+            assert.equal(harness.createDesktopCalls.length, creates);
+            assert.equal(harness.removedDesktops.length, removals);
+            assert.deepEqual(modeSnapshot(controller, mode), snapshot);
+        });
+    }
 });

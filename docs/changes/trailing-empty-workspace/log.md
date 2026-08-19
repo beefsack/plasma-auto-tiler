@@ -794,3 +794,205 @@ speculation.
   changes beyond `plan.md`/`log.md`, or pushes performed by this Lead - the
   three source files were already staged by the cancelled dispatch and are
   left staged unchanged. Terminal status for this dispatch: `accepted`.
+
+## 2026-08-19 (Lead succession, unit-07 reconciliation and diagnosis)
+
+- Role / unit: Lead / unit-07, attempt-01 reconciliation, then pre-unit-07
+  attempt-02 diagnosis (no Worker dispatched yet - bounded, citation-based
+  code reading only; every read used offset+limit, no whole-file read of
+  `controller.ts` or `controller.test.ts`)
+- Result: New Lead succession dispatched directly onto unit-07 (a new unit,
+  not previously in `plan.md`'s Work Units table). Found an uncommitted,
+  unstaged, cancelled-mid-flight partial edit with zero record in either
+  `log.md` or `plan.md`: a 6-line change to `kwin/src/controller.ts` (plus
+  the matching `main.js` bundle rebuild) that replaced each of the three
+  `cleanupDesktops()` single-desktop-degeneracy guard conditions
+  (`desktops.length <= 1 && ...`) with `(false && desktops.length <= 1) &&
+  ...`, unconditionally disabling all three guards via a dead-code
+  short-circuit, with no comment update, no test change, and no reasoning
+  recorded anywhere. Read the diff directly (bounded, `git diff --
+  kwin/src/controller.ts`, 6 lines) rather than the whole file. Judged this
+  a debug/exploratory disable, not a finished or considered fix: the
+  mechanism (`false &&`) is not a pattern this codebase uses anywhere else
+  to express "always take this branch," it left the now-inaccurate D1
+  comment in place unedited, and it added no tests or record - inconsistent
+  with every other accepted unit in this change, which always paired a
+  guard change with updated comments, tests, and a log entry. Discarded via
+  `git checkout -- kwin/src/controller.ts kwin/contents/code/main.js`;
+  confirmed clean tree afterward (`git status --short` shows only the three
+  pre-excluded untracked paths). This decision was made independently of
+  whether the edit's *location* was correct (it was, see below) - a correct
+  location reached via unreasoned means, with no record, is still discarded
+  per instruction ("do not silently keep it").
+- Independently established the root cause from the code, per the
+  Orchestrator's brief instruction to verify rather than assume the "not
+  wired into window-add events" hypothesis: **that hypothesis is false**.
+  `handleWindowAdded` (`controller.ts:4418-4454`) already calls
+  `this.cleanupDesktops()` unconditionally on every window-add dispatch
+  (`controller.ts:4451`), confirmed by direct bounded read - window-add was
+  never unwired. The actual defect is the pre-existing (predates this whole
+  change; comment cites "Spec D1" from the archived
+  `2026-08-14-multi-output-workspaces-and-shortcuts` change, confirmed by
+  reading that spec's D1 section directly) `cleanupDesktops()` early-return
+  guard, present once per mode branch (`controller.ts:8337-8365`, all three
+  read directly): `if (desktops.length <= 1 && this.connectedOutputKeys().length
+  <= 1) { return; }` for `per-output-local`/`global-unique`, and `if
+  (desktops.length <= 1) { return; }` for `shared` (no output-count
+  qualifier). All three unconditionally skip `reconcile*`/`enforce*Trailing
+  Empty()` entirely whenever the live desktop count is exactly 1 (plus,
+  for the first two, only one connected output) - with no occupancy check.
+  So the very first window ever placed directly onto a lone pre-existing
+  desktop (no prior Meta+0/Meta+Shift+0, which is exactly the user's
+  reproduction: fresh session, one desktop, opened a terminal in it
+  directly) never triggers append, in any of the three modes, because
+  `cleanupDesktops()` returns before ever calling the enforcement functions
+  that would notice the occupancy. Confirmed this is safe to simply remove
+  (not merely narrow) by reading `enforceLocalTrailingEmpties`
+  (`controller.ts:8519-8557`) and `enforceSharedTrailingEmpty`
+  (`controller.ts:8378-8406`) directly: both call the unit-01
+  `ensureTrailingEmptyDesktop` helper, whose own structural
+  last-position-if-empty check already no-ops correctly for the
+  single-empty-desktop startup case (step 1 of the live repro, which must
+  stay a no-op per the Orchestrator's brief) - the guard adds no behavior
+  the helper does not already provide correctly, it only actively breaks
+  the occupied case. Confirmed via a second bounded read
+  (`controller.test.ts:13486-13519`, "an occupancy event on the trailing
+  empty appends its replacement (COSMIC-style reuse)") that this exact
+  occupancy-append behavior already has passing test coverage today, but
+  only because that test's setup (`ownTrailingEmpty`) always creates a
+  second desktop first via Meta+Shift+0 before the occupancy event - so the
+  live desktop count is 2, not 1, at the moment of occupancy, entirely
+  sidestepping the buggy guard. This explains why 815/815 existing tests
+  pass despite the live defect: no existing test exercises "a window
+  occupies the *sole* pre-existing desktop with no prior owned-desktop
+  creation," in any of the three modes.
+  Also identified, by reading `modeCleanupSetup()` (`controller.test.ts:
+  682-700`) and its one parametrized caller (`controller.test.ts:
+  12425-12484`), that this helper places a window on the tile system
+  *before* `controller.start()`, with the Harness's single-output/
+  single-desktop defaults (`OUTPUT`/`DESKTOP`, `controller.test.ts:46-53,
+  248,250`) - i.e. removing the guard will newly cause `controller.start()`
+  itself to append a trailing-empty replacement during that test's setup
+  phase, for all three modes, before that test's own `configureSwitch
+  CleanupScenario` helper overwrites `harness.desktopsList` wholesale.
+  Reasoned through (not yet verified by an actual test run) that this
+  specific test's own assertions are likely unaffected, since the
+  wholesale list overwrite discards whatever `createDesktop` call happened
+  at startup and the subsequent mapping rebuild re-derives cleanly from the
+  post-overwrite live list - flagged as the primary thing to confirm by
+  running the actual suite, not by further static reading, to avoid
+  over-spending context on hand-verification the test run will settle
+  directly and authoritatively.
+  No conflict found against the approved anti-oscillation design: this fix
+  adds no new call site, no new dispatcher trigger, no caching, no
+  debounce/timer - it only removes a special-cased short-circuit that was
+  incorrectly preventing the *already-existing, already-idempotent*
+  `ensureTrailingEmptyDesktop` enforcement path from running on the single
+  dispatch event (window-add) where it was needed. Since that helper's own
+  step 3 (append-only-if-the-post-removal-invariant-is-actually-violated)
+  is unchanged and was already proven idempotent at unit-01/02/03b/04, and
+  since the guard removal does not change how often `cleanupDesktops()`
+  itself is invoked (only whether, once invoked, the mode branch actually
+  does its work), there is no new oscillation surface: a dispatch that
+  changes nothing still produces zero creates/removes for the same reason
+  it always did, and the single desktop boundary case simply stops being
+  wrongly special-cased out of that existing guarantee.
+- Files / commit: `docs/changes/trailing-empty-workspace/{plan.md,log.md}`
+  only (this entry, the new unit-07 Work Units row, Progress row, and
+  Attempt Accounting entry). `kwin/src/controller.ts`/`kwin/contents/code/
+  main.js` reverted to committed `HEAD` (`fa0e4a3`) via `git checkout --`;
+  no other source files touched. No commit (user-only per commit protocol).
+- Verification: n/a for this entry (diagnosis and record-keeping only; no
+  code changed by the Lead). Own fresh baseline re-confirmed before this
+  diagnosis: `git status --short` clean except the three pre-excluded
+  untracked paths, `HEAD` at `fa0e4a3`, matching the Orchestrator's stated
+  starting state exactly.
+- Notes: No commits, staging, or pushes performed. No live host action this
+  entry (static diagnosis only). Dispatching a fresh `worker-anthropic`
+  next, scoped to: `cleanupDesktops()` only (`controller.ts:8309-8368`) -
+  delete the three early-return guards and their now-stale comments,
+  changing nothing else in the method; run the full suite and fix only
+  tests that fail as a direct, reported consequence (naming each, and
+  classifying it as a stale pre-fix assumption vs. a genuine gap, not
+  guessed at); add one new, narrowly-bounded describe block with explicit
+  regression coverage for the exact live sequence (single desktop, occupy
+  it, append exactly one; occupy the replacement, append exactly one more)
+  in all three modes, plus an explicit idempotency check at the n=1
+  boundary specifically. unit-07 attempt count: 2 (attempt-01 cancelled
+  mid-flight with no report, per the Orchestrator's brief this counts as a
+  full attempt; this dispatch is attempt-02).
+
+## 2026-08-19 (unit-07, attempt-02, accepted)
+
+- Role / unit: Lead / unit-07, attempt-02 (worker-anthropic)
+- Result: Accepted, no correction round. Dispatched `worker-anthropic`
+  scoped to `cleanupDesktops()` (`controller.ts:8309-8368`) only: delete
+  the three early-return guards and their stale comments, run the full
+  suite, fix only tests that fail as a direct reported consequence, and add
+  one new narrowly-bounded regression describe block for the live sequence.
+  Worker reported `review-ready`: production diff is exactly the specified
+  deletion (one hunk, `cleanupDesktops()` only, -18 lines, nothing else
+  touched); 12 pre-existing tests needed precondition restoration (more
+  than the Lead's brief specifically flagged - the Lead had called out 1
+  test by name as the primary risk and asked the Worker to investigate
+  rather than assume for the rest, which the Worker did), all traced to the
+  same root cause: `setup()`'s pre-attached focused window genuinely
+  occupies the sole startup desktop, so the fix now correctly appends and
+  owns a replacement trailing empty during `controller.start()` itself,
+  invalidating each affected test's prior "nothing created yet"
+  precondition; one new describe block, "TileController trailing-empty
+  invariant on first occupation (Unit 07 live regression)", 12 `it()` cases
+  (4 per mode across the 3 modes: empty-start no-op, first-occupation
+  append, second-occupation append-with-survival, post-settle idempotency).
+  Lead inspected the actual diff directly (not the summary): confirmed the
+  `controller.ts` diff is exactly the deletion specified in the brief, one
+  hunk, no other method touched; confirmed zero `ownedDesktopIds` hits
+  anywhere in either file's diff (direct `git diff -- kwin/src/controller.ts
+  kwin/tests/controller.test.ts | grep ownedDesktopIds`, empty); read all 12
+  fallout fixes directly and confirmed each restores a precondition (a
+  stale create-count reset after a wholesale list overwrite, or a bare
+  `Harness` replacing `setup()` with `createDesktopThrows` set before
+  `start()` so the first, now-legitimate startup append attempt is the one
+  that fails) rather than weakening or deleting any assertion, and that the
+  same root cause explains all 12 consistently; read the new describe
+  block's fixture (`singleDesktopModeSetup`) and all 12 new cases directly,
+  confirmed they exercise the exact live-repro sequence (steps 1/2/5/6 of
+  the Orchestrator's brief) with concrete assertions on `createDesktopCalls`
+  count, the live desktop-id list, and each mode's own snapshot accessor
+  (`localWorkspaceSnapshot`/`globalUniqueAssignmentSnapshot`/
+  `sharedWorkspaceSnapshot`), plus an explicit idempotency case per mode.
+  Lead independently reran `npm --prefix kwin run typecheck` (clean, both
+  tsconfigs) and the full build+esbuild+`node --test` suite, reproducing
+  827 tests, 78 suites, 827 pass, 0 fail exactly (815 baseline + 12 new).
+  Lead independently verified `main.js` determinism properly (not by
+  checking for a zero `git diff`, which always compares against pre-fix
+  `HEAD` and would never be zero here): copied the post-fix `main.js`
+  aside, ran `npm run build` a second time, and diffed the two builds
+  directly - zero difference, confirming a faithful, deterministic
+  regeneration, not hand-edited.
+- Files / commit: `kwin/src/controller.ts` (-18 lines, one hunk,
+  `cleanupDesktops()` only), `kwin/tests/controller.test.ts` (+245/-40 net,
+  ~15 hunks: 10 precondition-restoration fixes in "TileController dynamic
+  virtual desktops", 2 in "TileController per-output-local workspaces (Unit
+  05)", 1 new describe block appended after "TileController shared
+  workspaces (Unit 07)"), `kwin/contents/code/main.js` (regenerated bundle,
+  independently verified deterministic). Committed and pushed by this Lead
+  per the updated commit protocol - see commit hash below.
+- Verification (Lead's own, independent of Worker-reported):
+  `npm --prefix kwin run typecheck` -> clean, 0 errors, both tsconfigs.
+  Full build+esbuild+`node --test` -> 827 tests, 78 suites, 827 pass, 0
+  fail, exit 0 - exact match to Worker's reported 827/827. `main.js`
+  determinism independently verified via a direct two-build diff (zero
+  difference).
+- Notes: unit-07 attempt count: 2 (attempt-01 cancelled mid-flight with no
+  report, treated as a full attempt per the Orchestrator's brief; attempt-02
+  accepted first try within itself, no correction round needed - the
+  breaker is not tripped and has full headroom, no further dispatch on this
+  unit expected unless a defect surfaces later). No live host action this
+  entry (static verification only, per brief - this unit was fully
+  deliverable with static tests, no live confirmation was required to reach
+  acceptance). Terminal status for this dispatch: `accepted`. Committed and
+  pushed immediately per the session's updated commit protocol (see commit
+  entry below), including the `docs/changes/trailing-empty-workspace/`
+  process artifacts alongside the code, per explicit instruction not to
+  leave them untracked.
