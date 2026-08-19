@@ -596,3 +596,201 @@ speculation.
   `kwin/tests/controller.test.ts`, `kwin/contents/code/main.js`,
   `docs/changes/trailing-empty-workspace/{spec.md,plan.md,log.md}` - see
   Staging Note in `plan.md`. Terminal status for this dispatch: `accepted`.
+
+## 2026-08-19 (Lead succession, unit-04 scoping and dispatch, accepted)
+
+- Role / unit: Lead / unit-04, attempt-1 (worker-anthropic)
+- Result: New Lead succession. Confirmed `unit-03b` already committed by the
+  user (`git log` shows `HEAD` at `7c28759 feat(workspace): scope
+  global-unique trailing empty to each output`, working tree clean except the
+  three pre-excluded untracked paths) - reconciled the stale
+  "not yet committed" staging note in `plan.md` accordingly. Own fresh
+  baseline: `npm --prefix kwin run typecheck` clean (0 errors, both
+  tsconfigs).
+  Investigated `shared` mode's exact code shape via targeted, bounded reads
+  (no whole-file reads): `synchronizeShared`/`synchronizeSharedCurrent`/
+  `rebuildSharedMapping`/`navigateShared` (`controller.ts:7528-7636`),
+  `finishWorkspaceZero`/`finishSharedWorkspaceZero`
+  (`controller.ts:7648-7769`), `finishMoveToTrailing`
+  (`controller.ts:7844-7909`, shared branch always called `appendDesktop()`
+  unconditionally), `moveActiveToWorkspace`
+  (`controller.ts:7975-8082`, shared's index-0 branch likewise always
+  created - its own comment explicitly flagged this as "unit-04, unchanged
+  here"), `cleanupDesktops`/`cleanupEligibleDesktops`/`removeOwnedEmptyShared`
+  (`controller.ts:8290-8425`, shared's only removal path, via
+  `planDesktopCleanup`, with no trailing-empty protection at all), and the
+  mirror pattern in `enforceGlobalTrailingEmpty`/`resolveGlobalTrailingEmpty`
+  (`controller.ts:8985-9057`). Confirmed `shared` needs exactly one global
+  domain (the entire live desktop list), no per-output split, and
+  `synchronizeShared` itself needs no change (matches spec.md's Q-Domain
+  ruling for shared exactly). Found `cleanupEligibleDesktops()`/the
+  `planDesktopCleanup` import would become fully dead in `controller.ts`
+  once shared switches to the domain-based helper (single remaining caller,
+  confirmed by grep) - since `noUnusedLocals: true` flags unused private
+  class members, removing both is a mechanically required consequence of the
+  wiring, not optional scope creep; confirmed `planDesktopCleanup`'s own
+  definition/types in `logic.ts` and its independent unit tests in
+  `tests/logic.test.ts` are unaffected (different import path, untouched).
+  Located the "TileController shared workspaces (Unit 07)" describe block
+  (`controller.test.ts:15778-16202`, ~17 `it(...)` cases) and, via targeted
+  grep and one bounded read of `configureSwitchCleanupScenario`/
+  `modeCleanupSetup`, identified three shared-only tests outside that block
+  (in "TileController dynamic virtual desktops",
+  `controller.test.ts:12425-12484`/`12566-12580`/`12627-12655`) that directly
+  assert the old "no reserved trailing capacity" premise for shared mode
+  specifically - determined these are this unit's own scope (not unit-05's
+  cross-mode sweep) since they are mode-specific and directly contradict the
+  exact invariant this unit adds.
+  Dispatched `worker-anthropic` with a fully prescriptive design (exact
+  method bodies for `enforceSharedTrailingEmpty`, `resolveSharedTrailingEmpty`,
+  `isCurrentShared`, `appendDesktopForShared`, and exact rewritten call sites)
+  mirroring `enforceGlobalTrailingEmpty`/`resolveGlobalTrailingEmpty`'s shape
+  collapsed to a single domain, per the project's established practice of
+  specifying precisely rather than leaving design to Worker invention.
+  Worker reported `review-ready`: added the four new methods; rewrote
+  `finishSharedWorkspaceZero`, the shared branches of `finishMoveToTrailing`
+  and `moveActiveToWorkspace`'s index-0 case, and `cleanupDesktops`'s shared
+  branch exactly as specified; deleted `cleanupEligibleDesktops()` and the
+  `planDesktopCleanup` import; rewrote the "shared workspaces (Unit 07)"
+  block (four "always create" tests converted to reuse+replenish tests, one
+  new explicit Q-Zero no-op test, one new explicit idempotency test) and the
+  three named cross-block tests.
+  Lead inspected the actual diff directly (not the summary): confirmed all 7
+  `controller.ts` hunks (old-line ranges 40, 7752-8448) fall entirely within
+  the declared shared-mode scope, none touching `per-output-local`/
+  `global-unique` code; confirmed the new methods, rewritten call sites, and
+  deleted dead code match the prescribed design exactly (read the full
+  production diff, not excerpts); confirmed zero `ownedDesktopIds` hits in
+  the diff of either `controller.ts` or `controller.test.ts` (direct `git
+  diff ... | grep ownedDesktopIds`, empty) - no ownership-gating
+  reintroduction; confirmed `removeOwnedEmptyShared` and
+  `ensureTrailingEmptyDesktop` (unit-01) are unmodified; confirmed no orphan
+  sweep was added (correctly - shared's domain is definitionally the entire
+  live list, so no desktop can fall outside it, matching the reasoning
+  already accepted for global-unique's original single-domain shape).
+  Inspected all 12 `controller.test.ts` hunks directly: confirmed the three
+  named cross-block fixes correctly reverse their prior "no reserved
+  capacity"/"removes desktop-trailing" assertions to the new
+  protect-the-trailing-position behavior with concrete, non-weakened
+  assertions (including new `sharedWorkspaceSnapshot()` checks matching the
+  other two modes' precedent), and confirmed all hunks in the Unit 07 block
+  stay within its own bounds, with no other test block touched.
+  Lead independently reran `npm --prefix kwin run typecheck` (clean, both
+  tsconfigs) and the full build+esbuild+`node --test` suite, reproducing the
+  Worker's reported 815/815 (0 fail) exactly, and independently reran `npm
+  run build` a second time, confirming `main.js` regenerates with no further
+  diff (deterministic, not hand-edited).
+- Files / commit: `kwin/src/controller.ts` (+181/-136 net across 7 hunks),
+  `kwin/tests/controller.test.ts` (+159/-124 net across 12 hunks),
+  `kwin/contents/code/main.js` (regenerated bundle, verified deterministic).
+  No commit (user-only per commit protocol).
+- Verification (Lead's own, independent of Worker-reported):
+  `npm --prefix kwin run typecheck` -> clean, 0 errors, both tsconfigs. Full
+  build+esbuild+`node --test` -> 815 tests, 77 suites, 815 pass, 0 fail,
+  exit 0 - exact match to Worker's reported 815/815.
+- Notes: unit-04 attempt count: 1, accepted first try, no correction round
+  (no Attempt Accounting entry needed per governance). No commits or pushes.
+  No live host action this entry (static verification only) - per the
+  standing instruction, `unit-04` was deliverable with static tests only and
+  no live-host action was needed or taken. Staged (not committed):
+  `kwin/src/controller.ts`, `kwin/tests/controller.test.ts`,
+  `kwin/contents/code/main.js` - see Staging Note in `plan.md`. Terminal
+  status for this dispatch: `accepted`.
+- **Post-hoc caveat (added by the reconciling successor Lead below): this
+  dispatching Lead was cancelled mid-flight by quota exhaustion before
+  returning any report to the Orchestrator. Everything in this entry above
+  was written before that cancellation and was unconfirmed until the
+  reconciliation entry below independently re-verified it.**
+
+## 2026-08-19 (Lead succession, unit-04 reconciliation after mid-flight cancellation)
+
+- Role / unit: Lead / unit-04, attempt-01 (reconciliation, no Worker
+  dispatched - the cancelled dispatch's surviving artifacts were verified
+  directly)
+- Result: Accepted. New Lead succession following the prior Lead's mid-flight
+  quota cancellation (no report ever reached the Orchestrator). Read
+  `docs/live-kwin-testing.md`, took a fresh, own, non-inherited live desktop
+  baseline before any other action: `busctl --user` read of
+  `org.kde.KWin.VirtualDesktopManager.desktops` returned exactly 4 desktops
+  matching the confirmed baseline by ID and name (`392a73ad` "Desktop 1",
+  `ec13f70f` "Desktop 3", `41cee7be` "Desktop 4", `dd68d41e` "4") - no
+  populated desktop missing, no more than one extra. Noted (not an incident
+  per the defined criteria, since no desktop is missing and there is not
+  more than one extra): no additional trailing-empty desktop is currently
+  present, unlike the "one extra expected" baseline description - most
+  likely because the currently live-installed script is a build of committed
+  `HEAD` (`7c28759`, pre-unit-04), and unit-04's shared-mode wiring is only
+  staged, not yet installed live. `bash scripts/dogfood-install.sh status`
+  confirmed installed/enabled, read-only, no mutation performed or
+  attempted; plugin left installed and enabled per instruction.
+  Treated the cancelled Lead's `log.md`/`plan.md` unit-04 entries (written
+  before cancellation, describing a `review-ready` Worker dispatch and full
+  Lead verification) as unverified record-keeping, not evidence, per
+  instruction. Independently re-established every claim from the actual
+  artifacts rather than trusting the record:
+  - `git diff --cached -- kwin/src/controller.ts` (249 lines) and
+    `kwin/tests/controller.test.ts` (279 lines) read directly in full (both
+    bounded, well under any whole-file read). Confirmed all `controller.ts`
+    hunks (old-line ranges 40, 7752-8460) and all `controller.test.ts` hunks
+    (three named locations in "TileController dynamic virtual desktops"
+    12467-12643, plus the entire "TileController shared workspaces (Unit
+    07)" block 15928-16222) fall within shared-mode scope only; zero hits
+    for `ownedDesktopIds` in either diff (only the pre-existing, unchanged
+    `ownedDesktopIdSnapshot()` test accessor is used, not touched); confirmed
+    `ensureTrailingEmptyDesktop` (unit-01, `controller.ts:~1651-1719`) and
+    every `per-output-local`/`global-unique` method (`enforceLocalTrailingEmpties`,
+    `resolveLocalTrailingEmpty`, `enforceGlobalTrailingEmpty`,
+    `resolveGlobalTrailingEmpty`, `globalUniqueSwapIfVisibleElsewhere`, etc.)
+    are entirely absent from the diff, i.e. untouched; confirmed
+    `enforceSharedTrailingEmpty`/`resolveSharedTrailingEmpty` operate on the
+    single entire live desktop list with no loop over `connectedOutputKeys()`
+    - i.e. the per-output design from unit-02/unit-03b was not imported into
+    `shared` mode, matching spec.md's Q-Domain ruling that `shared` keeps one
+    global trailing empty. `synchronizeShared` itself is called but its own
+    definition is absent from the diff (unmodified).
+  - `npm --prefix kwin run typecheck` -> clean, 0 errors, both tsconfigs
+    (independently rerun, not inherited).
+  - Full `devenv shell --impure -- bash -c "cd kwin && npm run build && rm
+    -rf dist/tests && esbuild 'tests/*.test.ts' --bundle --platform=node
+    --format=cjs --target=es2020 --outdir=dist/tests && node --test
+    'dist/tests/**/*.test.js'"` -> 815 tests, 77 suites, 815 pass, 0 fail,
+    exit 0. Exact match to the unverified record's claim. Delta vs. the
+    813/813 baseline at HEAD `7c28759` (confirmed pre-existing from
+    unit-03b's own independently-verified acceptance): +2, both new tests
+    added within the "shared workspaces (Unit 07)" block (Q-Zero no-op test,
+    repeated-cleanup-idempotency test) per the diff read above - fully
+    accounted for, no unexplained delta.
+  - Reran `npm run build` a second time after the test run above; `git diff
+    -- kwin/contents/code/main.js` (unstaged) returned zero lines - `main.js`
+    regenerates byte-identically to the already-staged copy, confirming a
+    faithful, deterministic bundle, not hand-edited.
+  - Design correctness against the unit's actual requirement (one GLOBAL
+    trailing empty for `shared`, not per-output): confirmed directly in the
+    diff - `enforceSharedTrailingEmpty()` reads `this.liveDesktops()` as one
+    flat ordered list and calls `ensureTrailingEmptyDesktop()` exactly once
+    (no per-output loop); `resolveSharedTrailingEmpty()` resolves against the
+    same flat list; `isCurrentShared()` reads the single global current
+    desktop via `this.environment.currentDesktop()`, not a per-output read
+    (unlike `isCurrentOnOutput`'s per-output-local counterpart).
+  No corrections were needed and no new Worker was dispatched - the
+  cancelled dispatch's surviving artifacts were, once independently verified
+  rather than trusted, already correct and complete.
+- Files / commit: `docs/changes/trailing-empty-workspace/{plan.md,log.md}`
+  (this entry and the corresponding Attempt Accounting / Progress / Staging
+  Note updates in `plan.md`). No source files touched or changed by this
+  Lead - `kwin/src/controller.ts`, `kwin/tests/controller.test.ts`, and
+  `kwin/contents/code/main.js` remain exactly as staged by the cancelled
+  dispatch, independently confirmed correct. No commit (user-only per commit
+  protocol).
+- Verification: `npm --prefix kwin run typecheck` (clean, both tsconfigs,
+  independently rerun); full `node --test` run, 815/815 pass, 0 fail
+  (counts only, independently rerun); `main.js` rebuild diff: 0 lines
+  (independently rerun a second time).
+- Notes: unit-04 attempt count: 1 (the cancelled dispatch and this
+  reconciliation together constitute attempt-01; no second Worker dispatch
+  or code change was needed, so this is not attempt-02). Recorded in Attempt
+  Accounting per explicit instruction despite not exceeding 1 attempt/
+  correction/review, given the mid-flight cancellation. No commits, staging
+  changes beyond `plan.md`/`log.md`, or pushes performed by this Lead - the
+  three source files were already staged by the cancelled dispatch and are
+  left staged unchanged. Terminal status for this dispatch: `accepted`.

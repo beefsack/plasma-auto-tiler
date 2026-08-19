@@ -40,7 +40,6 @@ import {
     findNeighborLeaf,
     pickDropLeaf,
     planAutomaticPlacement,
-    planDesktopCleanup,
     planEqualSplit,
     planGeometryDrop,
     planKeyboardInsertion,
@@ -7753,14 +7752,26 @@ export class TileController {
         this.focusTrailingEmpty(target, output);
     }
 
-    // Shared-mode Meta+0: always create a new shared desktop and synchronize
-    // every connected output (spec D3), never reuse an existing one.
+    // Shared-mode Meta+0: reuse the structurally-identified global trailing
+    // empty (the whole live desktop list, since shared has no per-output
+    // domain) when one exists, synchronizing every connected output to it.
+    // Q-Zero: if it is already the shared current desktop, the whole
+    // invocation is a no-op. Only when no trailing empty exists does this
+    // fall back to appendDesktopForShared - the same creation primitive
+    // enforceSharedTrailingEmpty() uses.
     private finishSharedWorkspaceZero(desktops: readonly VirtualDesktopCapability[]): void {
         this.rebuildSharedMapping(desktops);
-        const target = this.appendDesktop();
-        if (target !== null) {
-            this.rebuildSharedMapping();
+        const existing = this.resolveSharedTrailingEmpty();
+        if (existing !== null) {
+            if (this.isCurrentShared(existing.id)) {
+                this.diagnostic("workspace-zero-no-op:already-there");
+                return;
+            }
+            this.diagnostic("workspace-zero-completed");
+            this.synchronizeShared(existing);
+            return;
         }
+        const target = this.appendDesktopForShared();
         if (target === null) {
             return;
         }
@@ -7890,7 +7901,7 @@ export class TileController {
                 this.deferDesktopIntent(window);
                 return;
             }
-            target = this.appendDesktop();
+            target = this.resolveSharedTrailingEmpty() ?? this.appendDesktopForShared();
         }
         if (target === null) {
             return;
@@ -8006,12 +8017,13 @@ export class TileController {
                 // one exists (per-output-local, Q-Domain reuse; global-unique
                 // reuses the active output's own trailing empty from its own
                 // globalUniqueAssigned group the same way, never a different
-                // output's), or a brand-new script-owned desktop otherwise -
-                // shared still always creates, never reuses (unit-04,
-                // unchanged here). When the desktop list cannot be mutated
-                // yet (live drag, pending reconstruction, unsettled move),
-                // the whole move is deferred so no window moves before its
-                // required target exists.
+                // output's; shared reuses the single global trailing empty
+                // the same way, since it has no per-output domain), or a
+                // brand-new script-owned desktop otherwise. When the desktop
+                // list cannot be mutated yet (live drag, pending
+                // reconstruction, unsettled move), the whole move is
+                // deferred so no window moves before its required target
+                // exists.
                 if (this.workspaceMode === "per-output-local") {
                     if (this.workspaceMutationDeferred()) {
                         this.deferDesktopIntent(active);
@@ -8033,7 +8045,7 @@ export class TileController {
                         this.deferDesktopIntent(active);
                         return;
                     }
-                    target = this.appendDesktop();
+                    target = this.resolveSharedTrailingEmpty() ?? this.appendDesktopForShared();
                 }
             } else {
                 if (this.workspaceMode === "per-output-local") {
@@ -8287,13 +8299,13 @@ export class TileController {
     // both removes eligible non-trailing empties and appends a replacement
     // trailing empty in the same domain-scoped pass. global-unique (unit-03)
     // enforces the same invariant for its single global domain via
-    // enforceGlobalTrailingEmpty(). shared is unchanged: cleanupEligibleDesktops()
-    // removes one empty, non-current, non-visible-on-another-output desktop
-    // per candidate, never the last global desktop (planDesktopCleanup's own
-    // floor), and creates nothing - Meta+0/Meta+Shift+0 remain the only paths
-    // that create a desktop for shared mode. Deferral keeps the list untouched
-    // while a drag, reconstruction, or unsettled move is live, and the
-    // reconciliation guard keeps create/remove re-entry inert.
+    // enforceGlobalTrailingEmpty(). shared (unit-07) enforces the same
+    // invariant for its own single global domain - the entire live desktop
+    // list, since synchronizeShared already forces every output onto the
+    // same current desktop and there is no per-output domain - via
+    // enforceSharedTrailingEmpty(). Deferral keeps the list untouched while a
+    // drag, reconstruction, or unsettled move is live, and the reconciliation
+    // guard keeps create/remove re-entry inert.
     private cleanupDesktops(): void {
         if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
@@ -8345,58 +8357,101 @@ export class TileController {
         }
         this.rebuildSharedMapping(desktops);
         if (desktops.length <= 1) {
-            // A singleton shared list has nothing to remove or replenish (removal
-            // authority is cleanupEligibleDesktops, which itself never removes the
-            // last global desktop), and the mapping above already tracked the live
-            // ordered list.
+            // A singleton shared list has nothing to remove or replenish (the
+            // trailing-position exclusion in ensureTrailingEmptyDesktop
+            // itself protects the last global desktop), and the mapping
+            // above already tracked the live ordered list.
             return;
         }
-        this.cleanupEligibleDesktops();
+        this.enforceSharedTrailingEmpty();
         return;
     }
 
-    // Removal of empty, invisible desktops now runs on every cleanupDesktops
-    // dispatch (window add/remove, move, float, drag finish, desktopsChanged,
-    // output changes), not only after a workspace switch. Every pass rereads
-    // all mutable KWin state before selecting one candidate.
-    private cleanupEligibleDesktops(): void {
+    // Shared-mode trailing-empty enforcement: the domain is the entire live
+    // desktop list (Q-Domain: shared has one global trailing empty, no
+    // per-output split - synchronizeShared already forces every output onto
+    // the same current desktop, so there is no per-output domain to enforce
+    // separately). Mirrors enforceGlobalTrailingEmpty()'s single-domain shape
+    // (no loop over connectedOutputKeys - shared has exactly one domain).
+    // Structurally self-contained: reads the live list directly rather than a
+    // cached assignment map, so it needs no caller-side rebuild for freshness.
+    private enforceSharedTrailingEmpty(): void {
+        const visible = this.visibleDesktopIds();
+        if (visible === null) {
+            this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
+            return;
+        }
+        const occupied = this.occupiedDesktopIds();
+        if (occupied === null) {
+            this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
+            return;
+        }
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return;
+        }
+        const orderedIds = desktops.map((desktop) => desktop.id);
         this.reconcilingDesktops = true;
         try {
-            while (true) {
-                const desktops = this.liveDesktops();
-                if (desktops === null) {
-                    return;
-                }
-                const visible = this.visibleDesktopIds();
-                if (visible === null) {
-                    this.diagnostic("workspace-cleanup-deferred:output-visibility-unknown");
-                    return;
-                }
-                const occupied = this.occupiedDesktopIds();
-                if (occupied === null) {
-                    this.diagnostic("workspace-cleanup-deferred:window-occupancy-unknown");
-                    return;
-                }
-                const selection = planDesktopCleanup({
-                    orderedIds: desktops.map((desktop) => desktop.id),
-                    visibleIds: visible,
-                    occupiedIds: occupied,
-                });
-                if (!selection.ok) {
-                    return;
-                }
-                const removed = this.workspaceMode === "per-output-local"
-                    ? this.removeOwnedEmptyDesktop(selection.value.id, desktops, visible)
-                    : this.workspaceMode === "global-unique"
-                      ? this.removeOwnedEmptyGlobalUnique(selection.value.id, desktops, visible)
-                      : this.removeOwnedEmptyShared(selection.value.id, desktops, visible);
-                if (!removed) {
-                    return;
-                }
-            }
+            ensureTrailingEmptyDesktop({
+                orderedIds,
+                isEmpty: (id) => !occupied.has(id),
+                isVisible: (id) => visible.has(id),
+                removeDesktop: (id) => this.removeOwnedEmptyShared(id, desktops, visible),
+                createDesktop: () => this.appendDesktopForShared()?.id ?? null,
+            });
         } finally {
             this.reconcilingDesktops = false;
         }
+    }
+
+    // Structurally identify the current global trailing empty, if any: the
+    // desktop at the last position of the live desktop list, only when it is
+    // currently empty. Recomputed fresh on every call from the live list and
+    // occupancy snapshot - never cached, matching enforceSharedTrailingEmpty().
+    // Returns null when there are no desktops, the last one is occupied, or
+    // occupancy is unreadable; callers treat null as "no trailing empty to
+    // reuse".
+    private resolveSharedTrailingEmpty(): VirtualDesktopCapability | null {
+        const desktops = this.liveDesktops();
+        if (desktops === null) {
+            return null;
+        }
+        const last = desktops[desktops.length - 1];
+        if (last === undefined) {
+            return null;
+        }
+        const occupied = this.occupiedDesktopIds();
+        if (occupied === null || occupied.has(last.id)) {
+            return null;
+        }
+        return last;
+    }
+
+    // Whether the given id is already the shared current desktop (Q-Zero:
+    // Meta+0 is a no-op when the trailing empty is already current). Shared
+    // mode has one logical current desktop synchronized across every output,
+    // so this reads the global current desktop, unlike isCurrentOnOutput's
+    // per-output read.
+    private isCurrentShared(id: string): boolean {
+        let current: unknown;
+        try {
+            current = this.environment.currentDesktop();
+        } catch (error) {
+            void error;
+            return false;
+        }
+        return isVirtualDesktop(current) && current.id === id;
+    }
+
+    // Append one desktop for shared mode and keep the shared mapping fresh
+    // (Meta+0, Meta+Shift+0, and enforceSharedTrailingEmpty() paths).
+    private appendDesktopForShared(): VirtualDesktopCapability | null {
+        const created = this.appendDesktop();
+        if (created !== null) {
+            this.rebuildSharedMapping();
+        }
+        return created;
     }
 
     private removeOwnedEmptyShared(

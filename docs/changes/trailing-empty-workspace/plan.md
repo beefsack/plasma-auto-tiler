@@ -108,8 +108,11 @@ does not converge cleanly.
       the revised Q-Domain ruling - see unit-03b)
 - [x] unit-03b Rework global-unique mode to the revised Q-Domain ruling
       (accepted, attempt-01, no correction round; 813/813 pass, typecheck
-      clean)
-- [ ] unit-04 Wire shared mode (not started - no diff evidence)
+      clean; committed by the user at `7c28759`)
+- [x] unit-04 Wire shared mode (accepted, attempt-01, no correction round;
+      815/815 pass, typecheck clean; attempt-01's dispatching Lead was
+      cancelled mid-flight before returning any report - independently
+      reconciled and re-verified by a successor Lead, see Attempt Accounting)
 - [ ] unit-05 Cross-mode regression sweep
 - [ ] unit-06 Documentation correction
 
@@ -129,6 +132,35 @@ does not converge cleanly.
   now closed at attempt-02 with one correction round; no further dispatch
   on this unit is expected, so the breaker is moot for it unless a defect
   surfaces later.
+- unit-04, attempt-01: dispatched by a prior Lead succession, which wrote a
+  full `review-ready`-shaped log.md/plan.md record (diff inspection claims,
+  815/815 verification claims) but was cancelled by quota exhaustion before
+  returning any report to the Orchestrator or this Lead, leaving the record
+  unconfirmed. This reconciliation stint treated all of it as unverified and
+  independently re-established every claim from scratch, without dispatching
+  a new Worker or changing any code: (1) read the staged `git diff --cached`
+  for both `controller.ts` (249 diff lines) and `controller.test.ts` (279
+  diff lines) directly and confirmed every hunk falls within shared-mode
+  scope only (`controller.ts` old-line ranges 40, 7752-8460;
+  `controller.test.ts` three named locations in "dynamic virtual desktops"
+  12467-12643 plus the full "shared workspaces (Unit 07)" block
+  15928-16222), confirmed zero `ownedDesktopIds` references in either diff,
+  confirmed `ensureTrailingEmptyDesktop` (unit-01, `controller.ts:~1651`) and
+  all `per-output-local`/`global-unique` methods are untouched, and confirmed
+  `enforceSharedTrailingEmpty`/`resolveSharedTrailingEmpty` operate on the
+  single entire live desktop list with no per-output loop (i.e. did not
+  import unit-02/03b's per-output design into shared mode); (2) independently
+  ran `npm --prefix kwin run typecheck` (clean, both tsconfigs) and the full
+  build+esbuild+`node --test` suite (815 tests, 77 suites, 815 pass, 0 fail -
+  exact match to the unverified record's claim, +2 over the 813 baseline at
+  HEAD `7c28759`, accounted for by the new Q-Zero no-op test and the new
+  idempotency test); (3) independently reran `npm run build` a second time
+  and confirmed `main.js` produces zero further diff (deterministic, not
+  hand-edited). Accepted as attempt-01 (no second Worker dispatch or code
+  change was needed; the reconciliation confirmed the artifacts were already
+  correct). No Attempt Accounting entry would normally be needed for a
+  first-try acceptance, but this entry is recorded per explicit instruction
+  given the cancellation.
 
 ## Pending User Decisions
 
@@ -263,9 +295,52 @@ scope is unaffected.
   `unit-03`'s own acceptance evidence above is left as an accurate
   historical record of work done against the ruling in force at the time;
   this entry supersedes it for current behavior.
-- Remaining acceptance criteria (shared domain wiring, cross-mode sweep,
-  docs correction) are unit-04 through unit-06 and remain unmet pending
-  those units.
+- Shared domain acceptance (unit-04, now met): "one global trailing empty in
+  the shared domain, never zero/never more from this mechanism" and "trailing
+  empty never removed while empty" - met by `enforceSharedTrailingEmpty`
+  (`controller.ts`, replacing the deleted `cleanupEligibleDesktops()`) calling
+  `ensureTrailingEmptyDesktop` once for the single global domain (the entire
+  live desktop list, per Q-Domain - `synchronizeShared` unchanged, no
+  per-output split introduced). "Other empty invisible desktops remain
+  removable, ownership-independent" - met; no orphan sweep needed (the shared
+  domain is definitionally the whole live list, so no desktop can fall
+  outside it), reusing the pre-existing, unchanged `removeOwnedEmptyShared`.
+  "Meta+0/Meta+Shift+0 reuse existing trailing empty, no-op when already
+  current / create-only-if-absent" - met by `resolveSharedTrailingEmpty`/
+  `isCurrentShared` and their use in `finishSharedWorkspaceZero`,
+  `finishMoveToTrailing`'s shared branch, and `moveActiveToWorkspace`'s
+  index-0 shared branch; regression-tested by a new explicit Q-Zero no-op
+  test in the "shared workspaces (Unit 07)" block. "Appends exactly one new
+  trailing empty when the current one becomes occupied" - regression-tested
+  by the rewritten Meta+Shift+0/Meta+0 reuse tests, each asserting the
+  replenish create alongside the reuse. "No ownership Set introduced or
+  reintroduced" - met; Lead independently ran `git diff ... | grep
+  ownedDesktopIds` against both `controller.ts` and `controller.test.ts` and
+  found zero hits. "Repeated `cleanupDesktops()` idempotent" (shared) - met,
+  regression-tested by a new explicit idempotency test in the same block.
+  Mechanically required consequence of the wiring, verified in scope: the now
+  fully-dead `cleanupEligibleDesktops()` private method and the
+  `planDesktopCleanup` import were removed from `controller.ts` (the function
+  itself, its types, and its own direct unit tests in `logic.ts`/
+  `tests/logic.test.ts` are untouched) - `noUnusedLocals` would otherwise fail
+  typecheck. Three shared-only tests in the "TileController dynamic virtual
+  desktops" block that directly asserted the old "no reserved trailing
+  capacity" premise (outside the Unit 07 block, but exclusively about shared
+  mode's own cleanup floor, so in this unit's own scope, not unit-05's) were
+  corrected to assert the new trailing-protection behavior. "815/815 pass"
+  (813 prior + 2 net: Q-Zero no-op test, idempotency test) and typecheck
+  clean on both tsconfigs - met, independently reproduced by the Lead via the
+  standard build+esbuild+`node --test` command; `main.js` independently
+  confirmed a deterministic, faithful regeneration (no further diff after a
+  second fresh `npm run build`). `per-output-local` and `global-unique` code
+  and tests confirmed untouched by direct diff inspection (all `controller.ts`
+  hunks fall within the declared shared-mode scope, old-line ranges
+  7752-8448; all `controller.test.ts` hunks fall within the "TileController
+  dynamic virtual desktops" block, three named locations only, and the
+  "shared workspaces (Unit 07)" block, 15778-end - none touch the Unit 04/05/
+  06 test blocks).
+- Remaining acceptance criteria (cross-mode sweep, docs correction) are
+  unit-05 and unit-06 and remain unmet pending those units.
 
 ## Residual Risks
 
@@ -290,9 +365,10 @@ scope is unaffected.
 
 ## Final Outcome
 
-- Pending - unit-01, unit-02, unit-03 (all committed, `e2105c2`), and
-  unit-03b (accepted, staged, not yet committed) done; units 04-06 remain.
-  Not yet the change's overall completion transaction.
+- Pending - unit-01, unit-02 (committed, `1b34a37`), unit-03 (committed,
+  `e2105c2`), and unit-03b (committed, `7c28759`) done; unit-04 (accepted,
+  staged, not yet committed) done; units 05-06 remain. Not yet the change's
+  overall completion transaction.
 
 ## Staging Note (2026-08-19, unit-02)
 
@@ -332,6 +408,44 @@ scope is unaffected.
   not two). Proposed conventional-commit subject (subject only):
   `feat(workspace): scope global-unique trailing empty to each output`. No
   commit or push performed - user-only per commit protocol.
+- `unit-03b` was subsequently committed by the user at `7c28759
+  feat(workspace): scope global-unique trailing empty to each output`,
+  confirmed as this Lead succession's verified starting `HEAD`.
+
+## Staging Note (2026-08-19, unit-04)
+
+- Staged (`git add`, not committed): `kwin/src/controller.ts`,
+  `kwin/tests/controller.test.ts`, `kwin/contents/code/main.js` - the
+  unit-04 diff vs. `7c28759` (`controller.ts` +181/-136 net across 7 hunks,
+  old-line ranges 40 and 7752-8448, entirely within the declared shared-mode
+  scope: `finishSharedWorkspaceZero`, the shared branches of
+  `finishMoveToTrailing` and `moveActiveToWorkspace`'s index-0 case, the
+  shared branch of `cleanupDesktops`, and the new
+  `enforceSharedTrailingEmpty`/`resolveSharedTrailingEmpty`/`isCurrentShared`/
+  `appendDesktopForShared` methods replacing the deleted
+  `cleanupEligibleDesktops` and the now-unused `planDesktopCleanup` import;
+  `controller.test.ts` +159/-124 net across 12 hunks, three named locations
+  in the "TileController dynamic virtual desktops" block plus the full
+  "TileController shared workspaces (Unit 07)" block, 15778-end; faithful
+  regenerated bundle in `main.js`, confirmed deterministic by the Lead's own
+  second fresh `npm run build` producing no further diff), verified 815/815
+  tests pass (813 prior + net 2: Q-Zero no-op test, idempotency test) and
+  typecheck clean on both tsconfigs, independently reproduced by the Lead.
+  `per-output-local` and `global-unique` code and tests confirmed untouched
+  by direct diff inspection; `ensureTrailingEmptyDesktop` (unit-01)
+  confirmed unmodified. Proposed conventional-commit subject (subject only):
+  `feat(workspace): reuse trailing empty workspace in shared mode`. No
+  commit or push performed - user-only per commit protocol.
+- (2026-08-19, reconciliation) The dispatching Lead was cancelled mid-flight
+  by quota exhaustion before returning any report; the record above (written
+  before cancellation) was therefore treated as unverified pending
+  independent confirmation. A successor Lead reconciled it - see unit-04,
+  attempt-01 in Attempt Accounting - and independently confirmed every claim
+  (diff scope, no ownership-gating creep, no per-output contamination of
+  shared mode, 815/815 tests, clean typecheck, deterministic `main.js`)
+  without dispatching a new Worker or changing any code. The staged file set
+  and proposed commit subject above are unchanged and confirmed still
+  accurate.
 
 ## inv-01 Findings and Proposed Revision (APPROVED 2026-08-19 - Orchestrator
 and user approved the Q-Domain amendment; encoded in `spec.md` and the
