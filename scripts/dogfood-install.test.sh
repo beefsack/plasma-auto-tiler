@@ -55,12 +55,14 @@ file=""
 group=""
 key=""
 value=""
+delete=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --file) file="${2:?}"; shift 2 ;;
     --group) group="${2:?}"; shift 2 ;;
     --key) key="${2:?}"; shift 2 ;;
     --type) shift 2 ;;
+    --delete) delete=1; shift ;;
     *) value="$1"; shift ;;
   esac
 done
@@ -80,16 +82,22 @@ current=""
       current=""
     fi
     if [[ "$current" == "$group" && "$line" == "$key="* ]]; then
+      if [[ "$delete" -eq 1 ]]; then
+        key_replaced=1
+        continue
+      fi
       printf '%s=%s\n' "$key" "$value"
       key_replaced=1
       continue
     fi
     printf '%s\n' "$line"
   done < "$file"
-  if [[ "$group_found" -eq 0 ]]; then
-    printf '\n[%s]\n%s=%s\n' "$group" "$key" "$value"
-  elif [[ "$key_replaced" -eq 0 ]]; then
-    printf '%s=%s\n' "$key" "$value"
+  if [[ "$delete" -eq 0 ]]; then
+    if [[ "$group_found" -eq 0 ]]; then
+      printf '\n[%s]\n%s=%s\n' "$group" "$key" "$value"
+    elif [[ "$key_replaced" -eq 0 ]]; then
+      printf '%s=%s\n' "$key" "$value"
+    fi
   fi
 } > "$tmp" && mv "$tmp" "$file"
 EOF
@@ -759,6 +767,8 @@ assert_grep_file "fake-so" "$EFFECT_STAGED_SO"
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file 'export QT_PLUGIN_PATH="'"$EFFECT_ROOT"'${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"' "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in fresh env script"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
+assert_contains "kwinrc: plasma-auto-tiler-active-borderEnabled set to true"
 if sh -n "$EFFECT_ENV_FILE" 2>/dev/null; then
   PASS=$((PASS + 1))
 else
@@ -784,6 +794,7 @@ run_script effect-install
 check_exit 0
 assert_cmp "$WORK/env-first.sh" "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in env script after re-run"
+assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
 
 # effect-status: nothing staged, no env script, kwin_wayland not running (the
 # reset_state default) - all five stages fail/unknown with guidance, and it
@@ -954,6 +965,8 @@ assert_contains "removed: $EFFECT_ROOT"
 assert_contains "removed: $EFFECT_ENV_FILE"
 assert_not_exists "$EFFECT_ROOT"
 assert_not_exists "$EFFECT_ENV_FILE"
+assert_contains "removed (kwinrc key): plasma-auto-tiler-active-borderEnabled"
+assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
 
 # effect-remove: migration - also removes the legacy environment.d entry this
 # project used to write, without touching any other file under environment.d/
@@ -986,6 +999,8 @@ reset_state
 run_script effect-remove
 check_exit 0
 assert_contains "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, and $LEGACY_EFFECT_ENV_FILE not present)"
+assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled" "$WORK/tools.log"
+assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete" "$WORK/tools.log"
 
 # setup: full success path (all four stages succeed)
 reset_state
@@ -1045,6 +1060,60 @@ assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
 assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
 assert_not_grep_file "cmake" "$WORK/cmake.log"
 assert_not_exists "$CONFIG/kwinrc"
+
+# static: native-effect plugin ID consistency across metadata.json,
+# CMakeLists.txt's kcoreaddons_add_plugin target name, and
+# dogfood-install.sh's EFFECT_PLUGIN_ID literal must all agree, and
+# EFFECT_CONFIG_KEY must be derived from EFFECT_PLUGIN_ID rather than a second
+# independent literal. Reads real repo files directly with grep/sed.
+EXPECTED_EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
+NATIVE_EFFECT_METADATA="$KWIN_DIR/native-effect/metadata.json"
+NATIVE_EFFECT_CMAKELISTS="$KWIN_DIR/native-effect/CMakeLists.txt"
+
+metadata_id="$(grep -m1 '"Id"' "$NATIVE_EFFECT_METADATA" | sed -E 's/.*"Id"[[:space:]]*:[[:space:]]*"([^"]*)".*/\1/')"
+if [[ "$metadata_id" == "$EXPECTED_EFFECT_PLUGIN_ID" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: kwin/native-effect/metadata.json KPlugin.Id ('$metadata_id') disagrees with expected native-effect plugin ID ('$EXPECTED_EFFECT_PLUGIN_ID')" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+cmake_target="$(grep -m1 'kcoreaddons_add_plugin(' "$NATIVE_EFFECT_CMAKELISTS" | sed -E 's/.*kcoreaddons_add_plugin\(([^[:space:])]*).*/\1/')"
+if [[ "$cmake_target" == "$EXPECTED_EFFECT_PLUGIN_ID" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: kwin/native-effect/CMakeLists.txt kcoreaddons_add_plugin target name ('$cmake_target') disagrees with expected native-effect plugin ID ('$EXPECTED_EFFECT_PLUGIN_ID')" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+script_plugin_id="$(grep -m1 '^EFFECT_PLUGIN_ID=' "$SCRIPT" | sed -E 's/^EFFECT_PLUGIN_ID="([^"]*)".*/\1/')"
+if [[ "$script_plugin_id" == "$EXPECTED_EFFECT_PLUGIN_ID" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: scripts/dogfood-install.sh EFFECT_PLUGIN_ID ('$script_plugin_id') disagrees with expected native-effect plugin ID ('$EXPECTED_EFFECT_PLUGIN_ID')" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+if [[ "$metadata_id" == "$cmake_target" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: kwin/native-effect/metadata.json KPlugin.Id ('$metadata_id') disagrees with kwin/native-effect/CMakeLists.txt kcoreaddons_add_plugin target name ('$cmake_target')" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+if [[ "$metadata_id" == "$script_plugin_id" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: kwin/native-effect/metadata.json KPlugin.Id ('$metadata_id') disagrees with scripts/dogfood-install.sh EFFECT_PLUGIN_ID ('$script_plugin_id')" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+if grep -Fq 'EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"' "$SCRIPT"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: scripts/dogfood-install.sh does not derive EFFECT_CONFIG_KEY from EFFECT_PLUGIN_ID (expected literal: EFFECT_CONFIG_KEY=\"\${EFFECT_PLUGIN_ID}Enabled\")" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 echo "passes: $PASS failures: $FAIL"
 if [[ "$FAIL" -gt 0 ]]; then

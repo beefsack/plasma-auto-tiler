@@ -13,9 +13,24 @@ KCM_UI="$KWIN_DIR/contents/ui/config.ui"
 PLUGIN_ID="plasma-auto-tiler-kwin"
 CONFIG_KEY="${PLUGIN_ID}Enabled"
 
-# KPlugin.Id of the native "active border" effect plugin, matches the D-Bus
-# effect name and kwin/native-effect/metadata.json.
+# KPlugin.Id of the native "active border" effect plugin; matches the D-Bus
+# effect name and kwin/native-effect/metadata.json's KPlugin.Id.
+#
+# CAUTION: KWin derives a disk-scanned plugin's *runtime* ID from the built
+# .so filename (QFileInfo(fileName).completeBaseName()), NOT from
+# metadata.json's Id. This constant equals metadata.json's Id only because
+# kwin/native-effect/CMakeLists.txt's kcoreaddons_add_plugin target name was
+# deliberately set to match, enforced at build time by
+# kwin/native-effect/validate-metadata.cmake. A future rename that moves one
+# without the others silently breaks EFFECT_CONFIG_KEY below. See the
+# "native-effect plugin ID consistency" test in dogfood-install.test.sh.
 EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
+
+# kwinrc [Plugins] key that persists the native effect's enabled state across
+# session starts, exactly mirroring CONFIG_KEY above for the KWin script.
+# Derived from EFFECT_PLUGIN_ID so there is one place this identifier is
+# spelled out, not two.
+EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"
 KWIN_DEV_CMAKE_DIR="/nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev/lib/cmake/KWin"
 
 # Normal roots derive from XDG paths. Test-only overrides: DOGFOOD_DATA_ROOT and
@@ -70,7 +85,11 @@ Commands:
                   (or the $HOME/.local/share equivalent when XDG_DATA_HOME is
                   unset); writes a QT_PLUGIN_PATH env script under
                   $XDG_CONFIG_HOME/plasma-workspace/env/ so the staged plugin
-                  dir is discovered on next login; idempotent
+                  dir is discovered on next login; also writes
+                  [Plugins] plasma-auto-tiler-active-borderEnabled=true to
+                  kwinrc so the effect persists across future session starts
+                  once discovered (does not reconfigure KWin or use D-Bus);
+                  idempotent
   effect-reload   query D-Bus for effect support; if supported, unload and
                   reload the effect live; if not yet supported (the
                   plasma-workspace env script requires a logout/login to take
@@ -81,8 +100,10 @@ Commands:
                   D-Bus discovery, and D-Bus loaded state, each reported
                   pass/fail with guidance; read-only, never mutates
   effect-remove   remove the staged effect tree, the plasma-workspace env
-                  script, and (migration cleanup) any legacy environment.d
-                  entry this project wrote previously; idempotent
+                  script, the kwinrc [Plugins]
+                  plasma-auto-tiler-active-borderEnabled key when present, and
+                  (migration cleanup) any legacy environment.d entry this
+                  project wrote previously; idempotent
 
   setup      one-command install: composes install, enable, effect-install,
              and effect-reload in that order. install/enable are the
@@ -105,9 +126,10 @@ DOGFOOD_KWIN_NOT_RUNNING (force the "process not found" branch).
 
 install and uninstall never touch KWin configuration; enable and disable
 mutate kwinrc and reconfigure the running KWin session.
-effect-install and effect-remove never touch KWin configuration or D-Bus;
-effect-reload mutates the running KWin session via D-Bus; effect-status is
-read-only.
+effect-install and effect-remove touch kwinrc (only the one [Plugins]
+enablement key for the native effect) but never use D-Bus; effect-reload is
+the only effect command that mutates the running KWin session via D-Bus;
+effect-status is read-only.
 EOF
 }
 
@@ -309,8 +331,16 @@ cmd_effect_install() {
     printf '%s' "$desired" > "$EFFECT_ENV_FILE"
   fi
 
+  require_tool KWRITECONFIG6_BIN kwriteconfig6
+  local kwriteconfig="$TOOL"
+  if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" true; then
+    echo "error: kwriteconfig6 failed to set $EFFECT_CONFIG_KEY=true in $KWINRC" >&2
+    exit 1
+  fi
+
   echo "staged: $EFFECT_STAGED_SO"
   echo "env script: $EFFECT_ENV_FILE"
+  echo "kwinrc: $EFFECT_CONFIG_KEY set to true (persists across future session starts once the effect is discovered by KWin; this does not itself trigger a live D-Bus load - use 'effect-reload' for that)"
   echo "note: a logout/login (or new session) is required before the effect is discovered by KWin."
 }
 
@@ -497,6 +527,23 @@ cmd_effect_remove() {
   if [[ -e "$LEGACY_EFFECT_ENV_FILE" ]]; then
     rm -f "$LEGACY_EFFECT_ENV_FILE"
     echo "removed (legacy): $LEGACY_EFFECT_ENV_FILE"
+    removed=1
+  fi
+  require_tool KREADCONFIG6_BIN kreadconfig6
+  local kreadconfig="$TOOL"
+  local current_key_value
+  current_key_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" )" || {
+    echo "error: kreadconfig6 failed to read $EFFECT_CONFIG_KEY from $KWINRC" >&2
+    exit 1
+  }
+  if [[ -n "$current_key_value" ]]; then
+    require_tool KWRITECONFIG6_BIN kwriteconfig6
+    local kwriteconfig="$TOOL"
+    if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" --delete; then
+      echo "error: kwriteconfig6 failed to delete $EFFECT_CONFIG_KEY from $KWINRC" >&2
+      exit 1
+    fi
+    echo "removed (kwinrc key): $EFFECT_CONFIG_KEY"
     removed=1
   fi
   if [[ "$removed" -eq 0 ]]; then
