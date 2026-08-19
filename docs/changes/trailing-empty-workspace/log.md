@@ -1188,5 +1188,6 @@ speculation.
   `docs/live-kwin-testing.md`-gated, not performed this dispatch or any
   prior one) is explicitly and deliberately left open, recorded in Residual
   Risks, and is not resolved by this or any static-only dispatch. No live
-  host mutation was performed. Committed and pushed by this Lead - see
-  commit hash recorded alongside this entry once pushed.
+  host mutation was performed. Committed and pushed by this Lead at
+  `f77e772 test(workspace): close unit-05 3+-output, disconnect, replug, and
+  flap coverage gaps` (`6a70701..f77e772`).
