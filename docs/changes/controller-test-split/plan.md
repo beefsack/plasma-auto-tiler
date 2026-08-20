@@ -98,8 +98,8 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-19 | Move describe: per-output-local workspaces (Unit 05) (contains its own locally-scoped `twoOutputSetup`/`moveToTrailing` - these travel with the block untouched, not part of fixtures) -> `controller-per-output-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; relocate the eight drained-source comment blocks verbatim above their owning declarations and delete `controller.test.ts` | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
-| unit-23 safe subset | Remediate `controller-fixtures.ts` (1,332) by export cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004) by moving whole top-level `describe` blocks. Workers only apply boundaries pre-decided in `spec.md`. These operations are count-neutral: fixture modules have no describes and whole-describe moves retain the total of 81. Stop and escalate if a candidate changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`, `kwin/tests/controller-fixtures.ts`, derived target test files, and approved docs only | full 3-command block; exact counts are invariant |
-| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-interactive-drag.test.ts` (1,275), or `controller-dynamic-virtual-desktops.test.ts` (1,414). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
+| unit-23 safe subset | **Closed.** The fixture export-cluster split landed in `2dd926e`: `controller-fixtures.ts` is 574 lines and `controller-fixture-scenarios.ts` is 766 lines. The drag split is discarded under the Orchestrator ruling because 1,004 lines is within the user's "~1,000 line" threshold; it is preserved, unpushed, at `wip/unit-23-drag-split`. | unit-21 | approved fixture split and closure documentation only | final clean-main gate: 924 tests, 81 suites, 0 failures, 81 describes, both typechecks clean, 336 dogfood assertions |
+| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,932), `controller-interactive-drag.test.ts` (1,277), or `controller-dynamic-virtual-desktops.test.ts` (1,416). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
 | unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23 | final acceptance verification | full 3-command block + `main.js` diff check + test-name diff check |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
@@ -163,7 +163,7 @@ actually starts.
 - [x] unit-19 per-output workspaces
 - [x] unit-20 global-unique workspaces
 - [x] unit-21 shared workspaces
-- [ ] unit-23 safe subset over-threshold remediation - fixture scenarios accepted; drag reflow/resize circuit-breaker blocked
+- [x] unit-23 safe subset closed - fixture scenarios accepted; drag reflow/resize discarded under Orchestrator ruling
 - [ ] unit-23 parked subset user decision
 - [ ] unit-22 final cleanup and full gate
 
@@ -396,23 +396,36 @@ actually starts.
   next gate exposed another missing retained import, `movedGeometry`, in the
   same source test. A second correction round would be required and is
   prohibited, so the uncommitted diff is preserved and no further Worker was
-  dispatched. Attempts 1; correction rounds 1; independent reviews 0.
+   dispatched. Attempts 1; correction rounds 1; independent reviews 0.
+- unit-23 closure: **safe subset closed by scope reduction**. The fixture-
+  scenarios slice remains accepted in `2dd926e` after 1 attempt and 1
+  correction. The drag-reflow-and-resize slice had 1 attempt and 1 completed
+  correction round; its second failed gate exposed the missing `movedGeometry`
+  import, requiring a prohibited second correction and tripping the breaker. Per the
+  Orchestrator ruling, the drag split is discarded rather than retried because
+  the retained 1,004-line file is within the user's "~1,000 line" threshold.
+  The discarded work is preserved locally and unpushed in
+  `wip/unit-23-drag-split`.
 
 ## Pending User Decisions
 
-- **Parked unit-23 threshold decision.** The safe subset may proceed after its
-  boundaries are pre-decided: `controller-fixtures.ts` (1,332 lines) by export
-  cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004 lines) by
-  whole top-level `describe`. The parked subset is
-  `controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
-  `controller-interactive-drag.test.ts` (1,275 lines), and
-  `controller-dynamic-virtual-desktops.test.ts` (1,414 lines). Each has one
-  top-level `describe` that alone exceeds ~1,000 lines, so preserving describe
-  boundaries cannot meet the threshold. User options: allow intra-describe
-  splitting with a re-grounded count invariant; accept these files over
-  threshold as documented exceptions; or choose another resolution. No parked
-  subset implementation may begin. Because this is an acceptance gap, unit-22
-  completion/archive work remains prohibited.
+- **Parked unit-23 threshold decision.** The three files below each contain one
+  top-level `describe` that alone exceeds ~1,000 lines. A
+  describe-boundary-preserving split cannot bring them below the threshold.
+  None has a `beforeEach`.
+
+  | File | Total | Single top-level describe | Describe lines |
+  |---|---:|---|---:|
+  | `controller-automatic-dwindle-ownership.test.ts` | 1,932 | yes | 1,907 |
+  | `controller-dynamic-virtual-desktops.test.ts` | 1,416 | yes | 1,391 |
+  | `controller-interactive-drag.test.ts` | 1,277 | yes | 1,155 |
+
+  `controller-interactive-drag.test.ts` has module fixtures `rowsDropSetup` and
+  `assertLeafPartition` that an intra-describe split would need to share. User
+  options: allow intra-describe splitting with a re-grounded count invariant;
+  accept these files as documented exceptions; or choose another resolution. No
+  parked-subset implementation may begin. Because this is an acceptance gap,
+  unit-22 completion/archive work remains prohibited.
 
 The previously blocking module-scope and source-preamble decisions below are
 resolved.
@@ -448,26 +461,26 @@ resolved.
 
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
-| All 40 describes preserved unchanged across 20 files + fixtures | unit-22 name-literal diff from `d18d87a` to the pending tree is empty; final acceptance remains blocked by the drag import failure |
-| `grep -c "describe("` totals 81 | unit-22 recheck: 81 |
-| `npm test`: 924/81/924 pass/0 fail | unit-22 recheck: 924 tests, 81 suites, 923 pass, 1 fail (`movedGeometry is not defined` in retained drag diagnostics); unmet |
-| `npm run typecheck` clean on both tsconfigs | unit-22 recheck: `tsconfig.json` fails TS2304 for `movedGeometry`; `tsconfig.test.json` did not run because the command chains with `&&`; unmet |
+| All 40 describes preserved unchanged across 22 topic files + fixtures | unit-22 name-literal diff from `d18d87a` to clean `main` is empty; drag split was discarded, not merged |
+| `grep -c "describe("` totals 81 | clean-main final gate: 81 |
+| `npm test`: 924/81/924 pass/0 fail | clean-main final gate: 924 tests, 81 suites, 924 pass, 0 fail |
+| `npm run typecheck` clean on both tsconfigs | clean-main final gate: both `tsconfig.json` and `tsconfig.test.json` passed with zero errors |
 | `main.js` byte-identical | unit-22 history check from `d18d87a` through `2dd926e` and current-worktree diff are both empty |
 | No test name changed | unit-22 sorted `it(`/`describe(` literal diff from `d18d87a` to the pending tree is empty |
-| No describe split, reordered, or renested | unit-23 fixture move contains no describes; Lead diff review confirmed the drag move contains the three approved whole top-level describes in order |
+| No describe split, reordered, or renested | unit-23 fixture move contains no describes; the drag move was discarded rather than merged |
 | Only `kwin/tests/controller*.ts` and `docs/` change | unit-22 history check found no `kwin/src/` or `kwin/contents/code/main.js` path in change commits; pending diff is test-only |
-| `bash scripts/dogfood-install.test.sh` | unit-22 recheck: `passes: 336 failures: 0`; script also emitted `find: .../data: No such file or directory` |
+| `bash scripts/dogfood-install.test.sh` | clean-main final gate: `passes: 336 failures: 0`; script also emitted `find: .../data: No such file or directory` |
 
 ## Residual Risks
 
 - The unit-23 fixture-scenarios slice is accepted in `2dd926e`. The
-  drag-reflow-and-resize slice is circuit-breaker blocked after its sole
-  correction still left a missing retained `movedGeometry` import; a second
-  correction is prohibited and the pending diff remains uncommitted.
+  drag-reflow-and-resize slice is discarded under the Orchestrator's scope
+  reduction, with its failed work preserved locally and unpushed at
+  `wip/unit-23-drag-split`.
 - The unit-23 parked subset is an open acceptance gap:
-  `controller-automatic-dwindle-ownership.test.ts` (1,930),
-  `controller-interactive-drag.test.ts` (1,275), and
-  `controller-dynamic-virtual-desktops.test.ts` (1,414) cannot meet the
+  `controller-automatic-dwindle-ownership.test.ts` (1,932),
+  `controller-interactive-drag.test.ts` (1,277), and
+  `controller-dynamic-virtual-desktops.test.ts` (1,416) cannot meet the
   threshold while preserving their single top-level describes. Unit-22 and
   completion/archive work remain blocked pending the user decision.
 - Grep-based import pruning could theoretically under- or over-prune on an
@@ -476,12 +489,18 @@ resolved.
   designed catch for this, so the risk is caught immediately, not silently.
 - `controller.test.ts` was deleted by unit-21 after its eight orphaned comments
   were relocated verbatim; unit-22 does not own further source-file cleanup.
+- Pre-existing, not-ours over-threshold files remain out of scope:
+  `kwin/tests/logic.test.ts` (1,067), `scripts/start-test.sh` (~1,079), and
+  `scripts/start-test.test.sh` (1,068).
 
 ## Final Outcome
 
-- Pending. This session: corrected `spec.md`'s Shared State analysis to the
-  whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-21. Unit-23's fixture-scenarios safe slice is accepted;
-  its drag-reflow-and-resize safe slice is circuit-breaker blocked. The parked
-  subset remains an acceptance gap, so unit-22 completion/archive remains
-  prohibited pending the user decision.
+- In flight, not archived. The 17,075-line `kwin/tests/controller.test.ts` is
+  fully dissolved and deleted. The delivered layout is 22 topic-scoped test
+  files plus `controller-fixtures.ts` and `controller-fixture-scenarios.ts`.
+  No production code was touched anywhere in the change. The final clean-main
+  gate reports 924 tests, 81 suites, 0 failures, and 81 describes, with 336
+  dogfood assertions. Unit-23's fixture-scenarios safe slice is accepted; its
+  drag-reflow-and-resize slice is discarded under the Orchestrator ruling. The
+  three-file parked subset remains an acceptance gap, so unit-22
+  completion/archive remains prohibited pending the user decision.

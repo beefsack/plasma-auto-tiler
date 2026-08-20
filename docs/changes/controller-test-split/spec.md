@@ -328,11 +328,9 @@ needed to keep every produced file under ~1,000 lines.
 
 Current open acceptance gaps are:
 
-- `controller-automatic-dwindle-ownership.test.ts` - 1,930 lines (severe)
-- `controller-fixtures.ts` - 1,332 lines
-- `controller-interactive-drag.test.ts` - 1,275 lines
-- `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
-- `controller-dynamic-virtual-desktops.test.ts` - 1,414 lines (severe)
+- `controller-automatic-dwindle-ownership.test.ts` - 1,932 lines (severe)
+- `controller-interactive-drag.test.ts` - 1,277 lines
+- `controller-dynamic-virtual-desktops.test.ts` - 1,416 lines (severe)
 
 ### Unit-21 Scope Amendment
 
@@ -346,14 +344,20 @@ invariant of exactly 924 tests, 81 suites, 0 failures, and 81 top-level
 
 ### Unit-23 Safe Subset
 
-After unit-21, unit-23 may remediate `controller-fixtures.ts` by export
-cluster and `controller-drag-diagnostics-and-resize.test.ts` by moving whole
-top-level `describe` blocks. These changes are count-neutral: fixture modules
-contain no describes, and whole-describe moves preserve the total of 81.
-Workers apply only boundaries pre-decided in this specification; they do not
-derive, choose, or adjust them.
+Closed. The fixture export-cluster split landed in `2dd926e`, producing the
+574-line `controller-fixtures.ts` and 766-line
+`controller-fixture-scenarios.ts`. Its one attempt had one correction (a final
+blank line) and passed the count invariant. The drag split is discarded by the
+Orchestrator ruling: at 1,004 lines,
+`controller-drag-diagnostics-and-resize.test.ts` is within the user's
+"~1,000 line" threshold, so a third split attempt is not justified. Its one
+attempt had one completed correction round; a second failed gate exposed the
+missing `movedGeometry` import, requiring a prohibited second correction and
+tripping the circuit breaker. The discarded slice is preserved locally, unpushed, on
+`wip/unit-23-drag-split`.
 
-The pre-decided drag-diagnostics boundary is:
+The following was the pre-decided drag-diagnostics boundary and is retained as
+the discarded candidate, not an implementation instruction:
 
 | File | Retains | Moves to | Projected lines |
 |---|---|---|---:|
@@ -373,13 +377,22 @@ test imports for every moved scenario export directly to the new module.
 
 ### Unit-23 Parked Subset
 
-`controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
-`controller-interactive-drag.test.ts` (1,275 lines), and
-`controller-dynamic-virtual-desktops.test.ts` (1,414 lines) each contain one
-top-level `describe` that alone exceeds ~1,000 lines. A describe-boundary-
-preserving split therefore cannot bring these files below the threshold.
-Remediating them is parked pending a user decision; unit-23 must not split
-inside a `describe` or change the invariant.
+The following files each have one top-level `describe` that alone exceeds the
+threshold. A describe-boundary-preserving split therefore cannot bring them
+below it. None has a `beforeEach`.
+
+| File | Total | Single top-level describe | Describe lines |
+|---|---:|---|---:|
+| `controller-automatic-dwindle-ownership.test.ts` | 1,932 | yes | 1,907 |
+| `controller-dynamic-virtual-desktops.test.ts` | 1,416 | yes | 1,391 |
+| `controller-interactive-drag.test.ts` | 1,277 | yes | 1,155 |
+
+`controller-interactive-drag.test.ts` has module fixtures `rowsDropSetup` and
+`assertLeafPartition` that an intra-describe split would need to share.
+Remediation remains parked pending a user decision. Options: allow
+intra-describe splitting with a re-grounded count invariant; accept these files
+as documented exceptions; or choose another resolution. No parked-subset
+implementation may begin.
 
 Every remediation split must preserve exactly 924 tests, 81 suites, 0 failures,
 and 81 top-level `describe` occurrences. Before selecting a suite-count-neutral
@@ -391,11 +404,23 @@ Sum of target file line counts (excluding the fixture module, excluding new
 import-line overhead) = 16,060, matching lines 1016-17075 of the original
 exactly.
 
+### Delivered State
+
+The 17,075-line `kwin/tests/controller.test.ts` is fully dissolved and deleted.
+The delivered test layout contains 22 topic-scoped test files plus
+`controller-fixtures.ts` and `controller-fixture-scenarios.ts`; no production
+code was touched anywhere in this change. The final clean-main gate reports 924
+tests, 81 suites, 0 failures, and 81 describes, with 336 dogfood assertions.
+The pre-existing, out-of-scope over-threshold files are
+`kwin/tests/logic.test.ts` (1,067), `scripts/start-test.sh` (~1,079), and
+`scripts/start-test.test.sh` (1,068).
+
 ## Acceptance Criteria
 
 - [ ] `kwin/tests/controller.test.ts` no longer exists; its 40 `describe`
-      blocks exist unchanged (same names, same bodies, same order within each
-      block) across the 20 target files plus `controller-fixtures.ts`.
+       blocks exist unchanged (same names, same bodies, same order within each
+       block) across 22 topic-scoped test files plus `controller-fixtures.ts`
+       and `controller-fixture-scenarios.ts`.
 - [ ] `grep -c "describe(" kwin/tests/*.test.ts` totals exactly 81 (the
       current pre-split baseline).
 - [ ] `cd kwin && npm test` reports `tests 924`, `suites 81`, `pass 924`,
@@ -419,7 +444,7 @@ Exact commands:
 ```
 cd kwin && npm run typecheck
 cd kwin && npm test
-grep -c "describe(" kwin/tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # expect 78
+grep -c "describe(" kwin/tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # expect 81
 git diff --stat -- kwin/contents/code/main.js   # expect empty
 ```
 
@@ -436,9 +461,10 @@ spec approval round, provided every acceptance criterion above still holds.
 
 - Single shared fixture module for the entire preamble, rather than per-
   helper placement next to sole consumers - see Shared State rationale above.
-- The 20-file target is an estimate rather than acceptance criterion. The four
-  currently over-threshold produced files require the pre-decided remediation
-  recorded in Over-Threshold Remediation before final acceptance.
+- The 20-file target is an estimate rather than acceptance criterion. The
+  fixture remediation landed, the drag remediation was discarded under the
+  Orchestrator ruling, and the three remaining over-threshold single-describe
+  files are parked pending a user decision.
 - `kwin/src/controller.ts` splitting is explicitly out of scope and remains a
   separate backlog item.
 - **Correction (Orchestrator-authorized, this session):** the Shared State
