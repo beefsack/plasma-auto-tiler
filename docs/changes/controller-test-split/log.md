@@ -185,7 +185,7 @@ speculation.
   Worker attempt-02 after the Orchestrator-approved Technical Approach
   amendment.
 - Result: accepted. `controller-keyboard-placement.test.ts` contains the
-  verbatim original lines 1016-1858 (866 lines, excluding the non-semantic
+  verbatim original lines 1016-1858 (865 lines, excluding the non-semantic
   trailing blank line). Source search proved the
   original `DIRECTIONS`, `Direction`, and `focusSetup` had no remaining local
   consumers, so only those two import specifiers and the 33-line duplicate
