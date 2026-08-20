@@ -400,6 +400,18 @@ must preserve exactly 924 tests, 81 suites, 0 failures, and 81 describes; suite
 count behavior must be established empirically before assuming a split is
 count-neutral.
 
+- **Blocked unit-23 boundary decision.** Investigation evidence from
+  `ses_fe0289c42ffeRg9o65jCYltbpf` establishes that
+  `controller-automatic-dwindle-ownership.test.ts`,
+  `controller-interactive-drag.test.ts`, and
+  `controller-dynamic-virtual-desktops.test.ts` each contain one top-level
+  `describe` exceeding ~1,000 lines. The active specification prohibits
+  splitting a `describe`, so no compliant grouping can make every produced file
+  meet the threshold. The fixture grouping is acyclic and the drag diagnostics
+  file has a whole-describe grouping proposal, but neither can resolve the
+  conflict. No pre-decided unit-23 boundaries were recorded and no remediation
+  Worker may be dispatched pending Orchestrator direction.
+
 The previously blocking module-scope and source-preamble decisions below are
 resolved.
 
