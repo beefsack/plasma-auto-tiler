@@ -338,20 +338,30 @@ Current open acceptance gaps are:
 
 The Orchestrator approved a scope reset after the drained,
 comment-only `controller.test.ts` caused Node's test runner to count one
-file-level test. The move itself remains accepted as verbatim: unit-21 now
-also deletes the drained source file after relocating any durable comment
-information. This is the only change needed to restore the unchanged
-acceptance invariant of exactly 924 tests, 81 suites, 0 failures, and 81
-top-level `describe` occurrences. Unit-22 no longer owns that deletion.
+file-level test. The move remains verbatim: unit-21 also deletes the drained
+source file after relocating its eight comment blocks verbatim immediately
+above their owning declarations. This restores the unchanged acceptance
+invariant of exactly 924 tests, 81 suites, 0 failures, and 81 top-level
+`describe` occurrences. Unit-22 does not own that deletion.
 
-After all ordinary extractions complete, remediation `unit-23` runs after
-unit-21 and before unit-22. A successor Lead must first derive and record in
-this specification the exact, pre-decided top-level `describe` boundaries for
-each over-threshold test-file sub-split. Workers apply those recorded
-boundaries only; they must not derive, choose, or adjust them. The fixture
-module is split by export group rather than `describe` boundary and is lower
-priority; it must be flagged and escalated if a safe export-group split cannot
-be established.
+### Unit-23 Safe Subset
+
+After unit-21, unit-23 may remediate `controller-fixtures.ts` by export
+cluster and `controller-drag-diagnostics-and-resize.test.ts` by moving whole
+top-level `describe` blocks. These changes are count-neutral: fixture modules
+contain no describes, and whole-describe moves preserve the total of 81.
+Workers apply only boundaries pre-decided in this specification; they do not
+derive, choose, or adjust them.
+
+### Unit-23 Parked Subset
+
+`controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
+`controller-interactive-drag.test.ts` (1,271 lines), and
+`controller-dynamic-virtual-desktops.test.ts` (1,414 lines) each contain one
+top-level `describe` that alone exceeds ~1,000 lines. A describe-boundary-
+preserving split therefore cannot bring these files below the threshold.
+Remediating them is parked pending a user decision; unit-23 must not split
+inside a `describe` or change the invariant.
 
 Every remediation split must preserve exactly 924 tests, 81 suites, 0 failures,
 and 81 top-level `describe` occurrences. Before selecting a suite-count-neutral

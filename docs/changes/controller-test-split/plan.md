@@ -97,8 +97,9 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-18 | Move describe: workspace mode and per-output seams (Unit 04); verify local helper `ownTrailingEmpty` import from fixtures is included -> `controller-workspace-mode-seams.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-19 | Move describe: per-output-local workspaces (Unit 05) (contains its own locally-scoped `twoOutputSetup`/`moveToTrailing` - these travel with the block untouched, not part of fixtures) -> `controller-per-output-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
-| unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; delete the drained `controller.test.ts` after relocating any durable comment information | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
-| unit-23 | Remediate the five produced files over ~1,000 lines: `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts` (1,271), `controller-drag-diagnostics-and-resize.test.ts` (1,004), and `controller-dynamic-virtual-desktops.test.ts` (1,414). Before dispatch, a successor Lead must derive and record the exact top-level `describe` boundaries in `spec.md`; Workers only apply those pre-decided boundaries. Split `controller-fixtures.ts` by safe export groups, not `describe`; this is lower priority and must be flagged/escalated if unsafe. Empirically establish harness suite-count behavior before assuming a split is count-neutral. Stop and escalate if any candidate split changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-*.test.ts`, `kwin/tests/controller-fixtures.ts`, and approved docs only | full 3-command block; exact counts are invariant |
+| unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; relocate the eight drained-source comment blocks verbatim above their owning declarations and delete `controller.test.ts` | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
+| unit-23 safe subset | Remediate `controller-fixtures.ts` (1,332) by export cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004) by moving whole top-level `describe` blocks. Workers only apply boundaries pre-decided in `spec.md`. These operations are count-neutral: fixture modules have no describes and whole-describe moves retain the total of 81. Stop and escalate if a candidate changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`, `kwin/tests/controller-fixtures.ts`, derived target test files, and approved docs only | full 3-command block; exact counts are invariant |
+| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-interactive-drag.test.ts` (1,271), or `controller-dynamic-virtual-desktops.test.ts` (1,414). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
 | unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23 | final acceptance verification | full 3-command block + `main.js` diff check + test-name diff check |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
@@ -161,8 +162,9 @@ actually starts.
 - [x] unit-18 workspace mode seams
 - [x] unit-19 per-output workspaces
 - [x] unit-20 global-unique workspaces
-- [ ] unit-21 shared workspaces
-- [ ] unit-23 over-threshold remediation
+- [x] unit-21 shared workspaces
+- [ ] unit-23 safe subset over-threshold remediation
+- [ ] unit-23 parked subset user decision
 - [ ] unit-22 final cleanup and full gate
 
 ## Attempt Accounting
@@ -371,46 +373,32 @@ actually starts.
   exports. The one authorized correction round stopped on that destination
   ambiguity without changing files. Attempts 1; correction rounds 1;
   independent reviews 0.
+- unit-21/attempt-02: **accepted** under the Orchestrator's scope reset. All
+  eight comment blocks were preserved verbatim immediately above their owning
+  declarations: `swapSetup`, `attachTileWriter`, `reconstructDropSetup`,
+  `installDwindleSplitter`, `installCapacityRejectingSplitter`, and
+  `installStaleReturnSplitter` in `controller-fixtures.ts`; `rowsDropSetup` in
+  `controller-interactive-drag.test.ts`; and `singleDesktopModeSetup` in
+  `controller-shared-workspaces.test.ts`. The drained source file was deleted.
+  Lead re-gate: `npm test` 924 tests, 81 suites, 924 pass, 0 fail; 81
+  describes; both typecheck tsconfigs passed. Attempts 2; correction rounds 1;
+  independent reviews 0.
 
 ## Pending User Decisions
 
-- **Blocked unit-21 comment relocation.** The approved scope reset resolves
-  the 925-test file-level count drift by assigning drained-source deletion to
-  unit-21. Before deletion, six durable rationale blocks can relocate to their
-  fixture exports, while two document target-local helpers. The authorized
-  fixture-only correction stopped before changing files; a second correction
-  round would trip the circuit breaker. Orchestrator direction is required on
-  the permitted durable destination before further unit-21 work.
-
-Open acceptance gap: `unit-23` must remediate the following produced files over
-the ~1,000-line threshold before `unit-22` can pass final acceptance:
-
-- `controller-automatic-dwindle-ownership.test.ts` - 1,930 lines (severe)
-- `controller-fixtures.ts` - 1,332 lines
-- `controller-interactive-drag.test.ts` - 1,271 lines
-- `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
-- `controller-dynamic-virtual-desktops.test.ts` - 1,414 lines (severe)
-
-The 20-file target may be exceeded to resolve this gap. Exact `describe`
-boundaries are not yet pre-decided; a successor Lead must derive and record
-them in `spec.md` before dispatching unit-23. The fixture module requires an
-export-group rather than describe-bounded split and is lower priority; flag and
-escalate it if a safe split cannot be established. Every remediation candidate
-must preserve exactly 924 tests, 81 suites, 0 failures, and 81 describes; suite
-count behavior must be established empirically before assuming a split is
-count-neutral.
-
-- **Blocked unit-23 boundary decision.** Investigation evidence from
-  `ses_fe0289c42ffeRg9o65jCYltbpf` establishes that
-  `controller-automatic-dwindle-ownership.test.ts`,
-  `controller-interactive-drag.test.ts`, and
-  `controller-dynamic-virtual-desktops.test.ts` each contain one top-level
-  `describe` exceeding ~1,000 lines. The active specification prohibits
-  splitting a `describe`, so no compliant grouping can make every produced file
-  meet the threshold. The fixture grouping is acyclic and the drag diagnostics
-  file has a whole-describe grouping proposal, but neither can resolve the
-  conflict. No pre-decided unit-23 boundaries were recorded and no remediation
-  Worker may be dispatched pending Orchestrator direction.
+- **Parked unit-23 threshold decision.** The safe subset may proceed after its
+  boundaries are pre-decided: `controller-fixtures.ts` (1,332 lines) by export
+  cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004 lines) by
+  whole top-level `describe`. The parked subset is
+  `controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
+  `controller-interactive-drag.test.ts` (1,271 lines), and
+  `controller-dynamic-virtual-desktops.test.ts` (1,414 lines). Each has one
+  top-level `describe` that alone exceeds ~1,000 lines, so preserving describe
+  boundaries cannot meet the threshold. User options: allow intra-describe
+  splitting with a re-grounded count invariant; accept these files over
+  threshold as documented exceptions; or choose another resolution. No parked
+  subset implementation may begin. Because this is an acceptance gap, unit-22
+  completion/archive work remains prohibited.
 
 The previously blocking module-scope and source-preamble decisions below are
 resolved.
@@ -447,9 +435,9 @@ resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-20 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-20 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-20 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-21 passed; Lead rechecked after unit-21 |
+| `npm test`: 924/81/924 pass/0 fail | units 02-21 passed; Lead rechecked after unit-21 |
+| `npm run typecheck` clean on both tsconfigs | units 02-21 passed; Lead rechecked after unit-21 |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -457,24 +445,26 @@ resolved.
 
 ## Residual Risks
 
-- Four produced files exceed ~1,000 lines and are an open acceptance gap:
+- The unit-23 safe subset remains unimplemented: `controller-fixtures.ts`
+  (1,332) and `controller-drag-diagnostics-and-resize.test.ts` (1,004) need
+  pre-decided boundaries before a Worker can apply them.
+- The unit-23 parked subset is an open acceptance gap:
   `controller-automatic-dwindle-ownership.test.ts` (1,930),
-  `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts`
-  (1,271), `controller-drag-diagnostics-and-resize.test.ts` (1,004), and
-  `controller-dynamic-virtual-desktops.test.ts` (1,414).
-  `unit-23` is scheduled after unit-21 and before unit-22 to remediate them.
+  `controller-interactive-drag.test.ts` (1,271), and
+  `controller-dynamic-virtual-desktops.test.ts` (1,414) cannot meet the
+  threshold while preserving their single top-level describes. Unit-22 and
+  completion/archive work remain blocked pending the user decision.
 - Grep-based import pruning could theoretically under- or over-prune on an
   edge case (e.g. a name matching inside a string literal or comment rather
   than a real reference); the `npm run typecheck` step in every unit is the
   designed catch for this, so the risk is caught immediately, not silently.
-- `controller.test.ts`'s temporary duplicate-preamble state (unit-01 through
-  unit-21) means the repository is in a slightly unusual intermediate state
-  for the duration of execution; this is intentional (it is what keeps every
-  intermediate checkpoint self-verifying) and is fully resolved by unit-22.
+- `controller.test.ts` was deleted by unit-21 after its eight orphaned comments
+  were relocated verbatim; unit-22 does not own further source-file cleanup.
 
 ## Final Outcome
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-20. Unit 21, unit-23 over-threshold remediation, and
-  unit-22 final cleanup remain unexecuted.
+  completed units 01-21. Unit-23's safe subset remains unexecuted pending
+  boundary recording; its parked subset blocks unit-22 final cleanup and
+  completion/archive pending a user decision.
