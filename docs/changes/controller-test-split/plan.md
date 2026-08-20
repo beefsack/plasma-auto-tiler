@@ -159,7 +159,7 @@ actually starts.
 - [x] unit-16 dynamic virtual desktops
 - [x] unit-17 per-workspace maximize
 - [x] unit-18 workspace mode seams
-- [ ] unit-19 per-output workspaces
+- [x] unit-19 per-output workspaces
 - [ ] unit-20 global-unique workspaces
 - [ ] unit-21 shared workspaces
 - [ ] unit-23 over-threshold remediation
@@ -343,6 +343,14 @@ actually starts.
   duplicate source imports and helper were pruned. The moved 333-line body
   byte-matches its `HEAD` source boundary. `npm run typecheck`, `npm test` (924
   tests, 81 suites, 924 pass, 0 fail), and the describe count (81) all passed.
+- unit-19/attempt-01: **accepted**. The `per-output-local workspaces (Unit
+  05)` describe, including its describe-local `twoOutputSetup` and
+  `moveToTrailing` helpers, moved verbatim into
+  `controller-per-output-workspaces.test.ts`. Search proved `setup` had no
+  remaining source consumer, so only that duplicate source helper was pruned.
+  Lead review confirmed the source deletion and target content; `npm run
+  typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the
+  describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -399,9 +407,9 @@ resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-18 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-18 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-18 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-19 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-19 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-19 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -428,5 +436,5 @@ resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-18. Units 19-21, unit-23 over-threshold remediation, and
+  completed units 01-19. Units 20-21, unit-23 over-threshold remediation, and
   unit-22 final cleanup remain unexecuted.
