@@ -197,3 +197,18 @@ speculation.
 - Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
   test` reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count
   was 81.
+
+## 2026-08-20 (unit-03/attempt-01)
+
+- Role / unit: Lead / unit-03 (keyboard move and swap extraction), Worker
+  attempt-01.
+- Result: accepted. `controller-keyboard-move-and-swap.test.ts` contains the
+  verbatim original source lines 983-1938 (979 lines). Source search proved
+  `moveSetup` and `swapSetup` still have later local consumers, so no source
+  preamble pruning or helper relocation occurred and no test body was edited.
+- Files / commit: `kwin/tests/controller-keyboard-move-and-swap.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 15,243 lines; `plan.md`
+  and `log.md` updated in the unit commit.
+- Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
+  test` reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count
+  was 81.
