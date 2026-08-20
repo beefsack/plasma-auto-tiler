@@ -21,7 +21,7 @@ export type Split = {
 
 export type TreeNode = Leaf | Split;
 
-export type RuleId = "1" | "2a-leaf" | "2a-container" | "2b" | "3-flatten" | "3+1";
+export type RuleId = "1" | "2a-leaf" | "2a-container" | "2b" | "3-flatten" | "3+1" | "4-noop";
 
 export type MoveResult = {
     readonly tree: TreeNode;
@@ -149,7 +149,7 @@ export function move(tree: TreeNode, focusedLeafName: string, direction: Directi
         throw new Error(`move: leaf "${focusedLeafName}" not found in tree`);
     }
     if (path.length === 0) {
-        throw new Error(`move: leaf "${focusedLeafName}" is the root, cannot move`);
+        return { tree, rule: "4-noop" };
     }
 
     const w: Leaf = leaf(focusedLeafName);
@@ -206,11 +206,30 @@ export function move(tree: TreeNode, focusedLeafName: string, direction: Directi
                         ? isNearSide(idx, neighbourIndex)
                             ? [w, ...s.children]
                             : [...s.children, w]
-                        : [
-                              ...s.children.slice(0, Math.floor(s.children.length / 2)),
-                              w,
-                              ...s.children.slice(Math.floor(s.children.length / 2)),
-                          ];
+                        : (() => {
+                              const middleIndex = Math.floor(s.children.length / 2);
+                              if (s.children.length % 2 === 0) {
+                                  return [
+                                      ...s.children.slice(0, middleIndex),
+                                      w,
+                                      ...s.children.slice(middleIndex),
+                                  ];
+                              }
+                              const middle = s.children[middleIndex];
+                              if (middle === undefined) {
+                                  throw new Error("move: missing midpoint child while descending");
+                              }
+                              const pair: Split = {
+                                  kind: "split",
+                                  axis: dAxis,
+                                  children: stepFor(direction) === -1 ? [middle, w] : [w, middle],
+                              };
+                              return [
+                                  ...s.children.slice(0, middleIndex),
+                                  pair,
+                                  ...s.children.slice(middleIndex + 1),
+                              ];
+                          })();
                 const newS: Split = { kind: "split", axis: s.axis, children: newSChildren };
                 const newTree = replaceAtLevel(path, level, newS);
                 return { tree: newTree, rule: "2a-container" };
@@ -234,10 +253,7 @@ export function move(tree: TreeNode, focusedLeafName: string, direction: Directi
 
         // Rule 3: W sits at C's edge in direction D. Ascend to C's parent.
         if (level === 0) {
-            throw new Error(
-                "move: reached rule 4 (UNKNOWN) - no ancestor can act; this is a bug " +
-                    "or a transcription error, not an expected outcome",
-            );
+            return { tree, rule: "4-noop" };
         }
         const parentAncestor = path[level - 1];
         if (parentAncestor === undefined) {

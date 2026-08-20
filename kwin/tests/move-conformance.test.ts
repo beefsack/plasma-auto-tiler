@@ -17,6 +17,19 @@ type Sequence = {
     readonly transitions: readonly Transition[];
 };
 
+type AuthoredVector = {
+    readonly id: string;
+    readonly start: string;
+    readonly focusedLeafName: string;
+    readonly direction: Direction;
+    readonly expected: string;
+};
+
+type AuthoredSequence = {
+    readonly id: string;
+    readonly vectors: readonly AuthoredVector[];
+};
+
 const T1 = leaf("T1");
 const T2 = leaf("T2");
 const T3 = leaf("T3");
@@ -87,6 +100,150 @@ const sequence3: Sequence = {
     ],
 };
 
+const authoredSequences: readonly AuthoredSequence[] = [
+    {
+        id: "S4",
+        vectors: [
+            { id: "S4-01", start: "H[A,B,C]", focusedLeafName: "A", direction: "right", expected: "H[H[A,B],C]" },
+            { id: "S4-02", start: "H[H[A,B],C]", focusedLeafName: "A", direction: "right", expected: "H[H[B,A],C]" },
+            { id: "S4-03", start: "H[H[B,A],C]", focusedLeafName: "A", direction: "right", expected: "H[B,A,C]" },
+        ],
+    },
+    {
+        id: "S5",
+        vectors: [
+            { id: "S5-01", start: "H[A,B]", focusedLeafName: "A", direction: "left", expected: "H[A,B]" },
+        ],
+    },
+    {
+        id: "S6",
+        vectors: [
+            { id: "S6-01", start: "H[A,B]", focusedLeafName: "B", direction: "down", expected: "V[A,B]" },
+            { id: "S6-02", start: "V[A,B]", focusedLeafName: "B", direction: "up", expected: "V[B,A]" },
+            { id: "S6-03", start: "V[B,A]", focusedLeafName: "B", direction: "up", expected: "V[B,A]" },
+        ],
+    },
+    {
+        id: "S7",
+        vectors: [
+            { id: "S7-01", start: "H[A,B,C,D]", focusedLeafName: "D", direction: "down", expected: "V[H[A,B,C],D]" },
+            { id: "S7-02", start: "V[H[A,B,C],D]", focusedLeafName: "D", direction: "up", expected: "H[A,V[B,D],C]" },
+        ],
+    },
+    {
+        id: "S8",
+        vectors: [
+            { id: "S8-01", start: "H[A,B,C,D,E]", focusedLeafName: "E", direction: "down", expected: "V[H[A,B,C,D],E]" },
+            { id: "S8-02", start: "V[H[A,B,C,D],E]", focusedLeafName: "E", direction: "up", expected: "H[A,B,E,C,D]" },
+        ],
+    },
+    {
+        id: "S9",
+        vectors: [
+            { id: "S9-01", start: "H[A,B,H[C,D],E]", focusedLeafName: "E", direction: "down", expected: "V[H[A,B,H[C,D]],E]" },
+            { id: "S9-02", start: "V[H[A,B,H[C,D]],E]", focusedLeafName: "E", direction: "up", expected: "H[A,V[B,E],H[C,D]]" },
+        ],
+    },
+    {
+        id: "S10",
+        vectors: [
+            { id: "S10-01", start: "H[V[A,C],V[B,D]]", focusedLeafName: "A", direction: "down", expected: "H[V[C,A],V[B,D]]" },
+        ],
+    },
+    {
+        id: "S11",
+        vectors: [
+            { id: "S11-01", start: "V[H[A,B],H[C,D]]", focusedLeafName: "A", direction: "down", expected: "V[V[B,A],H[C,D]]" },
+        ],
+    },
+    {
+        id: "S12",
+        vectors: [
+            { id: "S12-01", start: "H[A,B,C,D,E,F]", focusedLeafName: "F", direction: "down", expected: "V[H[A,B,C,D,E],F]" },
+            { id: "S12-02", start: "V[H[A,B,C,D,E],F]", focusedLeafName: "F", direction: "up", expected: "H[A,B,V[C,F],D,E]" },
+        ],
+    },
+    {
+        id: "S13",
+        vectors: [
+            { id: "S13-01", start: "H[A,B,C]", focusedLeafName: "C", direction: "down", expected: "V[H[A,B],C]" },
+            { id: "S13-02", start: "V[H[A,B],C]", focusedLeafName: "C", direction: "up", expected: "H[A,C,B]" },
+        ],
+    },
+    {
+        id: "S14",
+        vectors: [
+            { id: "S14-01", start: "H[A,B,C,D]", focusedLeafName: "A", direction: "right", expected: "H[H[A,B],C,D]" },
+            { id: "S14-02", start: "H[H[A,B],C,D]", focusedLeafName: "B", direction: "right", expected: "H[A,B,C,D]" },
+            { id: "S14-03", start: "H[A,B,C,D]", focusedLeafName: "A", direction: "left", expected: "H[A,B,C,D]" },
+        ],
+    },
+    {
+        id: "S15",
+        vectors: [
+            { id: "S15-01", start: "H[A,B,C,D]", focusedLeafName: "A", direction: "right", expected: "H[H[A,B],C,D]" },
+            { id: "S15-02", start: "H[H[A,B],C,D]", focusedLeafName: "C", direction: "right", expected: "H[H[A,B],H[C,D]]" },
+            { id: "S15-03", start: "H[H[A,B],H[C,D]]", focusedLeafName: "B", direction: "right", expected: "H[A,B,H[C,D]]" },
+        ],
+    },
+    {
+        id: "S16",
+        vectors: [
+            { id: "S16-01", start: "H[A,B,C]", focusedLeafName: "C", direction: "down", expected: "V[H[A,B],C]" },
+            { id: "S16-02", start: "V[H[A,B],C]", focusedLeafName: "B", direction: "right", expected: "H[V[A,C],B]" },
+        ],
+    },
+    {
+        id: "S17",
+        vectors: [
+            { id: "S17-01", start: "A", focusedLeafName: "A", direction: "left", expected: "A" },
+            { id: "S17-02", start: "A", focusedLeafName: "A", direction: "right", expected: "A" },
+            { id: "S17-03", start: "A", focusedLeafName: "A", direction: "up", expected: "A" },
+            { id: "S17-04", start: "A", focusedLeafName: "A", direction: "down", expected: "A" },
+        ],
+    },
+    {
+        id: "S18",
+        vectors: [
+            { id: "S18-01", start: "H[A,B,C,D]", focusedLeafName: "B", direction: "right", expected: "H[A,H[B,C],D]" },
+            { id: "S18-02", start: "H[A,H[B,C],D]", focusedLeafName: "A", direction: "right", expected: "H[H[A,H[B,C]],D]" },
+        ],
+    },
+    {
+        id: "S19",
+        vectors: [
+            { id: "S19-01", start: "H[A,B,C,D]", focusedLeafName: "D", direction: "up", expected: "V[D,H[A,B,C]]" },
+            { id: "S19-02", start: "V[D,H[A,B,C]]", focusedLeafName: "D", direction: "down", expected: "H[A,V[D,B],C]" },
+        ],
+    },
+    {
+        id: "S20",
+        vectors: [
+            { id: "S20-01", start: "L=X, R=H[A,B]", focusedLeafName: "A", direction: "left", expected: "L=H[X,A], R=B" },
+        ],
+    },
+    {
+        id: "S21",
+        vectors: [
+            { id: "S21-01", start: "L=X, R=V[A,B]", focusedLeafName: "A", direction: "left", expected: "L=X, R=H[A,B]" },
+        ],
+    },
+    {
+        id: "S22",
+        vectors: [
+            { id: "S22-01", start: "L=empty, R=H[A,B]", focusedLeafName: "A", direction: "left", expected: "L=A, R=B" },
+        ],
+    },
+    {
+        id: "S23",
+        vectors: [
+            { id: "S23-01", start: "L=X, R=H[A,B,C]", focusedLeafName: "A", direction: "right", expected: "L=X, R=H[H[A,B],C]" },
+            { id: "S23-02", start: "L=X, R=H[H[A,B],C]", focusedLeafName: "A", direction: "left", expected: "L=X, R=H[A,B,C]" },
+            { id: "S23-03", start: "L=X, R=H[A,B,C]", focusedLeafName: "A", direction: "left", expected: "L=H[X,A], R=H[B,C]" },
+        ],
+    },
+];
+
 const sequences: readonly Sequence[] = [sequence1, sequence2, sequence3];
 
 function render(node: TreeNode): string {
@@ -96,13 +253,43 @@ function render(node: TreeNode): string {
     return `${node.axis}[${node.children.map(render).join(",")}]`;
 }
 
+function parseTree(input: string): TreeNode {
+    let index = 0;
+
+    function parseNode(): TreeNode {
+        const axis = input[index];
+        if ((axis === "H" || axis === "V") && input[index + 1] === "[") {
+            index += 2;
+            const children: TreeNode[] = [];
+            while (input[index] !== "]") {
+                children.push(parseNode());
+                if (input[index] === ",") {
+                    index += 1;
+                }
+            }
+            index += 1;
+            return axis === "H" ? h(...children) : v(...children);
+        }
+
+        const start = index;
+        while (input[index] !== "," && input[index] !== "]" && index < input.length) {
+            index += 1;
+        }
+        return leaf(input.slice(start, index));
+    }
+
+    const result = parseNode();
+    assert.equal(index, input.length, `unparsed tree suffix in ${input}`);
+    return result;
+}
+
 type TraceRow = {
     readonly id: string;
     readonly rule: RuleId;
     readonly resultTree: string;
 };
 
-describe("move conformance corpus (41 transitions)", () => {
+describe("move conformance corpus (S1-S3: 40 transitions)", () => {
     const trace: TraceRow[] = [];
 
     for (const sequence of sequences) {
@@ -122,11 +309,7 @@ describe("move conformance corpus (41 transitions)", () => {
     }
 
     it("builds the rule-firing trace for all corpus transitions", () => {
-        // Note: the corpus as literally enumerated in the work-unit brief
-        // (S1-01..S1-21, S2-01..S2-05, S3-01..S3-14) totals 21 + 5 + 14 =
-        // 40 transitions, not 41 as the brief's prose states. This is a
-        // count discrepancy in the brief text itself, not a missing row;
-        // every row given was transcribed and replayed.
+        // S1-01..S1-21, S2-01..S2-05, and S3-01..S3-14 total 40 rows.
         const totalTransitions = sequences.reduce((sum, seq) => sum + seq.transitions.length, 0);
         assert.equal(totalTransitions, 40);
         assert.equal(trace.length, 40, "trace must contain every corpus transition");
@@ -135,10 +318,8 @@ describe("move conformance corpus (41 transitions)", () => {
             "# Move conformance rule-firing trace",
             "",
             "Generated by `kwin/tests/move-conformance.test.ts` while replaying the",
-            "corpus against `kwin/tests/move-conformance-model.ts`. The corpus as",
-            "enumerated in the work-unit brief totals 40 transitions (21 in S1, 5 in",
-            "S2, 14 in S3); the brief's prose describes it as 41, which is a count",
-            "discrepancy in the brief text, not a missing row.",
+            "S1-S3 corpus against `kwin/tests/move-conformance-model.ts`. S1-S3",
+            "total 40 transitions (21 in S1, 5 in S2, 14 in S3).",
             "",
             "| ID | Rule fired | Resulting tree |",
             "| --- | --- | --- |",
@@ -158,4 +339,32 @@ describe("move conformance corpus (41 transitions)", () => {
         mkdirSync(outDir, { recursive: true });
         writeFileSync(join(outDir, "move-conformance-trace.md"), lines.join("\n"), "utf8");
     });
+
+    it("keeps every authored S4-S23 sequence chained", () => {
+        for (const sequence of authoredSequences) {
+            for (let index = 1; index < sequence.vectors.length; index++) {
+                const previous = sequence.vectors[index - 1];
+                const vector = sequence.vectors[index];
+                if (previous === undefined || vector === undefined) {
+                    throw new Error(`${sequence.id}: missing authored vector`);
+                }
+                assert.deepEqual(vector.start, previous.expected, `${vector.id}: start must equal prior expected`);
+            }
+        }
+    });
+});
+
+describe("authored single-output COSMIC vectors", () => {
+    for (const sequence of authoredSequences.slice(0, 16)) {
+        for (const vector of sequence.vectors) {
+            it(`${vector.id}: ${vector.focusedLeafName} ${vector.direction}`, () => {
+                const result = move(parseTree(vector.start), vector.focusedLeafName, vector.direction);
+                assert.deepEqual(
+                    result.tree,
+                    parseTree(vector.expected),
+                    `${vector.id}: expected ${vector.expected}, got ${render(result.tree)}`,
+                );
+            });
+        }
+    }
 });
