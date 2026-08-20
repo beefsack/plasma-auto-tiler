@@ -532,3 +532,23 @@ speculation.
   then independently ran `npm --prefix kwin run typecheck` (passed), `npm
   --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
   skipped), and describe count (81).
+
+## 2026-08-21 (unit-18/attempt-01)
+
+- Role / unit: Lead / unit-18 (workspace mode seams extraction), Worker
+  attempt-01.
+- Result: accepted. The `workspace mode and per-output seams (Unit 04)`
+  describe moved verbatim into `controller-workspace-mode-seams.test.ts`; its
+  333-line body byte-matches the `HEAD` source range through the next approved
+  top-level describe. `ownTrailingEmpty` is imported from fixtures. Search
+  proved `DEFAULT_WORKSPACE_MODE`, `SessionOutputKeys`, `WORKSPACE_MODES`,
+  `outputTuple`, `parseWorkspaceMode`, and `ownTrailingEmpty` have no retained
+  source consumers, so only those duplicate source imports and helper were
+  pruned.
+- Files / commit: `kwin/tests/controller-workspace-mode-seams.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 2,801 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the source deletion and new-file actual diffs,
+  then independently ran `npm --prefix kwin run typecheck` (passed), `npm
+  --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
+  skipped), and describe count (81).
