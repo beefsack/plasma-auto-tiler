@@ -218,3 +218,51 @@ speculation.
   controller.test.ts, devenv.nix, trailing-empty-workspace, Nix/NixOS/HM
   packaging, build-kpackage.sh reconciliation, native C++ source - all
   confirmed untouched by diff inspection throughout)
+
+## 2026-08-20 (post-completion defect fix: stale `setup` summary text)
+
+- Role / unit: Lead / (fix-forward, not a plan unit - change already had a
+  Final Outcome, awaiting its completion transaction)
+- Result: found and fixed a stale claim in `cmd_setup`'s "what remains
+  manual" summary in `scripts/dogfood-install.sh`. unit-04 (Stage 3) added
+  persistent kwinrc-key enablement; unit-05 (Stage 3 docs) corrected
+  README.md's equivalent claim but missed the script's own printed text,
+  which still asserted "the effect is loaded for this session only; it does
+  not survive a reboot or logout/login ... re-run 'effect-reload' ... after
+  every future reboot", directly contradicting `effect-install`'s own
+  output four lines earlier in the same `setup` run
+  ("kwinrc: ... persists across future session starts once the effect is
+  discovered by KWin"). Confirmed via code reading that the kwinrc
+  `[Plugins]` key write in `cmd_effect_install` is unconditional and
+  persistent, consistent with the reported live reboot verification
+  (`effect-status`: discovery yes, loaded yes, no `effect-reload` needed)
+  that first surfaced this as user-visible. Rewrote the "both stages
+  succeeded" branch of the summary to state persistence accurately instead
+  of the stale re-run-every-reboot claim; left the other two branches
+  (native build unavailable; pending first-run logout/login boundary)
+  unchanged - both remain accurate. Confirmed the env-script route (
+  `~/.config/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`)
+  still genuinely requires one logout/login on first install; that branch's
+  existing text was already correct and untouched.
+- Files / commit: scripts/dogfood-install.sh (not yet committed; staged only,
+  pending Orchestrator/user review of this stint)
+- Verification: `bash scripts/dogfood-install.test.sh` -> 336/0 (unchanged
+  from baseline; no existing assertion covered the changed text, confirmed
+  by search before and after); `npm --prefix kwin run typecheck` -> exit 0,
+  clean both tsconfigs; `npm --prefix kwin test` -> 838/838, unchanged;
+  `git diff kwin/contents/code/main.js` -> empty, confirmed byte-identical
+  to HEAD; ran the corrected summary text in the full-success branch via the
+  test harness's own hermetic fixtures (temp `DOGFOOD_DATA_ROOT`/
+  `DOGFOOD_CONFIG_ROOT`/`PATH`, fake `qdbus`/`kwriteconfig6`, no real KWin
+  session touched) and eyeballed it in context against `effect-install`'s
+  output in the same run.
+- Notes: no plan.md Work Unit or Progress entry tracked this specific
+  script-text defect as outstanding (unit-05's scope was README.md only,
+  per plan.md:59-66; the gap was a genuine oversight, not a deferred/known
+  item), so nothing there needed to be marked closed. Not touched: plan.md's
+  existing Residual Risks entry on live session-start auto-load being
+  "unverified per source research, not live-proven" - that predates and is
+  broader than this specific script-text defect; reconciling it against the
+  now-reported live reboot verification is left for the Orchestrator/Lead
+  completion transaction, since this Lead has no first-hand evidence of that
+  live test beyond what was reported in the dispatch brief.

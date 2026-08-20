@@ -614,7 +614,7 @@ cmd_setup() {
   elif [[ "$effect_reload_ok" != true ]]; then
     echo "  - effect-reload is pending the expected first-run logout/login boundary; log out and back in once, then run 'effect-reload' (or 'setup') again"
   else
-    echo "  - the effect is loaded for this session only; it does not survive a reboot or logout/login (EnabledByDefault is false, nothing auto-loads it); after every future reboot or logout/login, re-run 'effect-reload' (or 'setup') again"
+    echo "  - none: $EFFECT_CONFIG_KEY is set to true in $KWINRC, so the effect stays enabled and auto-loads on future reboots and logins without re-running 'effect-reload'"
   fi
 
   return 0
