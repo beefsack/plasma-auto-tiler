@@ -351,3 +351,24 @@ speculation.
 - Verification: Lead inspected the actual diff and new-file body. `npm
   --prefix kwin run typecheck` passed; `npm --prefix kwin test` reported 924
   tests, 81 suites, 924 pass, and 0 fail; describe count was 81.
+
+## 2026-08-21 (unit-10/attempt-01)
+
+- Role / unit: Lead / unit-10 (bindings and shortcuts extraction), Worker
+  attempt-01.
+- Result: accepted. The `binding profile catalog`, `shortcut registration`, and
+  `focus-writer seam` describes moved verbatim into
+  `controller-bindings-and-shortcuts.test.ts`; the target ends before the
+  8002-8169 helper cluster. Search proved `readFileSync`, `PROFILE_CATALOGS`,
+  `REGISTERED_PROFILE_ACTION_IDS`, `ShortcutOverrides`,
+  `catalogValidationDiagnostics`, `validateProfile`, `resolveSequence`,
+  `selectProfile`, `ProfileCatalog`, and `RowClassification` have no retained
+  source consumers, so only those imports were pruned.
+- Files / commit: `kwin/tests/controller-bindings-and-shortcuts.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 10,088 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual addition and source deletion diffs;
+  they contain only the approved describes, import scaffolding, and the
+  search-proven orphan import removals. `npm --prefix kwin run typecheck`
+  passed; `npm --prefix kwin test` reported 924 tests, 81 suites, 924 pass, and
+  0 fail; describe count was 81.

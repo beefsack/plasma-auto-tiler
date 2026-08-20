@@ -149,7 +149,7 @@ actually starts.
 - [x] unit-07 interactive drag
 - [x] unit-08 drag diagnostics and resize
 - [x] unit-09 production diagnostics
-- [ ] unit-10 bindings and shortcuts
+- [x] unit-10 bindings and shortcuts
 - [ ] unit-11 pure config functions
 - [ ] unit-12 automatic dwindle ownership
 - [ ] unit-13 automatic dwindle insertion
@@ -259,6 +259,16 @@ actually starts.
   declaration pruned. `dragSetup` and `startDrag` retain consumers. `npm run
   typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the
   describe count (81) all passed.
+- unit-10/attempt-01: **accepted**. The `binding profile catalog`, `shortcut
+  registration`, and `focus-writer seam` describes moved verbatim into
+  `controller-bindings-and-shortcuts.test.ts`, ending before the 8002-8169
+  helper cluster. Search proved `readFileSync`, `PROFILE_CATALOGS`,
+  `REGISTERED_PROFILE_ACTION_IDS`, `ShortcutOverrides`,
+  `catalogValidationDiagnostics`, `validateProfile`, `resolveSequence`,
+  `selectProfile`, `ProfileCatalog`, and `RowClassification` have no retained
+  source consumers, so only those imports were pruned. `npm run typecheck`,
+  `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the describe count
+  (81) all passed.
 
 ## Pending User Decisions
 
@@ -297,9 +307,9 @@ below are resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-09 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-09 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-09 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-10 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-10 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-10 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -323,6 +333,5 @@ below are resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed unit-01 (`controller-fixtures.ts`, accepted, typecheck-clean).
-  Units 02-22 (moving `describe` blocks and the four named single-file-local
-  relocations) remain unexecuted.
+  completed units 01-10. Units 11-22 (remaining `describe` blocks and the two
+  named single-file-local relocations) remain unexecuted.
