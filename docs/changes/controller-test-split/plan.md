@@ -133,7 +133,7 @@ actually starts.
 - [x] unit-01 create controller-fixtures.ts
 - [x] unit-02 keyboard placement
 - [x] unit-03 keyboard move and swap
-- [ ] unit-04 tile attach and scope
+- [x] unit-04 tile attach and scope
 - [ ] unit-05 selected overlay state
 - [ ] unit-06 selected overlay reflow
 - [ ] unit-07 interactive drag
@@ -198,6 +198,13 @@ actually starts.
   preamble pruning was justified or performed. No helper relocation or test
   body change occurred. `npm run typecheck`, `npm test` (924 tests, 81 suites,
   924 pass, 0 fail), and the describe count (81) all passed.
+- unit-04/attempt-01: **accepted**. Original source lines 983-1909 moved
+  verbatim into `controller-tile-attach-and-scope.test.ts`; source search
+  proved `attachSetup` and `fillSetup` had no remaining local consumers, so
+  only those duplicate preamble helpers were pruned. `currentScopeFor` and
+  `invokeShortcut` retain consumers and remain. No helper relocation or test
+  body change occurred. `npm run typecheck`, `npm test` (924 tests, 81 suites,
+  924 pass, 0 fail), and the describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -236,9 +243,9 @@ below are resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-03 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-03 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-03 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-04 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-04 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-04 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
