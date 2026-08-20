@@ -163,7 +163,7 @@ actually starts.
 - [x] unit-19 per-output workspaces
 - [x] unit-20 global-unique workspaces
 - [x] unit-21 shared workspaces
-- [ ] unit-23 safe subset over-threshold remediation
+- [ ] unit-23 safe subset over-threshold remediation - fixture scenarios accepted; drag reflow/resize circuit-breaker blocked
 - [ ] unit-23 parked subset user decision
 - [ ] unit-22 final cleanup and full gate
 
@@ -383,6 +383,20 @@ actually starts.
   Lead re-gate: `npm test` 924 tests, 81 suites, 924 pass, 0 fail; 81
   describes; both typecheck tsconfigs passed. Attempts 2; correction rounds 1;
   independent reviews 0.
+- unit-23 fixture-scenarios/attempt-01: **accepted**. The pre-decided 29
+  scenario exports and their owning comments moved verbatim from
+  `controller-fixtures.ts` to `controller-fixture-scenarios.ts`; every direct
+  consumer import now targets the appropriate core or scenarios module.
+  One correction restored an unrelated final blank line. Lead gate passed:
+  924 tests, 81 suites, 924 pass, 0 fail, 81 describes, and both typecheck
+  tsconfigs clean. Committed and pushed as `2dd926e`.
+- unit-23 drag-reflow-and-resize/attempt-01: **circuit-breaker blocked**. The
+  pre-decided three-describe and helper move initially omitted a retained
+  `tile` import; its one authorized correction restored that specifier. The
+  next gate exposed another missing retained import, `movedGeometry`, in the
+  same source test. A second correction round would be required and is
+  prohibited, so the uncommitted diff is preserved and no further Worker was
+  dispatched. Attempts 1; correction rounds 1; independent reviews 0.
 
 ## Pending User Decisions
 
@@ -434,20 +448,22 @@ resolved.
 
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
-| All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-21 passed; Lead rechecked after unit-21 |
-| `npm test`: 924/81/924 pass/0 fail | units 02-21 passed; Lead rechecked after unit-21 |
-| `npm run typecheck` clean on both tsconfigs | units 02-21 passed; Lead rechecked after unit-21 |
-| `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
-| No test name changed | pending - checked in unit-22 via sorted-literal diff |
-| No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
-| Only `kwin/tests/controller*.ts` and `docs/` change | pending - checked in unit-22 via `git diff --stat` |
+| All 40 describes preserved unchanged across 20 files + fixtures | unit-22 name-literal diff from `d18d87a` to the pending tree is empty; final acceptance remains blocked by the drag import failure |
+| `grep -c "describe("` totals 81 | unit-22 recheck: 81 |
+| `npm test`: 924/81/924 pass/0 fail | unit-22 recheck: 924 tests, 81 suites, 923 pass, 1 fail (`movedGeometry is not defined` in retained drag diagnostics); unmet |
+| `npm run typecheck` clean on both tsconfigs | unit-22 recheck: `tsconfig.json` fails TS2304 for `movedGeometry`; `tsconfig.test.json` did not run because the command chains with `&&`; unmet |
+| `main.js` byte-identical | unit-22 history check from `d18d87a` through `2dd926e` and current-worktree diff are both empty |
+| No test name changed | unit-22 sorted `it(`/`describe(` literal diff from `d18d87a` to the pending tree is empty |
+| No describe split, reordered, or renested | unit-23 fixture move contains no describes; Lead diff review confirmed the drag move contains the three approved whole top-level describes in order |
+| Only `kwin/tests/controller*.ts` and `docs/` change | unit-22 history check found no `kwin/src/` or `kwin/contents/code/main.js` path in change commits; pending diff is test-only |
+| `bash scripts/dogfood-install.test.sh` | unit-22 recheck: `passes: 336 failures: 0`; script also emitted `find: .../data: No such file or directory` |
 
 ## Residual Risks
 
-- The unit-23 safe subset remains unimplemented: `controller-fixtures.ts`
-  (1,332) and `controller-drag-diagnostics-and-resize.test.ts` (1,004) need
-  pre-decided boundaries before a Worker can apply them.
+- The unit-23 fixture-scenarios slice is accepted in `2dd926e`. The
+  drag-reflow-and-resize slice is circuit-breaker blocked after its sole
+  correction still left a missing retained `movedGeometry` import; a second
+  correction is prohibited and the pending diff remains uncommitted.
 - The unit-23 parked subset is an open acceptance gap:
   `controller-automatic-dwindle-ownership.test.ts` (1,930),
   `controller-interactive-drag.test.ts` (1,275), and
@@ -465,6 +481,7 @@ resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-21. Unit-23's safe subset remains unexecuted pending
-  boundary recording; its parked subset blocks unit-22 final cleanup and
-  completion/archive pending a user decision.
+  completed units 01-21. Unit-23's fixture-scenarios safe slice is accepted;
+  its drag-reflow-and-resize safe slice is circuit-breaker blocked. The parked
+  subset remains an acceptance gap, so unit-22 completion/archive remains
+  prohibited pending the user decision.
