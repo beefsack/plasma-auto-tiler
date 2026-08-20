@@ -515,3 +515,20 @@ speculation.
   then independently ran `npm --prefix kwin run typecheck` (passed), `npm
   --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
   skipped), and describe count (81).
+
+## 2026-08-21 (unit-17/attempt-01)
+
+- Role / unit: Lead / unit-17 (per-workspace maximize extraction), Worker
+  attempt-01.
+- Result: accepted. The `per-workspace maximize` describe moved verbatim into
+  `controller-per-workspace-maximize.test.ts`; its 792-line body byte-matches
+  the `HEAD` source range through the next approved top-level describe. Search
+  proved `attachTileWriter`, `installDwindleSplitter`, and `makeTile` have no
+  retained source consumers, so only those duplicate helpers were pruned.
+- Files / commit: `kwin/tests/controller-per-workspace-maximize.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 3,170 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the source deletion and new-file actual diffs,
+  then independently ran `npm --prefix kwin run typecheck` (passed), `npm
+  --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
+  skipped), and describe count (81).

@@ -157,7 +157,7 @@ actually starts.
 - [x] unit-14 deferred recovery and fullscreen
 - [x] unit-15 floating and sticky
 - [x] unit-16 dynamic virtual desktops
-- [ ] unit-17 per-workspace maximize
+- [x] unit-17 per-workspace maximize
 - [ ] unit-18 workspace mode seams
 - [ ] unit-19 per-output workspaces
 - [ ] unit-20 global-unique workspaces
@@ -327,6 +327,13 @@ actually starts.
   moved 1,391-line body byte-matches its `HEAD` source boundary. `npm run
   typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the
   describe count (81) all passed.
+- unit-17/attempt-01: **accepted**. The `per-workspace maximize` describe
+  moved verbatim into `controller-per-workspace-maximize.test.ts`. Search
+  proved `attachTileWriter`, `installDwindleSplitter`, and `makeTile` have no
+  retained source consumers, so only those duplicate source helpers were
+  pruned. The moved 792-line body byte-matches its `HEAD` source boundary.
+  `npm run typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and
+  the describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -383,9 +390,9 @@ resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-16 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-16 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-16 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-17 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-17 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-17 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -412,5 +419,5 @@ resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-16. Units 17-21, unit-23 over-threshold remediation, and
+  completed units 01-17. Units 18-21, unit-23 over-threshold remediation, and
   unit-22 final cleanup remain unexecuted.
