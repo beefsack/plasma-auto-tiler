@@ -121,7 +121,7 @@ describe("move conformance corpus (41 transitions)", () => {
         }
     }
 
-    it("writes the rule-firing trace for all corpus transitions", () => {
+    it("builds the rule-firing trace for all corpus transitions", () => {
         // Note: the corpus as literally enumerated in the work-unit brief
         // (S1-01..S1-21, S2-01..S2-05, S3-01..S3-14) totals 21 + 5 + 14 =
         // 40 transitions, not 41 as the brief's prose states. This is a
@@ -129,7 +129,7 @@ describe("move conformance corpus (41 transitions)", () => {
         // every row given was transcribed and replayed.
         const totalTransitions = sequences.reduce((sum, seq) => sum + seq.transitions.length, 0);
         assert.equal(totalTransitions, 40);
-        assert.equal(trace.length, 40, "trace must contain every corpus transition before it is written");
+        assert.equal(trace.length, 40, "trace must contain every corpus transition");
 
         const lines = [
             "# Move conformance rule-firing trace",
@@ -139,7 +139,6 @@ describe("move conformance corpus (41 transitions)", () => {
             "enumerated in the work-unit brief totals 40 transitions (21 in S1, 5 in",
             "S2, 14 in S3); the brief's prose describes it as 41, which is a count",
             "discrepancy in the brief text, not a missing row.",
-            "Do not hand-edit; regenerate by running `npm test` in `kwin/`.",
             "",
             "| ID | Rule fired | Resulting tree |",
             "| --- | --- | --- |",
@@ -147,16 +146,15 @@ describe("move conformance corpus (41 transitions)", () => {
             "",
         ];
 
-        // npm test always runs with cwd = kwin/ (per package.json), so the
-        // repo root's docs/ directory is one level up from there.
-        const outDir = join(
-            process.cwd(),
-            "..",
-            "docs",
-            "changes",
-            "cosmic-evidence-mining",
-            "research",
-        );
+        // The committed trace consumed by docs/cosmic-move-conformance.md
+        // lives at docs/changes/archive/2026-08-20-cosmic-evidence-mining/
+        // research/move-conformance-trace.md as a frozen artifact from
+        // when it was authored - this test intentionally does not rewrite
+        // it on every run (a test run must never silently mutate archived,
+        // committed documentation). Re-running this test only re-proves the
+        // trace is still reproducible; a local, gitignored copy is written
+        // under dist/ for inspection.
+        const outDir = join(process.cwd(), "dist");
         mkdirSync(outDir, { recursive: true });
         writeFileSync(join(outDir, "move-conformance-trace.md"), lines.join("\n"), "utf8");
     });
