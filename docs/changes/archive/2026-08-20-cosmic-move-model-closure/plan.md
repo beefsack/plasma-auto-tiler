@@ -68,7 +68,7 @@ that permits a start state to disagree silently with the chain.
 
 - Replace line 42 with:
   ```text
-  - P3 | open | dependencies: user-run bspwm and Hyprland reference-runtime access | COSMIC directional-move runtime behavior is validated end to end by [cosmic-move-model-closure](changes/cosmic-move-model-closure/); remaining work is to validate actual bspwm and Hyprland runtime behavior with the same corpus-replay methodology rather than source/documentation precedent | [comparison](reference-wm-comparison.md)
+  - P3 | open | dependencies: user-run bspwm and Hyprland reference-runtime access | COSMIC directional-move runtime behavior is validated end to end by [cosmic-move-model-closure](changes/archive/2026-08-20-cosmic-move-model-closure/); remaining work is to validate actual bspwm and Hyprland runtime behavior with the same corpus-replay methodology rather than source/documentation precedent | [comparison](reference-wm-comparison.md)
   ```
 - Replace line 47 with:
   ```text
