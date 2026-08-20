@@ -425,3 +425,39 @@ speculation.
   scaffolding, and search-proven orphan pruning. `npm --prefix kwin run
   typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81 suites,
   924 pass, and 0 fail; describe count was 81.
+
+## 2026-08-21 (over-threshold remediation amendment)
+
+- Role / unit: Lead / approved specification and plan amendment (no extraction
+  unit executed).
+- Result: recorded the Orchestrator ruling that the 20-file target is an
+  estimate rather than acceptance criterion; four produced files above ~1,000
+  lines are an open acceptance gap. Added `unit-23` after unit-21 and before
+  unit-22 for pre-decided test describe-boundary sub-splits and a lower-priority
+  fixture export-group split.
+- Files / commit: `spec.md` and `plan.md` updated and committed separately as
+  `b7283da` (`docs(controller-test-split): record threshold remediation`).
+- Verification: documentation diff inspected; no implementation files changed.
+- Notes: remediation must preserve exactly 924 tests, 81 suites, 0 failures,
+  and 81 describes; suite-count behavior must be established empirically before
+  a split is selected. Exact test-file boundaries are deferred for a successor
+  Lead to record before `unit-23` dispatch.
+
+## 2026-08-21 (unit-13/attempt-01)
+
+- Role / unit: Lead / unit-13 (automatic dwindle insertion extraction), Worker
+  attempt-01.
+- Result: accepted. The `automatic dwindle insertion preflight` and `automatic
+  split target insertion` describes moved verbatim into
+  `controller-automatic-dwindle-insertion.test.ts`, with the approved named
+  `installInlineMutatingRejectingSplitter` helper. Search proved
+  `AUTOMATIC_SPLIT_TARGET_CONFIG_KEY` has no retained source consumer, so only
+  that source import was pruned; `makeTile` and `installDwindleSplitter` remain
+  for later local consumers.
+- Files / commit: `kwin/tests/controller-automatic-dwindle-insertion.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 7,062 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual source deletion and full new-file
+  addition diff. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
+  test` reported 924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, and 0
+  skipped; describe count was 81.
