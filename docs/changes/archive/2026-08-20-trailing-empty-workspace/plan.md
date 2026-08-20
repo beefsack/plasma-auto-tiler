@@ -2,8 +2,11 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Approved; spec.md rulings encoded; all work units (01-07) now
-  `[x]`; ready for the Orchestrator to route the completion transaction
+- Status: Complete. All work units (01, 02, 03, inv-01, 03b, 04, 05, 06, 07)
+  `[x]` and accepted. Completion transaction run 2026-08-20; archived to
+  `docs/changes/archive/2026-08-20-trailing-empty-workspace/`. Live-runtime
+  oscillation verification remains an open residual risk, tracked in
+  `docs/backlog.md` and `docs/live-oscillation-verification.md`.
 
 Semantic sections - Technical Approach, Work Units, Pending User Decisions -
 need Orchestrator approval before each edit. Record-keeping sections -
@@ -687,18 +690,24 @@ scope is unaffected.
   yet been run against a real KWin/Plasma session; the live-runtime
   oscillation residual above remains open until it is. Route completion of
   this residual through that runbook rather than re-deriving scenarios here.
+- (2026-08-20, completion transaction) The user has read the runbook and
+  deliberately deferred running it: the runbook requires a multi-output
+  machine (several scenarios exercise output connect/disconnect/replug) and
+  the user's current machine is a single-output laptop. This is the change's
+  primary unverified technical risk and remains open past archiving; tracked
+  in `docs/backlog.md` so it is not buried in the archive.
 
 ## Final Outcome
 
-- Pending - unit-01, unit-02 (committed, `1b34a37`), unit-03 (committed,
-  `e2105c2`), unit-03b (committed, `7c28759`), unit-04 (committed, `4a3c044`),
-  unit-07 (committed, `cb9b121`), and unit-05 (committed, `f77e772`) done;
-  this record was stale (previously said unit-04 was staged-only and units
-  05-06 remained) and is corrected here as part of unit-06 record-keeping -
-  see git log for the full commit sequence. unit-06 is now `[x]`, staged
-  uncommitted (this Lead's session, per commit protocol). Not yet the
-  change's overall completion transaction - see this unit's chat report for
-  the routing recommendation.
+- Delivered and accepted. unit-01, unit-02 (`1b34a37`), unit-03 (`e2105c2`,
+  superseded by unit-03b), unit-03b (`7c28759`), unit-04 (`4a3c044`), unit-07
+  (`cb9b121`), unit-05 (`f77e772`), and unit-06 (docs correction, committed as
+  part of the completion transaction) are all done - see git log for the full
+  commit sequence. Completion transaction (acceptance-evidence reconciliation,
+  `docs/backlog.md` correction, archiving) run 2026-08-20. Sole open item:
+  live-runtime oscillation verification, deferred by the user pending a
+  multi-output machine - see Residual Risks, `docs/backlog.md`, and
+  `docs/live-oscillation-verification.md`.
 
 ## Staging Note (2026-08-19, unit-02)
 

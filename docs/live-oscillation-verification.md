@@ -7,7 +7,8 @@ session, that the trailing-empty-workspace anti-oscillation design holds
 under actual KWin event-loop timing, signal re-entrancy, and QML/D-Bus event
 coalescing - none of which the static `node --test` suite (mocked `Harness`)
 can exercise. It closes the live-runtime residual risk recorded in
-`docs/changes/trailing-empty-workspace/plan.md` Residual Risks.
+`docs/changes/archive/2026-08-20-trailing-empty-workspace/plan.md` Residual
+Risks.
 
 Read `docs/live-kwin-testing.md` in full before running any part of this
 document. It is the authoritative operational contract; this document does
@@ -428,7 +429,7 @@ desktop, and never calls the swap helper.
   structurally-last (protected) member instead of the survivor's own
   trailing empty, so the survivor's own trailing empty is removed like any
   other non-trailing empty desktop and the folded-in one is kept. This is
-  accepted, not a defect (`docs/changes/trailing-empty-workspace/plan.md`
+  accepted, not a defect (`docs/changes/archive/2026-08-20-trailing-empty-workspace/plan.md`
   Q-Domain ruling; regression-tested at
   `kwin/tests/controller.test.ts:16213`). Self-healing: once a window
   occupies the protected-but-"wrong" desktop, the group's last position

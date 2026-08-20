@@ -172,7 +172,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   A COSMIC-style trailing-empty invariant is layered on top: exactly one
   empty workspace is always maintained after the populated ones, per
   relevant domain, delivered by
-  [trailing-empty-workspace](changes/trailing-empty-workspace/), reversing
+  [trailing-empty-workspace](changes/archive/2026-08-20-trailing-empty-workspace/), reversing
   the intervening create-on-demand, no-reuse rule delivered by
   [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
@@ -183,7 +183,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   `plasma-auto-tiler-workspace-0` in every profile unless an exact
   in-profile conflict; reverses the intervening "always creates, never
   reuses" rule - see
-  [trailing-empty-workspace](changes/trailing-empty-workspace/));
+  [trailing-empty-workspace](changes/archive/2026-08-20-trailing-empty-workspace/));
   `Meta+Shift+0` **reuses** the existing trailing empty to move the focused
   window onto it, creating one only when none exists, same reuse rule
   (backlog P2 `move-window-to-workspace`).
@@ -200,7 +200,7 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   desktop-lifecycle dispatch event (window add/remove/move/float, drag
   finish, `desktopsChanged`, output disconnect), not only on workspace
   switch. The trailing-empty invariant is delivered by
-  [trailing-empty-workspace](changes/trailing-empty-workspace/), reversing
+  [trailing-empty-workspace](changes/archive/2026-08-20-trailing-empty-workspace/), reversing
   only the "always create, never reuse, no reserved trailing capacity" rule
   delivered by
   [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/);
@@ -214,11 +214,12 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   that enabling the plugin's startup sweep removes none of the user's real,
   populated desktops, and that a non-trailing empty desktop invisible on
   every output is auto-removed. The trailing-empty reuse/replenish behavior
-  itself ([trailing-empty-workspace](changes/trailing-empty-workspace/)) is
+  itself ([trailing-empty-workspace](changes/archive/2026-08-20-trailing-empty-workspace/)) is
   statically complete but not yet live-accepted on the user's host; whether
   the anti-oscillation design holds under KWin's actual event loop, signal
-  re-entrancy, and D-Bus/QML event coalescing is an open residual risk (see
-  that change's `plan.md`). Two further specific properties remain covered
+  re-entrancy, and D-Bus/QML event coalescing is an open residual risk, see
+  [docs/live-oscillation-verification.md](live-oscillation-verification.md).
+  Two further specific properties remain covered
   by static test evidence only, not live proof: an empty desktop that is
   currently visible is preserved (live-proving it would require switching
   the user's visible desktop, which is prohibited), and `Meta+0`/
