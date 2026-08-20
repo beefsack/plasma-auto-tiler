@@ -404,3 +404,24 @@ speculation.
   scaffolding, and search-proven orphan pruning. `npm --prefix kwin run
   typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81 suites,
   924 pass, and 0 fail; describe count was 81.
+
+## 2026-08-21 (unit-12/attempt-01)
+
+- Role / unit: Lead / unit-12 (automatic dwindle ownership extraction), Worker
+  attempt-01.
+- Result: accepted. The `automatic dwindle ownership` describe moved verbatim
+  into `controller-automatic-dwindle-ownership.test.ts` without splitting its
+  suite. Search proved `buildDwindleBlueprint`, `Blueprint`, `CurrentScope`,
+  `presetSetup`, `configureThreeOccupantPreset`, `currentScopeFor`,
+  `assertDwindleShape`, and `installStaleReturnSplitter` have no retained
+  source consumers, so only those source copies were pruned;
+  `installCapacityRejectingSplitter` remains for later source consumers.
+- Files / commit: `kwin/tests/controller-automatic-dwindle-ownership.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 7,566 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected bounded actual-diff evidence including the new
+  file's imports, opening describe, and closing brace, plus retained-source
+  boundaries; the change contains only the approved describe, import
+  scaffolding, and search-proven orphan pruning. `npm --prefix kwin run
+  typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81 suites,
+  924 pass, and 0 fail; describe count was 81.
