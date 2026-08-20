@@ -97,9 +97,9 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-18 | Move describe: workspace mode and per-output seams (Unit 04); verify local helper `ownTrailingEmpty` import from fixtures is included -> `controller-workspace-mode-seams.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-19 | Move describe: per-output-local workspaces (Unit 05) (contains its own locally-scoped `twoOutputSetup`/`moveToTrailing` - these travel with the block untouched, not part of fixtures) -> `controller-per-output-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
-| unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
-| unit-23 | Remediate the four produced files over ~1,000 lines: `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts` (1,271), and `controller-drag-diagnostics-and-resize.test.ts` (1,004). Before dispatch, a successor Lead must derive and record the exact top-level `describe` boundaries in `spec.md`; Workers only apply those pre-decided boundaries. Split `controller-fixtures.ts` by safe export groups, not `describe`; this is lower priority and must be flagged/escalated if unsafe. Empirically establish harness suite-count behavior before assuming a split is count-neutral. Stop and escalate if any candidate split changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-*.test.ts`, `kwin/tests/controller-fixtures.ts`, and approved docs only | full 3-command block; exact counts are invariant |
-| unit-22 | Final cleanup: confirm `controller.test.ts` now contains only the preamble (lines 1-1015) with zero `describe(` occurrences and zero remaining non-preamble top-level declarations (the 4112, 4520-4813, and 8002-8169 clusters must all be gone, fully relocated by unit-01/unit-05/unit-06/unit-07/unit-10/unit-11/unit-13), delete `kwin/tests/controller.test.ts`, run the full acceptance gate (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed) | unit-02 .. unit-21 | delete `kwin/tests/controller.test.ts` | full 3-command block + `main.js` diff check + test-name diff check |
+| unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; delete the drained `controller.test.ts` after relocating any durable comment information | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
+| unit-23 | Remediate the five produced files over ~1,000 lines: `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts` (1,271), `controller-drag-diagnostics-and-resize.test.ts` (1,004), and `controller-dynamic-virtual-desktops.test.ts` (1,414). Before dispatch, a successor Lead must derive and record the exact top-level `describe` boundaries in `spec.md`; Workers only apply those pre-decided boundaries. Split `controller-fixtures.ts` by safe export groups, not `describe`; this is lower priority and must be flagged/escalated if unsafe. Empirically establish harness suite-count behavior before assuming a split is count-neutral. Stop and escalate if any candidate split changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-*.test.ts`, `kwin/tests/controller-fixtures.ts`, and approved docs only | full 3-command block; exact counts are invariant |
+| unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23 | final acceptance verification | full 3-command block + `main.js` diff check + test-name diff check |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
 execution slices use `unit-<n>/attempt-<n>`.
@@ -359,8 +359,28 @@ actually starts.
   justified. Lead review confirmed the source deletion and target content;
   `npm run typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail),
   and the describe count (81) all passed.
+- unit-21 prior scope attempt: **reset by Orchestrator-approved scope change**.
+  The verbatim move left a 67-line comment-only source file; Node counted that
+  file as one file-level test, producing 925 tests/pass. The diagnosis is not a
+  move defect, and the reset adds deletion of the drained source file to
+  unit-21 to restore the unchanged 924/81/0/81 acceptance invariant.
+- unit-21/attempt-01: **blocked by circuit breaker**. Before deleting the
+  drained file, the Worker classified its comments as durable fixture/test
+  rationale. Six blocks map to fixture exports, but `rowsDropSetup` and
+  `singleDesktopModeSetup` are target-local helpers rather than fixture
+  exports. The one authorized correction round stopped on that destination
+  ambiguity without changing files. Attempts 1; correction rounds 1;
+  independent reviews 0.
 
 ## Pending User Decisions
+
+- **Blocked unit-21 comment relocation.** The approved scope reset resolves
+  the 925-test file-level count drift by assigning drained-source deletion to
+  unit-21. Before deletion, six durable rationale blocks can relocate to their
+  fixture exports, while two document target-local helpers. The authorized
+  fixture-only correction stopped before changing files; a second correction
+  round would trip the circuit breaker. Orchestrator direction is required on
+  the permitted durable destination before further unit-21 work.
 
 Open acceptance gap: `unit-23` must remediate the following produced files over
 the ~1,000-line threshold before `unit-22` can pass final acceptance:

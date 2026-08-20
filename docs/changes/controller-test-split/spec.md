@@ -332,6 +332,17 @@ Current open acceptance gaps are:
 - `controller-fixtures.ts` - 1,332 lines
 - `controller-interactive-drag.test.ts` - 1,271 lines
 - `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
+- `controller-dynamic-virtual-desktops.test.ts` - 1,414 lines (severe)
+
+### Unit-21 Scope Amendment
+
+The Orchestrator approved a scope reset after the drained,
+comment-only `controller.test.ts` caused Node's test runner to count one
+file-level test. The move itself remains accepted as verbatim: unit-21 now
+also deletes the drained source file after relocating any durable comment
+information. This is the only change needed to restore the unchanged
+acceptance invariant of exactly 924 tests, 81 suites, 0 failures, and 81
+top-level `describe` occurrences. Unit-22 no longer owns that deletion.
 
 After all ordinary extractions complete, remediation `unit-23` runs after
 unit-21 and before unit-22. A successor Lead must first derive and record in
