@@ -228,3 +228,21 @@ speculation.
 - Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
   test` reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count
   was 81.
+
+## 2026-08-20 (unit-05/attempt-01)
+
+- Role / unit: Lead / unit-05 (selected overlay state extraction), Worker
+  attempt-01.
+- Result: accepted. `controller-selected-overlay-state.test.ts` contains the
+  verbatim `selected overlay state` describe body; `attachTileWriter` remains
+  in `controller.test.ts` as required. Source search showed `presetSetup`,
+  `configureThreeOccupantPreset`, `invokeShortcut`, and `currentScopeFor`
+  retain local consumers in selected overlay reflow, so no source-preamble
+  pruning was justified or performed.
+- Files / commit: `kwin/tests/controller-selected-overlay-state.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 13,873 lines; `plan.md`
+  and `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual diff and new-file body; it is a pure
+  describe move with import scaffolding only. `npm --prefix kwin run typecheck`
+  passed; `npm --prefix kwin test` reported 924 tests, 81 suites, 924 pass,
+  and 0 fail; describe count was 81.
