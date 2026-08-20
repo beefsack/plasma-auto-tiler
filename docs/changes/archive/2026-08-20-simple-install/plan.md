@@ -146,7 +146,7 @@ the new kwinrc key. Recorded, not blocking implementation.
 | effect-install writes the kwinrc key; effect-remove removes it exactly; no autostart hook/`.desktop`/systemd unit | `scripts/dogfood-install.sh` `cmd_effect_install` writes `[Plugins] plasma-auto-tiler-active-borderEnabled=true` via `kwriteconfig6`; `cmd_effect_remove` reads then conditionally deletes via `kwriteconfig6 --delete`, only when present; no autostart/`.desktop`/systemd file anywhere; commit `1aaf894` |
 | Plugin-ID single source of truth + comment + consistency test | `EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"` derives from the one existing `EFFECT_PLUGIN_ID` constant; caution comment added at its declaration; new static test in `scripts/dogfood-install.test.sh` cross-checks `metadata.json`, `CMakeLists.txt`'s `kcoreaddons_add_plugin` target, and the script literal; `bash scripts/dogfood-install.test.sh` 331/0 (was 318/0), independently re-run by the Lead |
 | README.md no longer states an unconditional every-reboot re-run requirement; states what is automatic vs. manual | `README.md` "One-command install", "Native effect (dogfood)" (two passages), "Eyeball check", and "Scope of each command" sections all corrected; commits `20269ca` and `409e03a` (the Lead's own direct fix-forward for a fifth stale sentence the Worker correctly flagged as out of its brief) |
-| Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | `README.md` phrases every auto-load claim as source-verified-but-not-yet-confirmed and points at Eyeball check; see Residual Risks below - **unverified by design, needs a user-run logout/login this change cannot perform** |
+| Live session-start auto-discovery/auto-load recorded as unverified, not claimed proven | Superseded: the user performed a real reboot (`kwin_wayland` PID changed 23049 -> 2432, confirming a genuine session boundary, not a restart-in-place); `scripts/dogfood-install.sh effect-status` afterward reported discovery `[d]`: yes and loaded `[e]`: yes with no manual `effect-reload`. This is user-performed live verification, not this change's own evidence; `README.md`'s three hedged passages (One-command install, Native effect (dogfood), Eyeball check) updated to state it as confirmed; see Residual Risks below |
 | README.md documents the non-Nix build path honestly (rebuild-every-upgrade, no cross-distro portability, unverified distro names worded as "typically") | new `README.md` "Building without Nix/devenv" section, placed after "Native effect (dogfood)" and before "Eyeball check"; distro package names hedged as "typically"/"not directly verified"; ABI-guarantee and rebuild-every-release stated as fact, not softened; commit `8709ddd` |
 | `-DKWin_DIR=` used only when the pinned path exists, via exactly one conditional; both branches covered in tests; devenv.nix unchanged | `scripts/dogfood-install.sh` `KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-<pinned literal>}"`; `cmd_effect_install` adds `-DKWin_DIR=` only when `[[ -d "$KWIN_DEV_CMAKE_DIR" ]]` (one conditional); two new test scenarios cover both branches via the new override; `bash scripts/dogfood-install.test.sh` 336/0 (was 331/0), independently re-run by the Lead; `git diff devenv.nix` empty, confirmed by both Worker and Lead; commit `9b9d63a` |
 
@@ -157,13 +157,16 @@ the new kwinrc key. Recorded, not blocking implementation.
   script-only KPackage artifact, the latter now also drives the native
   effect and this new one-command `setup` path. Not reconciled here per
   explicit out-of-scope instruction; flagged for a future change.
-- **Live session-start auto-load of the persisted native effect is
-  unverified.** `inv-03` established the kwinrc `[Plugins] <id>Enabled`
-  mechanism against KWin source and out-of-tree precedent, but could not
-  observe a real session start. This needs a user-run logout/login; until
-  then, treat the persistence mechanism as correctly implemented per source
-  research, not as live-proven. Do not claim it works from this change
-  alone.
+- **Resolved: live session-start auto-load of the persisted native effect
+  is now user-verified.** `inv-03` established the kwinrc
+  `[Plugins] <id>Enabled` mechanism against KWin source and out-of-tree
+  precedent but could not itself observe a real session start. The user has
+  since performed a real reboot (`kwin_wayland` PID changed 23049 -> 2432,
+  confirming a genuine session boundary rather than a restart-in-place);
+  `scripts/dogfood-install.sh effect-status` afterward reported discovery
+  `[d]`: yes and loaded `[e]`: yes, with no manual `effect-reload` run. This
+  was the change's last unproven claim; it is now proven by user-performed
+  live verification, not by this change's own tooling.
 - The filename-derived plugin-ID linkage (CMake target name, `.so`
   filename, `metadata.json` `KPlugin.Id`, kwinrc key) has no structural
   single source of truth across files; a future rename that moves one
@@ -182,17 +185,28 @@ own commit), `24ad2c6`/`4238e1e`/`0f0e7a1` (change-doc record-keeping),
 consistency test), `20269ca` + `409e03a` (Stage 3 README correction, the
 second a Lead direct fix-forward for one passage the Worker correctly
 flagged as outside its brief), `9b9d63a` (Stage 4 script: conditional
-`-DKWin_DIR=`), `8709ddd` (Stage 4 README: non-Nix build path). All pushed
-to `main`.
+`-DKWin_DIR=`), `8709ddd` (Stage 4 README: non-Nix build path), `ed61417`
+(post-completion fix-forward: corrected `cmd_setup`'s stale "re-run every
+reboot" summary text, which unit-05 missed since its brief was README.md
+only), and one further completion-transaction fix-forward (staged,
+uncommitted at the time of writing): corrected the three remaining
+`README.md` passages (One-command install, Native effect (dogfood), and
+Eyeball check) that still hedged live session-start auto-load as
+unconfirmed, now that the user has performed a real reboot and confirmed
+it via `effect-status`. All prior commits pushed to `main`.
 
 Final verification (Lead, run directly): `bash
 scripts/dogfood-install.test.sh` -> 336 passes / 0 failures (baseline at
 change start: 281/0; +55 total across both stages). `npm --prefix kwin run
 typecheck` -> exit 0, clean on both tsconfigs. `npm --prefix kwin test` ->
-815/815 passing, unchanged from baseline. `git diff devenv.nix` -> empty.
-`git status --short` -> only the three permanently-untracked paths.
+838/838 passing (post-`ed61417`; unchanged in count from the surrounding
+`trailing-empty-workspace` work, not from this change). `git diff
+devenv.nix` -> empty. `git status --short` -> only the three
+permanently-untracked paths.
 
-Not verified, and not claimed as verified: live session-start
-auto-discovery/auto-load of the persisted native effect via the new kwinrc
-key at a real logout/login. This is the one acceptance criterion this
-change cannot close itself - see Residual Risks.
+Live session-start auto-discovery/auto-load of the persisted native effect
+via the new kwinrc key was the one acceptance criterion this change could
+not close itself. It is now closed by user-performed live verification: a
+real reboot (`kwin_wayland` PID 23049 -> 2432, a genuine session boundary)
+followed by `effect-status` reporting discovery and loaded both yes, with
+no manual `effect-reload`. See Residual Risks for the full evidence.
