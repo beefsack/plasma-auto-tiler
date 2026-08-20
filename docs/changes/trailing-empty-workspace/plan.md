@@ -2,7 +2,8 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Approved; spec.md rulings encoded; ready to dispatch unit-01
+- Status: Approved; spec.md rulings encoded; all work units (01-07) now
+  `[x]`; ready for the Orchestrator to route the completion transaction
 
 Semantic sections - Technical Approach, Work Units, Pending User Decisions -
 need Orchestrator approval before each edit. Record-keeping sections -
@@ -139,7 +140,12 @@ does not converge cleanly.
       fixed as test-authoring errors, not production bugs - see log.md).
       Live-runtime oscillation residual explicitly remains open, see
       Residual Risks; no live host action taken this unit)
-- [ ] unit-06 Documentation correction
+- [x] unit-06 Documentation correction (accepted, attempt-01, no correction
+      round; verified line refs 174/180/185/242 all still applied to the
+      stale claims described - see Acceptance-Criterion Evidence; one
+      additional stale span found and corrected (roadmap.md's "Main KWin
+      risk"/"Status" paragraph, ~lines 197-210 pre-edit); 838/838 pass,
+      typecheck clean, `main.js` byte-identical to committed `HEAD`)
 - [x] unit-07 Fix trailing-empty-not-appended-on-occupation defect (accepted,
       attempt-02, no correction round; attempt-01 cancelled mid-flight with
       no report, reconciled and discarded, see Attempt Accounting; 827/827
@@ -557,6 +563,58 @@ scope is unaffected.
   reachability gaps above were outside that declared scope and are a scope
   question for the Orchestrator, not an unmet acceptance criterion of the
   work as dispatched.
+- Documentation correction (unit-06, now met): "`docs/roadmap.md` and the
+  relevant `docs/backlog.md` entry are corrected to describe the
+  trailing-empty-reuse model" - met. Verified each of the four cited
+  `docs/roadmap.md` line references against current `HEAD` before editing
+  (line numbers had not drifted): line 174 ("always creates... never looks
+  up or reuses") and line 180 (`Meta+Shift+0` "always creates", same
+  no-reuse rule) - both part of the "Navigation" bullet of section 6, now
+  rewritten to describe reuse-when-present/create-only-when-absent; line 185
+  ("There is no reserved or replenished trailing-empty slot") - now false
+  given the shipped invariant, rewritten; line 242 (the `Meta+0` catalog
+  table row, "always creates and switches... never reuses") - rewritten.
+  Swept the full file (388 lines, read whole) rather than trusting the
+  four-line list was exhaustive, per instruction that it was a hypothesis to
+  verify: found one further stale span not on the list, section 6's "Main
+  KWin risk"/"Status" paragraph (pre-edit ~197-210), which asserted
+  "auto-removed with no replenish" and "`DECIDED`; create-on-demand ...
+  implemented and live-accepted" as settled fact - both false now that a
+  trailing empty is deliberately replenished and the reuse behavior's own
+  live acceptance is still open; rewritten to attribute the still-accurate
+  ownership-independent-cleanup live-acceptance claim to
+  `workspace-management-fixes` specifically and flag the new trailing-empty
+  reuse behavior's live acceptance as the open item, cross-referencing this
+  change's Residual Risks. No other stale span found by a full-file grep for
+  `create-on-demand`/`always creat`/`never reuse`/`no reserved` after
+  editing - all remaining hits are past-tense framing of the rule being
+  reversed, not present-tense fact. `docs/backlog.md`: corrected the three
+  P2 entries (lines 22-24 pre-edit) asserting "Meta+0 always creates...
+  never reuses" / "no reserved trailing-empty spare" as the settled,
+  live-accepted rule; left the ownership-independent-cleanup entry (line 25)
+  untouched (unaffected by this change, still accurate) and left the
+  standing "user's next selected work" entry for this very change (line 28)
+  untouched per explicit instruction (belongs to the completion
+  transaction). Checked the adjacent, out-of-scope `docs/backlog.md:27`
+  entry (7 stale doc-comment locations describing "the removed
+  ownership/reserved-trailing-empty desktop model") for continued accuracy
+  without absorbing or editing it: found it is now inaccurate, not merely
+  stale-worded. That model was not permanently removed - this change
+  structurally reinstated a real trailing-empty concept (no ownership Set).
+  Direct evidence: the entry's own cited example,
+  `kwin/src/controller.ts`'s `Meta+0` KDE-settings description string
+  ("Focus or create the trailing empty workspace", current line 614, `git
+  show 884ff95:kwin/src/controller.ts` confirms identical wording pre-dated
+  this change and was accurately flagged stale then) now correctly
+  describes the shipped `Meta+0` behavior again - it was never edited by
+  units 01-04/07, so it went from stale to accurate by the model reverting
+  around it, not by intent. Separately, the same entry's second clause
+  (`cleanupDesktops()`/`cleanupEligibleDesktops()` doubling API calls) is
+  also now stale: `cleanupEligibleDesktops()` was deleted as dead code
+  during unit-04 (`grep cleanupEligibleDesktops kwin/src/controller.ts` -
+  zero hits at current `HEAD`). Reported to the Orchestrator rather than
+  edited, per the brief's explicit "leave it" instruction for this adjacent
+  item.
 
 ## Residual Risks
 
@@ -628,9 +686,14 @@ scope is unaffected.
 ## Final Outcome
 
 - Pending - unit-01, unit-02 (committed, `1b34a37`), unit-03 (committed,
-  `e2105c2`), and unit-03b (committed, `7c28759`) done; unit-04 (accepted,
-  staged, not yet committed) done; units 05-06 remain. Not yet the change's
-  overall completion transaction.
+  `e2105c2`), unit-03b (committed, `7c28759`), unit-04 (committed, `4a3c044`),
+  unit-07 (committed, `cb9b121`), and unit-05 (committed, `f77e772`) done;
+  this record was stale (previously said unit-04 was staged-only and units
+  05-06 remained) and is corrected here as part of unit-06 record-keeping -
+  see git log for the full commit sequence. unit-06 is now `[x]`, staged
+  uncommitted (this Lead's session, per commit protocol). Not yet the
+  change's overall completion transaction - see this unit's chat report for
+  the routing recommendation.
 
 ## Staging Note (2026-08-19, unit-02)
 

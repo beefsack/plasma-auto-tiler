@@ -169,45 +169,66 @@ Continues the ledger in `reference-wm-comparison.md` lines 200-213 (decisions
   [B1]). Implemented statically as the three-mode `workspaceMode` model
   (`per-output-local` default, `global-unique`, `shared`) in
   [multi-output-workspaces-and-shortcuts](changes/archive/2026-08-14-multi-output-workspaces-and-shortcuts/).
+  A COSMIC-style trailing-empty invariant is layered on top: exactly one
+  empty workspace is always maintained after the populated ones, per
+  relevant domain, delivered by
+  [trailing-empty-workspace](changes/trailing-empty-workspace/), reversing
+  the intervening create-on-demand, no-reuse rule delivered by
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/).
 - **Navigation:** `Meta+1..9` focus workspace (Hyprland example `mainMod+[0-9]`
   [H-Ex]); `Meta+Shift+1..9` move focused window to workspace; `Meta+0`
-  **always creates** a new workspace and switches to it - it never looks up
-  or reuses an existing empty workspace, even if one is already present
-  (registered as `plasma-auto-tiler-workspace-0` in every profile unless an
-  exact in-profile conflict; corrected from the earlier "focus or create the
-  trailing empty" design - see
-  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/));
-  `Meta+Shift+0` **always creates** a new workspace and moves the focused
-  window to it, same no-reuse rule (backlog P2 `move-window-to-workspace`).
+  **reuses** the existing trailing empty workspace when one is present and
+  switches to it - a no-op if it is already the current desktop - and
+  creates a new one only when no trailing empty exists (registered as
+  `plasma-auto-tiler-workspace-0` in every profile unless an exact
+  in-profile conflict; reverses the intervening "always creates, never
+  reuses" rule - see
+  [trailing-empty-workspace](changes/trailing-empty-workspace/));
+  `Meta+Shift+0` **reuses** the existing trailing empty to move the focused
+  window onto it, creating one only when none exists, same reuse rule
+  (backlog P2 `move-window-to-workspace`).
 - **Implementation:** statically implemented in the controller via the
   documented scripting surface (`createDesktop`/`removeDesktop`,
   `setCurrentDesktopForScreen`, `Window.desktops`); the script keeps a
-  session-only output-to-desktop map. There is no reserved or replenished
-  trailing-empty slot: empty-workspace cleanup is ownership-independent (any
+  session-only output-to-desktop map. Exactly one trailing empty is
+  identified structurally (never cached across dispatches) on every
+  `cleanupDesktops()` pass and protected from cleanup; a fresh trailing
+  empty is appended only when the current one becomes occupied. All other
+  empty-workspace cleanup remains ownership-independent (any non-trailing
   empty desktop that is invisible on every connected output is a removal
   candidate, regardless of who created it) and fires on every
   desktop-lifecycle dispatch event (window add/remove/move/float, drag
   finish, `desktopsChanged`, output disconnect), not only on workspace
-  switch. This corrected rule, and its live acceptance on the user's real
-  host, is delivered by
-  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/),
-  superseding the earlier switch-only, ownership-gated cleanup and
-  trailing-empty-reservation design statically delivered in `d6d52a5`
+  switch. The trailing-empty invariant is delivered by
+  [trailing-empty-workspace](changes/trailing-empty-workspace/), reversing
+  only the "always create, never reuse, no reserved trailing capacity" rule
+  delivered by
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/);
+  that change's ownership-independent, broadened-trigger cleanup rule is
+  otherwise unchanged and remains in force, itself superseding the earlier
+  switch-only, ownership-gated cleanup and trailing-empty-reservation design
+  statically delivered in `d6d52a5`
   ([empty-workspace switch cleanup](changes/archive/2026-08-15-empty-workspace-switch-cleanup/plan.md)).
-- **Main KWin risk:** live-accepted on the user's real host that enabling the
-  plugin's startup sweep removes none of the user's real, populated desktops,
-  and that a freshly created, never-switched-to empty desktop is
-  auto-removed with no replenish (see
-  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/)).
-  Two specific properties remain covered by static test evidence only, not
-  live proof: an empty desktop that is currently visible is preserved
-  (live-proving it would require switching the user's visible desktop, which
-  is prohibited), and `Meta+0`/`Meta+Shift+0` create-on-demand under an
-  actual physical key press (D-Bus `invokeShortcut` bypasses the xkb layer
-  and proves nothing).
-- **Status:** `DECIDED`; create-on-demand and ownership-independent,
-  broadened-trigger cleanup are implemented and live-accepted on the user's
-  host; the two properties above remain `unproven-until-live`.
+- **Main KWin risk:** live-accepted on the user's real host (by
+  [workspace-management-fixes](changes/archive/2026-08-19-workspace-management-fixes/))
+  that enabling the plugin's startup sweep removes none of the user's real,
+  populated desktops, and that a non-trailing empty desktop invisible on
+  every output is auto-removed. The trailing-empty reuse/replenish behavior
+  itself ([trailing-empty-workspace](changes/trailing-empty-workspace/)) is
+  statically complete but not yet live-accepted on the user's host; whether
+  the anti-oscillation design holds under KWin's actual event loop, signal
+  re-entrancy, and D-Bus/QML event coalescing is an open residual risk (see
+  that change's `plan.md`). Two further specific properties remain covered
+  by static test evidence only, not live proof: an empty desktop that is
+  currently visible is preserved (live-proving it would require switching
+  the user's visible desktop, which is prohibited), and `Meta+0`/
+  `Meta+Shift+0` reuse-vs-create behavior under an actual physical key press
+  (D-Bus `invokeShortcut` bypasses the xkb layer and proves nothing).
+- **Status:** `DECIDED`; the trailing-empty-reuse model and the
+  ownership-independent, broadened-trigger cleanup rule are both statically
+  implemented; the ownership-independent cleanup rule is live-accepted on
+  the user's host; the trailing-empty-reuse behavior's own live acceptance,
+  and the two properties above, remain `unproven-until-live`.
 
 ### 7. Full keyboard shortcut scheme, including split resizing
 
@@ -239,7 +260,7 @@ gated installer/KCM migration exists
 | Maximize | `plasma-auto-tiler-maximize` | `Meta+M` | COSMIC `Super+M` [C-KR] |
 | Fullscreen | `plasma-auto-tiler-fullscreen` | `Meta+F11` (component requirement; not registered) | COSMIC `Super+F11` [C-KR] |
 | Focus workspace | `plasma-auto-tiler-workspace-{1..9}` | `Meta+1..9` | Hyprland `mainMod+[0-9]` [H-Ex] |
-| Create + switch workspace | `plasma-auto-tiler-workspace-0` | `Meta+0` | registered; always creates and switches to a new workspace, never reuses an existing empty one |
+| Create + switch workspace | `plasma-auto-tiler-workspace-0` | `Meta+0` | registered; reuses the existing trailing empty workspace and switches to it when one is present (no-op if already current), creates a new one only when none exists |
 | Move to workspace | `plasma-auto-tiler-move-workspace-{1..9}` | `Meta+Shift+1..9` | Hyprland example [H-Ex] |
 | Move to appended workspace | `plasma-auto-tiler-move-workspace-append` | `Meta+Shift+0` | backlog P2 |
 | Detach / attach | `plasma-auto-tiler-detach` / `-attach` | `Meta+Shift+Space` / `Meta+Alt+Shift+Space` | existing (controller.ts:913-924) |

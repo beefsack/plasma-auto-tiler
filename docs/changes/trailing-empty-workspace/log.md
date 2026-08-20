@@ -1191,3 +1191,68 @@ speculation.
   host mutation was performed. Committed and pushed by this Lead at
   `f77e772 test(workspace): close unit-05 3+-output, disconnect, replug, and
   flap coverage gaps` (`6a70701..f77e772`).
+
+## 2026-08-20 (unit-06)
+
+- Role / unit: Lead / unit-06, attempt-01
+- Result: Documentation-only unit, performed directly by this Lead per
+  explicit brief exception (no Worker dispatch). Verified all four cited
+  `docs/roadmap.md` line refs (174, 180, 185, 242) against current `HEAD`
+  before editing - unchanged, still pointed at the stale claims. Read
+  `docs/roadmap.md` in full (388 lines) rather than trusting the four-line
+  list was exhaustive; found and corrected one further stale span (section
+  6's "Main KWin risk"/"Status" paragraph, pre-edit ~197-210) asserting
+  "auto-removed with no replenish" and "create-on-demand ... implemented and
+  live-accepted" as settled fact. Corrected `docs/backlog.md`'s three P2
+  entries (pre-edit lines 22-24) asserting the same superseded rule; left
+  the ownership-independent-cleanup entry (line 25, unaffected, still
+  accurate) and the standing "user's next selected work" entry for this
+  change (line 28) untouched, the latter per explicit instruction (belongs
+  to the completion transaction, not this unit). Grepped both files after
+  editing for `create-on-demand`/`always creat`/`never reuse`/`no reserved`
+  - all remaining hits are past-tense framing of the rule being reversed,
+  not present-tense fact. Checked (did not edit) the adjacent, out-of-scope
+  `docs/backlog.md:27` entry (7 stale doc-comment locations describing "the
+  removed ownership/reserved-trailing-empty desktop model") for continued
+  accuracy: found it is now itself inaccurate. Direct evidence: `git show
+  884ff95:kwin/src/controller.ts` confirms the entry's own cited example
+  (the `Meta+0` KDE-settings description string, "Focus or create the
+  trailing empty workspace") was identical wording pre-dating this change
+  and correctly flagged stale then; that same string is unedited at current
+  `HEAD` (`kwin/src/controller.ts:614`) and, because this change
+  structurally reinstated a real trailing-empty concept, the string is now
+  an accurate description of shipped behavior again - the entry's "removed"
+  premise no longer holds. Separately, `grep cleanupEligibleDesktops
+  kwin/src/controller.ts` returned zero hits: that function was deleted as
+  dead code during unit-04, so the entry's second clause (about it doubling
+  API calls) is also now stale. Not fixed, per the brief's "leave it"
+  instruction; reported to the Orchestrator via chat and recorded in
+  `plan.md` Acceptance-Criterion Evidence for unit-06. Also corrected two
+  pieces of stale Lead-owned record-keeping found while working this unit:
+  `plan.md`'s header `Status` line (still said "ready to dispatch unit-01")
+  and its `Final Outcome` section (still said unit-04 was staged-only and
+  units 05-06 remained, though unit-04/05/07 were already committed at
+  `4a3c044`/`f77e772`/`cb9b121` per `git log`) - both now reflect the actual
+  commit sequence.
+- Files / commit: `docs/roadmap.md`, `docs/backlog.md` (staged via `git add`,
+  not committed, per commit protocol); `docs/changes/trailing-empty-workspace/
+  {plan.md,log.md}` (this entry; Progress marked `[x]` for unit-06; new
+  Acceptance-Criterion Evidence entry; `Final Outcome` and header `Status`
+  corrected) - process artifacts, left untracked as in every prior unit of
+  this change.
+- Verification: full build+esbuild+`node --test` -> 838 tests, 78 suites,
+  838 pass, 0 fail (unchanged from unit-05's closing baseline; no source
+  touched). `npm --prefix kwin run typecheck` -> clean, both tsconfigs.
+  `git diff --stat -- kwin/contents/code/main.js` empty - byte-identical to
+  committed `HEAD`. `git status --porcelain` confirms only `docs/roadmap.md`
+  and `docs/backlog.md` modified (plus the three permanently-excluded
+  untracked paths, untouched).
+- Notes: no governance conflict; no `docs/decisions.md` edit. unit-06 marked
+  `[x]` - this closes the last open work unit of the plan (`Progress`: all of
+  01, 02, 03, 03b, 04, 05, 06, 07 now `[x]`). The change is not yet through
+  its completion transaction (acceptance-evidence map/residual-risk summary
+  review, Orchestrator alignment approval, user result approval, then
+  promote/archive/backlog-removal) - that is a separate Lead-owned step this
+  unit does not perform. Proposed conventional-commit subject for the
+  user: `docs(trailing-empty-workspace): correct roadmap and backlog for
+  the trailing-empty-reuse model`.
