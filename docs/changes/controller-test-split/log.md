@@ -372,3 +372,35 @@ speculation.
   search-proven orphan import removals. `npm --prefix kwin run typecheck`
   passed; `npm --prefix kwin test` reported 924 tests, 81 suites, 924 pass, and
   0 fail; describe count was 81.
+
+## 2026-08-21 (unit-11/attempt-01)
+
+- Role / unit: Lead / unit-11 (pure config functions extraction), Worker
+  attempt-01.
+- Result: blocked, no changes. The named `takeoverTilingSetup` helper now spans
+  source lines 1,182-1,228 after prior accepted extractions, rather than its
+  original approximately 8,169 location. The Worker stopped at the stated
+  boundary mismatch without relocating or deleting anything.
+- Files / commit: none; no gate run.
+- Notes: the approved named-helper boundary is unchanged and unambiguous. A
+  single same-scope correction will apply that helper at its current source
+  location, found by name rather than the stale original line estimate.
+
+## 2026-08-21 (unit-11/attempt-02)
+
+- Role / unit: Lead / unit-11 (pure config functions extraction), Worker
+  attempt-02, one same-scope correction.
+- Result: accepted. The six approved pure-config describes moved verbatim into
+  `controller-pure-config-functions.test.ts`, together with
+  `takeoverTilingSetup` from its reconciled current source location. Search
+  proved the moved direct-source imports and fixture-duplicated
+  `assertPresetShape` had no retained source consumers, so only those source
+  copies were pruned.
+- Files / commit: `kwin/tests/controller-pure-config-functions.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 9,606 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual addition and source deletion diffs;
+  they contain only the approved describes, named-helper relocation, import
+  scaffolding, and search-proven orphan pruning. `npm --prefix kwin run
+  typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81 suites,
+  924 pass, and 0 fail; describe count was 81.
