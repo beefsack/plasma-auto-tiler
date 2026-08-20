@@ -336,3 +336,18 @@ speculation.
 - Verification: Lead inspected the actual diff and new-file body. `npm
   --prefix kwin run typecheck` passed; `npm --prefix kwin test` reported 924
   tests, 81 suites, 924 pass, and 0 fail; describe count was 81.
+
+## 2026-08-20 (unit-09/attempt-01)
+
+- Role / unit: Lead / unit-09 (production diagnostics extraction), Worker
+  attempt-01.
+- Result: accepted. The `production diagnostics` describe moved verbatim into
+  `controller-production-diagnostics.test.ts`. Search proved `movedGeometry`
+  has no retained consumer, so it was the only source declaration pruned;
+  `dragSetup` and `startDrag` remain.
+- Files / commit: `kwin/tests/controller-production-diagnostics.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 10,778 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual diff and new-file body. `npm
+  --prefix kwin run typecheck` passed; `npm --prefix kwin test` reported 924
+  tests, 81 suites, 924 pass, and 0 fail; describe count was 81.
