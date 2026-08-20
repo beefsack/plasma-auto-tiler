@@ -156,7 +156,7 @@ actually starts.
 - [x] unit-13 automatic dwindle insertion
 - [x] unit-14 deferred recovery and fullscreen
 - [x] unit-15 floating and sticky
-- [ ] unit-16 dynamic virtual desktops
+- [x] unit-16 dynamic virtual desktops
 - [ ] unit-17 per-workspace maximize
 - [ ] unit-18 workspace mode seams
 - [ ] unit-19 per-output workspaces
@@ -318,6 +318,15 @@ actually starts.
   `controller.test.ts`, so no retained-source pruning was justified. `npm run
   typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the
   describe count (81) all passed.
+- unit-16/attempt-01: **accepted**. The `dynamic virtual desktops` describe
+  moved verbatim into `controller-dynamic-virtual-desktops.test.ts`.
+  `ownTrailingEmpty` is imported from fixtures as required. Search proved
+  `prepareExcessOwnedEmpty`, `modeCleanupSetup`,
+  `configureSwitchCleanupScenario`, and `ownCleanupDesktops` have no retained
+  source consumers, so only those duplicate source helpers were pruned. The
+  moved 1,391-line body byte-matches its `HEAD` source boundary. `npm run
+  typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and the
+  describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -328,6 +337,7 @@ the ~1,000-line threshold before `unit-22` can pass final acceptance:
 - `controller-fixtures.ts` - 1,332 lines
 - `controller-interactive-drag.test.ts` - 1,271 lines
 - `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
+- `controller-dynamic-virtual-desktops.test.ts` - 1,414 lines (severe)
 
 The 20-file target may be exceeded to resolve this gap. Exact `describe`
 boundaries are not yet pre-decided; a successor Lead must derive and record
@@ -373,9 +383,9 @@ resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-15 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-15 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-15 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-16 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-16 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-16 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -386,7 +396,8 @@ resolved.
 - Four produced files exceed ~1,000 lines and are an open acceptance gap:
   `controller-automatic-dwindle-ownership.test.ts` (1,930),
   `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts`
-  (1,271), and `controller-drag-diagnostics-and-resize.test.ts` (1,004).
+  (1,271), `controller-drag-diagnostics-and-resize.test.ts` (1,004), and
+  `controller-dynamic-virtual-desktops.test.ts` (1,414).
   `unit-23` is scheduled after unit-21 and before unit-22 to remediate them.
 - Grep-based import pruning could theoretically under- or over-prune on an
   edge case (e.g. a name matching inside a string literal or comment rather
@@ -401,5 +412,5 @@ resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-15. Units 16-21, unit-23 over-threshold remediation, and
+  completed units 01-16. Units 17-21, unit-23 over-threshold remediation, and
   unit-22 final cleanup remain unexecuted.

@@ -495,3 +495,23 @@ speculation.
   addition diffs. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
   test` reported 924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, and 0
   skipped; describe count was 81.
+
+## 2026-08-21 (unit-16/attempt-01)
+
+- Role / unit: Lead / unit-16 (dynamic virtual desktops extraction), Worker
+  attempt-01.
+- Result: accepted. The `dynamic virtual desktops` describe moved verbatim into
+  `controller-dynamic-virtual-desktops.test.ts`; its 1,391-line body
+  byte-matches the `HEAD` source range through the next approved top-level
+  describe. `ownTrailingEmpty` is imported from fixtures. Search proved
+  `prepareExcessOwnedEmpty`, `modeCleanupSetup`,
+  `configureSwitchCleanupScenario`, and `ownCleanupDesktops` have no retained
+  source consumers, so only those duplicate helpers were pruned.
+- Files / commit: `kwin/tests/controller-dynamic-virtual-desktops.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 4,006 lines; `plan.md` and
+  `log.md` updated in the unit commit. The new test file is 1,414 lines and is
+  recorded for `unit-23` remediation.
+- Verification: Lead inspected the source deletion and new-file actual diffs,
+  then independently ran `npm --prefix kwin run typecheck` (passed), `npm
+  --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
+  skipped), and describe count (81).
