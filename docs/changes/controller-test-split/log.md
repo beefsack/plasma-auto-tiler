@@ -320,3 +320,19 @@ speculation.
 - Verification: Lead inspected the preserved actual diff and final orphan
   deletion. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin test`
   reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count was 81.
+
+## 2026-08-20 (unit-08/attempt-01)
+
+- Role / unit: Lead / unit-08 (drag diagnostics and resize extraction), Worker
+  attempt-01.
+- Result: accepted. The contiguous range from `drag snapshot diagnostics`
+  through `bspwm direct resize bindings` moved verbatim, including the in-range
+  `normalizeSetup`, `runNormalizeDrag`, and `resizeSetup` helpers. Search
+  proved `setFullscreen`, `setSticky`, `setMaximized`, and `nativeDropSetup`
+  have no retained consumers, so only those declarations were pruned.
+- Files / commit: `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 11,149 lines; `plan.md`
+  and `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual diff and new-file body. `npm
+  --prefix kwin run typecheck` passed; `npm --prefix kwin test` reported 924
+  tests, 81 suites, 924 pass, and 0 fail; describe count was 81.
