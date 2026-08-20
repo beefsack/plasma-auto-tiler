@@ -32,3 +32,115 @@ speculation.
   accepted in `spec.md`, not resolved. No pending user decision recorded.
   Next action: dispatch unit-01 (create `controller-fixtures.ts`) in a
   future session/Lead stint.
+
+## 2026-08-20 (unit-01/attempt-01)
+
+- Role / unit: Lead / unit-01 (create `controller-fixtures.ts`), executed
+  directly per plan.md's sizing note (no subagent needed for a `sed`
+  line-range copy).
+- Result: blocked, not accepted. Copied `controller.test.ts` lines 1-1015
+  verbatim to new `kwin/tests/controller-fixtures.ts`, added `export ` to
+  all 31 top-level `const`/`interface`/`function`/`class` declarations in
+  that range (confirmed by line-targeted `sed`, one insertion per confirmed
+  declaration line, matches spec's enumerated count of 3+5+7+1+15=31).
+  `npm run typecheck` then surfaced `TS2304: Cannot find name
+  'attachTileWriter'` at two call sites inside `configureThreeOccupantPreset`
+  (a preamble helper). Investigation traced this to a spec gap: at least 20
+  more top-level (module-scope) helper functions exist later in the file
+  (lines 4112-8169) that the spec's Shared State section never analyzed
+  because it scoped its search to lines 1-1015 only. Two of them
+  (`attachTileWriter`, `countEvent`) were confirmed by direct line-span
+  evidence to be referenced across most or all of the 20 target files, on
+  the same "must be shared" footing as the helpers the spec did enumerate;
+  several more show cross-file-boundary usage on a first-pass check but were
+  not exhaustively verified. Full details and impact recorded in
+  `plan.md`'s new Pending User Decisions entry.
+- Files / commit: `kwin/tests/controller-fixtures.ts` created, untracked,
+  not staged - WIP evidence only, not typecheck-clean, not to be built upon
+  until the Shared State section is corrected. `kwin/tests/controller.test.ts`
+  untouched (confirmed via `git status --short` / `git diff --stat`: zero
+  unstaged changes to any tracked file).
+- Verification: `npm run typecheck` run, failed as described (not the
+  acceptance gate - unit-01 was still investigation-in-progress when the
+  finding surfaced).
+- Notes: judged this discovery to exceed the Lead's existing delegated
+  authority (spec.md's Unresolved Questions permits adjusting the Target
+  File Set *grouping*, not correcting the Shared State *analysis* the
+  grouping and fixture design are built on) - stopped rather than
+  unilaterally expanding `controller-fixtures.ts`'s scope. No further unit
+  dispatched. Returning `handover` to Orchestrator with this as a blocking
+  Pending User Decision, not a routine threshold handover.
+
+## 2026-08-20 (spec correction, Orchestrator-authorized)
+
+- Role / unit: Lead / specification correction (no work unit executed
+  directly; Orchestrator explicitly authorized a full cross-reference
+  analysis and correction of `spec.md`/`plan.md`, framed as a specification
+  correction, not a governance change).
+- Result: analysis complete. Enumerated all 52 top-level (column-zero)
+  declarations in `controller.test.ts` (`grep -n` anchored patterns for
+  `function`/`const`/`let`/`var`/`class`/`interface`/`type`/`enum`; also
+  checked for `export`/`enum`/`namespace`/`declare` at top level, zero
+  found beyond the known 52) - 31 already documented in the preamble
+  (lines 1-1015, unchanged from original spec), 21 more in three physical
+  clusters (line 4112; lines 4520-4813; lines 6359-6479 inside an existing
+  multi-describe target file's own span; lines 8002-8169). Bucketed every
+  reference of all 21 by which of the 20 target-file line ranges it falls
+  in, using a single awk-aggregated script (no raw line dumps consumed).
+  Checked the internal call graph among the 21 for calls from a
+  fixtures-bound declaration into a single-file-local one (would force
+  promotion) - found one: `makeTile` (0 direct describe call sites, called
+  only from inside `installDwindleSplitter`/`installCapacityRejectingSplitter`/
+  `installStaleReturnSplitter`, all three already fixtures-bound) - promoted
+  to fixtures. Re-ran the module-level mutable-state check
+  (`grep -n "^let \|^var "`) against the whole 17,075-line file, not just
+  lines 1-1015 as the original check scoped it: zero matches; the two
+  whole-file `static ` hits are both inside comments. Extraction remains
+  behaviorally safe.
+- Files / commit: `docs/changes/controller-test-split/spec.md` (Shared
+  State section rewritten with the full 52-declaration classification
+  table and corrected fixture size estimate ~1,340 lines; Target File Set
+  section annotated with the 4 target files needing named, non-contiguous
+  relocation, and the 1 file needing a converse "describe body only, not
+  the cluster" caution; Consequential Decisions appended) and `plan.md`
+  (Technical Approach rewritten; units 01, 05, 06, 07, 08, 10, 11, 13, 22
+  updated with the specific named-declaration relocations or contiguous-
+  range requirements each now needs; Pending User Decision marked
+  resolved) edited directly by the Lead (plan record-keeping and an
+  Orchestrator-authorized spec correction, no separate approval round
+  needed per governance). No test code touched.
+  `kwin/tests/controller-fixtures.ts` (the untracked, not-yet-typecheck-
+  clean WIP file from unit-01/attempt-01) left as-is pending unit-01's
+  next attempt under the corrected scope.
+- Verification: no runtime verification applicable to a documentation-only
+  correction; the correctness of the classification itself was
+  cross-checked twice (external-reference bucketing, then internal call-
+  graph promotion check) before being written into `spec.md`.
+- Notes: Target File Set *grouping* (which `describe` lands in which file)
+  is unchanged - only the shared-declaration classification and the
+  physical extraction mechanics for 5 of the 20 files (5, 6, 7, 10, 12)
+  changed. No new governance conflict. Next action: attempt unit-01 under
+  the corrected scope (dispatch to a `worker-anthropic`   Worker, since it is
+  a large mechanical multi-location extraction well suited for delegation
+  with Lead diff/typecheck verification after).
+
+## 2026-08-20 (unit-01/attempt-02)
+
+- Role / unit: Lead / unit-01 (create `controller-fixtures.ts`, corrected
+  scope), dispatched to a `worker-anthropic` Worker per the Technical
+  Approach's sizing note (large mechanical multi-location extraction).
+- Result: accepted. `kwin/tests/controller-fixtures.ts` now contains the 31
+  preamble declarations plus the 14 corrected cross-boundary declarations
+  (45 total exports), pruned imports, 1,332 lines.
+- Files / commit: `kwin/tests/controller-fixtures.ts` staged (`git add`,
+  explicit path). `kwin/tests/controller.test.ts` untouched (confirmed
+  empty `git diff --stat`/`git status --short` scoped to that path).
+- Verification: Lead ran directly (not solely trusting the Worker's
+  report): `grep -n '^export '` -> 45 matches, names and order match the
+  corrected Shared State list exactly; grep for the 7 excluded single-
+  file-local names -> zero matches; `wc -l` -> 1,332; `npm run typecheck`
+  (both tsconfigs) -> zero errors.
+- Notes: unit-01 complete. Units 02-22 (all describe moves and the 4 named
+  single-file-local relocations into files 6, 7, 10, 12) remain for a
+  future Lead stint - each is independently dispatchable per the Technical
+  Approach's per-unit table.

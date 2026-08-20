@@ -82,53 +82,132 @@ Non-goals:
   across all `kwin/tests/*.test.ts` files also totals 78, confirming every
   `describe` is top-level (no nesting anywhere in the test suite).
 
-## Shared State (investigation finding)
+## Shared State (investigation finding, corrected)
 
-`kwin/tests/controller.test.ts` lines 1-1015 are the module-scope preamble:
-imports (lines 1-43), 3 constants (`RECT`, `OUTPUT`, `DESKTOP`), 5 type/
-interface declarations (`TestWindow`, `TestSignal`, `TestTile`,
-`RegisteredShortcut`, `YieldEntry`), 7 top-level functions (`tile`, `window`,
-`setFullscreen`, `setSticky`, `setMaximized`, `signal`, `qv4MethodSignal`),
-one class (`Harness`, lines 224-618), and 15 more top-level helper functions
-(`setup`, `ownTrailingEmpty`, `prepareExcessOwnedEmpty`, `modeCleanupSetup`,
-`ownCleanupDesktops`, `configureSwitchCleanupScenario`, `focusSetup`,
-`moveSetup`, `swapSetup`, `presetSetup`, `configureThreeOccupantPreset`,
-`attachSetup`, `fillSetup`, `currentScopeFor`, `invokeShortcut`).
+**Correction history:** the original version of this section analyzed only
+lines 1-1015 and asserted this was the complete set of module-scope shared
+state. That was false: 21 more top-level (column-zero) declarations exist
+between lines 4112 and 8169, reachable from early `describe`s today only via
+JS/TS function-declaration hoisting across the whole module - a mechanism
+that disappears once the file is split. This was discovered live during
+unit-01/attempt-01 (`TS2304: Cannot find name 'attachTileWriter'`), recorded
+as a blocking Pending User Decision in `plan.md`, and the Orchestrator
+authorized a full re-analysis. This section reflects that full analysis
+(every top-level declaration in the file, not just the preamble) and
+supersedes the original.
 
-**No module-level mutable state exists** (`grep -n "^let \|^var \|static "`
-over lines 1-1015 returns nothing) - every helper's state is per-call or
-per-`Harness`-instance, so extracting the whole preamble into a separate
-module and letting each split file's esbuild bundle carry its own copy is
-behaviorally identical to today: zero cross-test interference risk from the
-extraction itself.
+### Enumeration method
 
-Usage breadth (checked by mapping every reference of each helper name to the
-top-level `describe` it falls inside):
+Every top-level (column-zero) `function`/`const`/`let`/`var`/`class`/
+`interface`/`type`/`enum` declaration in the file was enumerated with an
+anchored `grep -n`, independent of `describe` adjacency (declarations are not
+assumed contiguous or pre-first-use). Total: **52** - the 31 already
+documented in the preamble (lines 1-1015: imports 1-43, 3 constants `RECT`/
+`OUTPUT`/`DESKTOP`, 5 interfaces `TestWindow`/`TestSignal`/`TestTile`/
+`RegisteredShortcut`/`YieldEntry`, 7 functions `tile`/`window`/
+`setFullscreen`/`setSticky`/`setMaximized`/`signal`/`qv4MethodSignal`, class
+`Harness`, and 15 more helpers `setup`/`ownTrailingEmpty`/
+`prepareExcessOwnedEmpty`/`modeCleanupSetup`/`ownCleanupDesktops`/
+`configureSwitchCleanupScenario`/`focusSetup`/`moveSetup`/`swapSetup`/
+`presetSetup`/`configureThreeOccupantPreset`/`attachSetup`/`fillSetup`/
+`currentScopeFor`/`invokeShortcut`), plus **21 more** declared later in the
+file, in three physical clusters, each sitting in the gap between two
+`describe` blocks (not inside either): a lone helper at line 4112
+(`attachTileWriter`, between "selected overlay state" and "selected overlay
+reflow"), a 9-function cluster at lines 4520-4813 (between "selected overlay
+reflow" and "interactive drag"), a 3-function cluster at lines 6359-6479
+(inside the "drag diagnostics and resize" describe group's own span, between
+two of its five describes), and an 8-function cluster at lines 8002-8169
+(between "focus-writer seam" and "parseTilingAlgorithm").
 
-| Helper(s) | Describes that use it | Verdict |
+`globalUniqueSetup` (`:15738`), `twoOutputSetup` (`:14928`), and
+`moveToTrailing` (`:14968`) remain confirmed declared **inside** their
+`describe` block (indented, not column-zero) - correctly excluded from this
+enumeration, travel with that block unchanged. `ownedDesktopIdSnapshot` named
+in an earlier dispatch brief still does not exist as a declared symbol
+anywhere in the file.
+
+### Mutable state re-check (whole file, not just the preamble)
+
+**No module-level mutable state exists anywhere in the file.** `grep -n
+"^let \|^var "` over all 17,075 lines returns zero matches (re-run against
+the whole file, not just lines 1-1015 as the original check scoped it). The
+two whole-file matches for `static ` are both inside comments (`:5162`,
+`:6358`), not declarations. Every helper's state is per-call or
+per-`Harness`-instance; extraction to a separate module bundled once per
+split file remains behaviorally identical to today.
+
+### The 31 preamble declarations - verdict unchanged
+
+Usage breadth (mapping every reference to the top-level `describe`/target
+file it falls inside), re-verified at whole-file scope:
+
+| Helper(s) | Target files touched | Verdict |
 |---|---|---|
-| `RECT`, `OUTPUT`, `DESKTOP`, `TestTile`, `tile()`, `window()`, `Harness`, `setup()`, `invokeShortcut()` | 11-33 of the 40 describes each (broadly cross-cutting) | must be shared |
-| `presetSetup`, `configureThreeOccupantPreset`, `currentScopeFor` | 5-6 non-adjacent describes each, spanning from "keyboard insertion" near the top to "automatic dwindle ownership" near the middle | must be shared |
-| `setFullscreen`, `setSticky`, `setMaximized` | 3-5 non-adjacent describes each | must be shared |
-| `moveSetup`, `swapSetup` | 2 non-adjacent describes each | must be shared |
-| `ownTrailingEmpty` | 2 adjacent describes (both land in the same target file) | shared for simplicity |
-| `focusSetup`, `attachSetup`, `fillSetup`, `modeCleanupSetup`, `ownCleanupDesktops`, `configureSwitchCleanupScenario`, `prepareExcessOwnedEmpty` | exactly 1 describe each | technically single-consumer, kept shared anyway (see rationale below) |
+| `window`, `tile`, `RECT` | 19-20 of the 20 target files (near-universal) | must be shared |
+| `Harness`, `invokeShortcut`, `TestTile`, `TestWindow`, `setup`, `OUTPUT` | 8-18 target files each | must be shared |
+| `presetSetup`, `configureThreeOccupantPreset`, `currentScopeFor`, `setFullscreen`, `DESKTOP` | 5-8 target files each | must be shared |
+| `setSticky`, `setMaximized`, `TestSignal`, `signal`, `qv4MethodSignal`, `moveSetup`, `swapSetup`, `ownTrailingEmpty` | 2-3 target files each | must be shared |
+| `focusSetup`, `attachSetup`, `fillSetup`, `modeCleanupSetup`, `ownCleanupDesktops`, `configureSwitchCleanupScenario`, `prepareExcessOwnedEmpty`, `RegisteredShortcut`, `YieldEntry` | 0-1 target files each | technically single-consumer, kept shared anyway (see rationale below) |
 
-Decision: extract the **entire** preamble (all of it, including the single-
-consumer helpers) into one shared module, `kwin/tests/controller-fixtures.ts`,
-rather than hand-placing each helper next to its sole consumer. Rationale:
-per-helper placement is a judgment call that adds risk (misjudging a helper's
-real consumer set) for no correctness benefit; one atomic, mechanical
-extraction of a fixed, pre-enumerated line range is lower-risk and needs no
-per-helper decision. The minor cost is that a few single-use helpers live one
-hop from their sole caller.
+Decision unchanged from the original: extract the **entire** preamble (all
+31, including single-consumer ones) into `controller-fixtures.ts` rather than
+hand-placing each next to its sole consumer, for the same risk-reduction
+rationale as before. This part of the analysis is unaffected by the
+correction below.
 
-`globalUniqueSetup` (`kwin/tests/controller.test.ts:15738`), `twoOutputSetup`
-(`:14928`), and `moveToTrailing` (`:14968`) are declared **inside** their
-`describe` block, not at module scope - they travel with that block
-unchanged and are not part of the fixture extraction. `ownedDesktopIdSnapshot`
-named in the dispatch brief does not exist as a declared symbol anywhere in
-the file (verified by exact-word grep); it is not a real shared helper.
+### The 21 non-preamble declarations - full corrected classification
+
+Classification required two passes, not one: (1) bucket every reference of
+each name by which target file's line range it falls in, and (2) because
+several of these declarations call each other (the physical clusters are
+themselves interdependent, e.g. `installDwindleSplitter` calls `makeTile`),
+check whether a function classified "single-file-local" by pass 1 is actually
+called from inside the body of a function that pass 1 already classified
+"must be shared" - if so it must be promoted to shared too, since the shared
+module is bundled independently and cannot import back from a single test
+file. One promotion was found this way (`makeTile`, see below).
+
+| Declaration | Line | Classification | Target files spanned |
+|---|---|---|---|
+| `attachTileWriter` | 4112 | cross-boundary -> fixtures | 10 (+ 2 preamble-region call sites, itself called by a preamble helper) |
+| `countEvent` | 4740 | cross-boundary -> fixtures | 20 (universal) |
+| `installDwindleSplitter` | 8002 | cross-boundary -> fixtures | 7 |
+| `dragSetup` | 4520 | cross-boundary -> fixtures | 4 |
+| `startDrag` | 4729 | cross-boundary -> fixtures | 4 |
+| `movedGeometry` | 4736 | cross-boundary -> fixtures | 3 |
+| `installCapacityRejectingSplitter` | 8028 | cross-boundary -> fixtures | 3 |
+| `nativeDropSetup` | 4551 | cross-boundary -> fixtures | 2 |
+| `collectLeaves` | 4698 | cross-boundary -> fixtures | 2 |
+| `reconstructDropSetup` | 4748 | cross-boundary -> fixtures | 2 |
+| `installStaleReturnSplitter` | 8098 | cross-boundary -> fixtures | 2 |
+| `assertDwindleShape` | 8129 | cross-boundary -> fixtures | 2 |
+| `assertPresetShape` | 8149 | cross-boundary -> fixtures | 2 |
+| `makeTile` | 8089 | cross-boundary -> fixtures (**promoted**: 0 direct describe call sites, but called from inside the bodies of `installDwindleSplitter`, `installCapacityRejectingSplitter`, and `installStaleReturnSplitter` - all three already fixtures-bound, so `makeTile` must move with them) | 0 direct / 3 transitive |
+| `rowsDropSetup` | 4626 | single-file-local -> `controller-interactive-drag.test.ts` (file 6); declared in the cluster before file 6's describe, must be physically relocated into file 6, not left with its physical neighbors | 1 |
+| `assertLeafPartition` | 4709 | single-file-local -> `controller-interactive-drag.test.ts` (file 6); same relocation as `rowsDropSetup` | 1 |
+| `normalizeSetup` | 6359 | single-file-local -> `controller-drag-diagnostics-and-resize.test.ts` (file 7); already physically inside file 7's own contiguous span, no relocation needed | 1 |
+| `runNormalizeDrag` | 6447 | single-file-local -> file 7; no relocation needed | 1 |
+| `resizeSetup` | 6463 | single-file-local -> file 7; no relocation needed | 1 |
+| `takeoverTilingSetup` | 8169 | single-file-local -> `controller-pure-config-functions.test.ts` (file 10); declared in the cluster before file 10's describes, must be physically relocated into file 10 | 1 |
+| `installInlineMutatingRejectingSplitter` | 8061 | single-file-local -> `controller-automatic-dwindle-insertion.test.ts` (file 12); declared in the cluster before file 12's describes, must be physically relocated into file 12 | 1 |
+
+14 of the 21 are cross-boundary and must be added to `controller-fixtures.ts`
+(bringing its total export count to 31 + 14 = 45). 7 are single-file-local;
+4 of those 7 (`rowsDropSetup`, `assertLeafPartition`, `takeoverTilingSetup`,
+`installInlineMutatingRejectingSplitter`) are physically declared in a
+different location than the file they logically belong to and must be
+extracted by name (individual `sed` range per function, not a single
+contiguous block) into that target file rather than assumed to travel
+automatically with a contiguous line-range extraction.
+
+Cross-check performed: every single-file-local declaration's call graph was
+checked for calls *into* it from a fixtures-bound declaration (which would
+force promotion) - none found beyond the `makeTile` case above. Every
+fixtures-bound declaration's call graph was checked for calls into any
+preamble-only helper - none found (the preamble is uniformly shared already,
+so this direction cannot break). No declaration outside these 52 (i.e. no
+describe-local helper) calls or is called by any of the 21.
 
 ## Imports (investigation finding)
 
@@ -161,9 +240,43 @@ under the `controller-` prefix so the family is visually grouped.
 
 ## Target File Set
 
-One shared module, `kwin/tests/controller-fixtures.ts` (~975 lines: the
-1-1015 preamble minus the `import` block, which is replaced/pruned per the
-files that need it - exact export list per the Shared State section above).
+One shared module, `kwin/tests/controller-fixtures.ts`, corrected estimate
+**~1,340 lines**: the 1-1015 preamble (~972 lines excluding its `import`
+block) plus the 14 non-preamble cross-boundary declarations from the Shared
+State section above (~365 lines: `attachTileWriter` ~24 lines at its original
+location, the 7-of-9 cross-boundary members of the 4520-4813 cluster ~202
+lines, the 6-of-8 cross-boundary members of the 8002-8169 cluster ~139
+lines). This itself now exceeds the file's own ~1,000-line target; disclosed
+as accepted below (a shared fixture module is not a test suite and splitting
+it further would mean re-deriving sub-groupings of mutually-dependent
+helpers, which is unwarranted extra risk for a mechanical change).
+
+The describe-to-file grouping below is unchanged by the correction (every
+`describe` still lands in the same file); what changes is which physical
+lines around the `describe`s move where. Four target files require
+non-contiguous, named extraction rather than one simple line-range `sed` -
+see the callouts in the table and in `plan.md`'s Work Units:
+
+- File 6 (`controller-interactive-drag.test.ts`): also receives
+  `rowsDropSetup` and `assertLeafPartition`, physically declared earlier (in
+  the 4520-4813 cluster, itself otherwise fixtures-bound), extracted by name.
+- File 7 (`controller-drag-diagnostics-and-resize.test.ts`): must be
+  extracted as one contiguous range (5970-6950), not five separate
+  per-`describe` extracts, so it naturally keeps `normalizeSetup`,
+  `runNormalizeDrag`, and `resizeSetup`, which sit in gaps between its own
+  internal `describe`s and are used only within this file.
+- File 10 (`controller-pure-config-functions.test.ts`): also receives
+  `takeoverTilingSetup`, physically declared earlier (in the 8002-8169
+  cluster, otherwise fixtures-bound), extracted by name.
+- File 12 (`controller-automatic-dwindle-insertion.test.ts`): also receives
+  `installInlineMutatingRejectingSplitter`, physically declared earlier (same
+  cluster), extracted by name.
+- File 5 (`controller-selected-overlay-reflow.test.ts`) is the converse case:
+  although the 4520-4813 cluster sits numerically inside its naive line span,
+  none of that cluster is used by file 5's own `describe` body (confirmed:
+  `collectLeaves`'s one same-region reference is internal self-recursion, not
+  a call from the describe) - file 5 must extract only its `describe` body
+  (ending before line 4520), not the cluster.
 
 Twenty target test files, each a contiguous, order-preserving slice of the
 original 40 top-level `describe`s (never split within a `describe`, never
@@ -251,3 +364,13 @@ spec approval round, provided every acceptance criterion above still holds.
   rationale above.
 - `kwin/src/controller.ts` splitting is explicitly out of scope and remains a
   separate backlog item.
+- **Correction (Orchestrator-authorized, this session):** the Shared State
+  analysis is expanded from lines 1-1015 to the whole file; 14 additional
+  declarations move to `controller-fixtures.ts` (now ~1,340 lines, itself
+  disclosed over the 1,000-line target) and 7 declarations are single-file-
+  local, 4 of which require named (non-contiguous) relocation into their
+  target file. See Shared State and Target File Set sections above for the
+  full corrected classification and rationale. This was judged a clear
+  specification correction (mechanical, evidence-based, does not change
+  scope, acceptance criteria, or architecture) rather than a contentious one,
+  per the Orchestrator's explicit authorization.
