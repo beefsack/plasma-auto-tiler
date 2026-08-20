@@ -9,6 +9,10 @@ import {
     Harness,
     type TestTile,
     type TestWindow,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachSetup,
     attachTileWriter,
     configureThreeOccupantPreset,
@@ -17,9 +21,7 @@ import {
     fillSetup,
     invokeShortcut,
     presetSetup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 describe("TileController tile attach", () => {
     it("invokes the registered callback and attaches the active window with one guarded write", () => {

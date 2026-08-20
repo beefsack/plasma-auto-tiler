@@ -6,14 +6,16 @@ import {
     DESKTOP,
     OUTPUT,
     RECT,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     configureThreeOccupantPreset,
     countEvent,
     currentScopeFor,
     invokeShortcut,
     presetSetup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 describe("TileController selected overlay state", () => {
     it("records the selected overlay only after every occupant assignment succeeds", () => {

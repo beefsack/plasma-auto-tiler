@@ -6,11 +6,10 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
-    countEvent,
-    invokeShortcut,
     tile,
     window,
 } from "./controller-fixtures";
+import { countEvent, invokeShortcut } from "./controller-fixture-scenarios";
 
 describe("TileController floating and sticky windows", () => {
     function floatSetup(): {

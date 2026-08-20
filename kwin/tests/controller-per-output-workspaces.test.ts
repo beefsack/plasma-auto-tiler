@@ -7,12 +7,10 @@ import {
     OUTPUT,
     RECT,
     type TestWindow,
-    countEvent,
-    invokeShortcut,
-    setup,
     tile,
     window,
 } from "./controller-fixtures";
+import { countEvent, invokeShortcut, setup } from "./controller-fixture-scenarios";
 
 describe("TileController per-output-local workspaces (Unit 05)", () => {
     const OUTPUT_E = { ...OUTPUT, name: "screen-e", serialNumber: "11" };

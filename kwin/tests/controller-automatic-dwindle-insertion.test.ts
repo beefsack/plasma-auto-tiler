@@ -2,16 +2,13 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { AUTOMATIC_SPLIT_TARGET_CONFIG_KEY, TileController } from "../src/controller";
 import {
-    attachTileWriter,
-    countEvent,
     Harness,
-    installDwindleSplitter,
-    makeTile,
     RECT,
     tile,
     type TestTile,
     window,
 } from "./controller-fixtures";
+import { attachTileWriter, countEvent, installDwindleSplitter, makeTile } from "./controller-fixture-scenarios";
 
 // Install a splitter that mirrors KWin's `CustomTile::split()` inline mutation
 // under the minimum-geometry boundary. Unlike `installCapacityRejectingSplitter`

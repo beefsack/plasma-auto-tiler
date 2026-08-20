@@ -2,7 +2,8 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
-import { Harness, countEvent, setup, window } from "./controller-fixtures";
+import { Harness, window } from "./controller-fixtures";
+import { countEvent, setup } from "./controller-fixture-scenarios";
 import {
     PROFILE_CATALOGS,
     REGISTERED_PROFILE_ACTION_IDS,

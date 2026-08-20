@@ -2,23 +2,19 @@ import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
 import {
-    countEvent,
-    currentScopeFor,
-    focusSetup,
     Harness,
-    invokeShortcut,
     OUTPUT,
     qv4MethodSignal,
     RECT,
     setFullscreen,
     setMaximized,
     setSticky,
-    setup,
     tile,
     type TestSignal,
     type TestTile,
     window,
 } from "./controller-fixtures";
+import { countEvent, currentScopeFor, focusSetup, invokeShortcut, setup } from "./controller-fixture-scenarios";
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import { PROFILE_CATALOGS, REGISTERED_PROFILE_ACTION_IDS, TileController } from "../src/controller";
 import { DIRECTIONS, type Direction } from "../src/logic";

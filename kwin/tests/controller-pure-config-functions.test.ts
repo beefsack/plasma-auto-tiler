@@ -1,18 +1,14 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
-    attachTileWriter,
-    assertPresetShape,
-    countEvent,
     Harness,
-    installDwindleSplitter,
-    invokeShortcut,
     RECT,
     tile,
     type TestTile,
     type TestWindow,
     window,
 } from "./controller-fixtures";
+import { attachTileWriter, assertPresetShape, countEvent, installDwindleSplitter, invokeShortcut } from "./controller-fixture-scenarios";
 import {
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     AUTOMATIC_SPLIT_TARGETS,

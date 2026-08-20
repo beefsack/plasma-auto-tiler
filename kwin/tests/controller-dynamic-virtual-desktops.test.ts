@@ -7,6 +7,10 @@ import {
     OUTPUT,
     RECT,
     type TestTile,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     configureSwitchCleanupScenario,
     countEvent,
@@ -17,9 +21,7 @@ import {
     ownTrailingEmpty,
     prepareExcessOwnedEmpty,
     setup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 describe("TileController dynamic virtual desktops", () => {
     it("requests the same cleanup pass on every dispatcher trigger, not only a completed switch (Q7 broadened trigger)", () => {

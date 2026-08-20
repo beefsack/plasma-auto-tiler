@@ -3,23 +3,25 @@ import assert from "node:assert/strict";
 import { TileController } from "../src/controller";
 import { buildDwindleBlueprint } from "../src/layout-blueprint";
 import {
-    assertDwindleShape,
-    attachTileWriter,
-    configureThreeOccupantPreset,
-    countEvent,
-    currentScopeFor,
     DESKTOP,
     Harness,
-    installCapacityRejectingSplitter,
-    installDwindleSplitter,
-    installStaleReturnSplitter,
-    invokeShortcut,
-    presetSetup,
     RECT,
     tile,
     type TestTile,
     window,
 } from "./controller-fixtures";
+import {
+    assertDwindleShape,
+    attachTileWriter,
+    configureThreeOccupantPreset,
+    countEvent,
+    currentScopeFor,
+    installCapacityRejectingSplitter,
+    installDwindleSplitter,
+    installStaleReturnSplitter,
+    invokeShortcut,
+    presetSetup,
+} from "./controller-fixture-scenarios";
 
 describe("TileController automatic dwindle ownership", () => {
     it("adopts a stable scope on controller start without any structural call", () => {

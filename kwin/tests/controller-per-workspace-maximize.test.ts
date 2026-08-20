@@ -9,14 +9,10 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
-    attachTileWriter,
-    countEvent,
-    installDwindleSplitter,
-    invokeShortcut,
-    setup,
     tile,
     window,
 } from "./controller-fixtures";
+import { attachTileWriter, countEvent, installDwindleSplitter, invokeShortcut, setup } from "./controller-fixture-scenarios";
 
 describe("TileController per-workspace maximize", () => {
     const WORK_AREA = { x: 0, y: 0, width: 200, height: 200 };

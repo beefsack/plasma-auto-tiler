@@ -14,11 +14,8 @@ import {
     DESKTOP,
     Harness,
     OUTPUT,
-    countEvent,
-    invokeShortcut,
-    ownTrailingEmpty,
-    setup,
 } from "./controller-fixtures";
+import { countEvent, invokeShortcut, ownTrailingEmpty, setup } from "./controller-fixture-scenarios";
 
 describe("TileController workspace mode and per-output seams (Unit 04)", () => {
     it("parses workspaceMode: missing selects per-output-local, each valid mode parses, invalid falls back", () => {

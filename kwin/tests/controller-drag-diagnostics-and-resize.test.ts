@@ -6,6 +6,13 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
+    setFullscreen,
+    setMaximized,
+    setSticky,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     countEvent,
     dragSetup,
@@ -13,13 +20,8 @@ import {
     movedGeometry,
     nativeDropSetup,
     reconstructDropSetup,
-    setFullscreen,
-    setMaximized,
-    setSticky,
     startDrag,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 import { TileController } from "../src/controller";
 
 describe("TileController drag snapshot diagnostics", () => {

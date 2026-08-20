@@ -7,15 +7,17 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     configureThreeOccupantPreset,
     countEvent,
     currentScopeFor,
     invokeShortcut,
     presetSetup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 describe("TileController selected overlay reflow", () => {
     it("compacts occupants into ordinal leaves after a removal leaves a hole", () => {

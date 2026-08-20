@@ -11,6 +11,11 @@ import {
     type TestSignal,
     type TestTile,
     type TestWindow,
+    qv4MethodSignal,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     collectLeaves,
     countEvent,
@@ -18,11 +23,8 @@ import {
     invokeShortcut,
     movedGeometry,
     nativeDropSetup,
-    qv4MethodSignal,
     startDrag,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 // The live minimum-split floor failure: four full-width rows 245px tall inside
 // a 980px working height (y 44..289, 289..534, 534..779, 779..1024). A 50/50

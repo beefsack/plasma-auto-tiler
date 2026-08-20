@@ -1,7 +1,8 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { DESKTOP, RECT, countEvent, dragSetup, movedGeometry, setup, startDrag, tile, window } from "./controller-fixtures";
+import { DESKTOP, RECT, tile, window } from "./controller-fixtures";
+import { countEvent, dragSetup, movedGeometry, setup, startDrag } from "./controller-fixture-scenarios";
 
 describe("TileController production diagnostics", () => {
     it("maps each keyboard guard to one fixed reason after callback entry", () => {

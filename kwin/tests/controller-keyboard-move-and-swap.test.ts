@@ -6,6 +6,12 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
+    setMaximized,
+    setSticky,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     configureThreeOccupantPreset,
     countEvent,
@@ -13,13 +19,9 @@ import {
     invokeShortcut,
     moveSetup,
     presetSetup,
-    setMaximized,
-    setSticky,
     setup,
     swapSetup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 import { TileController } from "../src/controller";
 
 describe("TileController keyboard move", () => {

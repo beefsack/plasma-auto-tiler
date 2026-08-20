@@ -9,6 +9,10 @@ import {
     RECT,
     type TestTile,
     type TestWindow,
+    tile,
+    window,
+} from "./controller-fixtures";
+import {
     attachTileWriter,
     countEvent,
     dragSetup,
@@ -20,9 +24,7 @@ import {
     setup,
     startDrag,
     swapSetup,
-    tile,
-    window,
-} from "./controller-fixtures";
+} from "./controller-fixture-scenarios";
 
 describe("TileController deferred invariant recovery", () => {
     it("recovers a leaf-count mismatch from a real drag split deferred origin removal", () => {
