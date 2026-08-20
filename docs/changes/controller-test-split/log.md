@@ -479,3 +479,19 @@ speculation.
 - Verification: Lead inspected the actual source deletion diff. `npm --prefix
   kwin run typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81
   suites, 924 pass, 0 fail, 0 cancelled, and 0 skipped; describe count was 81.
+
+## 2026-08-21 (unit-15/attempt-01)
+
+- Role / unit: Lead / unit-15 (floating and sticky extraction), Worker
+  attempt-01.
+- Result: accepted. The `floating and sticky windows` describe moved verbatim
+  into `controller-floating-and-sticky.test.ts`. Source search confirmed its
+  base helpers and imports retain consumers in `controller.test.ts`, so no
+  retained-source pruning was justified.
+- Files / commit: `kwin/tests/controller-floating-and-sticky.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 5,469 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual source deletion and full new-file
+  addition diffs. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
+  test` reported 924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, and 0
+  skipped; describe count was 81.
