@@ -24,6 +24,10 @@ import {
     window,
 } from "./controller-fixtures";
 
+// The live minimum-split floor failure: four full-width rows 245px tall inside
+// a 980px working height (y 44..289, 289..534, 534..779, 779..1024). A 50/50
+// vertical split of a 245px row yields 122.5px halves, below KWin's 15%
+// working-height floor (147px), so the split must be refused before mutating.
 function rowsDropSetup(dropOutlinePreview = false): {
     readonly harness: Harness;
     readonly controller: TileController;
