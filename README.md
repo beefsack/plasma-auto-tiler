@@ -124,11 +124,10 @@ After that one-time boundary, `effect-install` also writes a persistent
 `[Plugins] plasma-auto-tiler-active-borderEnabled=true` key to `kwinrc` -
 the same mechanism KWin already uses to auto-enable the KWin script - so the
 effect should auto-load again at every later reboot or logout/login with no
-manual step. This is a source-verified mechanism (KWin's plugin loader reads
-this exact key on every session start), but has not yet been confirmed by
-an actual logout/login on this host; see [Eyeball check](#eyeball-check) to
-verify it yourself. `effect-reload` (or `setup`) remains the manual step
-whenever you rebuild the effect from a code change within an
+manual step. This has been confirmed by an actual reboot on this host: after
+a real session boundary, `effect-status` reported the effect discovered and
+loaded with no manual `effect-reload`. `effect-reload` (or `setup`) remains
+the manual step whenever you rebuild the effect from a code change within an
 already-running session - a live in-session rebuild is never picked up
 automatically. See [Native effect (dogfood)](#native-effect-dogfood) below
 for the full mechanism.
@@ -337,11 +336,12 @@ uses to re-enable itself every session, and KWin's effect loader reads this
 exact key the same way it reads the KWin script's. So once the effect has
 been discovered (the one-time boundary above), it should also auto-load
 again at every later reboot or logout/login with no manual `effect-reload`.
-This is verified against KWin's own plugin-loader source and a documented
-out-of-tree precedent, but has not yet been confirmed by an actual
-logout/login on this host - see [Eyeball check](#eyeball-check) to verify
-it yourself, and fall back to `effect-reload`/`effect-status` if it does
-not hold. `effect-reload` remains required, exactly as before, whenever you
+This is verified against KWin's own plugin-loader source, a documented
+out-of-tree precedent, and an actual reboot on this host, which confirmed
+discovery and load with no manual `effect-reload`; see
+[Eyeball check](#eyeball-check) for the repeatable per-session check, and
+fall back to `effect-reload`/`effect-status` if it ever does not hold.
+`effect-reload` remains required, exactly as before, whenever you
 rebuild the effect from a code change within an already-running session:
 persistence only covers session starts, never a live in-session rebuild.
 `effect-remove` removes the staged plugin, the env script, and (when
@@ -418,14 +418,12 @@ After dogfooding, confirm by eye:
   and windows on your session actually tile.
 - `bash scripts/dogfood-install.sh effect-status` reports the effect
   supported and loaded (after the one-time logout/login). After any later
-  reboot or logout/login, the persisted `kwinrc` key should make
-  `effect-status` report loaded again automatically with no manual
-  `effect-reload` - this is the one part of Stage 3 this repository has not
-  yet confirmed with a real logout/login, so a fresh-session
-  `effect-status` check is the actual verification. If it ever reports
-  `[e]` not loaded after a fresh session start, run `effect-reload` (or
-  `setup`) to recover and treat it as worth investigating, not an expected
-  steady state.
+  reboot or logout/login, the persisted `kwinrc` key makes `effect-status`
+  report loaded again automatically with no manual `effect-reload` -
+  confirmed on this host by a real reboot. If it ever reports `[e]` not
+  loaded after a fresh session start, run `effect-reload` (or `setup`) to
+  recover and treat it as worth investigating, not an expected steady
+  state.
 - The active window shows the border effect rendering.
 - After a code change, `effect-install` (rebuild) then `effect-reload`
   completes and the border reflects it, with no session boundary.
