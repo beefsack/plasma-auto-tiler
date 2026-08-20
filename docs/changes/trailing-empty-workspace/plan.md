@@ -682,6 +682,11 @@ scope is unaffected.
   commit (`e2105c2`) already landed the superseded wiring, so the repository
   history retains both the original and the corrected behavior across two
   commits, which is expected and not a defect.
+- (2026-08-20) The concrete live-check proposed above is now a full
+  executable runbook: `docs/live-oscillation-verification.md`. It has not
+  yet been run against a real KWin/Plasma session; the live-runtime
+  oscillation residual above remains open until it is. Route completion of
+  this residual through that runbook rather than re-deriving scenarios here.
 
 ## Final Outcome
 

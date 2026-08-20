@@ -564,3 +564,7 @@ Durable prohibitions:
 - [Active Custom Tile log](changes/custom-tile-vertical-slice/log.md)
 - [Active Custom Tile plan](changes/custom-tile-vertical-slice/plan.md)
 - [Keyboard navigation archive](changes/archive/2026-08-11-keyboard-navigation-vertical-slice/)
+- [Live runtime oscillation verification runbook](live-oscillation-verification.md) -
+  scenario-specific executable runbook layered on top of this guide's
+  authoritative operational contract; does not grant any additional
+  mutation authorization.

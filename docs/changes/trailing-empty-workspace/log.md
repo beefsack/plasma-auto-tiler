@@ -1256,3 +1256,31 @@ speculation.
   unit does not perform. Proposed conventional-commit subject for the
   user: `docs(trailing-empty-workspace): correct roadmap and backlog for
   the trailing-empty-reuse model`.
+
+## unit-06 (Lead, cross-reference finishing pass)
+
+- Objective: finish the small remaining steps of a task a previous Lead was
+  cut off from by quota exhaustion partway through. That Lead had already
+  written the full live-runtime oscillation verification runbook,
+  `docs/live-oscillation-verification.md` (476 lines, untracked). The live
+  oscillation verification itself remains unperformed - the runbook exists
+  but has not been run against a real KWin/Plasma session.
+- Work done this dispatch: sanity-checked the runbook for truncation/ASCII
+  violations (none found, accepted as-is); added a cross-reference to it
+  from `docs/live-kwin-testing.md` Related Records; added a dated Residual
+  Risks entry in `plan.md` pointing completion of the live-runtime
+  oscillation residual at the runbook instead of re-deriving scenarios
+  inline; recorded this entry.
+- Files / commit: `docs/live-oscillation-verification.md` (new, staged),
+  `docs/live-kwin-testing.md` (Related Records entry, staged),
+  `docs/changes/trailing-empty-workspace/{plan.md,log.md}` (this entry;
+  Residual Risks cross-reference) - staged via `git add`, not committed, per
+  commit protocol.
+- Verification: full build+esbuild+`node --test` -> 838 tests pass, 0 fail.
+  `npm --prefix kwin run typecheck` clean, both tsconfigs. `git diff --stat
+  -- kwin/contents/code/main.js` empty - byte-identical to committed `HEAD`.
+  No code touched.
+- Notes: no governance conflict. The live oscillation verification against
+  a real KWin/Plasma session is still outstanding and is not performed by
+  this entry - it requires the standing user-directed live-testing process
+  in `docs/live-kwin-testing.md`.
