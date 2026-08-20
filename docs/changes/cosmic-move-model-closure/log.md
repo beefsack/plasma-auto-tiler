@@ -87,3 +87,11 @@
 - Files / commit: `kwin/tests/move-conformance-model.ts`; no commit
 - Verification: `npm --prefix kwin test` (915 tests / 80 suites / 915 pass / 0 fail), `npm --prefix kwin run typecheck`, `git diff --check`, and diff inspection confirmed no corpus/vector mutation
 - Notes: Added odd-parity midpoint wrapping and root/singleton `4-noop` only. S20-S23 are structurally checked but non-replayed pending unit-03.
+
+## 2026-08-20
+
+- Role / unit: Lead / unit-03 / attempt-01
+- Result: accepted
+- Files / commit: `kwin/tests/move-conformance-model.ts`, `kwin/tests/move-conformance.test.ts`; no commit
+- Verification: `npm --prefix kwin test` (924 tests / 81 suites / 924 pass / 0 fail), `npm --prefix kwin run typecheck`, `git diff --check`, and diff inspection
+- Notes: Added pure output-state R4 replay for S20-S23, same-workspace adjacency, no-adjacent no-op, and X as both leaf and multi-window target. No corpus/vector or runtime path changed.

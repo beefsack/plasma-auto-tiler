@@ -3,7 +3,17 @@ import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-import { h, leaf, move, v, type Direction, type RuleId, type TreeNode } from "./move-conformance-model";
+import {
+    h,
+    leaf,
+    move,
+    moveAcrossOutputs,
+    v,
+    type Direction,
+    type MultiOutputState,
+    type RuleId,
+    type TreeNode,
+} from "./move-conformance-model";
 
 type Transition = {
     readonly id: string;
@@ -367,4 +377,141 @@ describe("authored single-output COSMIC vectors", () => {
             });
         }
     }
+});
+
+function outputState(
+    left: TreeNode | undefined,
+    right: TreeNode | undefined,
+    workspace = "one",
+): MultiOutputState {
+    return {
+        outputs: [
+            { id: "L", workspace, tree: left, adjacent: { right: "R" } },
+            { id: "R", workspace, tree: right, adjacent: { left: "L" } },
+        ],
+    };
+}
+
+function outputTree(state: MultiOutputState, id: string): TreeNode | undefined {
+    const output = state.outputs.find((candidate) => candidate.id === id);
+    if (output === undefined) {
+        throw new Error(`missing output ${id}`);
+    }
+    return output.tree;
+}
+
+describe("authored multi-output COSMIC vectors", () => {
+    const vectors = authoredSequences.slice(16).flatMap((sequence) => sequence.vectors);
+
+    it("S20-01: crosses left into an occupied single-leaf target", () => {
+        const vector = vectors[0];
+        if (vector === undefined) {
+            throw new Error("missing S20-01");
+        }
+        const result = moveAcrossOutputs(outputState(leaf("X"), h(leaf("A"), leaf("B"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "4-cross-output");
+        assert.deepEqual(outputTree(result.state, "L"), h(leaf("X"), leaf("A")));
+        assert.deepEqual(outputTree(result.state, "R"), leaf("B"));
+    });
+
+    it("S21-01: applies R1 before considering a crossing", () => {
+        const vector = vectors[1];
+        if (vector === undefined) {
+            throw new Error("missing S21-01");
+        }
+        const result = moveAcrossOutputs(outputState(leaf("X"), v(leaf("A"), leaf("B"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "1");
+        assert.deepEqual(outputTree(result.state, "L"), leaf("X"));
+        assert.deepEqual(outputTree(result.state, "R"), h(leaf("A"), leaf("B")));
+    });
+
+    it("S22-01: moves to an empty adjacent target", () => {
+        const vector = vectors[2];
+        if (vector === undefined) {
+            throw new Error("missing S22-01");
+        }
+        const result = moveAcrossOutputs(outputState(undefined, h(leaf("A"), leaf("B"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "4-cross-output");
+        assert.deepEqual(outputTree(result.state, "L"), leaf("A"));
+        assert.deepEqual(outputTree(result.state, "R"), leaf("B"));
+    });
+
+    it("S23-01: keeps an eligible local R2b move on its source output", () => {
+        const vector = vectors[3];
+        if (vector === undefined) {
+            throw new Error("missing S23-01");
+        }
+        const result = moveAcrossOutputs(outputState(leaf("X"), h(leaf("A"), leaf("B"), leaf("C"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "2b");
+        assert.deepEqual(outputTree(result.state, "L"), leaf("X"));
+        assert.deepEqual(outputTree(result.state, "R"), h(h(leaf("A"), leaf("B")), leaf("C")));
+    });
+
+    it("S23-02: keeps an eligible ancestor rule on its source output", () => {
+        const vector = vectors[4];
+        if (vector === undefined) {
+            throw new Error("missing S23-02");
+        }
+        const result = moveAcrossOutputs(outputState(leaf("X"), h(h(leaf("A"), leaf("B")), leaf("C"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "3-flatten");
+        assert.deepEqual(outputTree(result.state, "L"), leaf("X"));
+        assert.deepEqual(outputTree(result.state, "R"), h(leaf("A"), leaf("B"), leaf("C")));
+    });
+
+    it("S23-03: wraps an occupied multi-window target without changing its shape", () => {
+        const vector = vectors[5];
+        if (vector === undefined) {
+            throw new Error("missing S23-03");
+        }
+        const target = v(leaf("X1"), leaf("X2"));
+        const result = moveAcrossOutputs(outputState(target, h(leaf("A"), leaf("B"), leaf("C"))), "R", vector.focusedLeafName, vector.direction);
+        assert.equal(result.rule, "4-cross-output");
+        assert.deepEqual(outputTree(result.state, "L"), h(target, leaf("A")));
+        assert.deepEqual(outputTree(result.state, "R"), h(leaf("B"), leaf("C")));
+    });
+
+    it("wraps occupied targets on the correct side for every direction", () => {
+        const cases: readonly {
+            readonly direction: Direction;
+            readonly source: TreeNode;
+            readonly expectedSource: TreeNode;
+            readonly expectedTarget: TreeNode;
+        }[] = [
+            { direction: "left", source: h(leaf("A"), leaf("B")), expectedSource: leaf("B"), expectedTarget: h(leaf("X"), leaf("A")) },
+            { direction: "right", source: h(leaf("B"), leaf("A")), expectedSource: leaf("B"), expectedTarget: h(leaf("A"), leaf("X")) },
+            { direction: "up", source: v(leaf("A"), leaf("B")), expectedSource: leaf("B"), expectedTarget: v(leaf("X"), leaf("A")) },
+            { direction: "down", source: v(leaf("B"), leaf("A")), expectedSource: leaf("B"), expectedTarget: v(leaf("A"), leaf("X")) },
+        ];
+        for (const testCase of cases) {
+            const state: MultiOutputState = {
+                outputs: [
+                    { id: "source", workspace: "one", tree: testCase.source, adjacent: { [testCase.direction]: "target" } },
+                    { id: "target", workspace: "one", tree: leaf("X"), adjacent: {} },
+                ],
+            };
+            const result = moveAcrossOutputs(state, "source", "A", testCase.direction);
+            assert.equal(result.rule, "4-cross-output", testCase.direction);
+            assert.deepEqual(outputTree(result.state, "source"), testCase.expectedSource, testCase.direction);
+            assert.deepEqual(outputTree(result.state, "target"), testCase.expectedTarget, testCase.direction);
+        }
+    });
+
+    it("retains the local no-op when no adjacent output exists", () => {
+        const state: MultiOutputState = {
+            outputs: [{ id: "R", workspace: "one", tree: h(leaf("A"), leaf("B")), adjacent: {} }],
+        };
+        const result = moveAcrossOutputs(state, "R", "A", "left");
+        assert.equal(result.rule, "4-noop");
+        assert.deepEqual(result.state, state);
+    });
+
+    it("never crosses to an adjacent output on another workspace", () => {
+        const state = outputState(leaf("X"), h(leaf("A"), leaf("B")));
+        const otherWorkspace: MultiOutputState = {
+            outputs: state.outputs.map((output) => (output.id === "L" ? { ...output, workspace: "two" } : output)),
+        };
+        const result = moveAcrossOutputs(otherWorkspace, "R", "A", "left");
+        assert.equal(result.rule, "4-noop");
+        assert.deepEqual(result.state, otherWorkspace);
+    });
 });

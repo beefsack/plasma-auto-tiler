@@ -28,6 +28,22 @@ export type MoveResult = {
     readonly rule: RuleId;
 };
 
+export type OutputTree = {
+    readonly id: string;
+    readonly workspace: string;
+    readonly tree: TreeNode | undefined;
+    readonly adjacent: Readonly<Partial<Record<Direction, string>>>;
+};
+
+export type MultiOutputState = {
+    readonly outputs: readonly OutputTree[];
+};
+
+export type MultiOutputMoveResult = {
+    readonly state: MultiOutputState;
+    readonly rule: RuleId | "4-cross-output";
+};
+
 export function leaf(name: string): Leaf {
     return { kind: "leaf", name };
 }
@@ -295,4 +311,86 @@ export function move(tree: TreeNode, focusedLeafName: string, direction: Directi
         const newTree = replaceAtLevel(path, level - 1, wrapped);
         return { tree: newTree, rule: "3+1" };
     }
+}
+
+function rootEdgeLeafIndex(tree: TreeNode, leafName: string, direction: Direction): number | undefined {
+    if (tree.kind === "leaf") {
+        return undefined;
+    }
+    const index = tree.children.findIndex((child) => child.kind === "leaf" && child.name === leafName);
+    if (index === -1 || index !== (stepFor(direction) === -1 ? 0 : tree.children.length - 1)) {
+        return undefined;
+    }
+    return index;
+}
+
+function replaceOutputTree(
+    state: MultiOutputState,
+    outputId: string,
+    tree: TreeNode | undefined,
+): MultiOutputState {
+    return {
+        outputs: state.outputs.map((output) => (output.id === outputId ? { ...output, tree } : output)),
+    };
+}
+
+/**
+ * Applies a directional tree move within one output before considering the
+ * explicitly adjacent output on the same workspace. Cross-output movement is
+ * only eligible after the single-tree model has no applicable rule.
+ */
+export function moveAcrossOutputs(
+    state: MultiOutputState,
+    sourceOutputId: string,
+    focusedLeafName: string,
+    direction: Direction,
+): MultiOutputMoveResult {
+    const source = state.outputs.find((output) => output.id === sourceOutputId);
+    if (source === undefined) {
+        throw new Error(`moveAcrossOutputs: output "${sourceOutputId}" not found`);
+    }
+    if (source.tree === undefined) {
+        return { state, rule: "4-noop" };
+    }
+
+    const local = move(source.tree, focusedLeafName, direction);
+    if (local.rule !== "4-noop") {
+        return { state: replaceOutputTree(state, source.id, local.tree), rule: local.rule };
+    }
+    if (source.tree.kind === "leaf") {
+        return { state, rule: "4-noop" };
+    }
+
+    const sourceLeafIndex = rootEdgeLeafIndex(source.tree, focusedLeafName, direction);
+    const targetId = source.adjacent[direction];
+    const target = targetId === undefined ? undefined : state.outputs.find((output) => output.id === targetId);
+    if (sourceLeafIndex === undefined || target === undefined || target.workspace !== source.workspace) {
+        return { state, rule: "4-noop" };
+    }
+
+    const moved = leaf(focusedLeafName);
+    const targetTree =
+        target.tree === undefined
+            ? moved
+            : {
+                  kind: "split" as const,
+                  axis: axisOf(direction),
+                  children:
+                      direction === "left" || direction === "up" ? [target.tree, moved] : [moved, target.tree],
+              };
+    const sourceTree = removeAt(source.tree, sourceLeafIndex);
+    return {
+        state: {
+            outputs: state.outputs.map((output) => {
+                if (output.id === source.id) {
+                    return { ...output, tree: sourceTree };
+                }
+                if (output.id === target.id) {
+                    return { ...output, tree: targetTree };
+                }
+                return output;
+            }),
+        },
+        rule: "4-cross-output",
+    };
 }

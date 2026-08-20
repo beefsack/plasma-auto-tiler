@@ -77,7 +77,7 @@ planning artifact does not alter the backlog.
 - [-] unit-05 retired after second circuit-breaker trip
 - [x] unit-06 transcribe authored sequences and isolated vectors
 - [x] unit-02 correct single-output model
-- [ ] unit-03 add multi-output model
+- [x] unit-03 add multi-output model
 - [ ] unit-04 update records and baseline
 
 ## Attempt Accounting
@@ -104,7 +104,7 @@ No entries. S18/S19 author U1/U2 as executable sequences.
 | New live corpus is complete | Authored S4-S23 sequences in `docs/cosmic-move-conformance.md`, including the documented vertical-output finding. |
 | Isolated vector start agrees with corpus chain | Unit-06 explicit-start vectors and its structural assertion using the existing tree comparison, with S4-S23 headings as the only boundaries. |
 | R1-R3 including G1 reconciliation | P1-P5, F1-F3, G1 and existing S2-02/S3-04 corpus replay; model rule assertions. |
-| R4 multi-output behavior | M2-M4 and the user-recorded M1 rule statement; output-state assertions for occupied, empty, eligible, and ineligible transfers. |
+| R4 multi-output behavior | S20-S23 output-state replays: occupied leaf and subtree targets, empty target, local-rule precedence, no adjacent output, and cross-workspace no-op. |
 | No runtime coupling or generated-bundle change | Diff inspection limited to planned test/docs paths; no changed path below `kwin/src/` or `kwin/contents/code/main.js`. |
 | Backlog and numeric gate are current | Line-level review of `docs/backlog.md`; measured post-change count recorded in `docs/changes/controller-test-split/plan.md`. |
 | Static verification passes | `npm --prefix kwin test`; `npm --prefix kwin run typecheck`. |
@@ -139,5 +139,5 @@ its correctness gate.
 
 ## Final Outcome
 
-- Unit-02 accepted: 915 tests / 80 suites / 915 pass / 0 fail and typecheck
-  pass. S20-S23 remain non-replayed pending unit-03.
+- Unit-03 accepted: 924 tests / 81 suites / 924 pass / 0 fail and typecheck
+  pass. Unit-04 remains pending.
