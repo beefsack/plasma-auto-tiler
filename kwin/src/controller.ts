@@ -8681,8 +8681,10 @@ export class TileController {
         return keys;
     }
 
-    // Remove one script-owned, empty, non-current, non-visible-on-any-output,
-    // non-last-global desktop. Returns whether it was removed; a throwing
+    // Remove one eligible empty desktop. Eligibility is structural: it must be
+    // invisible on every connected output, regardless of ownership. An empty
+    // desktop visible on any connected output, and the last remaining global
+    // desktop, are never removed. Returns whether it was removed; a throwing
     // remove is reported and preserved. Always a plain removeDesktop call -
     // never a structural tiling mutation.
     private removeOwnedEmptyDesktop(
@@ -8773,9 +8775,12 @@ export class TileController {
     // reconciliation: a disconnected output is unassigned, every live desktop is
     // assigned exactly once (unassigned pre-existing desktops go to the session
     // primary output, spec E hotplug), and each connected output retains exactly
-    // one script-owned trailing empty in its subset. Cleanup removes only an
-    // owned, empty, non-current, invisible-on-every-output desktop that is no
-    // longer assigned to any output; pre-existing desktops are never removed.
+    // one trailing empty in its own assigned subset. The trailing empty is the
+    // literal last desktop in that output's `globalUniqueAssigned` group, only
+    // if it is empty; it is never found by scanning backward. Cleanup is
+    // ownership-independent: any empty desktop invisible on every connected
+    // output is eligible, while an empty desktop visible on any connected output
+    // and the last remaining global desktop are never removed.
 
     // The ordered assigned subset of a connected output key, filtered to live
     // desktops and sorted by x11DesktopNumber ascending (spec D2). The stored
@@ -9093,9 +9098,12 @@ export class TileController {
         return last;
     }
 
-    // Remove one script-owned, empty, non-current, non-visible-on-any-output,
-    // non-last-global desktop and unassign it. Plain removeDesktop only - never
-    // a structural tiling mutation. A throwing remove is reported and preserved.
+    // Remove one eligible empty desktop and unassign it. Eligibility is
+    // structural: it must be invisible on every connected output, regardless of
+    // ownership. An empty desktop visible on any connected output, and the last
+    // remaining global desktop, are never removed. Plain removeDesktop only -
+    // never a structural tiling mutation. A throwing remove is reported and
+    // preserved.
     private removeOwnedEmptyGlobalUnique(
         id: string,
         desktops: readonly VirtualDesktopCapability[],
