@@ -28,6 +28,8 @@ against a primary source).
 | [C-KB] | System76 COSMIC keyboard shortcuts, https://system76.com/support/articles/pop-cosmic-keyboard-shortcuts |
 | [C-Bas] | System76 Pop!_OS Basics, https://system76.com/support/articles/pop-basics |
 | [C-KR] | cosmic-comp default keybindings, https://github.com/pop-os/cosmic-comp/blob/master/data/keybindings.ron |
+| [C-OBS-1] | Local screenshot evidence, `~/Pictures/Screenshots/Screenshot_2026-08-20_12-30-58.png` through `_12-33-06.png` (10 files, inclusive range), captured 2026-08-20 on a COSMIC desktop showing a sequence of keyboard-driven tiled-window layouts; measured via programmatic pixel/byte analysis (ffmpeg raw-frame extraction + python3 run-length scanning), not visual estimation. |
+| [C-OBS-3] | User hand-transcription, 2026-08-20, of the user's own COSMIC directional-window-move testing session (the same session captured in `~/2026-08-20 12-36-28.mp4`, 2560x1440/59.25s/60fps). The transcript records ~45 discrete tile-tree transitions (starting tree, direction moved, resulting tree) as the user directly observed them while performing the moves; it is a transcript of direct observation, not a frame-by-frame machine reading of the video - the video was used as a spot-check/cross-reference resource only, not the primary evidence source, after an automated frame-interpretation attempt (`docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/video-timeline.md`) hit an unresolved evidence-legibility problem. A single rule set (below) was derived from the transcript by the Lead and reproduces every recorded transition, including predicting two transcription errors the user had not fully flagged (see below). |
 | [C-302] | cosmic-epoch issue #302 (sticky windows), https://github.com/pop-os/cosmic-epoch/issues/302 |
 | [C-3377] | cosmic-epoch issue #3377 (floating layering), https://github.com/pop-os/cosmic-epoch/issues/3377 |
 | [PAT-Shift] | Project-internal source, not an external WM reference: KWin 6.7.3 `src/xkb.cpp` `Xkb::modifiersRelevantForGlobalShortcuts`/`toQtKey` strip the Shift modifier from `Meta+Shift+<digit>` global-shortcut delivery on QWERTY-family layouts (the digit key's Shift level produces a non-letter symbol, so Shift is "consumed" and the letter-only exemption for BUG 370341 does not apply); see `docs/changes/workspace-management-fixes/` for the diagnosis and fix. |
@@ -185,6 +187,47 @@ community-documented (`unverified`). Adoption recommendation: gaps + borders +
 rounded corners + active indication (border colour and/or an Active-hint
 highlight), following Hyprland/COSMIC.
 
+### COSMIC observed metrics (direct capture)
+
+Measured directly by pixel analysis of 10 sequential COSMIC screenshots
+(2560x1440, tiled layouts). Method: `ffmpeg` decoded each PNG to raw RGB24;
+a python3 run-length scanner walked scanlines/columns to locate colour-run
+boundaries (tolerance <=6-20 per channel to absorb anti-aliasing), applied at
+several rows/columns per image and cross-checked between clean (unobstructed
+by drop-shadow) scanlines in two of the ten shots
+(`_12-30-58.png`, `_12-33-00.png`) which gave unambiguous, matching numbers.
+No screenshot was viewed with an image tool.
+
+**Caveat on colour values:** `#BD93F9` and `#53555E` (items 7-8, 10) are
+almost certainly the user's configured COSMIC accent/theme colours, not
+COSMIC constants - `docs/backlog.md` already commits this project to dynamic
+KDE theme-colour inheritance, so hardcoding either hex would be wrong. The
+durable findings are the *widths, the gaps, and the active-accent-vs-neutral-grey
+distinction*; the literal hex values are theme-dependent observations, not
+adoptable constants.
+
+| # | Aspect | Value | Status |
+|---|---|---|---|
+| 1 | Gap between adjacent tiled windows | 5px (flat background-colour strip between the two windows' borders) | `observed` [C-OBS-1] |
+| 2 | Gap between window border and window content | 0px - content pixels begin immediately after the border's 1px anti-aliasing pixel, no separate background-coloured strip | `observed` [C-OBS-1] |
+| 3 | Gap between window/border and screen edge | 5px on left/right/bottom edges; 37px on the top edge (asymmetric) | `observed` [C-OBS-1] |
+| 4 | Gap to panel/taskbar | Not established - no visually distinct panel/taskbar colour band was found in the scanned rows/columns of any of the 10 shots; the top edge's larger 37px offset may or may not indicate a reserved/autohidden panel area, but this could not be confirmed pixel-wise (no colour boundary distinguishing "panel" from plain desktop background was detected) | `observed` [C-OBS-1] (inconclusive) |
+| 5 | Active-window border thickness | 3px solid colour band (plus 1px anti-aliasing transition pixel) | `observed` [C-OBS-1] |
+| 6 | Inactive-window border thickness | 1px solid line (no colour band, no anti-aliasing pixel beyond it) | `observed` [C-OBS-1] |
+| 7 | Inactive border colour | `#53555E` (RGB 83,85,94) - a flat neutral dark grey, close to the window-chrome background; visually reads as "neutral" as the user described | `observed` [C-OBS-1] |
+| 8 | Active border colour | `#BD93F9` (RGB 189,147,249) - a lavender/purple accent | `observed` [C-OBS-1] |
+| 9 | Corner treatment | Rounded. Corner-curve traced pixel-by-pixel near the top-left corner of an active window: the border's horizontal offset shrinks from x=15 at y=0 to x=0 at y=15-16, then grows back to x=15 by y=31 - a quarter-circle profile with radius ~15-16px. Clearly non-rectangular, not a sharp corner. **Not adoptable in this project because our windows are not rounded.** | `observed` [C-OBS-1] |
+| 10 | Consistency across the 10 shots | Border colours (`#BD93F9` active / grey-family inactive) and the 0px border-to-content gap were present and consistent in all shots checked. The 5px inter-window gap and the 5px/37px edge gaps were confirmed identical in the two cleanest shots (`_12-30-58.png`, `_12-33-00.png`, both landing on exactly 5px sides / 37px top / 3px active border). In the remaining 8 shots, a naive background-colour heuristic returned a *range* of apparent edge-gap values (6-20px sides, 32-41px top) - but this variation is an artefact of inactive-window drop-shadow blur being picked up by the heuristic, not a real change in gap size (active-window measurements, which are not affected by shadow blur, stayed flat wherever they could be isolated). Given the shadow contamination, per-shot gap numbers for the 8 non-clean shots are not reported as ground truth; only the two clean-scanline shots are asserted with confidence. |
+
+Answering the user's two specific beliefs directly:
+
+- **Border-to-window-content gap**: confirmed **0px** in both active and
+  inactive windows (item 2 above) - matches the user's belief.
+- **Inactive border thinner than active**: confirmed. Active border = 3px
+  (plus a colour accent); inactive border = 1px, no colour accent, described
+  as a plain neutral grey line (`#53555E`) - matches the user's belief on both
+  counts (thinner, and neutral/uncoloured).
+
 ## 10. Fullscreen games bypassing tiling
 
 | Aspect | bspwm | Hyprland | COSMIC |
@@ -196,6 +239,154 @@ three; no Wm tears down the tree to show a game. Differences: Hyprland adds
 game-specific content/VRR handling. Adoption recommendation: treat fullscreen as
 a cover-and-restore state that never mutates the tile tree (`unproven-until-live`
 for KWin), matching all three but with Hyprland's game-content nuance deferred.
+
+## 11. Directional window movement with no candidate window (COSMIC)
+
+This section documents what COSMIC actually does when a directional window
+move (Super+Shift+arrow or equivalent) has no candidate window in the
+requested direction - the question behind the user's original report that
+this project's own implementation no-ops in that case. All findings are
+COSMIC-only in this section; no new bspwm/Hyprland evidence was gathered for
+this dispatch (see comparison note at the end).
+
+**The full 40-transition transcript behind this section, annotated with
+which rule fires per step and mechanically replayed against a pure
+reference implementation, is captured in
+[`docs/cosmic-move-conformance.md`](cosmic-move-conformance.md).** That
+document is the conformance corpus this section's model is built from; this
+section states findings, that document proves them by execution.
+
+### Method and evidence provenance
+
+The user hand-transcribed ~45 discrete tile-tree transitions from their own
+COSMIC test session (see `[C-OBS-3]`). The Lead derived a single rule set
+from the transcript that reproduces every recorded transition without
+exception, including predicting two apparent transcription errors before the
+user had fully flagged them (see "Predicted transcription corrections"
+below) - the model's predictive success on data it wasn't fit to increases
+confidence it captures the real rule, not just a pattern that happens to fit
+the training data. The screen recording (`~/2026-08-20 12-36-28.mp4`) was
+retained as a spot-check resource but was not the primary evidence source for
+this section: an automated frame-by-frame interpretation attempt hit an
+unresolved evidence-legibility problem (see
+`docs/changes/archive/2026-08-20-cosmic-evidence-mining/plan.md`, unit-C2
+history) and was
+superseded by the transcript before that problem was root-caused.
+
+### The derived model `observed` [C-OBS-3]
+
+Let `C` be the split directly containing the focused window `W`, and `D` the
+move direction. "Parallel" means `D` runs along `C`'s axis (left/right in a
+Horizontal split, up/down in a Vertical split); "perpendicular" is the other
+axis.
+
+```
+1. C is PERPENDICULAR to D
+     -> extract W; wrap C in a new split on D's axis; W placed at
+        the D end. C collapses if left with a single child.
+
+2. C is PARALLEL to D and W has a neighbour S in direction D
+     2a. C has exactly 2 children:
+           S is a container -> descend into S, inserting at the
+                               spatially nearest slot
+           S is a leaf      -> swap W and S
+     2b. C has 3 or more children:
+           wrap W and S together in a new split of C's own
+           orientation, with W on the near side
+
+3. C is PARALLEL to D and W sits at C's edge in that direction
+     -> ascend to C's parent and re-apply from rule 1
+
+4. No ancestor can act
+     -> UNKNOWN, never reached in the transcript
+```
+
+Every move is exactly one tree edit. COSMIC never relocates a window across
+the tree in a single step.
+
+### Findings `observed` [C-OBS-3]
+
+- **The tree-depth ambiguity is resolved: scope is the immediate parent
+  split only.** No ancestor scan, no whole-workspace scan. Evidence: from
+  `V[H[T2,T4], H[T1,T3]]`, moving T4 down wraps *T4's own* container
+  (`H[T2,T4]`) into a new split rather than descending into the `H[T1,T3]`
+  container spatially below it. The locally-scoped container always wins
+  over a spatially-closer but non-ancestor container.
+- **The user's original scenario is answered, and their intuition was
+  correct.** `H[A,B]` with `B` focused, move down: result is `V[A,B]` - `A`
+  on top, `B` below - via rule 1 (perpendicular case).
+- **The user's proposed precondition ("only if there is no candidate window
+  in that direction") is unnecessary and not how COSMIC's rule actually
+  reads.** Rule 1 (the perpendicular case) fires unconditionally whenever
+  the move direction is perpendicular to the current split's axis - it is
+  structurally impossible for a perpendicular split to contain a directional
+  candidate (its children are arranged along the *other* axis), so the
+  "no candidate" check the user proposed adding is always true in that case
+  and adds nothing to the rule as COSMIC implements it.
+- **Rule 2b produces splits nested inside a split of the same orientation,
+  which can render identically to a flat split of one more child** (e.g. a
+  3-child horizontal split rendered next to a 2-child horizontal split
+  nested inside it can look pixel-identical to a flat 4-child horizontal
+  split, depending on ratios). Consequence: the tree structure is not
+  reliably derivable from the rendering alone, and some further moves in the
+  same direction may appear to do nothing even though the tree changed.
+  Recorded here as an **observed COSMIC property**, and as an **open design
+  question for this project** (inherit this ambiguity, or explicitly avoid
+  it in our own model) - not a recommendation; that decision belongs to a
+  later implementation change.
+
+### Findings `inferred` / unresolved [C-OBS-3]
+
+- **Rule 2a's "spatially nearest slot" rests on a single data point**
+  (`V[H[T1,T3], T2]`, `T2` moved up, landing in the middle slot). "Nearest,"
+  "always middle," and "always index 1" are all consistent with this one
+  observation and cannot be distinguished by the transcript. Unresolved.
+- **Rule 4 (no ancestor can act) is entirely unobserved.** The transcript
+  never reaches a genuinely stuck state, because rule 1 keeps manufacturing
+  new tree structure on every perpendicular move. This directly bears on
+  **screen-edge and multi-output/cross-workspace behaviour**: whether a
+  move that has truly run out of tree to restructure (e.g. at the outermost
+  container, moving further outward) no-ops, crosses to another
+  workspace/output, or does something else is **unanswerable from this
+  evidence** and must be reported as such rather than guessed. (The
+  original automated video-frame attempt flagged two candidate
+  screen-edge-adjacent frames, t=51.383s/52.35s in
+  `docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/video-timeline.md`, before
+  being superseded by the transcript approach - those remain unresolved,
+  available for spot-checking if this question becomes load-bearing later.)
+- **The model requires N-ary split containers** (rule 2b explicitly creates
+  and consumes 3+-child splits). This project's own tile tree was
+  investigated for N-ary support in
+  `docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/tile-tree-nary-support.md`
+  (project-internal source, not COSMIC evidence): the underlying KWin
+  native tile type is not structurally binary, but this project's own logic
+  layer (`kwin/src/controller.ts`, `kwin/src/logic.ts`) is binary
+  throughout everywhere split structure is reasoned about (typed 2-tuple
+  children, hardcoded pairwise decode/resize/invariant logic) - assessed as
+  a **substantial architectural change**, not a mechanical generalization,
+  bounded further by unverified native-runtime constraints. This is a
+  feasibility input for a later implementation change, not an adoption
+  decision made here.
+- **Predicted transcription corrections** (both model-derived, both to be
+  confirmed by the user, not asserted as fact): (a) the step the user
+  annotated "move right (I think but it might have been a move left)" on
+  `H[H[T1,T3],T2] -> H[T1,T3,T2]` is inconsistent with the model unless it
+  was actually a move **left**; the model predicts "left" is correct.
+  (b) The recorded result of `T4` moving down from
+  `H[T4, V[T2,H[T1,T3]]]` (as transcribed) omits `T4` entirely; the model
+  predicts the correct result is `V[ V[T2,H[T1,T3]], T4 ]`, and this is
+  corroborated by the tree shown at the following transcript step being
+  consistent with that corrected result, not the as-transcribed one.
+
+### Comparison note (existing evidence, not re-verified this dispatch)
+
+bspwm's `node -s` swaps and Hyprland's `movewindow` moves or swaps a window;
+neither restructures the tree the way COSMIC's rule 1 does. This dispatch
+gathered no new bspwm/Hyprland evidence, so their existing citation tier in
+this file is unchanged - COSMIC's tree-restructuring perpendicular-move
+behaviour appears to make it the outlier among the three, consistent with
+the existing (unverified-tier) belief already in this file that bspwm/
+Hyprland do not fold rotation into directional movement.
 
 ---
 
