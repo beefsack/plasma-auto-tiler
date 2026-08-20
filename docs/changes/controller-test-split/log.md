@@ -461,3 +461,21 @@ speculation.
   addition diff. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
   test` reported 924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, and 0
   skipped; describe count was 81.
+
+## 2026-08-21 (unit-14/attempt-01)
+
+- Role / unit: Lead / unit-14 (deferred recovery and fullscreen extraction),
+  Worker attempt-01.
+- Result: accepted. The `deferred invariant recovery` and `fullscreen
+  passthrough` describes moved verbatim into
+  `controller-deferred-recovery-and-fullscreen.test.ts`. Search proved
+  `DROP_OUTLINE_PREVIEW_CONFIG_KEY`, `moveSetup`, `swapSetup`, `dragSetup`,
+  `startDrag`, `reconstructDropSetup`, and
+  `installCapacityRejectingSplitter` have no retained source consumers, so only
+  those source copies were pruned.
+- Files / commit: `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts`
+  added; `kwin/tests/controller.test.ts` reduced to 6,003 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: Lead inspected the actual source deletion diff. `npm --prefix
+  kwin run typecheck` passed; `npm --prefix kwin test` reported 924 tests, 81
+  suites, 924 pass, 0 fail, 0 cancelled, and 0 skipped; describe count was 81.

@@ -154,7 +154,7 @@ actually starts.
 - [x] unit-11 pure config functions
 - [x] unit-12 automatic dwindle ownership
 - [x] unit-13 automatic dwindle insertion
-- [ ] unit-14 deferred recovery and fullscreen
+- [x] unit-14 deferred recovery and fullscreen
 - [ ] unit-15 floating and sticky
 - [ ] unit-16 dynamic virtual desktops
 - [ ] unit-17 per-workspace maximize
@@ -304,6 +304,14 @@ actually starts.
   that source import was pruned; `makeTile` and `installDwindleSplitter` retain
   source consumers. `npm run typecheck`, `npm test` (924 tests, 81 suites, 924
   pass, 0 fail), and the describe count (81) all passed.
+- unit-14/attempt-01: **accepted**. The `deferred invariant recovery` and
+  `fullscreen passthrough` describes moved verbatim into
+  `controller-deferred-recovery-and-fullscreen.test.ts`. Search proved
+  `DROP_OUTLINE_PREVIEW_CONFIG_KEY`, `moveSetup`, `swapSetup`, `dragSetup`,
+  `startDrag`, `reconstructDropSetup`, and `installCapacityRejectingSplitter`
+  have no retained source consumers, so only those source copies were pruned.
+  `npm run typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0 fail), and
+  the describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -359,9 +367,9 @@ resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-13 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-13 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-13 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-14 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-14 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-14 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
@@ -387,5 +395,5 @@ resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-13. Units 14-21, unit-23 over-threshold remediation, and
+  completed units 01-14. Units 15-21, unit-23 over-threshold remediation, and
   unit-22 final cleanup remain unexecuted.
