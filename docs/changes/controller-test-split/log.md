@@ -144,3 +144,19 @@ speculation.
   single-file-local relocations into files 6, 7, 10, 12) remain for a
   future Lead stint - each is independently dispatchable per the Technical
   Approach's per-unit table.
+
+## 2026-08-20 (reconciliation and baseline correction)
+
+- Role / unit: Lead / reconciliation (no test-file split unit executed).
+- Result: verified `0cf9982` contains the accepted unit-01 fixture: 1,332
+  lines and exactly 45 exports, comprising the 31 preamble declarations and
+  the 14 fixtures-bound later declarations. `controller.test.ts` remains
+  unchanged. The committed Shared State correction fully accounts for all 21
+  later top-level helpers: 14 move to fixtures and 7 remain single-file-local;
+  this does not alter the 20-file describe grouping or fixture strategy.
+- Files / commit: `spec.md`, `plan.md`, and `log.md` updated to replace stale
+  current-gate references to 838 tests / 78 suites with 924 tests / 81 suites;
+  historical 838/78 baseline evidence is retained. The empty untracked
+  `docs/changes/cosmic-move-model-closure/` directory was removed.
+- Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
+  test` reported 924 tests, 81 suites, 924 pass, and 0 fail.

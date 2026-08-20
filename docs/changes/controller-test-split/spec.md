@@ -16,9 +16,12 @@ for the helpers, fixtures, and constants every split file needs. No test
 behavior, name, or ordering changes; no production code changes.
 
 This was sequenced first (ahead of `controller.ts`) because it is mechanical
-and self-verifying: the test/suite counts (838 tests, 78 suites, confirmed by
-a baseline `npm test` run at HEAD `ecbf5ef`) are a hard, cheap, unambiguous
-acceptance gate, and every `describe` in this codebase is flat (no nested
+and self-verifying: the pre-change test/suite counts (838 tests, 78 suites,
+confirmed by a baseline `npm test` run at HEAD `ecbf5ef`) establish the
+original controller-suite baseline. The current execution gate is 924 tests
+and 81 suites after the separately scoped move-conformance tests were added;
+it remains a hard, cheap, unambiguous acceptance gate. Every `describe` in
+this codebase is flat (no nested
 `describe`s anywhere in `kwin/tests/`; total `describe(` occurrences across
 all test files equals the reported suite count exactly), so file boundaries
 can align exactly with `describe` boundaries with no internal restructuring.
@@ -319,9 +322,9 @@ exactly.
 - [ ] `kwin/tests/controller.test.ts` no longer exists; its 40 `describe`
       blocks exist unchanged (same names, same bodies, same order within each
       block) across the 20 target files plus `controller-fixtures.ts`.
-- [ ] `grep -c "describe(" kwin/tests/*.test.ts` totals exactly 78 (same as
-      the pre-change baseline).
-- [ ] `cd kwin && npm test` reports `tests 838`, `suites 78`, `pass 838`,
+- [ ] `grep -c "describe(" kwin/tests/*.test.ts` totals exactly 81 (the
+      current pre-split baseline).
+- [ ] `cd kwin && npm test` reports `tests 924`, `suites 81`, `pass 924`,
       `fail 0`, `cancelled 0`, `skipped 0`.
 - [ ] `cd kwin && npm run typecheck` (both `tsconfig.json` and
       `tsconfig.test.json`) passes with zero errors.

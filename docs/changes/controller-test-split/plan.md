@@ -23,8 +23,8 @@ any of the 21 non-preamble declarations that belongs with it per the Shared
 State table - either into `controller-fixtures.ts` (unit-01, for the 14
 cross-boundary ones) or into its own target file (units 07, 08, 11, 13 - see
 their entries below). A unit extracts and deletes its lines from
-`controller.test.ts` atomically, so the suite count stays at 78 and the test
-count at 838 after every single unit, not just at the end. The final unit
+`controller.test.ts` atomically, so the suite count stays at 81 and the test
+count at 924 after every single unit, not just at the end. The final unit
 deletes the now-empty `controller.test.ts` shell, once its preamble and all
 three clusters are fully and correctly relocated.
 
@@ -50,7 +50,7 @@ Every unit's verification block is the same three commands, run from `kwin/`:
 ```
 npm run typecheck
 npm test
-grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must print 78
+grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must print 81
 ```
 
 | ID | Objective | Depends on | File or subsystem scope | Verification |
@@ -195,8 +195,8 @@ None open. The blocking decision below was resolved this session.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 78 | pending - checked after every unit, not just the last |
-| `npm test`: 838/78/838 pass/0 fail | pending - checked after every unit from unit-02 onward |
+| `grep -c "describe("` totals 81 | pending - checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | pending - checked after every unit from unit-02 onward |
 | `npm run typecheck` clean on both tsconfigs | pending - checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
