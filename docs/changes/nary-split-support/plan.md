@@ -1,0 +1,95 @@
+# Plan: N-ary split container support
+
+Ownership and approval:
+
+- Owner: Lead
+- Status: Ready for Orchestrator approval after Pending User Decisions resolve
+
+## Baseline Gate
+
+Verified on 2026-08-21 before planning, from `main` at `ad18cc9`:
+
+- `npm --prefix kwin test` - 924 tests, 81 suites, 0 failures, 81 describes.
+- `npm --prefix kwin run typecheck` - clean for `tsconfig.json` and
+  `tsconfig.test.json`.
+- `bash scripts/dogfood-install.test.sh` - 336 assertions, 0 failures.
+
+Every implementation unit starts only while this baseline is reproducible or a
+documented accepted change explains its replacement.
+
+## Technical Approach
+
+After the pending design decisions are approved, migrate the project contract
+from binary child roles to an ordered direct-child collection. Establish binary
+characterization evidence before changing it, then apply the contract in narrow
+operation groups: core logic, native boundary and order, preset reconstruction,
+resize, drag, keyboard insertion, automatic/dwindle insertion, and reflow.
+Each group carries its focused tests; the final gate reruns the complete static
+suite and dogfood installer test. The conformance model remains test-only and
+is used only if its pending oracle role is approved.
+
+## Work Units
+
+| ID | Objective | Depends on | File or subsystem scope | Verification |
+| --- | --- | --- | --- | --- |
+| unit-01 | Resolve the seven Pending User Decisions and freeze the ordered-child, proportion, resize, normalization, native-boundary, and oracle contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
+| unit-02 | Add binary characterization fixtures that serialize ordered layouts and window assignments before topology migration. | unit-01 | `kwin/tests/logic.test.ts`, controller fixture/test seams | Focused characterization cases, then `npm --prefix kwin test` (static). |
+| unit-03 | Generalize logic-layer split planning and equality contracts from pair roles to the approved ordered-child contract. | unit-02 | `kwin/src/logic.ts`, `kwin/tests/logic.test.ts` | N-ary structural cases plus existing logic tests; `npm --prefix kwin run typecheck` (static). |
+| unit-04 | Generalize native split boundary decoding and canonical ordered-child handling without claiming an unproven native result cardinality. | unit-01, unit-03 | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests; `npm --prefix kwin test` and typecheck (static). |
+| unit-05 | Migrate preset collection, pathing, rebuild, overlay validation, and invariant shape checks to ordered direct children. | unit-04 | Controller preset/overlay functions; pure-config, selected-overlay, keyboard-move tests | Focused preset and overlay tests, binary serialization comparison, complete test suite (static). |
+| unit-06 | Implement the approved N-ary resize, minimum-size, and ratio/weight semantics. | unit-01, unit-04 | Controller resize/minimum functions; resize diagnostics tests | 2-child regression and approved 3+-child resize cases; typecheck and complete test suite (static). |
+| unit-07 | Generalize drag target selection, split application, and reflow normalization for N-ary direct children. | unit-03, unit-04 | Controller drag/reflow functions; interactive drag, diagnostics, overlay-reflow tests | Same-axis wrapping, order-only 3+-child cases, binary characterization checks, complete suite (static). |
+| unit-08 | Generalize keyboard insertion and automatic/dwindle insertion to the approved N-ary construction contract. | unit-03, unit-04 | Controller keyboard and dwindle functions; keyboard-placement, automatic-dwindle, deferred-recovery tests | Parent escape/one-child collapse structural cases, existing binary cases, typecheck and complete suite (static). |
+| unit-09 | Close the inventory sweep, add approved conformance-oracle coverage, and run final regression gates. | unit-05, unit-06, unit-07, unit-08 | All 13 identified test files, shared fixture, and test-only conformance adapter if approved | Inventory-to-test audit; `npm --prefix kwin test`, typecheck, and `bash scripts/dogfood-install.test.sh` (all static). |
+
+## Progress
+
+- [ ] unit-01 Pending user decisions.
+- [ ] unit-02 Binary characterization.
+- [ ] unit-03 Logic contract migration.
+- [ ] unit-04 Native boundary and ordering.
+- [ ] unit-05 Preset and overlay reconstruction.
+- [ ] unit-06 Resize and minimum semantics.
+- [ ] unit-07 Drag and reflow migration.
+- [ ] unit-08 Keyboard and automatic insertion migration.
+- [ ] unit-09 Inventory closure and final gates.
+
+## Attempt Accounting
+
+No implementation units have started. Counts will be recorded by stable unit ID
+once any count exceeds 1. A third attempt, a second correction round, a second
+independent review, or a repeated failure class with no acceptance progress
+trips the circuit breaker and requires escalation with a loop report.
+
+| Unit | Attempts | Corrections | Independent reviews |
+| --- | --- | --- | --- |
+| No entries | 0 | 0 | 0 |
+
+## Pending User Decisions
+
+- The seven questions in `spec.md#pending-user-decisions` block unit-01 and all
+  implementation units.
+
+## Acceptance-Criterion Evidence
+
+| Acceptance criterion | Evidence |
+| --- | --- |
+| Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. |
+| Same-axis wrapping, parent escape, collapse, and geometry independence | unit-07 and unit-08 structural tests, plus the approved oracle route in unit-09. |
+| Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
+| 13 test files and shared fixture covered | unit-09 test-surface audit. |
+| Binary-only layouts remain byte-identical | unit-02 fixtures rerun in units 03 through 09. |
+| Complete test, typecheck, and dogfood gates | unit-09 command results. |
+
+## Residual Risks
+
+- N-ary resize and proportion behavior lacks settled product semantics; unit-06
+  remains blocked until a user decision.
+- Native result cardinality is not established; unit-04 must retain that
+  evidence boundary rather than infer an API contract.
+- The controller is 9,191 lines and the inventory spans 24 functions and 13
+  test files; narrow units reduce but do not eliminate regression risk.
+
+## Final Outcome
+
+- Pending approval and implementation.
