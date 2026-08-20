@@ -160,3 +160,40 @@ speculation.
   `docs/changes/cosmic-move-model-closure/` directory was removed.
 - Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
   test` reported 924 tests, 81 suites, 924 pass, and 0 fail.
+
+## 2026-08-20 (unit-02/attempt-01)
+
+- Role / unit: Lead / unit-02 (keyboard placement extraction), Worker
+  attempt-01.
+- Result: blocked pending a plan decision. The Worker moved exactly source
+  lines 1016-1858 into `controller-keyboard-placement.test.ts`; independent
+  byte comparison confirmed the three describe bodies are verbatim. The new
+  file has 867 lines with pruned imports and needs no unplanned helper
+  relocation.
+- Files / commit: uncommitted WIP in `kwin/tests/controller.test.ts` and new
+  `kwin/tests/controller-keyboard-placement.test.ts`; `plan.md` records the
+  contradiction. No commit or push because the unit is unaccepted.
+- Verification: `npm --prefix kwin run typecheck` fails only with TS6133 for
+  now-unused source-preamble `DIRECTIONS`, `Direction`, and `focusSetup`.
+  The Technical Approach requires that preamble remain unmodified until final
+  cleanup, so the required cleanup is outside the approved unit scope. Full
+  test gate not run after the failed typecheck.
+
+## 2026-08-20 (unit-02/attempt-02)
+
+- Role / unit: Lead / unit-02 (keyboard placement extraction), resumed
+  Worker attempt-02 after the Orchestrator-approved Technical Approach
+  amendment.
+- Result: accepted. `controller-keyboard-placement.test.ts` contains the
+  verbatim original lines 1016-1858 (866 lines, excluding the non-semantic
+  trailing blank line). Source search proved the
+  original `DIRECTIONS`, `Direction`, and `focusSetup` had no remaining local
+  consumers, so only those two import specifiers and the 33-line duplicate
+  helper were pruned from `controller.test.ts`; no helper relocation or test
+  body edit occurred.
+- Files / commit: `kwin/tests/controller-keyboard-placement.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 16,199 lines; `plan.md` and
+  `log.md` updated in the unit commit.
+- Verification: `npm --prefix kwin run typecheck` passed; `npm --prefix kwin
+  test` reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count
+  was 81.

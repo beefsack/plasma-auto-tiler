@@ -13,20 +13,32 @@ and belong in `controller-fixtures.ts`; 4 more are single-file-local but
 physically declared away from the file they belong to and must be relocated
 by name. The mechanism below accounts for both.
 
-`controller.test.ts` keeps a **full, unmodified copy of its own preamble**
-(imports, constants, types, `Harness`, all helpers) and of the three
-non-preamble declaration clusters (line 4112; lines 4520-4813; lines
-8002-8169) until each cluster's members have been fully migrated out by the
-relevant unit(s). Every unit that moves a `describe` also moves, by name (an
-individually located `sed` range per declaration, not just per `describe`),
-any of the 21 non-preamble declarations that belongs with it per the Shared
-State table - either into `controller-fixtures.ts` (unit-01, for the 14
-cross-boundary ones) or into its own target file (units 07, 08, 11, 13 - see
-their entries below). A unit extracts and deletes its lines from
-`controller.test.ts` atomically, so the suite count stays at 81 and the test
-count at 924 after every single unit, not just at the end. The final unit
-deletes the now-empty `controller.test.ts` shell, once its preamble and all
-three clusters are fully and correctly relocated.
+`controller.test.ts` retains its original preamble and the three non-preamble
+declaration clusters (line 4112; lines 4520-4813; lines 8002-8169) until the
+last local consumer of each declaration moves. When a unit extracts
+`describe` blocks, it also removes exactly those source-preamble imports and
+declarations whose last remaining consumer moved in that same unit. Before
+removal, the unit proves by search that no remaining code in
+`controller.test.ts` references the symbol; a typecheck error is a detector,
+not sufficient justification. It does not prune a symbol that still has a
+remaining source reference, and it never deletes or rewrites a test body,
+assertion, describe name, or ordering. The duplicate helpers in the retained
+file are expected residue from unit-01; they are removed only with their last
+local consumer, not converged early.
+
+This amendment is necessary because the original requirement to retain a
+full, unmodified preamble until final cleanup contradicted the per-unit clean
+typecheck requirement. The contradiction could surface only after the first
+real extraction orphaned a preamble symbol. Every unit that moves a `describe`
+also moves, by name (an individually located `sed` range per declaration, not
+just per `describe`), any of the 21 non-preamble declarations that belongs
+with it per the Shared State table - either into `controller-fixtures.ts`
+(unit-01, for the 14 cross-boundary ones) or into its own target file (units
+07, 08, 11, 13 - see their entries below). A unit extracts and deletes its
+lines from `controller.test.ts` atomically, so the suite count stays at 81 and
+the test count at 924 after every single unit, not just at the end. The final
+unit deletes the now-empty `controller.test.ts` shell, once its preamble and
+all three clusters are fully and correctly relocated.
 
 Because every unit re-locates its target `describe`(s) by name via a fresh
 `grep -n "^describe("` rather than trusting a previously-recorded line
@@ -119,7 +131,7 @@ actually starts.
 ## Progress
 
 - [x] unit-01 create controller-fixtures.ts
-- [ ] unit-02 keyboard placement
+- [x] unit-02 keyboard placement
 - [ ] unit-03 keyboard move and swap
 - [ ] unit-04 tile attach and scope
 - [ ] unit-05 selected overlay state
@@ -162,14 +174,37 @@ actually starts.
   `installInlineMutatingRejectingSplitter`, `normalizeSetup`,
   `runNormalizeDrag`, `resizeSetup`) - zero matches, confirming none leaked
   in; `wc -l` confirms 1,332 lines (close to the ~1,340 estimate);
-  `git diff --stat`/`git status --short` scoped to `controller.test.ts`
-  both empty, confirming it is untouched; `npm run typecheck` run directly
-  by the Lead (not just re-quoted from the Worker) - both `tsconfig.json`
-  and `tsconfig.test.json` pass with zero errors.
+   `git diff --stat`/`git status --short` scoped to `controller.test.ts`
+   both empty, confirming it is untouched; `npm run typecheck` run directly
+   by the Lead (not just re-quoted from the Worker) - both `tsconfig.json`
+   and `tsconfig.test.json` pass with zero errors.
+- unit-02/attempt-01: blocked pending a plan decision. The approved move of
+  source lines 1016-1858 into `controller-keyboard-placement.test.ts` is a
+  verbatim body move with correctly pruned new-file imports, but typecheck
+  reports now-unused `DIRECTIONS`, `Direction`, and `focusSetup` in the
+  retained source preamble. The Technical Approach requires that preamble to
+  remain full and unmodified until final cleanup, so the required source
+  pruning/removal cannot be applied without resolving the contradiction.
+- unit-02/attempt-02: **accepted**. After the approved Technical Approach
+  amendment, source search proved `DIRECTIONS`, `Direction`, and `focusSetup`
+  had no remaining source consumers; the two import specifiers and the
+  33-line local helper were removed with the moved describe blocks. The new
+  file's body byte-compares to original lines 1016-1858; no helper relocation
+  or test-body change occurred. `npm run typecheck`, `npm test` (924 tests,
+  81 suites, 924 pass, 0 fail), and the describe count (81) all passed.
 
 ## Pending User Decisions
 
-None open. The blocking decision below was resolved this session.
+None open. The previously blocking module-scope and source-preamble decisions
+below are resolved.
+
+- **Resolved - source preamble cleanup during extraction.** The Orchestrator
+  approved the Technical Approach amendment above after unit-02 exposed its
+  internal contradiction. Each extraction now removes only imports and
+  declarations proven to have no remaining source consumer; no test body or
+  helper relocation is implicated in unit-02: `focusSetup` already exists in
+  fixtures, and `DIRECTIONS`/`Direction` are direct source imports used only
+  by that unit.
 
 - **Resolved.** Originally raised during unit-01/attempt-01: `spec.md`'s
   Shared State section analyzed only lines 1-1015 and asserted this was the
@@ -195,9 +230,9 @@ None open. The blocking decision below was resolved this session.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | pending - checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | pending - checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | pending - checked after every unit |
+| `grep -c "describe("` totals 81 | unit-02 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | unit-02 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | unit-02 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
