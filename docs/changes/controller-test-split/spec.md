@@ -330,7 +330,7 @@ Current open acceptance gaps are:
 
 - `controller-automatic-dwindle-ownership.test.ts` - 1,930 lines (severe)
 - `controller-fixtures.ts` - 1,332 lines
-- `controller-interactive-drag.test.ts` - 1,271 lines
+- `controller-interactive-drag.test.ts` - 1,275 lines
 - `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
 - `controller-dynamic-virtual-desktops.test.ts` - 1,414 lines (severe)
 
@@ -353,10 +353,28 @@ contain no describes, and whole-describe moves preserve the total of 81.
 Workers apply only boundaries pre-decided in this specification; they do not
 derive, choose, or adjust them.
 
+The pre-decided drag-diagnostics boundary is:
+
+| File | Retains | Moves to | Projected lines |
+|---|---|---|---:|
+| `controller-drag-diagnostics-and-resize.test.ts` | `TileController drag snapshot diagnostics`; `TileController drag reconstruction final snapshot` | `controller-drag-reflow-and-resize.test.ts`: `TileController drag reflow normalization`; `TileController COSMIC split resize mode`; `TileController bspwm direct resize bindings`, together with `normalizeSetup`, `runNormalizeDrag`, `resizeSetup`, and their immediately preceding comments | 390 / 619 |
+
+The pre-decided fixture boundary is:
+
+| File | Exported declarations | Projected lines |
+|---|---|---:|
+| Retain `controller-fixtures.ts` | `RECT`, `OUTPUT`, `DESKTOP`, `TestWindow`, `TestSignal`, `TestTile`, `RegisteredShortcut`, `YieldEntry`, `tile`, `window`, `setFullscreen`, `setSticky`, `setMaximized`, `signal`, `qv4MethodSignal`, `Harness` | 575 |
+| New `controller-fixture-scenarios.ts` | `setup`, `ownTrailingEmpty`, `prepareExcessOwnedEmpty`, `modeCleanupSetup`, `ownCleanupDesktops`, `configureSwitchCleanupScenario`, `focusSetup`, `moveSetup`, `swapSetup`, `presetSetup`, `configureThreeOccupantPreset`, `attachSetup`, `fillSetup`, `currentScopeFor`, `invokeShortcut`, `attachTileWriter`, `dragSetup`, `nativeDropSetup`, `collectLeaves`, `startDrag`, `movedGeometry`, `countEvent`, `reconstructDropSetup`, `installDwindleSplitter`, `installCapacityRejectingSplitter`, `makeTile`, `installStaleReturnSplitter`, `assertDwindleShape`, `assertPresetShape` | 766 |
+
+`controller-fixture-scenarios.ts` imports core fixture symbols from
+`controller-fixtures.ts`; the core module imports neither scenarios nor test
+modules, so the dependency direction is acyclic. The implementation updates
+test imports for every moved scenario export directly to the new module.
+
 ### Unit-23 Parked Subset
 
 `controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
-`controller-interactive-drag.test.ts` (1,271 lines), and
+`controller-interactive-drag.test.ts` (1,275 lines), and
 `controller-dynamic-virtual-desktops.test.ts` (1,414 lines) each contain one
 top-level `describe` that alone exceeds ~1,000 lines. A describe-boundary-
 preserving split therefore cannot bring these files below the threshold.

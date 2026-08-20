@@ -99,7 +99,7 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; relocate the eight drained-source comment blocks verbatim above their owning declarations and delete `controller.test.ts` | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
 | unit-23 safe subset | Remediate `controller-fixtures.ts` (1,332) by export cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004) by moving whole top-level `describe` blocks. Workers only apply boundaries pre-decided in `spec.md`. These operations are count-neutral: fixture modules have no describes and whole-describe moves retain the total of 81. Stop and escalate if a candidate changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`, `kwin/tests/controller-fixtures.ts`, derived target test files, and approved docs only | full 3-command block; exact counts are invariant |
-| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-interactive-drag.test.ts` (1,271), or `controller-dynamic-virtual-desktops.test.ts` (1,414). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
+| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-interactive-drag.test.ts` (1,275), or `controller-dynamic-virtual-desktops.test.ts` (1,414). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
 | unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23 | final acceptance verification | full 3-command block + `main.js` diff check + test-name diff check |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
@@ -391,7 +391,7 @@ actually starts.
   cluster and `controller-drag-diagnostics-and-resize.test.ts` (1,004 lines) by
   whole top-level `describe`. The parked subset is
   `controller-automatic-dwindle-ownership.test.ts` (1,930 lines),
-  `controller-interactive-drag.test.ts` (1,271 lines), and
+  `controller-interactive-drag.test.ts` (1,275 lines), and
   `controller-dynamic-virtual-desktops.test.ts` (1,414 lines). Each has one
   top-level `describe` that alone exceeds ~1,000 lines, so preserving describe
   boundaries cannot meet the threshold. User options: allow intra-describe
@@ -450,7 +450,7 @@ resolved.
   pre-decided boundaries before a Worker can apply them.
 - The unit-23 parked subset is an open acceptance gap:
   `controller-automatic-dwindle-ownership.test.ts` (1,930),
-  `controller-interactive-drag.test.ts` (1,271), and
+  `controller-interactive-drag.test.ts` (1,275), and
   `controller-dynamic-virtual-desktops.test.ts` (1,414) cannot meet the
   threshold while preserving their single top-level describes. Unit-22 and
   completion/archive work remain blocked pending the user decision.
