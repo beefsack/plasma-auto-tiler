@@ -212,6 +212,18 @@ preamble-only helper - none found (the preamble is uniformly shared already,
 so this direction cannot break). No declaration outside these 52 (i.e. no
 describe-local helper) calls or is called by any of the 21.
 
+### Retained-source pruning
+
+After a target file receives a describe or named single-file-local helper, its
+retained source copy is removed when search proves it has no remaining
+`controller.test.ts` consumer. This applies equally to imports, preamble
+declarations, and fixtures-bound declarations physically located in later
+clusters; the fixture export remains for split-file consumers. A typecheck
+TS6133 corroborates, but never alone authorizes, the removal. Instructions to
+exclude a cluster from a target file govern target-file relocation only and do
+not preserve an orphaned source copy. No such pruning may alter a test body,
+assertion, test name, describe name, or test ordering.
+
 ## Imports (investigation finding)
 
 The preamble imports from four sibling `src/` modules via flat relative

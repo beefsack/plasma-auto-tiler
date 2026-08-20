@@ -263,3 +263,60 @@ speculation.
   describe move with import scaffolding only. `npm --prefix kwin run typecheck`
   passed; `npm --prefix kwin test` reported 924 tests, 81 suites, 924 pass,
   and 0 fail; describe count was 81.
+
+## 2026-08-20 (unit-07/attempt-01)
+
+- Role / unit: Lead / unit-07 (interactive drag extraction), Worker
+  attempt-01.
+- Result: blocked, unaccepted. The working diff moves the complete interactive
+  drag describe plus the two approved file-local helpers, `rowsDropSetup` and
+  `assertLeafPartition`, into `controller-interactive-drag.test.ts`; source
+  search found zero retained consumers of both helpers. The test and describe
+  gates hold, but the retained fixtures-bound `collectLeaves` declaration is
+  now unused.
+- Files / commit: uncommitted WIP in `kwin/tests/controller.test.ts` and
+  `kwin/tests/controller-interactive-drag.test.ts`; `plan.md` and `log.md`
+  record the blocker. No commit or push.
+- Verification: Lead inspected the actual diff and confirmed the named helper
+  relocation and verbatim describe move. `npm --prefix kwin run typecheck`
+  fails only with `TS6133` for `collectLeaves` at
+  `tests/controller.test.ts:1028`; `npm test` reported 924 tests, 81 suites,
+  924 pass, and 0 fail; describe count was 81; `main.js` has no diff.
+- Decision needed: reconcile the unit-specific prohibition on deleting the
+  other 4520-4813 declarations with the Technical Approach's instruction to
+  retain that cluster only until each declaration's last local consumer moves.
+  The current diff is preserved for the successor Lead.
+
+## 2026-08-20 (retained-source reconciliation)
+
+- Role / unit: Lead / specification and plan correction (Orchestrator-authorized)
+- Result: approved systemic reconciliation applied before resuming unit-07.
+  The last-local-consumer rule now explicitly governs every retained source
+  import and declaration, including fixtures-bound duplicates in later helper
+  clusters. `collectLeaves` is authorized for removal from the retained source
+  once search and TS6133 prove it orphaned; its fixture export remains.
+- Audit: no remaining rule constrained scope, describe boundaries, target-file
+  count, or fixture strategy. One general source-preamble-only phrase and the
+  unit-05, unit-06, unit-07, unit-10, and unit-11 cluster-exclusion rules were
+  stale because they could preserve orphaned source copies. They now prohibit
+  relocation into the specified target only; each retained copy is deleted when
+  its last local consumer moves.
+- Files / commit: `spec.md`, `plan.md`, and `log.md` updated in the pending
+  unit-07 commit. No test body or production code changed.
+
+## 2026-08-20 (unit-07/attempt-02)
+
+- Role / unit: Lead / unit-07 (interactive drag extraction), Worker
+  attempt-02 under the Orchestrator-approved retained-source reconciliation.
+- Result: accepted. Search found no retained consumers of `collectLeaves`; its
+  retained 10-line source declaration was deleted while its fixture export
+  remains for the new test file. The interactive drag describe and named
+  `rowsDropSetup` and `assertLeafPartition` helper moves remain verbatim;
+  `MAX_SEQUENTIAL_LENGTH`, `Point`, and `qv4MethodSignal` are the only other
+  search-proven orphaned source symbols pruned.
+- Files / commit: `kwin/tests/controller-interactive-drag.test.ts` added;
+  `kwin/tests/controller.test.ts` reduced to 12,219 lines; `spec.md`,
+  `plan.md`, and `log.md` updated in the unit commit.
+- Verification: Lead inspected the preserved actual diff and final orphan
+  deletion. `npm --prefix kwin run typecheck` passed; `npm --prefix kwin test`
+  reported 924 tests, 81 suites, 924 pass, and 0 fail; describe count was 81.

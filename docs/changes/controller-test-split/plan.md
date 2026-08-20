@@ -14,17 +14,27 @@ physically declared away from the file they belong to and must be relocated
 by name. The mechanism below accounts for both.
 
 `controller.test.ts` retains its original preamble and the three non-preamble
-declaration clusters (line 4112; lines 4520-4813; lines 8002-8169) until the
-last local consumer of each declaration moves. When a unit extracts
-`describe` blocks, it also removes exactly those source-preamble imports and
-declarations whose last remaining consumer moved in that same unit. Before
-removal, the unit proves by search that no remaining code in
+declaration clusters (line 4112; lines 4520-4813; lines 8002-8169) only until
+the last local consumer of each declaration moves. When a unit extracts
+`describe` blocks, it also removes every retained source import or declaration
+whose last remaining consumer moved in that same unit, including a
+fixtures-bound declaration's retained duplicate. Before removal, the unit
+proves by search that no remaining code in
 `controller.test.ts` references the symbol; a typecheck error is a detector,
 not sufficient justification. It does not prune a symbol that still has a
 remaining source reference, and it never deletes or rewrites a test body,
 assertion, describe name, or ordering. The duplicate helpers in the retained
 file are expected residue from unit-01; they are removed only with their last
 local consumer, not converged early.
+
+**Systemic retained-source reconciliation (Orchestrator-authorized):** a
+unit-specific instruction to not include a physical helper cluster in a target
+file controls relocation only. It never preserves a source declaration after
+its last retained consumer moves. Such a source copy is deleted under the
+rule above when search proves it orphaned and TS6133 corroborates the finding.
+This clarification was required when unit-07 orphaned the retained
+fixtures-bound `collectLeaves` copy while its fixture export remained required
+by the new file.
 
 This amendment is necessary because the original requirement to retain a
 full, unmodified preamble until final cleanup contradicted the per-unit clean
@@ -71,13 +81,13 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-02 | Move describes: keyboard insertion; ordinary placement and boundaries; keyboard focus -> `controller-keyboard-placement.test.ts` | unit-01 | new file + delete matching lines from `controller.test.ts` | full 3-command block |
 | unit-03 | Move describes: keyboard move; occupied-target move swap; tile detach -> `controller-keyboard-move-and-swap.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-04 | Move describes: tile attach; scope fill; focused-leaf presets -> `controller-tile-attach-and-scope.test.ts` | unit-01 | same pattern | full 3-command block |
-| unit-05 | Move describe: selected overlay state -> `controller-selected-overlay-state.test.ts`; extract **only the describe body** (ends before line 4112) - do not include `attachTileWriter` (~4112-4135), which is fixtures-bound (unit-01) | unit-01 | same pattern | full 3-command block |
-| unit-06 | Move describe: selected overlay reflow -> `controller-selected-overlay-reflow.test.ts`; extract **only the describe body** (ends before line 4520) - do not include the 4520-4813 cluster that follows it, which is fixtures/file-6-bound (unit-01/unit-07), not used by this describe | unit-01 | same pattern | full 3-command block |
-| unit-07 | Move describe: interactive drag (1,156 lines; single describe, over threshold, disclosed in spec) -> `controller-interactive-drag.test.ts`; also relocate `rowsDropSetup` (~4626) and `assertLeafPartition` (~4709) by name from the 4520-4813 cluster (do not include the rest of that cluster - it goes to fixtures in unit-01) | unit-01 | same pattern, plus 2 named declarations | full 3-command block |
+| unit-05 | Move describe: selected overlay state -> `controller-selected-overlay-state.test.ts`; extract **only the describe body** (ends before line 4112) - do not relocate `attachTileWriter` (~4112-4135) into this target, because it is fixtures-bound (unit-01); delete its retained source copy only if orphaned | unit-01 | same pattern | full 3-command block |
+| unit-06 | Move describe: selected overlay reflow -> `controller-selected-overlay-reflow.test.ts`; extract **only the describe body** (ends before line 4520) - do not relocate the following 4520-4813 cluster into this target; it is fixtures/file-6-bound (unit-01/unit-07), and each retained source declaration is deleted only when orphaned | unit-01 | same pattern | full 3-command block |
+| unit-07 | Move describe: interactive drag (1,156 lines; single describe, over threshold, disclosed in spec) -> `controller-interactive-drag.test.ts`; also relocate `rowsDropSetup` (~4626) and `assertLeafPartition` (~4709) by name from the 4520-4813 cluster; do not relocate its other declarations into this target, but delete any retained source copy that is orphaned (the fixtures-bound `collectLeaves` copy is the first case) | unit-01 | same pattern, plus 2 named declarations | full 3-command block |
 | unit-08 | Move describes: drag snapshot diagnostics; drag reconstruction final snapshot; drag reflow normalization; COSMIC split resize mode; bspwm direct resize bindings -> `controller-drag-diagnostics-and-resize.test.ts`; extract as **one contiguous range** (first describe start to last describe end, ~5970-6950), not five separate per-describe extracts, so `normalizeSetup`, `runNormalizeDrag`, and `resizeSetup` (declared in gaps between this group's own describes, used only within this group) come along automatically | unit-01 | same pattern (contiguous range, not per-describe) | full 3-command block |
 | unit-09 | Move describe: production diagnostics -> `controller-production-diagnostics.test.ts` | unit-01 | same pattern | full 3-command block |
-| unit-10 | Move describes: binding profile catalog; shortcut registration; focus-writer seam -> `controller-bindings-and-shortcuts.test.ts`; extract **only through the last describe's closing brace** (ends before line 8002) - do not include the 8002-8169 cluster that follows, which is split between fixtures (unit-01), file 10 (unit-11), and file 12 (unit-13) | unit-01 | same pattern | full 3-command block |
-| unit-11 | Move describes: parseTilingAlgorithm; parseAutomaticSplitTarget; parseDropOutlinePreview; selectAutomaticSplitTarget; ensureTrailingEmptyDesktop; tiling algorithm takeover -> `controller-pure-config-functions.test.ts`; also relocate `takeoverTilingSetup` (~8169) by name from the 8002-8169 cluster (do not include the rest of that cluster - it goes to fixtures in unit-01, except `installInlineMutatingRejectingSplitter` which goes to unit-13) | unit-01 | same pattern, plus 1 named declaration | full 3-command block |
+| unit-10 | Move describes: binding profile catalog; shortcut registration; focus-writer seam -> `controller-bindings-and-shortcuts.test.ts`; extract **only through the last describe's closing brace** (ends before line 8002) - do not relocate the following 8002-8169 cluster into this target; it is split between fixtures (unit-01), file 10 (unit-11), and file 12 (unit-13), and retained copies are deleted only when orphaned | unit-01 | same pattern | full 3-command block |
+| unit-11 | Move describes: parseTilingAlgorithm; parseAutomaticSplitTarget; parseDropOutlinePreview; selectAutomaticSplitTarget; ensureTrailingEmptyDesktop; tiling algorithm takeover -> `controller-pure-config-functions.test.ts`; also relocate `takeoverTilingSetup` (~8169) by name from the 8002-8169 cluster; do not relocate its other declarations into this target, but delete any retained source copy that is orphaned (the rest is fixtures-bound except `installInlineMutatingRejectingSplitter`, which goes to unit-13) | unit-01 | same pattern, plus 1 named declaration | full 3-command block |
 | unit-12 | Move describe: automatic dwindle ownership (1,908 lines; single describe, over threshold, largest in the file, disclosed in spec) -> `controller-automatic-dwindle-ownership.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-13 | Move describes: automatic dwindle insertion preflight; automatic split target insertion -> `controller-automatic-dwindle-insertion.test.ts`; also relocate `installInlineMutatingRejectingSplitter` (~8061) by name from the 8002-8169 cluster | unit-01 | same pattern, plus 1 named declaration | full 3-command block |
 | unit-14 | Move describes: deferred invariant recovery; fullscreen passthrough -> `controller-deferred-recovery-and-fullscreen.test.ts` | unit-01 | same pattern | full 3-command block |
@@ -136,7 +146,7 @@ actually starts.
 - [x] unit-04 tile attach and scope
 - [x] unit-05 selected overlay state
 - [x] unit-06 selected overlay reflow
-- [ ] unit-07 interactive drag
+- [x] unit-07 interactive drag
 - [ ] unit-08 drag diagnostics and resize
 - [ ] unit-09 production diagnostics
 - [ ] unit-10 bindings and shortcuts
@@ -220,6 +230,21 @@ actually starts.
   retain later consumers, so no source-preamble pruning was justified or
   performed. `npm run typecheck`, `npm test` (924 tests, 81 suites, 924 pass,
   0 fail), and the describe count (81) all passed.
+- unit-07/attempt-01: **blocked**. The interactive drag describe and named
+  `rowsDropSetup` and `assertLeafPartition` helpers moved verbatim, and search
+  confirmed neither has a retained consumer. The remaining source copy of the
+  fixtures-bound `collectLeaves` helper is now orphaned, causing TS6133. The
+  unit brief prohibited deleting any other 4520-4813 declaration, while the
+  Technical Approach says such clusters remain only until their last local
+  consumer moves. Diff preserved; no acceptance, commit, or push.
+- unit-07/attempt-02: **accepted**. Under the Orchestrator-approved retained-
+  source reconciliation, search and TS6133 proved the fixtures-bound
+  `collectLeaves` source copy orphaned, so it was removed while its fixture
+  export remained. The interactive drag describe plus `rowsDropSetup` and
+  `assertLeafPartition` moved verbatim; `MAX_SEQUENTIAL_LENGTH`, `Point`, and
+  `qv4MethodSignal` were the only other search-proven orphaned source symbols
+  pruned. `npm run typecheck`, `npm test` (924 tests, 81 suites, 924 pass, 0
+  fail), and the describe count (81) all passed.
 
 ## Pending User Decisions
 
@@ -258,9 +283,9 @@ below are resolved.
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
 | All 40 describes preserved unchanged across 20 files + fixtures | pending - established by unit-22's full gate |
-| `grep -c "describe("` totals 81 | units 02-06 passed; checked after every unit, not just the last |
-| `npm test`: 924/81/924 pass/0 fail | units 02-06 passed; checked after every unit from unit-02 onward |
-| `npm run typecheck` clean on both tsconfigs | units 02-06 passed; checked after every unit |
+| `grep -c "describe("` totals 81 | units 02-07 passed; checked after every unit, not just the last |
+| `npm test`: 924/81/924 pass/0 fail | units 02-07 passed; checked after every unit from unit-02 onward |
+| `npm run typecheck` clean on both tsconfigs | units 02-07 passed; checked after every unit |
 | `main.js` byte-identical | pending - checked in unit-22 (also true trivially after every unit, since `src/` is never touched) |
 | No test name changed | pending - checked in unit-22 via sorted-literal diff |
 | No describe split, reordered, or renested | pending - by construction (units move whole, named describes; no unit edits describe/it syntax) |
