@@ -320,10 +320,33 @@ reordered relative to each other):
 | 19 | `controller-global-unique-workspaces.test.ts` | global-unique workspaces (Unit 06) | 707 |
 | 20 | `controller-shared-workspaces.test.ts` | shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) | 648 |
 
-Three files (6, 11, 15) remain over the 1,000-line threshold because each is
-a single `describe` block already over that size; splitting further would
-require adding new `describe`/`it` boundaries inside existing tests, which
-this change's non-goals forbid. This is disclosed as accepted, not resolved.
+## Over-Threshold Remediation
+
+The 20-file target is a planning estimate, not an acceptance criterion. The
+source-file threshold is the goal: the target file count may be exceeded where
+needed to keep every produced file under ~1,000 lines.
+
+Current open acceptance gaps are:
+
+- `controller-automatic-dwindle-ownership.test.ts` - 1,930 lines (severe)
+- `controller-fixtures.ts` - 1,332 lines
+- `controller-interactive-drag.test.ts` - 1,271 lines
+- `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
+
+After all ordinary extractions complete, remediation `unit-23` runs after
+unit-21 and before unit-22. A successor Lead must first derive and record in
+this specification the exact, pre-decided top-level `describe` boundaries for
+each over-threshold test-file sub-split. Workers apply those recorded
+boundaries only; they must not derive, choose, or adjust them. The fixture
+module is split by export group rather than `describe` boundary and is lower
+priority; it must be flagged and escalated if a safe export-group split cannot
+be established.
+
+Every remediation split must preserve exactly 924 tests, 81 suites, 0 failures,
+and 81 top-level `describe` occurrences. Before selecting a suite-count-neutral
+split, establish empirically what the harness counts as a suite. If any
+candidate sub-split changes one of those values, stop and escalate without
+adjusting the expected values.
 
 Sum of target file line counts (excluding the fixture module, excluding new
 import-line overhead) = 16,060, matching lines 1016-17075 of the original
@@ -374,9 +397,9 @@ spec approval round, provided every acceptance criterion above still holds.
 
 - Single shared fixture module for the entire preamble, rather than per-
   helper placement next to sole consumers - see Shared State rationale above.
-- Three files (6, 11, 15) accepted over the 1,000-line threshold rather than
-  restructuring their single oversized `describe` - see Target File Set
-  rationale above.
+- The 20-file target is an estimate rather than acceptance criterion. The four
+  currently over-threshold produced files require the pre-decided remediation
+  recorded in Over-Threshold Remediation before final acceptance.
 - `kwin/src/controller.ts` splitting is explicitly out of scope and remains a
   separate backlog item.
 - **Correction (Orchestrator-authorized, this session):** the Shared State

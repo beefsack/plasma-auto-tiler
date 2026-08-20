@@ -98,6 +98,7 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-19 | Move describe: per-output-local workspaces (Unit 05) (contains its own locally-scoped `twoOutputSetup`/`moveToTrailing` - these travel with the block untouched, not part of fixtures) -> `controller-per-output-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
+| unit-23 | Remediate the four produced files over ~1,000 lines: `controller-automatic-dwindle-ownership.test.ts` (1,930), `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts` (1,271), and `controller-drag-diagnostics-and-resize.test.ts` (1,004). Before dispatch, a successor Lead must derive and record the exact top-level `describe` boundaries in `spec.md`; Workers only apply those pre-decided boundaries. Split `controller-fixtures.ts` by safe export groups, not `describe`; this is lower priority and must be flagged/escalated if unsafe. Empirically establish harness suite-count behavior before assuming a split is count-neutral. Stop and escalate if any candidate split changes exactly 924 tests, 81 suites, 0 failures, or 81 describes. | unit-21 | `kwin/tests/controller-*.test.ts`, `kwin/tests/controller-fixtures.ts`, and approved docs only | full 3-command block; exact counts are invariant |
 | unit-22 | Final cleanup: confirm `controller.test.ts` now contains only the preamble (lines 1-1015) with zero `describe(` occurrences and zero remaining non-preamble top-level declarations (the 4112, 4520-4813, and 8002-8169 clusters must all be gone, fully relocated by unit-01/unit-05/unit-06/unit-07/unit-10/unit-11/unit-13), delete `kwin/tests/controller.test.ts`, run the full acceptance gate (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed) | unit-02 .. unit-21 | delete `kwin/tests/controller.test.ts` | full 3-command block + `main.js` diff check + test-name diff check |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
@@ -161,6 +162,7 @@ actually starts.
 - [ ] unit-19 per-output workspaces
 - [ ] unit-20 global-unique workspaces
 - [ ] unit-21 shared workspaces
+- [ ] unit-23 over-threshold remediation
 - [ ] unit-22 final cleanup and full gate
 
 ## Attempt Accounting
@@ -297,8 +299,25 @@ actually starts.
 
 ## Pending User Decisions
 
-None open. The previously blocking module-scope and source-preamble decisions
-below are resolved.
+Open acceptance gap: `unit-23` must remediate the following produced files over
+the ~1,000-line threshold before `unit-22` can pass final acceptance:
+
+- `controller-automatic-dwindle-ownership.test.ts` - 1,930 lines (severe)
+- `controller-fixtures.ts` - 1,332 lines
+- `controller-interactive-drag.test.ts` - 1,271 lines
+- `controller-drag-diagnostics-and-resize.test.ts` - 1,004 lines
+
+The 20-file target may be exceeded to resolve this gap. Exact `describe`
+boundaries are not yet pre-decided; a successor Lead must derive and record
+them in `spec.md` before dispatching unit-23. The fixture module requires an
+export-group rather than describe-bounded split and is lower priority; flag and
+escalate it if a safe split cannot be established. Every remediation candidate
+must preserve exactly 924 tests, 81 suites, 0 failures, and 81 describes; suite
+count behavior must be established empirically before assuming a split is
+count-neutral.
+
+The previously blocking module-scope and source-preamble decisions below are
+resolved.
 
 - **Resolved - source preamble cleanup during extraction.** The Orchestrator
   approved the Technical Approach amendment above after unit-02 exposed its
@@ -342,9 +361,11 @@ below are resolved.
 
 ## Residual Risks
 
-- The three over-threshold single-`describe` files (interactive drag,
-  automatic dwindle ownership, dynamic virtual desktops) remain above 1,000
-  lines; this is disclosed in `spec.md` as an accepted, not resolved, gap.
+- Four produced files exceed ~1,000 lines and are an open acceptance gap:
+  `controller-automatic-dwindle-ownership.test.ts` (1,930),
+  `controller-fixtures.ts` (1,332), `controller-interactive-drag.test.ts`
+  (1,271), and `controller-drag-diagnostics-and-resize.test.ts` (1,004).
+  `unit-23` is scheduled after unit-21 and before unit-22 to remediate them.
 - Grep-based import pruning could theoretically under- or over-prune on an
   edge case (e.g. a name matching inside a string literal or comment rather
   than a real reference); the `npm run typecheck` step in every unit is the
@@ -358,5 +379,5 @@ below are resolved.
 
 - Pending. This session: corrected `spec.md`'s Shared State analysis to the
   whole file (Orchestrator-authorized), revised `plan.md` accordingly, and
-  completed units 01-12. Units 13-22 (remaining `describe` blocks and the one
-  named single-file-local relocation) remain unexecuted.
+  completed units 01-12. Units 13-21, unit-23 over-threshold remediation, and
+  unit-22 final cleanup remain unexecuted.
