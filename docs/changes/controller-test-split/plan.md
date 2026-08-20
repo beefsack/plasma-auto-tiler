@@ -93,14 +93,15 @@ the Lead's context window at all.
 ## Baseline Note (record-keeping, added by `cosmic-evidence-mining`'s Lead)
 
 **The 838-test/78-suite baseline this plan's every verification step gates
-on has moved.** `cosmic-evidence-mining` added
+on has moved twice.** `cosmic-evidence-mining` added
 `kwin/tests/move-conformance-model.ts` and
 `kwin/tests/move-conformance.test.ts` (41 new tests, 1 new suite, none of
 them touching `controller.test.ts` or any file this change's units scope
-over). Before starting execution, the correct target is:
+over). `cosmic-move-model-closure` then extended that pure conformance work.
+Before starting execution, the correct target is:
 
-- `npm test`: **879 tests / 79 suites / 879 pass / 0 fail** (not 838/78).
-- `grep -c "describe(" tests/*.test.ts` totals **79** (not 78).
+- `npm test`: **924 tests / 81 suites / 924 pass / 0 fail** (not 838/78).
+- `grep -c "describe(" tests/*.test.ts` totals **81** (not 78).
 
 The 838/78 baseline was itself re-measured and confirmed correct on this
 machine, immediately before `move-conformance.test.ts` was added -
@@ -108,11 +109,12 @@ machine, immediately before `move-conformance.test.ts` was added -
 Acceptance-Criterion Evidence entry. It was
 not stale before this change; this change is what moved it.
 
-This is a numeric baseline shift only. `move-conformance.test.ts` is not a
-`controller.test.ts` describe block and is out of scope for every unit
-above; no work unit, file target, or grouping in this plan needs to change,
-only the target numbers quoted in `spec.md` and this plan's own verification
-commands, at the point execution actually starts.
+This follows the baseline-update precedent in `7ec91af`: it is a numeric
+shift only. `move-conformance.test.ts` is not a `controller.test.ts` describe
+block and is out of scope for every unit above; no work unit, file target, or
+grouping in this plan needs to change, only the target numbers quoted in
+`spec.md` and this plan's own verification commands, at the point execution
+actually starts.
 
 ## Progress
 

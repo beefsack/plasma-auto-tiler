@@ -44,6 +44,17 @@ becoming a general recursive re-application loop.
   and their results are provably unchanged. Their existing passing behavior
   outranks vector-shape consistency.
 
+## Circuit-Breaker History
+
+This change tripped the circuit breaker twice on the same semantic unit: corpus
+row transcription. The first reset moved from chained to isolated vectors with
+a continuity assertion, at the user's direction and on the standard argument
+that chained tests cascade. The second reset removed Worker derivation
+entirely: the Orchestrator authored the chained sequences from the user's
+verbatim results. The root cause was the original dispatch brief presenting
+the evidence as flat per-test triples with independent start states, a shape
+that permits a start state to disagree silently with the chain.
+
 ## Work Units
 
 | ID | Objective | Depends on | File or subsystem scope | Verification (static or live) |
@@ -53,7 +64,7 @@ becoming a general recursive re-application loop.
 | unit-03 | Add output-aware pure-model state and R4 replay coverage for occupied/empty targets, edge eligibility, and workspace isolation. | unit-02 | `kwin/tests/move-conformance-model.ts`, `kwin/tests/move-conformance.test.ts` | Static: `npm --prefix kwin test`; `npm --prefix kwin run typecheck`. |
 | unit-04 | Update the corpus explanation, backlog entries, and controller-test-split exact baseline after tests are added. | unit-06, unit-03 | `docs/cosmic-move-conformance.md`, `docs/backlog.md`, `docs/changes/controller-test-split/plan.md` | Static inspection; record measured `npm test` and suite-count result in controller-test-split plan. |
 
-## Proposed Backlog Edits
+## Backlog Edits
 
 - Replace line 42 with:
   ```text
@@ -68,8 +79,10 @@ becoming a general recursive re-application loop.
   - P3 | open | dependencies: none | N-ary split container support is an unscoped architectural prerequisite for COSMIC-style movement: ordered direct children, nested groups counted as one direct child, same-axis wrapping, parent escape, and one-child collapse are confirmed requirements; 3+-child operations use child count/order rather than width or screen position, and manual-resize behavior remains unobserved. This project's split logic (`kwin/src/controller.ts`, `kwin/src/logic.ts`) is binary throughout, assessed as a substantial architectural change, not a mechanical generalization; feasibility findings only, no design or scope decided | [research](changes/archive/2026-08-20-cosmic-evidence-mining/research/tile-tree-nary-support.md)
   ```
 
-The lines are exact proposed edits for the future implementation patch; this
-planning artifact does not alter the backlog.
+These exact replacements were applied by unit-04. No separate backlog entry
+was added for `cosmic-move-model-closure`: repository convention adds entries
+for distinct outstanding problems, while this change resolves and updates the
+three existing entries above.
 
 ## Progress
 
@@ -78,7 +91,7 @@ planning artifact does not alter the backlog.
 - [x] unit-06 transcribe authored sequences and isolated vectors
 - [x] unit-02 correct single-output model
 - [x] unit-03 add multi-output model
-- [ ] unit-04 update records and baseline
+- [x] unit-04 update records and baseline
 
 ## Attempt Accounting
 
@@ -118,26 +131,28 @@ npm --prefix kwin test
 npm --prefix kwin run typecheck
 ```
 
-The current recorded gate is 879 tests / 79 suites. This change will move that
-count; unit-04 must measure and record the new exact baseline in
-`docs/changes/controller-test-split/plan.md` because that plan uses the count as
-its correctness gate.
+The recorded gate is 924 tests / 81 suites / 924 pass / 0 fail. Unit-04
+measured and recorded this exact baseline in
+`docs/changes/controller-test-split/plan.md` because that plan uses the count
+as its correctness gate.
 
 ## Residual Risks
 
-- Deeper parity descent and post-resize behavior remain intentionally unmodeled
-  until observed.
-- M1 is a user-stated generalization and M3 is an empty-target observation;
-  tests must express only their stated parameters and not invent display
-  topology beyond directional adjacency.
-- The retired vector derivation approaches are not evidence. Unit-06 may only
-  transcribe the authored rows; any inconsistency is an escalation.
-- Unit-06 intentionally leaves 11 S4-S19 replay failures against the
-  uncorrected model: S5-01, S6-03, S7-02, S9-02, S12-02, S14-03, S17-01
-  through S17-04, and S19-02. Unit-02 owns their resolution; all S1-S3 rows
-  passed in the same run.
+- Parity descent into a target nested more than one level deep is explicitly
+  unobserved.
+- Behavior after a manual split resize is explicitly unobserved; every
+  observation used evenly-spaced splits.
+- The contents of output `L` in S20 and S23 were never transcribed, so the
+  corpus represents them as opaque leaf `X`.
+- Vertically stacked outputs are recorded only as prose from the user's
+  statement; no replay vector was fabricated.
+- F4-class multi-output verification beyond the cases captured by S20-S23 is
+  explicitly unobserved.
+- Retired vector derivation approaches are not evidence; the authored chained
+  rows remain the sole source for S4-S23.
 
 ## Final Outcome
 
-- Unit-03 accepted: 924 tests / 81 suites / 924 pass / 0 fail and typecheck
-  pass. Unit-04 remains pending.
+- Unit-04 accepted: records, backlog entries, and the controller-test-split
+  baseline are current. Static gate: 924 tests / 81 suites / 924 pass / 0
+  fail; typecheck passes.
