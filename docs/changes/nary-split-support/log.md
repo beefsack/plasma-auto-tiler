@@ -34,3 +34,28 @@ result, changed files or commit, verification, and discoveries or decisions.
   baseline gate, acceptance-evidence map, and circuit-breaker accounting.
 - Notes: Pending user decisions block implementation; no file under `kwin/` was
   modified.
+
+## 2026-08-21
+
+- Role / unit: Lead / COSMIC sizing procedure / attempt-01
+- Result: Accepted three isolated, manually resized sizing vectors for R2b,
+  R2c, and R3; R1 is explicitly excluded because the stated hypotheses all
+  predict a two-way half split.
+- Files / commit: `research/cosmic-sizing-procedure.md`; uncommitted.
+- Verification: Lead reread the procedure and confirmed each vector's
+  H-equalize, H-preserve, and H-local predictions differ at coarse scale;
+  `git diff --check` passed.
+- Notes: This is a hand-executable research procedure only. No live COSMIC
+  test was run and no file under `kwin/` was modified.
+
+## 2026-08-21
+
+- Role / unit: Lead / R2b target-axis coverage / attempt-01
+- Result: Investigation accepted and checkpointed; the closed parity-only R2b
+  wording contradicts two parallel-target corpus cases, both of which agree
+  with the new live observation.
+- Files / commit: `research/r2b-axis-coverage.md`; uncommitted.
+- Verification: Three serial Worker investigations reconciled against direct
+  Lead inspection of `S1-17`, `S7-02`, and the model's target-axis branch.
+- Notes: `S1-17` remains a model-derived direction correction awaiting user
+  confirmation. No file under `kwin/` was modified.
