@@ -85,6 +85,7 @@ const FLOAT_WORK_AREA_FRACTION = 0.6;
 // bounded re-evaluation gives it a chance to settle before being treated as
 // permanently out of scope.
 const DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
+const GROUP_OUTLINE_DURATION_MS = 150;
 // Bounded re-drive budget per pending reconstruction phase. A lifecycle event
 // while a reconstruction is pending re-arms that phase's one-shot yield so a
 // single lost callDBus reply cannot strand a collapsed scope. A bound is still
@@ -945,9 +946,9 @@ export interface ControllerEnvironment {
         changed: () => void,
     ) => { readonly disconnect: () => void; readonly ok: number; readonly failed: number };
     readonly onPendingTargetChanged: (window: WindowCapability, handler: () => void) => () => void;
-    // Geometry-only outline rectangle surface (KWin workspace
-    // `showOutline(x, y, w, h)` / `hideOutline()` slots). Typed seam only in
-    // this unit; no lifecycle call site invokes it yet.
+    // Geometry-only outline rectangle surface bound at kwin/src/entry.ts:227-230
+    // to KWin workspace `showOutline(x, y, w, h)` / `hideOutline()` slots.
+    // The drag destination preview lifecycle and group flash use this seam.
     readonly showOutline: (x: number, y: number, w: number, h: number) => void;
     readonly hideOutline: () => void;
     // Named one-shot event-loop yield used to defer dwindle reconstruction
@@ -1714,6 +1715,7 @@ export class TileController {
     private readonly pending = new TransientState<PendingKeyboard>();
     private readonly drag = new TransientState<ActiveDrag>();
     private shownDropOutline: RectCapability | null = null;
+    private groupOutlineIdentity: object | null = null;
     private readonly interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
     // Per-window fullscreen watch disconnects and enter/exit records. Both are
     // bounded like the other identity sets so they cannot grow without limit.
@@ -5382,6 +5384,36 @@ export class TileController {
         this.shownDropOutline = null;
     }
 
+    private flashFocusedGroup(): void {
+        if (this.shownDropOutline !== null) {
+            return;
+        }
+        const focused = this.environment.activeWindow();
+        if (
+            !isWindow(focused) ||
+            focused.tile === null ||
+            !isCustomTile(focused.tile) ||
+            focused.tile.isLayout
+        ) {
+            return;
+        }
+        const parent = focused.tile.parent;
+        if (parent === null || !isCustomTile(parent) || !parent.isLayout || !positiveGeometry(parent.absoluteGeometry)) {
+            return;
+        }
+        const identity = {};
+        this.groupOutlineIdentity = identity;
+        const geometry = parent.absoluteGeometry;
+        this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
+        this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
+            if (this.groupOutlineIdentity !== identity || this.shownDropOutline !== null) {
+                return;
+            }
+            this.environment.hideOutline();
+            this.groupOutlineIdentity = null;
+        });
+    }
+
     private handleMoveResizedChanged(): void {
         this.diagnostic("drag-move-resized-changed");
         this.gate.run(() => {
@@ -6467,6 +6499,10 @@ export class TileController {
         // Phase two: the splits-only preset rebuild in one synchronous batch.
         if (this.rebuildPreset(scope, population)) {
             this.diagnostic("ownership-taken");
+            // Deliberate quick-and-dirty debt: REPLACE this mechanism, do not
+            // extend it with further hook call sites. Closing coverage gaps
+            // requires replacing the mechanism.
+            this.flashFocusedGroup();
         } else {
             this.markInert(scope, "rebuild-failed");
         }

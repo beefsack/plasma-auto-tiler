@@ -1055,6 +1055,7 @@
   var WORK_AREA_CLIENT_AREA_OPTION = 5;
   var FLOAT_WORK_AREA_FRACTION = 0.6;
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
+  var GROUP_OUTLINE_DURATION_MS = 150;
   var MAX_YIELD_REARM_PER_PHASE = 2;
   var UNRESOLVABLE_CLASSIFICATIONS = Object.freeze([
     "deferred",
@@ -1857,6 +1858,7 @@
       this.pending = new TransientState();
       this.drag = new TransientState();
       this.shownDropOutline = null;
+      this.groupOutlineIdentity = null;
       this.interactiveWindows = /* @__PURE__ */ new Map();
       // Per-window fullscreen watch disconnects and enter/exit records. Both are
       // bounded like the other identity sets so they cannot grow without limit.
@@ -4989,6 +4991,30 @@
       this.environment.hideOutline();
       this.shownDropOutline = null;
     }
+    flashFocusedGroup() {
+      if (this.shownDropOutline !== null) {
+        return;
+      }
+      const focused = this.environment.activeWindow();
+      if (!isWindow(focused) || focused.tile === null || !isCustomTile(focused.tile) || focused.tile.isLayout) {
+        return;
+      }
+      const parent = focused.tile.parent;
+      if (parent === null || !isCustomTile(parent) || !parent.isLayout || !positiveGeometry(parent.absoluteGeometry)) {
+        return;
+      }
+      const identity = {};
+      this.groupOutlineIdentity = identity;
+      const geometry = parent.absoluteGeometry;
+      this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
+      this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
+        if (this.groupOutlineIdentity !== identity || this.shownDropOutline !== null) {
+          return;
+        }
+        this.environment.hideOutline();
+        this.groupOutlineIdentity = null;
+      });
+    }
     handleMoveResizedChanged() {
       this.diagnostic("drag-move-resized-changed");
       this.gate.run(() => {
@@ -5957,6 +5983,7 @@
       }
       if (this.rebuildPreset(scope, population)) {
         this.diagnostic("ownership-taken");
+        this.flashFocusedGroup();
       } else {
         this.markInert(scope, "rebuild-failed");
       }
