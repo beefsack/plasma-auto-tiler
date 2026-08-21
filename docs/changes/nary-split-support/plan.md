@@ -17,6 +17,17 @@ Verified on 2026-08-21 before planning, from `main` at `ad18cc9`:
 Every implementation unit starts only while this baseline is reproducible or a
 documented accepted change explains its replacement.
 
+## Pre-start Resize Characterization
+
+- Accepted 2026-08-21: `resizeActiveWindow` container-edge behavior is pinned
+  in `kwin/tests/controller-drag-diagnostics-and-resize.test.ts` before any
+  migration unit starts. The cases cover outward and inward mode-mapped climbs
+  that resize the outer container by 5% of its extent, plus outermost refusal
+  with no write.
+- Static verification after the added tests: `npm --prefix kwin test` - 927
+  tests, 87 suites, 0 failures; `npm --prefix kwin run typecheck` - clean for
+  both tsconfigs.
+
 ## Technical Approach
 
 After the remaining new-window insertion sizing decision and approval, migrate

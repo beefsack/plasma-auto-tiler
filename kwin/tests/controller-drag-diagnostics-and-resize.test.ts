@@ -703,6 +703,80 @@ describe("TileController COSMIC split resize mode", () => {
     const resizeEnter = "plasma-auto-tiler-resize-mode-outwards";
     const resizeEnterInverse = "plasma-auto-tiler-resize-mode-inwards";
 
+    function nestedResizeSetup(
+        outerSide: "first" | "second",
+        focusedSide: "first" | "second",
+    ): {
+        readonly harness: Harness;
+        readonly controller: TileController;
+        readonly inner: TestTile;
+        readonly outerNeighbor: TestTile;
+        readonly focusedLeaf: TestTile;
+        readonly writes: number[];
+    } {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 300, height: 100 }, true);
+        root.layoutDirection = 1;
+        const innerGeometry = outerSide === "first"
+            ? { x: 0, y: 0, width: 200, height: 100 }
+            : { x: 100, y: 0, width: 200, height: 100 };
+        const outerNeighborGeometry = outerSide === "first"
+            ? { x: 200, y: 0, width: 100, height: 100 }
+            : { x: 0, y: 0, width: 100, height: 100 };
+        const inner = tile(innerGeometry, true);
+        inner.layoutDirection = 1;
+        const outerNeighbor = tile(outerNeighborGeometry);
+        inner.parent = root;
+        outerNeighbor.parent = root;
+        root.tiles = outerSide === "first" ? [inner, outerNeighbor] : [outerNeighbor, inner];
+        const firstLeaf = tile({ x: innerGeometry.x, y: 0, width: 100, height: 100 });
+        const secondLeaf = tile({ x: innerGeometry.x + 100, y: 0, width: 100, height: 100 });
+        firstLeaf.parent = inner;
+        secondLeaf.parent = inner;
+        inner.tiles = [firstLeaf, secondLeaf];
+        const focusedLeaf = focusedSide === "first" ? firstLeaf : secondLeaf;
+        const innerNeighbor = focusedSide === "first" ? secondLeaf : firstLeaf;
+        const focused = window({ tile: focusedLeaf, caption: "focused" });
+        const innerNeighborWindow = window({ tile: innerNeighbor, caption: "inner-neighbor" });
+        const outerNeighborWindow = window({ tile: outerNeighbor, caption: "outer-neighbor" });
+        focusedLeaf.windows = [focused];
+        innerNeighbor.windows = [innerNeighborWindow];
+        outerNeighbor.windows = [outerNeighborWindow];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused, innerNeighborWindow, outerNeighborWindow];
+        const writes: number[] = [];
+        let innerState = inner.relativeGeometry;
+        Object.defineProperty(inner, "relativeGeometry", {
+            configurable: true,
+            get: () => innerState,
+            set: (next: typeof RECT) => {
+                writes.push(1);
+                innerState = next;
+                inner.absoluteGeometry = next;
+                const neighborState = outerNeighbor.relativeGeometry;
+                const updated = outerSide === "first"
+                    ? {
+                          x: next.x + next.width,
+                          y: neighborState.y,
+                          width: neighborState.x + neighborState.width - (next.x + next.width),
+                          height: neighborState.height,
+                      }
+                    : {
+                          x: neighborState.x,
+                          y: neighborState.y,
+                          width: next.x - neighborState.x,
+                          height: neighborState.height,
+                      };
+                outerNeighbor.relativeGeometry = updated;
+                outerNeighbor.absoluteGeometry = updated;
+            },
+        });
+        const controller = new TileController(harness.environment());
+        controller.start();
+        return { harness, controller, inner, outerNeighbor, focusedLeaf, writes };
+    }
+
     it("enters outwards mode, enters the inverse inwards mode, switches, and exits deterministically", () => {
         const state = resizeSetup();
         invokeShortcut(state.harness, resizeEnter);
@@ -972,6 +1046,46 @@ describe("TileController COSMIC split resize mode", () => {
         assert.equal(third.relativeGeometry.x, 215);
         assert.equal(third.relativeGeometry.width, 85);
         assert.equal(controller.isEnabled, true);
+    });
+
+    it("outwards crosses a right boundary by resizing the containing outer child by 5% of the outer split", () => {
+        const state = nestedResizeSetup("first", "second");
+        invokeShortcut(state.harness, resizeEnter);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+
+        // observed-not-endorsed: crossing the inner right boundary writes its
+        // containing outer child rather than the focused leaf.
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.deepEqual(state.inner.relativeGeometry, { x: 0, y: 0, width: 215, height: 100 });
+        assert.deepEqual(state.outerNeighbor.relativeGeometry, { x: 215, y: 0, width: 85, height: 100 });
+        assert.deepEqual(state.focusedLeaf.relativeGeometry, { x: 100, y: 0, width: 100, height: 100 });
+    });
+
+    it("inwards crosses a right boundary by resizing the opposite-side containing outer child by 5%", () => {
+        const state = nestedResizeSetup("second", "first");
+        invokeShortcut(state.harness, resizeEnterInverse);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+
+        // observed-not-endorsed: inwards maps right to the left boundary, then
+        // writes the containing outer child after climbing.
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 1);
+        assert.equal(state.writes.length, 1);
+        assert.deepEqual(state.inner.relativeGeometry, { x: 115, y: 0, width: 185, height: 100 });
+        assert.deepEqual(state.outerNeighbor.relativeGeometry, { x: 0, y: 0, width: 115, height: 100 });
+        assert.deepEqual(state.focusedLeaf.relativeGeometry, { x: 100, y: 0, width: 100, height: 100 });
+    });
+
+    it("refuses an outermost inwards mode-mapped boundary without a geometry write", () => {
+        const state = resizeSetup("x", "first");
+        invokeShortcut(state.harness, resizeEnterInverse);
+        invokeShortcut(state.harness, "plasma-auto-tiler-focus-right");
+
+        // observed-not-endorsed: inwards maps right to the left outer boundary
+        // even though this focused tile has a physical right sibling.
+        assert.equal(countEvent(state.harness.logs, "resize-rejected:no-parent"), 1);
+        assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
+        assert.equal(state.writes.length, 0);
     });
 
     it("resolves no split when the focused window has no sibling at any matching ancestor", () => {
