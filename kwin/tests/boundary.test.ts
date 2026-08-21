@@ -15,7 +15,10 @@ import {
     isTile,
     isVirtualDesktop,
     isWindow,
+    manageTile,
+    removeCustomTile,
     sameScope,
+    splitCustomTile,
     type BoundaryScope,
 } from "../src/boundary";
 import { sameScope as sameLogicScope, type Scope as LogicScope } from "../src/logic";
@@ -368,6 +371,49 @@ describe("assignWindowToTile", () => {
         });
         assert.equal(assignWindowToTile(window, target), false);
         assert.equal(window.tile, source);
+    });
+});
+
+describe("structural mutation reporting", () => {
+    it("reports only successful manage, assignment, split, and removal returns", () => {
+        let reports = 0;
+        const report = () => {
+            reports += 1;
+        };
+        const managedTile = tile();
+        const assignedTile = tile();
+        const customTile = {
+            ...tile(),
+            layoutDirection: 1,
+            split: () => [],
+            remove: () => {},
+        };
+        const assignedWindow = {
+            normalWindow: true,
+            managed: true,
+            resizeable: true,
+            appletPopup: false,
+            desktops: [],
+            output: OUTPUT,
+            tile: null as object | null,
+            frameGeometry: RECT,
+            move: false,
+            resize: false,
+        };
+
+        assert.equal(manageTile(managedTile, assignedWindow, report), true);
+        assert.equal(assignWindowToTile(assignedWindow, assignedTile, report), true);
+        assert.deepEqual(splitCustomTile(customTile, 1, report), []);
+        assert.equal(removeCustomTile(customTile, report), true);
+        assert.equal(reports, 4);
+
+        managedTile.manage = () => false;
+        Object.defineProperty(assignedWindow, "tile", { configurable: true, value: assignedTile, writable: false });
+        const noRemoveTile = { ...customTile, remove: undefined };
+        assert.equal(manageTile(managedTile, assignedWindow, report), false);
+        assert.equal(assignWindowToTile(assignedWindow, assignedTile, report), false);
+        assert.equal(removeCustomTile(noRemoveTile, report), false);
+        assert.equal(reports, 4);
     });
 });
 

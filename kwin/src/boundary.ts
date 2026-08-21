@@ -265,12 +265,26 @@ export function isCustomTile(value: unknown): value is CustomTileCapability {
     );
 }
 
-export function manageTile(tile: TileCapability, window: WindowCapability): boolean {
+export type StructuralMutationReporter = () => void;
+
+function reportStructuralMutation(reporter: StructuralMutationReporter | undefined): void {
+    reporter?.();
+}
+
+export function manageTile(
+    tile: TileCapability,
+    window: WindowCapability,
+    reporter?: StructuralMutationReporter,
+): boolean {
     const method = read(tile, "manage");
     if (!method.ok || !isMethod(method.value)) {
         return false;
     }
-    return Reflect.apply(method.value, tile, [window]) === true;
+    const managed = Reflect.apply(method.value, tile, [window]) === true;
+    if (managed) {
+        reportStructuralMutation(reporter);
+    }
+    return managed;
 }
 
 // Source-pinned window.h:595: `Q_PROPERTY(KWin::Tile *tile READ requestedTile
@@ -290,9 +304,17 @@ export function detachWindowFromTile(window: WindowCapability): boolean {
 // The attach half of the same pinned writable `Window.tile` contract: writing
 // a tile dispatches to `setTileCompatibility(tile)`. Assignment-only overlay
 // reflow uses exactly these guarded writes and never structural tile methods.
-export function assignWindowToTile(window: WindowCapability, tile: TileCapability): boolean {
+export function assignWindowToTile(
+    window: WindowCapability,
+    tile: TileCapability,
+    reporter?: StructuralMutationReporter,
+): boolean {
     try {
-        return Reflect.set(window, "tile", tile) === true;
+        const assigned = Reflect.set(window, "tile", tile) === true;
+        if (assigned) {
+            reportStructuralMutation(reporter);
+        }
+        return assigned;
     } catch (error) {
         void error;
         return false;
@@ -392,24 +414,31 @@ export function setTileRelativeGeometry(tile: TileCapability, geometry: RectCapa
     }
 }
 
-export function splitCustomTile(tile: CustomTileCapability, direction: number): unknown {
+export function splitCustomTile(
+    tile: CustomTileCapability,
+    direction: number,
+    reporter?: StructuralMutationReporter,
+): unknown {
     const method = read(tile, "split");
     if (!method.ok || !isMethod(method.value)) {
         throw new Error("CustomTile split capability changed before invocation");
     }
-    return Reflect.apply(method.value, tile, [direction]);
+    const split = Reflect.apply(method.value, tile, [direction]);
+    reportStructuralMutation(reporter);
+    return split;
 }
 
 // Pinned KWin 6.7.3 `CustomTile::remove()` is Q_INVOKABLE but returns void.
 // Its caller must re-decode the root immediately afterwards; a successful call
 // is only mutation-possible, never a successful reset acknowledgement.
-export function removeCustomTile(tile: CustomTileCapability): boolean {
+export function removeCustomTile(tile: CustomTileCapability, reporter?: StructuralMutationReporter): boolean {
     const method = read(tile, "remove");
     if (!method.ok || !isMethod(method.value)) {
         return false;
     }
     try {
         Reflect.apply(method.value, tile, []);
+        reportStructuralMutation(reporter);
         return true;
     } catch (error) {
         void error;
@@ -434,12 +463,15 @@ export class FeatureGate {
     private enabled = true;
     private logged = false;
 
+    constructor(private readonly afterRun?: () => void) {}
+
     get isEnabled(): boolean {
         return this.enabled;
     }
 
     run<T>(operation: () => T, log: (reason: string) => void): GateResult<T> {
         if (!this.enabled) {
+            this.afterRunSafely();
             return { ok: false };
         }
         try {
@@ -448,6 +480,16 @@ export class FeatureGate {
             void error;
             this.disable("exception", log);
             return { ok: false };
+        } finally {
+            this.afterRunSafely();
+        }
+    }
+
+    private afterRunSafely(): void {
+        try {
+            this.afterRun?.();
+        } catch (error) {
+            void error;
         }
     }
 

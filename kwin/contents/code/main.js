@@ -116,12 +116,19 @@
   function isCustomTile(value) {
     return isTile(value) && hasValue(value, "layoutDirection", (item) => item === 0 || item === 1 || item === 2) && hasValue(value, "split", isMethod);
   }
-  function manageTile(tile, window) {
+  function reportStructuralMutation(reporter) {
+    reporter == null ? void 0 : reporter();
+  }
+  function manageTile(tile, window, reporter) {
     const method = read(tile, "manage");
     if (!method.ok || !isMethod(method.value)) {
       return false;
     }
-    return Reflect.apply(method.value, tile, [window]) === true;
+    const managed = Reflect.apply(method.value, tile, [window]) === true;
+    if (managed) {
+      reportStructuralMutation(reporter);
+    }
+    return managed;
   }
   function detachWindowFromTile(window) {
     try {
@@ -131,9 +138,13 @@
       return false;
     }
   }
-  function assignWindowToTile(window, tile) {
+  function assignWindowToTile(window, tile, reporter) {
     try {
-      return Reflect.set(window, "tile", tile) === true;
+      const assigned = Reflect.set(window, "tile", tile) === true;
+      if (assigned) {
+        reportStructuralMutation(reporter);
+      }
+      return assigned;
     } catch (error) {
       void error;
       return false;
@@ -193,20 +204,23 @@
       return false;
     }
   }
-  function splitCustomTile(tile, direction) {
+  function splitCustomTile(tile, direction, reporter) {
     const method = read(tile, "split");
     if (!method.ok || !isMethod(method.value)) {
       throw new Error("CustomTile split capability changed before invocation");
     }
-    return Reflect.apply(method.value, tile, [direction]);
+    const split = Reflect.apply(method.value, tile, [direction]);
+    reportStructuralMutation(reporter);
+    return split;
   }
-  function removeCustomTile(tile) {
+  function removeCustomTile(tile, reporter) {
     const method = read(tile, "remove");
     if (!method.ok || !isMethod(method.value)) {
       return false;
     }
     try {
       Reflect.apply(method.value, tile, []);
+      reportStructuralMutation(reporter);
       return true;
     } catch (error) {
       void error;
@@ -217,7 +231,8 @@
     return a.output === b.output && a.desktopId === b.desktopId;
   }
   var FeatureGate = class {
-    constructor() {
+    constructor(afterRun) {
+      this.afterRun = afterRun;
       this.enabled = true;
       this.logged = false;
     }
@@ -226,6 +241,7 @@
     }
     run(operation, log) {
       if (!this.enabled) {
+        this.afterRunSafely();
         return { ok: false };
       }
       try {
@@ -234,6 +250,16 @@
         void error;
         this.disable("exception", log);
         return { ok: false };
+      } finally {
+        this.afterRunSafely();
+      }
+    }
+    afterRunSafely() {
+      var _a;
+      try {
+        (_a = this.afterRun) == null ? void 0 : _a.call(this);
+      } catch (error) {
+        void error;
       }
     }
     disable(reason, log) {
@@ -1854,11 +1880,12 @@
   var TileController = class {
     constructor(environment) {
       this.environment = environment;
-      this.gate = new FeatureGate();
+      this.gate = new FeatureGate(() => this.flushStructuralMutation());
       this.pending = new TransientState();
       this.drag = new TransientState();
       this.shownDropOutline = null;
       this.groupOutlineIdentity = null;
+      this.structuralMutationPending = false;
       this.interactiveWindows = /* @__PURE__ */ new Map();
       // Per-window fullscreen watch disconnects and enter/exit records. Both are
       // bounded like the other identity sets so they cannot grow without limit.
@@ -1992,6 +2019,9 @@
       // changes it (spec E) and hotplug/disconnect leaves it intact. Session-only,
       // never persisted; empty for every non-shared mode.
       this.sharedWorkspaces = [];
+      this.markStructuralMutation = () => {
+        this.structuralMutationPending = true;
+      };
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -2566,7 +2596,7 @@
           }
           let assigned = false;
           try {
-            assigned = manageTile(target.decoded.tile, active);
+            assigned = manageTile(target.decoded.tile, active, this.markStructuralMutation);
           } catch (error) {
             void error;
             this.diagnostic("move-rejected:assignment-failed");
@@ -2841,7 +2871,7 @@
       }
       let firstAssigned = false;
       try {
-        firstAssigned = assignWindowToTile(active, target.decoded.tile);
+        firstAssigned = assignWindowToTile(active, target.decoded.tile, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -2855,7 +2885,7 @@
       }
       let secondAssigned = false;
       try {
-        secondAssigned = assignWindowToTile(occupant, source.decoded.tile);
+        secondAssigned = assignWindowToTile(occupant, source.decoded.tile, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -2981,7 +3011,7 @@
       }
       let restored = false;
       try {
-        restored = assignWindowToTile(active, source.decoded.tile);
+        restored = assignWindowToTile(active, source.decoded.tile, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -3125,7 +3155,7 @@
         }
         let assigned = false;
         try {
-          assigned = assignWindowToTile(active, target.decoded.tile);
+          assigned = assignWindowToTile(active, target.decoded.tile, this.markStructuralMutation);
         } catch (error) {
           void error;
           this.diagnostic("attach-rejected:assignment-failed");
@@ -3305,7 +3335,7 @@
       }
       let managed = false;
       try {
-        managed = manageTile(target.decoded.tile, active);
+        managed = manageTile(target.decoded.tile, active, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -3541,7 +3571,7 @@
           }
           let assigned = false;
           try {
-            assigned = assignWindowToTile(entry.window, entry.target);
+            assigned = assignWindowToTile(entry.window, entry.target, this.markStructuralMutation);
           } catch (error) {
             void error;
             this.diagnostic(
@@ -3671,7 +3701,10 @@
           this.diagnostic("preset-rejected:compile-failed");
           return;
         }
-        const execution = executeBlueprintInstructions(compiled.value, source.decoded.tile, customTileSplitSeam);
+        const execution = executeBlueprintInstructions(compiled.value, source.decoded.tile, {
+          split: (tile, orientation) => splitCustomTile(tile, layoutDirectionFor(orientation), this.markStructuralMutation),
+          decodeChildren: customTileSplitSeam.decodeChildren
+        });
         if (!execution.ok) {
           this.diagnostic(
             execution.mutationPossible ? "preset-failed:split-mutation-possible" : "preset-failed:split-no-mutation"
@@ -3695,7 +3728,7 @@
             return;
           }
           try {
-            if (!manageTile(leaf, occupant.window)) {
+            if (!manageTile(leaf, occupant.window, this.markStructuralMutation)) {
               this.diagnostic(`preset-failed:assignment-failed:${stage}`);
               return;
             }
@@ -3843,7 +3876,7 @@
         }
         let assigned = false;
         try {
-          assigned = assignWindowToTile(entry.window, entry.target);
+          assigned = assignWindowToTile(entry.window, entry.target, this.markStructuralMutation);
         } catch (error) {
           void error;
           return writes === 0 ? { kind: "rejected", reason: "assignment-failed" } : { kind: "partial", reason: "assignment-failed", writes };
@@ -4444,7 +4477,7 @@
         this.diagnostic("fullscreen:exit restore failed:leaf-occupied");
         return;
       }
-      if (!manageTile(preservedLeaf.decoded.tile, window)) {
+      if (!manageTile(preservedLeaf.decoded.tile, window, this.markStructuralMutation)) {
         this.diagnostic("fullscreen:exit restore failed:assignment-failed");
         return;
       }
@@ -4693,7 +4726,7 @@
           this.diagnostic("maximize:exit restore failed:leaf-occupied");
           return false;
         }
-        if (!manageTile(leaf.decoded.tile, window)) {
+        if (!manageTile(leaf.decoded.tile, window, this.markStructuralMutation)) {
           this.diagnostic("maximize:exit restore failed:assignment-failed");
           return false;
         }
@@ -4991,6 +5024,13 @@
       this.environment.hideOutline();
       this.shownDropOutline = null;
     }
+    flushStructuralMutation() {
+      if (!this.structuralMutationPending) {
+        return;
+      }
+      this.structuralMutationPending = false;
+      this.flashFocusedGroup();
+    }
     flashFocusedGroup() {
       if (this.shownDropOutline !== null) {
         return;
@@ -5140,7 +5180,7 @@
       if (topology === null || operationLeafForTile(topology, drag.originTile) === null) {
         return false;
       }
-      if (!manageTile(drag.originTile, drag.window)) {
+      if (!manageTile(drag.originTile, drag.window, this.markStructuralMutation)) {
         return false;
       }
       this.diagnostic("drag-origin-restored");
@@ -5334,7 +5374,7 @@
     applyEmptyDrop(drag, scope, target) {
       let managed = false;
       try {
-        managed = manageTile(target.decoded.tile, drag.window);
+        managed = manageTile(target.decoded.tile, drag.window, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -5408,7 +5448,7 @@
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
       }
-      const split = splitCustomTile(target.decoded.tile, splitDirection2(direction));
+      const split = splitCustomTile(target.decoded.tile, splitDirection2(direction), this.markStructuralMutation);
       const decoded = decodeSequential(split, isCustomTile, 2);
       if (decoded.ok) {
         this.decodedBoundary("split-result");
@@ -5423,8 +5463,8 @@
       const second = children[1];
       const selected = direction === "left" || direction === "up" ? first : second;
       const opposite = selected === first ? second : first;
-      const occupantManaged = manageTile(opposite, occupant);
-      const draggedManaged = occupantManaged && manageTile(selected, drag.window);
+      const occupantManaged = manageTile(opposite, occupant, this.markStructuralMutation);
+      const draggedManaged = occupantManaged && manageTile(selected, drag.window, this.markStructuralMutation);
       if (!occupantManaged || !draggedManaged) {
         this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
         return false;
@@ -5583,7 +5623,7 @@
       if (!plan.ok) {
         return;
       }
-      const split = splitCustomTile(target.decoded.tile, splitDirection2(pending.direction));
+      const split = splitCustomTile(target.decoded.tile, splitDirection2(pending.direction), this.markStructuralMutation);
       const decoded = decodeSequential(split, isCustomTile, 2);
       if (!decoded.ok) {
         this.gate.disable("keyboard-split-result-invalid", (reason) => this.disabled(reason));
@@ -5600,11 +5640,11 @@
       const second = children[1];
       const occupantChild = pending.direction === "left" || pending.direction === "up" ? second : first;
       const incomingChild = occupantChild === first ? second : first;
-      if (!manageTile(occupantChild, pending.targetWindow)) {
+      if (!manageTile(occupantChild, pending.targetWindow, this.markStructuralMutation)) {
         this.diagnostic("keyboard-failed:first-assignment");
         return;
       }
-      if (!manageTile(incomingChild, window)) {
+      if (!manageTile(incomingChild, window, this.markStructuralMutation)) {
         this.diagnostic("keyboard-failed:second-assignment");
         return;
       }
@@ -5628,7 +5668,7 @@
       }
       for (const entry of topology) {
         if (entry.leaf === plan.value.leaf) {
-          if (manageTile(entry.decoded.tile, window)) {
+          if (manageTile(entry.decoded.tile, window, this.markStructuralMutation)) {
             this.diagnostic("automatic-placement-managed");
             return { kind: "managed" };
           }
@@ -5868,13 +5908,17 @@
       try {
         armed = this.environment.yieldOnce(() => {
           var _a;
-          if (((_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) !== pending) {
-            return;
+          try {
+            if (((_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) !== pending) {
+              return;
+            }
+            if (pending.phase !== armedFor) {
+              return;
+            }
+            this.settleScopeRebuild(scope, pending);
+          } finally {
+            this.flushStructuralMutation();
           }
-          if (pending.phase !== armedFor) {
-            return;
-          }
-          this.settleScopeRebuild(scope, pending);
         });
       } catch (error) {
         void error;
@@ -5890,7 +5934,7 @@
       const seam = {
         snapshot: () => this.resetSnapshot(scope),
         unmanage: (_tile, window) => detachWindowFromTile(window),
-        remove: (tile) => isCustomTile(tile) && removeCustomTile(tile)
+        remove: (tile) => isCustomTile(tile) && removeCustomTile(tile, this.markStructuralMutation)
       };
       const result = collapseToRootLeaf(seam);
       return result.ok;
@@ -5983,7 +6027,6 @@
       }
       if (this.rebuildPreset(scope, population)) {
         this.diagnostic("ownership-taken");
-        this.flashFocusedGroup();
       } else {
         this.markInert(scope, "rebuild-failed");
       }
@@ -6039,7 +6082,7 @@
         }
         let split;
         try {
-          split = splitCustomTile(target, layoutDirectionFor(instruction.orientation));
+          split = splitCustomTile(target, layoutDirectionFor(instruction.orientation), this.markStructuralMutation);
         } catch (error) {
           void error;
           return false;
@@ -6068,7 +6111,7 @@
         }
         let assigned = false;
         try {
-          assigned = assignWindowToTile(window, leaf);
+          assigned = assignWindowToTile(window, leaf, this.markStructuralMutation);
         } catch (error) {
           void error;
           return false;
@@ -6379,7 +6422,7 @@
       if (insertion.windows.length === 0 && insertion.tile.isLayout) {
         let assigned = false;
         try {
-          assigned = assignWindowToTile(window, insertion.tile);
+          assigned = assignWindowToTile(window, insertion.tile, this.markStructuralMutation);
         } catch (error) {
           void error;
         }
@@ -6418,7 +6461,7 @@
       const orientation = target.depth % 2 === 0 ? "horizontal" : "vertical";
       let split;
       try {
-        split = splitCustomTile(target.tile, layoutDirectionFor(orientation));
+        split = splitCustomTile(target.tile, layoutDirectionFor(orientation), this.markStructuralMutation);
       } catch (error) {
         void error;
         this.markInert(scope, "insert-split-threw");
@@ -6439,8 +6482,8 @@
       let occupantAssigned = false;
       let incomingAssigned = false;
       try {
-        occupantAssigned = assignWindowToTile(target.occupant, children[0]);
-        incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1]);
+        occupantAssigned = assignWindowToTile(target.occupant, children[0], this.markStructuralMutation);
+        incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1], this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -6581,8 +6624,12 @@
       let armed = false;
       try {
         armed = this.environment.yieldOnce(() => {
-          this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
-          this.settleOwedInvariants();
+          try {
+            this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
+            this.settleOwedInvariants();
+          } finally {
+            this.flushStructuralMutation();
+          }
         });
       } catch (error) {
         void error;
@@ -6733,7 +6780,7 @@
     collapseFreedLeaf(scope, topology, leafTile) {
       let removed = false;
       try {
-        removed = removeCustomTile(leafTile);
+        removed = removeCustomTile(leafTile, this.markStructuralMutation);
       } catch (error) {
         void error;
       }
@@ -7433,8 +7480,12 @@
       let armed = false;
       try {
         armed = this.environment.yieldOnce(() => {
-          this.pendingMoves.delete(window);
-          this.adoptMovedWindow(window, targetScope);
+          try {
+            this.pendingMoves.delete(window);
+            this.adoptMovedWindow(window, targetScope);
+          } finally {
+            this.flushStructuralMutation();
+          }
         });
       } catch (error) {
         void error;

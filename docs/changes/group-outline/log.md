@@ -31,3 +31,48 @@
 - Files / commit: `kwin/tests/controller-group-outline.test.ts`
 - Verification: 931 tests, 88 suites, 931 pass, 0 fail; both typechecks clean; `git diff --check` clean
 - Notes: unit-02 finding addressed; no further independent review dispatched
+
+## 2026-08-21
+
+- Role / unit: Lead / planning / stage-03
+- Result: spec amended and approved by user (`36b650f`): central hook replaced
+  by mutation-transaction observer at `boundary.ts` primitive perimeter;
+  implementation pre-written uncommitted by a prior Worker, structurally
+  verified by the Orchestrator, not yet test-run
+- Files / commit: `docs/changes/group-outline/spec.md` (`36b650f`)
+- Verification: none run yet at this stage
+- Notes: unit-03/unit-04 added to `plan.md` for the seven-flow test-gap
+  closure and Lead-run verification
+
+## 2026-08-21
+
+- Role / unit: Worker / unit-03 / attempt-01 (checkpoint slice 1 of 2)
+- Result: added 4 end-to-end tests (`applyPreset`, keyboard insertion
+  completion, automatic direct insertion, owned freed-leaf collapse); no
+  implementation fix needed
+- Files / commit: `kwin/tests/controller-group-outline.test.ts`
+- Verification: Lead-run `npm --prefix kwin test`: 938 tests, 89 suites, 0
+  fail; `npm --prefix kwin run typecheck`: clean
+- Notes: Lead inspected the diff directly; checkpoint accepted, no correction
+
+## 2026-08-21
+
+- Role / unit: Worker / unit-03 / attempt-01 (checkpoint slice 2 of 2)
+- Result: added 2 more end-to-end tests covering the remaining 3 flows
+  (`completeDrag` split + deferred collapse; cross-workspace source collapse +
+  deferred destination adoption); no implementation fix needed
+- Files / commit: `kwin/tests/controller-group-outline.test.ts`
+- Verification: Lead-run `npm --prefix kwin test`: 940 tests, 89 suites, 0
+  fail; `npm --prefix kwin run typecheck`: clean; single-call-site invariant
+  reconfirmed by grep
+- Notes: Lead inspected the diff directly; accepted, no correction round
+
+## 2026-08-21
+
+- Role / unit: Lead / unit-04
+- Result: full static verification re-run independently by the Lead
+- Files / commit: none changed
+- Verification: `npm --prefix kwin test`: 940/89/0 fail; `npm --prefix kwin
+  run typecheck`: clean on both tsconfigs; `bash scripts/dogfood-install.test.sh`:
+  347 assertions, 0 fail (matches baseline)
+- Notes: all acceptance criteria met; proceeding to commit
