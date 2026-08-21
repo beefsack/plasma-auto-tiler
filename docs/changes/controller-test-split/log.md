@@ -569,4 +569,24 @@ speculation.
   `presetSetup` have zero retained-source matches after pruning. Lead gates:
   `npm --prefix kwin test` reports 924 tests, 83 suites, 924 pass, 0 fail;
   `npm --prefix kwin run typecheck` passes both tsconfigs; describe count is
-  83; and `kwin/contents/code/main.js` has an empty diff.
+   83; and `kwin/contents/code/main.js` has an empty diff.
+
+## 2026-08-21 (unit-23b/attempt-01)
+
+- Role / unit: Lead / unit-23b (dynamic virtual desktops intra-describe
+  split), Worker attempt-01.
+- Result: accepted. The fixed 16/19/14 assignment moved tests verbatim into
+  `controller-dynamic-virtual-desktops-navigation.test.ts` and
+  `controller-dynamic-virtual-desktops-reconciliation.test.ts` under their
+  declared top-level describes. Direct range comparisons against `HEAD` show
+  all 49 test bodies are byte-identical.
+- Files / commit: `controller-dynamic-virtual-desktops.test.ts` reduced to
+  399 lines; navigation and reconciliation files added at 440 and 608 lines.
+  No commit.
+- Verification: Search proved `TileController`, `Harness`, `RECT`,
+  `TestTile`, `tile`, `attachTileWriter`, `installDwindleSplitter`,
+  `invokeShortcut`, and `ownTrailingEmpty` have no retained-source consumer
+  after pruning. Lead gates: `npm --prefix kwin test` reports 924 tests, 85
+  suites, 924 pass, 0 fail; `npm --prefix kwin run typecheck` passes both
+  tsconfigs; describe count is 85; and `kwin/contents/code/main.js` has an
+  empty diff.

@@ -167,7 +167,7 @@ actually starts.
 - [x] unit-21 shared workspaces
 - [x] unit-23 safe subset closed - fixture scenarios accepted; drag reflow/resize discarded under Orchestrator ruling
 - [x] unit-23a automatic dwindle ownership intra-describe split
-- [ ] unit-23b dynamic virtual desktops intra-describe split
+- [x] unit-23b dynamic virtual desktops intra-describe split
 - [ ] unit-23c interactive drag intra-describe split
 - [ ] unit-22 final cleanup and full gate
 
@@ -420,7 +420,20 @@ actually starts.
   have no retained ownership-file consumer, so only those imports were pruned.
   Lead gates: 924 tests, 83 suites/describes, 924 pass, 0 fail; both typecheck
   tsconfigs clean; `kwin/contents/code/main.js` diff empty. Attempts 1;
-  correction rounds 0; independent reviews 0.
+   correction rounds 0; independent reviews 0.
+- unit-23b/attempt-01: **accepted**. The verified fixed 16/19/14 assignment
+  moved tests verbatim into
+  `controller-dynamic-virtual-desktops-navigation.test.ts` and
+  `controller-dynamic-virtual-desktops-reconciliation.test.ts`, with the
+  declared top-level describe titles. Direct range comparisons against `HEAD`
+  confirm all 49 test bodies are byte-identical. Search proved
+  `TileController`, `Harness`, `RECT`, `TestTile`, `tile`,
+  `attachTileWriter`, `installDwindleSplitter`, `invokeShortcut`, and
+  `ownTrailingEmpty` have no retained dynamic-desktops-file consumer, so only
+  those import specifiers were pruned. Lead gates: 924 tests, 85
+  suites/describes, 924 pass, 0 fail; both typecheck tsconfigs clean; and
+  `kwin/contents/code/main.js` diff empty. Attempts 1; correction rounds 0;
+  independent reviews 0.
 
 ## Pending User Decisions
 
@@ -493,12 +506,10 @@ resolved.
   drag-reflow-and-resize slice is discarded under the Orchestrator's scope
   reduction, with its failed work preserved locally and unpushed at
   `wip/unit-23-drag-split`.
-- The unit-23 parked subset is an open acceptance gap:
-  `controller-automatic-dwindle-ownership.test.ts` (1,932),
-  `controller-interactive-drag.test.ts` (1,277), and
-  `controller-dynamic-virtual-desktops.test.ts` (1,416) cannot meet the
-  threshold while preserving their single top-level describes. Unit-22 and
-  completion/archive work remain blocked pending the user decision.
+- The unit-23 parked subset still has an open acceptance gap:
+  `controller-interactive-drag.test.ts` (1,277) cannot meet the threshold
+  while preserving its single top-level describe. Unit-22 and
+  completion/archive work remain blocked pending unit-23c.
 - Grep-based import pruning could theoretically under- or over-prune on an
   edge case (e.g. a name matching inside a string literal or comment rather
   than a real reference); the `npm run typecheck` step in every unit is the
@@ -517,6 +528,6 @@ resolved.
   No production code was touched anywhere in the change. The final clean-main
   gate reports 924 tests, 81 suites, 0 failures, and 81 describes, with 336
   dogfood assertions. Unit-23's fixture-scenarios safe slice is accepted; its
-  drag-reflow-and-resize slice is discarded under the Orchestrator ruling. The
-  three-file parked subset remains an acceptance gap, so unit-22
-  completion/archive remains prohibited pending the user decision.
+  drag-reflow-and-resize slice is discarded under the Orchestrator ruling.
+  Unit-23a and unit-23b are accepted; unit-23c remains, so unit-22
+  completion/archive remains prohibited.
