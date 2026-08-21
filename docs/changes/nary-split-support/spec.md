@@ -26,8 +26,10 @@ In scope:
 - Make every 3+-child topology decision from direct-child count and order, never
   width, screen position, or other geometry.
 - Characterize and preserve every binary-only behavior. For identical
-  binary-only inputs, the ordered layout serialization and window assignments
-  must be byte-identical to the pre-migration baseline.
+  binary-only inputs, the existing native layout serialization and window
+  assignments must be byte-identical to the pre-migration baseline. The
+  comparison is not against a serialization of the new project model: that
+  would not establish preserved observable behavior.
 - Extend focused tests across the inventory in
   `research/binary-coupling.md`, without changing unrelated behavior.
 
@@ -66,41 +68,74 @@ In scope:
   removed, or retained behind an explicitly N-ary-safe contract.
 - [ ] The 13 affected test files and shared fixture identified by the research
   inventory have appropriate updated or added coverage.
-- [ ] Characterization tests prove byte-identical ordered layout serialization
-  and window assignments for all existing binary-only fixtures before and after
-  the migration.
+- [ ] Characterization tests prove byte-identical existing native layout
+  serialization and window assignments for all existing binary-only fixtures
+  before and after the migration, rather than comparing the new internal model
+  with itself.
 - [ ] `npm --prefix kwin test` passes, `npm --prefix kwin run typecheck` is
   clean for both tsconfigs, and `bash scripts/dogfood-install.test.sh` reports
   zero failures.
 
-## Pending User Decisions
+## User Decisions
 
-- Should this be a hard type migration to ordered child arrays, or may a
-  temporary compatibility shim preserve tuple-shaped contracts at boundaries?
-  Options: hard migration; boundary-only shim with an explicit removal unit.
-- What represents N-ary proportions? Options: an N-length ratio array;
-  per-child weights normalized at use; retain only native geometry with no
-  project ratio representation.
-- How does resize absorb a delta in a 3+-child split? Options: the immediate
-  adjacent sibling only; all eligible siblings proportionally; a selected
-  deterministic sibling policy; reject N-ary resize until separately designed.
-- After insertion into an N-ary container, what normalization rule applies?
-  Options: equalize all direct children; equalize only the inserted local pair;
-  preserve existing proportions and assign a defined new-child proportion.
-- What is the canonical ordered-child source independent of geometry? Options:
-  stable native child enumeration; project-owned persisted order; another
-  explicitly specified boundary contract.
-- How should native split-result cardinality be handled? Options: retain and
-  assert the known binary result at the native split boundary while N-ary
-  containers are formed through composition; broaden the boundary to decode an
-  arbitrary native list after evidence establishes its contract.
-- Should `move-conformance-model.ts` be a test-only behavioral oracle for the
-  new structural tests? Options: replay its relevant vectors against a
+- Settled - use a hard migration to ordered child arrays. Do not retain a
+  compatibility shim. The project is pre-release, so breaking changes are
+  acceptable to keep the design simple.
+- Settled - represent N-ary proportions as per-child weights normalized at
+  layout time. Do not introduce a sizing mode, scroll offset, or flow container
+  until a strategy needs one. Sum-to-1 must not become a persisted invariant:
+  keeping stored weights un-normalized is what keeps a later sizing mode cheap.
+- Settled - resize is divider-based. The direction selects the divider; only
+  the focused child and the sibling across that divider change weight. This
+  degenerates to the current binary behavior at two children by construction.
+- Settled by evidence - move-insertion normalization for an existing window
+  entering a container through a directional move follows S1-S4 in
+  `docs/cosmic-move-conformance.md#sizing`: the mover receives `1/n` of the
+  target extent, a nested group counts as one direct child, and existing direct
+  children retain their relative proportions while scaling by `(n-1)/n`. R2b's
+  target-axis precondition is governed by
+  `docs/cosmic-move-conformance.md#the-rules`, not by a design choice.
+- Open - what sizing applies to new-window insertion? The only findings are
+  unpromoted research in
+  `docs/changes/nary-split-support/research/cosmic-insertion-findings.md`; no
+  replay vectors exist for it. Directional move-insertion sizing evidence does
+  not settle new-window insertion sizing.
+- Settled jointly with native split cardinality - the project owns an ordered
+  N-ary layout model as the semantic source of truth for direct-child order,
+  weights, adjacency, and container meaning. No native KWin type or
+  geometry-derived order appears in project semantics; the geometry sort in
+  `orderedChildren` is deleted rather than generalized.
+- Settled jointly with canonical child order - a narrow, pinned adapter projects
+  the project model onto native tiles. KWin is the rendering and mutation
+  substrate, not the model. The exact native binding is deferred behind one
+  evidence unit: validate `CustomTile.split(direction)` as a strict two-child
+  mutation result and `tile.tiles` only as an ordered native projection; form
+  N-ary semantics in the project model and never infer them from native
+  geometry. If evidence contradicts that candidate contract, redesign only the
+  adapter, not the project semantic model; this asymmetry is why approval can
+  precede the evidence. Semantic authority is session-scoped; restart and
+  manual-native-edit persistence remain evidence questions because they depend
+  on native support for a 3+-child container.
+- Open - should `move-conformance-model.ts` be a test-only behavioral oracle
+  for the new structural tests? Options: replay its relevant vectors against a
   test-only adapter; keep it independent and author equivalent focused N-ary
   vectors; use it only as reference documentation.
 
+## Known Migration Defect
+
+The current code applies four incompatible order rules: `orderedChildren`
+(`kwin/src/controller.ts:1480-1501`) derives geometry order and rejects
+non-pairs; `presetNodeMatches` (`kwin/src/controller.ts:1554-1581`) accepts
+either decoded order; `presetTileAtPath`
+(`kwin/src/controller.ts:6480-6498`) treats decoded indices as left/right; and
+`deepestLeaf` (`kwin/src/controller.ts:6674-6713`) follows the last decoded
+child. The migration resolves this only when every site consumes the same
+canonical project-model order. Retaining a geometry sort or raw native
+traversal at any of these sites relocates the conflict rather than resolving
+it; this is an acceptance condition.
+
 ## Approval Boundary
 
-Implementation begins only after the Pending User Decisions are resolved and
-this specification is approved. Autonomous mode authorized preparation of this
-artifact, not resolution of its consequential design choices.
+Implementation begins only after the remaining open oracle decision is resolved
+and this specification is approved. Autonomous mode authorized preparation of
+this artifact, not resolution of its consequential design choice.

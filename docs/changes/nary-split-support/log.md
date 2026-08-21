@@ -71,3 +71,29 @@ result, changed files or commit, verification, and discoveries or decisions.
 - Verification: `npm --prefix kwin test` passed: 924 tests / 87 suites / 0
   failures. `npm --prefix kwin run typecheck` passed with both tsconfigs clean.
 - Notes: No authored vectors, model executable code, or `main.js` changed.
+
+## 2026-08-21
+
+- Role / unit: Lead / unit-01 / attempt-01
+- Result: Reconciled six settled decisions into the specification and aligned
+  the plan's semantic sections. The conformance-model oracle role remains open.
+- Files / commit: `spec.md`, `plan.md`, `log.md`; uncommitted.
+- Verification: Confirmed the COSMIC corpus's S1-S4 sizing rules determine the
+  insertion-normalization contract and cite R2b's target-axis precondition.
+  `npm --prefix kwin run typecheck` passed for both tsconfigs; `npm --prefix
+  kwin test` passed: 924 tests / 87 suites / 0 failures.
+- Notes: The project-owned ordered N-ary model is authoritative for session
+  semantics; a separately scoped native-binding evidence unit gates unit-04.
+  The adapter, not the semantic model, changes if its candidate native contract
+  is disproved. No file under `kwin/` was modified.
+
+## 2026-08-21
+
+- Role / unit: Lead / unit-01 / correction-01
+- Result: Restricted the settled insertion-normalization rule to directional
+  move-insertion and recorded new-window insertion sizing as open.
+- Files / commit: `spec.md`, `plan.md`, `log.md`; uncommitted.
+- Verification: Confirmed the new-window findings are unpromoted research with
+  no replay vectors and do not add behavior to the movement rules.
+- Notes: S1-S4 govern existing-window directional move-insertion only; they do
+  not establish new-window insertion sizing. No file under `kwin/` was modified.

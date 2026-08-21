@@ -19,23 +19,28 @@ documented accepted change explains its replacement.
 
 ## Technical Approach
 
-After the pending design decisions are approved, migrate the project contract
-from binary child roles to an ordered direct-child collection. Establish binary
-characterization evidence before changing it, then apply the contract in narrow
+After the remaining open decisions and approval, migrate the project contract
+from binary child roles to a project-owned ordered direct-child model. Establish
+binary characterization evidence against existing native serialization and
+window assignments before changing it, then apply the contract in narrow
 operation groups: core logic, native boundary and order, preset reconstruction,
 resize, drag, keyboard insertion, automatic/dwindle insertion, and reflow.
-Each group carries its focused tests; the final gate reruns the complete static
-suite and dogfood installer test. The conformance model remains test-only and
-is used only if its pending oracle role is approved.
+Every order-sensitive site consumes the same canonical model order; no site
+retains a geometry sort or raw native traversal. A separately scoped
+native-binding evidence unit gates native-boundary work: its result may redesign
+the adapter but not the project semantic model. Each group carries its focused
+tests; the final gate reruns the complete static suite and dogfood installer
+test. The conformance model remains test-only and is used only if its pending
+oracle role is approved.
 
 ## Work Units
 
 | ID | Objective | Depends on | File or subsystem scope | Verification |
 | --- | --- | --- | --- | --- |
-| unit-01 | Resolve the seven Pending User Decisions and freeze the ordered-child, proportion, resize, normalization, native-boundary, and oracle contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
+| unit-01 | Record the six settled decisions, including the joint ordered-child/native-boundary contract, and resolve the remaining oracle and new-window-insertion-sizing decisions before freezing the contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
 | unit-02 | Add binary characterization fixtures that serialize ordered layouts and window assignments before topology migration. | unit-01 | `kwin/tests/logic.test.ts`, controller fixture/test seams | Focused characterization cases, then `npm --prefix kwin test` (static). |
 | unit-03 | Generalize logic-layer split planning and equality contracts from pair roles to the approved ordered-child contract. | unit-02 | `kwin/src/logic.ts`, `kwin/tests/logic.test.ts` | N-ary structural cases plus existing logic tests; `npm --prefix kwin run typecheck` (static). |
-| unit-04 | Generalize native split boundary decoding and canonical ordered-child handling without claiming an unproven native result cardinality. | unit-01, unit-03 | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests; `npm --prefix kwin test` and typecheck (static). |
+| unit-04 | Generalize the pinned native adapter and canonical project-model order without claiming an unproven native result cardinality. A separately scoped native-binding evidence unit gates this work. | unit-01, unit-03, native-binding evidence | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests prove every listed order-sensitive site consumes canonical model order; `npm --prefix kwin test` and typecheck (static). |
 | unit-05 | Migrate preset collection, pathing, rebuild, overlay validation, and invariant shape checks to ordered direct children. | unit-04 | Controller preset/overlay functions; pure-config, selected-overlay, keyboard-move tests | Focused preset and overlay tests, binary serialization comparison, complete test suite (static). |
 | unit-06 | Implement the approved N-ary resize, minimum-size, and ratio/weight semantics. | unit-01, unit-04 | Controller resize/minimum functions; resize diagnostics tests | 2-child regression and approved 3+-child resize cases; typecheck and complete test suite (static). |
 | unit-07 | Generalize drag target selection, split application, and reflow normalization for N-ary direct children. | unit-03, unit-04 | Controller drag/reflow functions; interactive drag, diagnostics, overlay-reflow tests | Same-axis wrapping, order-only 3+-child cases, binary characterization checks, complete suite (static). |
@@ -67,8 +72,8 @@ trips the circuit breaker and requires escalation with a loop report.
 
 ## Pending User Decisions
 
-- The seven questions in `spec.md#pending-user-decisions` block unit-01 and all
-  implementation units.
+- The oracle role and new-window insertion sizing in `spec.md#user-decisions`
+  remain open. They block unit-01 and therefore implementation.
 
 ## Acceptance-Criterion Evidence
 
@@ -78,15 +83,16 @@ trips the circuit breaker and requires escalation with a loop report.
 | Same-axis wrapping, parent escape, collapse, and geometry independence | unit-07 and unit-08 structural tests, plus the approved oracle route in unit-09. |
 | Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
 | 13 test files and shared fixture covered | unit-09 test-surface audit. |
-| Binary-only layouts remain byte-identical | unit-02 fixtures rerun in units 03 through 09. |
+| Binary-only layouts remain byte-identical | unit-02 fixtures compare existing native serialization and window assignments, then rerun in units 03 through 09. |
 | Complete test, typecheck, and dogfood gates | unit-09 command results. |
 
 ## Residual Risks
 
-- N-ary resize and proportion behavior lacks settled product semantics; unit-06
-  remains blocked until a user decision.
-- Native result cardinality is not established; unit-04 must retain that
-  evidence boundary rather than infer an API contract.
+- Native result cardinality and whether a native 3+-child container survives
+  restart or manual native edits remain unestablished. The separately scoped
+  evidence unit gates unit-04; its outcome may redesign the adapter only.
+- The project model's semantic authority is session-scoped until that evidence
+  resolves restart and manual-native-edit behavior.
 - The controller is 9,191 lines and the inventory spans 24 functions and 13
   test files; narrow units reduce but do not eliminate regression risk.
 
