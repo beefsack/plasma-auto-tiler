@@ -166,7 +166,7 @@ actually starts.
 - [x] unit-20 global-unique workspaces
 - [x] unit-21 shared workspaces
 - [x] unit-23 safe subset closed - fixture scenarios accepted; drag reflow/resize discarded under Orchestrator ruling
-- [ ] unit-23a automatic dwindle ownership intra-describe split
+- [x] unit-23a automatic dwindle ownership intra-describe split
 - [ ] unit-23b dynamic virtual desktops intra-describe split
 - [ ] unit-23c interactive drag intra-describe split
 - [ ] unit-22 final cleanup and full gate
@@ -410,6 +410,17 @@ actually starts.
   the retained 1,004-line file is within the user's "~1,000 line" threshold.
   The discarded work is preserved locally and unpushed in
   `wip/unit-23-drag-split`.
+- unit-23a/attempt-01: **accepted**. The verified fixed 12/12/8 assignment
+  moved tests verbatim into `controller-automatic-dwindle-removals.test.ts`
+  and `controller-automatic-dwindle-recovery.test.ts`, with the declared
+  top-level describe titles. Direct range comparisons against `HEAD` confirm
+  all 32 test bodies are byte-identical. Search proved
+  `configureThreeOccupantPreset`, `currentScopeFor`,
+  `installCapacityRejectingSplitter`, `invokeShortcut`, and `presetSetup`
+  have no retained ownership-file consumer, so only those imports were pruned.
+  Lead gates: 924 tests, 83 suites/describes, 924 pass, 0 fail; both typecheck
+  tsconfigs clean; `kwin/contents/code/main.js` diff empty. Attempts 1;
+  correction rounds 0; independent reviews 0.
 
 ## Pending User Decisions
 

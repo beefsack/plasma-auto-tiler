@@ -552,3 +552,21 @@ speculation.
   then independently ran `npm --prefix kwin run typecheck` (passed), `npm
   --prefix kwin test` (924 tests, 81 suites, 924 pass, 0 fail, 0 cancelled, 0
   skipped), and describe count (81).
+
+## 2026-08-21 (unit-23a/attempt-01)
+
+- Role / unit: Lead / unit-23a (automatic dwindle ownership intra-describe
+  split), Worker attempt-01.
+- Result: accepted. The fixed 12/12/8 assignment moved tests verbatim into
+  `controller-automatic-dwindle-removals.test.ts` and
+  `controller-automatic-dwindle-recovery.test.ts` under their declared
+  top-level describes. Direct range comparisons against `HEAD` show all 32
+  test bodies are byte-identical.
+- Files / commit: `controller-automatic-dwindle-ownership.test.ts` reduced to
+  570 lines; removals and recovery files added at 678 and 725 lines. No commit.
+- Verification: Search proved `configureThreeOccupantPreset`,
+  `currentScopeFor`, `installCapacityRejectingSplitter`, `invokeShortcut`, and
+  `presetSetup` have zero retained-source matches after pruning. Lead gates:
+  `npm --prefix kwin test` reports 924 tests, 83 suites, 924 pass, 0 fail;
+  `npm --prefix kwin run typecheck` passes both tsconfigs; describe count is
+  83; and `kwin/contents/code/main.js` has an empty diff.
