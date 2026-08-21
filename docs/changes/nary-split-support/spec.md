@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Ready for Orchestrator approval after new-window insertion sizing resolves
+- Status: Ready for Orchestrator approval
 
 ## Objective
 
@@ -95,27 +95,31 @@ In scope:
   children retain their relative proportions while scaling by `(n-1)/n`. R2b's
   target-axis precondition is governed by
   `docs/cosmic-move-conformance.md#the-rules`, not by a design choice.
-- Open - what sizing applies to new-window insertion? The only findings are
-  unpromoted research in
-  `docs/changes/nary-split-support/research/cosmic-insertion-findings.md`; no
-  replay vectors exist for it. Directional move-insertion sizing evidence does
-  not settle new-window insertion sizing.
-- Settled jointly with native split cardinality - the project owns an ordered
-  N-ary layout model as the semantic source of truth for direct-child order,
-  weights, adjacency, and container meaning. No native KWin type or
+- Settled - New-window insertion sizing: a new window subdivides the focused
+  window's own cell approximately 50/50, splitting along the focused window's
+  longest axis. No sibling's extent changes. The parent container is NOT
+  re-weighted. Unlike move-insertion, which gives the mover an equal share and
+  scales existing direct children by `(n-1)/n`, new-window insertion does not
+  renormalise.
+- Settled jointly with ordered child and native boundary - the project owns an
+  ordered N-ary layout model as the semantic source of truth for direct-child
+  order, weights, adjacency, and container meaning. No native KWin type or
   geometry-derived order appears in project semantics; the geometry sort in
-  `orderedChildren` is deleted rather than generalized.
-- Settled jointly with canonical child order - a narrow, pinned adapter projects
-  the project model onto native tiles. KWin is the rendering and mutation
-  substrate, not the model. The exact native binding is deferred behind one
-  evidence unit: validate `CustomTile.split(direction)` as a strict two-child
-  mutation result and `tile.tiles` only as an ordered native projection; form
-  N-ary semantics in the project model and never infer them from native
-  geometry. If evidence contradicts that candidate contract, redesign only the
-  adapter, not the project semantic model; this asymmetry is why approval can
-  precede the evidence. Semantic authority is session-scoped; restart and
-  manual-native-edit persistence remain evidence questions because they depend
-  on native support for a 3+-child container.
+  `orderedChildren` is deleted rather than generalized. A narrow, pinned adapter
+  projects the project model onto native tiles. KWin is the rendering and
+  mutation substrate, not the model. E4 establishes that, on an observed
+  one-child root, `tile.tiles` is indexed and iterable array-like:
+  `Array.isArray(tile.tiles)` is false despite prototype constructor name
+  `"Array"` (`research/native-binding-evidence.md:156-170`). The adapter must
+  not use `Array.isArray` guards or assume `Array.prototype` methods.
+  Multi-ordinal native order remains unestablished;
+  `CustomTile.split(direction)` JavaScript return shape, return order, and
+  cardinality remain unproven and parked. Form N-ary semantics in the project
+  model and never infer them from native geometry. If evidence contradicts that
+  candidate contract, redesign only the adapter, not the project semantic model;
+  this asymmetry is why approval can precede the evidence. Semantic authority is
+  session-scoped; restart and manual-native-edit persistence remain evidence
+  questions because they depend on native support for a 3+-child container.
 - Settled - `move-conformance-model.ts` is reference documentation only, not a
   behavioral oracle for N-ary structural tests. Structural tests use independent
   synthetic N-ary fixtures covering ordered direct children, same-axis wrapping,

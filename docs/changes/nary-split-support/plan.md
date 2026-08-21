@@ -63,7 +63,7 @@ binary behavior.
 
 ## Progress
 
-- [ ] unit-01 Pending new-window insertion sizing decision.
+- [x] unit-01 Decision record and contracts frozen.
 - [ ] unit-02 Binary characterization.
 - [ ] unit-03 Logic contract migration.
 - [ ] unit-04 Native boundary and ordering.
@@ -95,16 +95,13 @@ trips the circuit breaker and requires escalation with a loop report.
 
 ## Pending User Decisions
 
-- New-window insertion sizing in `spec.md#user-decisions` is the only pending
-  user decision. It blocks unit-01 and therefore implementation.
-- Resolved 2026-08-21: after two failed `native-evidence-phase-2` attempts,
-  the circuit breaker froze the nested live-probe path. The user then approved
-  the distinct direct read-only host reset recorded as `unit-03b/attempt-03`.
+None.
 
 ## Acceptance-Criterion Evidence
 
 | Acceptance criterion | Evidence |
 | --- | --- |
+| Seven settled decisions and frozen contracts | unit-01 approved record in `spec.md#user-decisions`, promoted replay vectors in `research/cosmic-insertion-findings.md`, and static citation inspection. |
 | Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. |
 | Same-axis wrapping, parent escape, collapse, and geometry independence | Independent synthetic N-ary structural tests in units 07 through 09. |
 | Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
