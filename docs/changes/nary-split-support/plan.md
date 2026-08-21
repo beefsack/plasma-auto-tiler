@@ -64,7 +64,7 @@ binary behavior.
 ## Progress
 
 - [x] unit-01 Decision record and contracts frozen.
-- [ ] unit-02 Binary characterization.
+- [x] unit-02 Binary characterization.
 - [ ] unit-03 Logic contract migration.
 - [ ] unit-04 Native boundary and ordering.
 - [ ] unit-05 Preset and overlay reconstruction.
@@ -108,6 +108,7 @@ None.
 | 13 test files and shared fixture covered | unit-09 test-surface audit. |
 | Binary-only layouts remain byte-identical | unit-02 fixtures compare existing native serialization and window assignments, then rerun in units 03 through 09. |
 | Complete test, typecheck, and dogfood gates | unit-09 command results. |
+| unit-02 binary "before" characterization baseline | `serializeTileTree` helper in `kwin/tests/controller-fixture-scenarios.ts`; two pinned-golden tests driving the real controller through a dwindle chain and a preset-shortcut insertion in `kwin/tests/nary-characterization.test.ts`; `npm --prefix kwin test`: 942 tests, 90 suites, 0 fail (up from the 940/89/0 baseline); typecheck clean on both tsconfigs. |
 
 ## Residual Risks
 

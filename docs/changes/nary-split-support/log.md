@@ -237,3 +237,27 @@ result, changed files or commit, verification, and discoveries or decisions.
   by the circuit breaker and is escalated.
 - Notes: E4 has no new runtime fact. The pre-existing source-only conclusion
   remains unchanged.
+
+## 2026-08-22
+
+- Role / unit: Lead / unit-02 / attempt-01
+- Result: Accepted. Added a `serializeTileTree` fixture-seam helper and two
+  pinned-golden characterization tests that drive the real `TileController`
+  through a dwindle chain and a preset-shortcut insertion, establishing the
+  "before migration" binary baseline.
+- Files / commit: `kwin/tests/controller-fixture-scenarios.ts`,
+  `kwin/tests/nary-characterization.test.ts`; commit pending.
+- Verification: Lead independently reran both commands after inspecting the
+  diff directly: `npm --prefix kwin test` - 942 tests / 90 suites / 0
+  failures (up from 940/89/0); `npm --prefix kwin run typecheck` - clean on
+  both tsconfigs.
+- Notes: Plan's Work Units table lists unit-02's file scope as
+  `kwin/tests/logic.test.ts`, controller fixture/test seams. `logic.test.ts`
+  tests pure `logic.ts` functions only and has no `TestTile`/controller
+  involvement; achieving spec's "native layout serialization" acceptance
+  criterion required exercising real `TestTile` trees through the controller,
+  so the Lead placed the new characterization tests in a new file,
+  `kwin/tests/nary-characterization.test.ts`, using the existing
+  `controller-fixture-scenarios.ts` fixture seam instead. This is an
+  execution-level file-location judgment, not a change to the unit's
+  objective, dependencies, or verification. No `kwin/src/` file was touched.

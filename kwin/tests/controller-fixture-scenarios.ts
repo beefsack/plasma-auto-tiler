@@ -749,6 +749,26 @@ export function assertDwindleShape(tile: TestTile, blueprint: Blueprint, depth: 
 // the blueprint exactly, with the first decoded child as the left subtree and
 // the second as its right subtree, and each branch carrying the orientation the
 // blueprint node itself declares.
+// Serializes a live TestTile tree into a plain, assert.deepEqual-comparable
+// value keyed on each window's stable `caption`, for byte-identical
+// before/after migration characterization comparisons.
+export interface SerializedLayout {
+    readonly direction: number;
+    readonly children: readonly SerializedNode[];
+}
+export interface SerializedLeaf {
+    readonly windows: readonly string[];
+}
+export type SerializedNode = SerializedLayout | SerializedLeaf;
+
+export function serializeTileTree(tile: TestTile): SerializedNode {
+    if (tile.isLayout) {
+        const children = tile.tiles as TestTile[];
+        return { direction: tile.layoutDirection, children: children.map(serializeTileTree) };
+    }
+    return { windows: (tile.windows as TestWindow[]).map((w) => w.caption) };
+}
+
 export function assertPresetShape(tile: TestTile, blueprint: Blueprint): void {
     if (blueprint.kind === "leaf") {
         assert.equal(tile.isLayout, false);
