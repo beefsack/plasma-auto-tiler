@@ -25,7 +25,7 @@ In scope:
 - Extend the pure model with an outer multi-output state for R4: output trees,
   directional output adjacency, and focused output/window.
 - Propose the required `docs/backlog.md` edits and record the eventual test
-  baseline update in `docs/changes/controller-test-split/plan.md`.
+  baseline update in `docs/changes/archive/2026-08-21-controller-test-split/plan.md`.
 
 Non-goals:
 

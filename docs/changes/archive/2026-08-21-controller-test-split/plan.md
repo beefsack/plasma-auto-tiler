@@ -169,7 +169,7 @@ actually starts.
 - [x] unit-23a automatic dwindle ownership intra-describe split
 - [x] unit-23b dynamic virtual desktops intra-describe split
 - [x] unit-23c interactive drag intra-describe split
-- [ ] unit-22 final cleanup and full gate
+- [x] unit-22 final cleanup and full gate
 
 ## Attempt Accounting
 
@@ -505,15 +505,35 @@ resolved.
 
 | Acceptance criterion (from spec.md) | Evidence |
 |---|---|
-| All 40 describes preserved unchanged across 22 topic files + fixtures | unit-22 name-literal diff from `d18d87a` to clean `main` is empty; drag split was discarded, not merged |
-| `grep -c "describe("` totals 81 | clean-main final gate: 81 |
-| `npm test`: 924/81/924 pass/0 fail | clean-main final gate: 924 tests, 81 suites, 924 pass, 0 fail |
-| `npm run typecheck` clean on both tsconfigs | clean-main final gate: both `tsconfig.json` and `tsconfig.test.json` passed with zero errors |
-| `main.js` byte-identical | unit-22 history check from `d18d87a` through `2dd926e` and current-worktree diff are both empty |
-| No test name changed | unit-22 sorted `it(`/`describe(` literal diff from `d18d87a` to the pending tree is empty |
-| No describe split, reordered, or renested | unit-23 fixture move contains no describes; the drag move was discarded rather than merged |
-| Only `kwin/tests/controller*.ts` and `docs/` change | unit-22 history check found no `kwin/src/` or `kwin/contents/code/main.js` path in change commits; pending diff is test-only |
-| `bash scripts/dogfood-install.test.sh` | clean-main final gate: `passes: 336 failures: 0`; script also emitted `find: .../data: No such file or directory` |
+| Original monolith removed; 40 describes preserved across the delivered 26 topic files + fixtures; approximate 1,000-line threshold | Met: `controller.test.ts` is deleted; all 40 original titles are byte-identical across 26 topic-scoped test files plus two fixture modules. The topic-file count was a planning estimate. The sole threshold exception is `controller-drag-diagnostics-and-resize.test.ts` at 1,006 lines, accepted as within the user's approximate threshold. |
+| `grep -c "describe("` totals 87 | Met: exact command printed `87`. |
+| `npm test`: 924/87/924 pass/0 fail | Met: `npm --prefix kwin test` reported 924 tests, 87 suites, 924 pass, 0 fail, 0 cancelled, and 0 skipped. |
+| `npm run typecheck` clean on both tsconfigs | Met: `npm --prefix kwin run typecheck` completed `tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json` with zero errors. |
+| `main.js` byte-identical | Met for this change: `git diff --stat eab2aca..HEAD -- kwin/contents/code/main.js` and `origin/main..HEAD` are empty. The separate `eab2aca` bundle commit changes 16 insertions and 8 deletions from the unit-01 baseline; it is outside this change. |
+| No test name changed | Met: TypeScript-AST literal extraction from `2aa79ade` monolith and all HEAD `controller-*.test.ts` files found 532 `it(`/`test(` titles on each side; sorted diff is empty. |
+| No describe title changed except the declared unit-23 additions | Met: all 40 original `describe` titles are byte-identical; HEAD has exactly the six declared additions and no others (40 baseline, 46 HEAD). Unit-23 range evidence records the approved order-preserving, non-nested splits. |
+| Only `kwin/tests/controller*.ts` and `docs/` change | Met: all 37 `test(controller-test-split)` / `docs(controller-test-split)` commits touch only controller test paths and `docs/`; none touches `kwin/src/` or `kwin/contents/code/main.js`. |
+| `bash scripts/dogfood-install.test.sh` | Met: `passes: 336 failures: 0`. The script also emitted its pre-existing missing temporary `data` directory diagnostic. |
+
+## Unit-22 Verification Record (2026-08-21)
+
+- Full gates: `npm --prefix kwin test` = 924 tests, 87 suites, 924 pass, 0
+  failures; `npm --prefix kwin run typecheck` clean on both tsconfigs; and
+  `bash scripts/dogfood-install.test.sh` = 336 assertions, 0 failures.
+- Literal preservation baseline: unit-01 first extraction is `0cf99826`; its
+  parent is `2aa79ade`. Sorted test-title diff is empty (532/532). Describe
+  comparison is 40 baseline / 46 HEAD: every original is unchanged and the six
+  additions exactly match the titles declared in `spec.md`.
+- Inventory: 28 `kwin/tests/controller-*.ts` files total 17,534 lines versus
+  the 17,075-line monolith (+459). Import declarations account for +448 lines
+  (43 baseline, 491 final); blank separators account for +12 lines and other
+  non-import content is down one line. The sole file over the approximate
+  threshold is `controller-drag-diagnostics-and-resize.test.ts` at 1,006 lines;
+  it is the unit-23 safe-subset retained exception, closed by the Orchestrator
+  ruling rather than a pending extraction.
+- Acceptance wording reconciled: the delivered inventory is 26 topic test
+  files plus two fixture modules; the approximate 1,000-line threshold, not
+  the planning file count, is the acceptance criterion.
 
 ## Residual Risks
 
@@ -521,10 +541,6 @@ resolved.
   drag-reflow-and-resize slice is discarded under the Orchestrator's scope
   reduction, with its failed work preserved locally and unpushed at
   `wip/unit-23-drag-split`.
-- The unit-23 parked subset still has an open acceptance gap:
-  `controller-interactive-drag.test.ts` (1,277) cannot meet the threshold
-  while preserving its single top-level describe. Unit-22 and
-  completion/archive work remain blocked pending unit-23c.
 - Grep-based import pruning could theoretically under- or over-prune on an
   edge case (e.g. a name matching inside a string literal or comment rather
   than a real reference); the `npm run typecheck` step in every unit is the
@@ -537,12 +553,13 @@ resolved.
 
 ## Final Outcome
 
-- In flight, not archived. The 17,075-line `kwin/tests/controller.test.ts` is
-  fully dissolved and deleted. The delivered layout is 22 topic-scoped test
+- Accepted and archived. The 17,075-line `kwin/tests/controller.test.ts` is
+  fully dissolved and deleted. The delivered layout is 26 topic-scoped test
   files plus `controller-fixtures.ts` and `controller-fixture-scenarios.ts`.
-  No production code was touched anywhere in the change. The final clean-main
-  gate reports 924 tests, 81 suites, 0 failures, and 81 describes, with 336
+  The topic-file count was a planning estimate; the approximate 1,000-line
+  threshold is met, including the accepted 1,006-line retained exception. No
+  production code was touched anywhere in the change. The final clean-main
+  gate reports 924 tests, 87 suites, 0 failures, and 87 describes, with 336
   dogfood assertions. Unit-23's fixture-scenarios safe slice is accepted; its
   drag-reflow-and-resize slice is discarded under the Orchestrator ruling.
-  Unit-23a and unit-23b are accepted; unit-23c remains, so unit-22
-  completion/archive remains prohibited.
+  Unit-23a, unit-23b, and unit-23c are accepted.

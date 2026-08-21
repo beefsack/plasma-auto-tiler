@@ -62,7 +62,7 @@ that permits a start state to disagree silently with the chain.
 | unit-06 | Transcribe authored S4-S23 corpus sequences and isolated test vectors exactly, with explicit starts and a per-sequence continuity assertion. | - | `docs/cosmic-move-conformance.md`, `kwin/tests/move-conformance.test.ts` | Static: `npm --prefix kwin test`; `npm --prefix kwin run typecheck`; every non-first vector start structurally equals the preceding recorded result. |
 | unit-02 | Correct the pure single-output move model for R1-R3 and add replay coverage for all applicable new vectors. | unit-06 | `kwin/tests/move-conformance-model.ts`, `kwin/tests/move-conformance.test.ts` | Static: `npm --prefix kwin test`; `npm --prefix kwin run typecheck`. |
 | unit-03 | Add output-aware pure-model state and R4 replay coverage for occupied/empty targets, edge eligibility, and workspace isolation. | unit-02 | `kwin/tests/move-conformance-model.ts`, `kwin/tests/move-conformance.test.ts` | Static: `npm --prefix kwin test`; `npm --prefix kwin run typecheck`. |
-| unit-04 | Update the corpus explanation, backlog entries, and controller-test-split exact baseline after tests are added. | unit-06, unit-03 | `docs/cosmic-move-conformance.md`, `docs/backlog.md`, `docs/changes/controller-test-split/plan.md` | Static inspection; record measured `npm test` and suite-count result in controller-test-split plan. |
+| unit-04 | Update the corpus explanation, backlog entries, and controller-test-split exact baseline after tests are added. | unit-06, unit-03 | `docs/cosmic-move-conformance.md`, `docs/backlog.md`, `docs/changes/archive/2026-08-21-controller-test-split/plan.md` | Static inspection; record measured `npm test` and suite-count result in controller-test-split plan. |
 
 ## Backlog Edits
 
@@ -119,7 +119,7 @@ No entries. S18/S19 author U1/U2 as executable sequences.
 | R1-R3 including G1 reconciliation | P1-P5, F1-F3, G1 and existing S2-02/S3-04 corpus replay; model rule assertions. |
 | R4 multi-output behavior | S20-S23 output-state replays: occupied leaf and subtree targets, empty target, local-rule precedence, no adjacent output, and cross-workspace no-op. |
 | No runtime coupling or generated-bundle change | Diff inspection limited to planned test/docs paths; no changed path below `kwin/src/` or `kwin/contents/code/main.js`. |
-| Backlog and numeric gate are current | Line-level review of `docs/backlog.md`; measured post-change count recorded in `docs/changes/controller-test-split/plan.md`. |
+| Backlog and numeric gate are current | Line-level review of `docs/backlog.md`; measured post-change count recorded in `docs/changes/archive/2026-08-21-controller-test-split/plan.md`. |
 | Static verification passes | `npm --prefix kwin test`; `npm --prefix kwin run typecheck`. |
 
 ## Verification Gate
@@ -133,7 +133,7 @@ npm --prefix kwin run typecheck
 
 The recorded gate is 924 tests / 81 suites / 924 pass / 0 fail. Unit-04
 measured and recorded this exact baseline in
-`docs/changes/controller-test-split/plan.md` because that plan uses the count
+`docs/changes/archive/2026-08-21-controller-test-split/plan.md` because that plan uses the count
 as its correctness gate.
 
 ## Residual Risks
