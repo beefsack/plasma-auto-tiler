@@ -166,3 +166,19 @@ result, changed files or commit, verification, and discoveries or decisions.
   requires the proposed isolation-first hardening and separately authorized
   writer attribution; this investigation ran no compositor, probe, or D-Bus
   mutation.
+
+## 2026-08-21
+
+- Role / unit: Worker / unit-01 / decision-Q6
+- Result: Settled Q6: `move-conformance-model.ts` is reference documentation
+  only, not a behavioral oracle for N-ary structural tests. The sole pending
+  user decision is new-window insertion sizing.
+- Files / commit: `spec.md`, `plan.md`, `log.md`; uncommitted.
+- Verification: Reconciled the structural acceptance boundary with spec
+  Scope 28-32, Non-Goals 38-41, and Constraints 55-56; confirmed the archived
+  corpus/model rule at
+  `docs/changes/archive/2026-08-20-cosmic-move-model-closure/spec.md:9-13`.
+- Notes: Native C++ evidence permits 3+-child topology and same-axis sibling
+  insertion, and direction-only drag, keyboard, and preset split paths can
+  potentially reach it. QJSEngine marshalling remains unproven; both binding
+  probes were invalidated, so structural tests must use synthetic N-ary trees.

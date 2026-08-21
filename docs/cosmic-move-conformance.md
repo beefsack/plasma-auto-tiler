@@ -380,13 +380,15 @@ implementation for the S1-S3 tree replay - no KWin imports, no dependency on
 `kwin/src/controller.ts` or `kwin/src/logic.ts`, and no coupling to this
 project's own tile tree.
 
-`kwin/tests/move-conformance.test.ts` replays S1-S3: it parses each start
-state, applies each `(window, direction)` transition in order, asserts the
-result matches the recorded tree exactly, carries the result forward as the
-next input, and writes the per-transition rule-firing trace. S4-S23 are held
-as authored explicit-start vectors and are structurally checked to ensure
-each non-first start exactly equals the preceding expected result. They do
-not invoke the model yet.
+`kwin/tests/move-conformance.test.ts` replays the single-output authored
+S1-S19 vectors through `move`. For S1-S3, it parses each start state, applies
+each `(window, direction)` transition in order, asserts the result matches the
+recorded tree exactly, carries the result forward as the next input, and
+writes the per-transition rule-firing trace. S4-S19 invoke `move` in explicit
+single-output tests. S20-S23 invoke `moveAcrossOutputs` in explicit
+multi-output tests. A separate chain check applies to every authored S4-S23
+sequence, ensuring each non-first start exactly equals the preceding expected
+result; no authored sequence is only chain-checked.
 
 **All 40 S1-S3 transitions replay correctly against the model** as of this
 writing. The replay is a second, independent check on the original

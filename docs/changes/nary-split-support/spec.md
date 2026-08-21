@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Ready for user decisions and approval
+- Status: Ready for Orchestrator approval after new-window insertion sizing resolves
 
 ## Objective
 
@@ -116,10 +116,34 @@ In scope:
   precede the evidence. Semantic authority is session-scoped; restart and
   manual-native-edit persistence remain evidence questions because they depend
   on native support for a 3+-child container.
-- Open - should `move-conformance-model.ts` be a test-only behavioral oracle
-  for the new structural tests? Options: replay its relevant vectors against a
-  test-only adapter; keep it independent and author equivalent focused N-ary
-  vectors; use it only as reference documentation.
+- Settled - `move-conformance-model.ts` is reference documentation only, not a
+  behavioral oracle for N-ary structural tests. Structural tests use independent
+  synthetic N-ary fixtures covering ordered direct children, same-axis wrapping,
+  parent escape, one-child collapse, and existing binary behavior.
+- Rationale - this is a pure structural migration accepted by byte-identical
+  native serialization and window assignments, not movement conformance
+  (Scope 28-32; Non-Goals 38-41; Constraints 55-56). The archived move-model
+  specification makes the live corpus ground truth and treats a model
+  disagreement as a model defect, never a reason to alter corpus evidence
+  (`docs/changes/archive/2026-08-20-cosmic-move-model-closure/spec.md:9-13`).
+  Model-coupled expected results stay green when the model drifts with them from
+  the corpus; that failure class has occurred three times.
+
+## Native Scope Note
+
+- This is scope evidence, not a decision. Drag
+  (`kwin/src/controller.ts:5826-5857`) and keyboard
+  (`kwin/src/controller.ts:6025-6069`) split paths pass only the requested
+  direction to `splitCustomTile` without a parent-orientation check, while
+  native same-axis `CustomTile::split()` inserts a sibling into the parent
+  (`research/native-binding-evidence.md:21-26`). Columns/rows preset
+  reconstruction (`kwin/src/preset-catalog.ts:39-52`) and blueprint
+  construction (`kwin/src/layout-blueprint.ts:69-77`) also request directional
+  native splits, so these paths can potentially reach N-ary native containers.
+- Counterweight: QJSEngine marshalling is unproven, and both binding probes were
+  invalidated. This does not establish that a script-visible N-ary tree arrives
+  (`research/native-binding-evidence.md:54-57,58-74,122-139`). Structural tests
+  must construct synthetic N-ary trees rather than depend on a native binding.
 
 ## Known Migration Defect
 
@@ -136,6 +160,7 @@ it; this is an acceptance condition.
 
 ## Approval Boundary
 
-Implementation begins only after the remaining open oracle decision is resolved
-and this specification is approved. Autonomous mode authorized preparation of
-this artifact, not resolution of its consequential design choice.
+Implementation begins only after the remaining new-window insertion sizing
+decision is resolved and this specification is approved. Autonomous mode
+authorized preparation of this artifact, not resolution of its consequential
+design choice.

@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Ready for Orchestrator approval after Pending User Decisions resolve
+- Status: Ready for Orchestrator approval after new-window insertion sizing resolves
 
 ## Baseline Gate
 
@@ -19,8 +19,9 @@ documented accepted change explains its replacement.
 
 ## Technical Approach
 
-After the remaining open decisions and approval, migrate the project contract
-from binary child roles to a project-owned ordered direct-child model. Establish
+After the remaining new-window insertion sizing decision and approval, migrate
+the project contract from binary child roles to a project-owned ordered
+direct-child model. Establish
 binary characterization evidence against existing native serialization and
 window assignments before changing it, then apply the contract in narrow
 operation groups: core logic, native boundary and order, preset reconstruction,
@@ -30,14 +31,16 @@ retains a geometry sort or raw native traversal. A separately scoped
 native-binding evidence unit gates native-boundary work: its result may redesign
 the adapter but not the project semantic model. Each group carries its focused
 tests; the final gate reruns the complete static suite and dogfood installer
-test. The conformance model remains test-only and is used only if its pending
-oracle role is approved.
+test. The conformance model remains reference documentation only. Structural
+tests construct independent synthetic N-ary fixtures for ordered direct
+children, same-axis wrapping, parent escape, one-child collapse, and existing
+binary behavior.
 
 ## Work Units
 
 | ID | Objective | Depends on | File or subsystem scope | Verification |
 | --- | --- | --- | --- | --- |
-| unit-01 | Record the six settled decisions, including the joint ordered-child/native-boundary contract, and resolve the remaining oracle and new-window-insertion-sizing decisions before freezing the contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
+| unit-01 | Record the seven settled decisions, including the joint ordered-child/native-boundary contract and reference-only conformance model, and resolve the remaining new-window-insertion-sizing decision before freezing the contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
 | unit-02 | Add binary characterization fixtures that serialize ordered layouts and window assignments before topology migration. | unit-01 | `kwin/tests/logic.test.ts`, controller fixture/test seams | Focused characterization cases, then `npm --prefix kwin test` (static). |
 | unit-03 | Generalize logic-layer split planning and equality contracts from pair roles to the approved ordered-child contract. | unit-02 | `kwin/src/logic.ts`, `kwin/tests/logic.test.ts` | N-ary structural cases plus existing logic tests; `npm --prefix kwin run typecheck` (static). |
 | unit-04 | Generalize the pinned native adapter and canonical project-model order without claiming an unproven native result cardinality. A separately scoped native-binding evidence unit gates this work. | unit-01, unit-03, native-binding evidence | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests prove every listed order-sensitive site consumes canonical model order; `npm --prefix kwin test` and typecheck (static). |
@@ -45,11 +48,11 @@ oracle role is approved.
 | unit-06 | Implement the approved N-ary resize, minimum-size, and ratio/weight semantics. | unit-01, unit-04 | Controller resize/minimum functions; resize diagnostics tests | 2-child regression and approved 3+-child resize cases; typecheck and complete test suite (static). |
 | unit-07 | Generalize drag target selection, split application, and reflow normalization for N-ary direct children. | unit-03, unit-04 | Controller drag/reflow functions; interactive drag, diagnostics, overlay-reflow tests | Same-axis wrapping, order-only 3+-child cases, binary characterization checks, complete suite (static). |
 | unit-08 | Generalize keyboard insertion and automatic/dwindle insertion to the approved N-ary construction contract. | unit-03, unit-04 | Controller keyboard and dwindle functions; keyboard-placement, automatic-dwindle, deferred-recovery tests | Parent escape/one-child collapse structural cases, existing binary cases, typecheck and complete suite (static). |
-| unit-09 | Close the inventory sweep, add approved conformance-oracle coverage, and run final regression gates. | unit-05, unit-06, unit-07, unit-08 | All 13 identified test files, shared fixture, and test-only conformance adapter if approved | Inventory-to-test audit; `npm --prefix kwin test`, typecheck, and `bash scripts/dogfood-install.test.sh` (all static). |
+| unit-09 | Close the inventory sweep, add independent synthetic N-ary structural coverage, and run final regression gates. | unit-05, unit-06, unit-07, unit-08 | All 13 identified test files and shared fixture | Inventory-to-test audit; `npm --prefix kwin test`, typecheck, and `bash scripts/dogfood-install.test.sh` (all static). |
 
 ## Progress
 
-- [ ] unit-01 Pending user decisions.
+- [ ] unit-01 Pending new-window insertion sizing decision.
 - [ ] unit-02 Binary characterization.
 - [ ] unit-03 Logic contract migration.
 - [ ] unit-04 Native boundary and ordering.
@@ -72,8 +75,8 @@ trips the circuit breaker and requires escalation with a loop report.
 
 ## Pending User Decisions
 
-- The oracle role and new-window insertion sizing in `spec.md#user-decisions`
-  remain open. They block unit-01 and therefore implementation.
+- New-window insertion sizing in `spec.md#user-decisions` is the only pending
+  user decision. It blocks unit-01 and therefore implementation.
 - Resolved 2026-08-21: after two failed `native-evidence-phase-2` attempts,
   the circuit breaker tripped. The Orchestrator froze that live-probe path and
   the user selected an isolation-first reset with E4 parked as source-only
@@ -84,7 +87,7 @@ trips the circuit breaker and requires escalation with a loop report.
 | Acceptance criterion | Evidence |
 | --- | --- |
 | Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. |
-| Same-axis wrapping, parent escape, collapse, and geometry independence | unit-07 and unit-08 structural tests, plus the approved oracle route in unit-09. |
+| Same-axis wrapping, parent escape, collapse, and geometry independence | Independent synthetic N-ary structural tests in units 07 through 09. |
 | Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
 | 13 test files and shared fixture covered | unit-09 test-surface audit. |
 | Binary-only layouts remain byte-identical | unit-02 fixtures compare existing native serialization and window assignments, then rerun in units 03 through 09. |
