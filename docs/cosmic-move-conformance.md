@@ -40,10 +40,14 @@ R2. C is PARALLEL to D and W has a neighbour S in direction D with
     exactly 2 direct children:
       R2a. S is a leaf -> swap W and S.
       R2b. S is a container with n direct children (a nested group is one
-           direct child). If n is even, flat-insert W at n/2. If n is odd,
-           replace child (n-1)/2 with a D-axis split containing that child
-           and W on the near side. This defines child order and count, not
-           geometry.
+           direct child). The parity descent behavior applies only if S is
+           PERPENDICULAR to D: if n is even, flat-insert W at n/2; if n is
+           odd, replace child (n-1)/2 with a D-axis split containing that
+           child and W on the near side (S1-08, S3-13). If S is PARALLEL to
+           D, W flat-inserts at S's NEAR EDGE, the end adjacent to W's
+           original side (S1-17, S3-08). This defines child order and count,
+           not geometry. This prose correction changes zero authored vectors
+           and zero model code.
 
 R2c. C is PARALLEL to D and has 3 or more direct children:
      wrap W and any neighbour S together in a new split of C's own
@@ -67,6 +71,39 @@ and post-resize behavior remain explicitly unobserved.
 Horizontal output adjacency places the target in a top-level H split;
 vertical output adjacency places it in a top-level V split. This is prose
 only; the corpus has no fabricated vertical-adjacency vector.
+
+## Sizing
+
+These are observed sizing facts, separate from the structural rules above.
+
+- S1. Joining a group resizes the mover: a window entering a container takes
+  `1/n` of that container's extent on its axis after insertion; a nested group
+  is one direct child.
+- S2. Existing direct children retain their relative proportions and each
+  scales by `(n-1)/n`; do not equalize or recalculate them.
+- S3. Leaving a group never resizes anything at any nesting depth.
+  Extraction and one-child collapse preserve absolute geometry; a promoted
+  child keeps its own size and does not inherit the dissolved container's
+  extent.
+- S4. Resize only when entering a group the mover was not already
+  transitively a member of. R3 escape does not resize because W is already in
+  the receiving parent; R2b descent and R2c wrapping do resize because the
+  target was not previously inside.
+
+Evidence: for R2b, `H[A,H[B,C]]` with B/C at extremes, moving A right gives
+`A=1/3`; with four children the mover is `1/4` and B/C retain their 40:60
+proportion within the remaining `2/3`. For R2c, start `H[A,B,C,D]` uneven;
+focus B/right gives `H[A,H[B,C],D]`; A/D are unchanged, the wrapper retains
+the pair's combined former extent, and B/C halve inside it. For R3, start
+`H[A,H[B,C],D,E]` uneven; focus C/right gives no resize, confirmed with
+another nesting level.
+
+The canonical result is `1/n`. It is mathematically identical to taking the
+new child as the mean existing weight and then normalizing, yielding a `1/n`
+mover and `(n-1)/n` for the rest.
+
+Not observed: R1 sizing, pixel rounding, behavior after manual resize, and
+which sibling absorbs a user drag in a 3+ split.
 
 ## The corpus
 

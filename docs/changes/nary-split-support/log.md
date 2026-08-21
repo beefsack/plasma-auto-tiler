@@ -59,3 +59,15 @@ result, changed files or commit, verification, and discoveries or decisions.
   Lead inspection of `S1-17`, `S7-02`, and the model's target-axis branch.
 - Notes: `S1-17` remains a model-derived direction correction awaiting user
   confirmation. No file under `kwin/` was modified.
+
+## 2026-08-21
+
+- Role / unit: Worker / nary-split-support documentation and comments
+- Result: Corrected R2b target-axis prose; recorded observed sizing and
+  insertion findings; updated the perpendicular-branch corpus comment.
+- Files / commit: `docs/cosmic-move-conformance.md`,
+  `docs/changes/nary-split-support/research/cosmic-insertion-findings.md`,
+  `kwin/tests/move-conformance-model.ts`, `log.md`; uncommitted.
+- Verification: `npm --prefix kwin test` passed: 924 tests / 87 suites / 0
+  failures. `npm --prefix kwin run typecheck` passed with both tsconfigs clean.
+- Notes: No authored vectors, model executable code, or `main.js` changed.

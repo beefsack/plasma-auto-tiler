@@ -215,8 +215,8 @@ export function move(tree: TreeNode, focusedLeafName: string, direction: Directi
                 // When S's axis differs from C's (W approaches S along an
                 // axis S's children are not arranged on), there is no
                 // "near" edge along S's own ordering, since W's approach
-                // spans all of S's children equally - the sole corpus case
-                // exercising this (S1-08) inserts W at S's midpoint.
+                // spans all of S's children equally - the corpus cases
+                // exercising this (S1-08 and S3-13) insert W at S's midpoint.
                 const newSChildren =
                     s.axis === c.axis
                         ? isNearSide(idx, neighbourIndex)
