@@ -71,3 +71,30 @@ slices use `unit-<n>/attempt-<n>`.
   by the Lead with 0 failures and no test count regression. User visual
   validation (live host) remains the intended live acceptance and was
   explicitly deferred to the Orchestrator/user for this stint.
+
+## Parked Status (2026-08-21, after `1fa1f12`)
+
+- **Status: PARKED by user decision.** Static acceptance was met; live
+  acceptance FAILED.
+- **The divergence**: the static suite reports 940 tests / 89 suites / 0
+  fail, with all seven former gap flows covered by direct end-to-end outline
+  tests. The user then reloaded the script on their live host via
+  `scripts/dogfood-install.sh reload` and the outline STILL does not flash.
+  The mocked test harness therefore does not model whatever is actually
+  broken. A green suite is proven insufficient for this feature; any future
+  fix must establish live evidence first.
+- **Uninvestigated candidate causes** (listed, not diagnosed or ranked; no
+  evidence yet gathered for any of them):
+  - (a) the installed bundle may be stale — no stale-bundle guard exists in
+    the repo;
+  - (b) the flush may not fire on the live arrow-move path even though it
+    fires in the harness;
+  - (c) `Workspace.showOutline` may not render in this context at all, which
+    would also invalidate the original MVP's premise.
+- **User's assessment**: the MVP approach is proving harder than expected;
+  the intent on circling back is a full implementation, not another MVP
+  patch.
+- **Debt status**: the central-hook debt from the original spec IS
+  discharged by `1fa1f12` — exactly one `flashFocusedGroup()` call site
+  remains, at `controller.ts:5401`. Parking this change does not reinstate
+  that debt.
