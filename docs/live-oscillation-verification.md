@@ -14,7 +14,7 @@ Read `docs/live-kwin-testing.md` in full before running any part of this
 document. It is the authoritative operational contract; this document does
 not grant any additional mutation authorization. The standing-authorized
 operations here are exactly the ones `docs/live-kwin-testing.md` Safety
-Boundary already lists: KWin script install/enable/disable/reconfigure via
+Boundary already lists: KWin script install/enable/disable/reload/reconfigure via
 `kpackagetool6`/`kwriteconfig6`/`qdbus6`/`dogfood-install.sh`, and read-only
 journal/status queries. Every scenario below stays inside that boundary -
 window creation, drags, and keyboard presses use one disposable throwaway

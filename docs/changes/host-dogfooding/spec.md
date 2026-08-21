@@ -27,7 +27,7 @@ In scope:
   one user-run session boundary (logout/login or new session); every
   iteration after that is live via D-Bus with no further boundary.
 - A KWin script dogfood path reusing the existing, already-working
-  `scripts/dogfood-install.sh install|enable|disable|uninstall|status`
+  `scripts/dogfood-install.sh install|enable|disable|reload|uninstall|status`
   surface, which needs no session boundary.
 - The smallest practical command surface covering both components, stated
   exactly for the user to type.

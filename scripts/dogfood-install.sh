@@ -78,7 +78,9 @@ Commands:
   enable     write [Plugins] plasma-auto-tiler-kwinEnabled=true through
              kwriteconfig6 and reconfigure KWin via D-Bus
   disable    write [Plugins] plasma-auto-tiler-kwinEnabled=false through
-             kwriteconfig6 and reconfigure KWin via D-Bus
+              kwriteconfig6 and reconfigure KWin via D-Bus
+  reload     disable then re-enable the script, reconfiguring KWin after each
+              change so it replaces the running in-memory script instance
   status     report installed and enabled state; read-only, never mutates
   dry-run    inspect source package metadata, bundle, KCM schema/UI, and
              destination install/enabled state; lists intended install
@@ -131,8 +133,8 @@ DOGFOOD_KWIN_NOT_RUNNING (force the "process not found" branch).
 Test-only effect-install override: DOGFOOD_KWIN_DEV_CMAKE_DIR (overrides the
 pinned -DKWin_DIR= path used only when it exists on disk).
 
-install and uninstall never touch KWin configuration; enable and disable
-mutate kwinrc and reconfigure the running KWin session.
+install and uninstall never touch KWin configuration; enable, disable, and
+reload mutate kwinrc and reconfigure the running KWin session.
 effect-install and effect-remove touch kwinrc (only the one [Plugins]
 enablement key for the native effect) but never use D-Bus; effect-reload is
 the only effect command that mutates the running KWin session via D-Bus;
@@ -215,6 +217,12 @@ cmd_enable() {
 
 cmd_disable() {
   cmd_set_enabled false disabled
+}
+
+cmd_reload() {
+  cmd_disable
+  cmd_enable
+  echo "reloaded: $PLUGIN_ID is enabled with a fresh KWin script instance"
 }
 
 cmd_status() {
@@ -621,7 +629,7 @@ cmd_setup() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (install, uninstall, enable, disable, status, or dry-run)" >&2
+  echo "error: missing command (install, uninstall, enable, disable, reload, status, or dry-run)" >&2
   usage >&2
   exit 1
 fi
@@ -662,6 +670,13 @@ case "${1:-}" in
       exit 1
     fi
     cmd_disable
+    ;;
+  reload)
+    if [[ $# -ne 1 ]]; then
+      echo "error: 'reload' takes no arguments" >&2
+      exit 1
+    fi
+    cmd_reload
     ;;
   status)
     if [[ $# -ne 1 ]]; then

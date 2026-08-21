@@ -87,7 +87,7 @@ This is the single biggest change in project posture. The plugin is installed
 and running on the user's real Plasma session and is being used daily.
 
 `scripts/dogfood-install.sh` provides `install`, `uninstall`, `enable`,
-`disable`, and `status`. Change archived at
+`disable`, `reload`, and `status`. Change archived at
 `docs/changes/archive/2026-08-12-dogfood-install-packaging/`. `README.md` at the
 repo root documents prerequisites, the full 27-shortcut catalog, and an honest
 statement of what enabling does to the session.

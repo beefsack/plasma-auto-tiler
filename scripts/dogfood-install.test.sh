@@ -436,7 +436,7 @@ assert_contains "effect-remove"
 assert_contains "setup"
 
 # parsing: every subcommand rejects extra arguments
-for command in install uninstall enable disable status dry-run effect-install effect-reload effect-status effect-remove setup; do
+for command in install uninstall enable disable reload status dry-run effect-install effect-reload effect-status effect-remove setup; do
   run_script "$command" extra
   check_exit 1
   assert_contains "error: '$command' takes no arguments"
@@ -589,6 +589,19 @@ run_script disable
 check_exit 0
 assert_qdbus_calls 2
 assert_grep_file "plasma-auto-tiler-kwinEnabled=false" "$CONFIG/kwinrc"
+
+# reload: disables then re-enables so KWin replaces the in-memory script
+# instance, leaving the plugin enabled.
+reset_state
+run_script reload
+check_exit 0
+assert_contains "disabled: plasma-auto-tiler-kwinEnabled set to false and KWin reconfigured"
+assert_contains "enabled: plasma-auto-tiler-kwinEnabled set to true and KWin reconfigured"
+assert_contains "reloaded: plasma-auto-tiler-kwin is enabled with a fresh KWin script instance"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled false" "$WORK/tools.log"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-kwinEnabled true" "$WORK/tools.log"
+assert_qdbus_calls 2
+assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
 
 # enable: kwriteconfig6 failure fails closed before any reconfigure
 reset_state

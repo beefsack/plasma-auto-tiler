@@ -56,8 +56,9 @@ Safety Boundary below.
   [native-effect-host-live-runner](changes/archive/2026-08-18-native-effect-host-live-runner/spec.md)
   protocol this superseded is retained only as historical record.
 - KWin script path: `scripts/dogfood-install.sh
-  install|enable|disable|uninstall|status` needs no session boundary at any
-  time; `enable`/`disable` reconfigure the running KWin live via D-Bus.
+  install|enable|disable|reload|uninstall|status` needs no session boundary at
+  any time; `enable`/`disable` reconfigure the running KWin live via D-Bus and
+  `reload` uses both transitions to replace the in-memory script instance.
 - Native effect path: discovery needs exactly one user-run session boundary
   (logout/login, or starting a new session), performed once after
   `scripts/dogfood-install.sh effect-install` first creates the project's

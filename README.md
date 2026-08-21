@@ -153,6 +153,17 @@ and reconfigures the running KWin via `qdbus org.kde.KWin /KWin reconfigure`.
 bash scripts/dogfood-install.sh enable
 ```
 
+### Reload
+
+After rebuilding and installing a script code change, reload it without a
+session boundary. This disables then re-enables the plugin, reconfiguring KWin
+after each change so KWin replaces the in-memory script instance. It finishes
+with the plugin enabled.
+
+```sh
+bash scripts/dogfood-install.sh reload
+```
+
 ### Status
 
 Read-only report of installed and enabled state. It never reconfigures KWin.
@@ -435,8 +446,10 @@ After dogfooding, confirm by eye:
 - `install` and `uninstall` affect only the local package directory
   (`$XDG_DATA_HOME`/`$HOME/.local/share` under `kwin/scripts/`).
 - `enable` and `disable` touch only the exact `[Plugins]
-  plasma-auto-tiler-kwinEnabled` setting in `kwinrc` and request KWin
-  reconfiguration; they never modify the installed package.
+   plasma-auto-tiler-kwinEnabled` setting in `kwinrc` and request KWin
+   reconfiguration; they never modify the installed package.
+- `reload` composes `disable` then `enable` to replace the running KWin script
+  instance, leaving the plugin enabled.
 - `status` is read-only.
 - `dry-run` is read-only and never mutates anything.
 - `effect-install` and `effect-remove` build/stage/unstage the native effect
