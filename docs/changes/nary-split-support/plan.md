@@ -65,13 +65,35 @@ binary behavior.
 
 - [x] unit-01 Decision record and contracts frozen.
 - [x] unit-02 Binary characterization.
-- [ ] unit-03 Logic contract migration.
+- [x] unit-03 Closed by analysis: no code change. See "Unit-03 Finding" below.
 - [ ] unit-04 Native boundary and ordering.
 - [ ] unit-05 Preset and overlay reconstruction.
 - [ ] unit-06 Resize and minimum semantics.
 - [ ] unit-07 Drag and reflow migration.
 - [ ] unit-08 Keyboard and automatic insertion migration.
 - [ ] unit-09 Inventory closure and final gates.
+
+## Unit-03 Finding
+
+Closed 2026-08-22 by analysis; no code changed in `kwin/src/logic.ts` or
+`kwin/tests/logic.test.ts`. `logic.ts` was read in full and contains no real
+arity coupling to generalize: every apparently pair-shaped function operates
+on a locally-always-exactly-2 relationship (a subdivision of one region into
+two, e.g. a split proposal or an equality check between exactly two sibling
+candidates) that remains correct under N-ary by construction, because it never
+claims to enumerate or order a parent's full child set. The real arity
+coupling that N-ary migration must address lives outside `logic.ts`:
+
+- `kwin/src/custom-tile-split.ts:15` - `decodeChildren` hard-decodes exactly
+  two children via `decodeSequential(value, isCustomTile, 2)`.
+- `kwin/src/controller.ts:1481` (`orderedChildren`) and its three call sites
+  (`controller.ts:5891`, `:6096`, `:2720`) - fixed two-child geometry
+  ordering.
+- `kwin/src/controller.ts:2715`, `:5886`, `:6089`, `:6588` -
+  `decodeSequential(..., isCustomTile, 2)` calls that fix child count at 2.
+- `kwin/src/boundary.ts:56` (`decodeSequential`) - the shared decode seam
+  these sites all consume; it is already arity-parametric (`maxLength`) and
+  requires no change itself.
 
 ## Attempt Accounting
 
