@@ -419,6 +419,7 @@ assert_contains "error: unknown command 'bogus'"
 run_script --help
 check_exit 0
 assert_contains "usage: dogfood-install.sh <command> [--help]"
+assert_contains "reload"
 assert_contains "Runtime tool-path overrides"
 
 # parsing: --help rejects extra arguments
