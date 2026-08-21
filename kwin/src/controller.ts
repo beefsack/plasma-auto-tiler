@@ -85,7 +85,7 @@ const FLOAT_WORK_AREA_FRACTION = 0.6;
 // bounded re-evaluation gives it a chance to settle before being treated as
 // permanently out of scope.
 const DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
-const GROUP_OUTLINE_DURATION_MS = 150;
+const GROUP_OUTLINE_DURATION_MS = 700;
 // Bounded re-drive budget per pending reconstruction phase. A lifecycle event
 // while a reconstruction is pending re-arms that phase's one-shot yield so a
 // single lost callDBus reply cannot strand a collapsed scope. A bound is still
