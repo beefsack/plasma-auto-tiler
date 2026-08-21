@@ -74,7 +74,19 @@ journalctl --user --since '2026-08-21 14:00:40' --until '2026-08-21 14:00:50' -o
 - **Established fact:** the attempt postflight only proves that a private `kwinrc` exists; it does not record a host/private byte comparison, provenance, or copy operation. `/tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912/run.sh:89-93`, `private-kwinrc-proof.txt:1`
 - **Inference:** no literal host-config copy is established. The private `kwinrc`, shortcut config, and shortcut state are copies or generated state only in the generic sense that they are private files; whether any content was copied from host configuration is undetermined.
 
-## Proposed Guide Hardening
+## User Ruling and Accepted Residuals
+
+- **User ruling:** the forensic question changes nothing. The host write self-reverted within three seconds and the current host `kwinrc` content is byte-identical to its original content; divergent bytes were never captured, only their SHA-256 divergence.
+- **User ruling:** writer attribution would require `fanotify` with a global mark, an `auditd` watch rule, or `bpftrace`; each requires root. `docs/decisions.md#native-effect-live-validation` prohibits `sudo` without separate approval. The writer and mechanism are **UNDETERMINED** and will remain undetermined.
+- **User ruling:** host `/Scripting` `loadScript`/`unloadScript` is already authorized, and host dogfooding proved that path end-to-end. No nesting is needed to exercise that authorized path.
+- **Accepted unresolved risk:** a child might escape `DBUS_SESSION_BUS_ADDRESS`, reach host KWin, and reconfigure it. This D-Bus fallback is neither confirmed nor refuted. The missing divergent bytes and prohibited attribution mean these are unresolved-and-accepted risks, not benign-by-proof.
+- **Established fact:** `scripts/nested-kwin-spike.sh` remains unhardened. Its line 30 `dbus-run-session -- /bin/sh -c ...` has no `env -i`, inherits the full parent environment, and exports `WAYLAND_DISPLAY="/run/user/$UID/wayland-0"`, the absolute host Wayland socket.
+- **User ruling:** if nesting is ever needed, cheap containment options are a host `kwinrc` backup/restore or `bubblewrap`. `bubblewrap` is neither in `devenv.nix` nor on `PATH`.
+
+## Proposed Guide Hardening - SUPERSEDED/DROPPED
+
+The following proposals are retained as readable history only. They are
+SUPERSEDED/DROPPED by the user ruling above and are not approved work.
 
 - **Assumption (proposal):** amend `docs/live-kwin-testing.md` to require a fail-closed sanitized child environment: start from `env -i`, add only required execution variables and explicit safe system search paths, set every XDG home, and explicitly unset host session, starter, display, agent, media, loader, KDE, Qt, and graphics-cache variables unless an individually documented need exists.
 - **Assumption (proposal):** amend the nested-launch contract to record the complete child environment, canonical workdir ancestry/ownership/modes, selected KWin executable and hash, private-bus address/socket metadata, and parent Wayland socket metadata before the compositor is allowed to mutate.

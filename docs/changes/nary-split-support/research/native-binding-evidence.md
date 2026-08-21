@@ -15,6 +15,9 @@
 - **Runtime fact**: an observation from an isolated nested-KWin run that passes
   the isolation acceptance criteria. A run that fails those criteria is retained
   as an invalidated observation, not a runtime fact about the binding.
+- **Host runtime fact**: a direct observation from an authorized, bounded,
+  read-only host-KWin probe whose `~/.config/kwinrc` SHA-256 and mtime are
+  unchanged across the run.
 
 ## E1 - Native 3+-child topology
 
@@ -90,12 +93,12 @@
   correspondence to post-split direct root child ordinals 3 and 4. It would
   not demonstrate an exactly three-child result from this call: the fresh root
   already had three direct children and the single split yielded five.
-- **Conclusion:** E4 remains unresolved. The candidate contract is **not
-  accepted** because the only runtime observation failed host-isolation
-  acceptance. In particular, no strict two-child split conclusion is accepted
-  for the tested horizontal adapter binding or its decoded shape; no claim is
-  made for all directions, since the source establishes that the floating
-  new-layout path returns one C++ item.
+- **Historical conclusion after attempt-01:** E4 remained unresolved because
+  that only runtime observation failed host-isolation acceptance. In particular,
+  no strict two-child split conclusion was accepted for the tested horizontal
+  adapter binding or its decoded shape; no claim was made for all directions,
+  since the source establishes that the floating new-layout path returns one
+  C++ item.
 - **Durability verdict:** native source supports ordered direct 3+-child
   topology, but this invalidated binding observation cannot establish that
   session-scoped semantic authority plus reconstruction is sufficient for
@@ -133,12 +136,41 @@
   isolation measurements, private-config proof, probe input, and cleanup
   result are retained at
   `/tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912`.
-- **Conclusion:** E4 remains unresolved and the candidate JavaScript binding
-  contract is **undetermined**. The changed host hash independently prevents
-  any Runtime fact, and the loader parse failure prevented this attempt from
-  producing binding observations. No conclusion is made for floating
+- **Historical conclusion after attempt-02:** the candidate JavaScript binding
+  contract was undetermined. The changed host hash independently prevented any
+  Runtime fact, and the loader parse failure prevented this attempt from
+  producing binding observations. No conclusion was made for floating
   directions.
 - **Residual risk:** no `plan.md` risk is retired. Native result cardinality,
   restart/manual-native-edit, and session-scoped-semantic-authority risks remain
   open. A new evidence-generation blocker is that the attempt-owned loader
   parser rejected the documented `i` load reply before running the probe.
+
+## E4 attempt-03 - direct read-only host probe
+
+- **Host runtime fact:** on 2026-08-21, the authorized direct host probe loaded
+  through `/Scripting` as signed script ID `1`, ran, emitted its unique journal
+  sentinel, and unloaded successfully. `~/.config/kwinrc` was
+  `905375112bbf8d9c8b882f687bd71eb1cb8eeb69a31ed657585889b9320e2fe8` before
+  and after; its nanosecond mtime was also unchanged.
+- **Host runtime fact:** the active root tile had one child. Its `tiles` value
+  reported `Array.isArray(...) === false`, `typeof === "object"`, and a
+  prototype constructor name of `"Array"`. It had a `length` property with
+  value `1`; integer index `0` was readable.
+- **Host runtime fact:** two reads of the root's `tiles` value were strictly
+  identical. The element at ordinal `0` was strictly identical across those
+  reads, had `typeof === "object"`, and a prototype constructor name of
+  `"Object"`. Iteration was available and its one observed element strictly
+  matched index `0`.
+- **Inference:** for this host binding and the observed one-child root, the
+  adapter may consume `tiles` as an indexed, iterable array-like object without
+  requiring `Array.isArray(...)`. It must continue to accept dynamic
+  cardinality; a one-element observation cannot establish multi-ordinal order.
+- **Boundary:** `split()` was not called. Its JavaScript return shape, return
+  order, and any strict two-item contract remain unproven and parked by scope.
+  The probe also does not establish behavior for other tiles, multiple children,
+  restart, or manual native edits.
+- **Conclusion:** E4's read-only marshalling and same-ordinal identity question
+  is established only for the scoped host observation above. It does not accept
+  a JavaScript-array contract, a universal ordering contract, or a two-child
+  `split()` contract.

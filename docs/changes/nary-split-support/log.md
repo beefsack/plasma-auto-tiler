@@ -182,3 +182,58 @@ result, changed files or commit, verification, and discoveries or decisions.
   insertion, and direction-only drag, keyboard, and preset split paths can
   potentially reach it. QJSEngine marshalling remains unproven; both binding
   probes were invalidated, so structural tests must use synthetic N-ary trees.
+
+## 2026-08-21
+
+- Role / unit: Worker / isolation-hardening / attempt-01
+- Result: Blocked before edits. The signed-`i` loader parser is only retained in
+  the untracked attempt `run.sh`; no tracked probe-script emitter exists to
+  change. Writer-attributed monitoring needs an unrecorded kernel/audit
+  collection mechanism and authorization boundary.
+- Files / commit: No files changed by the worker; `log.md` updated by Lead.
+- Verification: The worker read the accepted investigation and identified the
+  retained parser at
+  `/tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912/run.sh:62-73`.
+  No probe, host mutation, or static test command was run.
+- Notes: The proposal requires a future signed-`i` JSON-envelope parser and
+  writer attribution, but specifies neither a tracked emitter nor the required
+  audit implementation. Escalated for an implementation-boundary decision.
+
+## 2026-08-21
+
+- Role / unit: Worker / unit-01 and unit-02 documentation ruling
+- Result: Recorded the user ruling. The host write self-reverted within three
+  seconds and current content is byte-identical; only the divergent hash was
+  retained. Writer/mechanism remain undetermined, and root-tool attribution is
+  prohibited without separate approval. Attribution would require `fanotify`
+  with a global mark, an `auditd` watch rule, or `bpftrace`; each requires root.
+  `docs/decisions.md#native-effect-live-validation` prohibits `sudo` without
+  separate approval.
+- Files / commit: `research/isolation-breach-investigation.md`,
+  `docs/live-kwin-testing.md`, `log.md`; uncommitted.
+- Verification: Re-read the retained attempt parser at untracked throwaway
+  `run.sh:62-73`: it required `u`, rejected the signed `i 0`, and never invoked
+  `run()`. Confirmed the documented `/Scripting` contract is signed `i` with a
+  non-negative 32-bit ID and raw-output retention.
+- Notes: The D-Bus fallback (a child escaping `DBUS_SESSION_BUS_ADDRESS`,
+  reaching host KWin, and reconfiguring it) is neither confirmed nor refuted;
+  this and the missing divergent bytes are unresolved-and-accepted, not
+  benign-by-proof. `scripts/nested-kwin-spike.sh` remains unhardened: line 30
+  lacks `env -i`, inherits its parent environment, and exports the absolute host
+  Wayland socket. If nesting is ever needed, host `kwinrc` backup/restore or
+  `bubblewrap` are cheap containment options; `bubblewrap` is neither in
+  `devenv.nix` nor on `PATH`.
+
+## 2026-08-21
+
+- Role / unit: Lead / unit-03 (E4 read-only host probe) / attempt-02
+- Result: Blocked before preflight. The attempt-owned runner exited at `mkdir`
+  because creating its source with `apply_patch` had already created the
+  evidence directory.
+- Files / commit: `plan.md`, `log.md`, and the cursor procedure in
+  `docs/live-kwin-testing.md`; uncommitted.
+- Verification: No `loadScript`, `run`, or `unloadScript` call occurred. No
+  `kwinrc` baseline or postflight was captured. A third attempt is prohibited
+  by the circuit breaker and is escalated.
+- Notes: E4 has no new runtime fact. The pre-existing source-only conclusion
+  remains unchanged.

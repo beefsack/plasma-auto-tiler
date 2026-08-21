@@ -184,6 +184,10 @@ exit status, missing error, or visual appearance is never feature evidence.
 - `/Scripting` exposes `loadScript(s) -> i` and `loadScript(ss) -> i`. With
   `busctl --json=short`, require exactly `{"type":"i","data":[ID]}` where
   `ID` is one integral value in `0..2147483647`.
+- `loadScript` returns signed `i`, not `u`. Attempt-02's untracked throwaway
+  `run.sh:62-73` required `u`, so its body never executed even under perfect
+  isolation. Future callers parse signed `i`, accept a non-negative 32-bit ID,
+  and retain raw output.
 - Atomically write raw `loadScript` stdout to an attempt-owned runtime file,
   then parse it fail-closed. Only parser success permits `/Scripting/Script<ID>`.
   Require read-only introspection of that exact path and `org.kde.kwin.Script`
@@ -381,10 +385,11 @@ manual start launcher in one nonce-owned interactive run; the low-level
    `journalctl --user --quiet --no-pager --after-cursor=<cursor> _PID=<pid>`
    read. Fail closed on cursor acquisition failure, non-zero read status, or
    `-- No entries --` presentation text (requires `--quiet`).
-- `--show-cursor` prints a display prefix (`-- cursor: `). Strip that prefix
-  before passing the opaque cursor token to `--after-cursor=`; otherwise
-  journalctl rejects the cursor. Prove the stripped-token path with the
-  required true-positive marker before it gates a live attempt.
+- `--show-cursor` emits the cursor as its final output line, with the display
+  prefix `-- cursor: `. Select that final line, then strip the prefix before
+  passing the opaque cursor token to `--after-cursor=`; otherwise journalctl
+  rejects the cursor. Prove the stripped-token path with the required
+  true-positive marker before it gates a live attempt.
 - An empty after-cursor read is never proof that a capture contract works.
   Prove any new capture contract against a true positive, such as a benign
   `logger`-written marker, before it gates a live attempt; an empty result

@@ -72,15 +72,23 @@ trips the circuit breaker and requires escalation with a loop report.
 | Unit | Attempts | Corrections | Independent reviews |
 | --- | --- | --- | --- |
 | native-evidence-phase-2 | 2 | 0 | 0 |
+| unit-03b (E4 read-only host probe) | 3 (final) | 0 | 0 |
+
+- `unit-03b/attempt-01` and `attempt-02` stopped in bespoke harness setup
+  before a D-Bus load call. The user-approved reset removed that harness.
+- `unit-03b/attempt-03` loaded signed ID `1` directly on the host, ran the
+  read-only probe, found its sentinel, unloaded successfully, and left the host
+  `kwinrc` SHA-256 and mtime unchanged. It establishes only the scoped
+  read-only E4 facts in `research/native-binding-evidence.md`; `split()` was
+  intentionally not called and remains unproven.
 
 ## Pending User Decisions
 
 - New-window insertion sizing in `spec.md#user-decisions` is the only pending
   user decision. It blocks unit-01 and therefore implementation.
 - Resolved 2026-08-21: after two failed `native-evidence-phase-2` attempts,
-  the circuit breaker tripped. The Orchestrator froze that live-probe path and
-  the user selected an isolation-first reset with E4 parked as source-only
-  evidence. No third attempt is authorized.
+  the circuit breaker froze the nested live-probe path. The user then approved
+  the distinct direct read-only host reset recorded as `unit-03b/attempt-03`.
 
 ## Acceptance-Criterion Evidence
 
@@ -100,14 +108,18 @@ trips the circuit breaker and requires escalation with a loop report.
   evidence unit gates unit-04; its outcome may redesign the adapter only.
 - The project model's semantic authority is session-scoped until that evidence
   resolves restart and manual-native-edit behavior.
-- The native-binding evidence unit is blocked: attempt-02 observed a host
-  `kwinrc` SHA-256 change and hard-stopped; its strict loader parser also
-  rejected an `i 0` reply before the probe could run. Its two attempts tripped
-  the circuit breaker. The path is frozen pending the user-selected
-  isolation-first reset; E4 is parked as source-only evidence.
+- The nested native-binding evidence path remains blocked and frozen: attempt-02
+  observed a host `kwinrc` SHA-256 change and its strict loader parser rejected
+  an `i 0` reply before the probe ran. The direct read-only host reset produced
+  only scoped `tiles` marshalling facts, not native result cardinality.
+- `unit-03b/attempt-03` is final. The adapter must not require a JavaScript
+  array or two children; it may use defensive indexed/iterable enumeration for
+  the observed host binding. `split()` return shape remains unproven and parked.
 - The controller is 9,191 lines and the inventory spans 24 functions and 13
   test files; narrow units reduce but do not eliminate regression risk.
 
 ## Final Outcome
 
-- Pending approval and implementation.
+- `unit-03b/attempt-03` completed as the final E4 read-only host probe. Its
+  scoped facts are recorded in `research/native-binding-evidence.md`; no
+  `split()` fact was sought or obtained.
