@@ -377,9 +377,12 @@ test imports for every moved scenario export directly to the new module.
 
 ### Unit-23 Parked Subset
 
-The following files each have one top-level `describe` that alone exceeds the
-threshold. A describe-boundary-preserving split therefore cannot bring them
-below it. None has a `beforeEach`.
+The user authorized intra-`describe` splitting. The following fixed assignments
+replace the parked subset. Tests remain in their original order and retain their
+titles and bodies. The original top-level `describe` stays with the first
+resulting file; each later contiguous extraction gets the declared new title.
+No Worker may derive, adjust, rename, reword, add, remove, or reorder these
+assignments.
 
 | File | Total | Single top-level describe | Describe lines |
 |---|---:|---|---:|
@@ -387,18 +390,42 @@ below it. None has a `beforeEach`.
 | `controller-dynamic-virtual-desktops.test.ts` | 1,416 | yes | 1,391 |
 | `controller-interactive-drag.test.ts` | 1,277 | yes | 1,155 |
 
-`controller-interactive-drag.test.ts` has module fixtures `rowsDropSetup` and
-`assertLeafPartition` that an intra-describe split would need to share.
-Remediation remains parked pending a user decision. Options: allow
-intra-describe splitting with a re-grounded count invariant; accept these files
-as documented exceptions; or choose another resolution. No parked-subset
-implementation may begin.
+| Source file and execution order | Resulting file | Top-level `describe` title | Tests assigned in original order | Projected lines | Declared gate after unit |
+|---|---|---|---|---:|---|
+| `controller-automatic-dwindle-ownership.test.ts` (unit-23a) | retain `controller-automatic-dwindle-ownership.test.ts` | `TileController automatic dwindle ownership` | `adopts a stable scope on controller start without any structural call`; `reconstructs a persisted same-shape tree with empty leaves instead of adopting it`; `reconstructs a persisted same-shape tree with one empty leaf and a floating window`; `adopts a zero-child layout root as the sole usable leaf of a one-window scope`; `splits the zero-child layout root on insertion instead of marking the scope inert`; `leaves a zero-child layout root with no owned windows unmanaged and untouched`; `adopts the current desktop scope when a window is added after a switch to an empty workspace`; `emits a decisive no-op diagnostic when an in-scope addition reaches placement with no empty leaf on an inert scope`; `rebuilds a non-dwindle one-window scope onto the collapsed zero-child root's sole leaf`; `rebuilds a non-dwindle owned scope as the dwindle blueprint after a deferred remove-to-split yield`; `re-resolves the root and fresh-decodes around every rebuild split instead of retaining returned child handles`; `inserts each added window on the dwindle right spine with alternating orientation` | ~570 | exactly 924 tests, 83 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-automatic-dwindle-removals.test.ts` | `TileController automatic dwindle ownership removals and capacity recovery` | `rebuilds for the changed managed count when windows leave before the reconstruction completes`; `collapses the freed leaf after an owned window is removed, with a fresh whole-root decode`; `settles removal of the last window onto an empty tree without arming a reconstruction`; `occupies an empty zero-child layout root with the first eligible window added after N=0`; `leaves a zero-child root untouched when its sole occupant is removed`; `makes a duplicate removal settle callback inert`; `never mixes a remove and a split in one dispatch`; `excludes explicitly detached windows from the owned population and the dwindle rebuild`; `does not collapse a leaf for a detached window's removal`; `lets a valid selected overlay win over dwindle ownership`; `marks a damaged scope inert for the session and never retries dwindle there`; `keeps a scope retryable when minimum geometry rejects the split children, then recovers on a later lifecycle dispatch` | ~680 | exactly 924 tests, 83 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-automatic-dwindle-recovery.test.ts` | `TileController automatic dwindle ownership pending reconstruction and non-canonical ownership` | `defers a removal during a pending reconstruction and keeps stale duplicate callbacks inert`; `re-drives completion after a lost split-phase yield reply on the next lifecycle event`; `bounds re-drive re-arms so repeated lost split-phase replies mark the scope inert`; `fails a scope closed when the one-shot yield arm fails`; `accepts a non-canonical but bijection-intact tree at a steady-state removal and arms no reconstruction`; `arms a reconstruction from a steady-state add when the occupancy bijection fails, with the failed diagnostic`; `reconciles a foreign persisted non-canonical tree to the canonical dwindle shape on adoption`; `inserts a fourth window at the right-spine leaf of an owned non-canonical tree without reconstruction` | ~730 | exactly 924 tests, 83 suites/describes, 0 failures; both tsconfigs clean |
+| `controller-dynamic-virtual-desktops.test.ts` (unit-23b) | retain `controller-dynamic-virtual-desktops.test.ts` | `TileController dynamic virtual desktops` | `requests the same cleanup pass on every dispatcher trigger, not only a completed switch (Q7 broadened trigger)`; `removes every empty invisible owned desktop after a switch in ${mode} mode (no reserved trailing capacity)`; `removes every eligible non-trailing empty invisible desktop in one per-output-local pass, protecting only the trailing one`; `keeps a switch-cleanup candidate visible on another output in ${mode} mode, but still removes the other empty invisible one`; `keeps switch-cleanup candidates visible on another output, and now also protects the structurally-last trailing empty (shared)`; `protects occupied and uncertain switch-cleanup snapshots (ownership plays no role)`; `ignores sticky-only membership during switch cleanup`; `protects the structurally-last trailing empty, and still keeps the final global desktop after a switch`; `removes an empty invisible middle desktop on a non-switch trigger too (Q7 broadened trigger)`; `keeps an owned empty visible on another output`; `defers cleanup when an output current desktop is unreadable`; `defers cleanup when the global current desktop is invalid`; `treats floating non-sticky windows as desktop occupancy`; `excludes sticky windows from desktop occupancy`; `defers cleanup when the window list is invalid`; `defers cleanup when a non-sticky window membership is invalid` | ~410 | exactly 924 tests, 85 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-dynamic-virtual-desktops-navigation.test.ts` | `TileController dynamic virtual desktops navigation and cross-workspace moves` | `navigates to an existing 1-based index and never creates on an absent index`; `Meta+0 registers as the stable workspace-0 shortcut in every profile`; `Meta+Shift+0 reuses the existing trailing empty rather than creating a new one, and cleanup replenishes it once it is occupied`; `move to an absent index is a specific no-op with no membership write`; `moves a tiled window to an existing desktop, writing membership and following`; `move to the current desktop is a specific no-op`; `moves a tiled window via the shifted-symbol alias shortcut ID, same as the canonical ID`; `move-workspace-append-symbol dispatches identically to move-workspace-append`; `collapses the tiled source leaf synchronously and adopts only on the yielded turn`; `leaves a moved window floating on the target when destination placement fails`; `honors move-follow when the event-loop yield is unavailable (synchronous fallback)`; `defers cleanup while a cross-workspace move is unsettled and retries after it settles`; `moves a floating window across workspaces without mutating the tile tree`; `refuses to move a sticky window with no membership write or navigation`; `refuses to move a fullscreen window with no membership write or navigation`; `reports an append create failure without navigating or owning`; `reports a failed membership write on a tiled move without navigating or arming`; `keeps navigation nonfatal when the desktops surface is missing`; `keeps cleanup nonfatal when removeDesktop throws mid-cleanup` | ~460 | exactly 924 tests, 85 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-dynamic-virtual-desktops-reconciliation.test.ts` | `TileController dynamic virtual desktops deferred desktop operations and trailing-empty reconciliation` | `defers desktop mutation during a live drag and performs it after drag completion`; `defers desktop mutation while a reconstruction is pending and performs it after it settles`; `defers Meta+0 creation during a live drag and completes after drag finish`; `defers a repeated Meta+0 during a live drag and reuses the existing trailing empty after drag finish`; `defers Meta+0 creation while a reconstruction is pending and completes after it settles`; `Meta+0 creation or set-current failure is non-destructive and reason-logged`; `Meta+0 fails safely when the active output has no key and never mutates`; `Meta+0 and Meta+Shift+0 reuse the same existing trailing empty instead of creating separate ones`; `Shift+0 creates the first trailing empty, moves into it, and cleanup replenishes the vacated trailing empty once it settles`; `an occupancy event on the trailing empty appends its replacement (COSMIC-style reuse)`; `reconciliation is idempotent under repeated triggers`; `a desktop creation failure is non-destructive and reason-logged`; `cleanup never deletes a current or visible desktop, but does remove a non-trailing empty invisible one`; `stays stable (no oscillation) under interleaved, mixed dispatcher trigger types around a real occupation, in ${mode} mode` | ~620 | exactly 924 tests, 85 suites/describes, 0 failures; both tsconfigs clean |
+| `controller-interactive-drag.test.ts` (unit-23c) | retain `controller-interactive-drag.test.ts` | `TileController interactive drag` | `captures only interactive moves and permits one active drag`; `does not overwrite a captured origin on a repeated start of the same window`; `does not claim a cancellation when origin association and geometry are unchanged`; `restores association through origin manage when the cursor resolves to the origin or no occupied leaf`; `rejects stale, same, multiple, ineligible, invalid, and cross-scope targets before split`; `maps all directions to geometric children, retaining the origin leaf`; `selects the split direction from the cursor across all regions with a central dead-zone default`; `places the dragged window directly into an empty leaf without splitting or occupied-leaf reflow`; `logs the decisive plan rejection reason when an occupied target cannot be reflowed`; `disables structural drag once for malformed split output or post-split manage failure`; `deduplicates and disconnects existing and newly added interactive handlers`; `emits exactly one startup drag-attach summary aggregating per-signal results`; `reports a per-signal attach failure with a useful detail without skipping the window`; `attaches function-valued, prototype-provided signals approximating the QJSEngine shape (not live proof)`; `logs a distinct skip reason for every remaining attach guard`; `logs a window-list decode failure as the attach guard skip`; `skips interactive attachment once the window map is at capacity`; `logs diagnostic-only drag event signals without mutating tiles` | ~600 | exactly 924 tests, 87 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-interactive-drag-outline.test.ts` | `TileController interactive drag outline preview and minimum-split geometry` | `shows the whole valid target leaf on a stepped drag without structural mutation`; `suppresses duplicate stepped outline requests`; `hides a shown outline when a stepped target becomes unresolved, origin, out of scope, or topology-invalid`; `hides a shown outline when the target split would violate the minimum size`; `does nothing for stepped outlines when the configuration is disabled`; `clears a shown outline once when a drop finishes successfully`; `clears a shown outline once when the final drop is refused as undersized`; `clears a shown outline when its origin is invalidated or removed`; `clears a shown outline before replacing a stale drag`; `clears a shown outline when the controller disables without duplicate teardown`; `does not hide an outline again after terminal cleanup`; `hides a shown outline once when finished arrives while fullscreen`; `hides a shown outline once when finished arrives while maximized`; `contains drag exceptions and clears active state`; `resolves a native Shift-drop overlap into a position-directed split and defers the origin collapse`; `defaults a central-zone native Shift drop to a vertical split with the occupant above`; `restores the origin when the native drop target is not exactly dragged plus one occupant`; `refuses an undersized drop split while the dragged window still holds its origin leaf, leaving the tree untouched`; `restores the captured origin when KWin clears the dragged tile and the drop split is undersized`; `keeps a passing drop split contiguous, non-overlapping, and summing the full working extent` | ~470 | exactly 924 tests, 87 suites/describes, 0 failures; both tsconfigs clean |
+| same | new `controller-interactive-drag-reflow.test.ts` | `TileController interactive drag native/plain reflow and cursor-derived finish decisions` | `reflows a plain drop from the final frame geometry into the accepted three-window example`; `converges a plain drop and a native Shift drop on the same reflow`; `converges a vacated plain drop and a lagged origin-associated plain drop on the same reflow`; `derives the split direction from the cursor point used for target resolution, for plain and Shift alike`; `derives the drop target from the cursor, bailing to the origin over the frame-center leaf`; `bails when native overlap state contradicts the cursor-derived target`; `logs a distinct target-is-origin bail and restores the origin when the final frame center sits over the origin leaf`; `logs a distinct no-target-leaf bail with the center point when the final frame center sits on no leaf`; `logs distinct scope and topology bail reasons when the finish scope or tree is unavailable`; `emits the drag-finished hook entry log before every finish decision and bail` | ~340 | exactly 924 tests, 87 suites/describes, 0 failures; both tsconfigs clean |
 
-Every remediation split must preserve exactly 924 tests, 81 suites, 0 failures,
-and 81 top-level `describe` occurrences. Before selecting a suite-count-neutral
-split, establish empirically what the harness counts as a suite. If any
-candidate sub-split changes one of those values, stop and escalate without
-adjusting the expected values.
+`rowsDropSetup` and `assertLeafPartition` move only to
+`controller-interactive-drag-outline.test.ts`, where their sole consumers are
+assigned. They stay file-local: `rowsDropSetup` is used by `hides a shown
+outline when the target split would violate the minimum size`, `clears a shown
+outline once when the final drop is refused as undersized`, `refuses an
+undersized drop split while the dragged window still holds its origin leaf,
+leaving the tree untouched`, `restores the captured origin when KWin clears the
+dragged tile and the drop split is undersized`, and `keeps a passing drop split
+contiguous, non-overlapping, and summing the full working extent`.
+`assertLeafPartition` is used only by the last of those tests. No helper moves
+to `controller-fixtures.ts` or `controller-fixture-scenarios.ts`; no helper is
+duplicated.
+
+Boundary decision: the three-file assignments above are the approved unit-23
+split boundaries. The investigation confirmed no nested `describe` or
+`beforeEach` in any source file, no additional module/file-local helpers in the
+automatic-dwindle or dynamic-desktops files, and no consumer of either drag
+helper outside the declared outline file. Workers apply these assignments and
+titles verbatim.
+
+The declared test count is exactly 924 with 0 failures after every unit. The
+declared exact suite and top-level-`describe` totals are 83 after unit-23a, 85
+after unit-23b, and 87 after unit-23c. An observed deviation from its declared
+total is a stop-and-escalate condition, not a reason to adjust this table.
 
 Sum of target file line counts (excluding the fixture module, excluding new
 import-line overhead) = 16,060, matching lines 1016-17075 of the original
@@ -421,9 +448,9 @@ The pre-existing, out-of-scope over-threshold files are
        blocks exist unchanged (same names, same bodies, same order within each
        block) across 22 topic-scoped test files plus `controller-fixtures.ts`
        and `controller-fixture-scenarios.ts`.
-- [ ] `grep -c "describe(" kwin/tests/*.test.ts` totals exactly 81 (the
-      current pre-split baseline).
-- [ ] `cd kwin && npm test` reports `tests 924`, `suites 81`, `pass 924`,
+- [ ] `grep -c "describe(" kwin/tests/*.test.ts` totals exactly 87 after
+       unit-23c (83 after unit-23a; 85 after unit-23b).
+- [ ] `cd kwin && npm test` reports `tests 924`, `suites 87`, `pass 924`,
       `fail 0`, `cancelled 0`, `skipped 0`.
 - [ ] `cd kwin && npm run typecheck` (both `tsconfig.json` and
       `tsconfig.test.json`) passes with zero errors.
@@ -432,8 +459,9 @@ The pre-existing, out-of-scope over-threshold files are
       comparison since `npm test` regenerates it via `npm run build`).
 - [ ] No test name changed (spot-checkable via a diff of sorted `it(`/
       `describe(` string literals before and after).
-- [ ] No `describe` was split across files, reordered relative to its
-      original position, or nested differently.
+- [ ] Outside the six explicitly declared unit-23 descriptions above, no
+       `describe` was split across files, reordered relative to its original
+       position, or nested differently.
 - [ ] `kwin/src/controller.ts` and every other file outside
       `kwin/tests/controller*.ts` is untouched (`git diff --stat` shows only
       the deleted original file, the new `kwin/tests/controller-*.ts` files,
@@ -444,7 +472,7 @@ Exact commands:
 ```
 cd kwin && npm run typecheck
 cd kwin && npm test
-grep -c "describe(" kwin/tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # expect 81
+grep -c "describe(" kwin/tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # expect 87 after unit-23c
 git diff --stat -- kwin/contents/code/main.js   # expect empty
 ```
 

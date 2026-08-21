@@ -99,8 +99,10 @@ grep -c "describe(" tests/*.test.ts | awk -F: '{s+=$2} END{print s}'   # must pr
 | unit-20 | Move describe: global-unique workspaces (Unit 06) (contains its own locally-scoped `globalUniqueSetup` - travels with the block untouched) -> `controller-global-unique-workspaces.test.ts` | unit-01 | same pattern | full 3-command block |
 | unit-21 | Move describes: shared workspaces (Unit 07); trailing-empty invariant on first occupation (Unit 07 live regression) -> `controller-shared-workspaces.test.ts`; relocate the eight drained-source comment blocks verbatim above their owning declarations and delete `controller.test.ts` | unit-01 | same pattern plus drained-source deletion | full 3-command block; exactly 924 tests, 81 suites, 0 fail, 81 describes |
 | unit-23 safe subset | **Closed.** The fixture export-cluster split landed in `2dd926e`: `controller-fixtures.ts` is 574 lines and `controller-fixture-scenarios.ts` is 766 lines. The drag split is discarded under the Orchestrator ruling because 1,004 lines is within the user's "~1,000 line" threshold; it is preserved, unpushed, at `wip/unit-23-drag-split`. | unit-21 | approved fixture split and closure documentation only | final clean-main gate: 924 tests, 81 suites, 0 failures, 81 describes, both typechecks clean, 336 dogfood assertions |
-| unit-23 parked subset | Do not implement remediation for `controller-automatic-dwindle-ownership.test.ts` (1,932), `controller-interactive-drag.test.ts` (1,277), or `controller-dynamic-virtual-desktops.test.ts` (1,416). Each contains one top-level `describe` that alone exceeds ~1,000 lines, so a describe-boundary-preserving split cannot meet the threshold. | user decision | no implementation scope | parked pending the documented user decision |
-| unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23 | final acceptance verification | full 3-command block + `main.js` diff check + test-name diff check |
+| unit-23a | Apply the fixed ownership assignment in `spec.md`: retain the first 12 tests in `controller-automatic-dwindle-ownership.test.ts` and move the two declared later groups to their declared files and new top-level describes. | user decision | three declared ownership files | exactly 924 tests, 83 suites/describes, 0 failures; both tsconfigs clean |
+| unit-23b | Apply the fixed dynamic-desktops assignment in `spec.md`: retain the first 16 tests and move the two declared later groups to their declared files and new top-level describes. | unit-23a | three declared dynamic-desktop files | exactly 924 tests, 85 suites/describes, 0 failures; both tsconfigs clean |
+| unit-23c | Apply the fixed interactive-drag assignment in `spec.md`: retain the first 18 tests, move `rowsDropSetup` and `assertLeafPartition` with the declared outline group only, and move the last two groups to their declared files and new top-level describes. | unit-23b | three declared interactive-drag files | exactly 924 tests, 87 suites/describes, 0 failures; both tsconfigs clean |
+| unit-22 | Final cleanup: run the full acceptance gate after unit-23 remediation (3-command block plus `git diff --stat -- kwin/contents/code/main.js` must be empty, plus a diff of sorted `it(`/`describe(` string literals before (from git history) and after confirming no test name changed). Unit-21 owns deletion of the drained `kwin/tests/controller.test.ts`; this unit does not delete it. | unit-02 .. unit-21, unit-23a .. unit-23c | final acceptance verification | exactly 924 tests, 87 suites/describes, 0 failures; both typechecks clean; `main.js` diff empty; test-name diff empty |
 
 Only the Lead mutates plans and state. Semantic unit IDs above are stable;
 execution slices use `unit-<n>/attempt-<n>`.
@@ -164,7 +166,9 @@ actually starts.
 - [x] unit-20 global-unique workspaces
 - [x] unit-21 shared workspaces
 - [x] unit-23 safe subset closed - fixture scenarios accepted; drag reflow/resize discarded under Orchestrator ruling
-- [ ] unit-23 parked subset user decision
+- [ ] unit-23a automatic dwindle ownership intra-describe split
+- [ ] unit-23b dynamic virtual desktops intra-describe split
+- [ ] unit-23c interactive drag intra-describe split
 - [ ] unit-22 final cleanup and full gate
 
 ## Attempt Accounting
@@ -409,10 +413,11 @@ actually starts.
 
 ## Pending User Decisions
 
-- **Parked unit-23 threshold decision.** The three files below each contain one
-  top-level `describe` that alone exceeds ~1,000 lines. A
-  describe-boundary-preserving split cannot bring them below the threshold.
-  None has a `beforeEach`.
+- **Resolved - unit-23 threshold decision.** The user authorized intra-
+  `describe` splitting. The fixed per-test assignments, new titles, helper
+  disposition, and declared 924-test/83-then-85-then-87 suite-and-describe
+  gates are in `spec.md`'s Unit-23 Parked Subset section. No Worker may choose
+  a boundary or alter a declared title.
 
   | File | Total | Single top-level describe | Describe lines |
   |---|---:|---|---:|
