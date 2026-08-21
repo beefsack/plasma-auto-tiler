@@ -168,7 +168,7 @@ actually starts.
 - [x] unit-23 safe subset closed - fixture scenarios accepted; drag reflow/resize discarded under Orchestrator ruling
 - [x] unit-23a automatic dwindle ownership intra-describe split
 - [x] unit-23b dynamic virtual desktops intra-describe split
-- [ ] unit-23c interactive drag intra-describe split
+- [x] unit-23c interactive drag intra-describe split
 - [ ] unit-22 final cleanup and full gate
 
 ## Attempt Accounting
@@ -431,9 +431,24 @@ actually starts.
   `attachTileWriter`, `installDwindleSplitter`, `invokeShortcut`, and
   `ownTrailingEmpty` have no retained dynamic-desktops-file consumer, so only
   those import specifiers were pruned. Lead gates: 924 tests, 85
-  suites/describes, 924 pass, 0 fail; both typecheck tsconfigs clean; and
-  `kwin/contents/code/main.js` diff empty. Attempts 1; correction rounds 0;
-  independent reviews 0.
+   suites/describes, 924 pass, 0 fail; both typecheck tsconfigs clean; and
+   `kwin/contents/code/main.js` diff empty. Attempts 1; correction rounds 0;
+   independent reviews 0.
+- unit-23c/attempt-01: **accepted**. The verified fixed 18/20/10 assignment
+  moved all 48 tests verbatim into
+  `controller-interactive-drag-outline.test.ts` and
+  `controller-interactive-drag-reflow.test.ts`, under their declared top-level
+  describe titles. Direct comparison against the pre-split file confirms every
+  test body remains byte-identical and in order. `rowsDropSetup` (including its
+  doc comment) and `assertLeafPartition` moved verbatim to the outline file;
+  search confirms their five and one call sites respectively are all there and
+  no retained-file consumer remains. Search also proved
+  `DROP_OUTLINE_PREVIEW_CONFIG_KEY`, `TestTile`, `attachTileWriter`,
+  `collectLeaves`, `invokeShortcut`, and `nativeDropSetup` have no retained
+  source consumer, so only those imports/helpers were pruned. Lead gates: 924
+  tests, 87 suites/describes, 924 pass, 0 fail; both typecheck tsconfigs clean;
+  and `kwin/contents/code/main.js` diff empty. Resulting line counts: 478,
+  534, and 298. Attempts 1; correction rounds 0; independent reviews 0.
 
 ## Pending User Decisions
 

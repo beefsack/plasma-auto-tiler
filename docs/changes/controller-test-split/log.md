@@ -588,5 +588,26 @@ speculation.
   `invokeShortcut`, and `ownTrailingEmpty` have no retained-source consumer
   after pruning. Lead gates: `npm --prefix kwin test` reports 924 tests, 85
   suites, 924 pass, 0 fail; `npm --prefix kwin run typecheck` passes both
-  tsconfigs; describe count is 85; and `kwin/contents/code/main.js` has an
-  empty diff.
+   tsconfigs; describe count is 85; and `kwin/contents/code/main.js` has an
+   empty diff.
+
+## 2026-08-21 (unit-23c/attempt-01)
+
+- Role / unit: Lead / unit-23c (interactive drag intra-describe split), Worker
+  attempt-01.
+- Result: accepted. The fixed 18/20/10 assignment moved all 48 tests verbatim
+  into `controller-interactive-drag-outline.test.ts` and
+  `controller-interactive-drag-reflow.test.ts` under their declared top-level
+  describes. Direct comparison against the pre-split file confirms all test
+  bodies are byte-identical and in order. `rowsDropSetup`, including its doc
+  comment, and `assertLeafPartition` moved verbatim to the outline file.
+- Files / commit: `controller-interactive-drag.test.ts` reduced to 478 lines;
+  outline and reflow files added at 534 and 298 lines. No commit.
+- Verification: Search confirms the two file-local helpers have five and one
+  outline call sites respectively and no retained-file consumers.
+  `DROP_OUTLINE_PREVIEW_CONFIG_KEY`, `TestTile`, `attachTileWriter`,
+  `collectLeaves`, `invokeShortcut`, and `nativeDropSetup` have zero retained
+  source consumers after pruning. Lead gates: `npm --prefix kwin test` reports
+  924 tests, 87 suites, 924 pass, 0 fail; `npm --prefix kwin run typecheck`
+  passes both tsconfigs; describe count is 87; and
+  `kwin/contents/code/main.js` has an empty diff.
