@@ -119,10 +119,16 @@ Safety Boundary below.
   mtime of the host `~/.config/kwinrc` immediately before and immediately
   after one bounded nested run held long enough for the TileManager
   persistence timer (at least 2 seconds). Acceptance requires the host hash
-  AND mtime to be unchanged, plus read-only inspection showing the nested run
-  wrote/used its private config copy (a fresh `kwinrc` under the private
-  config dir). Any host state change is a hard failure: stop immediately,
-  report, and do not retry the live launch within that authorization.
+  to be unchanged, plus read-only inspection showing the nested run wrote/used
+  its private config copy (a fresh `kwinrc` under the private config dir). A
+  changed host hash is a HARD STOP: stop immediately, report, and do not retry
+  the live launch within that authorization. Unchanged mtime is advisory only,
+  but must be captured before and after. If the mtime changes while the hash is
+  unchanged, prominently report it in that run's evidence as an unexplained
+  isolation anomaly; never silently omit it. Attempt-02 later proved that this
+  signal was real: the host content hash diverged during its nested run. Mtime
+  remains advisory only because the content hash is the stronger hard-stop
+  check, never because an mtime anomaly is considered benign or noise.
 
 ## Validation Ladder
 

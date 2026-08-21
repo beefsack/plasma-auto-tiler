@@ -68,12 +68,16 @@ trips the circuit breaker and requires escalation with a loop report.
 
 | Unit | Attempts | Corrections | Independent reviews |
 | --- | --- | --- | --- |
-| No entries | 0 | 0 | 0 |
+| native-evidence-phase-2 | 2 | 0 | 0 |
 
 ## Pending User Decisions
 
 - The oracle role and new-window insertion sizing in `spec.md#user-decisions`
   remain open. They block unit-01 and therefore implementation.
+- Resolved 2026-08-21: after two failed `native-evidence-phase-2` attempts,
+  the circuit breaker tripped. The Orchestrator froze that live-probe path and
+  the user selected an isolation-first reset with E4 parked as source-only
+  evidence. No third attempt is authorized.
 
 ## Acceptance-Criterion Evidence
 
@@ -93,6 +97,11 @@ trips the circuit breaker and requires escalation with a loop report.
   evidence unit gates unit-04; its outcome may redesign the adapter only.
 - The project model's semantic authority is session-scoped until that evidence
   resolves restart and manual-native-edit behavior.
+- The native-binding evidence unit is blocked: attempt-02 observed a host
+  `kwinrc` SHA-256 change and hard-stopped; its strict loader parser also
+  rejected an `i 0` reply before the probe could run. Its two attempts tripped
+  the circuit breaker. The path is frozen pending the user-selected
+  isolation-first reset; E4 is parked as source-only evidence.
 - The controller is 9,191 lines and the inventory spans 24 functions and 13
   test files; narrow units reduce but do not eliminate regression risk.
 

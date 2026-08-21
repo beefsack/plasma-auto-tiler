@@ -97,3 +97,72 @@ result, changed files or commit, verification, and discoveries or decisions.
   no replay vectors and do not add behavior to the movement rules.
 - Notes: S1-S4 govern existing-window directional move-insertion only; they do
   not establish new-window insertion sizing. No file under `kwin/` was modified.
+
+## 2026-08-21
+
+- Role / unit: Lead / native-evidence-phase-1 / attempt-01
+- Result: Accepted pinned-source evidence. Native C++ supports ordered direct
+  3+-child containers; same-axis split inserts a sibling in the parent. C++
+  horizontal/vertical split paths return two entries, while the floating path
+  returns one; QJSEngine marshalling remains unproven by source.
+- Files / commit: `research/native-binding-evidence.md`; uncommitted.
+- Verification: KWin `v6.7.3` archive source was matched to commit
+  `45ec9a6d0ed312a803ff5658a2a3e61f221566c6`; citations recorded in the
+  research file; `git diff --check` passed.
+- Notes: The source result establishes native 3+-child topology but not the
+  script-facing `tiles` representation, ordering, or identity.
+
+## 2026-08-21
+
+- Role / unit: Lead / native-evidence-phase-2 / attempt-01
+- Result: Blocked by failed nested-KWin isolation acceptance. The host
+  `~/.config/kwinrc` hash was unchanged but its nanosecond mtime changed, so
+  the only runtime observation is invalidated and no retry was made.
+- Files / commit: `research/native-binding-evidence.md`; uncommitted.
+- Verification: Private nested resources were cleaned; `git diff --check`
+  passed. Static gates passed: `npm --prefix kwin test` reported 924 tests /
+  87 suites / 0 failures and `npm --prefix kwin run typecheck` was clean.
+- Notes: E4 and the JavaScript binding contract remain unresolved. The native
+  result-cardinality and restart/manual-native-edit residual risks remain open.
+
+## 2026-08-21
+
+- Role / unit: Lead / native-evidence-phase-2 / attempt-02
+- Result: Hard-stopped. The final authorized nested-KWin probe observed a host
+  `~/.config/kwinrc` SHA-256 change; no third attempt is permitted.
+- Files / commit: `docs/live-kwin-testing.md`,
+  `research/native-binding-evidence.md`, `plan.md`, `log.md`; uncommitted.
+- Verification: Retained evidence at
+  `/tmp/opencode/native-evidence-phase-2-attempt-02-20260821T035827482591912`
+  records private XDG/runtime isolation, a private `kwinrc`, complete cleanup,
+  and host before/after measurements. The attempt-owned loader parser rejected
+  `i 0` before the probe executed.
+- Static verification: `npm --prefix kwin test` passed with 924 tests / 87
+  suites / 0 failures; `npm --prefix kwin run typecheck` was clean for both
+  tsconfigs.
+- Notes: The user relaxed the mtime tripwire to advisory after attempt-01;
+  attempt-02 proved the mtime anomaly was a real isolation signal by observing
+  content divergence. Mtime remains advisory only because SHA-256 is the
+  stronger hard-stop check, not because the signal was benign. Two attempts
+  spent the unit's budget and tripped the circuit breaker. The Orchestrator
+  froze the path, and the user selected an isolation-first reset with E4 parked
+  as source-only evidence. Native result cardinality and the 3-child binding
+  observation remain unresolved.
+
+## 2026-08-21
+
+- Role / unit: Lead / isolation-breach-investigation
+- Result: Accepted read-only investigation. The host `kwinrc` content divergence
+  is established, but its writer and mechanism are undetermined. The explicit
+  private-bus calls used the retained private address; the D-Bus-to-host
+  hypothesis is neither confirmed nor refuted. E4 remains parked.
+- Files / commit: `research/isolation-breach-investigation.md`,
+  `docs/live-kwin-testing.md`, `plan.md`, `log.md`; uncommitted.
+- Verification: Narrow time-bounded `journalctl --user` queries for KWin,
+  Plasma, KDED, and D-Bus returned no entries. Static verification reported
+  924 tests / 87 suites / 0 failures; typecheck was clean.
+- Notes: The retained loader parser expected `u` and rejected the documented
+  signed `i 0` `loadScript` reply before the probe body ran. Future live work
+  requires the proposed isolation-first hardening and separately authorized
+  writer attribution; this investigation ran no compositor, probe, or D-Bus
+  mutation.
