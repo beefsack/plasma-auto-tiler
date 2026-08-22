@@ -342,7 +342,12 @@ describe("TileController selected overlay state", () => {
         const third = configureThreeOccupantPreset(reordered);
         invokeShortcut(reordered.harness, "plasma-auto-tiler-apply-columns");
         const reorderedScope = currentScopeFor(reordered.active);
-        reordered.source.tiles = [third.branch, third.left];
+        // Leaf order is derived from relativeGeometry, not raw `tiles[]` array
+        // position, so a genuine order change is a geometry swap: left and
+        // branch trade places along the split axis.
+        const leftGeometry = third.left.relativeGeometry;
+        third.left.relativeGeometry = third.branch.relativeGeometry;
+        third.branch.relativeGeometry = leftGeometry;
         assert.equal(reordered.controller.readSelectedOverlay(reorderedScope), null);
         assert.equal(countEvent(reordered.harness.logs, "selected-overlay-invalidated"), 1);
     });
@@ -361,6 +366,30 @@ describe("TileController selected overlay state", () => {
         realized.right.windows = [];
         assert.ok(state.controller.readSelectedOverlay(scope) !== null);
         assert.equal(state.controller.isEnabled, true);
+        assert.equal(countEvent(state.harness.logs, "selected-overlay-invalidated"), 0);
+    });
+
+    it("stays valid when a branch reports its children reversed in tiles[] relative to geometry", () => {
+        const state = presetSetup();
+        const realized = configureThreeOccupantPreset(state);
+        invokeShortcut(state.harness, "plasma-auto-tiler-apply-columns");
+        const scope = currentScopeFor(state.active);
+        const before = state.controller.readSelectedOverlay(scope);
+        assert.ok(before !== null);
+        assert.deepEqual(before.leaves, [realized.left, realized.middle, realized.right]);
+
+        // Simulate the tree being re-observed with `tiles[]` array order
+        // inverted at both levels while `relativeGeometry` (and thus the
+        // canonical leaf order) is unchanged: raw array index no longer
+        // matches geometric order, but the overlay's recorded leaves were
+        // geometry-ordered at recording time, so re-reading must still find
+        // them.
+        state.source.tiles = [realized.branch, realized.left];
+        realized.branch.tiles = [realized.right, realized.middle];
+
+        const after = state.controller.readSelectedOverlay(scope);
+        assert.ok(after !== null);
+        assert.deepEqual(after.leaves, [realized.left, realized.middle, realized.right]);
         assert.equal(countEvent(state.harness.logs, "selected-overlay-invalidated"), 0);
     });
 

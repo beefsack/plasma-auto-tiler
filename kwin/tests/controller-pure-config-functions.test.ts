@@ -8,7 +8,14 @@ import {
     type TestWindow,
     window,
 } from "./controller-fixtures";
-import { attachTileWriter, assertPresetShape, countEvent, installDwindleSplitter, invokeShortcut } from "./controller-fixture-scenarios";
+import {
+    attachTileWriter,
+    assertPresetShape,
+    countEvent,
+    installDwindleSplitter,
+    installReversedOrderSplitter,
+    invokeShortcut,
+} from "./controller-fixture-scenarios";
 import {
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     AUTOMATIC_SPLIT_TARGETS,
@@ -80,6 +87,55 @@ function takeoverTilingSetup(
     const controller = new TileController(harness.environment());
     controller.start();
     return { harness, controller, root, removed };
+}
+
+// Same takeover reconstruction shape as `takeoverTilingSetup`, but the
+// installed splitter reports its two children in `tiles` in the array order
+// opposite their geometric position, and each window carries a distinct
+// caption so the final leaf assignment can be verified by geometry rather
+// than by raw `tiles[]` array index.
+function takeoverTilingSetupReversed(
+    preset: string,
+    windowCount: number,
+): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly windows: readonly TestWindow[];
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const leaves = Array.from({ length: windowCount }, () => tile());
+    const windows = Array.from({ length: windowCount }, (_, index) => window({ caption: `w${index}` }));
+    for (let index = 0; index < windowCount; index += 1) {
+        const leaf = leaves[index];
+        const subject = windows[index];
+        if (leaf === undefined || subject === undefined) {
+            break;
+        }
+        if (index < windowCount - 1) {
+            leaf.windows = [subject];
+            subject.tile = leaf;
+        }
+    }
+    root.tiles = leaves;
+    harness.root = root;
+    harness.active = windows[0] as TestWindow;
+    harness.windows = windows;
+    harness.configValues.set("tilingAlgorithm", preset);
+    for (const leaf of leaves) {
+        leaf.remove = () => {
+            root.tiles = (root.tiles as TestTile[]).filter((entry) => entry !== leaf);
+            return true;
+        };
+    }
+    installReversedOrderSplitter(root);
+    for (const subject of windows) {
+        attachTileWriter(subject);
+    }
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, windows };
 }
 
 describe("parseTilingAlgorithm", () => {
@@ -475,5 +531,27 @@ describe("TileController tiling algorithm takeover", () => {
         invokeShortcut(harness, "plasma-auto-tiler-apply-dwindle");
         assert.equal(countEvent(harness.logs, "preset-invoked:dwindle"), 1);
         assert.equal(countEvent(harness.logs, "preset-invoked:columns"), 0);
+    });
+
+    it("resolves preset split targets and leaves by geometry order, not by raw tiles[] array index", () => {
+        const state = takeoverTilingSetupReversed("dwindle", 2);
+        assert.equal(countEvent(state.harness.logs, "ownership-pending"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-collapsed"), 1);
+        assert.equal(state.harness.flushNextYield(), true);
+        assert.equal(countEvent(state.harness.logs, "ownership-taken"), 1);
+        assert.equal(state.root.isLayout, true);
+        const children = state.root.tiles as TestTile[];
+        assert.equal(children.length, 2);
+        const [first, second] = children;
+        assert.ok(first !== undefined && second !== undefined);
+        // The splitter reports children reversed in `tiles[]` relative to
+        // geometry, so a raw-index reader would see the geometrically-right
+        // child first; confirm the fixture is exercising that inversion.
+        assert.ok(first.relativeGeometry.x > second.relativeGeometry.x);
+        const leftLeaf = first.relativeGeometry.x < second.relativeGeometry.x ? first : second;
+        const rightLeaf = leftLeaf === first ? second : first;
+        assert.deepEqual((leftLeaf.windows as TestWindow[]).map((w) => w.caption), ["w0"]);
+        assert.deepEqual((rightLeaf.windows as TestWindow[]).map((w) => w.caption), ["w1"]);
     });
 });

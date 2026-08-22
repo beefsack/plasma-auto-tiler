@@ -67,7 +67,7 @@ binary behavior.
 - [x] unit-02 Binary characterization.
 - [x] unit-03 Closed by analysis: no code change. See "Unit-03 Finding" below.
 - [x] unit-04 Native boundary and ordering.
-- [ ] unit-05 Preset and overlay reconstruction.
+- [x] unit-05 Preset and overlay reconstruction.
 - [ ] unit-06 Resize and minimum semantics.
 - [ ] unit-07 Drag and reflow migration.
 - [ ] unit-08 Keyboard and automatic insertion migration.
@@ -193,6 +193,77 @@ Completed 2026-08-22, one Worker attempt, no correction round.
   scripts/dogfood-install.test.sh` 347 assertions / 0 fail, unchanged from
   baseline. `kwin/contents/code/main.js` rebuilt via `npm --prefix kwin run
   build` and confirmed to match source.
+
+## Unit-05 Finding
+
+Completed 2026-08-22, one Worker attempt, no correction round on scope (one
+mechanical existing-test correction made in-line by the Worker; see below).
+
+- `collectPresetLeaves` (`kwin/src/controller.ts:1377-1408`, module-level) and
+  `presetTileAtPath` (`kwin/src/controller.ts:6518-6555`, private method of
+  `TileController`) both selected the "left"/"right" child by raw
+  `decodeSequential` array index rather than by geometry. Both now derive the
+  split axis from `layoutDirection` and call `orderCustomTilesByAxis`
+  (`custom-tile-split.ts:24`), matching the pattern already established for
+  the 5 sites converged in unit-04. `collectPresetLeaves` backs
+  `selectedOverlayValid`'s leaf re-read; `presetTileAtPath` backs
+  `rebuildPreset`'s split-target and leaf-path resolution. Both were reading
+  back trees whose leaves were originally geometry-ordered at build time (via
+  `customTileSplitSeam.decodeChildren`, already order-correct since unit-04),
+  so a raw-index re-read could silently disagree with how the tree was built.
+- `presetNodeMatches` (`controller.ts:1537`) was deliberately left untouched:
+  it already tries both decoded-child permutations against
+  `node.left`/`node.right`, so it is already order-tolerant without needing
+  `orderCustomTilesByAxis`; its own comment says as much ("accepted in either
+  decoded order"). Its hardcoded arity-2 decode matches the `Blueprint`
+  type's own binary schema (`layout-blueprint.ts`), the same
+  contract-not-native-claim pattern as the blueprint executor's own arity-2
+  requirement (unit-04 finding). `rebuildPreset`'s own
+  `decodeSequential(split, isCustomTile, 2)` post-split validation
+  (`controller.ts:6573` pre-change) was also left untouched: it only checks
+  split() produced 2 children before discarding the result, uninvolved in
+  ordering.
+- **Of the 5 `orderCustomTilesByAxis` call sites unit-04 left in
+  `controller.ts`, none fall in unit-05's scope.** Verified by reading each
+  site's containing function: `controller.ts:2697` (resize postcondition,
+  inside `resizeActiveWindow`) and `:2748` (`resolveResizeSplit`) are
+  unit-06's resize territory; `:5876` (`splitDropTarget`) is unit-07's drag
+  territory; `:6081` (keyboard split) and `:7026` (dwindle insertion) are
+  unit-08's keyboard/automatic-insertion territory. unit-05's actual coupling
+  bug was a different, unconverged pattern entirely (raw array index with no
+  `orderCustomTilesByAxis` call at all, in `collectPresetLeaves` and
+  `presetTileAtPath`), not a leftover use of the already-converged helper.
+  This tracks as fully resolved for unit-05; units 06-08 still own their
+  respective sites unchanged.
+- Test correction disclosed by the Worker and independently verified by the
+  Lead: the pre-existing case in
+  `kwin/tests/controller-selected-overlay-state.test.ts` ("discards when the
+  overlay root leaves, its topology drifts, or leaf order changes") asserted
+  that swapping only raw `tiles[]` array order (geometry unchanged)
+  invalidated the overlay - i.e. it encoded the exact bug being fixed as
+  expected behavior. The Worker changed that one sub-case to swap
+  `relativeGeometry` between the two children instead (a genuine reorder),
+  preserving the test's original intent (detect real leaf reordering)
+  without weakening coverage; the Lead confirmed by diff that no assertion
+  was deleted or loosened, only its trigger mechanism corrected to match the
+  now-authoritative ordering rule. Two new tests were added (not a
+  substitution for count purposes): `controller-pure-config-functions.test.ts`
+  ("resolves preset split targets and leaves by geometry order, not by raw
+  tiles[] array index") and `controller-selected-overlay-state.test.ts`
+  ("stays valid when a branch reports its children reversed in tiles[]
+  relative to geometry"), both using a new `installReversedOrderSplitter`
+  fixture (`controller-fixture-scenarios.ts`) that stores children reversed
+  in `tiles[]` while geometry stays correct. Both were confirmed by the
+  Worker (via `git stash` of only `controller.ts`) to fail against the
+  pre-fix code and pass against the fix.
+- Verification: `npm --prefix kwin test` 949 tests / 90 suites / 0 fail (up
+  from the 947 baseline, 2 new cases); `npm --prefix kwin run typecheck`
+  clean on both tsconfigs; `bash scripts/dogfood-install.test.sh` 347
+  assertions / 0 fail, unchanged from baseline. All four numbers independently
+  reproduced by the Lead, not just the Worker's report.
+  `kwin/contents/code/main.js` rebuilt via `npm --prefix kwin run build` by
+  the Lead after acceptance; a second rebuild produced no further diff,
+  confirming the tracked bundle matches source.
 
 ## Attempt Accounting
 

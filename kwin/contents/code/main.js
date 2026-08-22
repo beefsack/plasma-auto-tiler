@@ -1695,11 +1695,16 @@
       return [root];
     }
     const children = decodeSequential(root.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-    if (!children.ok || children.value.length !== 2) {
+    if (!children.ok) {
       return null;
     }
-    const left = children.value[0];
-    const right = children.value[1];
+    const axis = root.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : "y";
+    const ordered = orderCustomTilesByAxis(children.value, axis);
+    if (ordered === null || ordered.length !== 2) {
+      return null;
+    }
+    const left = ordered[0];
+    const right = ordered[1];
     if (left === void 0 || right === void 0) {
       return null;
     }
@@ -6047,7 +6052,10 @@
     // Fresh resolution of a compiled blueprint path to the live custom tile:
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
-    // next structural call and is never retained across one.
+    // next structural call and is never retained across one. Per-segment child
+    // selection is derived from relativeGeometry via orderCustomTilesByAxis,
+    // not from tiles[] array index: multi-ordinal native array order is
+    // unestablished (custom-tile-split.ts:18-23).
     presetTileAtPath(scope, path) {
       const root = this.environment.rootTile(scope.output, scope.desktop);
       if (!isCustomTile(root)) {
@@ -6062,7 +6070,12 @@
         if (!children.ok) {
           return null;
         }
-        const child = segment === "left" ? children.value[0] : children.value[1];
+        const axis = current.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : "y";
+        const ordered = orderCustomTilesByAxis(children.value, axis);
+        if (ordered === null || ordered.length !== 2) {
+          return null;
+        }
+        const child = segment === "left" ? ordered[0] : ordered[1];
         if (child === void 0) {
           return null;
         }

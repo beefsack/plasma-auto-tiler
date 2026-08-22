@@ -662,6 +662,31 @@ export function installDwindleSplitter(tile: TestTile): void {
         return [childA, childB];
     };
 }
+// Install a splitter that mirrors `installDwindleSplitter` geometrically but
+// stores the two children in `tiles` in the array order opposite their
+// geometric position along the split axis (the second-along-axis child at
+// `tiles[0]`, the first at `tiles[1]`), while both still carry correct,
+// distinct, non-degenerate `relativeGeometry`. Exercises call sites that must
+// order children by geometry rather than trust native `tiles[]` array index
+// (custom-tile-split.ts:18-23).
+export function installReversedOrderSplitter(tile: TestTile): void {
+    tile.split = (direction) => {
+        tile.isLayout = true;
+        tile.layoutDirection = direction;
+        tile.windows = [];
+        const horizontal = direction === 1;
+        const childA = makeTile(
+            horizontal ? { x: 0, y: 0, width: 50, height: 100 } : { x: 0, y: 0, width: 100, height: 50 },
+        );
+        const childB = makeTile(
+            horizontal ? { x: 50, y: 0, width: 50, height: 100 } : { x: 0, y: 50, width: 100, height: 50 },
+        );
+        installReversedOrderSplitter(childA);
+        installReversedOrderSplitter(childB);
+        tile.tiles = [childB, childA];
+        return [childA, childB];
+    };
+}
 // Install a configurable splitter that models the KWin minimum-geometry
 // boundary. While `state.rejecting` is true it yields a split result whose
 // children carry invalid geometry (the strict `orderCustomTilesByAxis` check

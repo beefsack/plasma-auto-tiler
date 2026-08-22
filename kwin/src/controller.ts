@@ -1374,6 +1374,9 @@ function dwindleLeafDepths(root: CustomTileCapability): Map<CustomTileCapability
 // executor's decoded split children. A non-layout root realizes to itself; a
 // layout root must decode to exactly two custom-tile children per level, so any
 // manual split, removal, or reorder of the overlay subtree returns null.
+// Child order is derived from relativeGeometry via orderCustomTilesByAxis, not
+// from tiles[] array index: multi-ordinal native array order is unestablished
+// (custom-tile-split.ts:18-23).
 function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | null {
     if (!isCustomTile(root)) {
         return null;
@@ -1382,11 +1385,16 @@ function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | 
         return [root];
     }
     const children = decodeSequential(root.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-    if (!children.ok || children.value.length !== 2) {
+    if (!children.ok) {
         return null;
     }
-    const left = children.value[0];
-    const right = children.value[1];
+    const axis: SplitAxis = root.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
+    const ordered = orderCustomTilesByAxis(children.value, axis);
+    if (ordered === null || ordered.length !== 2) {
+        return null;
+    }
+    const left = ordered[0];
+    const right = ordered[1];
     if (left === undefined || right === undefined) {
         return null;
     }
@@ -6514,7 +6522,10 @@ export class TileController {
     // Fresh resolution of a compiled blueprint path to the live custom tile:
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
-    // next structural call and is never retained across one.
+    // next structural call and is never retained across one. Per-segment child
+    // selection is derived from relativeGeometry via orderCustomTilesByAxis,
+    // not from tiles[] array index: multi-ordinal native array order is
+    // unestablished (custom-tile-split.ts:18-23).
     private presetTileAtPath(scope: CurrentScope, path: BlueprintPath): CustomTileCapability | null {
         const root = this.environment.rootTile(scope.output, scope.desktop);
         if (!isCustomTile(root)) {
@@ -6529,7 +6540,12 @@ export class TileController {
             if (!children.ok) {
                 return null;
             }
-            const child = segment === "left" ? children.value[0] : children.value[1];
+            const axis: SplitAxis = current.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
+            const ordered = orderCustomTilesByAxis(children.value, axis);
+            if (ordered === null || ordered.length !== 2) {
+                return null;
+            }
+            const child = segment === "left" ? ordered[0] : ordered[1];
             if (child === undefined) {
                 return null;
             }
