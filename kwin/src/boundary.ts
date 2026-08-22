@@ -1,4 +1,6 @@
 export const MAX_SEQUENTIAL_LENGTH = 1024;
+// Fixed logical-pixel padding for the native Custom Tile spacing contract.
+export const CUSTOM_TILE_PADDING = 8;
 
 export type DecodeFailure =
     | "not-sequential"
@@ -263,6 +265,21 @@ export function isCustomTile(value: unknown): value is CustomTileCapability {
         hasValue(value, "layoutDirection", (item) => item === 0 || item === 1 || item === 2) &&
         hasValue(value, "split", isMethod)
     );
+}
+
+// Documented writable `Tile.padding` (KWin 6.7.3 scripting surface). The
+// caller must already hold a validated CustomTileCapability; this seam only
+// validates the value and contains setter failures.
+export function setCustomTilePadding(tile: CustomTileCapability, padding: number): boolean {
+    if (!isFiniteNumber(padding) || padding < 0) {
+        return false;
+    }
+    try {
+        return Reflect.set(tile, "padding", padding) === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
 }
 
 export type StructuralMutationReporter = () => void;

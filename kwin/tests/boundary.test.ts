@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 
 import {
     FeatureGate,
+    CUSTOM_TILE_PADDING,
     MAX_SEQUENTIAL_LENGTH,
     TransientState,
     assignWindowToTile,
@@ -18,6 +19,7 @@ import {
     manageTile,
     removeCustomTile,
     sameScope,
+    setCustomTilePadding,
     splitCustomTile,
     type BoundaryScope,
 } from "../src/boundary";
@@ -192,6 +194,39 @@ describe("boundary capability guards", () => {
         assert.equal(splits, 0);
         assert.equal(isCustomTile({ ...customTile, split: 1 }), false);
         assert.equal(isOutput(throwingOutput), false);
+    });
+
+    it("writes the fixed logical padding through the guarded Custom Tile seam", () => {
+        const customTile = {
+            ...tile(),
+            padding: 0,
+            layoutDirection: 1,
+            split: () => [],
+        };
+        let assigned = customTile.padding;
+        let writes = 0;
+        Object.defineProperty(customTile, "padding", {
+            configurable: true,
+            get: () => assigned,
+            set: (value: number) => {
+                writes += 1;
+                assigned = value;
+            },
+        });
+
+        assert.equal(isCustomTile(customTile), true);
+        assert.equal(setCustomTilePadding(customTile, CUSTOM_TILE_PADDING), true);
+        assert.equal(customTile.padding, 8);
+        assert.equal(writes, 1);
+    });
+
+    it("documents uniform native spacing as outer 8 and adjacent 8", () => {
+        const nativeSpacing = {
+            outer: CUSTOM_TILE_PADDING,
+            adjacent: CUSTOM_TILE_PADDING,
+        };
+        assert.deepEqual(nativeSpacing, { outer: 8, adjacent: 8 });
+        assert.notDeepEqual(nativeSpacing, { outer: 0, adjacent: 8 });
     });
 
     it("decodes the native maximize enum Restore=0, Vertical=1, Horizontal=2, Full=3", () => {

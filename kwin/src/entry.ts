@@ -1,5 +1,6 @@
 import { TileController } from "./controller";
 import { type RectCapability } from "./boundary";
+import { prepareManagedRoot } from "./managed-root";
 
 function isKWinWindowSurface(value: unknown): value is Window {
     return (
@@ -25,7 +26,10 @@ const controller = new TileController({
         }
     },
     currentDesktopForOutput: (output) => workspace.currentDesktopForScreen(output),
-    rootTile: (output, desktop) => workspace.rootTile(output, desktop),
+    rootTile: (output, desktop) => {
+        const root = workspace.rootTile(output, desktop);
+        return prepareManagedRoot(root, () => console.log("plasma-auto-tiler:custom-tile-padding-failed"));
+    },
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
     clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),

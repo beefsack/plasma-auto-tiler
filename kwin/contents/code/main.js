@@ -19,6 +19,7 @@
 
   // src/boundary.ts
   var MAX_SEQUENTIAL_LENGTH = 1024;
+  var CUSTOM_TILE_PADDING = 8;
   function isObject(value) {
     return typeof value === "object" && value !== null;
   }
@@ -115,6 +116,17 @@
   }
   function isCustomTile(value) {
     return isTile(value) && hasValue(value, "layoutDirection", (item) => item === 0 || item === 1 || item === 2) && hasValue(value, "split", isMethod);
+  }
+  function setCustomTilePadding(tile, padding) {
+    if (!isFiniteNumber(padding) || padding < 0) {
+      return false;
+    }
+    try {
+      return Reflect.set(tile, "padding", padding) === true;
+    } catch (error) {
+      void error;
+      return false;
+    }
   }
   function reportStructuralMutation(reporter) {
     reporter == null ? void 0 : reporter();
@@ -8550,6 +8562,14 @@
     }
   };
 
+  // src/managed-root.ts
+  function prepareManagedRoot(root, onPaddingFailure) {
+    if (isCustomTile(root) && !setCustomTilePadding(root, CUSTOM_TILE_PADDING)) {
+      onPaddingFailure == null ? void 0 : onPaddingFailure();
+    }
+    return root;
+  }
+
   // src/entry.ts
   function isKWinWindowSurface(value) {
     return typeof value === "object" && value !== null && "activeChanged" in value && "desktopsChanged" in value && "outputChanged" in value && "tileChanged" in value && "interactiveMoveResizeStarted" in value && "interactiveMoveResizeStepped" in value && "interactiveMoveResizeFinished" in value;
@@ -8562,7 +8582,10 @@
       }
     },
     currentDesktopForOutput: (output) => workspace.currentDesktopForScreen(output),
-    rootTile: (output, desktop) => workspace.rootTile(output, desktop),
+    rootTile: (output, desktop) => {
+      const root = workspace.rootTile(output, desktop);
+      return prepareManagedRoot(root, () => console.log("plasma-auto-tiler:custom-tile-padding-failed"));
+    },
     windowList: () => workspace.windowList(),
     cursorPos: () => workspace.cursorPos,
     clientArea: (option, output, desktop) => workspace.clientArea(option, output, desktop),

@@ -193,6 +193,10 @@ interface Tile {
     // value is in screen-relative [0,1] units. The neighbor-adjusting detail is
     // source-derived and not live-proven here.
     relativeGeometry: Rect;
+    // Writable: src/tiles/tile.h exposes the uniform logical-pixel padding
+    // property used by Custom Tile roots. KWin applies output scaling and
+    // computes the resulting outer and adjacent spacing.
+    padding: number;
     readonly absoluteGeometry: Rect;
     readonly parent: Tile | null;
     // QList QObject boundaries require runtime decoding before iteration.
