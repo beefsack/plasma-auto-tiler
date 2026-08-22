@@ -298,17 +298,29 @@
   }
   var customTileSplitSeam = {
     split: (tile, orientation) => splitCustomTile(tile, splitDirection(orientation)),
-    decodeChildren: (value) => {
-      const decoded = decodeSequential(value, isCustomTile, 2);
+    // split()'s return shape is native-unproven and unused (see
+    // docs/changes/nary-split-support/research/native-binding-evidence.md:169-172).
+    // Children are obtained by re-decoding the split target's own `tiles`
+    // afterward, the same re-decode-after-mutation shape already established
+    // for `removeCustomTile` (boundary.ts:431-433) and already used at the
+    // resize postcondition (controller.ts:2715).
+    decodeChildren: (tile) => {
+      const decoded = decodeSequential(tile.tiles, isCustomTile, 2);
       if (!decoded.ok) {
         return null;
       }
-      const left = decoded.value[0];
-      const right = decoded.value[1];
-      if (left === void 0 || right === void 0) {
+      const a = decoded.value[0];
+      const b = decoded.value[1];
+      if (a === void 0 || b === void 0) {
         return null;
       }
-      return Object.freeze([left, right]);
+      const axis = tile.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
+      const aPosition = a.relativeGeometry[axis];
+      const bPosition = b.relativeGeometry[axis];
+      if (aPosition === bPosition) {
+        return null;
+      }
+      return Object.freeze(aPosition < bPosition ? [a, b] : [b, a]);
     }
   };
 
@@ -398,8 +410,8 @@
           return failed(completedSplits, mutationPossible);
         }
         mutationPossible = true;
-        const split = seam.split(target, instruction.orientation);
-        const children = seam.decodeChildren(split);
+        seam.split(target, instruction.orientation);
+        const children = seam.decodeChildren(target);
         if (children === null) {
           return failed(completedSplits, mutationPossible);
         }

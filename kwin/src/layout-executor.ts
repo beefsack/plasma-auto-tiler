@@ -3,7 +3,11 @@ import { type BlueprintInstructions, type BlueprintPath } from "./layout-instruc
 
 export interface BlueprintSplitSeam<Tile extends object> {
     readonly split: (tile: Tile, orientation: Orientation) => unknown;
-    readonly decodeChildren: (value: unknown) => readonly [Tile, Tile] | null;
+    // Receives the split TARGET (the parent tile) after split() has been
+    // called on it, not split()'s return value: the native return shape is
+    // unproven and must stay unused. See custom-tile-split.ts for the
+    // concrete decode.
+    readonly decodeChildren: (tile: Tile) => readonly [Tile, Tile] | null;
 }
 
 export type BlueprintExecutionFailure = {
@@ -146,8 +150,14 @@ export function executeBlueprintInstructions<Tile extends object>(
             }
 
             mutationPossible = true;
-            const split = seam.split(target, instruction.orientation);
-            const children = seam.decodeChildren(split);
+            // split()'s return value is native-shape-unproven and
+            // intentionally unused here (see
+            // docs/changes/nary-split-support/research/native-binding-evidence.md:169-172).
+            // Re-decode the split target's own children afterward instead,
+            // matching the established re-decode-after-mutation precedent
+            // (kwin/src/boundary.ts:431-433, kwin/src/controller.ts:2715).
+            seam.split(target, instruction.orientation);
+            const children = seam.decodeChildren(target);
             if (children === null) {
                 return failed(completedSplits, mutationPossible);
             }

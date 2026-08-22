@@ -36,7 +36,12 @@ function seam(
             }
             return response;
         },
-        decodeChildren: (value) => {
+        // Mirrors the production seam: decodeChildren now reads from the
+        // split TARGET (looked up by id), not from split()'s return value,
+        // even though this synthetic seam sources both from the same
+        // responses map.
+        decodeChildren: (tile) => {
+            const value = responses.get(tile.id);
             if (!Array.isArray(value) || value.length !== 2) {
                 return null;
             }
@@ -215,47 +220,76 @@ describe("executeBlueprintInstructions", () => {
 });
 
 describe("customTileSplitSeam", () => {
-    it("maps orientations and strictly decodes exactly two CustomTile children", () => {
+    it("maps orientations to the pinned KWin split() direction integers", () => {
         const directions: number[] = [];
-        const child = customTile();
-        const root = customTile((direction) => {
-            directions.push(direction);
-            return [child, customTile()];
+        const root = customTile(() => {
+            return undefined;
         });
-
-        customTileSplitSeam.split(root, "horizontal");
-        customTileSplitSeam.split(root, "vertical");
+        const spying = customTile((direction) => {
+            directions.push(direction);
+            return undefined;
+        });
+        customTileSplitSeam.split(spying, "horizontal");
+        customTileSplitSeam.split(spying, "vertical");
         assert.deepEqual(directions, [1, 2]);
-        assert.equal(customTileSplitSeam.decodeChildren([child]), null);
-        assert.notEqual(customTileSplitSeam.decodeChildren([child, customTile()]), null);
+        assert.equal(root.layoutDirection, 1);
+    });
+
+    it("returns null when the split target does not have exactly two CustomTile children", () => {
+        const oneChild = customTile(undefined, [customTile()]);
+        assert.equal(customTileSplitSeam.decodeChildren(oneChild), null);
+
+        const noChildren = customTile();
+        assert.equal(customTileSplitSeam.decodeChildren(noChildren), null);
+    });
+
+    it("orders two children by relativeGeometry along the split axis, not by tiles[] index", () => {
+        const leftChild = customTile(undefined, [], { x: 0, y: 0, width: 1, height: 2 });
+        const rightChild = customTile(undefined, [], { x: 1, y: 0, width: 1, height: 2 });
+        // Deliberately stored in reverse geometric order to prove ordering
+        // is derived from geometry, not from tiles[] index position.
+        const horizontalParent = customTile(undefined, [rightChild, leftChild], undefined, HORIZONTAL_LAYOUT_DIRECTION);
+        assert.deepEqual(customTileSplitSeam.decodeChildren(horizontalParent), [leftChild, rightChild]);
+
+        const topChild = customTile(undefined, [], { x: 0, y: 0, width: 2, height: 1 });
+        const bottomChild = customTile(undefined, [], { x: 0, y: 1, width: 2, height: 1 });
+        const verticalParent = customTile(undefined, [bottomChild, topChild], undefined, VERTICAL_LAYOUT_DIRECTION);
+        assert.deepEqual(customTileSplitSeam.decodeChildren(verticalParent), [topChild, bottomChild]);
     });
 });
 
-function customTile(split: (direction: number) => unknown = () => []): {
+const HORIZONTAL_LAYOUT_DIRECTION = 1;
+const VERTICAL_LAYOUT_DIRECTION = 2;
+
+function customTile(
+    split: ((direction: number) => unknown) | undefined = () => undefined,
+    tiles: readonly unknown[] = [],
+    relativeGeometry: { readonly x: number; readonly y: number; readonly width: number; readonly height: number } = { x: 0, y: 0, width: 1, height: 1 },
+    layoutDirection: number = HORIZONTAL_LAYOUT_DIRECTION,
+): {
     readonly relativeGeometry: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
     readonly absoluteGeometry: { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
     readonly parent: null;
-    readonly tiles: readonly [];
+    readonly tiles: readonly unknown[];
     readonly windows: readonly [];
     readonly isLayout: false;
     readonly canBeRemoved: true;
-    readonly layoutDirection: 1;
+    readonly layoutDirection: number;
     readonly manage: () => boolean;
     readonly unmanage: () => boolean;
     readonly split: (direction: number) => unknown;
 } {
-    const geometry = { x: 0, y: 0, width: 1, height: 1 };
     return {
-        relativeGeometry: geometry,
-        absoluteGeometry: geometry,
+        relativeGeometry,
+        absoluteGeometry: relativeGeometry,
         parent: null,
-        tiles: [],
+        tiles,
         windows: [],
         isLayout: false,
         canBeRemoved: true,
-        layoutDirection: 1,
+        layoutDirection,
         manage: () => true,
         unmanage: () => true,
-        split,
+        split: split ?? (() => undefined),
     };
 }

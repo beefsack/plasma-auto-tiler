@@ -54,7 +54,7 @@ binary behavior.
 | unit-01 | Record the seven settled decisions, including the joint ordered-child/native-boundary contract and reference-only conformance model, and resolve the remaining new-window-insertion-sizing decision before freezing the contracts. | Baseline gate | Approved spec and this plan | Decision record matches the approved spec; static document-link inspection. |
 | unit-02 | Add binary characterization fixtures that serialize ordered layouts and window assignments before topology migration. | unit-01 | `kwin/tests/nary-characterization.test.ts`, `controller-fixture-scenarios.ts` seam | Focused characterization cases, then `npm --prefix kwin test` (static). |
 | unit-03 | Generalize logic-layer split planning and equality contracts from pair roles to the approved ordered-child contract. | unit-02 | `kwin/src/logic.ts`, `kwin/tests/logic.test.ts` | N-ary structural cases plus existing logic tests; `npm --prefix kwin run typecheck` (static). |
-| unit-04 | Generalize the pinned native adapter and canonical project-model order without claiming an unproven native result cardinality. A separately scoped native-binding evidence unit gates this work. | unit-01, unit-03, native-binding evidence | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests prove every listed order-sensitive site consumes canonical model order; `npm --prefix kwin test` and typecheck (static). |
+| unit-04 | Generalize the pinned native adapter and canonical project-model order without claiming an unproven native result cardinality. | unit-01, unit-03 | `kwin/src/boundary.ts`, split adapter/executor seams, controller child-order helpers, related tests | Boundary cardinality and ordered-child tests prove every listed order-sensitive site consumes canonical model order; `npm --prefix kwin test` and typecheck (static). |
 | unit-05 | Migrate preset collection, pathing, rebuild, overlay validation, and invariant shape checks to ordered direct children. | unit-04 | Controller preset/overlay functions; pure-config, selected-overlay, keyboard-move tests | Focused preset and overlay tests, binary serialization comparison, complete test suite (static). |
 | unit-06 | Implement the approved N-ary resize, minimum-size, and ratio/weight semantics. | unit-01, unit-04 | Controller resize/minimum functions; resize diagnostics tests | 2-child regression and approved 3+-child resize cases; typecheck and complete test suite (static). |
 | unit-07 | Generalize drag target selection, split application, and reflow normalization for N-ary direct children. | unit-03, unit-04 | Controller drag/reflow functions; interactive drag, diagnostics, overlay-reflow tests | Same-axis wrapping, order-only 3+-child cases, binary characterization checks, complete suite (static). |
@@ -94,6 +94,51 @@ coupling that N-ary migration must address lives outside `logic.ts`:
 - `kwin/src/boundary.ts:56` (`decodeSequential`) - the shared decode seam
   these sites all consume; it is already arity-parametric (`maxLength`) and
   requires no change itself.
+
+## Unit-04 Native-Binding-Evidence Gate Dissolved
+
+Dissolved 2026-08-22 by design change, not by evidence. unit-04's dependency
+on the parked native-binding evidence traced to one architectural choice: the
+blueprint split seam decoded `split()`'s native return value directly to
+obtain the new children
+(`kwin/src/custom-tile-split.ts:15` prior to this change, consumed through
+`kwin/src/layout-executor.ts:150` prior to this change). That return shape is
+native-unproven and parked
+(`docs/changes/nary-split-support/research/native-binding-evidence.md:169-172`).
+
+Fix: `BlueprintSplitSeam.decodeChildren` (`kwin/src/layout-executor.ts:4-9`)
+now receives the split TARGET tile, not `split()`'s return value.
+`executeBlueprintInstructions` (`kwin/src/layout-executor.ts:149-155`) still
+calls `seam.split(target, orientation)` for its mutation side effect but
+discards the return value, then calls `seam.decodeChildren(target)`, which
+re-decodes the target's own `.tiles` (`kwin/src/custom-tile-split.ts:15-24`).
+This matches the precedent already established for `removeCustomTile`
+(`kwin/src/boundary.ts:431-433`: "Its caller must re-decode the root
+immediately afterwards") and already implemented at the resize postcondition
+(`kwin/src/controller.ts:2715`: `decodeSequential(target.split.tiles, ...)`).
+
+Ordering is derived from `relativeGeometry` along the split axis
+(`layoutDirection`), not from `tiles[]` index position, because multi-ordinal
+array order is unestablished for the native binding
+(`native-binding-evidence.md:149-176`: observed only on a one-child root).
+`kwin/tests/layout-executor.test.ts` adds a dedicated case that stores two
+children in reverse geometric order within `tiles` and asserts
+`decodeChildren` still returns them ordered by geometry, proving index is not
+trusted.
+
+Behavior for the existing binary case is unchanged: `npm --prefix kwin test`
+944 tests / 90 suites / 0 fail (up from 942, two new
+`customTileSplitSeam` cases), typecheck clean on both tsconfigs.
+
+Scope note: this dissolution covers only unit-04's own scope (the split
+adapter/executor seam). Three other call sites still decode `split()`'s
+return value directly rather than re-decoding the parent
+(`kwin/src/controller.ts:5885-5886` drag, `:6088-6089` keyboard, `:6588`
+preset-path construction) instead of going through this seam. None of them
+list "native-binding evidence" as a plan dependency (only unit-04 did); they
+belong to unit-07, unit-08, and unit-05 respectively and are unaffected by
+this dissolution. Migrating them to the same re-decode pattern is in scope
+for those units, not this one.
 
 ## Attempt Accounting
 
