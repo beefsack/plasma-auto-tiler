@@ -3,8 +3,9 @@
 ## Status
 
 - Change class: Standard.
-- Status: Approved.
-- Artifact map: [plan](plan.md) and [log](log.md).
+- Owner: Lead.
+- Status: Accepted by Orchestrator; static completion complete.
+- Artifact map: [plan](plan.md).
 
 ## Intent
 
@@ -43,19 +44,19 @@ supported asymmetric Custom Tile gap API.
 
 ## Acceptance Criteria
 
-- [ ] The typed script-visible writable padding contract is statically present,
+- [x] The typed script-visible writable padding contract is statically present,
       and focused tests prove the fixed value is `8` logical pixels.
-- [ ] Every relevant managed-root bootstrap, initialization, and recovery path
+- [x] Every relevant managed-root bootstrap, initialization, and recovery path
       applies padding `8` before tile-managed assignment or reflow where
       feasible; direct tests cover those paths.
-- [ ] Static tests document and assert `(outer=8, inner=8)` and adjacent native
+- [x] Static tests document and assert `(outer=8, inner=8)` and adjacent native
       spacing, without claiming or constructing asymmetric `(0,8)` padding.
-- [ ] Static inspection proves spacing does not use tiled `frameGeometry`,
+- [x] Static inspection proves spacing does not use tiled `frameGeometry`,
       controller geometry, `kwinrc`, effects, shadows, clipping, or scene
       manipulation, and existing float/maximize/fullscreen behavior remains
       unchanged.
-- [ ] `npm --prefix kwin test`, `npm --prefix kwin run typecheck`,
+- [x] `npm --prefix kwin test`, `npm --prefix kwin run typecheck`,
       `bash scripts/dogfood-install.test.sh`, and `npm --prefix kwin run build`
       pass; the generated bundle is reproducible and matches authored source.
-- [ ] Live visual measurement is separate user-run and authorized work, not
+- [x] Live visual measurement is separate user-run and authorized work, not
       static completion evidence.

@@ -1,5 +1,13 @@
 # Plan: Native KWin Custom Tile Window Spacing
 
+## Ownership And Acceptance
+
+- Owner: Lead.
+- Status: Accepted by Orchestrator; static completion complete.
+- Accepted implementation: `c173f70 feat(window-spacing): apply native tile padding`.
+- Completion records retain `spec.md` and this plan. The transient execution
+  log is intentionally removed.
+
 ## Technical Approach
 
 Use one typed writable Custom Tile padding boundary and one fixed uniform value
@@ -23,12 +31,12 @@ these units, and no unit depends on N-ary or controller-source work.
 
 | Criterion | Static evidence |
 |---|---|
-| Typed writable contract and fixed logical value | unit-01 declaration/boundary inspection plus focused tests. |
-| Root bootstrap and recovery coverage | unit-02 path-by-path source inspection and direct ordering tests. |
-| Native outer and adjacent semantics | unit-01 focused tests asserting `(outer=8, inner=8)` and rejecting asymmetric `(0,8)` claims. |
-| Forbidden spacing paths and preservation | unit-03 source/bundle inspection for tiled `frameGeometry`, controller geometry, `kwinrc`, effects, shadows, clipping, scene manipulation, per-edge geometry, and border changes. |
-| Full static gates and bundle | unit-03 commands: `npm --prefix kwin test`; `npm --prefix kwin run typecheck`; `bash scripts/dogfood-install.test.sh`; `npm --prefix kwin run build`; `git diff --check`. |
-| Live visual behavior | No static evidence; separate user-run and authorized work only. |
+| Typed writable contract and fixed logical value | Accepted: unit-01 declaration/boundary inspection and 20 focused tests prove fixed `8` logical pixels. |
+| Root bootstrap and recovery coverage | Accepted: unit-02 inspected every root-acquisition path and directly tested assignment/reflow ordering and repeat-safe preparation. |
+| Native outer and adjacent semantics | Accepted: unit-01 focused tests assert `(outer=8, inner=8)` and do not claim asymmetric `(0,8)` behavior. |
+| Forbidden spacing paths and preservation | Accepted: unit-03 source/bundle inspection found no tiled `frameGeometry` spacing, controller geometry, `kwinrc`, effects, shadows, clipping, scene manipulation, per-edge geometry, or border change. |
+| Full static gates and bundle | Accepted: 965 tests / 91 suites / 0 failures; typecheck clean; dogfood 347 / 0; four deterministic builds with SHA-256 `f91f7d27843057cb98cae43611361fab6847407e054dc914ab03fa5c3bcd3433`; `git diff --check` clean. |
+| Live visual behavior | Accepted boundary: no static evidence is claimed. Optional user-run live visual measurement remains outside static completion. |
 
 ## Progress And Evidence
 
@@ -59,5 +67,9 @@ these units, and no unit depends on N-ary or controller-source work.
 
 ## Final Outcome
 
-- All static acceptance criteria are met. Live visual measurement remains a
-  separate user-run activity and is not required for this fixed native behavior.
+- Accepted: all static acceptance criteria are met by `c173f70`. The approved
+  behavior is uniform `(outer=8, inner=8)` logical-pixel padding, intentionally
+  diverging from COSMIC's `(outer=0, inner=8)` because KWin 6.7.3 provides no
+  supported asymmetric Custom Tile gap API.
+- Optional live visual measurement remains separate user-run work and is not
+  required for this static completion.
