@@ -6,8 +6,11 @@ export interface BlueprintSplitSeam<Tile extends object> {
     // Receives the split TARGET (the parent tile) after split() has been
     // called on it, not split()'s return value: the native return shape is
     // unproven and must stay unused. See custom-tile-split.ts for the
-    // concrete decode.
-    readonly decodeChildren: (tile: Tile) => readonly [Tile, Tile] | null;
+    // concrete decode. Decodes an ordered array of whatever length the
+    // target reports; it does not itself assume 2. Callers with their own
+    // arity contract (see executeBlueprintInstructions below) enforce that
+    // separately.
+    readonly decodeChildren: (tile: Tile) => readonly Tile[] | null;
 }
 
 export type BlueprintExecutionFailure = {
@@ -158,12 +161,21 @@ export function executeBlueprintInstructions<Tile extends object>(
             // (kwin/src/boundary.ts:431-433, kwin/src/controller.ts:2715).
             seam.split(target, instruction.orientation);
             const children = seam.decodeChildren(target);
-            if (children === null) {
+            // Every compiled blueprint split instruction has exactly a
+            // leftPath and rightPath (see layout-instructions.ts's
+            // SplitInstruction): this is the blueprint executor's OWN
+            // structural contract (blueprints are always binary trees of
+            // splits), not a claim about native split()'s cardinality. A
+            // target that decodes to any length other than 2 fails
+            // deterministically here.
+            if (children === null || children.length !== 2) {
                 return failed(completedSplits, mutationPossible);
             }
             const left = children[0];
             const right = children[1];
             if (
+                left === undefined ||
+                right === undefined ||
                 left === right ||
                 left === target ||
                 right === target ||

@@ -664,8 +664,8 @@ export function installDwindleSplitter(tile: TestTile): void {
 }
 // Install a configurable splitter that models the KWin minimum-geometry
 // boundary. While `state.rejecting` is true it yields a split result whose
-// children carry invalid geometry (the strict `orderedChildren` check rejects
-// the pair) and does not realize the split in the live tree, so a capacity
+// children carry invalid geometry (the strict `orderCustomTilesByAxis` check
+// rejects the pair) and does not realize the split in the live tree, so a capacity
 // rejection leaves the scope structurally unchanged and retryable. When
 // `state.rejecting` is false it behaves exactly like `installDwindleSplitter`,
 // realizing a valid dwindle chain.
@@ -680,7 +680,7 @@ export function installCapacityRejectingSplitter(tile: TestTile, state: { reject
         );
         if (state.rejecting) {
             // KWin minimum geometry can yield an empty child: the first child
-            // has zero width, so `orderedChildren` must reject the pair.
+            // has zero width, so `orderCustomTilesByAxis` must reject the pair.
             return [makeTile({ x: 0, y: 0, width: 0, height: 100 }), validB];
         }
         tile.isLayout = true;

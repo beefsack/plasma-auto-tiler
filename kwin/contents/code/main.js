@@ -296,6 +296,22 @@
   function splitDirection(orientation) {
     return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
   }
+  function orderCustomTilesByAxis(children, axis) {
+    const positioned = children.map((child) => {
+      const geometry = child.relativeGeometry;
+      return { child, position: geometry[axis], width: geometry.width, height: geometry.height };
+    });
+    if (positioned.some((entry) => entry.width <= 0 || entry.height <= 0)) {
+      return null;
+    }
+    const positions = positioned.map((entry) => entry.position);
+    if (new Set(positions).size !== positions.length) {
+      return null;
+    }
+    return Object.freeze(
+      positioned.slice().sort((a, b) => a.position - b.position).map((entry) => entry.child)
+    );
+  }
   var customTileSplitSeam = {
     split: (tile, orientation) => splitCustomTile(tile, splitDirection(orientation)),
     // split()'s return shape is native-unproven and unused (see
@@ -304,23 +320,17 @@
     // afterward, the same re-decode-after-mutation shape already established
     // for `removeCustomTile` (boundary.ts:431-433) and already used at the
     // resize postcondition (controller.ts:2715).
+    //
+    // The decode accepts any length `tile.tiles` reports (not just 2); it is
+    // up to each caller (e.g. the blueprint executor's own binary-split
+    // contract) to decide what arity it requires.
     decodeChildren: (tile) => {
-      const decoded = decodeSequential(tile.tiles, isCustomTile, 2);
-      if (!decoded.ok) {
-        return null;
-      }
-      const a = decoded.value[0];
-      const b = decoded.value[1];
-      if (a === void 0 || b === void 0) {
+      const decoded = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      if (!decoded.ok || decoded.value.length < 2) {
         return null;
       }
       const axis = tile.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
-      const aPosition = a.relativeGeometry[axis];
-      const bPosition = b.relativeGeometry[axis];
-      if (aPosition === bPosition) {
-        return null;
-      }
-      return Object.freeze(aPosition < bPosition ? [a, b] : [b, a]);
+      return orderCustomTilesByAxis(decoded.value, axis);
     }
   };
 
@@ -412,12 +422,12 @@
         mutationPossible = true;
         seam.split(target, instruction.orientation);
         const children = seam.decodeChildren(target);
-        if (children === null) {
+        if (children === null || children.length !== 2) {
           return failed(completedSplits, mutationPossible);
         }
         const left = children[0];
         const right = children[1];
-        if (left === right || left === target || right === target || tilePaths.has(left) || tilePaths.has(right)) {
+        if (left === void 0 || right === void 0 || left === right || left === target || right === target || tilePaths.has(left) || tilePaths.has(right)) {
           return failed(completedSplits, mutationPossible);
         }
         leaves.delete(instruction.targetKey);
@@ -1763,19 +1773,6 @@
   function ordinalClass(ordinal) {
     return ordinal === 0 ? "first" : "later";
   }
-  function orderedChildren(children, axis) {
-    const first = children[0];
-    const second = children[1];
-    if (first === void 0 || second === void 0 || children.length !== 2) {
-      return null;
-    }
-    const firstGeometry = first.absoluteGeometry;
-    const secondGeometry = second.absoluteGeometry;
-    if (firstGeometry.width <= 0 || firstGeometry.height <= 0 || secondGeometry.width <= 0 || secondGeometry.height <= 0 || firstGeometry[axis] === secondGeometry[axis]) {
-      return null;
-    }
-    return firstGeometry[axis] < secondGeometry[axis] ? [first, second] : [second, first];
-  }
   function sameGeometry(a, b) {
     return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
   }
@@ -2765,8 +2762,10 @@
           this.diagnostic("resize-rejected:postcondition");
           return;
         }
-        const freshOrdered = orderedChildren(freshChildren.value, axis);
-        if (freshOrdered === null || freshOrdered[0] !== target.first || freshOrdered[1] !== target.second) {
+        const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
+        const freshFirst = freshOrdered == null ? void 0 : freshOrdered[0];
+        const freshSecond = freshOrdered == null ? void 0 : freshOrdered[1];
+        if (freshOrdered === null || freshOrdered.length !== 2 || freshFirst !== target.first || freshSecond !== target.second) {
           this.diagnostic("resize-rejected:postcondition");
           return;
         }
@@ -2800,9 +2799,10 @@
         if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
           const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
           if (decoded.ok) {
-            const ordered = orderedChildren(decoded.value, axis);
-            if (ordered !== null) {
-              const [first, second] = ordered;
+            const ordered = orderCustomTilesByAxis(decoded.value, axis);
+            const first = ordered == null ? void 0 : ordered[0];
+            const second = ordered == null ? void 0 : ordered[1];
+            if (ordered !== null && ordered.length === 2 && first !== void 0 && second !== void 0) {
               const side = first === node ? "first" : second === node ? "second" : null;
               if (side !== null) {
                 const pressedTowardNeighbor = side === "first" && (direction === "right" || direction === "down") || side === "second" && (direction === "left" || direction === "up");
@@ -5466,13 +5466,13 @@
         this.decodedBoundary("split-result");
       }
       const axis = direction === "left" || direction === "right" ? "x" : "y";
-      const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
-      if (children === null) {
+      const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+      const first = children == null ? void 0 : children[0];
+      const second = children == null ? void 0 : children[1];
+      if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
       }
-      const first = children[0];
-      const second = children[1];
       const selected = direction === "left" || direction === "up" ? first : second;
       const opposite = selected === first ? second : first;
       const occupantManaged = manageTile(opposite, occupant, this.markStructuralMutation);
@@ -5643,13 +5643,13 @@
       }
       this.decodedBoundary("split-result");
       const axis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
-      const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
-      if (children === null) {
+      const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+      const first = children == null ? void 0 : children[0];
+      const second = children == null ? void 0 : children[1];
+      if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
         this.gate.disable("keyboard-split-child-selection-failed", (reason) => this.disabled(reason));
         return;
       }
-      const first = children[0];
-      const second = children[1];
       const occupantChild = pending.direction === "left" || pending.direction === "up" ? second : first;
       const incomingChild = occupantChild === first ? second : first;
       if (!manageTile(occupantChild, pending.targetWindow, this.markStructuralMutation)) {
@@ -6486,16 +6486,18 @@
       }
       this.decodedBoundary("split-result");
       const axis = orientation === "horizontal" ? "x" : "y";
-      const children = orderedChildren(decoded.value, axis);
-      if (children === null) {
+      const children = orderCustomTilesByAxis(decoded.value, axis);
+      const firstChild = children == null ? void 0 : children[0];
+      const secondChild = children == null ? void 0 : children[1];
+      if (children === null || children.length !== 2 || firstChild === void 0 || secondChild === void 0) {
         this.diagnostic("ownership-add-failed:no-child-geometry");
         return;
       }
       let occupantAssigned = false;
       let incomingAssigned = false;
       try {
-        occupantAssigned = assignWindowToTile(target.occupant, children[0], this.markStructuralMutation);
-        incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1], this.markStructuralMutation);
+        occupantAssigned = assignWindowToTile(target.occupant, firstChild, this.markStructuralMutation);
+        incomingAssigned = occupantAssigned && assignWindowToTile(window, secondChild, this.markStructuralMutation);
       } catch (error) {
         void error;
       }

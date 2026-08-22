@@ -30,7 +30,7 @@ import {
     type VirtualDesktopCapability,
     type WindowCapability,
 } from "./boundary";
-import { customTileSplitSeam } from "./custom-tile-split";
+import { customTileSplitSeam, orderCustomTilesByAxis } from "./custom-tile-split";
 import { type Blueprint, type Orientation } from "./layout-blueprint";
 import { executeBlueprintInstructions } from "./layout-executor";
 import { type BlueprintPath } from "./layout-instructions";
@@ -1478,29 +1478,6 @@ function ordinalClass(ordinal: number): "first" | "later" {
     return ordinal === 0 ? "first" : "later";
 }
 
-function orderedChildren(
-    children: readonly CustomTileCapability[],
-    axis: "x" | "y",
-): readonly [CustomTileCapability, CustomTileCapability] | null {
-    const first = children[0];
-    const second = children[1];
-    if (first === undefined || second === undefined || children.length !== 2) {
-        return null;
-    }
-    const firstGeometry = first.absoluteGeometry;
-    const secondGeometry = second.absoluteGeometry;
-    if (
-        firstGeometry.width <= 0 ||
-        firstGeometry.height <= 0 ||
-        secondGeometry.width <= 0 ||
-        secondGeometry.height <= 0 ||
-        firstGeometry[axis] === secondGeometry[axis]
-    ) {
-        return null;
-    }
-    return firstGeometry[axis] < secondGeometry[axis] ? [first, second] : [second, first];
-}
-
 function sameGeometry(a: RectCapability, b: RectCapability): boolean {
     return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
 }
@@ -2717,8 +2694,15 @@ export class TileController {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
             }
-            const freshOrdered = orderedChildren(freshChildren.value, axis);
-            if (freshOrdered === null || freshOrdered[0] !== target.first || freshOrdered[1] !== target.second) {
+            const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
+            const freshFirst = freshOrdered?.[0];
+            const freshSecond = freshOrdered?.[1];
+            if (
+                freshOrdered === null ||
+                freshOrdered.length !== 2 ||
+                freshFirst !== target.first ||
+                freshSecond !== target.second
+            ) {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
             }
@@ -2761,9 +2745,10 @@ export class TileController {
             if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
                 const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
                 if (decoded.ok) {
-                    const ordered = orderedChildren(decoded.value, axis);
-                    if (ordered !== null) {
-                        const [first, second] = ordered;
+                    const ordered = orderCustomTilesByAxis(decoded.value, axis);
+                    const first = ordered?.[0];
+                    const second = ordered?.[1];
+                    if (ordered !== null && ordered.length === 2 && first !== undefined && second !== undefined) {
                         const side = first === node ? "first" : second === node ? "second" : null;
                         if (side !== null) {
                             const pressedTowardNeighbor =
@@ -5888,13 +5873,13 @@ export class TileController {
             this.decodedBoundary("split-result");
         }
         const axis = direction === "left" || direction === "right" ? "x" : "y";
-        const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
-        if (children === null) {
+        const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+        const first = children?.[0];
+        const second = children?.[1];
+        if (children === null || children.length !== 2 || first === undefined || second === undefined) {
             this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
             return false;
         }
-        const first = children[0];
-        const second = children[1];
         const selected = direction === "left" || direction === "up" ? first : second;
         const opposite = selected === first ? second : first;
         const occupantManaged = manageTile(opposite, occupant, this.markStructuralMutation);
@@ -6093,13 +6078,13 @@ export class TileController {
         }
         this.decodedBoundary("split-result");
         const axis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
-        const children = decoded.ok ? orderedChildren(decoded.value, axis) : null;
-        if (children === null) {
+        const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+        const first = children?.[0];
+        const second = children?.[1];
+        if (children === null || children.length !== 2 || first === undefined || second === undefined) {
             this.gate.disable("keyboard-split-child-selection-failed", (reason) => this.disabled(reason));
             return;
         }
-        const first = children[0];
-        const second = children[1];
         // Smallest source-proven child ordering: the revalidated source
         // occupant is assigned to its child first, then the incoming window is
         // placed on the requested side. The split has already mutated topology,
@@ -7038,8 +7023,10 @@ export class TileController {
         }
         this.decodedBoundary("split-result");
         const axis: SplitAxis = orientation === "horizontal" ? "x" : "y";
-        const children = orderedChildren(decoded.value, axis);
-        if (children === null) {
+        const children = orderCustomTilesByAxis(decoded.value, axis);
+        const firstChild = children?.[0];
+        const secondChild = children?.[1];
+        if (children === null || children.length !== 2 || firstChild === undefined || secondChild === undefined) {
             // KWin minimum tile geometry can yield an empty split child, so a
             // strict geometry-order rejection is a capacity failure, not a
             // damaged tree. Leave the impossible incoming insertion unmanaged
@@ -7051,8 +7038,8 @@ export class TileController {
         let occupantAssigned = false;
         let incomingAssigned = false;
         try {
-            occupantAssigned = assignWindowToTile(target.occupant, children[0], this.markStructuralMutation);
-            incomingAssigned = occupantAssigned && assignWindowToTile(window, children[1], this.markStructuralMutation);
+            occupantAssigned = assignWindowToTile(target.occupant, firstChild, this.markStructuralMutation);
+            incomingAssigned = occupantAssigned && assignWindowToTile(window, secondChild, this.markStructuralMutation);
         } catch (error) {
             void error;
         }

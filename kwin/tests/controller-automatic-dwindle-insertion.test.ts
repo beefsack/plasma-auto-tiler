@@ -17,8 +17,8 @@ import { attachTileWriter, countEvent, installDwindleSplitter, makeTile } from "
 // returned children: while `state.rejecting` is true it turns the tile into a
 // layout whose first child carries zero extent on the split axis (KWin's
 // below-minimum empty child). A controller that splits before preflighting
-// therefore leaves the tree mutated even though `orderedChildren` then rejects
-// the pair.
+// therefore leaves the tree mutated even though `orderCustomTilesByAxis` then
+// rejects the pair.
 function installInlineMutatingRejectingSplitter(tile: TestTile, state: { rejecting: boolean }): void {
     tile.split = (direction) => {
         const horizontal = direction === 1;

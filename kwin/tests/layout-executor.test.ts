@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { customTileSplitSeam } from "../src/custom-tile-split";
+import { customTileSplitSeam, orderCustomTilesByAxis } from "../src/custom-tile-split";
 import { executeBlueprintInstructions, type BlueprintSplitSeam } from "../src/layout-executor";
 import { buildBlueprint } from "../src/layout-blueprint";
 import { compileBlueprintInstructions, type BlueprintInstructions } from "../src/layout-instructions";
@@ -217,6 +217,26 @@ describe("executeBlueprintInstructions", () => {
         }
         assert.deepEqual(calls, []);
     });
+
+    it("fails deterministically when a seam's decodeChildren returns three children for a binary split", () => {
+        const root = { id: "root" };
+        const calls: Array<{ readonly id: string; readonly orientation: "vertical" | "horizontal" }> = [];
+        const ternarySeam: BlueprintSplitSeam<TestTile> = {
+            split: (tile, orientation) => {
+                calls.push({ id: tile.id, orientation });
+                return undefined;
+            },
+            decodeChildren: () => [{ id: "a" }, { id: "b" }, { id: "c" }],
+        };
+        const result = executeBlueprintInstructions(plan(2), root, ternarySeam);
+
+        expectFailure(result);
+        if (!result.ok) {
+            assert.equal(result.completedSplits, 0);
+            assert.equal(result.mutationPossible, true);
+        }
+        assert.deepEqual(calls.map((call) => call.id), ["root"]);
+    });
 });
 
 describe("customTileSplitSeam", () => {
@@ -235,12 +255,31 @@ describe("customTileSplitSeam", () => {
         assert.equal(root.layoutDirection, 1);
     });
 
-    it("returns null when the split target does not have exactly two CustomTile children", () => {
+    it("returns null when the split target has fewer than two CustomTile children", () => {
         const oneChild = customTile(undefined, [customTile()]);
         assert.equal(customTileSplitSeam.decodeChildren(oneChild), null);
 
         const noChildren = customTile();
         assert.equal(customTileSplitSeam.decodeChildren(noChildren), null);
+    });
+
+    it("decodes and orders three children by relativeGeometry when tiles reports three, not by tiles[] index", () => {
+        const first = customTile(undefined, [], { x: 0, y: 0, width: 1, height: 3 });
+        const second = customTile(undefined, [], { x: 1, y: 0, width: 1, height: 3 });
+        const third = customTile(undefined, [], { x: 2, y: 0, width: 1, height: 3 });
+        // Stored out of geometric order to prove index is not trusted.
+        const parent = customTile(undefined, [third, first, second], undefined, HORIZONTAL_LAYOUT_DIRECTION);
+        assert.deepEqual(customTileSplitSeam.decodeChildren(parent), [first, second, third]);
+    });
+
+    it("rejects a degenerate zero-extent child via orderCustomTilesByAxis", () => {
+        const zeroWidth = customTile(undefined, [], { x: 0, y: 0, width: 0, height: 2 });
+        const valid = customTile(undefined, [], { x: 1, y: 0, width: 1, height: 2 });
+        assert.equal(orderCustomTilesByAxis([zeroWidth, valid], "x"), null);
+
+        const zeroHeight = customTile(undefined, [], { x: 0, y: 0, width: 1, height: 0 });
+        const validB = customTile(undefined, [], { x: 0, y: 1, width: 1, height: 1 });
+        assert.equal(orderCustomTilesByAxis([zeroHeight, validB], "y"), null);
     });
 
     it("orders two children by relativeGeometry along the split axis, not by tiles[] index", () => {

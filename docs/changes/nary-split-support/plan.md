@@ -66,7 +66,7 @@ binary behavior.
 - [x] unit-01 Decision record and contracts frozen.
 - [x] unit-02 Binary characterization.
 - [x] unit-03 Closed by analysis: no code change. See "Unit-03 Finding" below.
-- [ ] unit-04 Native boundary and ordering.
+- [x] unit-04 Native boundary and ordering.
 - [ ] unit-05 Preset and overlay reconstruction.
 - [ ] unit-06 Resize and minimum semantics.
 - [ ] unit-07 Drag and reflow migration.
@@ -140,6 +140,60 @@ belong to unit-07, unit-08, and unit-05 respectively and are unaffected by
 this dissolution. Migrating them to the same re-decode pattern is in scope
 for those units, not this one.
 
+## Unit-04 Generalization Finding
+
+Completed 2026-08-22, one Worker attempt, no correction round.
+
+- `customTileSplitSeam.decodeChildren` (`kwin/src/custom-tile-split.ts:53-63`)
+  now decodes up to `MAX_SEQUENTIAL_LENGTH` from `tile.tiles` instead of a
+  hardcoded 2, and rejects only on fewer than 2 decoded children. Ordering is
+  delegated to a new exported `orderCustomTilesByAxis`
+  (`kwin/src/custom-tile-split.ts:18-46`), which orders any-length input by
+  `relativeGeometry[axis]`, rejecting on a degenerate zero-extent child or a
+  duplicate axis position. `BlueprintSplitSeam.decodeChildren`
+  (`kwin/src/layout-executor.ts:10`) is retyped `readonly Tile[] | null`
+  accordingly. `executeBlueprintInstructions`
+  (`kwin/src/layout-executor.ts:164-183`) independently requires
+  `children.length === 2`, commented as the blueprint executor's own
+  binary-tree contract (every compiled `SplitInstruction` has exactly a
+  `leftPath` and `rightPath`), not a native-cardinality claim. A dedicated
+  test proves a synthetic 3-child seam result fails the executor
+  deterministically rather than crashing or being silently truncated
+  (`kwin/tests/layout-executor.test.ts:220-238`). No native result cardinality
+  is asserted anywhere in this change.
+- Convergence verdict on `orderedChildren` vs. the split seam: deleted
+  `orderedChildren` (was `kwin/src/controller.ts:1481-1502`) and its
+  `absoluteGeometry`-based sort entirely; its 5 call sites
+  (`kwin/src/controller.ts` resize postcondition, resize-target resolution,
+  drag split, keyboard split, dwindle insertion) now call
+  `orderCustomTilesByAxis` directly, matching the spec's settled decision that
+  "the geometry sort in `orderedChildren` is deleted rather than generalized"
+  (`spec.md:104-108`). The zero-extent guard in the deleted `orderedChildren`
+  (`width <= 0 || height <= 0`) was a real, load-bearing check, not dead
+  defensiveness: it is what turns a KWin below-minimum-tile-size split
+  (documented at the dwindle call site, `kwin/src/controller.ts:7043-7048`,
+  and exercised by `installCapacityRejectingSplitter` in
+  `kwin/tests/controller-fixture-scenarios.ts:672-693`) into a clean capacity
+  rejection instead of an incorrectly-ordered pair. It is now ported into
+  `orderCustomTilesByAxis` and covered directly at the adapter level
+  (`kwin/tests/layout-executor.test.ts:266-274`), not only indirectly through
+  controller integration tests. `absoluteGeometry` (deleted) vs.
+  `relativeGeometry` (kept, matching the pre-existing adapter) differ only by
+  a per-parent translation/scale common to all siblings, so axis order and the
+  zero-extent test are unaffected; full-suite evidence below confirms no
+  behavior change.
+- The 5 call sites' own `decodeSequential(..., isCustomTile, 2)` decode calls
+  are untouched and remain hardcoded to 2, matching the plan's assignment of
+  their own N-ary generalization to unit-06 (resize), unit-07 (drag), and
+  unit-08 (keyboard/dwindle). Only the ordering step they call was converged.
+- Verification: `npm --prefix kwin test` 947 tests / 90 suites / 0 fail (up
+  from the 944 baseline, 3 new focused cases: N=3 adapter decode/order, adapter
+  zero-extent rejection, executor N=3 deterministic-failure); `npm --prefix
+  kwin run typecheck` clean on both tsconfigs; `bash
+  scripts/dogfood-install.test.sh` 347 assertions / 0 fail, unchanged from
+  baseline. `kwin/contents/code/main.js` rebuilt via `npm --prefix kwin run
+  build` and confirmed to match source.
+
 ## Attempt Accounting
 
 No implementation units have started. Counts will be recorded by stable unit ID
@@ -169,7 +223,7 @@ None.
 | Acceptance criterion | Evidence |
 | --- | --- |
 | Seven settled decisions and frozen contracts | unit-01 approved record in `spec.md#user-decisions`, promoted replay vectors in `research/cosmic-insertion-findings.md`, and static citation inspection. |
-| Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. |
+| Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. unit-04 additionally proves the blueprint executor fails deterministically, not silently, on a non-2 seam decode ("Unit-04 Generalization Finding"). |
 | Same-axis wrapping, parent escape, collapse, and geometry independence | Independent synthetic N-ary structural tests in units 07 through 09. |
 | Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
 | 13 test files and shared fixture covered | unit-09 test-surface audit. |
