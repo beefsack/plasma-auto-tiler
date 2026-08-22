@@ -155,7 +155,7 @@ export function executeBlueprintInstructions<Tile extends object>(
             mutationPossible = true;
             // split()'s return value is native-shape-unproven and
             // intentionally unused here (see
-            // docs/changes/nary-split-support/research/native-binding-evidence.md:169-172).
+            // docs/changes/archive/2026-08-23-nary-split-support/research/native-binding-evidence.md:169-172).
             // Re-decode the split target's own children afterward instead,
             // matching the established re-decode-after-mutation precedent
             // (kwin/src/boundary.ts:431-433, kwin/src/controller.ts:2715).

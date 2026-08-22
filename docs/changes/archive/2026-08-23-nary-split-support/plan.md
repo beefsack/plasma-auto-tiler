@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Approved by Orchestrator; unit-08 split into 08a and 08b
+- Status: Accepted by Orchestrator; static N-ary specification complete.
 
 ## Baseline Gate
 
@@ -61,7 +61,7 @@ binary behavior.
 | unit-08 | Historical parent for the paused new-window insertion work. It remains partially unaccepted and is not resumable. | unit-03, unit-04 | Historical unit-08 attempt-01 and cancelled attempt-02 records | No acceptance; preserve both attempts and their counter. |
 | unit-08a | Candidate supported local/perpendicular new-window insertion for keyboard and automatic/dwindle paths. | unit-03, unit-04, unit-07 | Controller keyboard and dwindle functions; keyboard-placement, automatic-dwindle, deferred-recovery tests; adapter re-decode seam | Focused-cell longest-axis automatic selection, requested keyboard direction, 50/50 local split, unchanged sibling extents/weights, opaque-return adapter re-decode, parent escape/one-child collapse where applicable, binary characterization, typecheck and complete suite (static). |
 | unit-08b | Candidate unsupported same-axis new-window boundary. Detect before topology mutation, reject with zero topology writes, and leave the incoming window unassigned/floating. | unit-04, unit-07 | New-window preflight in keyboard and automatic/dwindle paths; focused rejection tests | Split is not called, topology and existing assignments are unchanged, incoming window remains unassigned/floating, no perpendicular substitution or direction flip, and existing-window unit-07 same-axis drag remains direct parent expansion; typecheck and complete suite (static). |
-| unit-08c | Narrowly scope adapter-ordering convergence exposed by the completion gate: migrate every controller ordering decision to adapter-decoded children and remove the controller's direct ordering helper dependency. | Accepted units 01-07 and candidate units 08a/08b | Controller preset, resize, and drag ordering paths; `customTileSplitSeam.decodeChildren`; affected focused tests and generated bundle | Adapter-only ordering end state: the controller neither imports nor calls `orderCustomTilesByAxis`, and all migrated paths consume adapter-decoded validity/order without changing their established gates, diagnostics, zero-extent handling, or structural behavior. One normal attempt, not a reset or hidden counter. |
+| unit-08c | Narrowly scope adapter-ordering convergence exposed by the completion gate: migrate every controller ordering decision to adapter-decoded children and remove the controller's direct ordering helper dependency. | Accepted units 01-07, 08a, and 08b | Controller preset, resize, and drag ordering paths; `customTileSplitSeam.decodeChildren`; affected focused tests and generated bundle | Adapter-only ordering end state: the controller neither imports nor calls `orderCustomTilesByAxis`, and all migrated paths consume adapter-decoded validity/order without changing their established gates, diagnostics, zero-extent handling, or structural behavior. One normal attempt, not a reset or hidden counter. |
 | unit-09 | Close the inventory sweep, add independent synthetic N-ary structural coverage, and run final regression gates. | unit-05, unit-06, unit-07, unit-08a, unit-08b, unit-08c | All 13 identified test files and shared fixture | Inventory-to-test audit; `npm --prefix kwin test`, typecheck, and `bash scripts/dogfood-install.test.sh` (all static). |
 
 ## Progress
@@ -76,7 +76,7 @@ binary behavior.
 - [ ] unit-08 Historical parent remains partially unaccepted; attempts 01 and 02
   are preserved.
 - [x] unit-08a Supported local/perpendicular new-window insertion accepted;
-  coherent commit with units 08b and 08c remains pending.
+  committed with units 08b and 08c.
 - [x] unit-08b Same-axis rejection behavior accepted after the mandatory
   adapter-ordering gate closed in unit-08c.
 - [x] unit-08c Adapter-ordering convergence accepted in one normal attempt.
@@ -113,7 +113,7 @@ obtain the new children
 (`kwin/src/custom-tile-split.ts:15` prior to this change, consumed through
 `kwin/src/layout-executor.ts:150` prior to this change). That return shape is
 native-unproven and parked
-(`docs/changes/nary-split-support/research/native-binding-evidence.md:169-172`).
+(`docs/changes/archive/2026-08-23-nary-split-support/research/native-binding-evidence.md:169-172`).
 
 Fix: `BlueprintSplitSeam.decodeChildren` (`kwin/src/layout-executor.ts:4-9`)
 now receives the split TARGET tile, not `split()`'s return value.
@@ -442,11 +442,11 @@ Completed 2026-08-22, one Worker attempt, one narrow trigger-correction round
 
 Unit-08 is a historical parent only. Attempt-01 remains partially unaccepted;
 attempt-02 remains the cancelled prior-host dispatch. Neither attempt is
-renamed, erased, reset, hidden, or acceptance evidence. The fresh semantic
-counters are `unit-08a` and `unit-08b`, both at zero attempts and with no
-acceptance.
+renamed, erased, reset, hidden, or acceptance evidence. The successor units
+`unit-08a` and `unit-08b` were each accepted in one attempt without a
+correction round.
 
-- **unit-08a candidate:** Generalize supported local/perpendicular new-window
+- **unit-08a accepted scope:** Generalize supported local/perpendicular new-window
   insertion for keyboard and automatic/dwindle paths. Keyboard preserves the
   requested direction. Automatic/dwindle selects the focused cell's longest
   axis. The operation must make an atomic approximately 50/50 local split,
@@ -454,7 +454,7 @@ acceptance.
   adapter re-decode for an opaque native split return. Parent escape,
   one-child collapse, and binary preservation are required where applicable.
   Same-axis selected/requested insertion is excluded.
-- **unit-08b candidate:** Detect unsupported same-axis new-window insertion
+- **unit-08b accepted scope:** Detect unsupported same-axis new-window insertion
   before calling the native split or writing topology. Reject with zero
   topology writes, leaving the incoming window unassigned/floating. No
   float-then-move, perpendicular substitution, direction flip, remove/rebuild
@@ -479,11 +479,11 @@ documentation reset.
 | `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts:459-477, 497-505` fixture updates | Shared prerequisite | They align deferred recovery with live post-mutation decoding and opaque return handling. |
 | `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts:997` blank-line deletion | Unsupported | It has no semantic or verification role. |
 | `kwin/tests/controller-fixture-scenarios.ts:688-753` capacity fixture changes | Shared prerequisite | The fixture exposes live invalid geometry for adapter re-decode and preserves the zero-extent capacity guard. |
-| Existing parked changes in this `plan.md` and `log.md` | Unrelated recordkeeping | Attempt history and counters are retained, then amended only by this reset. |
+| Existing parked changes in this `plan.md` | Unrelated recordkeeping | Attempt history and counters are retained, then amended only by this reset. |
 
-No currently parked hunk is a candidate for 08b. The fresh 08b work must add
-preflight and zero-topology-write tests; the parked local synthetic tests do
-not cover that boundary.
+At reset time, no parked hunk was an 08b candidate. The accepted 08b work added
+the required preflight and zero-topology-write tests; the parked local synthetic
+tests did not cover that boundary.
 
 ### Preservation Gates
 
@@ -508,7 +508,7 @@ prior unit-08 intent and the frozen cross-unit contracts:
   neighbor formula, unit-07 drag, workspace invariants, one
   `flashFocusedGroup` call site, and no controller structural refactor.
 
-## Attempt Accounting
+## Final Historical Counters
 
 Counts are recorded by stable unit ID. A third attempt, a second correction
 round, a second independent review, or a repeated failure class with no
@@ -532,29 +532,30 @@ loop report.
   `kwinrc` SHA-256 and mtime unchanged. It establishes only the scoped
   read-only E4 facts in `research/native-binding-evidence.md`; `split()` was
   intentionally not called and remains unproven.
-- `unit-08/attempt-01` is the parked Worker implementation recorded in
-   `log.md`. `unit-08/attempt-02` is the cancelled prior-host dispatch. It is an
-   unsuccessful, non-resumable attempt with no correction or review result; its
-   counter is preserved for the circuit-breaker rule.
+- `unit-08/attempt-01` paused on the unsupported atomic same-axis local-wrapper
+  construction. `unit-08/attempt-02` is the cancelled prior-host dispatch. It
+  is an unsuccessful, non-resumable attempt with no correction or review result;
+  its counter is preserved for the circuit-breaker rule.
 - `unit-08c/attempt-01` is the single normal implementation attempt for the
   completion-gate adapter-ordering convergence. It is not a reset, hidden
   counter, or correction round; it was accepted after one Lead review.
 
 ## Pending User Decisions
 
-None. The approved unit-08 fallback is represented by fresh candidate units
-08a and 08b: supported local/perpendicular insertion and narrow preflight
-rejection before any topology mutation when same-axis local subdivision is
-unsupported. A dispatch under the historical `unit-08` ID would be attempt-03
-and therefore trips the circuit breaker.
+None. The approved unit-08 fallback is accepted in units 08a and 08b: supported
+local/perpendicular insertion and narrow preflight rejection before any topology
+mutation when same-axis local subdivision is unsupported. A dispatch under the
+historical `unit-08` ID would be attempt-03 and therefore trips the circuit
+breaker.
 
-## Acceptance-Criterion Evidence
+## Final Acceptance-Evidence Map
 
 | Acceptance criterion | Evidence |
 | --- | --- |
+| Approved static N-ary specification | Accepted units 01-07, 08a-08c, and 09 satisfy the approved static scope. Historical unit-08 remains unaccepted and is not acceptance evidence. |
 | Seven settled decisions and frozen contracts | unit-01 approved record in `spec.md#user-decisions`, promoted replay vectors in `research/cosmic-insertion-findings.md`, and static citation inspection. |
 | Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. unit-04 additionally proves the blueprint executor fails deterministically, not silently, on a non-2 seam decode ("Unit-04 Generalization Finding"). |
-| Existing-window same-axis wrapping, parent escape, collapse, and geometry independence | Accepted unit-07 evidence; new-window equivalents remain 08a/08b candidate gates. |
+| Existing-window same-axis wrapping, parent escape, collapse, and geometry independence | Accepted unit-07 evidence plus accepted 08a/08b new-window coverage. |
 | Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`; final source searches found no controller `orderCustomTilesByAxis` use, native array-index semantics, unproven split-return/cardinality claim, or unclassified two-child formula. |
 | 13 test files and shared fixture covered | unit-09 read audit of all 13 named test files and `controller-fixture-scenarios.ts`; independent synthetic additions cover nested direct-child counting, deterministic duplicate-position rejection, and N-ary resize parent escape. |
 | Binary-only layouts remain byte-identical | unit-02 fixtures compare existing native serialization and window assignments, then rerun in units 03 through 09. |
@@ -563,9 +564,10 @@ and therefore trips the circuit breaker.
 
 ## Residual Risks
 
-- Native result cardinality and whether a native 3+-child container survives
-  restart or manual native edits remain unestablished. The separately scoped
-  evidence unit gates unit-04; its outcome may redesign the adapter only.
+- Native JavaScript `split()` result cardinality/order and whether a native
+  3+-child container survives restart or manual native edits remain
+  unestablished. The completed implementation discards split returns and
+  re-decodes through the adapter.
 - The project model's semantic authority is session-scoped until that evidence
   resolves restart and manual-native-edit behavior.
 - The nested native-binding evidence path remains blocked and frozen: attempt-02
@@ -576,13 +578,18 @@ and therefore trips the circuit breaker.
   array or two children; it may use defensive indexed/iterable enumeration for
   the observed host binding. `split()` return shape remains unproven and parked.
 - The controller is 9,191 lines and the inventory spans 24 functions and 13
-  test files; narrow units reduce but do not eliminate regression risk.
+  test files; focused static coverage reduces but does not eliminate regression
+  risk.
 
 ## Final Outcome
 
-- `unit-03b/attempt-03` completed as the final E4 read-only host probe. Its
-  scoped facts are recorded in `research/native-binding-evidence.md`; no
-  `split()` fact was sought or obtained.
-- unit-09 completed the final inventory sweep and static regression gates.
-  It added independent synthetic structural coverage without changing production
-  behavior, and its single independent review returned no findings.
+- Accepted: the approved static N-ary specification is fully satisfied through
+  `43e0780`. Units 01-07, 08a, 08b, 08c, and 09 are accepted; historical
+  unit-08 remains unaccepted with its two preserved attempts and reset breaker.
+- Final evidence: `npm --prefix kwin test` reported 961 tests across 90 suites
+  with 0 failures; both typecheck configurations were clean; `bash
+  scripts/dogfood-install.test.sh` reported 347 assertions with 0 failures; the
+  unit-09 independent review returned no findings.
+- No live KWin/Plasma mutation occurred in the accepted static implementation
+  or completion transaction. Native evidence boundaries remain recorded above
+  and in `research/native-binding-evidence.md`.

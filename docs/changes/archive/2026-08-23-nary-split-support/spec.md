@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Approved by Orchestrator; unit-08 split into 08a and 08b
+- Status: Accepted by Orchestrator; static N-ary specification complete.
 
 ## Objective
 

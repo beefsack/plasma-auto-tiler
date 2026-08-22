@@ -50,7 +50,7 @@ export function orderCustomTilesByAxis(
 export const customTileSplitSeam: BlueprintSplitSeam<CustomTileCapability> = {
     split: (tile, orientation) => splitCustomTile(tile, splitDirection(orientation)),
     // split()'s return shape is native-unproven and unused (see
-    // docs/changes/nary-split-support/research/native-binding-evidence.md:169-172).
+    // docs/changes/archive/2026-08-23-nary-split-support/research/native-binding-evidence.md:169-172).
     // Children are obtained by re-decoding the split target's own `tiles`
     // afterward, the same re-decode-after-mutation shape already established
     // for `removeCustomTile` (boundary.ts:431-433) and already used at the
