@@ -68,7 +68,7 @@ binary behavior.
 - [x] unit-03 Closed by analysis: no code change. See "Unit-03 Finding" below.
 - [x] unit-04 Native boundary and ordering.
 - [x] unit-05 Preset and overlay reconstruction.
-- [ ] unit-06 Resize and minimum semantics.
+- [x] unit-06 Resize and minimum semantics.
 - [ ] unit-07 Drag and reflow migration.
 - [ ] unit-08 Keyboard and automatic insertion migration.
 - [ ] unit-09 Inventory closure and final gates.
@@ -264,6 +264,73 @@ mechanical existing-test correction made in-line by the Worker; see below).
   `kwin/contents/code/main.js` rebuilt via `npm --prefix kwin run build` by
   the Lead after acceptance; a second rebuild produced no further diff,
   confirming the tracked bundle matches source.
+
+## Unit-06 Finding
+
+Completed 2026-08-22, one Worker attempt, no correction round.
+
+- Implements the settled divider-based resize contract (`spec.md:88-90`):
+  "the direction selects the divider; only the focused child and the sibling
+  across that divider change weight. This degenerates to the current binary
+  behavior at two children by construction." `resolveResizeSplit`
+  (`controller.ts:2748-2799`) now decodes up to `MAX_SEQUENTIAL_LENGTH`
+  children (was hardcoded to 2) and locates the focused child's index in the
+  geometry-ordered array; the divider neighbor is `focusedIndex + dirSign`
+  (outwards) or `focusedIndex - dirSign` (inwards), only returning when that
+  index is in range, else the existing climb-to-ancestor loop continues
+  unchanged. This is a proven generalization of the prior `first`/`second`
+  identity check, not a new design: at exactly two children `dirSign`-based
+  neighbor selection reduces to the same side/pressedTowardNeighbor result the
+  removed code computed, by construction.
+- `resizeActiveWindow` (`controller.ts:2597-2735`) fixes a real N-ary bug that
+  would otherwise have shipped silently: `neighborProposed` was
+  `parentExtent - focusedProposed`, which is only correct at exactly two
+  children. With 3+ children this would have absorbed space from non-adjacent
+  siblings the spec requires to stay untouched. It is now
+  `(focusedExtent + neighborExtent) - focusedProposed`, degenerating to the
+  old formula when the pair fills the whole parent (the two-child case).
+  `positionShift` and the postcondition structural-identity check are
+  generalized the same way, from `target.first`/`target.second` equality to
+  `target.ordered`/`target.focusedIndex`/`target.neighborIndex`, preserving
+  every existing diagnostic and rejecting exactly as before when the
+  postcondition's ordered child list drifts from the pre-write snapshot.
+- `resizeWouldViolateMinimum` (`controller.ts:2803-2826`) is unchanged: it
+  already takes two proposed extents generically and has no child-count
+  coupling.
+- fc69698 characterization preserved, each behavior still pinned by its
+  existing (untouched) test: climb-to-nearest-matching-ancestor
+  ("climbs to an outer split when the focused leaf has no sibling in the
+  pressed direction", `controller-drag-diagnostics-and-resize.test.ts:995`);
+  exactly 5% of the ancestor's extent ("outwards crosses a right boundary by
+  resizing the containing outer child by 5% of the outer split" and its
+  inwards counterpart, `:1051` and `:1065`); no controller-side clamping (the
+  15%-floor case rejects outright rather than clamping, `:894`); outermost
+  case emits `resize-rejected:no-parent` with zero writes (`:1079`, `:1091`).
+  None of these four tests were modified; all still pass unmodified.
+- Two new focused tests added
+  (`controller-drag-diagnostics-and-resize.test.ts:1099-1181`) using a
+  synthetic 3-child single-level row (not nested), the topology absent from
+  existing coverage: "only adjusts the focused child and its divider neighbor
+  in a 3-child row, leaving the third child untouched" proves the
+  `pairExtent` fix by asserting the non-adjacent third child's
+  `relativeGeometry` is byte-identical before and after; "rejects at the outer
+  edge of a 3-child row with no further neighbor or ancestor" proves the
+  climb/rejection behavior generalizes past two children.
+- Of unit-06's two assigned `orderCustomTilesByAxis` call sites
+  (`controller.ts:2697`/`:2748` pre-change, now `:2714`/`:2772` post-change,
+  inside the resize postcondition and `resolveResizeSplit`), both are
+  migrated to the ordered-child model. The other three sites unit-04 left
+  (`controller.ts:5904` drag, `:6109` keyboard, `:7062` dwindle) are untouched
+  and remain unit-07's and unit-08's, per the unit-05 finding's inventory.
+- No narrow trigger-correction exception was invoked: no existing test's
+  expectation was touched.
+- Verification (Lead-independent, not just Worker-reported): `npm --prefix
+  kwin test` 951 tests / 90 suites / 0 fail (up from 949, 2 new cases); `npm
+  --prefix kwin run typecheck` clean on both tsconfigs; `bash
+  scripts/dogfood-install.test.sh` 347 assertions / 0 fail, unchanged from
+  baseline. `kwin/contents/code/main.js` rebuilt by the Lead after acceptance;
+  a second rebuild produced a byte-identical file, confirming determinism and
+  that the tracked bundle matches source.
 
 ## Attempt Accounting
 

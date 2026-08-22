@@ -2730,13 +2730,16 @@
         const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
         const focusedGeometry = target.focused.relativeGeometry;
         const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
-        if (!(parentExtent > 0) || !(focusedExtent > 0)) {
+        const neighborGeometry = target.neighbor.relativeGeometry;
+        const neighborExtent = axis === "x" ? neighborGeometry.width : neighborGeometry.height;
+        if (!(parentExtent > 0) || !(focusedExtent > 0) || !(neighborExtent > 0)) {
           this.diagnostic("resize-rejected:no-parent");
           return;
         }
         const delta = RESIZE_STEP_FRACTION * parentExtent;
         const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
-        const neighborProposed = parentExtent - focusedProposed;
+        const pairExtent = focusedExtent + neighborExtent;
+        const neighborProposed = pairExtent - focusedProposed;
         if (focusedProposed <= 0 || neighborProposed <= 0) {
           this.diagnostic("resize-rejected:no-parent");
           return;
@@ -2745,7 +2748,7 @@
           this.diagnostic("resize-rejected:at-floor");
           return;
         }
-        const positionShift = target.focused === target.first ? 0 : mode === "outwards" ? -delta : delta;
+        const positionShift = target.neighborIndex > target.focusedIndex ? 0 : mode === "outwards" ? -delta : delta;
         const focusedTarget = axis === "x" ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height } : { x: focusedGeometry.x, y: focusedGeometry.y + positionShift, width: focusedGeometry.width, height: focusedProposed };
         const written = setTileRelativeGeometry(target.focused, focusedTarget);
         if (!written) {
@@ -2762,17 +2765,21 @@
           this.diagnostic("resize-rejected:postcondition");
           return;
         }
-        const freshChildren = decodeSequential(target.split.tiles, isCustomTile, 2);
-        if (!freshChildren.ok) {
+        const freshChildren = decodeSequential(target.split.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+        if (!freshChildren.ok || freshChildren.value.length !== target.ordered.length) {
           this.diagnostic("resize-rejected:postcondition");
           return;
         }
         const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
-        const freshFirst = freshOrdered == null ? void 0 : freshOrdered[0];
-        const freshSecond = freshOrdered == null ? void 0 : freshOrdered[1];
-        if (freshOrdered === null || freshOrdered.length !== 2 || freshFirst !== target.first || freshSecond !== target.second) {
+        if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
           this.diagnostic("resize-rejected:postcondition");
           return;
+        }
+        for (let index = 0; index < target.ordered.length; index += 1) {
+          if (freshOrdered[index] !== target.ordered[index]) {
+            this.diagnostic("resize-rejected:postcondition");
+            return;
+          }
         }
         const freshFocusedGeometry = target.focused.relativeGeometry;
         const freshNeighborGeometry = target.neighbor.relativeGeometry;
@@ -2795,6 +2802,7 @@
     // (shell/layout/tiling/mod.rs resize()); no climb target returns null.
     resolveResizeSplit(focusedTile, expectedLayoutDirection, direction, mode) {
       const axis = direction === "left" || direction === "right" ? "x" : "y";
+      const dirSign = direction === "right" || direction === "down" ? 1 : -1;
       let node = focusedTile;
       while (node !== null) {
         const parent = node.parent;
@@ -2802,23 +2810,19 @@
           return null;
         }
         if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
-          const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
-          if (decoded.ok) {
+          const decoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+          if (decoded.ok && decoded.value.length >= 2) {
             const ordered = orderCustomTilesByAxis(decoded.value, axis);
-            const first = ordered == null ? void 0 : ordered[0];
-            const second = ordered == null ? void 0 : ordered[1];
-            if (ordered !== null && ordered.length === 2 && first !== void 0 && second !== void 0) {
-              const side = first === node ? "first" : second === node ? "second" : null;
-              if (side !== null) {
-                const pressedTowardNeighbor = side === "first" && (direction === "right" || direction === "down") || side === "second" && (direction === "left" || direction === "up");
-                if (mode === "outwards" === pressedTowardNeighbor) {
-                  return {
-                    split: parent,
-                    first,
-                    second,
-                    focused: side === "first" ? first : second,
-                    neighbor: side === "first" ? second : first
-                  };
+            if (ordered !== null) {
+              const focusedIndex = ordered.indexOf(node);
+              if (focusedIndex >= 0) {
+                const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
+                if (neighborIndex >= 0 && neighborIndex < ordered.length) {
+                  const focused = ordered[focusedIndex];
+                  const neighbor = ordered[neighborIndex];
+                  if (focused !== void 0 && neighbor !== void 0) {
+                    return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
+                  }
                 }
               }
             }

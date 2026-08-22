@@ -2654,13 +2654,22 @@ export class TileController {
             const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
             const focusedGeometry = target.focused.relativeGeometry;
             const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
-            if (!(parentExtent > 0) || !(focusedExtent > 0)) {
+            const neighborGeometry = target.neighbor.relativeGeometry;
+            const neighborExtent = axis === "x" ? neighborGeometry.width : neighborGeometry.height;
+            if (!(parentExtent > 0) || !(focusedExtent > 0) || !(neighborExtent > 0)) {
                 this.diagnostic("resize-rejected:no-parent");
                 return;
             }
             const delta = RESIZE_STEP_FRACTION * parentExtent;
             const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
-            const neighborProposed = parentExtent - focusedProposed;
+            // Only the focused child and its divider neighbor change weight;
+            // with 3+ children, parentExtent - focusedProposed would silently
+            // absorb space from non-neighbor siblings, so the neighbor's
+            // proposed extent is derived from the focused/neighbor pair
+            // extent alone. At exactly two children pairExtent === parentExtent
+            // by construction, so this is behavior-preserving for the binary case.
+            const pairExtent = focusedExtent + neighborExtent;
+            const neighborProposed = pairExtent - focusedProposed;
             if (focusedProposed <= 0 || neighborProposed <= 0) {
                 this.diagnostic("resize-rejected:no-parent");
                 return;
@@ -2671,7 +2680,7 @@ export class TileController {
             }
             // Only the shared edge changes: the near-side child keeps its
             // near edge fixed, the far-side child keeps its far edge fixed.
-            const positionShift = target.focused === target.first ? 0 : mode === "outwards" ? -delta : delta;
+            const positionShift = target.neighborIndex > target.focusedIndex ? 0 : mode === "outwards" ? -delta : delta;
             const focusedTarget: RectCapability =
                 axis === "x"
                     ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height }
@@ -2697,22 +2706,21 @@ export class TileController {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
             }
-            const freshChildren = decodeSequential(target.split.tiles, isCustomTile, 2);
-            if (!freshChildren.ok) {
+            const freshChildren = decodeSequential(target.split.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+            if (!freshChildren.ok || freshChildren.value.length !== target.ordered.length) {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
             }
             const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
-            const freshFirst = freshOrdered?.[0];
-            const freshSecond = freshOrdered?.[1];
-            if (
-                freshOrdered === null ||
-                freshOrdered.length !== 2 ||
-                freshFirst !== target.first ||
-                freshSecond !== target.second
-            ) {
+            if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
+            }
+            for (let index = 0; index < target.ordered.length; index += 1) {
+                if (freshOrdered[index] !== target.ordered[index]) {
+                    this.diagnostic("resize-rejected:postcondition");
+                    return;
+                }
             }
             const freshFocusedGeometry = target.focused.relativeGeometry;
             const freshNeighborGeometry = target.neighbor.relativeGeometry;
@@ -2742,8 +2750,16 @@ export class TileController {
         expectedLayoutDirection: number,
         direction: Direction,
         mode: "outwards" | "inwards",
-    ): { readonly split: CustomTileCapability; readonly first: CustomTileCapability; readonly second: CustomTileCapability; readonly focused: CustomTileCapability; readonly neighbor: CustomTileCapability } | null {
+    ): {
+        readonly split: CustomTileCapability;
+        readonly ordered: readonly CustomTileCapability[];
+        readonly focusedIndex: number;
+        readonly neighborIndex: number;
+        readonly focused: CustomTileCapability;
+        readonly neighbor: CustomTileCapability;
+    } | null {
         const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
+        const dirSign = direction === "right" || direction === "down" ? 1 : -1;
         let node: object | null = focusedTile;
         while (node !== null) {
             const parent: object | null = (node as TileCapability).parent;
@@ -2751,25 +2767,29 @@ export class TileController {
                 return null;
             }
             if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
-                const decoded = decodeSequential(parent.tiles, isCustomTile, 2);
-                if (decoded.ok) {
+                const decoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+                if (decoded.ok && decoded.value.length >= 2) {
                     const ordered = orderCustomTilesByAxis(decoded.value, axis);
-                    const first = ordered?.[0];
-                    const second = ordered?.[1];
-                    if (ordered !== null && ordered.length === 2 && first !== undefined && second !== undefined) {
-                        const side = first === node ? "first" : second === node ? "second" : null;
-                        if (side !== null) {
-                            const pressedTowardNeighbor =
-                                (side === "first" && (direction === "right" || direction === "down")) ||
-                                (side === "second" && (direction === "left" || direction === "up"));
-                            if ((mode === "outwards") === pressedTowardNeighbor) {
-                                return {
-                                    split: parent,
-                                    first,
-                                    second,
-                                    focused: side === "first" ? first : second,
-                                    neighbor: side === "first" ? second : first,
-                                };
+                    if (ordered !== null) {
+                        const focusedIndex = ordered.indexOf(node as CustomTileCapability);
+                        if (focusedIndex >= 0) {
+                            // Divider-based N-ary resize: only the focused
+                            // child and its immediate same-split neighbor
+                            // across the pressed-and-mode-selected divider
+                            // change weight. Outwards grows into the
+                            // neighbor on the pressed side; inwards shrinks
+                            // from the neighbor on the opposite side
+                            // (documented flipped-edge semantics), hence the
+                            // sign flip by mode. At exactly two children
+                            // this is always the sole other child, matching
+                            // pre-N-ary behavior by construction.
+                            const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
+                            if (neighborIndex >= 0 && neighborIndex < ordered.length) {
+                                const focused = ordered[focusedIndex];
+                                const neighbor = ordered[neighborIndex];
+                                if (focused !== undefined && neighbor !== undefined) {
+                                    return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
+                                }
                             }
                         }
                     }

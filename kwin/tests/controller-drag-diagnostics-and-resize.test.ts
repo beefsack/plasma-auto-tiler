@@ -1096,6 +1096,89 @@ describe("TileController COSMIC split resize mode", () => {
         assert.equal(countEvent(state.harness.logs, "resize-completed"), 0);
         assert.equal(state.writes.length, 0);
     });
+
+    it("only adjusts the focused child and its divider neighbor in a 3-child row, leaving the third child untouched", () => {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 300, height: 100 }, true);
+        root.layoutDirection = 1;
+        const first = tile({ x: 0, y: 0, width: 100, height: 100 });
+        const second = tile({ x: 100, y: 0, width: 100, height: 100 });
+        const third = tile({ x: 200, y: 0, width: 100, height: 100 });
+        first.parent = root;
+        second.parent = root;
+        third.parent = root;
+        root.tiles = [first, second, third];
+        const focused = window({ tile: first, caption: "focused" });
+        const middle = window({ tile: second, caption: "middle" });
+        const rightmost = window({ tile: third, caption: "rightmost" });
+        first.windows = [focused];
+        second.windows = [middle];
+        third.windows = [rightmost];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused, middle, rightmost];
+        const writes: number[] = [];
+        let firstState = first.relativeGeometry;
+        Object.defineProperty(first, "relativeGeometry", {
+            configurable: true,
+            get: () => firstState,
+            set: (next: typeof RECT) => {
+                writes.push(1);
+                firstState = next;
+                first.absoluteGeometry = next;
+                // Only child index 1 (the immediate divider neighbor) is
+                // adjusted; child index 2 is untouched by this setter.
+                const secondState = second.relativeGeometry;
+                const updated = {
+                    x: next.x + next.width,
+                    y: secondState.y,
+                    width: secondState.x + secondState.width - (next.x + next.width),
+                    height: secondState.height,
+                };
+                second.relativeGeometry = updated;
+                second.absoluteGeometry = updated;
+            },
+        });
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, resizeEnter);
+        invokeShortcut(harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(harness.logs, "resize-completed"), 1);
+        assert.equal(writes.length, 1);
+        assert.equal(first.relativeGeometry.width, 115);
+        assert.equal(second.relativeGeometry.x, 115);
+        assert.equal(second.relativeGeometry.width, 85);
+        assert.deepEqual(third.relativeGeometry, { x: 200, y: 0, width: 100, height: 100 });
+        assert.equal(controller.isEnabled, true);
+    });
+
+    it("rejects at the outer edge of a 3-child row with no further neighbor or ancestor", () => {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 300, height: 100 }, true);
+        root.layoutDirection = 1;
+        const first = tile({ x: 0, y: 0, width: 100, height: 100 });
+        const second = tile({ x: 100, y: 0, width: 100, height: 100 });
+        const third = tile({ x: 200, y: 0, width: 100, height: 100 });
+        first.parent = root;
+        second.parent = root;
+        third.parent = root;
+        root.tiles = [first, second, third];
+        const focused = window({ tile: third, caption: "focused" });
+        const midWin = window({ tile: second, caption: "mid" });
+        const leftWin = window({ tile: first, caption: "left" });
+        third.windows = [focused];
+        second.windows = [midWin];
+        first.windows = [leftWin];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused, midWin, leftWin];
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, resizeEnter);
+        invokeShortcut(harness, "plasma-auto-tiler-focus-right");
+        assert.equal(countEvent(harness.logs, "resize-rejected:no-parent"), 1);
+        assert.equal(countEvent(harness.logs, "resize-completed"), 0);
+    });
 });
 
 describe("TileController bspwm direct resize bindings", () => {
