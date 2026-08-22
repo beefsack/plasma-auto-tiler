@@ -12,9 +12,10 @@ import {
     tile,
     type TestSignal,
     type TestTile,
+    type TestWindow,
     window,
 } from "./controller-fixtures";
-import { countEvent, currentScopeFor, focusSetup, invokeShortcut, setup } from "./controller-fixture-scenarios";
+import { attachTileWriter, countEvent, currentScopeFor, focusSetup, invokeShortcut, setup } from "./controller-fixture-scenarios";
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
 import { PROFILE_CATALOGS, REGISTERED_PROFILE_ACTION_IDS, TileController } from "../src/controller";
 import { DIRECTIONS, type Direction } from "../src/logic";
@@ -130,6 +131,7 @@ describe("TileController keyboard insertion", () => {
         target.split = () => {
             splits += 1;
             target.isLayout = true;
+            target.tiles = [null, null];
             return [null, null];
         };
         controller.armKeyboardInsertion("right");
@@ -149,7 +151,11 @@ describe("TileController keyboard insertion", () => {
             incomingManages += 1;
             return true;
         });
-        target.split = () => [left, right];
+        target.split = () => {
+            target.isLayout = true;
+            target.tiles = [left, right];
+            return { native: "opaque" };
+        };
         controller.armKeyboardInsertion("right");
         harness.emitAdded(window());
         assert.equal(incomingManages, 0);
@@ -251,9 +257,11 @@ describe("TileController keyboard insertion", () => {
             { direction: "down", splitDirection: 2 },
         ];
         for (const { direction, splitDirection } of cases) {
-            const { harness, controller, target, focused } = setup();
+            const { harness, controller, root, target, focused } = setup();
             const splits: number[] = [];
             const managed: Array<[TestTile, unknown]> = [];
+            root.layoutDirection = splitDirection === 1 ? 2 : 1;
+            target.parent = root;
             const axis = direction === "left" || direction === "right" ? "x" : "y";
             const first = tile({ x: 0, y: 0, width: 50, height: 50 });
             const second = tile({
@@ -271,8 +279,9 @@ describe("TileController keyboard insertion", () => {
             target.split = (directionArg) => {
                 splits.push(directionArg);
                 target.isLayout = true;
+                target.layoutDirection = directionArg;
                 target.tiles = [first, second];
-                return [second, first];
+                return { native: "opaque" };
             };
             invokeShortcut(harness, `plasma-auto-tiler-insert-${direction}`);
             const incoming = window();
@@ -291,6 +300,106 @@ describe("TileController keyboard insertion", () => {
             assert.equal(countEvent(harness.logs, "keyboard-failed:first-assignment"), 0);
             assert.equal(countEvent(harness.logs, "keyboard-failed:second-assignment"), 0);
         }
+    });
+
+    it("rejects a requested same-axis parent insertion before split or assignment writes", () => {
+        const { harness, controller, root, target, focused } = setup();
+        root.layoutDirection = 1;
+        target.parent = root;
+        target.relativeGeometry = { x: 25, y: 0, width: 50, height: 100 };
+        target.absoluteGeometry = target.relativeGeometry;
+        const left = tile({ x: 0, y: 0, width: 25, height: 100 });
+        const right = tile({ x: 75, y: 0, width: 25, height: 100 });
+        const leftWindow = window({ tile: left, caption: "left" });
+        const rightWindow = window({ tile: right, caption: "right" });
+        left.windows = [leftWindow];
+        right.windows = [rightWindow];
+        left.parent = root;
+        right.parent = root;
+        root.tiles = [left, target, right];
+        const beforeTiles = root.tiles;
+        const beforeTargetGeometry = { ...target.relativeGeometry };
+        const beforeLeftGeometry = { ...left.relativeGeometry };
+        const beforeRightGeometry = { ...right.relativeGeometry };
+        const beforeTargetWindows = target.windows;
+        const beforeLeftWindows = left.windows;
+        const beforeRightWindows = right.windows;
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(focused, writes);
+        let splits = 0;
+        target.split = () => {
+            splits += 1;
+            throw new Error("same-axis keyboard split must be preflighted");
+        };
+
+        controller.armKeyboardInsertion("right");
+        const incoming = window();
+        attachTileWriter(incoming, writes);
+        harness.windows = [leftWindow, focused, rightWindow, incoming];
+        harness.emitAdded(incoming);
+
+        assert.equal(splits, 0);
+        assert.equal(writes.length, 0);
+        assert.strictEqual(root.tiles, beforeTiles);
+        assert.deepEqual(target.relativeGeometry, beforeTargetGeometry);
+        assert.deepEqual(left.relativeGeometry, beforeLeftGeometry);
+        assert.deepEqual(right.relativeGeometry, beforeRightGeometry);
+        assert.deepEqual(target.windows, beforeTargetWindows);
+        assert.deepEqual(left.windows, beforeLeftWindows);
+        assert.deepEqual(right.windows, beforeRightWindows);
+        assert.equal(focused.tile, target);
+        assert.equal(leftWindow.tile, left);
+        assert.equal(rightWindow.tile, right);
+        assert.equal(incoming.tile, null);
+        assert.equal(countEvent(harness.logs, "keyboard-rejected:same-axis-parent"), 1);
+        assert.equal(harness.logs.some((entry) => entry.includes("keyboard-split")), false);
+    });
+
+    it("re-decodes a focused-cell split without flattening an N-ary parent", () => {
+        const { harness, controller, root, target, focused } = setup();
+        root.layoutDirection = 2;
+        target.parent = root;
+        target.relativeGeometry = { x: 0, y: 25, width: 100, height: 50 };
+        target.absoluteGeometry = target.relativeGeometry;
+        const left = tile({ x: 0, y: 0, width: 100, height: 25 });
+        const right = tile({ x: 0, y: 75, width: 100, height: 25 });
+        left.parent = root;
+        right.parent = root;
+        const leftWindow = window({ tile: left, caption: "left" });
+        const rightWindow = window({ tile: right, caption: "right" });
+        left.windows = [leftWindow];
+        right.windows = [rightWindow];
+        root.tiles = [left, target, right];
+        harness.windows = [leftWindow, focused, rightWindow];
+
+        const occupantChild = tile({ x: 0, y: 25, width: 50, height: 50 });
+        const incomingChild = tile({ x: 50, y: 25, width: 50, height: 50 });
+        occupantChild.manage = (value) => {
+            occupantChild.windows = [value];
+            return true;
+        };
+        incomingChild.manage = (value) => {
+            incomingChild.windows = [value];
+            return true;
+        };
+        target.split = (direction) => {
+            target.isLayout = true;
+            target.layoutDirection = direction;
+            target.tiles = [occupantChild, incomingChild];
+            return { native: "opaque" };
+        };
+
+        controller.armKeyboardInsertion("right");
+        const incoming = window();
+        harness.emitAdded(incoming);
+
+        assert.deepEqual(root.tiles, [left, target, right]);
+        assert.deepEqual(target.tiles, [occupantChild, incomingChild]);
+        assert.deepEqual(occupantChild.windows, [focused]);
+        assert.deepEqual(incomingChild.windows, [incoming]);
+        assert.equal(leftWindow.tile, left);
+        assert.equal(rightWindow.tile, right);
+        assert.equal(countEvent(harness.logs, "keyboard-completed"), 1);
     });
 
     it("arms keyboard insertion when target scope signals are function-valued QV4 signals (approximating QJSEngine shape, not live proof)", () => {
@@ -337,8 +446,9 @@ describe("TileController keyboard insertion", () => {
         target.split = (directionArg) => {
             splits.push(directionArg);
             target.isLayout = true;
+            target.layoutDirection = directionArg;
             target.tiles = [first, second];
-            return [first, second];
+            return { native: "opaque" };
         };
         controller.armKeyboardInsertion("left");
         harness.active = other;
@@ -411,10 +521,11 @@ describe("TileController keyboard insertion", () => {
                 incomingManages += 1;
                 return true;
             };
-            target.split = () => {
+            target.split = (directionArg) => {
                 target.isLayout = true;
+                target.layoutDirection = directionArg;
                 target.tiles = [first, second];
-                return [first, second];
+                return { native: "opaque" };
             };
             controller.armKeyboardInsertion(direction);
             harness.emitAdded(window());
@@ -437,7 +548,7 @@ describe("TileController keyboard insertion", () => {
         target.split = () => {
             target.isLayout = true;
             target.tiles = [first, second];
-            return [first, second];
+            return { native: "opaque" };
         };
         controller.armKeyboardInsertion("right");
         harness.emitAdded(window());

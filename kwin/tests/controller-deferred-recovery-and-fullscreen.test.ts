@@ -459,7 +459,11 @@ describe("TileController deferred invariant recovery", () => {
         const seam = { rejecting: true };
         b.split = (direction) => {
             if (seam.rejecting) {
-                return [tile({ x: 100, y: 0, width: 0, height: 100 }), tile({ x: 150, y: 0, width: 50, height: 100 })];
+                const empty = tile({ x: 100, y: 0, width: 0, height: 100 });
+                const valid = tile({ x: 150, y: 0, width: 50, height: 100 });
+                valid.windows = [bWin];
+                b.tiles = [empty, valid];
+                return { native: "opaque" };
             }
             b.isLayout = true;
             b.layoutDirection = direction;
@@ -497,6 +501,7 @@ describe("TileController deferred invariant recovery", () => {
         harness.windows = [aWin, bWin, incoming];
         attachTileWriter(incoming);
         harness.emitAdded(incoming);
+        b.tiles = [];
         assert.equal(countEvent(harness.logs, "ownership-invariant-deferred:drag-live"), 1);
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
         assert.equal(harness.yields.length, 0);

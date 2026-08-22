@@ -6,9 +6,10 @@ import {
     RECT,
     tile,
     type TestTile,
+    type TestWindow,
     window,
 } from "./controller-fixtures";
-import { attachTileWriter, countEvent, installDwindleSplitter, makeTile } from "./controller-fixture-scenarios";
+import { attachTileWriter, countEvent, installDwindleSplitter, makeTile, setup } from "./controller-fixture-scenarios";
 
 // Install a splitter that mirrors KWin's `CustomTile::split()` inline mutation
 // under the minimum-geometry boundary. Unlike `installCapacityRejectingSplitter`
@@ -54,10 +55,11 @@ function installInlineMutatingRejectingSplitter(tile: TestTile, state: { rejecti
 describe("TileController automatic dwindle insertion preflight", () => {
     it("refuses an undersized automatic insertion before splitting, leaving the tree unmutated and the newcomer floating", () => {
         const harness = new Harness();
-        // A dwindle(1) scope whose single leaf (20px wide in a 100px working
-        // area) halves to 10px on a horizontal split, below the 15% working
-        // width floor (15px), so the intended insertion is genuinely undersized.
-        const root = tile({ x: 0, y: 0, width: 20, height: 100 });
+        // A dwindle(1) scope whose single leaf (20px in both axes in a 100px
+        // working area) halves to 10px, below the 15% working-area floor
+        // (15px), so the intended insertion is genuinely undersized on its
+        // longest axis.
+        const root = tile({ x: 0, y: 0, width: 20, height: 20 });
         const first = window({ tile: root });
         root.windows = [first];
         const seam = { rejecting: true };
@@ -95,7 +97,7 @@ describe("TileController automatic dwindle insertion preflight", () => {
 
     it("still splits the insertion when the working area is unreadable instead of inventing a floor", () => {
         const harness = new Harness();
-        const root = tile({ x: 0, y: 0, width: 20, height: 100 });
+        const root = tile({ x: 0, y: 0, width: 20, height: 20 });
         const first = window({ tile: root });
         root.windows = [first];
         installDwindleSplitter(root);
@@ -127,14 +129,14 @@ describe("TileController automatic dwindle insertion preflight", () => {
 
     it("falls back to the closest eligible leaf when the intended right-spine leaf is undersized", () => {
         const harness = new Harness();
-        // A dwindle(2) scope H[a, b] whose right-spine leaf `b` (50x20) is too
-        // short to split vertically (20/2 = 10 < 15% of the 100px working
-        // height), while `a` (50x100) is eligible. The insertion falls back to
-        // splitting `a` under its own depth-one (vertical) orientation.
+        // A dwindle(2) scope H[a, b] whose right-spine leaf `b` (20x20) is too
+        // short to split along its longest axis (20/2 = 10 < 15% of the 100px
+        // working-area floor), while `a` (50x100) is eligible. The insertion
+        // falls back to splitting `a`.
         const root = tile(RECT, true);
         root.layoutDirection = 1;
         const a = tile({ x: 0, y: 0, width: 50, height: 100 });
-        const b = tile({ x: 50, y: 0, width: 50, height: 20 });
+        const b = tile({ x: 50, y: 0, width: 20, height: 20 });
         const aWin = window({ tile: a, caption: "a" });
         const bWin = window({ tile: b, caption: "b" });
         a.windows = [aWin];
@@ -174,8 +176,8 @@ describe("TileController automatic dwindle insertion preflight", () => {
 
     it("resolves an equal-distance fallback tie to the earlier compareLeaves leaf", () => {
         const harness = new Harness();
-        // A dwindle(3) tree H[V[A1, A2], M] whose right-spine leaf `M` (50x20,
-        // depth one, vertical) is undersized. In compareLeaves order the leaves
+        // A dwindle(3) tree H[V[A1, A2], M] whose right-spine leaf `M` (20x20)
+        // is undersized on its longest axis. In compareLeaves order the leaves
         // are A1 (x:0,y:0), M (x:50,y:0), A2 (x:0,y:50): M sits at the middle index, so A1
         // and A2 are both one index away. Both are eligible (depth two,
         // horizontal, 50px wide), so the earlier A1 wins the tie.
@@ -185,7 +187,7 @@ describe("TileController automatic dwindle insertion preflight", () => {
         left.layoutDirection = 2;
         const a1 = tile({ x: 0, y: 0, width: 50, height: 50 });
         const a2 = tile({ x: 0, y: 50, width: 50, height: 50 });
-        const m = tile({ x: 50, y: 0, width: 50, height: 20 });
+        const m = tile({ x: 50, y: 0, width: 20, height: 20 });
         const a1Win = window({ tile: a1, caption: "a1" });
         const a2Win = window({ tile: a2, caption: "a2" });
         const mWin = window({ tile: m, caption: "m" });
@@ -405,8 +407,8 @@ describe("TileController automatic split target insertion", () => {
     it("applies the nearest-splittable fallback relative to the selected active leaf", () => {
         const harness = new Harness();
         harness.configValues.set(AUTOMATIC_SPLIT_TARGET_CONFIG_KEY, "active");
-        // H[V[A1, A2], M]: the active leaf A1 (20x100) is undersized for its
-        // depth-two horizontal split (10 < 15px floor), while A2 and M are
+        // H[V[A1, A2], M]: the active leaf A1 (20x20) is undersized for its
+        // longest-axis split (10 < 15px floor), while A2 and M are
         // splittable. The dwindle deepest-right-spine leaf is M, so this
         // proves the fallback resolves from the selected A1 intent, not the
         // dwindle intent.
@@ -414,7 +416,7 @@ describe("TileController automatic split target insertion", () => {
         root.layoutDirection = 1;
         const left = tile({ x: 0, y: 0, width: 50, height: 100 }, true);
         left.layoutDirection = 2;
-        const a1 = tile({ x: 0, y: 0, width: 20, height: 100 });
+        const a1 = tile({ x: 0, y: 0, width: 20, height: 20 });
         const a2 = tile({ x: 20, y: 0, width: 30, height: 100 });
         const m = tile({ x: 50, y: 0, width: 50, height: 100 });
         const a1Win = window({ tile: a1, caption: "a1" });
@@ -452,7 +454,7 @@ describe("TileController automatic split target insertion", () => {
         assert.equal(m.isLayout, false);
         assert.equal(mWin.tile, m);
         assert.equal(a2.isLayout, true);
-        assert.equal(a2.layoutDirection, 1);
+        assert.equal(a2.layoutDirection, 2);
         const a2Children = a2.tiles as TestTile[];
         assert.equal(a2Children.length, 2);
         assert.equal(a2Win.tile, a2Children[0]);
@@ -510,5 +512,92 @@ describe("TileController automatic split target insertion", () => {
         assert.equal(countEvent(harness.logs, "ownership-pending"), 0);
         assert.equal(harness.yields.length, 0);
         assert.equal(harness.scheduled.length, 0);
+    });
+
+    it("rejects the focused cell's same-axis longest-axis insertion before split or assignment writes", () => {
+        const { harness, root, target, focused } = setup();
+        root.layoutDirection = 1;
+        target.parent = root;
+        target.relativeGeometry = { x: 0, y: 0, width: 80, height: 40 };
+        target.absoluteGeometry = target.relativeGeometry;
+        const sibling = tile({ x: 80, y: 0, width: 20, height: 100 });
+        const siblingWindow = window({ tile: sibling, caption: "sibling" });
+        sibling.windows = [siblingWindow];
+        sibling.parent = root;
+        root.tiles = [sibling, target];
+        const beforeTiles = root.tiles;
+        const beforeTargetGeometry = { ...target.relativeGeometry };
+        const beforeSiblingGeometry = { ...sibling.relativeGeometry };
+        const beforeTargetWindows = target.windows;
+        const beforeSiblingWindows = sibling.windows;
+        const writes: Array<{ window: TestWindow; target: object | null }> = [];
+        attachTileWriter(focused, writes);
+        let splits = 0;
+        target.split = () => {
+            splits += 1;
+            throw new Error("same-axis automatic split must be preflighted");
+        };
+
+        const incoming = window();
+        harness.windows = [siblingWindow, focused, incoming];
+        attachTileWriter(incoming, writes);
+        harness.emitAdded(incoming);
+
+        assert.equal(splits, 0);
+        assert.equal(writes.length, 0);
+        assert.strictEqual(root.tiles, beforeTiles);
+        assert.deepEqual(target.relativeGeometry, beforeTargetGeometry);
+        assert.deepEqual(sibling.relativeGeometry, beforeSiblingGeometry);
+        assert.deepEqual(target.windows, beforeTargetWindows);
+        assert.deepEqual(sibling.windows, beforeSiblingWindows);
+        assert.equal(root.isLayout, true);
+        assert.equal(root.layoutDirection, 1);
+        assert.equal(focused.tile, target);
+        assert.equal(incoming.tile, null);
+        assert.equal(countEvent(harness.logs, "ownership-add-refused:same-axis-parent"), 1);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
+    });
+
+    it("subdivides the selected leaf inside an existing N-ary parent", () => {
+        const { harness, root, target, focused } = setup();
+        root.layoutDirection = 2;
+        target.parent = root;
+        target.relativeGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        target.absoluteGeometry = target.relativeGeometry;
+        const left = tile({ x: 0, y: 0, width: 100, height: 25 });
+        const middle = tile({ x: 0, y: 25, width: 100, height: 25 });
+        left.parent = root;
+        middle.parent = root;
+        const leftWindow = window({ tile: left, caption: "left" });
+        const middleWindow = window({ tile: middle, caption: "middle" });
+        left.windows = [leftWindow];
+        middle.windows = [middleWindow];
+        root.tiles = [left, middle, target];
+        harness.windows = [leftWindow, middleWindow, focused];
+        attachTileWriter(leftWindow);
+        attachTileWriter(middleWindow);
+        installDwindleSplitter(target, true, true);
+        const siblingGeometry = [left.relativeGeometry, middle.relativeGeometry];
+
+        const incoming = window();
+        harness.windows = [leftWindow, middleWindow, focused, incoming];
+        attachTileWriter(incoming);
+        harness.emitAdded(incoming);
+
+        assert.equal(countEvent(harness.logs, "ownership-add-split"), 1);
+        assert.deepEqual(root.tiles, [left, middle, target]);
+        assert.deepEqual([left.relativeGeometry, middle.relativeGeometry], siblingGeometry);
+        assert.equal(target.layoutDirection, 1, "automatic insertion chooses the focused cell's longest axis");
+        assert.equal(leftWindow.tile, left);
+        assert.equal(middleWindow.tile, middle);
+        const children = target.tiles as TestTile[];
+        assert.equal(children.length, 2);
+        assert.deepEqual(children.map((child) => child.relativeGeometry), [
+            { x: 0, y: 50, width: 50, height: 50 },
+            { x: 50, y: 50, width: 50, height: 50 },
+        ]);
+        assert.equal(focused.tile, children[0]);
+        assert.equal(incoming.tile, children[1]);
+        assert.equal(harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:ownership-inert:")), false);
     });
 });

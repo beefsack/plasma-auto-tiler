@@ -184,6 +184,7 @@ describe("TileController interactive drag", () => {
             target.split = (value) => {
                 direction = value;
                 target.isLayout = true;
+                target.layoutDirection = value;
                 target.tiles = [first, second];
                 return [second, first];
             };
@@ -264,6 +265,7 @@ describe("TileController interactive drag", () => {
             target.split = (value) => {
                 direction = value;
                 target.isLayout = true;
+                target.layoutDirection = value;
                 target.tiles = [first, second];
                 return [second, first];
             };

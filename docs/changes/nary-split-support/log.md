@@ -280,3 +280,184 @@ result, changed files or commit, verification, and discoveries or decisions.
   still-unobserved directional-move and new-window behavior. It does not alter
   the approved directional-move or new-window semantics, so `spec.md` and
   `plan.md` were not edited.
+
+## 2026-08-22
+
+- Role / unit: Worker / unit-08 / attempt-01
+- Result: Paused for a semantic construction conflict. The worker replaced both
+  direct `split()` return decodes with live post-mutation target decoding through
+  the adapter and added opaque-return/N-ary synthetic coverage, but did not find
+  a supported way to keep new-window insertion local when native same-axis
+  `split()` escapes to the parent.
+- Files / commit: Unaccepted, uncommitted worktree changes in `kwin/src/controller.ts`,
+  `kwin/tests/controller-keyboard-placement.test.ts`,
+  `kwin/tests/controller-automatic-dwindle-insertion.test.ts`,
+  `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts`,
+  `kwin/tests/controller-fixture-scenarios.ts`, and generated
+  `kwin/contents/code/main.js`.
+- Verification: Focused affected tests 79 pass; complete suite 956 tests / 90
+  suites / 0 failures; both tsconfigs clean; dogfood 347 assertions / 0 failures;
+  two builds byte-identical; `git diff --check` passed. No live KWin/Plasma
+  operation ran.
+- Notes: The pending decision is recorded in `plan.md`. The worker's same-axis
+  synthetic tests model a local nested split and therefore do not prove native
+  same-axis construction; they are not acceptance evidence for that boundary.
+
+## 2026-08-23
+
+- Role / unit: Lead / unit-08 recovery and capability investigation / attempt-02
+- Result: Reconciled the parked worktree, accepted history, and counters. The
+  prior cancelled host dispatch is an unsuccessful, non-resumable unit-08
+  attempt with no correction or review result. A bounded read-only KWin 6.7.3
+  investigation found no qualifying local wrapper/reparent mechanism: a
+  temporary writable-parent-`layoutDirection` flip can select the local split
+  branch, but `split()` is non-transactional and leaves no supported rollback
+  after partial mutation. It is unsuitable under the frozen atomicity and
+  native-feel criteria.
+- Files / commit: Lead recordkeeping only in `plan.md` and `log.md`; parked
+  implementation files remain unaccepted and unmodified by this recovery.
+- Verification: Re-read `spec.md:91-103`,
+  `research/cosmic-insertion-findings.md:3-30`, and
+  `research/native-binding-evidence.md:24-40`; inspected KWin v6.7.3 source
+  citations supplied by the bounded Worker investigation. No live mutation ran.
+- Notes: The approved fallback requires a spec and unit-08 plan amendment plus
+  implementation and focused tests. Delegating that work would be
+  `unit-08/attempt-03`, which trips the documented circuit breaker; work stops
+  pending escalation rather than relabeling the attempt.
+
+## 2026-08-23
+
+- Role / unit: Worker / nary-split-support artifact reset / recordkeeping
+- Result: Amended only the nary spec, plan, and this append-only log. Preserved
+  original unit-08 as partially unaccepted with attempt-01 and attempt-02
+  intact. Created fresh zeroed semantic units `unit-08a` and `unit-08b` with no
+  acceptance.
+- Files / commit: `spec.md`, `plan.md`, `log.md`; uncommitted. No production,
+  generated, or test file changed.
+- Verification: Read the three records and the complete parked diff. Performed
+  documentation and diff review only; no full tests and no live KWin/Plasma
+  operation ran.
+- Notes: 08a is the supported local/perpendicular keyboard and
+  automatic/dwindle insertion candidate, with requested-direction versus
+  focused-cell-longest-axis selection and adapter-only opaque-return re-decode.
+  08b is the unsupported same-axis new-window preflight rejection candidate,
+  requiring zero topology writes and an unassigned/floating incoming window.
+  Existing-window unit-07 same-axis drag remains direct parent expansion.
+  Parked production and generated re-decode hunks are unsupported as parked,
+  with only their re-decode fragments reusable as a shared prerequisite;
+  fixture updates are shared prerequisites; local synthetic insertion tests are
+  08a candidates; no parked hunk is an 08b candidate; the trailing test
+  whitespace deletion is unsupported; existing plan/log changes are unrelated
+  recordkeeping.
+
+## 2026-08-23
+
+- Role / unit: Worker and Lead review / unit-08a / attempt-01
+- Result: Accepted supported local/perpendicular new-window insertion for
+  keyboard and automatic/dwindle paths. Keyboard preserves requested direction;
+  automatic/dwindle splits the focused cell's longest axis. Native `split()`
+  returns are discarded and live children are adapter-re-decoded. The related
+  preset reconstruction return decode was corrected to the same opaque-return
+  contract.
+- Files / commit: Uncommitted coherent worktree changes in `kwin/src/controller.ts`,
+  `kwin/tests/controller-keyboard-placement.test.ts`,
+  `kwin/tests/controller-automatic-dwindle-insertion.test.ts`,
+  `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts`,
+  `kwin/tests/controller-fixture-scenarios.ts`, and generated
+  `kwin/contents/code/main.js`. Commit is deferred until unit-08b is accepted.
+- Verification: Worker reports focused coverage plus `npm --prefix kwin test`
+  at 956 tests / 90 suites / 0 failures, typecheck clean, bundle build clean,
+  271 project checks passing, and `git diff --check` clean. Lead inspected the
+  complete source/generated/test diff: opaque-return tests mutate only live
+  children, keyboard cases retain requested direction, and automatic N-ary
+  coverage preserves parent siblings while splitting the selected cell 50/50.
+- Notes: Same-axis new-window mutation remains deliberately unaccepted and is
+  unit-08b's required preflight boundary. Existing-window unit-07 drag is
+  untouched.
+
+## 2026-08-23
+
+- Role / unit: Worker and Lead review / unit-08b / attempt-01
+- Result: Implemented and behavior-reviewed the same-axis new-window preflight
+  boundary for keyboard and automatic/dwindle insertion. Both paths reject
+  before native `split()` or assignment writes, retain existing topology and
+  assignments, and leave the incoming window unassigned/floating. Unit-07
+  existing-window same-axis drag remains unchanged.
+- Files / commit: Uncommitted coherent worktree changes in `kwin/src/controller.ts`,
+  `kwin/tests/controller-keyboard-placement.test.ts`,
+  `kwin/tests/controller-automatic-dwindle-insertion.test.ts`, and generated
+  `kwin/contents/code/main.js`, together with the accepted-but-uncommitted
+  unit-08a files. No commit or push: unit-08b is not accepted while a required
+  final gate fails.
+- Verification: Worker reports 69 targeted tests / 0 failures including
+  unit-07 same-axis drag coverage; `npm --prefix kwin run typecheck` clean;
+  `npm --prefix kwin test` 958 tests / 90 suites / 0 failures; `bash
+  scripts/dogfood-install.test.sh` 347 assertions / 0 failures (with a
+  non-fatal temporary-data `find` warning); generated bundle rebuilt and stable
+  at SHA-256 `d4b59f0edfecefa80c08b21c2fb0378845859166a7d4b7db5635951bc66d8eb6`;
+  `git diff --check` clean; one production `flashFocusedGroup()` call site.
+  Lead inspected the preflight and the keyboard/automatic zero-write tests.
+- Gate blocker: `orderCustomTilesByAxis` still has nine call sites outside
+  `kwin/src/custom-tile-split.ts`, all pre-existing accepted controller work
+  outside this unit's delegated scope. The mandatory no-semantic-order-site
+  outside-adapter gate therefore fails. No correction was started because it
+  would modify accepted work and conflicts with the frozen no-controller-
+  structural-refactor scope.
+
+## 2026-08-23
+
+- Role / unit: Worker / unit-08c / attempt-01
+- Result: Implemented the narrowly scoped adapter-ordering convergence exposed
+  by the completion gate. The controller no longer imports or calls
+  `orderCustomTilesByAxis`; collect-preset-leaves, resize postconditions and
+  target resolution, drag split paths, and preset path resolution now consume
+  `customTileSplitSeam.decodeChildren`. Acceptance remains pending.
+- Files / commit: Uncommitted changes in `kwin/src/controller.ts`,
+  `kwin/tests/controller-interactive-drag.test.ts`,
+  `docs/changes/nary-split-support/plan.md`, this log, and generated
+  `kwin/contents/code/main.js`; no commit or push.
+- Verification: `npm --prefix kwin test` - 958 tests / 90 suites / 0 failures;
+  `node --test` over the affected preset, resize, drag, keyboard/dwindle,
+  deferred-recovery, and adapter/executor bundles - 212 tests / 23 suites / 0
+  failures; `npm --prefix kwin run typecheck` - clean for both tsconfigs;
+  `bash scripts/dogfood-install.test.sh` - 347 assertions / 0 failures;
+  `npm --prefix kwin run build` completed and a second build was byte-identical
+  by `cmp`; `git diff --check` passed. The final source search finds the two
+  `orderCustomTilesByAxis` references only inside `custom-tile-split.ts`.
+- Notes: Two existing drag direction-matrix fixtures did not write the live
+  split target's `layoutDirection`; the adapter correctly rejected their
+  duplicate axis positions, so those two mocks were minimally corrected
+  without changing assertions. The dogfood harness emitted its existing
+  non-fatal temporary-data `find` warning. No live KWin/Plasma operation ran.
+
+## 2026-08-23
+
+- Role / unit: Lead acceptance / unit-08c and unit-08b
+- Result: Accepted unit-08c's one-attempt adapter-ordering convergence after
+  confirming the completion gate found genuine controller-side native geometry
+  ordering, not a stale interpretation. All controller ordering decisions now
+  use `customTileSplitSeam.decodeChildren`; the ordering helper remains only
+  inside `kwin/src/custom-tile-split.ts`. This closes the blocker and accepts
+  unit-08b's already-reviewed same-axis preflight behavior. Historical
+  unit-08, accepted unit-08a, and all existing counters remain intact.
+- Files / commit: Coherent uncommitted unit-08a/08b/08c work remains in
+  `docs/changes/nary-split-support/{spec,plan,log}.md`,
+  `kwin/src/controller.ts`,
+  `kwin/tests/controller-automatic-dwindle-insertion.test.ts`,
+  `kwin/tests/controller-deferred-recovery-and-fullscreen.test.ts`,
+  `kwin/tests/controller-fixture-scenarios.ts`,
+  `kwin/tests/controller-interactive-drag.test.ts`,
+  `kwin/tests/controller-keyboard-placement.test.ts`, and generated
+  `kwin/contents/code/main.js`; commit and push remain pending.
+- Verification: Lead reran `npm --prefix kwin test` serially after the bundle
+  build: 958 tests / 90 suites / 0 failures. `npm --prefix kwin run typecheck`
+  is clean for both tsconfigs; `bash scripts/dogfood-install.test.sh` reports
+  347 assertions / 0 failures; the generated bundle build passes; and `git
+  diff --check` is clean. The initial concurrent test/build run lost generated
+  `dist` modules during the build and was rerun serially; it was not a code
+  failure.
+- Notes: The final source search has two `orderCustomTilesByAxis` references,
+  both in `custom-tile-split.ts`; `controller.ts` neither imports nor calls it.
+  The resize formula, unit-07 drag behavior, workspace invariants, dead drag
+  planner, and the single production `flashFocusedGroup()` call site remain
+  unchanged. No live KWin/Plasma operation ran.

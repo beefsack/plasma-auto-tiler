@@ -1694,12 +1694,7 @@
     if (!root.isLayout) {
       return [root];
     }
-    const children = decodeSequential(root.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-    if (!children.ok) {
-      return null;
-    }
-    const axis = root.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : "y";
-    const ordered = orderCustomTilesByAxis(children.value, axis);
+    const ordered = customTileSplitSeam.decodeChildren(root);
     if (ordered === null || ordered.length !== 2) {
       return null;
     }
@@ -1812,6 +1807,10 @@
   }
   function layoutDirectionFor(orientation) {
     return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
+  }
+  function parentHasSameSplitAxis(tile, axis) {
+    const parent = tile.parent;
+    return parent !== null && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === (axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2);
   }
   function presetNodeMatches(tile, node) {
     if (node.kind === "leaf") {
@@ -2765,12 +2764,7 @@
           this.diagnostic("resize-rejected:postcondition");
           return;
         }
-        const freshChildren = decodeSequential(target.split.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-        if (!freshChildren.ok || freshChildren.value.length !== target.ordered.length) {
-          this.diagnostic("resize-rejected:postcondition");
-          return;
-        }
-        const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
+        const freshOrdered = customTileSplitSeam.decodeChildren(target.split);
         if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
           this.diagnostic("resize-rejected:postcondition");
           return;
@@ -2801,7 +2795,6 @@
     // matching split climbs to the next ancestor, exactly like cosmic-comp
     // (shell/layout/tiling/mod.rs resize()); no climb target returns null.
     resolveResizeSplit(focusedTile, expectedLayoutDirection, direction, mode) {
-      const axis = direction === "left" || direction === "right" ? "x" : "y";
       const dirSign = direction === "right" || direction === "down" ? 1 : -1;
       let node = focusedTile;
       while (node !== null) {
@@ -2810,19 +2803,16 @@
           return null;
         }
         if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
-          const decoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-          if (decoded.ok && decoded.value.length >= 2) {
-            const ordered = orderCustomTilesByAxis(decoded.value, axis);
-            if (ordered !== null) {
-              const focusedIndex = ordered.indexOf(node);
-              if (focusedIndex >= 0) {
-                const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
-                if (neighborIndex >= 0 && neighborIndex < ordered.length) {
-                  const focused = ordered[focusedIndex];
-                  const neighbor = ordered[neighborIndex];
-                  if (focused !== void 0 && neighbor !== void 0) {
-                    return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
-                  }
+          const ordered = customTileSplitSeam.decodeChildren(parent);
+          if (ordered !== null) {
+            const focusedIndex = ordered.indexOf(node);
+            if (focusedIndex >= 0) {
+              const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
+              if (neighborIndex >= 0 && neighborIndex < ordered.length) {
+                const focused = ordered[focusedIndex];
+                const neighbor = ordered[neighborIndex];
+                if (focused !== void 0 && neighbor !== void 0) {
+                  return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
                 }
               }
             }
@@ -5469,19 +5459,17 @@
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
       }
-      const axis = direction === "left" || direction === "right" ? "x" : "y";
       const parent = target.decoded.tile.parent;
       const axisDirection = splitDirection2(direction);
       const sameAxis = parent !== null && isTile(parent) && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === axisDirection;
       if (sameAxis) {
-        return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction, axis);
+        return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction);
       }
       splitCustomTile(target.decoded.tile, splitDirection2(direction), this.markStructuralMutation);
-      const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, 2);
-      if (decoded.ok) {
+      const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
+      if (children !== null && children.length === 2) {
         this.decodedBoundary("split-result");
       }
-      const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
       const first = children == null ? void 0 : children[0];
       const second = children == null ? void 0 : children[1];
       if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
@@ -5502,22 +5490,20 @@
     // split along the requested direction's axis, so native `split()` takes
     // the add-cell branch and inserts one new direct sibling into the parent
     // (native-binding-evidence.md:22-30), rather than wrapping the target in
-    // a new two-child container. The new sibling is identified by geometry-
-    // order set difference between the parent's ordered children before and
-    // after the call, never by raw array index or a direction-to-side
+    // a new two-child container. The new sibling is identified by the
+    // adapter-decoded child order set difference before and after the call,
+    // never by raw array index or a direction-to-side
     // mapping (multi-ordinal native array order is unproven). The dragged
     // window is managed onto the new sibling; the occupant stays on the
     // unchanged target and is never re-managed.
-    splitDropTargetSameAxis(target, parent, drag, direction, axis) {
-      const beforeDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-      const before = beforeDecoded.ok ? orderCustomTilesByAxis(beforeDecoded.value, axis) : null;
+    splitDropTargetSameAxis(target, parent, drag, direction) {
+      const before = customTileSplitSeam.decodeChildren(parent);
       if (before === null || !before.includes(target)) {
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
       }
       splitCustomTile(target, splitDirection2(direction), this.markStructuralMutation);
-      const afterDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-      const after = afterDecoded.ok ? orderCustomTilesByAxis(afterDecoded.value, axis) : null;
+      const after = customTileSplitSeam.decodeChildren(parent);
       if (after === null || after.length !== before.length + 1 || !after.includes(target)) {
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
@@ -5687,15 +5673,21 @@
       if (!plan.ok) {
         return;
       }
-      const split = splitCustomTile(target.decoded.tile, splitDirection2(pending.direction), this.markStructuralMutation);
-      const decoded = decodeSequential(split, isCustomTile, 2);
+      const requestedAxis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
+      if (parentHasSameSplitAxis(target.decoded.tile, requestedAxis)) {
+        this.floatingWindows.add(window);
+        this.floatScopes.set(window, scope.scope);
+        this.diagnostic("keyboard-rejected:same-axis-parent");
+        return;
+      }
+      splitCustomTile(target.decoded.tile, splitDirection2(pending.direction), this.markStructuralMutation);
+      const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
       if (!decoded.ok) {
         this.gate.disable("keyboard-split-result-invalid", (reason) => this.disabled(reason));
         return;
       }
       this.decodedBoundary("split-result");
-      const axis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
-      const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+      const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
       const first = children == null ? void 0 : children[0];
       const second = children == null ? void 0 : children[1];
       if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
@@ -6100,8 +6092,8 @@
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
     // next structural call and is never retained across one. Per-segment child
-    // selection is derived from relativeGeometry via orderCustomTilesByAxis,
-    // not from tiles[] array index: multi-ordinal native array order is
+    // selection is derived by the split adapter from relativeGeometry, not
+    // from tiles[] array index: multi-ordinal native array order is
     // unestablished (custom-tile-split.ts:18-23).
     presetTileAtPath(scope, path) {
       const root = this.environment.rootTile(scope.output, scope.desktop);
@@ -6113,12 +6105,7 @@
         if (segment === "root") {
           continue;
         }
-        const children = decodeSequential(current.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-        if (!children.ok) {
-          return null;
-        }
-        const axis = current.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : "y";
-        const ordered = orderCustomTilesByAxis(children.value, axis);
+        const ordered = customTileSplitSeam.decodeChildren(current);
         if (ordered === null || ordered.length !== 2) {
           return null;
         }
@@ -6135,8 +6122,8 @@
     // current owned population on the freshly resolved single-leaf root, then
     // guarded assignments of the population to the ordinal leaves. Every split
     // re-resolves the scope root and fresh-decodes the tree around the call,
-    // and the split return value is validated and discarded rather than
-    // retained, so no tile handle survives from one structural call to the
+    // and the native split return value is discarded, so no tile handle
+    // survives from one structural call to the
     // next. The whole split reconstruction finishes in one dispatch, never one
     // frame per tile.
     rebuildPreset(scope, population) {
@@ -6152,15 +6139,14 @@
         if (target === null) {
           return false;
         }
-        let split;
         try {
-          split = splitCustomTile(target, layoutDirectionFor(instruction.orientation), this.markStructuralMutation);
+          splitCustomTile(target, layoutDirectionFor(instruction.orientation), this.markStructuralMutation);
         } catch (error) {
           void error;
           return false;
         }
-        const decoded = decodeSequential(split, isCustomTile, 2);
-        if (!decoded.ok || decoded.value.length !== 2) {
+        const children = customTileSplitSeam.decodeChildren(target);
+        if (children === null || children.length !== 2) {
           return false;
         }
       }
@@ -6322,8 +6308,8 @@
     // scope's usable leaves in stable compareLeaves order, the dwindle intent
     // is the deepest-right-spine leaf, and the active leaf qualifies only when
     // the active window's tile is one of those candidates. Returns the
-    // intended leaf tile with its own depth (which derives the split
-    // orientation) or null when the strategy yields no eligible occupied
+    // intended leaf tile with its own depth or null when the strategy yields no
+    // eligible occupied
     // intended leaf. Any structural degradation preserves the dwindle intent
     // unchanged.
     automaticSplitIntended(scope, deepest) {
@@ -6443,8 +6429,8 @@
       this.dwindleInsert(window, scope);
       this.presetEnsureInvariant(scope);
     }
-    // One dwindle insertion: split the deepest leaf with depth-derived
-    // orientation, keep its sole eligible occupant on the first child, and
+    // One dwindle insertion: split the selected leaf along its longest axis,
+    // keep its sole eligible occupant on the first child, and
     // assign the incoming window to the second child. The split is the only
     // structural call; its result is freshly decoded before any assignment.
     // A structural or decode failure marks the scope inert; a strict
@@ -6516,7 +6502,7 @@
       }
       const intendedLeaf = operationLeafForTile(topology, intended.tile);
       const intendedGeometry = (_b = intendedLeaf == null ? void 0 : intendedLeaf.leaf.geometry) != null ? _b : intended.tile.absoluteGeometry;
-      const intendedAxis = intended.depth % 2 === 0 ? "x" : "y";
+      const intendedAxis = intendedGeometry.width >= intendedGeometry.height ? "x" : "y";
       let target;
       if (!this.splitAxisWouldViolateMinimum(scope, intendedGeometry, intendedAxis)) {
         target = { tile: intended.tile, depth: intended.depth, occupant };
@@ -6530,26 +6516,44 @@
         }
         target = fallback;
       }
-      const orientation = target.depth % 2 === 0 ? "horizontal" : "vertical";
-      let split;
+      const targetGeometry = target.tile.absoluteGeometry;
+      const targetAxis = targetGeometry.width >= targetGeometry.height ? "x" : "y";
+      if (parentHasSameSplitAxis(target.tile, targetAxis)) {
+        this.floatingWindows.add(window);
+        this.floatScopes.set(window, scope.scope);
+        this.diagnostic("ownership-add-refused:same-axis-parent");
+        return;
+      }
+      const orientation = targetAxis === "x" ? "horizontal" : "vertical";
       try {
-        split = splitCustomTile(target.tile, layoutDirectionFor(orientation), this.markStructuralMutation);
+        splitCustomTile(target.tile, layoutDirectionFor(orientation), this.markStructuralMutation);
       } catch (error) {
         void error;
         this.markInert(scope, "insert-split-threw");
         return;
       }
-      const decoded = decodeSequential(split, isCustomTile, 2);
-      if (!decoded.ok || decoded.value.length !== 2) {
+      const decoded = decodeSequential(target.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      const children = customTileSplitSeam.decodeChildren(target.tile);
+      if (!decoded.ok) {
+        this.markInert(scope, "insert-split-decode-failed");
+        return;
+      }
+      if (children === null) {
+        if (decoded.value.length < 2) {
+          this.markInert(scope, "insert-split-decode-failed");
+          return;
+        }
+        this.diagnostic("ownership-add-failed:no-child-geometry");
+        return;
+      }
+      if (children.length !== 2) {
         this.markInert(scope, "insert-split-decode-failed");
         return;
       }
       this.decodedBoundary("split-result");
-      const axis = orientation === "horizontal" ? "x" : "y";
-      const children = orderCustomTilesByAxis(decoded.value, axis);
-      const firstChild = children == null ? void 0 : children[0];
-      const secondChild = children == null ? void 0 : children[1];
-      if (children === null || children.length !== 2 || firstChild === void 0 || secondChild === void 0) {
+      const firstChild = children[0];
+      const secondChild = children[1];
+      if (firstChild === void 0 || secondChild === void 0) {
         this.diagnostic("ownership-add-failed:no-child-geometry");
         return;
       }
@@ -6595,7 +6599,7 @@
       return decoded.ok ? { tile: deepest.tile, windows: decoded.value } : null;
     }
     // Select the eligible fallback insertion leaf when the intended right-spine
-    // leaf cannot split under its own dwindle orientation without violating
+    // leaf cannot split along its longest axis without violating
     // KWin's minimum floor. Candidates are the scope's usable leaves in stable
     // ascending compareLeaves order; the winner is the eligible leaf at the
     // minimum absolute index distance from the intended leaf, with the earlier
@@ -6623,8 +6627,7 @@
         if (depth === void 0) {
           continue;
         }
-        const orientation = depth % 2 === 0 ? "horizontal" : "vertical";
-        const axis = orientation === "horizontal" ? "x" : "y";
+        const axis = entry.leaf.geometry.width >= entry.leaf.geometry.height ? "x" : "y";
         if (this.splitAxisWouldViolateMinimum(scope, entry.leaf.geometry, axis)) {
           continue;
         }

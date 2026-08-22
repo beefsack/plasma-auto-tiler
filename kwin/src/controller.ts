@@ -30,7 +30,7 @@ import {
     type VirtualDesktopCapability,
     type WindowCapability,
 } from "./boundary";
-import { customTileSplitSeam, orderCustomTilesByAxis } from "./custom-tile-split";
+import { customTileSplitSeam } from "./custom-tile-split";
 import { type Blueprint, type Orientation } from "./layout-blueprint";
 import { executeBlueprintInstructions } from "./layout-executor";
 import { type BlueprintPath } from "./layout-instructions";
@@ -275,13 +275,14 @@ export function parseDropOutlinePreview(value: unknown): {
 // occupied leaf a strategy prefers and never mutates topology, preflights
 // splittability, or resolves a fallback. The existing nearest-splittable
 // fallback and no-candidate behavior keep applying to the chosen intended leaf
-// unchanged, and split orientation stays the established depth-derived rule,
-// so this seam changes only which occupied leaf is the intended target.
+// unchanged, and split orientation is selected later from the target cell's
+// longest axis, so this seam changes only which occupied leaf is the intended
+// target.
 
 // A candidate intended target: an opaque tile identity the caller resolves to
-// its real tile, the depth that derives the split orientation, the pure leaf
-// data for stable ordering and area decisions, and whether the leaf holds an
-// eligible in-scope occupant.
+// its real tile, its tree depth for stable fallback handling, the pure leaf data
+// for stable ordering and area decisions, and whether the leaf holds an eligible
+// in-scope occupant.
 export interface AutomaticSplitCandidate {
     readonly tile: object;
     readonly depth: number;
@@ -1032,8 +1033,9 @@ interface OperationLeaf {
     readonly refs: readonly WindowRef[];
 }
 
-// The resolved dwindle insertion split: the leaf to split, its depth-derived
-// orientation (via `depth % 2`), and its sole eligible occupant.
+// The resolved dwindle insertion split: the leaf to split, its depth in the
+// current tree, and its sole eligible occupant. The split axis comes from the
+// selected leaf's geometry at insertion time.
 interface DwindleInsertionTarget {
     readonly tile: CustomTileCapability;
     readonly depth: number;
@@ -1374,8 +1376,8 @@ function dwindleLeafDepths(root: CustomTileCapability): Map<CustomTileCapability
 // executor's decoded split children. A non-layout root realizes to itself; a
 // layout root must decode to exactly two custom-tile children per level, so any
 // manual split, removal, or reorder of the overlay subtree returns null.
-// Child order is derived from relativeGeometry via orderCustomTilesByAxis, not
-// from tiles[] array index: multi-ordinal native array order is unestablished
+// Child order is derived by the split adapter from relativeGeometry, not from
+// tiles[] array index: multi-ordinal native array order is unestablished
 // (custom-tile-split.ts:18-23).
 function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | null {
     if (!isCustomTile(root)) {
@@ -1384,12 +1386,7 @@ function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | 
     if (!root.isLayout) {
         return [root];
     }
-    const children = decodeSequential(root.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-    if (!children.ok) {
-        return null;
-    }
-    const axis: SplitAxis = root.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
-    const ordered = orderCustomTilesByAxis(children.value, axis);
+    const ordered = customTileSplitSeam.decodeChildren(root);
     if (ordered === null || ordered.length !== 2) {
         return null;
     }
@@ -1535,6 +1532,16 @@ function splitDirection(direction: Direction): number {
 
 function layoutDirectionFor(orientation: Orientation): number {
     return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
+}
+
+function parentHasSameSplitAxis(tile: CustomTileCapability, axis: SplitAxis): boolean {
+    const parent = tile.parent;
+    return (
+        parent !== null &&
+        isCustomTile(parent) &&
+        parent.isLayout &&
+        parent.layoutDirection === (axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION)
+    );
 }
 
 // Structural preset-shape match: a live custom-tile subtree must realize the
@@ -2706,12 +2713,7 @@ export class TileController {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
             }
-            const freshChildren = decodeSequential(target.split.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-            if (!freshChildren.ok || freshChildren.value.length !== target.ordered.length) {
-                this.diagnostic("resize-rejected:postcondition");
-                return;
-            }
-            const freshOrdered = orderCustomTilesByAxis(freshChildren.value, axis);
+            const freshOrdered = customTileSplitSeam.decodeChildren(target.split);
             if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
                 this.diagnostic("resize-rejected:postcondition");
                 return;
@@ -2758,7 +2760,6 @@ export class TileController {
         readonly focused: CustomTileCapability;
         readonly neighbor: CustomTileCapability;
     } | null {
-        const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
         const dirSign = direction === "right" || direction === "down" ? 1 : -1;
         let node: object | null = focusedTile;
         while (node !== null) {
@@ -2767,29 +2768,26 @@ export class TileController {
                 return null;
             }
             if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
-                const decoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-                if (decoded.ok && decoded.value.length >= 2) {
-                    const ordered = orderCustomTilesByAxis(decoded.value, axis);
-                    if (ordered !== null) {
-                        const focusedIndex = ordered.indexOf(node as CustomTileCapability);
-                        if (focusedIndex >= 0) {
-                            // Divider-based N-ary resize: only the focused
-                            // child and its immediate same-split neighbor
-                            // across the pressed-and-mode-selected divider
-                            // change weight. Outwards grows into the
-                            // neighbor on the pressed side; inwards shrinks
-                            // from the neighbor on the opposite side
-                            // (documented flipped-edge semantics), hence the
-                            // sign flip by mode. At exactly two children
-                            // this is always the sole other child, matching
-                            // pre-N-ary behavior by construction.
-                            const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
-                            if (neighborIndex >= 0 && neighborIndex < ordered.length) {
-                                const focused = ordered[focusedIndex];
-                                const neighbor = ordered[neighborIndex];
-                                if (focused !== undefined && neighbor !== undefined) {
-                                    return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
-                                }
+                const ordered = customTileSplitSeam.decodeChildren(parent);
+                if (ordered !== null) {
+                    const focusedIndex = ordered.indexOf(node as CustomTileCapability);
+                    if (focusedIndex >= 0) {
+                        // Divider-based N-ary resize: only the focused
+                        // child and its immediate same-split neighbor
+                        // across the pressed-and-mode-selected divider
+                        // change weight. Outwards grows into the
+                        // neighbor on the pressed side; inwards shrinks
+                        // from the neighbor on the opposite side
+                        // (documented flipped-edge semantics), hence the
+                        // sign flip by mode. At exactly two children
+                        // this is always the sole other child, matching
+                        // pre-N-ary behavior by construction.
+                        const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
+                        if (neighborIndex >= 0 && neighborIndex < ordered.length) {
+                            const focused = ordered[focusedIndex];
+                            const neighbor = ordered[neighborIndex];
+                            if (focused !== undefined && neighbor !== undefined) {
+                                return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
                             }
                         }
                     }
@@ -5895,20 +5893,18 @@ export class TileController {
             this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
             return false;
         }
-        const axis = direction === "left" || direction === "right" ? "x" : "y";
         const parent = target.decoded.tile.parent;
         const axisDirection = splitDirection(direction);
         const sameAxis =
             parent !== null && isTile(parent) && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === axisDirection;
         if (sameAxis) {
-            return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction, axis);
+            return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction);
         }
         splitCustomTile(target.decoded.tile, splitDirection(direction), this.markStructuralMutation);
-        const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, 2);
-        if (decoded.ok) {
+        const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
+        if (children !== null && children.length === 2) {
             this.decodedBoundary("split-result");
         }
-        const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
         const first = children?.[0];
         const second = children?.[1];
         if (children === null || children.length !== 2 || first === undefined || second === undefined) {
@@ -5930,9 +5926,9 @@ export class TileController {
     // split along the requested direction's axis, so native `split()` takes
     // the add-cell branch and inserts one new direct sibling into the parent
     // (native-binding-evidence.md:22-30), rather than wrapping the target in
-    // a new two-child container. The new sibling is identified by geometry-
-    // order set difference between the parent's ordered children before and
-    // after the call, never by raw array index or a direction-to-side
+    // a new two-child container. The new sibling is identified by the
+    // adapter-decoded child order set difference before and after the call,
+    // never by raw array index or a direction-to-side
     // mapping (multi-ordinal native array order is unproven). The dragged
     // window is managed onto the new sibling; the occupant stays on the
     // unchanged target and is never re-managed.
@@ -5941,17 +5937,14 @@ export class TileController {
         parent: CustomTileCapability,
         drag: ActiveDrag,
         direction: Direction,
-        axis: SplitAxis,
     ): boolean {
-        const beforeDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-        const before = beforeDecoded.ok ? orderCustomTilesByAxis(beforeDecoded.value, axis) : null;
+        const before = customTileSplitSeam.decodeChildren(parent);
         if (before === null || !before.includes(target)) {
             this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
             return false;
         }
         splitCustomTile(target, splitDirection(direction), this.markStructuralMutation);
-        const afterDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-        const after = afterDecoded.ok ? orderCustomTilesByAxis(afterDecoded.value, axis) : null;
+        const after = customTileSplitSeam.decodeChildren(parent);
         if (after === null || after.length !== before.length + 1 || !after.includes(target)) {
             this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
             return false;
@@ -6146,18 +6139,25 @@ export class TileController {
         if (!plan.ok) {
             return;
         }
+        const requestedAxis: SplitAxis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
+        if (parentHasSameSplitAxis(target.decoded.tile, requestedAxis)) {
+            this.floatingWindows.add(window);
+            this.floatScopes.set(window, scope.scope);
+            this.diagnostic("keyboard-rejected:same-axis-parent");
+            return;
+        }
         // Left/right split horizontally, up/down vertically. The requested
         // side receives the incoming window; the focused occupant keeps the
-        // opposite child.
-        const split = splitCustomTile(target.decoded.tile, splitDirection(pending.direction), this.markStructuralMutation);
-        const decoded = decodeSequential(split, isCustomTile, 2);
+        // opposite child. The native return value is opaque: re-decode the
+        // target's live children and let the adapter derive their order.
+        splitCustomTile(target.decoded.tile, splitDirection(pending.direction), this.markStructuralMutation);
+        const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
         if (!decoded.ok) {
             this.gate.disable("keyboard-split-result-invalid", (reason) => this.disabled(reason));
             return;
         }
         this.decodedBoundary("split-result");
-        const axis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
-        const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
+        const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
         const first = children?.[0];
         const second = children?.[1];
         if (children === null || children.length !== 2 || first === undefined || second === undefined) {
@@ -6594,8 +6594,8 @@ export class TileController {
     // the scope root is re-resolved from the environment and the tree is
     // re-decoded on every call, so the returned handle is valid only until the
     // next structural call and is never retained across one. Per-segment child
-    // selection is derived from relativeGeometry via orderCustomTilesByAxis,
-    // not from tiles[] array index: multi-ordinal native array order is
+    // selection is derived by the split adapter from relativeGeometry, not
+    // from tiles[] array index: multi-ordinal native array order is
     // unestablished (custom-tile-split.ts:18-23).
     private presetTileAtPath(scope: CurrentScope, path: BlueprintPath): CustomTileCapability | null {
         const root = this.environment.rootTile(scope.output, scope.desktop);
@@ -6607,12 +6607,7 @@ export class TileController {
             if (segment === "root") {
                 continue;
             }
-            const children = decodeSequential(current.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-            if (!children.ok) {
-                return null;
-            }
-            const axis: SplitAxis = current.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION ? "x" : "y";
-            const ordered = orderCustomTilesByAxis(children.value, axis);
+            const ordered = customTileSplitSeam.decodeChildren(current);
             if (ordered === null || ordered.length !== 2) {
                 return null;
             }
@@ -6630,8 +6625,8 @@ export class TileController {
     // current owned population on the freshly resolved single-leaf root, then
     // guarded assignments of the population to the ordinal leaves. Every split
     // re-resolves the scope root and fresh-decodes the tree around the call,
-    // and the split return value is validated and discarded rather than
-    // retained, so no tile handle survives from one structural call to the
+    // and the native split return value is discarded, so no tile handle
+    // survives from one structural call to the
     // next. The whole split reconstruction finishes in one dispatch, never one
     // frame per tile.
     private rebuildPreset(
@@ -6650,19 +6645,18 @@ export class TileController {
             if (target === null) {
                 return false;
             }
-            let split: unknown;
             try {
-                split = splitCustomTile(target, layoutDirectionFor(instruction.orientation), this.markStructuralMutation);
+                splitCustomTile(target, layoutDirectionFor(instruction.orientation), this.markStructuralMutation);
             } catch (error) {
                 void error;
                 return false;
             }
-            const decoded = decodeSequential(split, isCustomTile, 2);
-            if (!decoded.ok || decoded.value.length !== 2) {
+            const children = customTileSplitSeam.decodeChildren(target);
+            if (children === null || children.length !== 2) {
                 return false;
             }
-            // The split result is validated and then discarded: the next split
-            // and the final leaf realization re-resolve the root and re-decode.
+            // The target is re-resolved and re-decoded for the next split and
+            // the final leaf realization.
         }
         const leaves: TileCapability[] = [];
         for (const leafPath of compiled.value.leafPaths) {
@@ -6843,8 +6837,8 @@ export class TileController {
     // scope's usable leaves in stable compareLeaves order, the dwindle intent
     // is the deepest-right-spine leaf, and the active leaf qualifies only when
     // the active window's tile is one of those candidates. Returns the
-    // intended leaf tile with its own depth (which derives the split
-    // orientation) or null when the strategy yields no eligible occupied
+    // intended leaf tile with its own depth or null when the strategy yields no
+    // eligible occupied
     // intended leaf. Any structural degradation preserves the dwindle intent
     // unchanged.
     private automaticSplitIntended(
@@ -6970,8 +6964,8 @@ export class TileController {
         this.presetEnsureInvariant(scope);
     }
 
-    // One dwindle insertion: split the deepest leaf with depth-derived
-    // orientation, keep its sole eligible occupant on the first child, and
+    // One dwindle insertion: split the selected leaf along its longest axis,
+    // keep its sole eligible occupant on the first child, and
     // assign the incoming window to the second child. The split is the only
     // structural call; its result is freshly decoded before any assignment.
     // A structural or decode failure marks the scope inert; a strict
@@ -7015,8 +7009,8 @@ export class TileController {
         // occupied leaf before any structural call. The accepted selector
         // decides between the dwindle deepest-right-spine intent, the largest
         // eligible occupied leaf, and the active in-scope occupied leaf. The
-        // chosen leaf is the only changed target and retains its own
-        // depth-derived orientation; the nearest-splittable fallback and
+        // chosen leaf is the only changed target and supplies its longest-axis
+        // orientation; the nearest-splittable fallback and
         // no-candidate floating behavior below apply relative to it. A null
         // selection (`largest` with no occupied leaf) floats the newcomer
         // alone and leaves the tree untouched.
@@ -7072,19 +7066,19 @@ export class TileController {
             return;
         }
         // Preflight the intended leaf before any split: when it cannot split
-        // under its own depth-derived orientation without violating KWin's
+        // along its own longest axis without violating KWin's
         // minimum floor, select the eligible fallback candidate (or float the
         // newcomer alone when none exists) before any structural mutation.
         const intendedLeaf = operationLeafForTile(topology, intended.tile);
         const intendedGeometry = intendedLeaf?.leaf.geometry ?? intended.tile.absoluteGeometry;
-        const intendedAxis: SplitAxis = intended.depth % 2 === 0 ? "x" : "y";
+        const intendedAxis: SplitAxis = intendedGeometry.width >= intendedGeometry.height ? "x" : "y";
         let target: DwindleInsertionTarget;
         if (!this.splitAxisWouldViolateMinimum(scope, intendedGeometry, intendedAxis)) {
             target = { tile: intended.tile, depth: intended.depth, occupant };
         } else {
             const fallback = this.dwindleInsertionFallback(scope, topology, intended);
             if (fallback === null) {
-                // No leaf can split under its own orientation: the newcomer
+                // No leaf can split along its own longest axis: the newcomer
                 // alone stays floating, the tree is untouched, and the scope
                 // stays retryable rather than being marked inert.
                 this.floatingWindows.add(window);
@@ -7094,26 +7088,47 @@ export class TileController {
             }
             target = fallback;
         }
-        const orientation: Orientation = target.depth % 2 === 0 ? "horizontal" : "vertical";
-        let split: unknown;
+        const targetGeometry = target.tile.absoluteGeometry;
+        const targetAxis: SplitAxis = targetGeometry.width >= targetGeometry.height ? "x" : "y";
+        if (parentHasSameSplitAxis(target.tile, targetAxis)) {
+            this.floatingWindows.add(window);
+            this.floatScopes.set(window, scope.scope);
+            this.diagnostic("ownership-add-refused:same-axis-parent");
+            return;
+        }
+        const orientation: Orientation = targetAxis === "x" ? "horizontal" : "vertical";
         try {
-            split = splitCustomTile(target.tile, layoutDirectionFor(orientation), this.markStructuralMutation);
+            splitCustomTile(target.tile, layoutDirectionFor(orientation), this.markStructuralMutation);
         } catch (error) {
             void error;
             this.markInert(scope, "insert-split-threw");
             return;
         }
-        const decoded = decodeSequential(split, isCustomTile, 2);
-        if (!decoded.ok || decoded.value.length !== 2) {
+        const decoded = decodeSequential(target.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+        const children = customTileSplitSeam.decodeChildren(target.tile);
+        if (!decoded.ok) {
+            this.markInert(scope, "insert-split-decode-failed");
+            return;
+        }
+        if (children === null) {
+            if (decoded.value.length < 2) {
+                this.markInert(scope, "insert-split-decode-failed");
+                return;
+            }
+            // The live list decoded, but the adapter rejected its geometry,
+            // including the zero-extent minimum-size case. This is retryable
+            // capacity failure rather than a damaged structural decode.
+            this.diagnostic("ownership-add-failed:no-child-geometry");
+            return;
+        }
+        if (children.length !== 2) {
             this.markInert(scope, "insert-split-decode-failed");
             return;
         }
         this.decodedBoundary("split-result");
-        const axis: SplitAxis = orientation === "horizontal" ? "x" : "y";
-        const children = orderCustomTilesByAxis(decoded.value, axis);
-        const firstChild = children?.[0];
-        const secondChild = children?.[1];
-        if (children === null || children.length !== 2 || firstChild === undefined || secondChild === undefined) {
+        const firstChild = children[0];
+        const secondChild = children[1];
+        if (firstChild === undefined || secondChild === undefined) {
             // KWin minimum tile geometry can yield an empty split child, so a
             // strict geometry-order rejection is a capacity failure, not a
             // damaged tree. Leave the impossible incoming insertion unmanaged
@@ -7170,7 +7185,7 @@ export class TileController {
     }
 
     // Select the eligible fallback insertion leaf when the intended right-spine
-    // leaf cannot split under its own dwindle orientation without violating
+    // leaf cannot split along its longest axis without violating
     // KWin's minimum floor. Candidates are the scope's usable leaves in stable
     // ascending compareLeaves order; the winner is the eligible leaf at the
     // minimum absolute index distance from the intended leaf, with the earlier
@@ -7205,8 +7220,7 @@ export class TileController {
             if (depth === undefined) {
                 continue;
             }
-            const orientation: Orientation = depth % 2 === 0 ? "horizontal" : "vertical";
-            const axis: SplitAxis = orientation === "horizontal" ? "x" : "y";
+            const axis: SplitAxis = entry.leaf.geometry.width >= entry.leaf.geometry.height ? "x" : "y";
             if (this.splitAxisWouldViolateMinimum(scope, entry.leaf.geometry, axis)) {
                 continue;
             }

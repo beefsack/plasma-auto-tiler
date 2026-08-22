@@ -3,7 +3,7 @@
 Ownership and approval:
 
 - Owner: Lead
-- Status: Ready for Orchestrator approval
+- Status: Approved by Orchestrator; unit-08 split into 08a and 08b
 
 ## Objective
 
@@ -21,8 +21,17 @@ In scope:
 - Generalize split decoding, construction, reconstruction, validation,
   minimum-size checks, resize handling, and reflow normalization where their
   current contracts require two children.
-- Support same-axis wrapping, parent escape, one-child collapse, and operations
-  on splits with three or more direct children.
+- Support same-axis wrapping for existing-window insertion, parent escape,
+  one-child collapse, and operations on splits with three or more direct
+  children.
+- Generalize supported new-window insertion locally: perpendicular insertion
+  uses the requested keyboard direction, while automatic/dwindle insertion
+  selects the focused cell's longest axis. The local split is approximately
+  50/50, leaves sibling extents and parent weights unchanged, and preserves
+  applicable parent escape, one-child collapse, and binary behavior.
+- Reject new-window insertion before topology mutation when the selected or
+  requested axis matches the target parent and no supported atomic local
+  wrapper exists. The incoming window remains unassigned/floating.
 - Make every 3+-child topology decision from direct-child count and order, never
   width, screen position, or other geometry.
 - Characterize and preserve every binary-only behavior. For identical
@@ -54,6 +63,12 @@ In scope:
   current two-child decode policy into a native API claim.
 - Existing binary-only strategies must retain byte-identical layout results.
 - No runtime behavior may depend on the conformance model.
+- New-window insertion must not float-then-move, substitute a perpendicular
+  split, flip the requested direction, remove and rebuild topology, use private
+  APIs, or use project-owned geometry to emulate a native split.
+- Sequential new-window opens do not form wide N-ary rows. Existing-window
+  unit-07 same-axis drag remains direct parent expansion with its accepted
+  behavior unchanged.
 
 ## Acceptance Criteria
 
@@ -63,6 +78,13 @@ In scope:
 - [ ] Focused structural tests cover same-axis wrapping and parent escape in
   3+-child containers, including immediate adjacency, one-child collapse, and
   geometry-independent child count/order decisions.
+- [ ] Supported new-window insertion covers keyboard and automatic/dwindle
+  local/perpendicular paths, including focused-cell longest-axis selection,
+  requested keyboard direction, opaque native-return adapter re-decode, and
+  applicable parent escape, one-child collapse, and binary preservation.
+- [ ] Unsupported same-axis new-window insertion is rejected before any
+  topology write, leaving the incoming window unassigned/floating with zero
+  topology writes.
 - [ ] Each of the 24 direct binary-coupled functions and both named
   structural-binary types in `research/binary-coupling.md` is migrated,
   removed, or retained behind an explicitly N-ary-safe contract.
@@ -101,6 +123,15 @@ In scope:
   re-weighted. Unlike move-insertion, which gives the mover an equal share and
   scales existing direct children by `(n-1)/n`, new-window insertion does not
   renormalise.
+- Settled - Supported new-window insertion is local and atomic. Keyboard
+  insertion preserves the requested direction; automatic/dwindle insertion
+  selects the focused cell's longest axis. Same-axis selection/request against
+  a target parent is unsupported when no supported local wrapper exists and
+  must reject before topology mutation, leaving the incoming window
+  unassigned/floating.
+- Settled - Existing-window unit-07 same-axis drag remains direct parent
+  expansion. New-window insertion is not allowed to obtain a wide N-ary row by
+  sequential opens.
 - Settled jointly with ordered child and native boundary - the project owns an
   ordered N-ary layout model as the semantic source of truth for direct-child
   order, weights, adjacency, and container meaning. No native KWin type or
@@ -133,13 +164,31 @@ In scope:
   Model-coupled expected results stay green when the model drifts with them from
   the corpus; that failure class has occurred three times.
 
+## Frozen Cross-Unit Contracts
+
+- New-window insertion is approximately 50/50 along the focused cell's
+  longest axis, with no sibling extent change or parent reweighting except on
+  rejection.
+- A native split return is opaque and is decoded only by the approved adapter
+  re-decode. Geometry ordering is adapter-only; project semantics do not infer
+  native cardinality or order.
+- No unproven native cardinality claims are permitted, and native bindings must
+  not be guarded with `Array.isArray`.
+- Existing comments and zero guards remain load-bearing and must be preserved.
+- Dead drag-planning tests, types, and functions remain untouched, as do the
+  resize characterization, unit-06 neighbor formula, unit-07 drag behavior,
+  workspace invariants, the single `flashFocusedGroup` call site, and the
+  controller's structure. No controller structural refactor is part of this
+  amendment.
+
 ## Native Scope Note
 
-- This is scope evidence, not a decision. Drag
+- This is scope evidence, not a decision. Existing-window drag
   (`kwin/src/controller.ts:5826-5857`) and keyboard
-  (`kwin/src/controller.ts:6025-6069`) split paths pass only the requested
-  direction to `splitCustomTile` without a parent-orientation check, while
-  native same-axis `CustomTile::split()` inserts a sibling into the parent
+  (`kwin/src/controller.ts:6025-6069`) and new-window insertion paths pass only
+  their split direction to `splitCustomTile` without a parent-orientation
+  check, while native same-axis `CustomTile::split()` inserts a sibling into
+  the parent
   (`research/native-binding-evidence.md:21-26`). Columns/rows preset
   reconstruction (`kwin/src/preset-catalog.ts:39-52`) and blueprint
   construction (`kwin/src/layout-blueprint.ts:69-77`) also request directional
@@ -164,7 +213,7 @@ it; this is an acceptance condition.
 
 ## Approval Boundary
 
-Implementation begins only after the remaining new-window insertion sizing
-decision is resolved and this specification is approved. Autonomous mode
-authorized preparation of this artifact, not resolution of its consequential
-design choice.
+Implementation of units 08a and 08b begins only after this amended
+specification is approved. The parked unit-08 attempts remain historical and
+unaccepted; this artifact reset does not accept their production, test, or
+generated changes.

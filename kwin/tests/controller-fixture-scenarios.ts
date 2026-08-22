@@ -644,22 +644,27 @@ export function reconstructDropSetup(): {
 // split turns the tile into a layout with two children whose geometry follows
 // the requested orientation (1 = horizontal, 2 = vertical), and installs the
 // same splitter on both children so the chain can keep growing.
-export function installDwindleSplitter(tile: TestTile): void {
+export function installDwindleSplitter(tile: TestTile, opaqueReturn = false, preserveGeometry = false): void {
     tile.split = (direction) => {
         tile.isLayout = true;
         tile.layoutDirection = direction;
         tile.windows = [];
         const horizontal = direction === 1;
+        const geometry = preserveGeometry ? tile.relativeGeometry : RECT;
         const childA = makeTile(
-            horizontal ? { x: 0, y: 0, width: 50, height: 100 } : { x: 0, y: 0, width: 100, height: 50 },
+            horizontal
+                ? { x: geometry.x, y: geometry.y, width: geometry.width / 2, height: geometry.height }
+                : { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height / 2 },
         );
         const childB = makeTile(
-            horizontal ? { x: 50, y: 0, width: 50, height: 100 } : { x: 0, y: 50, width: 100, height: 50 },
+            horizontal
+                ? { x: geometry.x + geometry.width / 2, y: geometry.y, width: geometry.width / 2, height: geometry.height }
+                : { x: geometry.x, y: geometry.y + geometry.height / 2, width: geometry.width, height: geometry.height / 2 },
         );
-        installDwindleSplitter(childA);
-        installDwindleSplitter(childB);
+        installDwindleSplitter(childA, opaqueReturn, preserveGeometry);
+        installDwindleSplitter(childB, opaqueReturn, preserveGeometry);
         tile.tiles = [childA, childB];
-        return [childA, childB];
+        return opaqueReturn ? { native: "opaque" } : [childA, childB];
     };
 }
 // Install a splitter that mirrors `installDwindleSplitter` geometrically but
@@ -688,13 +693,30 @@ export function installReversedOrderSplitter(tile: TestTile): void {
     };
 }
 // Install a configurable splitter that models the KWin minimum-geometry
-// boundary. While `state.rejecting` is true it yields a split result whose
-// children carry invalid geometry (the strict `orderCustomTilesByAxis` check
-// rejects the pair) and does not realize the split in the live tree, so a capacity
-// rejection leaves the scope structurally unchanged and retryable. When
+// boundary. While `state.rejecting` is true it exposes invalid children through
+// the live tile list (the strict `orderCustomTilesByAxis` check rejects the
+// pair) without changing the tile's layout/occupancy state, so a capacity
+// rejection leaves the scope retryable. When
 // `state.rejecting` is false it behaves exactly like `installDwindleSplitter`,
 // realizing a valid dwindle chain.
 export function installCapacityRejectingSplitter(tile: TestTile, state: { rejecting: boolean }): void {
+    let liveTiles = tile.tiles;
+    let invalidTiles: unknown = liveTiles;
+    let invalidReads = 0;
+    Object.defineProperty(tile, "tiles", {
+        configurable: true,
+        get: () => {
+            if (state.rejecting && invalidReads < 2) {
+                invalidReads += 1;
+                return invalidTiles;
+            }
+            return liveTiles;
+        },
+        set: (value: unknown) => {
+            liveTiles = value;
+            invalidReads = state.rejecting ? 2 : 0;
+        },
+    });
     tile.split = (direction) => {
         const horizontal = direction === 1;
         const validA = makeTile(
@@ -706,7 +728,10 @@ export function installCapacityRejectingSplitter(tile: TestTile, state: { reject
         if (state.rejecting) {
             // KWin minimum geometry can yield an empty child: the first child
             // has zero width, so `orderCustomTilesByAxis` must reject the pair.
-            return [makeTile({ x: 0, y: 0, width: 0, height: 100 }), validB];
+            validB.windows = tile.windows;
+            invalidTiles = [makeTile({ x: 0, y: 0, width: 0, height: 100 }), validB];
+            invalidReads = 0;
+            return { native: "opaque" };
         }
         tile.isLayout = true;
         tile.layoutDirection = direction;
