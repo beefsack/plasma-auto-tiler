@@ -461,3 +461,26 @@ result, changed files or commit, verification, and discoveries or decisions.
   The resize formula, unit-07 drag behavior, workspace invariants, dead drag
   planner, and the single production `flashFocusedGroup()` call site remain
   unchanged. No live KWin/Plasma operation ran.
+
+## 2026-08-23
+
+- Role / unit: Worker, independent Worker review, and Lead / unit-09 / attempt-01
+- Result: Accepted. The inventory sweep covered every test file and the shared
+  fixture named in `research/binary-coupling.md`; three independent synthetic
+  N-ary cases close the remaining direct-child validation and resize-parent
+  escape coverage. The single required independent review returned no findings.
+- Files / commit: `kwin/tests/layout-executor.test.ts`,
+  `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`, `plan.md`, and
+  `log.md`; commit pending.
+- Verification: `npm --prefix kwin test` - 961 tests / 90 suites / 0 failures;
+  `npm --prefix kwin run typecheck` - clean for `tsconfig.json` and
+  `tsconfig.test.json`; `bash scripts/dogfood-install.test.sh` - 347 assertions
+  / 0 failures. The dogfood harness emitted its known non-fatal missing
+  temporary-data `find` warning. `git diff --check` passed. Searches confirm
+  that `orderCustomTilesByAxis` has two references, both in
+  `kwin/src/custom-tile-split.ts`; no controller import or call remains.
+- Notes: The diff adds tests only, with no deleted, skipped, weakened, or
+  trigger-corrected test. The source and generated bundle are unchanged by this
+  unit; the suite rebuilds the bundle as part of its normal gate. No live
+  KWin/Plasma operation ran. Historical unit-08 remains unaccepted with two
+  preserved attempts; no backlog entry was archived or removed.

@@ -272,6 +272,30 @@ describe("customTileSplitSeam", () => {
         assert.deepEqual(customTileSplitSeam.decodeChildren(parent), [first, second, third]);
     });
 
+    it("counts a nested group as one direct child while preserving direct-child order", () => {
+        const first = customTile(undefined, [], { x: 0, y: 0, width: 1, height: 3 });
+        const nestedLeaf = customTile(undefined, [], { x: 1, y: 0, width: 1, height: 1 });
+        const nested = {
+            ...customTile(undefined, [nestedLeaf], { x: 1, y: 0, width: 1, height: 3 }),
+            isLayout: true as const,
+        };
+        const third = customTile(undefined, [], { x: 2, y: 0, width: 1, height: 3 });
+        const parent = customTile(undefined, [third, nested, first], undefined, HORIZONTAL_LAYOUT_DIRECTION);
+
+        assert.deepEqual(customTileSplitSeam.decodeChildren(parent), [first, nested, third]);
+        assert.equal(customTileSplitSeam.decodeChildren(parent)?.length, 3);
+    });
+
+    it("rejects duplicate direct-child positions deterministically", () => {
+        const first = customTile(undefined, [], { x: 0, y: 0, width: 1, height: 3 });
+        const duplicate = customTile(undefined, [], { x: 0, y: 1, width: 1, height: 2 });
+        const third = customTile(undefined, [], { x: 2, y: 0, width: 1, height: 3 });
+        const parent = customTile(undefined, [third, duplicate, first], undefined, HORIZONTAL_LAYOUT_DIRECTION);
+
+        assert.equal(customTileSplitSeam.decodeChildren(parent), null);
+        assert.equal(customTileSplitSeam.decodeChildren(parent), null);
+    });
+
     it("rejects a degenerate zero-extent child via orderCustomTilesByAxis", () => {
         const zeroWidth = customTile(undefined, [], { x: 0, y: 0, width: 0, height: 2 });
         const valid = customTile(undefined, [], { x: 1, y: 0, width: 1, height: 2 });

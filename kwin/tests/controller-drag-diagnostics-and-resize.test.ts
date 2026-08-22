@@ -1097,6 +1097,74 @@ describe("TileController COSMIC split resize mode", () => {
         assert.equal(state.writes.length, 0);
     });
 
+    it("escapes an edge of a nested 3-child row to the adjacent divider in a 3-child parent", () => {
+        const harness = new Harness();
+        const root = tile({ x: 0, y: 0, width: 400, height: 100 }, true);
+        root.layoutDirection = 1;
+        const inner = tile({ x: 0, y: 0, width: 200, height: 100 }, true);
+        inner.layoutDirection = 1;
+        const outerMiddle = tile({ x: 200, y: 0, width: 100, height: 100 });
+        const outerRight = tile({ x: 300, y: 0, width: 100, height: 100 });
+        inner.parent = root;
+        outerMiddle.parent = root;
+        outerRight.parent = root;
+        root.tiles = [inner, outerMiddle, outerRight];
+
+        const innerFirst = tile({ x: 0, y: 0, width: 60, height: 100 });
+        const innerMiddle = tile({ x: 60, y: 0, width: 60, height: 100 });
+        const innerFocused = tile({ x: 120, y: 0, width: 80, height: 100 });
+        innerFirst.parent = inner;
+        innerMiddle.parent = inner;
+        innerFocused.parent = inner;
+        inner.tiles = [innerFirst, innerMiddle, innerFocused];
+
+        const focused = window({ tile: innerFocused, caption: "focused" });
+        const innerMiddleWindow = window({ tile: innerMiddle, caption: "inner-middle" });
+        const outerMiddleWindow = window({ tile: outerMiddle, caption: "outer-middle" });
+        const outerRightWindow = window({ tile: outerRight, caption: "outer-right" });
+        innerFocused.windows = [focused];
+        innerMiddle.windows = [innerMiddleWindow];
+        outerMiddle.windows = [outerMiddleWindow];
+        outerRight.windows = [outerRightWindow];
+        harness.root = root;
+        harness.active = focused;
+        harness.windows = [focused, innerMiddleWindow, outerMiddleWindow, outerRightWindow];
+
+        const writes: number[] = [];
+        let innerState = inner.relativeGeometry;
+        Object.defineProperty(inner, "relativeGeometry", {
+            configurable: true,
+            get: () => innerState,
+            set: (next: typeof RECT) => {
+                writes.push(1);
+                innerState = next;
+                inner.absoluteGeometry = next;
+                const nextEdge = next.x + next.width;
+                const updated = {
+                    x: nextEdge,
+                    y: outerMiddle.relativeGeometry.y,
+                    width: outerMiddle.relativeGeometry.x + outerMiddle.relativeGeometry.width - nextEdge,
+                    height: outerMiddle.relativeGeometry.height,
+                };
+                outerMiddle.relativeGeometry = updated;
+                outerMiddle.absoluteGeometry = updated;
+            },
+        });
+
+        const controller = new TileController(harness.environment());
+        controller.start();
+        invokeShortcut(harness, resizeEnter);
+        invokeShortcut(harness, "plasma-auto-tiler-focus-right");
+
+        assert.equal(countEvent(harness.logs, "resize-completed"), 1);
+        assert.equal(writes.length, 1);
+        assert.deepEqual(inner.relativeGeometry, { x: 0, y: 0, width: 220, height: 100 });
+        assert.deepEqual(outerMiddle.relativeGeometry, { x: 220, y: 0, width: 80, height: 100 });
+        assert.deepEqual(outerRight.relativeGeometry, { x: 300, y: 0, width: 100, height: 100 });
+        assert.deepEqual(innerFocused.relativeGeometry, { x: 120, y: 0, width: 80, height: 100 });
+        assert.equal(controller.isEnabled, true);
+    });
+
     it("only adjusts the focused child and its divider neighbor in a 3-child row, leaving the third child untouched", () => {
         const harness = new Harness();
         const root = tile({ x: 0, y: 0, width: 300, height: 100 }, true);

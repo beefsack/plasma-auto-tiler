@@ -80,7 +80,7 @@ binary behavior.
 - [x] unit-08b Same-axis rejection behavior accepted after the mandatory
   adapter-ordering gate closed in unit-08c.
 - [x] unit-08c Adapter-ordering convergence accepted in one normal attempt.
-- [ ] unit-09 Inventory closure and final gates.
+- [x] unit-09 Inventory closure and final gates.
 
 ## Unit-03 Finding
 
@@ -523,6 +523,7 @@ loop report.
 | unit-08a | 1 | 0 | 1 |
 | unit-08b | 1 | 0 | 1 |
 | unit-08c | 1 | 0 | 1 |
+| unit-09 | 1 | 0 | 1 |
 
 - `unit-03b/attempt-01` and `attempt-02` stopped in bespoke harness setup
   before a D-Bus load call. The user-approved reset removed that harness.
@@ -554,10 +555,10 @@ and therefore trips the circuit breaker.
 | Seven settled decisions and frozen contracts | unit-01 approved record in `spec.md#user-decisions`, promoted replay vectors in `research/cosmic-insertion-findings.md`, and static citation inspection. |
 | Ordered direct children and deterministic malformed-list handling | unit-03 and unit-04 focused structural tests. unit-04 additionally proves the blueprint executor fails deterministically, not silently, on a non-2 seam decode ("Unit-04 Generalization Finding"). |
 | Existing-window same-axis wrapping, parent escape, collapse, and geometry independence | Accepted unit-07 evidence; new-window equivalents remain 08a/08b candidate gates. |
-| Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`. |
-| 13 test files and shared fixture covered | unit-09 test-surface audit. |
+| Inventory coupling removed or made N-ary-safe | unit-09 audit against `research/binary-coupling.md`; final source searches found no controller `orderCustomTilesByAxis` use, native array-index semantics, unproven split-return/cardinality claim, or unclassified two-child formula. |
+| 13 test files and shared fixture covered | unit-09 read audit of all 13 named test files and `controller-fixture-scenarios.ts`; independent synthetic additions cover nested direct-child counting, deterministic duplicate-position rejection, and N-ary resize parent escape. |
 | Binary-only layouts remain byte-identical | unit-02 fixtures compare existing native serialization and window assignments, then rerun in units 03 through 09. |
-| Complete test, typecheck, and dogfood gates | Future unit-09 results after 08a and 08b acceptance; no result is claimed by this reset. |
+| Complete test, typecheck, and dogfood gates | unit-09: `npm --prefix kwin test` - 961 tests / 90 suites / 0 failures; `npm --prefix kwin run typecheck` - both tsconfigs clean; `bash scripts/dogfood-install.test.sh` - 347 assertions / 0 failures. |
 | unit-02 binary "before" characterization baseline | `serializeTileTree` helper in `kwin/tests/controller-fixture-scenarios.ts`; two pinned-golden tests driving the real controller through a dwindle chain and a preset-shortcut insertion in `kwin/tests/nary-characterization.test.ts`; `npm --prefix kwin test`: 942 tests, 90 suites, 0 fail (up from the 940/89/0 baseline); typecheck clean on both tsconfigs. |
 
 ## Residual Risks
@@ -582,3 +583,6 @@ and therefore trips the circuit breaker.
 - `unit-03b/attempt-03` completed as the final E4 read-only host probe. Its
   scoped facts are recorded in `research/native-binding-evidence.md`; no
   `split()` fact was sought or obtained.
+- unit-09 completed the final inventory sweep and static regression gates.
+  It added independent synthetic structural coverage without changing production
+  behavior, and its single independent review returned no findings.
