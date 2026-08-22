@@ -66,7 +66,8 @@ R4. A direct root-edge child crosses only to an adjacent output in D. An
 
 S18 proves R2c also wraps a container neighbour. S19 proves odd-parity
 near-side placement in both directions. Only deeper-than-one parity descent
-and post-resize behavior remain explicitly unobserved.
+and post-resize behavior for directional moves or new-window insertion remain
+explicitly unobserved.
 
 Horizontal output adjacency places the target in a top-level H split;
 vertical output adjacency places it in a top-level V split. This is prose
@@ -102,8 +103,38 @@ The canonical result is `1/n`. It is mathematically identical to taking the
 new child as the mean existing weight and then normalizing, yielding a `1/n`
 mover and `(n-1)/n` for the rest.
 
-Not observed: R1 sizing, pixel rounding, behavior after manual resize, and
-which sibling absorbs a user drag in a 3+ split.
+### Follow-up manual observations (Tests A-C)
+
+These observations were made at 1920x1080 with 100% scale. They supplement the
+directional corpus without changing its structural rules.
+
+- **Test A - float removals.** The equal A/B/C/D row in
+  `Screenshot_2026-08-22_21-37-56.png`,
+  `Screenshot_2026-08-22_21-38-48.png`, and
+  `Screenshot_2026-08-22_21-40-50.png` was reduced by floating B and then C.
+  After floating B, A/C/D were uniform at 640px each; after floating C, A/D
+  remained uniform. This is equal-survivor normalization after removal, not
+  directional escape S3.
+- **Test B - existing-window between-child insertion.** From an equal A/B/C
+  row, an existing N was dragged to the between-child bar between A and B in
+  `Screenshot_2026-08-22_21-44-13.png` and
+  `Screenshot_2026-08-22_21-45-05.png`. The four direct children were all
+  480px. This corroborates the existing move-insertion rule: the mover takes
+  `1/n` and existing direct children scale uniformly; it does not establish
+  new-window insertion. The child-drop affordance is distinct and yields a
+  nested split rather than this flat four-child insertion.
+- **Test C - ratio-preserving float removal.** The 50/30/20 row was
+  960/576/384px before floating the 50% child, as shown in
+  `Screenshot_2026-08-22_21-47-56.png` and
+  `Screenshot_2026-08-22_21-48-37.png`. The remaining children became 60/40 at
+  1152/768px, preserving the original 30:20 ratio and normalizing to fill the
+  parent. This is an observed float-removal result, not a generalized
+  directional-move or new-window rule.
+
+Not observed: R1 sizing, pixel rounding, and post-resize behavior for
+directional moves or new-window insertion. Tests A and C observe float removal
+from manually sized starts only; they do not establish directional-move
+post-resize behavior.
 
 ## The corpus
 

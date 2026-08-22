@@ -261,3 +261,22 @@ result, changed files or commit, verification, and discoveries or decisions.
   `controller-fixture-scenarios.ts` fixture seam instead. This is an
   execution-level file-location judgment, not a change to the unit's
   objective, dependencies, or verification. No `kwin/src/` file was touched.
+
+## 2026-08-22
+
+- Role / unit: Lead / COSMIC follow-up evidence / attempt-01
+- Result: Accepted durable recording of the user's 1920x1080, 100% COSMIC
+  observations. Between-child existing-window drag insertion confirms the
+  already-settled `1/n` mover plus uniform existing-child scaling rule; float
+  removal normalizes surviving children while preserving their relative ratio,
+  including the observed manually resized 50/30/20 case.
+- Files / commit: `docs/cosmic-move-conformance.md`,
+  `research/cosmic-insertion-findings.md`, `research/cosmic-sizing-procedure.md`,
+  `docs/backlog.md`; documentation commit pending.
+- Verification: Lead inspected the exact four-file diff and confirmed
+  `git diff --check` passed. No live KWin/Plasma operation ran.
+- Notes: This closes the stale claim that a 3+-child between-child user drag has
+  an unobserved single absorbing sibling, and narrows the manual-resize gap to
+  still-unobserved directional-move and new-window behavior. It does not alter
+  the approved directional-move or new-window semantics, so `spec.md` and
+  `plan.md` were not edited.

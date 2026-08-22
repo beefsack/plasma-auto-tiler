@@ -192,7 +192,10 @@ not infer any unmeasured R1 resize behavior from that fact.
 
 These observations can select only among the stated coarse sizing hypotheses
 for these shallow, single-operation vectors. They cannot settle pixel-level
-rounding, resize animation timing, behavior after further manual resizing,
-the absorbing-sibling policy for a user drag in a 3+-child split, deeper-than-
-one parity descent, output crossing, or any structural rule. The corpus's
-closed structural ground truth outranks every result recorded here.
+rounding, resize animation timing, post-resize behavior for directional move
+insertion or new-window insertion, deeper-than-one parity descent, output
+crossing, or any structural rule. Follow-up Tests A and C observe float removal
+after manually sized starts, including equal-survivor and ratio-preserving
+normalization; they do not establish directional-move post-resize behavior.
+The corpus's closed structural ground truth outranks every result recorded
+here.
