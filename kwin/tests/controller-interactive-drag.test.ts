@@ -18,6 +18,7 @@ import {
     countEvent,
     dragSetup,
     movedGeometry,
+    sameAxisRowDropSetup,
     startDrag,
 } from "./controller-fixture-scenarios";
 
@@ -196,6 +197,38 @@ describe("TileController interactive drag", () => {
         }
     });
 
+    it("reads the live post-split tiles rather than trusting split()'s return value (cross-axis anti-pattern regression)", () => {
+        // target.parent stays null (dragSetup's default), so this drop always
+        // takes the cross-axis path regardless of direction.
+        const { origin, target, dragged, targetWindow } = dragSetup();
+        const managed: unknown[] = [];
+        const first = tile({ x: 200, y: 0, width: 50, height: 100 }, false, (value) => {
+            managed.push(value);
+            return true;
+        });
+        const second = tile({ x: 250, y: 0, width: 50, height: 100 }, false, (value) => {
+            managed.push(value);
+            return true;
+        });
+        // The returned children are distinct objects with degenerate,
+        // duplicate-position geometry that `orderCustomTilesByAxis` would
+        // reject outright if trusted directly. The live `target.tiles` (what
+        // the fix re-decodes) holds the real, valid children instead.
+        const bogusFirst = tile({ x: 0, y: 0, width: 0, height: 0 });
+        const bogusSecond = tile({ x: 0, y: 0, width: 0, height: 0 });
+        target.split = () => {
+            target.isLayout = true;
+            target.tiles = [first, second];
+            return [bogusFirst, bogusSecond];
+        };
+        startDrag(dragged);
+        dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
+        dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(managed[0], targetWindow);
+        assert.equal(managed[1], dragged);
+        assert.deepEqual(origin.windows, [dragged]);
+    });
+
     it("selects the split direction from the cursor across all regions with a central dead-zone default", () => {
         const cases: ReadonlyArray<[Point, number]> = [
             [{ x: 210, y: 50 }, 1],
@@ -303,6 +336,7 @@ describe("TileController interactive drag", () => {
         const first = tile({ x: 200, y: 0, width: 50, height: 100 }, false, () => false);
         const second = tile({ x: 250, y: 0, width: 50, height: 100 });
         failedManage.target.split = () => [first, second];
+        failedManage.target.tiles = [first, second];
         startDrag(failedManage.dragged);
         failedManage.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         failedManage.dragged.interactiveMoveResizeFinished.emit();
@@ -455,6 +489,34 @@ describe("TileController interactive drag", () => {
         const overflow = window({ tile: null });
         harness.emitAdded(overflow);
         assert.equal(countEvent(harness.logs, "drag-attach-skipped:max-windows"), 1);
+    });
+
+    it("same-axis wraps: adds a new direct sibling to a 3-child row parent instead of wrapping the target, identified by geometry-order set difference over a scrambled raw tiles[] array", () => {
+        const { harness, a, b, c, d, dragged, aWin, bWin, cWin } = sameAxisRowDropSetup();
+        startDrag(dragged);
+        dragged.tile = null;
+        dragged.frameGeometry = movedGeometry();
+        // Cursor sits inside b (the middle child), near its left edge, which
+        // classifies as a horizontal ("left"/"right") direction, matching
+        // parent's horizontal layoutDirection and taking the same-axis path.
+        harness.cursor = { x: 110, y: 50 };
+        dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(harness.logs, "drag-overlap-split-completed"), 1);
+        // The dragged window is managed onto the new sibling d, identified by
+        // set difference (it is stored at tiles[0], not adjacent to b).
+        assert.equal(dragged.tile, d);
+        assert.deepEqual(d.windows, [dragged]);
+        // The occupant and target b are unchanged: b is never re-managed and
+        // its window identity is untouched by this drop.
+        assert.equal(bWin.tile, b);
+        assert.deepEqual(b.windows, [bWin]);
+        // Pre-existing siblings a and c keep their original geometry and
+        // windows: this function performs no incidental reweighting.
+        assert.deepEqual(a.relativeGeometry, { x: 0, y: 0, width: 100, height: 100 });
+        assert.deepEqual(a.windows, [aWin]);
+        assert.deepEqual(c.relativeGeometry, { x: 200, y: 0, width: 100, height: 100 });
+        assert.deepEqual(c.windows, [cWin]);
     });
 
     it("logs diagnostic-only drag event signals without mutating tiles", () => {

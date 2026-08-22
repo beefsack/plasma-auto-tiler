@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
+import { planEqualSplit } from "../src/logic";
 import { OUTPUT } from "./controller-fixtures";
 import {
     countEvent,
@@ -294,5 +295,19 @@ describe("TileController interactive drag native/plain reflow and cursor-derived
             assert.ok(state.harness.logs.includes(entry));
             assert.ok(state.harness.logs.indexOf(entry) < state.harness.logs.indexOf(outcome));
         }
+    });
+
+    it("planEqualSplit already refuses to normalize a same-axis 3-child parent shape (reflow no-op proof for N-ary same-axis drops)", () => {
+        // A same-axis 3-child horizontal row [a, b, c]: dragged=a and
+        // occupant=b are two of the parent's three children, so together
+        // they never exactly fill the parent along the axis (c's span is
+        // missing). normalizeReflowLeaves's existing guard (via
+        // planEqualSplit) must therefore refuse and leave every sibling's
+        // geometry untouched, rather than force an equalization meant only
+        // for a 2-child-filling-parent shape.
+        const parent = { x: 0, y: 0, width: 300, height: 100 };
+        const a = { x: 0, y: 0, width: 100, height: 100 };
+        const b = { x: 100, y: 0, width: 100, height: 100 };
+        assert.equal(planEqualSplit(parent, a, b, "x"), null);
     });
 });

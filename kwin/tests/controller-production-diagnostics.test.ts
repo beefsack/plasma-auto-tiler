@@ -335,6 +335,7 @@ describe("TileController production diagnostics", () => {
             return true;
         });
         completed.target.split = () => [first, second];
+        completed.target.tiles = [first, second];
         startDrag(completed.dragged);
         completed.dragged.frameGeometry = { x: 240, y: 0, width: 100, height: 100 };
         completed.dragged.interactiveMoveResizeFinished.emit();

@@ -720,6 +720,79 @@ export function installCapacityRejectingSplitter(tile: TestTile, state: { reject
 export function makeTile(geometry = RECT, isLayout = false): TestTile {
     return tile(geometry, isLayout);
 }
+// A horizontal three-child row `parent` (children `a`, `b`, `c`, geometry
+// order left to right) directly beneath the exact scope root, alongside a
+// separate `origin` leaf holding the drag source window. `b` is the occupied
+// drop target and its `.parent` is wired to `parent` with a matching
+// `layoutDirection`, so a same-axis horizontal drop split on `b` takes the
+// splitDropTargetSameAxis path. `b.split` models the native same-axis
+// add-cell branch (native-binding-evidence.md:22-30): it inserts one new
+// sibling `d` into `parent.tiles`, stored at a raw array index that does NOT
+// match `d`'s geometric position among the siblings (mirroring
+// `installReversedOrderSplitter`'s technique), proving the new-sibling lookup
+// must use geometry-order set difference rather than raw array index. `a` and
+// `c` are pre-existing siblings whose geometry and windows must stay untouched
+// by the drop; the returned `split()` value is intentionally empty/unused
+// since the caller must never trust it (custom-tile-split.ts's established
+// re-decode-after-mutation contract).
+export function sameAxisRowDropSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly parent: TestTile;
+    readonly origin: TestTile;
+    readonly a: TestTile;
+    readonly b: TestTile;
+    readonly c: TestTile;
+    readonly d: TestTile;
+    readonly dragged: TestWindow;
+    readonly aWin: TestWindow;
+    readonly bWin: TestWindow;
+    readonly cWin: TestWindow;
+} {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const origin = tile({ x: 300, y: 0, width: 100, height: 100 });
+    const parent = tile({ x: 0, y: 0, width: 300, height: 100 }, true);
+    parent.layoutDirection = 1;
+    const a = tile({ x: 0, y: 0, width: 100, height: 100 });
+    const b = tile({ x: 100, y: 0, width: 100, height: 100 });
+    const c = tile({ x: 200, y: 0, width: 100, height: 100 });
+    // The new sibling geometrically follows every pre-existing child, but is
+    // stored first in the raw `tiles` array below to prove order-only lookup.
+    const d = tile({ x: 400, y: 0, width: 100, height: 100 });
+    a.parent = parent;
+    b.parent = parent;
+    c.parent = parent;
+    d.parent = parent;
+    const dragged = window({ tile: origin, caption: "dragged" });
+    const aWin = window({ tile: a, caption: "a" });
+    const bWin = window({ tile: b, caption: "b" });
+    const cWin = window({ tile: c, caption: "c" });
+    origin.windows = [dragged];
+    a.windows = [aWin];
+    b.windows = [bWin];
+    c.windows = [cWin];
+    parent.tiles = [a, b, c];
+    d.manage = (value) => {
+        (value as TestWindow).tile = d;
+        d.windows = [value as TestWindow];
+        return true;
+    };
+    b.split = () => {
+        // Scrambled raw array order relative to geometric position (d, c, a,
+        // b), matching `installReversedOrderSplitter`'s order-vs-index proof.
+        parent.tiles = [d, c, a, b];
+        return [];
+    };
+    root.tiles = [origin, parent];
+    harness.root = root;
+    harness.active = dragged;
+    harness.windows = [dragged, aWin, bWin, cWin];
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, root, parent, origin, a, b, c, d, dragged, aWin, bWin, cWin };
+}
 // Install a splitter that returns placeholder children whose own split()
 // throws, while realizing the live tree with distinct children under
 // `tile.tiles`. A rebuild that retains a returned child handle and splits it

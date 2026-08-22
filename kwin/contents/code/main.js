@@ -5469,12 +5469,18 @@
         this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
         return false;
       }
-      const split = splitCustomTile(target.decoded.tile, splitDirection2(direction), this.markStructuralMutation);
-      const decoded = decodeSequential(split, isCustomTile, 2);
+      const axis = direction === "left" || direction === "right" ? "x" : "y";
+      const parent = target.decoded.tile.parent;
+      const axisDirection = splitDirection2(direction);
+      const sameAxis = parent !== null && isTile(parent) && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === axisDirection;
+      if (sameAxis) {
+        return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction, axis);
+      }
+      splitCustomTile(target.decoded.tile, splitDirection2(direction), this.markStructuralMutation);
+      const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, 2);
       if (decoded.ok) {
         this.decodedBoundary("split-result");
       }
-      const axis = direction === "left" || direction === "right" ? "x" : "y";
       const children = decoded.ok ? orderCustomTilesByAxis(decoded.value, axis) : null;
       const first = children == null ? void 0 : children[0];
       const second = children == null ? void 0 : children[1];
@@ -5487,6 +5493,43 @@
       const occupantManaged = manageTile(opposite, occupant, this.markStructuralMutation);
       const draggedManaged = occupantManaged && manageTile(selected, drag.window, this.markStructuralMutation);
       if (!occupantManaged || !draggedManaged) {
+        this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
+        return false;
+      }
+      return true;
+    }
+    // Same-axis drop split: the drop target's parent is already a layout
+    // split along the requested direction's axis, so native `split()` takes
+    // the add-cell branch and inserts one new direct sibling into the parent
+    // (native-binding-evidence.md:22-30), rather than wrapping the target in
+    // a new two-child container. The new sibling is identified by geometry-
+    // order set difference between the parent's ordered children before and
+    // after the call, never by raw array index or a direction-to-side
+    // mapping (multi-ordinal native array order is unproven). The dragged
+    // window is managed onto the new sibling; the occupant stays on the
+    // unchanged target and is never re-managed.
+    splitDropTargetSameAxis(target, parent, drag, direction, axis) {
+      const beforeDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      const before = beforeDecoded.ok ? orderCustomTilesByAxis(beforeDecoded.value, axis) : null;
+      if (before === null || !before.includes(target)) {
+        this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
+        return false;
+      }
+      splitCustomTile(target, splitDirection2(direction), this.markStructuralMutation);
+      const afterDecoded = decodeSequential(parent.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      const after = afterDecoded.ok ? orderCustomTilesByAxis(afterDecoded.value, axis) : null;
+      if (after === null || after.length !== before.length + 1 || !after.includes(target)) {
+        this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
+        return false;
+      }
+      this.decodedBoundary("split-result");
+      const added = after.filter((candidate) => !before.includes(candidate));
+      const newTile = added[0];
+      if (added.length !== 1 || newTile === void 0) {
+        this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
+        return false;
+      }
+      if (!manageTile(newTile, drag.window, this.markStructuralMutation)) {
         this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
         return false;
       }

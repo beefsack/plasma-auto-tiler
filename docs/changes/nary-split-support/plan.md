@@ -69,7 +69,7 @@ binary behavior.
 - [x] unit-04 Native boundary and ordering.
 - [x] unit-05 Preset and overlay reconstruction.
 - [x] unit-06 Resize and minimum semantics.
-- [ ] unit-07 Drag and reflow migration.
+- [x] unit-07 Drag and reflow migration.
 - [ ] unit-08 Keyboard and automatic insertion migration.
 - [ ] unit-09 Inventory closure and final gates.
 
@@ -331,6 +331,103 @@ Completed 2026-08-22, one Worker attempt, no correction round.
   baseline. `kwin/contents/code/main.js` rebuilt by the Lead after acceptance;
   a second rebuild produced a byte-identical file, confirming determinism and
   that the tracked bundle matches source.
+
+## Unit-07 Finding
+
+Completed 2026-08-22, one Worker attempt, one narrow trigger-correction round
+(see below; not a design-scope correction).
+
+- `splitDropTarget` (`controller.ts:5888-5946`) now branches on whether
+  `target.decoded.tile.parent` is a layout tile whose `layoutDirection`
+  matches the requested direction's axis (same-axis) or not (cross-axis),
+  mirroring the parent-check style already established in
+  `normalizeReflowLeaves` (`controller.ts:7376-7390`).
+  - **Cross-axis** (including no parent, non-layout parent, or a different
+    axis): behavior is unchanged and byte-identical for every existing
+    binary-only fixture. The only change is internal: `splitCustomTile`'s
+    return value is discarded and `target.decoded.tile.tiles` is re-decoded
+    afterward instead, matching the re-decode-after-mutation pattern already
+    established for `customTileSplitSeam.decodeChildren`
+    (`custom-tile-split.ts:62-69`) and the resize postcondition
+    (`controller.ts:2714`). The existing `decodeSequential(..., 2)` arity
+    requirement is unchanged: it is the drop-split feature's own structural
+    contract (one occupied leaf becomes occupant-vs-dragged), the same
+    contract-not-native-claim status as the blueprint executor's arity-2
+    requirement (unit-04 finding), not a native cardinality claim.
+  - **Same-axis** (new `splitDropTargetSameAxis`, `controller.ts:5926-5966`):
+    established fact `native-binding-evidence.md:26` is that same-axis
+    `split()` takes the add-cell branch and inserts exactly one new direct
+    sibling into the PARENT (`row() + 1`), not a two-child wrap under the
+    target. Because multi-ordinal native array order is unproven
+    (`custom-tile-split.ts:18-23`) and the C++ insertion index is not
+    guaranteed to survive marshalling or match project-model order, the new
+    sibling is identified by geometry-order **set difference**: the parent's
+    ordered children are decoded via `orderCustomTilesByAxis` both before and
+    after the native `split()` call, and the sole tile present after but not
+    before is the new sibling. No direction-to-side (left-inserts-before /
+    right-inserts-after) mapping is used or assumed anywhere - the evidence
+    does not support one, and inventing one was explicitly avoided. The
+    dragged window is managed onto the new sibling; the occupant is never
+    re-managed since it never left the (unchanged) target tile.
+  - **No sizing or reweighting logic was added** for the same-axis case. This
+    is a deliberate scope boundary, not an oversight: `docs/cosmic-move-
+    conformance.md:105-106` explicitly lists "which sibling absorbs a user
+    drag in a 3+ split" as **not observed** in the COSMIC conformance corpus
+    that is the sole evidentiary source for the spec's move-insertion sizing
+    decision (`spec.md:91-97`), and implementing COSMIC directional-move
+    runtime behavior is an explicit Non-Goal of this change (`spec.md:38-39`).
+    Applying that sizing formula to the pre-existing mouse-drag feature here
+    would have been invented, unevidenced behavior change to a live user-
+    facing feature, not a structural migration. Whatever `relativeGeometry`
+    native's own `split()` produced for the new sibling and the other
+    existing siblings stands untouched; `normalizeReflowLeaves` /
+    `planEqualSplit` (`logic.ts:305-341`) already safely refuse to equalize
+    (return `null`) unless exactly two children fill the whole parent along
+    the axis, so they correctly no-op for any 3+-child same-axis result
+    without any code change - confirmed by a new direct test, not modified.
+- Narrow trigger-correction round (single round, not a second Worker attempt):
+  two pre-existing tests (`controller-interactive-drag.test.ts:335-343`
+  `failedManage` case; `controller-production-diagnostics.test.ts:331-341`
+  `completed` case) mocked `target.split = () => [first, second]` without
+  ever writing `target.tiles`, an authoring oversight (every other split
+  fixture in the suite sets `.tiles`) that happened to encode the exact
+  anti-pattern being fixed (trusting `split()`'s return value). Lead-verified
+  by direct diff read, not the Worker's report: the fix is exactly one added
+  line per test (`target.tiles = [first, second];`), every existing assertion
+  in both tests is byte-for-byte unchanged, and the corrected behavior is
+  independently pinned by a new test in the same unit ("reads the live
+  post-split tiles rather than trusting split()'s return value (cross-axis
+  anti-pattern regression)", `controller-interactive-drag.test.ts:200-231`),
+  satisfying the narrow-exception proviso (precedent: `git show aed0e32 --
+  kwin/tests/controller-selected-overlay-state.test.ts`).
+- Three new tests added, Lead-verified by direct diff read:
+  `controller-interactive-drag.test.ts` gains the cross-axis anti-pattern
+  regression case above and "same-axis wraps: adds a new direct sibling to a
+  3-child row parent instead of wrapping the target, identified by geometry-
+  order set difference over a scrambled raw tiles[] array" (new
+  `sameAxisRowDropSetup` fixture, `controller-fixture-scenarios.ts:723-793`,
+  modeled on `installReversedOrderSplitter`; covers same-axis wrapping and
+  order-only 3+-child lookup in one fixture, and asserts pre-existing
+  siblings' geometry and windows are untouched);
+  `controller-interactive-drag-reflow.test.ts` gains the `planEqualSplit`
+  reflow no-op proof described above.
+- Of unit-07's one assigned `orderCustomTilesByAxis` call site
+  (`controller.ts:5904` pre-change, now `:5911` cross-axis plus two new uses
+  at `:5947`/`:5954` same-axis before/after, post-change), it is migrated.
+  The other two sites unit-04 left (keyboard, now `controller.ts:6160`;
+  dwindle, now `:7113`; line numbers shifted only by this unit's insertion)
+  are confirmed untouched by a zero-diff check on their surrounding hunks -
+  they remain unit-08's.
+- `resizeActiveWindow`/`resolveResizeSplit`, `normalizeReflowLeaves`/
+  `planEqualSplit`, and `flashFocusedGroup` were read for context but not
+  modified, per this unit's constraints.
+- Verification (Lead-independent, not just Worker-reported): `npm --prefix
+  kwin test` 954 tests / 90 suites / 0 fail (up from 951, 3 new cases); `npm
+  --prefix kwin run typecheck` clean on both tsconfigs; `bash
+  scripts/dogfood-install.test.sh` 347 assertions / 0 fail, unchanged from
+  baseline. `kwin/contents/code/main.js` rebuilt by the Lead after
+  acceptance; a second rebuild produced a byte-identical diff, confirming
+  determinism and that the tracked bundle matches source.
 
 ## Attempt Accounting
 
