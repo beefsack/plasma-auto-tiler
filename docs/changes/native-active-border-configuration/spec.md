@@ -137,7 +137,7 @@ the native KCM reads and writes the same storage with no migration.
 |---|---|---|
 | Colour mode | theme | theme / fixed fallback |
 | Fallback colour | `#2a82da` | any valid colour |
-| Border width | `2` | `1`-`10` logical px |
+| Border width | `3` | `1`-`10` logical px |
 | Outline radius | `0` | `0`-`40` logical px |
 | Outline gap | `0` | `0`-`32` logical px |
 

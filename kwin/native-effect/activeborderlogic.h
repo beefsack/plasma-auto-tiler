@@ -5,6 +5,8 @@
 namespace KWin
 {
 
+inline constexpr double ACTIVE_BORDER_THICKNESS = 3.0;
+
 struct ActiveBorderState
 {
     bool visible;

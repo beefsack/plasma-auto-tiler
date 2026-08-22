@@ -11,7 +11,7 @@ namespace KWin
 
 ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     : m_isOpenGL(effects->isOpenGLCompositing())
-    , m_borderItem(RectF(), BorderOutline(2.0, QColor(0x2a, 0x82, 0xda), BorderRadius()))
+    , m_borderItem(RectF(), BorderOutline(ACTIVE_BORDER_THICKNESS, QColor(0x2a, 0x82, 0xda), BorderRadius()))
 {
     if (!m_isOpenGL) {
         return;

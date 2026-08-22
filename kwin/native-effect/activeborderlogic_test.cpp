@@ -28,6 +28,11 @@ void eligibleWindowUsesFrameGeometryAsInnerRect()
     CHECK(state.innerRect == frame);
 }
 
+void activeBorderUsesThreeLogicalPixels()
+{
+    CHECK(KWin::ACTIVE_BORDER_THICKNESS == 3.0);
+}
+
 void missingWindowIsNotVisible()
 {
     const QRectF frame(0.0, 0.0, 100.0, 100.0);
@@ -62,6 +67,7 @@ void fullScreenWindowIsNotVisible()
 int main()
 {
     eligibleWindowUsesFrameGeometryAsInnerRect();
+    activeBorderUsesThreeLogicalPixels();
     missingWindowIsNotVisible();
     deletedWindowIsNotVisible();
     minimizedWindowIsNotVisible();
