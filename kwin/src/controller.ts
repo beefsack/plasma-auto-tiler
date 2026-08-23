@@ -306,10 +306,6 @@ interface PendingMoveState {
     readonly clearPendingMove: (window: WindowCapability) => void;
 }
 
-interface WorkspaceMutationGuard {
-    readonly workspaceMutationDeferred: () => boolean;
-}
-
 interface WorkspaceModeState {
     readonly workspaceMode: () => WorkspaceMode;
 }
@@ -559,7 +555,6 @@ export class TileController {
     private readonly interactiveDrag: InteractiveDragController;
     private readonly reflowObservers: ReflowObservers;
     private readonly pendingMoveState: PendingMoveState;
-    private readonly workspaceMutationGuard: WorkspaceMutationGuard;
     private readonly workspaceModeState: WorkspaceModeState;
     private readonly desktopChangeState: DesktopChangeState;
     private readonly inputActions: InputActions;
@@ -648,7 +643,7 @@ export class TileController {
             topologyForScope: (scope, onRejected) => this.topologyForScope(scope, onRejected),
             windowInScope,
             isFloating: (window) => this.floatingWindows.has(window),
-            isInert: (scope) => this.isInert(scope),
+            isInert: (scope) => this.layoutDomain.isInert(scope),
             isMaximized: (window) => this.maximizedWindows.has(window),
             dropOutlinePreview: () => this.dropOutlinePreview,
             mutation: this.markStructuralMutation,
@@ -662,7 +657,7 @@ export class TileController {
             ensureInvariant: (scope) => this.presetEnsureInvariant(scope),
             afterFinished: () => {
                 this.cleanupDesktops();
-                this.drainPendingDesktopIntents();
+                this.workspaceDomain.drainPendingDesktopIntents();
             },
             onExistingWindow: (window) => {
                 this.attachFullscreenWindow(window);
@@ -689,9 +684,9 @@ export class TileController {
             scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
             runGuarded: (operation) => this.gate.run(operation, (reason) => this.disabled(reason)),
             onEligibleDeferred: (window, scope) => {
-                this.placeEligibleAdded(window, scope);
+                this.layoutDomain.placeEligibleAdded(window, scope);
                 this.cleanupDesktops();
-                this.drainPendingDesktopIntents();
+                this.workspaceDomain.drainPendingDesktopIntents();
             },
         });
         this.layoutDomain = createLayoutDomain({
@@ -762,9 +757,9 @@ export class TileController {
                 onceDiagnostic: (event) => this.onceDiagnostic(event),
                 onSettled: () => {
                     this.cleanupDesktops();
-                    this.drainPendingDesktopIntents();
+                    this.workspaceDomain.drainPendingDesktopIntents();
                 },
-                onDeferredRemovalSettled: () => this.settleOwedInvariants(),
+                onDeferredRemovalSettled: () => this.interactiveDrag.settleOwedInvariants(),
             },
         });
         this.workspaceDomain = createWorkspaceDomain({
@@ -778,10 +773,6 @@ export class TileController {
             hasPendingMove: (window) => this.pendingMoves.has(window),
             markPendingMove: (window) => this.pendingMoves.add(window),
             clearPendingMove: (window) => this.pendingMoves.delete(window),
-        };
-        this.workspaceMutationGuard = {
-            workspaceMutationDeferred: () =>
-                this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0,
         };
         this.workspaceModeState = {
             workspaceMode: () => this.workspaceMode,
@@ -1499,28 +1490,6 @@ export class TileController {
         this.interactiveDrag.hideDropOutline();
     }
 
-    // Whether the tracked drag window is currently live-moving or
-    // live-resizing, per the documented Window live state (`move` / `resize`).
-    // This is the authoritative active-drag signal: the captured-origin latch is
-    // never used on its own to decide that a drag is still in progress.
-    private trackedDragLive(): boolean {
-        return this.interactiveDrag.isLive();
-    }
-
-    // Record exactly one owed invariant check for a scope whose check was
-    // deferred by a live drag. A scope that already owes a check is neither
-    // re-marked nor re-logged, keeping the diagnostic non-noisy.
-    private markOwedInvariant(scope: CurrentScope): void {
-        this.interactiveDrag.markOwedInvariant(scope);
-    }
-
-    // Run every owed invariant check exactly once, after the tracked drag is no
-    // longer live. Owed scopes are cleared before their check runs so a
-    // still-live drag re-marks rather than double-running.
-    private settleOwedInvariants(): void {
-        this.interactiveDrag.settleOwedInvariants();
-    }
-
     // screensChanged -> rebuild the deterministic session output keys, then
     // re-anchor ownership and reconcile (spec F). A removed output's keys stay
     // in the registry so a re-plug with the same tuple is matched again. In
@@ -1553,14 +1522,14 @@ export class TileController {
         this.gate.run(() => {
             this.clearPending();
             this.clearDrag();
-            this.settleOwedInvariants();
+            this.interactiveDrag.settleOwedInvariants();
             this.interactiveDrag.attachExisting(false);
             this.engageCurrentScope();
             // A current-desktop change can move the sole trailing owned empty
             // into or out of occupancy (for example a pager move onto it), so
             // reconcile. Cleanup defers while a drag or reconstruction is live.
             this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
+            this.workspaceDomain.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -1595,7 +1564,7 @@ export class TileController {
                 this.maximizedWindows.delete(window);
                 this.detachMaximizeWindow(window);
                 this.reflowObservers.afterRemoval(window);
-                this.dwindleMaybeRemove(window);
+                this.layoutDomain.dwindleMaybeRemove(window);
                 // The fullscreen record stays alive through both removal paths:
                 // removing any window (including the fullscreen window itself)
                 // while a fullscreen window belongs to this scope must not
@@ -1605,12 +1574,12 @@ export class TileController {
                 this.detachFullscreenWindow(window);
                 this.fullscreenWindows.delete(window);
             }
-            this.settleOwedInvariants();
+            this.interactiveDrag.settleOwedInvariants();
             // A window removal can leave an owned desktop empty again, turning
             // the kept replacement plus the re-emptied desktop into excess, so
             // reconcile. Cleanup defers while a drag or reconstruction is live.
             this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
+            this.workspaceDomain.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -1634,11 +1603,11 @@ export class TileController {
                         }
                     } else {
                         this.onceDiagnostic("window-added-eligible");
-                        this.placeEligibleAdded(window, scope);
+                        this.layoutDomain.placeEligibleAdded(window, scope);
                     }
                 } else {
                     try {
-                        this.completeKeyboardInsertion(window, pending);
+                        this.inputActions.completeKeyboardInsertion(window, pending);
                     } finally {
                         this.clearPending();
                     }
@@ -1648,7 +1617,7 @@ export class TileController {
             // occupied, so reconcile. Cleanup defers while a drag or
             // reconstruction is live and retries through the settle seams.
             this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
+            this.workspaceDomain.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -1862,7 +1831,7 @@ export class TileController {
                 // remembered float geometry so the restoration that follows
                 // preserves the user's adjusted size, then re-apply it.
                 this.rememberCurrentFloatGeometry(window);
-                this.writeFloatGeometry(window, scope);
+                this.windowActions.writeFloatGeometry(window, scope);
             }
             this.diagnostic("fullscreen:exit restored float");
             return;
@@ -1876,7 +1845,7 @@ export class TileController {
             this.diagnostic("fullscreen:exit restore failed:persisted-float");
             return;
         }
-        this.placeEligibleAdded(window, scope);
+        this.layoutDomain.placeEligibleAdded(window, scope);
         this.diagnostic("fullscreen:exit newly managed");
     }
 
@@ -2060,7 +2029,7 @@ export class TileController {
                 // reconciliation used elsewhere; this never invents unsafe
                 // structural mutation.
                 const scope = this.scopeForWindow(window);
-                if (scope !== null && this.isOwned(scope)) {
+                if (scope !== null && this.layoutDomain.isOwned(scope)) {
                     this.presetEnsureInvariant(scope);
                 }
             }
@@ -2396,23 +2365,6 @@ export class TileController {
         const scope = this.scopeForWindow(active);
         return scope === null ? (this.diagnostic(`${action}-rejected:desktop-output-scope`), null) : { active, scope };
     }
-
-
-    // Write the float geometry: the session-remembered geometry bounded to the
-    // current work area, or the centered 60% default when none is remembered.
-    // The written geometry is recorded for the session so re-float, sticky
-    // toggles, and the fullscreen round trip restore it. Returns whether the
-    // guarded write reported success; the record is kept even on a failed write
-    // so the remembered size survives the fullscreen seam.
-    private writeFloatGeometry(window: WindowCapability, scope: CurrentScope): boolean {
-        return this.windowActions.writeFloatGeometry(window, scope);
-    }
-
-    private completeKeyboardInsertion(window: unknown, pending: PendingKeyboard): void {
-        this.inputActions.completeKeyboardInsertion(window, pending);
-        return;
-    }
-
     // Returns the placement outcome. Managed-scope dwindle ownership reuses
     // this deterministic empty-leaf placement so a full owned tree keeps the
     // same guarded assignment and diagnostic as generic automatic placement.
@@ -2456,7 +2408,7 @@ export class TileController {
         if (scope === null) {
             return;
         }
-        this.ensureManaged(scope);
+        this.layoutDomain.ensureManaged(scope);
     }
 
     private ownershipAnchor(): WindowCapability | null {
@@ -2479,14 +2431,6 @@ export class TileController {
             }
         }
         return null;
-    }
-
-    private isOwned(scope: CurrentScope): boolean {
-        return this.layoutDomain.isOwned(scope);
-    }
-
-    private isInert(scope: CurrentScope): boolean {
-        return this.layoutDomain.isInert(scope);
     }
 
     private managedRecord(scope: CurrentScope): ManagedScope | null {
@@ -2513,19 +2457,6 @@ export class TileController {
         }
         byDesktop.set(scope.desktop.id, { scope, inert: true });
         this.diagnostic(`ownership-inert:${reason}`);
-    }
-
-    // Adopt session-local ownership of the anchored scope with the configured
-    // preset (`tilingAlgorithm`). A valid selected overlay takes precedence and
-    // leaves the scope overlay-managed. The owned population is every eligible
-    // in-scope window from the proven window collection excluding explicitly
-    // detached windows. When the scope's tree already realizes the preset
-    // blueprint for that count it is adopted unchanged; otherwise a full
-    // reconstruction starts: a synchronous removals-only collapse to a single
-    // leaf followed by a non-timer event-loop yield before the deferred split
-    // reconstruction.
-    private ensureManaged(scope: CurrentScope): void {
-        this.layoutDomain.ensureManaged(scope);
     }
 
     // The owned population of a scope: eligible in-scope windows from the
@@ -2596,23 +2527,6 @@ export class TileController {
             return false;
         }
         return dwindleBijectionTreeMatches(scope, root, population);
-    }
-
-    // Full dwindle reconstruction, phase registration: record the owned scope
-    // as awaiting its first one-shot event-loop yield and arm it. No structural
-    // call happens here; the removals-only collapse runs at the first yield
-    // callback and the splits-only rebuild at the second. A valid selected
-    // overlay or an inert scope drops the pending reconstruction without
-    // acting. A later request while a reconstruction is already pending starts
-    // no second one: it re-arms the current phase's yield so a lost callDBus
-    // reply (scripting.cpp:361-364 never invokes the callback on an error
-    // reply) cannot strand the scope in a collapsed or un-rebuilt state. Each
-    // such re-arm counts against the current phase's bounded budget; once the
-    // budget is exhausted the scope fails closed and becomes inert instead of
-    // retrying forever, while the phase and pending-identity guards keep every
-    // stale or duplicate callback inert.
-    private startReconstruction(scope: CurrentScope): void {
-        this.layoutDomain.startReconstruction(scope);
     }
 
     // Guarded collapse of an owned scope to a single leaf through the guarded
@@ -2776,7 +2690,7 @@ export class TileController {
     // untouched. The scope root is decoded exactly once per check and shared by
     // the occupancy-bijection predicate and the canonical-shape predicate.
     private presetEnsureInvariant(scope: CurrentScope): void {
-        if (!this.isOwned(scope) || this.isInert(scope)) {
+        if (!this.layoutDomain.isOwned(scope) || this.layoutDomain.isInert(scope)) {
             return;
         }
         if (this.readSelectedOverlay(scope) !== null) {
@@ -2790,8 +2704,8 @@ export class TileController {
             this.diagnostic("maximize:ignored reconstruction while maximized");
             return;
         }
-        if (this.trackedDragLive()) {
-            this.markOwedInvariant(scope);
+        if (this.interactiveDrag.isLive()) {
+            this.interactiveDrag.markOwedInvariant(scope);
             return;
         }
         const population = this.ownedPopulation(scope);
@@ -2808,7 +2722,7 @@ export class TileController {
         const root = this.environment.rootTile(scope.output, scope.desktop);
         if (!isCustomTile(root) || !dwindleBijectionTreeMatches(scope, root, population)) {
             this.diagnostic("ownership-invariant:bijection-failed");
-            this.startReconstruction(scope);
+            this.layoutDomain.startReconstruction(scope);
             return;
         }
         if (!this.presetShapeMatches(root, population)) {
@@ -2958,17 +2872,6 @@ export class TileController {
         };
         const selected = selectAutomaticSplitTarget(this.automaticSplitTarget, context);
         return selected === null ? null : { tile: selected.tile as CustomTileCapability, depth: selected.depth };
-    }
-
-    // Dispatch an eligible added window to the owned-scope dwindle path or the
-    // generic overlay/automatic-placement path. A not-yet-owned, not-inert
-    // scope is adopted first: the window's scope is the current desktop of its
-    // output, so this re-establishes ownership when the current desktop had no
-    // window at the earlier `currentDesktopChanged` notification and was left
-    // unmanaged. Adoption goes through `ensureManaged` (dwindle match or the
-    // two-phase reconstruction), never a direct remove or split.
-    private placeEligibleAdded(window: WindowCapability, scope: CurrentScope): void {
-        this.layoutDomain.placeEligibleAdded(window, scope);
     }
 
     // One dwindle insertion: split the selected leaf along its longest axis,
@@ -3325,11 +3228,11 @@ export class TileController {
         afterDragSnapshot: boolean,
         onDragSettled?: (topology: readonly OperationLeaf[], collapsed: boolean) => readonly OperationLeaf[],
     ): void {
-        if (this.isInert(scope) || !this.isOwned(scope)) {
+        if (this.layoutDomain.isInert(scope) || !this.layoutDomain.isOwned(scope)) {
             return;
         }
-        if (this.trackedDragLive()) {
-            this.markOwedInvariant(scope);
+        if (this.interactiveDrag.isLive()) {
+            this.interactiveDrag.markOwedInvariant(scope);
             return;
         }
         if (this.readSelectedOverlay(scope) !== null) {
@@ -3419,10 +3322,6 @@ export class TileController {
         return after;
     }
 
-    private dwindleMaybeRemove(window: WindowCapability): void {
-        this.layoutDomain.dwindleMaybeRemove(window);
-    }
-
     // ---- Dynamic virtual desktops ----
 
     // Ordered live desktop list, or null when the workspace surface is absent
@@ -3447,7 +3346,7 @@ export class TileController {
     private handleDesktopsChanged(): void {
         this.gate.run(() => {
             this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
+            this.workspaceDomain.drainPendingDesktopIntents();
         }, (reason) => this.disabled(reason));
     }
 
@@ -3680,9 +3579,9 @@ export class TileController {
     // reported by the existing surfaces and never leaves a partial desktop
     // (non-destructive).
     private finishWorkspaceZero(output: OutputCapability | null): void {
-        if (this.workspaceMutationDeferred()) {
+        if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
             if (output !== null) {
-                this.deferWorkspaceZero(output);
+                this.workspaceDomain.deferWorkspaceZero(output);
             }
             return;
         }
@@ -3803,38 +3702,6 @@ export class TileController {
         this.diagnostic("workspace-zero-completed");
     }
 
-    // Whether the desktop list must not be mutated right now: a live drag, a
-    // pending reconstruction, or an unsettled cross-workspace move. Desktop
-    // creation and removal are deferred in exactly these conditions and
-    // retried through the existing settle/yield seams.
-    private workspaceMutationDeferred(): boolean {
-        return this.workspaceMutationGuard.workspaceMutationDeferred();
-    }
-
-    // Queue a deferred Meta+Shift+0 trailing-empty creation request for later
-    // execution. The queue is bounded and each entry is re-validated on
-    // execution.
-    private deferDesktopIntent(window: WindowCapability): void {
-        this.workspaceDomain.deferDesktopIntent(window);
-    }
-
-    // Queue a deferred Meta+0 focus/creation request for the active output. The
-    // queue is bounded and each entry is re-validated on execution; the output
-    // is re-resolved against the current context then, never acted on stale.
-    private deferWorkspaceZero(output: OutputCapability): void {
-        this.workspaceDomain.deferWorkspaceZero(output);
-    }
-
-    // Run every queued trailing-empty creation request, in order, once the
-    // desktop list is safe to mutate. A request that is still unsafe is kept
-    // queued; a request whose context became stale is cancelled.
-    private drainPendingDesktopIntents(): void {
-        this.workspaceDomain.drainPendingDesktopIntents();
-    }
-
-    // Run every queued Meta+0 request, in order, once the desktop list is safe
-    // to mutate. A request still unsafe is kept queued; a request whose output
-    // became stale fails safely on execution.
     // Execute a deferred Meta+Shift+0 request: re-validate the captured window
     // against current context, ensure the trailing empty exists, then move the
     // window into it. A window that is no longer movable cancels the request.
@@ -3851,8 +3718,8 @@ export class TileController {
         let target: VirtualDesktopCapability | null;
         if (this.workspaceMode === "per-output-local") {
             this.rebuildLocalMapping();
-            if (this.workspaceMutationDeferred()) {
-                this.deferDesktopIntent(window);
+            if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                this.workspaceDomain.deferDesktopIntent(window);
                 return;
             }
             // Reuse the target output's existing trailing empty when one
@@ -3863,8 +3730,8 @@ export class TileController {
             // freshly-created cases.
             target = this.resolveLocalTrailingEmpty(scope.output) ?? this.appendTrailingForOutput(scope.output);
         } else if (this.workspaceMode === "global-unique") {
-            if (this.workspaceMutationDeferred()) {
-                this.deferDesktopIntent(window);
+            if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                this.workspaceDomain.deferDesktopIntent(window);
                 return;
             }
             // Reuse the target output's own trailing empty (its own
@@ -3880,8 +3747,8 @@ export class TileController {
             }
             target = this.resolveGlobalTrailingEmpty(scope.output) ?? this.appendDesktopForGlobalUnique(scope.output);
         } else {
-            if (this.workspaceMutationDeferred()) {
-                this.deferDesktopIntent(window);
+            if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                this.workspaceDomain.deferDesktopIntent(window);
                 return;
             }
             target = this.resolveSharedTrailingEmpty() ?? this.appendDesktopForShared();
@@ -4008,14 +3875,14 @@ export class TileController {
                 // deferred so no window moves before its required target
                 // exists.
                 if (this.workspaceMode === "per-output-local") {
-                    if (this.workspaceMutationDeferred()) {
-                        this.deferDesktopIntent(active);
+                    if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                        this.workspaceDomain.deferDesktopIntent(active);
                         return;
                     }
                     target = this.resolveLocalTrailingEmpty(scope.output) ?? this.appendTrailingForOutput(scope.output);
                 } else if (this.workspaceMode === "global-unique") {
-                    if (this.workspaceMutationDeferred()) {
-                        this.deferDesktopIntent(active);
+                    if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                        this.workspaceDomain.deferDesktopIntent(active);
                         return;
                     }
                     const liveForRebuild = this.liveDesktops();
@@ -4024,8 +3891,8 @@ export class TileController {
                     }
                     target = this.resolveGlobalTrailingEmpty(scope.output) ?? this.appendDesktopForGlobalUnique(scope.output);
                 } else {
-                    if (this.workspaceMutationDeferred()) {
-                        this.deferDesktopIntent(active);
+                    if (this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0) {
+                        this.workspaceDomain.deferDesktopIntent(active);
                         return;
                     }
                     target = this.resolveSharedTrailingEmpty() ?? this.appendDesktopForShared();
@@ -4104,7 +3971,7 @@ export class TileController {
         this.diagnostic("workspace-move-floated");
         this.setCurrentDesktop(target, output);
         this.cleanupDesktops();
-        this.drainPendingDesktopIntents();
+        this.workspaceDomain.drainPendingDesktopIntents();
     }
 
     // Tiled move: write the new membership, collapse the freed source leaf
@@ -4195,7 +4062,7 @@ export class TileController {
                 this.diagnostic("workspace-move-adopted-existing");
                 return;
             }
-            this.placeEligibleAdded(window, targetScope);
+            this.layoutDomain.placeEligibleAdded(window, targetScope);
             if (window.tile !== null) {
                 this.diagnostic("workspace-move-adopted");
             } else if (this.layoutDomain.hasPendingRebuild(targetScope)) {
@@ -4211,7 +4078,7 @@ export class TileController {
             this.diagnostic(`workspace-move-adopt-failed:${describeWorkspaceFailure(error)}`);
         }
         this.cleanupDesktops();
-        this.drainPendingDesktopIntents();
+        this.workspaceDomain.drainPendingDesktopIntents();
     }
 
     // Navigate/follow to a desktop, written through the per-output seam on the
@@ -4297,7 +4164,7 @@ export class TileController {
         if (!this.gate.isEnabled || this.reconcilingDesktops) {
             return;
         }
-        if (this.trackedDragLive()) {
+        if (this.interactiveDrag.isLive()) {
             this.diagnostic("workspace-cleanup-deferred:drag-live");
             return;
         }

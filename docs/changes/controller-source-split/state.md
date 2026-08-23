@@ -1,17 +1,17 @@
 # State: Controller Source Split
 
-- Current unit: `unit-07-facade-bundle-finalization` - next approved successor
-  after accepted Unit 06.
+- Current unit: `unit-07-facade-bundle-finalization` - accepted, pending
+  Orchestrator alignment and the later completion transaction.
 - Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
 - Blockers: none. Original Unit 05 remains permanently frozen after its
   malformed Worker preflights; it is not a dispatch target.
-- Next dispatch: Unit 07 may be dispatched after Orchestrator alignment.
-- Status: units 01-04, Unit 05A, Unit 05B, and Unit 06 accepted; frozen Unit 05
-  remains replaced by the accepted reset units. Unit 07 is next.
-- Semantic units completed: 7/8.
+- Next dispatch: none for this change pending Orchestrator alignment.
+- Status: units 01-04, Unit 05A, Unit 05B, Unit 06, and Unit 07 accepted;
+  frozen Unit 05 remains replaced by the accepted reset units.
+- Semantic units completed: 8/8.
 - Unit 04 accounting: attempts 2, cancellations 1, corrections 1, independent
   reviews 1.
-- Change-wide independent reviews: 4 (units 03, 04, 05B, and 06).
+- Change-wide independent reviews: 5 (units 03, 04, 05B, 06, and 07).
 - Circuit breakers: 1 - frozen Unit 05 attempt limit reached; no third attempt
   may be dispatched on that semantic unit.
 - Frozen Unit 05 accounting: attempts 2, cancellations 0, corrections 0,
@@ -64,9 +64,24 @@
   the full suite, clean dual typecheck, 965 tests / 91 suites / 0 failures / 0
   skipped, dogfood 347/0, clean `git diff --check`, and two matching normal
   builds SHA-256 `468ddf82db849c7d9ea50a1234709106ea2903353dc16bdc737d2c7f87b816a1`.
-  The implementation Worker omitted the required process-role first line in its
-  attempt and correction reports; this is a recorded process-compliance defect,
-  not a technical acceptance gap.
+   The implementation Worker omitted the required process-role first line in its
+   attempt and correction reports; this is a recorded process-compliance defect,
+   not a technical acceptance gap.
+- Unit 07 accounting: attempts 1, cancellations 0, corrections 0, independent
+  reviews 1, accepted 2026-08-23. It removed obsolete direct facade pass-throughs
+  while retaining `controller.ts` as the 5,053-line sole public facade and
+  composition root, then regenerated `kwin/contents/code/main.js` normally.
+  Final verification: both typechecks clean; full suite 965 tests / 91 suites /
+  0 failures / 0 skipped; dogfood 347/0; two normal builds matched SHA-256
+  `51af50efc153ba82dfaa2543ba973b443ef6b92f2c098409ae46e9a197c8f02b`;
+  `git diff --check` clean. Static inspection confirmed `entry.ts` as the sole
+  runtime controller importer, no runtime sibling-domain imports, one production
+  `flashFocusedGroup()` invocation, one structural reporting/flush path, shortcut
+  callbacks in the facade, and geometry ordering localized to
+  `custom-tile-split.ts`. The mandatory independent review found no technical
+  findings. Both implementation and review Workers omitted their required
+  process-role assertion first line; this is a process-compliance defect without
+  a role mismatch or technical acceptance gap.
 - Reset ownership: `controller.ts` remains the composition root and sole owner
   of `StructuralMutationCapability`, its pending flag,
   `flushStructuralMutation()`, and the one production `flashFocusedGroup()`

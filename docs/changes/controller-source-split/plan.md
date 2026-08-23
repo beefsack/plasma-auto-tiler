@@ -162,12 +162,13 @@ controller-types module is permitted.
 | Unit 05A | 1 | 0 | 0 | 0 | Accepted: extracted reflow state/execution, lifecycle reflow callbacks, and eligibility token cancellation behind the approved narrow seam. |
 | Unit 05B | 1 | 0 | 1 | 1 | Accepted: attempt 1 extracted drag and deferred-work coordination; its three independent-review findings were corrected and Lead-confirmed. The Worker omitted its required identity-preflight line, a recorded process-compliance defect with no role mismatch or technical acceptance gap. |
 | Unit 06 | 2 | 0 | 1 | 1 | Accepted: attempt 01 stopped at a malformed role preflight before source work. Attempt 02 extracted layout/reconstruction and deferred workspace queues; its sole independent review found three issues, all corrected and Lead-confirmed. No third attempt or second review ran. |
+| Unit 07 | 1 | 0 | 0 | 1 | Accepted: attempt 01 removed obsolete facade pass-throughs and regenerated the bundle. The mandatory independent review found no technical findings. Both Workers omitted the required process-role assertion first line; this is a recorded process-compliance defect with no role mismatch or technical acceptance gap. |
 
-- Change-wide independent reviews: 4, belonging to accepted Units 03, 04, 05B, and 06.
+- Change-wide independent reviews: 5, belonging to accepted Units 03, 04, 05B, 06, and 07.
 - Circuit breakers: 1 - frozen Unit 05 reached its attempt limit before
   implementation; no third attempt is authorized. The approved semantic reset
   creates independently accountable Units 05A and 05B with fresh counters.
-- Next semantic unit: Unit 07 - facade and bundle finalization.
+- Unit 07 accepted; completion awaits Orchestrator alignment and the later completion transaction.
 - Reconciliation evidence before Unit 04 attempt 2: the candidate changes
   `controller.ts`, adds the input/window action domains, and has an unverified
   generated bundle with 22 trailing-whitespace findings. The facade contains
@@ -243,8 +244,35 @@ controller-types module is permitted.
   sole runtime importer of `controller.ts`, geometry-ordering code was not
   changed outside `custom-tile-split.ts`, shortcut callbacks remain in the
   facade, and there is one production `flashFocusedGroup()` invocation and one
-  `flushStructuralMutation()` implementation. No second review ran or is
-  available.
+   `flushStructuralMutation()` implementation. No second review ran or is
+   available.
+- Unit 07 acceptance evidence, all static: Lead inspection of the actual
+  finalization diff found only obsolete facade pass-throughs removed from
+  `controller.ts` and the normal generated-bundle update; no package, typecheck,
+  test, public-export, or extracted-domain implementation changed. The facade is
+  5,053 lines (from 5,186), with 44 additions / 177 deletions; the generated
+  bundle has 44 additions / 154 deletions. `npm --prefix kwin run typecheck`
+  passed both configurations; `npm --prefix kwin test` reported 965 tests / 91
+  suites / 0 failures / 0 skipped; `bash scripts/dogfood-install.test.sh`
+  reported 347 assertions / 0 failures; `git diff --check` was clean. Two normal
+  `npm --prefix kwin run build` runs produced matching
+  `kwin/contents/code/main.js` SHA-256
+  `51af50efc153ba82dfaa2543ba973b443ef6b92f2c098409ae46e9a197c8f02b`.
+  Static facade/import review found `entry.ts` remains the only runtime importer
+  of `controller.ts`; extracted-domain imports are type-only; shortcut
+  registration callbacks remain in the facade; there is one production
+  `flashFocusedGroup()` invocation and one `flushStructuralMutation()`
+  implementation; and geometry ordering remains in `custom-tile-split.ts`.
+  No focused test was added because the deleted methods were direct pass-throughs
+  to already characterized accepted-domain operations. Acceptance-criterion map:
+  sole public facade/composition root and equivalent exports/callback ownership -
+  actual diff and static facade review; narrow no-runtime-domain contracts -
+  import review; callback, signal, deferred, cancellation, and structural-flush
+  lifetime preservation - full suite and static flush review; retained tests,
+  typecheck, and dogfood - commands above; normal generated bundle - two-build
+  hash; baseline/no live operation - test and dogfood counts above with no live
+  command run. The mandatory independent review inspected the full active-change
+  and finalization diffs and returned no findings.
 
 ## Checkpoints and Circuit Breakers
 
