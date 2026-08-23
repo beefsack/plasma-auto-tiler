@@ -161,12 +161,13 @@ controller-types module is permitted.
 | Unit 05 | 2 | 0 | 0 | 0 | Frozen permanently before implementation: two malformed Worker preflights performed no source work; circuit breaker 1 prohibits another attempt. |
 | Unit 05A | 1 | 0 | 0 | 0 | Accepted: extracted reflow state/execution, lifecycle reflow callbacks, and eligibility token cancellation behind the approved narrow seam. |
 | Unit 05B | 1 | 0 | 1 | 1 | Accepted: attempt 1 extracted drag and deferred-work coordination; its three independent-review findings were corrected and Lead-confirmed. The Worker omitted its required identity-preflight line, a recorded process-compliance defect with no role mismatch or technical acceptance gap. |
+| Unit 06 | 2 | 0 | 1 | 1 | Accepted: attempt 01 stopped at a malformed role preflight before source work. Attempt 02 extracted layout/reconstruction and deferred workspace queues; its sole independent review found three issues, all corrected and Lead-confirmed. No third attempt or second review ran. |
 
-- Change-wide independent reviews: 3, belonging to accepted Units 03, 04, and 05B.
+- Change-wide independent reviews: 4, belonging to accepted Units 03, 04, 05B, and 06.
 - Circuit breakers: 1 - frozen Unit 05 reached its attempt limit before
   implementation; no third attempt is authorized. The approved semantic reset
   creates independently accountable Units 05A and 05B with fresh counters.
-- Next semantic unit: Unit 06 - reconstruction, dwindle, and workspaces.
+- Next semantic unit: Unit 07 - facade and bundle finalization.
 - Reconciliation evidence before Unit 04 attempt 2: the candidate changes
   `controller.ts`, adds the input/window action domains, and has an unverified
   generated bundle with 22 trailing-whitespace findings. The facade contains
@@ -220,8 +221,30 @@ controller-types module is permitted.
   Static inspection found type-only extracted-domain imports in
   `controller-interactive-drag.ts`, `entry.ts` as the sole runtime importer of
   `controller.ts`, one production `flashFocusedGroup()` invocation, and the
-  existing sole structural reporting/flush path. No second independent review
-  ran or is available.
+   existing sole structural reporting/flush path. No second independent review
+   ran or is available.
+- Unit 06 acceptance evidence, all static: the implementation Worker reported
+  focused reconstruction, dwindle/insertion/removal, deferred-recovery,
+  workspace-mode, trailing-empty lifecycle, output-isolation, and
+  deferred-removal coverage within the full suite; `npm --prefix kwin run
+  typecheck` passed both configurations; `npm --prefix kwin test` reported 965
+  tests / 91 suites / 0 failures / 0 skipped; `bash
+  scripts/dogfood-install.test.sh` reported 347 assertions / 0 failures; two
+  normal `npm --prefix kwin run build` runs produced matching
+  `kwin/contents/code/main.js` SHA-256
+  `468ddf82db849c7d9ea50a1234709106ea2903353dc16bdc737d2c7f87b816a1`;
+  `git diff --check` was clean. Lead inspection found the 387-line layout domain
+  and 64-line workspace domain use only type-only sibling imports, have no
+  mutable state exposure, and are composed by the facade. The sole review found
+  an inert-removal diagnostic regression, duplicate reconstruction methods, and
+  mutable/widened capabilities; correction 01 restored the diagnostic, removed
+  the duplicate implementation, and returned mutable ownership to the facade
+  behind explicit operations. Static inspection found `entry.ts` remains the
+  sole runtime importer of `controller.ts`, geometry-ordering code was not
+  changed outside `custom-tile-split.ts`, shortcut callbacks remain in the
+  facade, and there is one production `flashFocusedGroup()` invocation and one
+  `flushStructuralMutation()` implementation. No second review ran or is
+  available.
 
 ## Checkpoints and Circuit Breakers
 

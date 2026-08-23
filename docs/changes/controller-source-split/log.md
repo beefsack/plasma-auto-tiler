@@ -202,3 +202,35 @@ Append-only record of artifact creation and approved execution checkpoints.
 - Verification: focused existing interactive-watch, drag, and outline suites 43 tests / 3 suites / 0 failures; `npm --prefix kwin run typecheck` clean for both configurations; `npm --prefix kwin test` 965 tests / 91 suites / 0 failures / 0 skipped; `bash scripts/dogfood-install.test.sh` 347 passes / 0 failures; `git diff --check` clean; two normal builds matched generated-bundle SHA-256 `cd4145bd8b0d2b27d1e634483ab6ddb7936abb548a66382da72f268842c242cc`.
 - Files / commit: added `kwin/src/controller-interactive-drag.ts`; modified `kwin/src/controller.ts` and generated `kwin/contents/code/main.js`; updated `plan.md`, `state.md`, and this log. No tests changed, no staging, commit, push, dependency edit, or live operation occurred.
 - Accounting: Unit 05B attempts 1, cancellations 0, corrections 1, independent reviews 1; change-wide independent reviews 3; circuit breakers remain 1 for frozen original Unit 05 only. Unit 06 is the next approved successor.
+
+## 2026-08-23 - unit-06-reconstruction-dwindle-workspaces attempt 01 host stop
+
+- Role / unit: Lead / `unit-06-reconstruction-dwindle-workspaces` / attempt 01.
+- Result: the fresh implementation Worker stopped at the mandatory identity preflight. It reported actual role Worker and parent role Lead, but host configured role `OpenCode` rather than required `worker-openai`. The parent Lead host configuration likewise reports `OpenCode` rather than requested `lead-openai`; this mismatch was disclosed before dispatch.
+- Files / commit: no source, test, generated bundle, staging, commit, push, or live operation occurred. No candidate exists for inspection or recovery.
+- Verification: none - the preflight stop occurred before code inspection or modification.
+- Notes / blocker: Unit 06 accounting is attempts 1, cancellations 0, corrections 0, independent reviews 0. Re-dispatch under the unchanged host configuration would repeat the same preflight mismatch and is not authorized as a same-class loop. Escalate to the Orchestrator for host-resolution or a materially different execution reset. Change-wide independent reviews remain 3; the sole circuit breaker remains frozen original Unit 05.
+
+## 2026-08-23 - unit-06-reconstruction-dwindle-workspaces attempt 02 resolution
+
+- Role / unit: Lead / `unit-06-reconstruction-dwindle-workspaces` / attempt 02.
+- Result: Orchestrator resolved attempt 01 as a malformed role-preflight contract, not an unavailable `worker-openai` selector. The Task selector remains `worker-openai`; the required child configured process role is Worker, actual role is Worker, and parent role is Lead. An `OpenCode` host persona label is reportable but not blocking.
+- Files / commit: record-keeping only; no source, test, generated bundle, staging, commit, push, or live operation occurred.
+- Notes / blocker: attempt 02 is dispatched as the final authorized Unit 06 attempt. No third attempt is available. Parent provenance is configured Lead selector `lead-openai`, task/session `ses_fd14d46c3ffeDfiBTWCzNtq5Vo`.
+
+## 2026-08-23 - unit-06-reconstruction-dwindle-workspaces independent review
+
+- Role / unit: independent Worker review / `unit-06-reconstruction-dwindle-workspaces` / attempt 02.
+- Result: three findings in the actual candidate: P1 inert-scope removal no longer emits `ownership-inert-ignored:removal`; P2 duplicate unreachable reconstruction methods remain in `controller.ts`; P2 extracted layout/workspace domains expose mutable state bags and widened/unused capabilities.
+- Files / commit: review-only; no files changed and no commit.
+- Verification: reviewed the actual source and candidate evidence: dual typecheck clean; 965 tests / 91 suites / 0 failures / 0 skipped; dogfood 347/0; two normal builds matched SHA-256 `09b2ee5f0a89d6e4b772699081f96971afe0d1856af8255a3a37067d300fc9a8`; `git diff --check` clean.
+- Notes / blocker: Unit 06 independent reviews are 1 and no second review is available. The single same-scope correction is dispatched solely for this finding set; no third attempt is available.
+
+## 2026-08-23 - unit-06-reconstruction-dwindle-workspaces acceptance
+
+- Role / unit: Lead / `unit-06-reconstruction-dwindle-workspaces` / attempt 02, correction 01.
+- Result: accepted. Extracted reconstruction/dwindle/layout coordination and deferred workspace queues to `controller-layout-domain.ts` and `controller-workspace-domain.ts`, with `controller.ts` retained as facade, composition root, and semantic state authority. The sole independent review found a missing inert-removal diagnostic, duplicate reconstruction methods, and mutable/widened domain contracts; correction 01 resolved all three and Lead inspection confirmed the finding set only.
+- Lead inspection: layout domain is 387 lines and workspace domain 64 lines. They have no runtime controller or sibling-domain import, expose no mutable collections, and use facade-owned state through explicit operations. The facade retains shortcut callbacks, the sole `flushStructuralMutation()` implementation, and the sole production `flashFocusedGroup()` invocation. Geometry ordering remained confined to the existing `custom-tile-split.ts` implementation. Deferred removal retains the 05B callback ordering while Unit 06 owns its collapse/reconstruction execution and yield.
+- Verification: focused reconstruction, dwindle/insertion/removal, deferred-recovery, workspace-mode, trailing-empty, output-isolation, and deferred-removal coverage was included in the reported full suite; dual typecheck clean; full suite 965 tests / 91 suites / 0 failures / 0 skipped; dogfood 347/0; `git diff --check` clean; two normal builds matched SHA-256 `468ddf82db849c7d9ea50a1234709106ea2903353dc16bdc737d2c7f87b816a1`.
+- Files / commit: added `kwin/src/controller-layout-domain.ts` and `kwin/src/controller-workspace-domain.ts`; modified `kwin/src/controller.ts` and generated `kwin/contents/code/main.js`; updated `plan.md`, `state.md`, and this log. No tests, dependencies, public APIs, staging, commit, push, or live operation changed.
+- Notes / blocker: Unit 06 counts are attempts 2, cancellations 0, corrections 1, independent reviews 1; change-wide independent reviews are 4. Original Unit 05 remains the sole circuit breaker. The implementation Worker omitted its required process-role first line in both attempt 02 and correction 01 reports; recorded as a process-compliance defect with no technical acceptance gap. Unit 07 is the approved successor.

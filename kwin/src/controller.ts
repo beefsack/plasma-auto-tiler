@@ -135,6 +135,16 @@ import {
     createInteractiveDragController,
     type InteractiveDragController,
 } from "./controller-interactive-drag";
+import {
+    createLayoutDomain,
+    type LayoutDomain,
+    type ManagedScope as LayoutManagedScope,
+    type PendingRebuild as LayoutPendingRebuild,
+} from "./controller-layout-domain";
+import {
+    createWorkspaceDomain,
+    type WorkspaceDomain,
+} from "./controller-workspace-domain";
 export type { CurrentScope, SelectedOverlay } from "./controller-reflow-observers";
 
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
@@ -158,7 +168,6 @@ const GROUP_OUTLINE_DURATION_MS = 700;
 // required: if every ListNames reply is lost, unlimited re-arms would leave a
 // collapsed awaiting-split scope retrying forever instead of reaching the
 // session-local inert state.
-const MAX_YIELD_REARM_PER_PHASE = 2;
 
 // Session output identity and key allocation live in controller-workspace-state.ts.
 
@@ -291,17 +300,6 @@ interface WindowCoverState {
     readonly clearMaximizeRecord: (window: WindowCapability) => void;
 }
 
-interface ManagedScopeState {
-    readonly managedScope: (scope: CurrentScope) => ManagedScope | null;
-    readonly setManagedScope: (scope: CurrentScope) => void;
-    readonly markScopeInert: (scope: CurrentScope, reason: string) => void;
-}
-
-interface PendingRebuildState {
-    readonly setPendingRebuild: (scope: CurrentScope, pending: PendingRebuild) => void;
-    readonly dropPendingRebuild: (scope: CurrentScope, pending: PendingRebuild) => void;
-}
-
 interface PendingMoveState {
     readonly hasPendingMove: (window: WindowCapability) => boolean;
     readonly markPendingMove: (window: WindowCapability) => void;
@@ -325,10 +323,7 @@ interface DesktopChangeState {
 // scope change and stays owned for the session unless it becomes inert: a
 // failed or damaged scope is never retried in that session. No identity
 // survives restart or hotplug.
-export interface ManagedScope {
-    readonly scope: CurrentScope;
-    readonly inert: boolean;
-}
+export interface ManagedScope extends LayoutManagedScope {}
 
 // A deferred dwindle reconstruction awaiting its one-shot event-loop yield.
 // Phase one collapses the owned scope to a single leaf in a synchronous
@@ -342,12 +337,7 @@ export interface ManagedScope {
 // each phase gets its own bounded re-drive budget.
 export type RebuildPhase = "awaiting-collapse" | "awaiting-split";
 
-export interface PendingRebuild {
-    readonly scope: CurrentScope;
-    phase: RebuildPhase;
-    rearmCount: number;
-    dragFinalSnapshot?: boolean;
-}
+export interface PendingRebuild extends LayoutPendingRebuild {}
 
 // A deferred script-owned trailing-empty creation request. A user Meta+Shift+0
 // (move) or Meta+0 (focus/create) request that would have to create the
@@ -453,14 +443,14 @@ export class TileController {
     private readonly maximizeWatches = new Map<WindowCapability, () => void>();
     private readonly decodedBoundaries = new Set<BoundaryKind>();
     private readonly onceDiagnostics = new Set<string>();
+    private readonly managedScopes = new Map<OutputCapability, Map<string, LayoutManagedScope>>();
+    private readonly pendingRebuilds = new Map<OutputCapability, Map<string, LayoutPendingRebuild>>();
     // Per-output/per-desktop session-local managed-scope ownership for
     // automatic ratio-free dwindle. A scope is managed only when it holds
     // owned windows; a failed or damaged scope is recorded inert for the
     // session and never retried.
-    private readonly managedScopes = new Map<OutputCapability, Map<string, ManagedScope>>();
     // Deferred dwindle reconstructions awaiting their one-shot event-loop
     // yields between the removals-only collapse and the splits-only rebuild.
-    private readonly pendingRebuilds = new Map<OutputCapability, Map<string, PendingRebuild>>();
     // Explicitly detached windows (the detach action writes `window.tile` to
     // null) are excluded from the owned population and the dwindle rebuild.
     // Bounded like the other session identity sets so it cannot grow without limit.
@@ -498,10 +488,8 @@ export class TileController {
     private reconcilingDesktops = false;
     // Deferred Meta+Shift+0 trailing-empty creation windows. Bounded like the
     // other controller queues.
-    private readonly pendingDesktopIntents: WindowCapability[] = [];
     // Deferred Meta+0 trailing-empty focus/creation outputs, drained through the
     // same bounded settle queue as the Meta+Shift+0 intents (spec F).
-    private readonly pendingWorkspaceZeroOutputs: OutputCapability[] = [];
     // Parsed `workspaceMode` configuration (spec D). Set from readConfig at
     // startup; invalid input falls back to the default with a diagnostic. The
     // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
@@ -561,7 +549,7 @@ export class TileController {
     // reconcile and navigation (never creates), so a rename/reorder never
     // changes it (spec E) and hotplug/disconnect leaves it intact. Session-only,
     // never persisted; empty for every non-shared mode.
-    private sharedWorkspaces: string[] = [];
+    private readonly sharedWorkspaces: string[] = [];
 
     private readonly structuralMutation: StructuralMutationCapability;
     private readonly scopeResolution: ScopeResolutionCapability;
@@ -570,14 +558,14 @@ export class TileController {
     private readonly windowCoverState: WindowCoverState;
     private readonly interactiveDrag: InteractiveDragController;
     private readonly reflowObservers: ReflowObservers;
-    private readonly managedScopeState: ManagedScopeState;
-    private readonly pendingRebuildState: PendingRebuildState;
     private readonly pendingMoveState: PendingMoveState;
     private readonly workspaceMutationGuard: WorkspaceMutationGuard;
     private readonly workspaceModeState: WorkspaceModeState;
     private readonly desktopChangeState: DesktopChangeState;
     private readonly inputActions: InputActions;
     private readonly windowActions: WindowActions;
+    private readonly layoutDomain: LayoutDomain;
+    private readonly workspaceDomain: WorkspaceDomain;
 
     constructor(private readonly environment: ControllerEnvironment) {
         this.structuralMutation = {
@@ -706,22 +694,86 @@ export class TileController {
                 this.drainPendingDesktopIntents();
             },
         });
-        this.managedScopeState = {
-            managedScope: (scope) => this.managedRecord(scope),
-            setManagedScope: (scope) => this.setManaged(scope),
-            markScopeInert: (scope, reason) => this.markInert(scope, reason),
-        };
-        this.pendingRebuildState = {
-            setPendingRebuild: (scope, pending) => {
-                let byDesktop = this.pendingRebuilds.get(scope.output);
-                if (byDesktop === undefined) {
-                    byDesktop = new Map<string, PendingRebuild>();
-                    this.pendingRebuilds.set(scope.output, byDesktop);
-                }
-                byDesktop.set(scope.desktop.id, pending);
+        this.layoutDomain = createLayoutDomain({
+            environment: {
+                yieldOnce: (callback) => this.environment.yieldOnce(callback),
             },
-            dropPendingRebuild: (scope, pending) => this.dropPendingRebuild(scope, pending),
-        };
+            scope: {
+                scopeForWindow: (window) => this.scopeForWindow(window),
+                topologyForScope: (scope) => this.topologyForScope(scope),
+            },
+            reflow: {
+                afterAddition: (window, scope) => this.reflowObservers.afterAddition(window, scope),
+                readSelectedOverlay: (scope) => this.reflowObservers.readSelectedOverlay(scope),
+            },
+            placement: {
+                placeAutomatically: (window, scope) => this.placeAutomatically(window, scope),
+                dwindleInsert: (window, scope) => this.dwindleInsert(window, scope),
+            },
+            state: {
+                isFloating: (window) => this.floatingWindows.has(window),
+                scopeHasFloating: (scope) => this.scopeHasFloating(scope),
+                scopeHasFullscreen: (scope) => this.scopeHasFullscreen(scope),
+                scopeHasMaximized: (scope) => this.scopeHasMaximized(scope),
+            },
+            ownership: {
+                managedRecord: (scope) => this.managedRecord(scope),
+                setManaged: (scope) => this.setManaged(scope),
+                markInert: (scope, reason) => this.markInert(scope, reason),
+                pendingForScope: (scope) => this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id),
+                setPendingRebuild: (scope, pending) => {
+                    let byDesktop = this.pendingRebuilds.get(scope.output);
+                    if (byDesktop === undefined) {
+                        byDesktop = new Map<string, LayoutPendingRebuild>();
+                        this.pendingRebuilds.set(scope.output, byDesktop);
+                    }
+                    byDesktop.set(scope.desktop.id, pending);
+                },
+                dropPendingRebuild: (scope, pending) => {
+                    const byDesktop = this.pendingRebuilds.get(scope.output);
+                    if (byDesktop?.get(scope.desktop.id) !== pending) {
+                        return;
+                    }
+                    byDesktop.delete(scope.desktop.id);
+                    if (byDesktop.size === 0) {
+                        this.pendingRebuilds.delete(scope.output);
+                    }
+                },
+                hasPendingRebuilds: () => this.pendingRebuilds.size > 0,
+            },
+            structural: {
+                flush: () => this.flushStructuralMutation(),
+                ownedPopulation: (scope) => this.ownedPopulation(scope),
+                presetMatches: (scope, population) => this.presetMatches(scope, population),
+                collapseOwnedScope: (scope) => this.collapseOwnedScope(scope),
+                rebuildPreset: (scope, population) => this.rebuildPreset(scope, population),
+                presetEnsureInvariant: (scope) => this.presetEnsureInvariant(scope),
+                dwindleRemove: (window, scope) => this.dwindleRemove(window, scope),
+                settleRemovalCollapse: (window, scope, leaf, afterDragSnapshot, onDragSettled) =>
+                    this.settleRemovalCollapse(window, scope, leaf, afterDragSnapshot, onDragSettled),
+            },
+            drag: {
+                isLive: () => this.interactiveDrag.isLive(),
+                markOwedInvariant: (scope) => this.interactiveDrag.markOwedInvariant(scope),
+                dragSnapshotFinal: (topology) => this.interactiveDrag.dragSnapshotFinal(topology),
+            },
+            callbacks: {
+                diagnostic: (event) => this.diagnostic(event),
+                onceDiagnostic: (event) => this.onceDiagnostic(event),
+                onSettled: () => {
+                    this.cleanupDesktops();
+                    this.drainPendingDesktopIntents();
+                },
+                onDeferredRemovalSettled: () => this.settleOwedInvariants(),
+            },
+        });
+        this.workspaceDomain = createWorkspaceDomain({
+            isEnabled: () => this.gate.isEnabled,
+            mutationDeferred: () => this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0,
+            finishMoveToTrailing: (window) => this.finishMoveToTrailing(window),
+            finishWorkspaceZero: (output) => this.finishWorkspaceZero(output),
+            diagnostic: (event) => this.diagnostic(event),
+        });
         this.pendingMoveState = {
             hasPendingMove: (window) => this.pendingMoves.has(window),
             markPendingMove: (window) => this.pendingMoves.add(window),
@@ -729,7 +781,7 @@ export class TileController {
         };
         this.workspaceMutationGuard = {
             workspaceMutationDeferred: () =>
-                this.interactiveDrag.isLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0,
+                this.interactiveDrag.isLive() || this.layoutDomain.hasPendingRebuilds() || this.pendingMoves.size > 0,
         };
         this.workspaceModeState = {
             workspaceMode: () => this.workspaceMode,
@@ -1362,21 +1414,6 @@ export class TileController {
             this.reflowObservers.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
             this.diagnostic(`preset-applied:${kind}`);
         }, (reason) => this.disabled(reason));
-    }
-
-    private refillOrPlaceAutomatically(window: WindowCapability, scope: CurrentScope): void {
-        const outcome = this.reflowObservers.afterAddition(window, scope);
-        if (outcome.kind === "no-selection" || outcome.kind === "no-capacity") {
-            // An already-tiled window is not a no-op; only a still-floating
-            // window that cannot be placed emits the decisive reason.
-            if (window.tile !== null) {
-                return;
-            }
-            const placement = this.placeAutomatically(window, scope);
-            if (placement.kind !== "managed") {
-                this.diagnostic(`window-added-noop:${placement.kind}`);
-            }
-        }
     }
 
     // This returns the explicit realization input rather than tying executor
@@ -2444,18 +2481,16 @@ export class TileController {
         return null;
     }
 
-    private managedRecord(scope: CurrentScope): ManagedScope | null {
-        return this.managedScopes.get(scope.output)?.get(scope.desktop.id) ?? null;
-    }
-
     private isOwned(scope: CurrentScope): boolean {
-        const record = this.managedScopeState.managedScope(scope);
-        return record !== null && !record.inert;
+        return this.layoutDomain.isOwned(scope);
     }
 
     private isInert(scope: CurrentScope): boolean {
-        const record = this.managedRecord(scope);
-        return record !== null && record.inert;
+        return this.layoutDomain.isInert(scope);
+    }
+
+    private managedRecord(scope: CurrentScope): ManagedScope | null {
+        return this.managedScopes.get(scope.output)?.get(scope.desktop.id) ?? null;
     }
 
     private setManaged(scope: CurrentScope): void {
@@ -2490,29 +2525,7 @@ export class TileController {
     // leaf followed by a non-timer event-loop yield before the deferred split
     // reconstruction.
     private ensureManaged(scope: CurrentScope): void {
-        if (this.isOwned(scope) || this.isInert(scope)) {
-            return;
-        }
-        if (this.readSelectedOverlay(scope) !== null) {
-            return;
-        }
-        const population = this.ownedPopulation(scope);
-        if (population.length === 0) {
-            return;
-        }
-        this.managedScopeState.setManagedScope(scope);
-        if (this.scopeHasFloating(scope)) {
-            // A scope with floating windows preserves its tree as the user
-            // left it: the vacated leaves must never be collapsed, so the
-            // tree is adopted unchanged rather than reconstructed.
-            this.diagnostic("ownership-taken");
-            return;
-        }
-        if (this.presetMatches(scope, population)) {
-            this.diagnostic("ownership-taken");
-            return;
-        }
-        this.startReconstruction(scope);
+        this.layoutDomain.ensureManaged(scope);
     }
 
     // The owned population of a scope: eligible in-scope windows from the
@@ -2599,71 +2612,7 @@ export class TileController {
     // retrying forever, while the phase and pending-identity guards keep every
     // stale or duplicate callback inert.
     private startReconstruction(scope: CurrentScope): void {
-        if (this.scopeHasFullscreen(scope)) {
-            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-            return;
-        }
-        if (this.scopeHasMaximized(scope)) {
-            this.diagnostic("maximize:ignored reconstruction while maximized");
-            return;
-        }
-        if (this.trackedDragLive()) {
-            this.markOwedInvariant(scope);
-            return;
-        }
-        const existing = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
-        if (existing !== undefined) {
-            existing.rearmCount += 1;
-            const rearmCount = existing.rearmCount;
-            if (rearmCount > MAX_YIELD_REARM_PER_PHASE) {
-                this.markInert(scope, "rearm-budget-exhausted");
-                this.dropPendingRebuild(scope, existing);
-                return;
-            }
-            if (!this.armRebuildYield(scope, existing)) {
-                this.markInert(scope, "rearm-yield-arm-failed");
-                this.dropPendingRebuild(scope, existing);
-            }
-            return;
-        }
-        const pending: PendingRebuild = { scope, phase: "awaiting-collapse", rearmCount: 0 };
-        this.pendingRebuildState.setPendingRebuild(scope, pending);
-        if (!this.armRebuildYield(scope, pending)) {
-            this.markInert(scope, "initial-yield-arm-failed");
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        this.diagnostic("ownership-pending");
-    }
-
-    // Arm exactly one one-shot event-loop yield for the pending rebuild's
-    // current phase. The callback captures the phase it was armed for and is
-    // inert unless the same pending record is still current and still in that
-    // phase, so a duplicate or stale callback can never collapse, split, or
-    // assign twice. A failed arm fails the scope closed rather than stranding
-    // it.
-    private armRebuildYield(scope: CurrentScope, pending: PendingRebuild): boolean {
-        const armedFor = pending.phase;
-        let armed = false;
-        try {
-            armed = this.environment.yieldOnce(() => {
-                try {
-                    if (this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id) !== pending) {
-                        return;
-                    }
-                    if (pending.phase !== armedFor) {
-                        return;
-                    }
-                    this.settleScopeRebuild(scope, pending);
-                } finally {
-                    this.flushStructuralMutation();
-                }
-            });
-        } catch (error) {
-            void error;
-            return false;
-        }
-        return armed;
+        this.layoutDomain.startReconstruction(scope);
     }
 
     // Guarded collapse of an owned scope to a single leaf through the guarded
@@ -2709,74 +2658,6 @@ export class TileController {
             entries.push({ tile, children: children.value, occupants, removable: tile.canBeRemoved });
         }
         return { root, tiles: entries };
-    }
-
-    // Full dwindle reconstruction phase dispatch: re-validate everything fresh
-    // (scope ownership, selected-overlay precedence, owned population, and the
-    // live dwindle match), then either drop the pending rebuild or perform the
-    // phase's one structural dispatch. The awaiting-collapse dispatch is a
-    // synchronous removals-only collapse that arms the second yield; the
-    // awaiting-split dispatch is a synchronous splits-only rebuild that drops
-    // the pending record. Every callback re-resolves the scope, root, and
-    // window membership fresh and never touches a recorded child tile handle.
-    private settleScopeRebuild(scope: CurrentScope, pending: PendingRebuild): void {
-        if (this.isInert(scope) || !this.isOwned(scope)) {
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        if (this.scopeHasFullscreen(scope)) {
-            this.dropPendingRebuild(scope, pending);
-            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-            return;
-        }
-        if (this.scopeHasMaximized(scope)) {
-            this.dropPendingRebuild(scope, pending);
-            this.diagnostic("maximize:ignored reconstruction while maximized");
-            return;
-        }
-        if (this.trackedDragLive()) {
-            this.markOwedInvariant(scope);
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        if (this.readSelectedOverlay(scope) !== null) {
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        const population = this.ownedPopulation(scope);
-        if (population.length === 0) {
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        if (this.presetMatches(scope, population)) {
-            this.dropPendingRebuild(scope, pending);
-            return;
-        }
-        if (pending.phase === "awaiting-collapse") {
-            // Phase one: a synchronous homogeneous removals-only collapse to a
-            // single leaf with a fresh whole-root decode after every removal.
-            // The split reconstruction then waits for the second yield.
-            if (!this.collapseOwnedScope(scope)) {
-                this.markInert(scope, "collapse-failed");
-                this.dropPendingRebuild(scope, pending);
-                return;
-            }
-            pending.phase = "awaiting-split";
-            pending.rearmCount = 0;
-            this.diagnostic("ownership-collapsed");
-            if (!this.armRebuildYield(scope, pending)) {
-                this.markInert(scope, "split-yield-arm-failed");
-                this.dropPendingRebuild(scope, pending);
-            }
-            return;
-        }
-        // Phase two: the splits-only preset rebuild in one synchronous batch.
-        if (this.rebuildPreset(scope, population)) {
-            this.diagnostic("ownership-taken");
-        } else {
-            this.markInert(scope, "rebuild-failed");
-        }
-        this.dropPendingRebuild(scope, pending);
     }
 
     // Fresh resolution of a compiled blueprint path to the live custom tile:
@@ -2876,30 +2757,6 @@ export class TileController {
             }
         }
         return true;
-    }
-
-    private dropPendingRebuild(scope: CurrentScope, pending: PendingRebuild): void {
-        const byDesktop = this.pendingRebuilds.get(scope.output);
-        if (byDesktop?.get(scope.desktop.id) === pending) {
-            byDesktop.delete(scope.desktop.id);
-            if (byDesktop.size === 0) {
-                this.pendingRebuilds.delete(scope.output);
-            }
-            if (pending.dragFinalSnapshot) {
-                const finalTopology = this.topologyForScope(scope);
-                if (finalTopology !== null) {
-                    this.interactiveDrag.dragSnapshotFinal(finalTopology);
-                }
-            }
-        }
-        // Retry desktop cleanup deferred by the pending reconstruction once the
-        // last one reaches its settled or inert end state. Cleanup is a no-op
-        // here unless something is genuinely removable, and it cannot recurse
-        // back into reconstruction.
-        if (this.pendingRebuilds.size === 0) {
-            this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
-        }
     }
 
     private recordDetached(window: WindowCapability): void {
@@ -3111,46 +2968,7 @@ export class TileController {
     // unmanaged. Adoption goes through `ensureManaged` (dwindle match or the
     // two-phase reconstruction), never a direct remove or split.
     private placeEligibleAdded(window: WindowCapability, scope: CurrentScope): void {
-        if (this.isFloating(window)) {
-            return;
-        }
-        if (this.scopeHasFullscreen(scope)) {
-            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-            return;
-        }
-        if (!this.isOwned(scope) && !this.isInert(scope)) {
-            this.ensureManaged(scope);
-        }
-        if (this.isOwned(scope)) {
-            this.dwindleAdd(window, scope);
-        } else {
-            this.refillOrPlaceAutomatically(window, scope);
-        }
-    }
-
-    // Owned-scope add: a valid selected overlay wins and its reflow (with the
-    // established generic fallback) handles the window. Without an overlay the
-    // window is placed into a retained empty leaf through the same guarded
-    // automatic placement, and only when no empty leaf exists does a single
-    // splits-only dwindle insertion split the deepest leaf. No removal is ever
-    // part of an add dispatch.
-    private dwindleAdd(window: WindowCapability, scope: CurrentScope): void {
-        const outcome = this.reflowObservers.afterAddition(window, scope);
-        if (outcome.kind !== "no-selection" && outcome.kind !== "no-capacity") {
-            return;
-        }
-        if (outcome.kind === "no-capacity") {
-            this.placeAutomatically(window, scope);
-            return;
-        }
-        if (window.tile !== null) {
-            return;
-        }
-        if (this.placeAutomatically(window, scope).kind === "managed") {
-            return;
-        }
-        this.dwindleInsert(window, scope);
-        this.presetEnsureInvariant(scope);
+        this.layoutDomain.placeEligibleAdded(window, scope);
     }
 
     // One dwindle insertion: split the selected leaf along its longest axis,
@@ -3161,7 +2979,7 @@ export class TileController {
     // geometry-order rejection is a capacity failure that leaves the scope
     // retryable.
     private dwindleInsert(window: WindowCapability, scope: CurrentScope): void {
-        if (this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id) !== undefined) {
+        if (this.layoutDomain.hasPendingRebuild(scope)) {
             // A reconstruction is already pending for this scope: leave the
             // incoming window floating and let the pending rebuild re-resolve
             // the fresh population (which includes it) on its next dispatch.
@@ -3490,24 +3308,7 @@ export class TileController {
         afterDragSnapshot = false,
         onDragSettled?: (topology: readonly OperationLeaf[], collapsed: boolean) => readonly OperationLeaf[],
     ): void {
-        let armed = false;
-        try {
-            armed = this.environment.yieldOnce(() => {
-                try {
-                    this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, onDragSettled);
-                    this.settleOwedInvariants();
-                } finally {
-                    this.flushStructuralMutation();
-                }
-            });
-        } catch (error) {
-            void error;
-        }
-        if (!armed) {
-            this.markInert(scope, "removal-yield-arm-failed");
-            return;
-        }
-        this.diagnostic("ownership-remove-deferred");
+        this.layoutDomain.deferRemovalCollapse(window, scope, leafTile, afterDragSnapshot, onDragSettled);
     }
 
     // Deferred removal collapse body. Runs on a later event-loop turn, after
@@ -3559,10 +3360,7 @@ export class TileController {
         const after = this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
         if (afterDragSnapshot && after !== null) {
             onDragSettled?.(after, true);
-            const pending = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
-            if (pending !== undefined) {
-                pending.dragFinalSnapshot = true;
-            }
+            this.layoutDomain.markPendingDragFinalSnapshot(scope);
         }
     }
 
@@ -3622,22 +3420,7 @@ export class TileController {
     }
 
     private dwindleMaybeRemove(window: WindowCapability): void {
-        const scope = this.scopeForWindow(window);
-        if (scope === null) {
-            return;
-        }
-        if (this.isInert(scope)) {
-            this.onceDiagnostic("ownership-inert-ignored:removal");
-            return;
-        }
-        if (!this.isOwned(scope)) {
-            return;
-        }
-        if (this.trackedDragLive()) {
-            this.markOwedInvariant(scope);
-            return;
-        }
-        this.dwindleRemove(window, scope);
+        this.layoutDomain.dwindleMaybeRemove(window);
     }
 
     // ---- Dynamic virtual desktops ----
@@ -3780,7 +3563,8 @@ export class TileController {
         if (resolved === null) {
             return;
         }
-        this.sharedWorkspaces = resolved.map((desktop) => desktop.id);
+        this.sharedWorkspaces.length = 0;
+        this.sharedWorkspaces.push(...resolved.map((desktop) => desktop.id));
     }
 
     // Shared navigation (spec D3): resolve logical index n against the shared
@@ -4031,60 +3815,26 @@ export class TileController {
     // execution. The queue is bounded and each entry is re-validated on
     // execution.
     private deferDesktopIntent(window: WindowCapability): void {
-        if (this.pendingDesktopIntents.length < MAX_SEQUENTIAL_LENGTH) {
-            this.pendingDesktopIntents.push(window);
-        }
-        this.diagnostic("workspace-create-deferred:move");
+        this.workspaceDomain.deferDesktopIntent(window);
     }
 
     // Queue a deferred Meta+0 focus/creation request for the active output. The
     // queue is bounded and each entry is re-validated on execution; the output
     // is re-resolved against the current context then, never acted on stale.
     private deferWorkspaceZero(output: OutputCapability): void {
-        if (
-            this.pendingWorkspaceZeroOutputs.length < MAX_SEQUENTIAL_LENGTH &&
-            !this.pendingWorkspaceZeroOutputs.includes(output)
-        ) {
-            this.pendingWorkspaceZeroOutputs.push(output);
-        }
-        this.diagnostic("workspace-zero-deferred");
+        this.workspaceDomain.deferWorkspaceZero(output);
     }
 
     // Run every queued trailing-empty creation request, in order, once the
     // desktop list is safe to mutate. A request that is still unsafe is kept
     // queued; a request whose context became stale is cancelled.
     private drainPendingDesktopIntents(): void {
-        if (!this.gate.isEnabled) {
-            return;
-        }
-        if (this.workspaceMutationDeferred()) {
-            return;
-        }
-        const pending = this.pendingDesktopIntents.slice();
-        this.pendingDesktopIntents.length = 0;
-        for (const window of pending) {
-            this.finishMoveToTrailing(window);
-        }
-        this.drainPendingWorkspaceZero();
+        this.workspaceDomain.drainPendingDesktopIntents();
     }
 
     // Run every queued Meta+0 request, in order, once the desktop list is safe
     // to mutate. A request still unsafe is kept queued; a request whose output
     // became stale fails safely on execution.
-    private drainPendingWorkspaceZero(): void {
-        if (!this.gate.isEnabled) {
-            return;
-        }
-        if (this.workspaceMutationDeferred()) {
-            return;
-        }
-        const pending = this.pendingWorkspaceZeroOutputs.slice();
-        this.pendingWorkspaceZeroOutputs.length = 0;
-        for (const output of pending) {
-            this.finishWorkspaceZero(output);
-        }
-    }
-
     // Execute a deferred Meta+Shift+0 request: re-validate the captured window
     // against current context, ensure the trailing empty exists, then move the
     // window into it. A window that is no longer movable cancels the request.
@@ -4448,7 +4198,7 @@ export class TileController {
             this.placeEligibleAdded(window, targetScope);
             if (window.tile !== null) {
                 this.diagnostic("workspace-move-adopted");
-            } else if (this.pendingRebuilds.get(targetScope.output)?.get(targetScope.desktop.id) !== undefined) {
+            } else if (this.layoutDomain.hasPendingRebuild(targetScope)) {
                 this.diagnostic("workspace-move-adopted-deferred:reconstruction");
             } else {
                 this.floatingWindows.add(window);
@@ -4551,7 +4301,7 @@ export class TileController {
             this.diagnostic("workspace-cleanup-deferred:drag-live");
             return;
         }
-        if (this.pendingRebuilds.size > 0) {
+        if (this.layoutDomain.hasPendingRebuilds()) {
             this.diagnostic("workspace-cleanup-deferred:reconstruction-pending");
             return;
         }

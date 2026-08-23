@@ -1,17 +1,17 @@
 # State: Controller Source Split
 
-- Current unit: `unit-06-reconstruction-dwindle-workspaces` - next approved
-  successor after accepted Unit 05B.
+- Current unit: `unit-07-facade-bundle-finalization` - next approved successor
+  after accepted Unit 06.
 - Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
 - Blockers: none. Original Unit 05 remains permanently frozen after its
   malformed Worker preflights; it is not a dispatch target.
-- Next dispatch: Unit 06 may be dispatched as the next approved successor.
-- Status: units 01-04, Unit 05A, and Unit 05B accepted; frozen Unit 05 remains
-  replaced by the accepted reset units. Unit 06 is next.
-- Semantic units completed: 6/8.
+- Next dispatch: Unit 07 may be dispatched after Orchestrator alignment.
+- Status: units 01-04, Unit 05A, Unit 05B, and Unit 06 accepted; frozen Unit 05
+  remains replaced by the accepted reset units. Unit 07 is next.
+- Semantic units completed: 7/8.
 - Unit 04 accounting: attempts 2, cancellations 1, corrections 1, independent
   reviews 1.
-- Change-wide independent reviews: 3 (units 03, 04, and 05B).
+- Change-wide independent reviews: 4 (units 03, 04, 05B, and 06).
 - Circuit breakers: 1 - frozen Unit 05 attempt limit reached; no third attempt
   may be dispatched on that semantic unit.
 - Frozen Unit 05 accounting: attempts 2, cancellations 0, corrections 0,
@@ -46,6 +46,27 @@
   reporting/flush implementation. The implementation Worker omitted its
   required identity-preflight line; this is a recorded process-compliance
   defect, not a technical acceptance gap. No second independent review ran.
+- Unit 06 accounting: attempts 2, cancellations 0, corrections 1, independent
+  reviews 1, accepted 2026-08-23. Attempt 01 stopped before source inspection, modification,
+  candidate generation, or verification because of a malformed role-preflight
+  contract. Orchestrator resolved that the Task selector is `worker-openai`, the
+  required configured process role is Worker, and an `OpenCode` host persona
+  label is not a process-role mismatch. Attempt 02 is the final authorized
+  attempt; no third attempt may be dispatched. The sole independent review of
+  the attempt 02 candidate found a missing inert-removal diagnostic, duplicate
+  unreachable reconstruction methods retained in the facade, and mutable/widened
+  layout and workspace capability surfaces. Correction 01 is limited to those
+  findings. Correction 01 restored the omitted inert-removal diagnostic,
+  removed duplicate reconstruction methods retained in the facade, and replaced
+  mutable layout/workspace state exposure with facade-owned state behind explicit
+  operations. Lead inspection confirmed the correction and static boundaries;
+  no second review is available. Verification reported focused coverage within
+  the full suite, clean dual typecheck, 965 tests / 91 suites / 0 failures / 0
+  skipped, dogfood 347/0, clean `git diff --check`, and two matching normal
+  builds SHA-256 `468ddf82db849c7d9ea50a1234709106ea2903353dc16bdc737d2c7f87b816a1`.
+  The implementation Worker omitted the required process-role first line in its
+  attempt and correction reports; this is a recorded process-compliance defect,
+  not a technical acceptance gap.
 - Reset ownership: `controller.ts` remains the composition root and sole owner
   of `StructuralMutationCapability`, its pending flag,
   `flushStructuralMutation()`, and the one production `flashFocusedGroup()`
