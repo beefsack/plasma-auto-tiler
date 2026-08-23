@@ -1,12 +1,17 @@
 # State: Controller Source Split
 
-- Current unit: unit 04 - input and window actions, not started.
+- Current unit: unit 05 - reflow, observers, and drag, not started.
 - Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
 - Blockers: none.
-- Next dispatch: unit 04 - input and window actions, with the accepted unit 03 contracts; shortcut registration callbacks remain in `controller.ts`.
-- Status: units 01-03 accepted; unit 04 not started.
-- Semantic units completed: 3/7.
-- Independent reviews: 1.
+- Next dispatch: unit 05 - reflow, observers, and drag, after this accepted Unit
+  04 checkpoint is committed.
+- Status: units 01-04 accepted; unit 04 attempt 1 was cancelled and
+  non-resumable, attempt 2 recovered the candidate, and its one review finding
+  was corrected and confirmed. Unit 05 is next.
+- Semantic units completed: 4/7.
+- Unit 04 accounting: attempts 2, cancellations 1, corrections 1, independent
+  reviews 1.
+- Change-wide independent reviews: 2 (unit 03 and unit 04).
 - Circuit breakers: 0.
 - Baseline: 965 tests / 91 suites / 0 failures; typecheck clean; dogfood
   347/0. No live KWin operations.
@@ -57,5 +62,19 @@
   `bash scripts/dogfood-install.test.sh` 347 passes / 0 failures. `npm test`
   also reported its script-local 255 passes / 0 failures. Two normal bundle
   builds matched SHA-256
-  `af5dfd49f430bc803d7289824201d2e1b421aab27bf28b318bd9cf13d82625a8`.
+   `af5dfd49f430bc803d7289824201d2e1b421aab27bf28b318bd9cf13d82625a8`.
+   No live KWin operations occurred.
+- Unit 04 checkpoint: `controller-input-actions.ts` owns keyboard insertion,
+  focus/move/swap, and resize-mode state/dispatch/validation;
+  `controller-window-actions.ts` owns detach/attach, float/tile, sticky, scope
+  fill, float geometry, and revalidation. `controller.ts` remains the public
+  facade, composition root, and shortcut callback owner. The obsolete facade
+  implementations were removed. The one P1 independent-review finding (resize
+  mode ownership remaining in the facade) was corrected and Lead-confirmed; no
+  second review ran.
+- Verification: `npm --prefix kwin run typecheck` clean for both configurations;
+  `npm --prefix kwin test` 965 tests / 91 suites / 0 failures / 0 skipped;
+  `bash scripts/dogfood-install.test.sh` 347 passes / 0 failures; `git diff
+  --check` clean. Two normal `npm --prefix kwin run build` runs matched SHA-256
+  `3434ccd9de8b264665083f83ba24485d0ba37ab78f78ea1dd34e88c4cf2b9e52`.
   No live KWin operations occurred.

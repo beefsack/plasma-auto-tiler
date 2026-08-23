@@ -99,6 +99,36 @@ controller-types module is permitted.
   347/0, generated-bundle regeneration/checks, final static review, and no
   live KWin operations. This is the final-facade independent review.
 
+## Execution Record
+
+| Unit | Attempts | Cancellations | Corrections | Independent reviews | Status |
+|---|---:|---:|---:|---:|---|
+| Unit 04 | 2 | 1 | 1 | 1 | Accepted: attempt 2 recovered the candidate; its one P1 input ownership finding was corrected and Lead-confirmed. |
+
+- Change-wide independent reviews: 2, belonging to accepted Unit 03 and Unit 04.
+- Circuit breakers: 0.
+- Next semantic unit: Unit 05 - reflow, observers, and drag.
+- Reconciliation evidence before Unit 04 attempt 2: the candidate changes
+  `controller.ts`, adds the input/window action domains, and has an unverified
+  generated bundle with 22 trailing-whitespace findings. The facade contains
+  obsolete commented legacy action implementations that recovery must remove.
+- Unit 04 independent review found P1: resize-mode state, entry/exit, and
+  focus-versus-resize routing remained in `controller.ts` rather than the input
+  domain. The one same-scope correction moved that state and routing into the
+  input domain; Lead confirmation checked only that recorded finding. No second
+  independent review ran or is available.
+- Unit 04 acceptance evidence, all static: `npm --prefix kwin run typecheck`
+  passed both configurations; `npm --prefix kwin test` reported 965 tests / 91
+  suites / 0 failures / 0 skipped; `bash scripts/dogfood-install.test.sh`
+  reported 347 passes / 0 failures; `git diff --check` was clean; two
+  `npm --prefix kwin run build` runs followed by `sha256sum
+  kwin/contents/code/main.js` matched
+  `3434ccd9de8b264665083f83ba24485d0ba37ab78f78ea1dd34e88c4cf2b9e52`.
+  Static import/facade inspection found type-only topology imports, no action
+  domain runtime import of `controller.ts` or its sibling, one production
+  `flashFocusedGroup()` invocation, and the existing sole structural
+  reporting/flush path.
+
 ## Checkpoints and Circuit Breakers
 
 Each unit stops at its checkpoint for diff inspection, import-graph inspection,

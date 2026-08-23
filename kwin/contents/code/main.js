@@ -1894,14 +1894,1254 @@
     }
   }
 
-  // src/controller.ts
+  // src/controller-input-actions.ts
   var HORIZONTAL_LAYOUT_DIRECTION4 = 1;
   var VERTICAL_LAYOUT_DIRECTION4 = 2;
-  var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
   var MINIMUM_TILE_FRACTION = 0.15;
   var RESIZE_STEP_FRACTION = 0.05;
   var WORK_AREA_CLIENT_AREA_OPTION = 5;
+  function createInputActions(capabilities) {
+    const { environment, scope, topologyHelpers, geometryHelpers, pending, floating, mutation, diagnostics } = capabilities;
+    const { operationLeafForTile: operationLeafForTile2, targetOccupantForActive: targetOccupantForActive2, windowInScope: windowInScope2, windowIndex: windowIndex2 } = topologyHelpers;
+    const { parentHasSameSplitAxis: parentHasSameSplitAxis2, splitDirection: splitDirection3 } = geometryHelpers;
+    const { diagnostic, disable } = diagnostics;
+    let resizeModeActive = false;
+    let resizeModeDirection = "outwards";
+    const resizeModeSnapshot = () => ({
+      active: resizeModeActive,
+      direction: resizeModeDirection
+    });
+    const armKeyboardInsertion = (direction) => {
+      diagnostic("keyboard-invoked");
+      const hadPending = pending.current() !== void 0;
+      pending.clear();
+      if (hadPending) {
+        diagnostic("keyboard-pending-replaced");
+      }
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("keyboard-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("keyboard-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("keyboard-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => {
+        diagnostic(`keyboard-rejected:${reason}`);
+      });
+      if (topology === null || active.tile === null || !isTile(active.tile)) {
+        if (topology !== null) {
+          diagnostic("keyboard-rejected:active-tile-association");
+        }
+        return;
+      }
+      const target = operationLeafForTile2(topology, active.tile);
+      if (target === null || target.leaf.isLayout) {
+        diagnostic("keyboard-rejected:target-occupancy-validity");
+        return;
+      }
+      for (const occupant of target.windows) {
+        if (!windowInScope2(occupant, currentScope)) {
+          diagnostic("keyboard-rejected:target-occupancy-validity");
+          return;
+        }
+      }
+      const targetOccupant = targetOccupantForActive2(target, active);
+      if (targetOccupant === null) {
+        diagnostic("keyboard-rejected:target-occupancy-validity");
+        return;
+      }
+      const disconnect = environment.onPendingTargetChanged(targetOccupant.window, () => pending.clear());
+      pending.replace({
+        scope: currentScope,
+        sourceWindow: active,
+        targetWindow: targetOccupant.window,
+        targetTile: active.tile,
+        direction,
+        disconnect
+      });
+      if (!targetOccupant.usesActiveWrapper) {
+        diagnostic("keyboard-armed:target-occupant-wrapper");
+      }
+      diagnostic("keyboard-armed");
+    };
+    const completeKeyboardInsertion = (window, record) => {
+      const active = environment.activeWindow();
+      const activeScope = scope.scopeForWindow(active);
+      const windowScope = scope.scopeForWindow(window);
+      if (activeScope === null || windowScope === null || !sameScope3(activeScope.scope, record.scope.scope) || !sameScope3(windowScope.scope, record.scope.scope) || !windowInScope2(active, activeScope) || !windowInScope2(window, windowScope) || !windowInScope2(record.targetWindow, windowScope) || active.tile !== record.targetTile) {
+        return;
+      }
+      if (window.fullScreen === true || active.fullScreen === true || record.targetWindow.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      const topology = scope.topologyForScope(windowScope);
+      if (topology === null) {
+        return;
+      }
+      const target = operationLeafForTile2(topology, record.targetTile);
+      if (target === null || target.leaf.isLayout || !isCustomTile(target.decoded.tile)) {
+        return;
+      }
+      const targetIndex = windowIndex2(target.windows, record.targetWindow);
+      if (targetIndex < 0) {
+        return;
+      }
+      for (const occupant of target.windows) {
+        if (!windowInScope2(occupant, windowScope)) {
+          return;
+        }
+      }
+      const focused = target.refs[targetIndex];
+      if (focused === void 0) {
+        return;
+      }
+      const plan = planKeyboardInsertion({
+        scope: windowScope.scope,
+        direction: record.direction,
+        focusedLeaf: target.leaf,
+        focusedWindow: focused,
+        incoming: { id: "incoming", normal: window.normalWindow, managed: window.managed },
+        record: { scope: windowScope.scope, leafId: target.leaf.id, windowId: focused.id }
+      });
+      if (!plan.ok) {
+        return;
+      }
+      const requestedAxis = record.direction === "left" || record.direction === "right" ? "x" : "y";
+      if (parentHasSameSplitAxis2(target.decoded.tile, requestedAxis)) {
+        floating.markFloating(window, windowScope.scope);
+        diagnostic("keyboard-rejected:same-axis-parent");
+        return;
+      }
+      splitCustomTile(target.decoded.tile, splitDirection3(record.direction), mutation);
+      const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      if (!decoded.ok) {
+        disable("keyboard-split-result-invalid");
+        return;
+      }
+      diagnostics.decodedBoundary("split-result");
+      const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
+      const first = children == null ? void 0 : children[0];
+      const second = children == null ? void 0 : children[1];
+      if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
+        disable("keyboard-split-child-selection-failed");
+        return;
+      }
+      const occupantChild = record.direction === "left" || record.direction === "up" ? second : first;
+      const incomingChild = occupantChild === first ? second : first;
+      if (!manageTile(occupantChild, record.targetWindow, mutation)) {
+        diagnostic("keyboard-failed:first-assignment");
+        return;
+      }
+      if (!manageTile(incomingChild, window, mutation)) {
+        diagnostic("keyboard-failed:second-assignment");
+        return;
+      }
+      diagnostic("keyboard-completed");
+    };
+    const focusNeighbor = (direction) => {
+      diagnostic("focus-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("focus-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("focus-rejected:fullscreen");
+        return;
+      }
+      if (isWindow(active) && active.onAllDesktops === true) {
+        diagnostic("focus-rejected:sticky");
+        return;
+      }
+      if (isWindow(active) && isNativelyMaximized(active)) {
+        diagnostic("focus-rejected:maximized");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("focus-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("focus-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => {
+        diagnostic(`focus-rejected:${reason}`);
+      });
+      if (topology === null || active.tile === null || !isTile(active.tile)) {
+        if (topology !== null) {
+          diagnostic("focus-rejected:active-tile-association");
+        }
+        return;
+      }
+      const focused = operationLeafForTile2(topology, active.tile);
+      if (focused === null || focused.leaf.isLayout || focused.windows.length === 0 || windowIndex2(focused.windows, active) < 0) {
+        diagnostic("focus-rejected:focused-occupancy-validity");
+        return;
+      }
+      for (const occupant of focused.windows) {
+        if (!windowInScope2(occupant, currentScope)) {
+          diagnostic("focus-rejected:focused-occupancy-validity");
+          return;
+        }
+      }
+      const candidates = topology.filter(
+        (entry) => !entry.leaf.isLayout && entry.windows.length > 0 && entry.windows.every((occupant) => windowInScope2(occupant, currentScope))
+      ).map((entry) => entry.leaf);
+      const neighborLeaf = findNeighborLeaf(candidates, focused.leaf, direction);
+      if (neighborLeaf === null) {
+        diagnostic("focus-rejected:no-neighbor");
+        return;
+      }
+      const target = topology.find((entry) => entry.leaf === neighborLeaf);
+      if (target === void 0 || target.leaf.isLayout || target.windows.length === 0) {
+        diagnostic("focus-rejected:target-occupancy-validity");
+        return;
+      }
+      for (const occupant of target.windows) {
+        if (!windowInScope2(occupant, currentScope)) {
+          diagnostic("focus-rejected:target-occupancy-validity");
+          return;
+        }
+      }
+      const targetWindow = target.windows[0];
+      if (targetWindow === void 0) {
+        diagnostic("focus-rejected:target-occupancy-validity");
+        return;
+      }
+      environment.setActiveWindow(targetWindow);
+    };
+    const moveActiveWindow = (direction) => {
+      diagnostic("move-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("move-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      if (isWindow(active) && active.onAllDesktops === true) {
+        diagnostic("move-rejected:sticky");
+        return;
+      }
+      if (isWindow(active) && isNativelyMaximized(active)) {
+        diagnostic("move-rejected:maximized");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("move-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("move-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => {
+        diagnostic(`move-rejected:${reason}`);
+      });
+      if (topology === null || active.tile === null || !isTile(active.tile)) {
+        if (topology !== null) {
+          diagnostic("move-rejected:active-tile-association");
+        }
+        return;
+      }
+      const source = operationLeafForTile2(topology, active.tile);
+      if (source === null || source.leaf.isLayout || source.windows.length !== 1 || windowIndex2(source.windows, active) < 0 || topology.filter((entry) => windowIndex2(entry.windows, active) >= 0).length !== 1) {
+        diagnostic("move-rejected:source-occupancy-validity");
+        return;
+      }
+      for (const occupant of source.windows) {
+        if (!windowInScope2(occupant, currentScope)) {
+          diagnostic("move-rejected:source-occupancy-validity");
+          return;
+        }
+      }
+      const candidates = topology.filter((entry) => !entry.leaf.isLayout && entry.leaf !== source.leaf).map((entry) => entry.leaf);
+      const targetLeaf = findNeighborLeaf(candidates, source.leaf, direction);
+      if (targetLeaf === null) {
+        diagnostic("move-rejected:no-target");
+        return;
+      }
+      const target = topology.find((entry) => entry.leaf === targetLeaf);
+      if (target === void 0 || target.leaf.isLayout) {
+        diagnostic("move-rejected:target-occupancy-validity");
+        return;
+      }
+      if (target.windows.length === 0) {
+        if (!moveAssignmentRevalidates(currentScope, active, source, target, direction)) {
+          diagnostic("move-rejected:assignment-stale");
+          return;
+        }
+        let assigned = false;
+        try {
+          assigned = manageTile(target.decoded.tile, active, mutation);
+        } catch (error) {
+          void error;
+        }
+        if (!assigned) {
+          diagnostic("move-rejected:assignment-failed");
+          return;
+        }
+        diagnostic("move-completed");
+        return;
+      }
+      swapToOccupiedTarget(currentScope, active, source, target, direction);
+    };
+    const resizeActiveWindow = (direction, mode) => {
+      diagnostic("resize-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("resize-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("resize-rejected:fullscreen");
+        return;
+      }
+      if (isWindow(active) && active.onAllDesktops === true) {
+        diagnostic("resize-rejected:sticky");
+        return;
+      }
+      if (isWindow(active) && isNativelyMaximized(active)) {
+        diagnostic("resize-rejected:maximized");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("resize-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("resize-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => {
+        diagnostic(`resize-rejected:${reason}`);
+      });
+      if (topology === null || active.tile === null || !isTile(active.tile)) {
+        if (topology !== null) {
+          diagnostic("resize-rejected:active-tile-association");
+        }
+        return;
+      }
+      const focused = operationLeafForTile2(topology, active.tile);
+      if (focused === null || focused.leaf.isLayout || focused.windows.length === 0 || windowIndex2(focused.windows, active) < 0) {
+        diagnostic("resize-rejected:focused-occupancy-validity");
+        return;
+      }
+      const axis = direction === "left" || direction === "right" ? "x" : "y";
+      const expected = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION4 : VERTICAL_LAYOUT_DIRECTION4;
+      const target = resolveResizeSplit(active.tile, expected, direction, mode);
+      if (target === null) {
+        diagnostic("resize-rejected:no-parent");
+        return;
+      }
+      const parentGeometry = target.split.relativeGeometry;
+      const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
+      const focusedGeometry = target.focused.relativeGeometry;
+      const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
+      const neighborGeometry = target.neighbor.relativeGeometry;
+      const neighborExtent = axis === "x" ? neighborGeometry.width : neighborGeometry.height;
+      if (!(parentExtent > 0) || !(focusedExtent > 0) || !(neighborExtent > 0)) {
+        diagnostic("resize-rejected:no-parent");
+        return;
+      }
+      const delta = RESIZE_STEP_FRACTION * parentExtent;
+      const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
+      const pairExtent = focusedExtent + neighborExtent;
+      const neighborProposed = pairExtent - focusedProposed;
+      if (focusedProposed <= 0 || neighborProposed <= 0) {
+        diagnostic("resize-rejected:no-parent");
+        return;
+      }
+      if (resizeWouldViolateMinimum(currentScope, target.split, focusedProposed, neighborProposed, axis)) {
+        diagnostic("resize-rejected:at-floor");
+        return;
+      }
+      const positionShift = target.neighborIndex > target.focusedIndex ? 0 : mode === "outwards" ? -delta : delta;
+      const focusedTarget = axis === "x" ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height } : { x: focusedGeometry.x, y: focusedGeometry.y + positionShift, width: focusedGeometry.width, height: focusedProposed };
+      if (!setTileRelativeGeometry(target.focused, focusedTarget)) {
+        diagnostic("resize-rejected:write-failed");
+        return;
+      }
+      const fresh = scope.topologyForScope(currentScope);
+      if (fresh === null) {
+        diagnostic("resize-rejected:post-decode");
+        return;
+      }
+      const freshActive = operationLeafForTile2(fresh, active.tile);
+      if (freshActive === null || freshActive.leaf.isLayout || windowIndex2(freshActive.windows, active) < 0) {
+        diagnostic("resize-rejected:postcondition");
+        return;
+      }
+      const freshOrdered = customTileSplitSeam.decodeChildren(target.split);
+      if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
+        diagnostic("resize-rejected:postcondition");
+        return;
+      }
+      for (let index = 0; index < target.ordered.length; index += 1) {
+        if (freshOrdered[index] !== target.ordered[index]) {
+          diagnostic("resize-rejected:postcondition");
+          return;
+        }
+      }
+      const freshFocusedGeometry = target.focused.relativeGeometry;
+      const freshNeighborGeometry = target.neighbor.relativeGeometry;
+      const freshFocusedExtent = axis === "x" ? freshFocusedGeometry.width : freshFocusedGeometry.height;
+      const freshNeighborExtent = axis === "x" ? freshNeighborGeometry.width : freshNeighborGeometry.height;
+      if (Math.abs(freshFocusedExtent - focusedProposed) > RELATIVE_GEOMETRY_EPSILON || Math.abs(freshNeighborExtent - neighborProposed) > RELATIVE_GEOMETRY_EPSILON) {
+        diagnostic("resize-rejected:postcondition");
+        return;
+      }
+      diagnostic("resize-completed");
+    };
+    const focusOrResize = (direction) => {
+      if (resizeModeActive) {
+        resizeActiveWindow(direction, resizeModeDirection);
+      } else {
+        focusNeighbor(direction);
+      }
+    };
+    const enterOrExitResizeMode = (mode) => {
+      if (resizeModeActive && resizeModeDirection === mode) {
+        resizeModeActive = false;
+        diagnostic("resize-mode-exited");
+        return;
+      }
+      const entering = !resizeModeActive;
+      resizeModeDirection = mode;
+      resizeModeActive = true;
+      diagnostic(entering ? `resize-mode-entered:${mode}` : `resize-mode-switched:${mode}`);
+    };
+    function resolveResizeSplit(focusedTile, expectedLayoutDirection, direction, mode) {
+      const dirSign = direction === "right" || direction === "down" ? 1 : -1;
+      let node = focusedTile;
+      while (node !== null) {
+        const parent = node.parent;
+        if (parent === null) {
+          return null;
+        }
+        if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
+          const ordered = customTileSplitSeam.decodeChildren(parent);
+          if (ordered !== null) {
+            const focusedIndex = ordered.indexOf(node);
+            if (focusedIndex >= 0) {
+              const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
+              const focused = ordered[focusedIndex];
+              const neighbor = ordered[neighborIndex];
+              if (neighborIndex >= 0 && neighborIndex < ordered.length && focused !== void 0 && neighbor !== void 0) {
+                return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
+              }
+            }
+          }
+        }
+        if (!isTile(node)) {
+          return null;
+        }
+        node = parent;
+      }
+      return null;
+    }
+    function resizeWouldViolateMinimum(currentScope, split, firstProposed, secondProposed, axis) {
+      const workArea = environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, currentScope.output, currentScope.desktop);
+      if (!isRect(workArea)) {
+        return false;
+      }
+      const workExtent = axis === "x" ? workArea.width : workArea.height;
+      if (!(workExtent > 0)) {
+        return false;
+      }
+      const absoluteExtent = axis === "x" ? split.absoluteGeometry.width : split.absoluteGeometry.height;
+      const relativeExtent = axis === "x" ? split.relativeGeometry.width : split.relativeGeometry.height;
+      if (!(absoluteExtent > 0) || !(relativeExtent > 0)) {
+        return false;
+      }
+      const scale = absoluteExtent / relativeExtent;
+      const floor = MINIMUM_TILE_FRACTION * workExtent;
+      return firstProposed * scale < floor || secondProposed * scale < floor;
+    }
+    function moveAssignmentRevalidates(currentScope, active, source, target, direction) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope)) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null || active.tile === null || !isTile(active.tile)) {
+        return false;
+      }
+      const freshSource = operationLeafForTile2(topology, active.tile);
+      if (freshSource === null || freshSource.decoded.tile !== source.decoded.tile || freshSource.leaf.isLayout || freshSource.windows.length !== 1 || windowIndex2(freshSource.windows, active) < 0 || topology.filter((entry) => windowIndex2(entry.windows, active) >= 0).length !== 1) {
+        return false;
+      }
+      const freshTarget = operationLeafForTile2(topology, target.decoded.tile);
+      if (freshTarget === null || freshTarget.leaf.isLayout || freshTarget.windows.length !== 0) {
+        return false;
+      }
+      const freshCandidates = topology.filter((entry) => !entry.leaf.isLayout && entry.windows.length === 0).map((entry) => entry.leaf);
+      return findNeighborLeaf(freshCandidates, freshSource.leaf, direction) === freshTarget.leaf;
+    }
+    function swapToOccupiedTarget(currentScope, active, source, target, direction) {
+      diagnostic("move-swap-invoked");
+      if (active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      if (target.leaf.isLayout || target.windows.length !== 1) {
+        diagnostic("move-rejected:swap-occupancy-validity");
+        return;
+      }
+      const occupant = target.windows[0];
+      if (occupant === void 0 || !windowInScope2(occupant, currentScope)) {
+        diagnostic("move-rejected:swap-occupant-ineligible");
+        return;
+      }
+      if (occupant.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      if (!swapRevalidates(currentScope, active, occupant, source, target, direction, "before-first")) {
+        diagnostic("move-swap-rejected:stale");
+        return;
+      }
+      let firstAssigned = false;
+      try {
+        firstAssigned = assignWindowToTile(active, target.decoded.tile, mutation);
+      } catch (error) {
+        void error;
+      }
+      if (!firstAssigned) {
+        diagnostic("move-swap-failed:first-write");
+        return;
+      }
+      if (!swapRevalidates(currentScope, active, occupant, source, target, direction, "before-second")) {
+        swapSecondWriteFailed(currentScope, active, source);
+        return;
+      }
+      let secondAssigned = false;
+      try {
+        secondAssigned = assignWindowToTile(occupant, source.decoded.tile, mutation);
+      } catch (error) {
+        void error;
+      }
+      if (!secondAssigned) {
+        swapSecondWriteFailed(currentScope, active, source);
+        return;
+      }
+      if (!swapDecodesFinal(currentScope, active, occupant, source, target)) {
+        swapSecondWriteFailed(currentScope, active, source);
+        return;
+      }
+      diagnostic("move-swap-completed");
+    }
+    function swapRevalidates(currentScope, active, occupant, source, target, direction, phase) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope) || !windowInScope2(occupant, freshScope)) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null || active.tile === null || !isTile(active.tile) || occupant.tile === null || !isTile(occupant.tile) || occupant.tile !== target.decoded.tile) {
+        return false;
+      }
+      const expectedActiveTile = phase === "before-first" ? source.decoded.tile : target.decoded.tile;
+      if (active.tile !== expectedActiveTile) {
+        return false;
+      }
+      const freshSource = operationLeafForTile2(topology, source.decoded.tile);
+      const freshTarget = operationLeafForTile2(topology, target.decoded.tile);
+      if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
+        return false;
+      }
+      if (phase === "before-first") {
+        if (freshSource.windows.length !== 1 || windowIndex2(freshSource.windows, active) < 0) {
+          return false;
+        }
+        if (freshTarget.windows.length !== 1 || windowIndex2(freshTarget.windows, occupant) < 0) {
+          return false;
+        }
+      } else if (freshSource.windows.length !== 0 || freshTarget.windows.length !== 2 || windowIndex2(freshTarget.windows, active) < 0 || windowIndex2(freshTarget.windows, occupant) < 0) {
+        return false;
+      }
+      if (active === occupant || topology.filter((entry) => windowIndex2(entry.windows, active) >= 0).length !== 1 || topology.filter((entry) => windowIndex2(entry.windows, occupant) >= 0).length !== 1) {
+        return false;
+      }
+      if (phase === "before-first") {
+        const freshCandidates = topology.filter((entry) => !entry.leaf.isLayout && entry.leaf !== freshSource.leaf).map((entry) => entry.leaf);
+        return findNeighborLeaf(freshCandidates, freshSource.leaf, direction) === freshTarget.leaf;
+      }
+      return true;
+    }
+    function swapDecodesFinal(currentScope, active, occupant, source, target) {
+      const topology = scope.topologyForScope(currentScope);
+      if (topology === null || active.tile !== target.decoded.tile || occupant.tile !== source.decoded.tile) {
+        return false;
+      }
+      const freshSource = operationLeafForTile2(topology, source.decoded.tile);
+      const freshTarget = operationLeafForTile2(topology, target.decoded.tile);
+      if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
+        return false;
+      }
+      return freshSource.windows.length === 1 && windowIndex2(freshSource.windows, occupant) >= 0 && freshTarget.windows.length === 1 && windowIndex2(freshTarget.windows, active) >= 0;
+    }
+    function swapSecondWriteFailed(currentScope, active, source) {
+      diagnostic("move-swap-failed:second-write");
+      const restored = restoreSwapFirst(currentScope, active, source);
+      diagnostic(restored && active.tile === source.decoded.tile ? "move-swap-restored:verified" : "move-swap-restored:unverified");
+    }
+    function restoreSwapFirst(currentScope, active, source) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope)) {
+        return false;
+      }
+      if (active.tile === null || !isTile(active.tile)) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshSource = operationLeafForTile2(topology, source.decoded.tile);
+      const freshActive = operationLeafForTile2(topology, active.tile);
+      if (freshSource === null || freshSource.leaf.isLayout || freshActive === null || freshActive.leaf.isLayout || windowIndex2(freshActive.windows, active) < 0) {
+        return false;
+      }
+      let restored = false;
+      try {
+        restored = assignWindowToTile(active, source.decoded.tile, mutation);
+      } catch (error) {
+        void error;
+      }
+      return restored;
+    }
+    function sameScope3(left, right) {
+      return left.output === right.output && left.desktopId === right.desktopId;
+    }
+    return {
+      armKeyboardInsertion,
+      completeKeyboardInsertion,
+      focusNeighbor,
+      moveActiveWindow,
+      focusOrResize,
+      enterOrExitResizeMode,
+      resizeModeSnapshot,
+      resizeActiveWindow
+    };
+  }
+
+  // src/controller-window-actions.ts
+  var WORK_AREA_CLIENT_AREA_OPTION2 = 5;
   var FLOAT_WORK_AREA_FRACTION = 0.6;
+  function createWindowActions(capabilities) {
+    const { environment, scope, topologyHelpers, floating, geometry, mutation, callbacks, diagnostics } = capabilities;
+    const { operationLeafForTile: operationLeafForTile2, windowInScope: windowInScope2, windowIndex: windowIndex2 } = topologyHelpers;
+    const { diagnostic } = diagnostics;
+    const detachActiveWindow = () => {
+      diagnostic("detach-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("detach-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("detach-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("detach-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => diagnostic(`detach-rejected:${reason}`));
+      if (topology === null) {
+        return;
+      }
+      if (active.tile === null) {
+        diagnostic("detach-rejected:no-tile");
+        return;
+      }
+      if (!isCustomTile(active.tile)) {
+        diagnostic("detach-rejected:active-tile-association");
+        return;
+      }
+      if (active.tile.isLayout) {
+        diagnostic("detach-rejected:layout-tile");
+        return;
+      }
+      const origin = operationLeafForTile2(topology, active.tile);
+      if (origin === null || windowIndex2(origin.windows, active) < 0) {
+        diagnostic("detach-rejected:occupancy-validity");
+        return;
+      }
+      const originTile = active.tile;
+      if (!detachRevalidates(currentScope, active, originTile)) {
+        diagnostic("detach-rejected:assignment-stale");
+        return;
+      }
+      let detached = false;
+      try {
+        detached = detachWindowFromTile(active);
+      } catch (error) {
+        void error;
+        diagnostic("detach-rejected:assignment-failed");
+        return;
+      }
+      if (!detached) {
+        diagnostic("detach-rejected:assignment-failed");
+        return;
+      }
+      if (active.tile !== null) {
+        diagnostic("detach-failed:postcondition");
+        return;
+      }
+      diagnostic("detach-completed");
+      floating.markDetached(active);
+      callbacks.afterDetach(currentScope, originTile);
+    };
+    const attachActiveWindow = () => {
+      diagnostic("attach-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("attach-rejected:no-active-window");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("attach-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("attach-rejected:active-window-eligibility");
+        return;
+      }
+      if (active.tile !== null) {
+        diagnostic("attach-rejected:already-assigned");
+        return;
+      }
+      if (floating.isFloating(active)) {
+        tileFloatingActive(currentScope, active);
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => diagnostic(`attach-rejected:${reason}`));
+      if (topology === null) {
+        return;
+      }
+      const target = firstEmptyLeaf(topology);
+      if (target === null) {
+        diagnostic("attach-rejected:no-available-tile");
+        return;
+      }
+      if (!attachRevalidates(currentScope, active, target)) {
+        diagnostic("attach-rejected:assignment-stale");
+        return;
+      }
+      let assigned = false;
+      try {
+        assigned = assignWindowToTile(active, target.decoded.tile, mutation);
+      } catch (error) {
+        void error;
+        diagnostic("attach-rejected:assignment-failed");
+        return;
+      }
+      if (!assigned) {
+        diagnostic("attach-rejected:assignment-failed");
+        return;
+      }
+      if (active.tile !== target.decoded.tile) {
+        diagnostic("attach-failed:postcondition");
+        return;
+      }
+      diagnostic("attach-completed");
+      floating.clearDetached(active);
+    };
+    const floatActiveWindow = () => {
+      diagnostic("float-invoked");
+      const guard = activeActionGuard("float");
+      if (guard === null) {
+        return;
+      }
+      if (callbacks.isMaximized(guard.active)) {
+        diagnostic("float-rejected:maximized");
+        return;
+      }
+      if (guard.active.tile !== null) {
+        if (!isCustomTile(guard.active.tile) || guard.active.tile.isLayout) {
+          diagnostic("float-rejected:active-tile-association");
+          return;
+        }
+        floatTiledActive(guard.scope, guard.active);
+        return;
+      }
+      tileFloatingActive(guard.scope, guard.active);
+    };
+    const stickyActiveWindow = () => {
+      diagnostic("sticky-invoked");
+      const guard = activeActionGuard("sticky");
+      if (guard === null) {
+        return;
+      }
+      const { active, scope: currentScope } = guard;
+      if (floating.isSticky(active)) {
+        if (!clearSticky(active)) {
+          diagnostic("sticky-failed:on-all-desktops-write");
+          return;
+        }
+        diagnostic("sticky-disabled");
+        return;
+      }
+      if (callbacks.isMaximized(active)) {
+        diagnostic("sticky-rejected:maximized");
+        return;
+      }
+      if (!floating.isFloating(active)) {
+        if (active.tile !== null) {
+          if (!isCustomTile(active.tile) || active.tile.isLayout) {
+            diagnostic("sticky-rejected:active-tile-association");
+            return;
+          }
+          floatTiledActive(currentScope, active);
+          if (!floating.isFloating(active)) {
+            return;
+          }
+        } else {
+          if (!writeFloatGeometry(active, currentScope)) {
+            diagnostic("sticky-rejected:float-geometry-failed");
+            return;
+          }
+          floating.markFloating(active, currentScope.scope);
+          diagnostic("float-completed");
+        }
+      }
+      if (!pinSticky(active)) {
+        diagnostic("sticky-failed:on-all-desktops-write");
+        return;
+      }
+      diagnostic("sticky-enabled");
+    };
+    const fillScope = () => {
+      diagnostic("fill-invoked");
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic("fill-rejected:no-active-window");
+        return;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic("fill-rejected:desktop-output-scope");
+        return;
+      }
+      if (!windowInScope2(active, currentScope)) {
+        diagnostic("fill-rejected:active-window-eligibility");
+        return;
+      }
+      const topology = scope.topologyForScope(currentScope, (reason) => diagnostic(`fill-rejected:${reason}`));
+      if (topology === null) {
+        return;
+      }
+      const leaves = emptyAuthoredLeaves(topology);
+      if (leaves.length === 0) {
+        diagnostic("fill-inert:no-leaves");
+        return;
+      }
+      const candidates = fillCandidates(currentScope, active);
+      if (candidates === null) {
+        diagnostic("fill-rejected:window-list-decode");
+        return;
+      }
+      if (candidates.length === 0) {
+        diagnostic("fill-inert:no-candidates");
+        return;
+      }
+      const count = Math.min(leaves.length, candidates.length);
+      const plan = [];
+      for (let index = 0; index < count; index += 1) {
+        const candidate = candidates[index];
+        const leaf = leaves[index];
+        if (candidate === void 0 || leaf === void 0) {
+          diagnostic("fill-rejected:preflight");
+          return;
+        }
+        plan.push({ window: candidate, target: leaf.decoded.tile });
+      }
+      let writes = 0;
+      for (const entry of plan) {
+        if (!fillAssignmentRevalidates(currentScope, active, entry.window, entry.target)) {
+          diagnostic(writes === 0 ? "fill-rejected:assignment-stale" : "fill-partial:assignment-stale");
+          return;
+        }
+        let assigned = false;
+        try {
+          assigned = assignWindowToTile(entry.window, entry.target, mutation);
+        } catch (error) {
+          void error;
+          diagnostic(writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed");
+          return;
+        }
+        if (!assigned) {
+          diagnostic(writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed");
+          return;
+        }
+        if (!isWindow(entry.window) || entry.window.tile !== entry.target) {
+          diagnostic(writes === 0 ? "fill-failed:postcondition" : "fill-partial:postcondition");
+          return;
+        }
+        writes += 1;
+      }
+      diagnostic("fill-completed");
+    };
+    const writeFloatGeometry = (window, currentScope) => {
+      const workArea = workAreaForScope(currentScope);
+      if (workArea === null) {
+        return false;
+      }
+      const remembered = geometry.remembered(window);
+      const next = remembered === void 0 ? centeredFloatGeometry(workArea) : boundFloatGeometry(remembered, workArea);
+      const written = writeWindowFrameGeometry(window, next);
+      geometry.remember(window, next);
+      return written;
+    };
+    function activeActionGuard(action) {
+      const active = environment.activeWindow();
+      if (active === null) {
+        diagnostic(`${action}-rejected:no-active-window`);
+        return null;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return null;
+      }
+      if (!isWindow(active)) {
+        diagnostic(`${action}-rejected:not-a-window`);
+        return null;
+      }
+      if (!active.normalWindow) {
+        diagnostic(`${action}-rejected:not-normal-window`);
+        return null;
+      }
+      if (!active.managed) {
+        diagnostic(`${action}-rejected:not-managed`);
+        return null;
+      }
+      if (!active.resizeable) {
+        diagnostic(`${action}-rejected:not-resizeable`);
+        return null;
+      }
+      if (active.appletPopup) {
+        diagnostic(`${action}-rejected:applet-popup`);
+        return null;
+      }
+      const currentScope = scope.scopeForWindow(active);
+      if (currentScope === null) {
+        diagnostic(`${action}-rejected:desktop-output-scope`);
+        return null;
+      }
+      return { active, scope: currentScope };
+    }
+    function floatTiledActive(currentScope, active) {
+      const originTile = active.tile;
+      if (originTile === null || !isCustomTile(originTile) || originTile.isLayout) {
+        diagnostic("float-rejected:active-tile-association");
+        return;
+      }
+      if (!floatRevalidates(currentScope, active, originTile)) {
+        diagnostic("float-rejected:assignment-stale");
+        return;
+      }
+      let unmanaged = false;
+      try {
+        unmanaged = unmanageTile(originTile, active);
+      } catch (error) {
+        void error;
+        diagnostic("float-rejected:assignment-failed");
+        return;
+      }
+      if (!unmanaged) {
+        diagnostic("float-rejected:assignment-failed");
+        return;
+      }
+      if (active.tile !== null) {
+        diagnostic("float-failed:postcondition");
+        return;
+      }
+      floating.markFloating(active, currentScope.scope);
+      if (!writeFloatGeometry(active, currentScope)) {
+        diagnostic("float-geometry-failed");
+      }
+      diagnostic("float-completed");
+    }
+    function tileFloatingActive(currentScope, active) {
+      const topology = scope.topologyForScope(currentScope, (reason) => diagnostic(`tile-failed:${reason}`));
+      if (topology === null) {
+        return;
+      }
+      const target = firstEmptyLeaf(topology);
+      if (target === null) {
+        diagnostic("tile-failed:no-available-leaf");
+        return;
+      }
+      if (!tileFloatRevalidates(currentScope, active, target)) {
+        diagnostic("tile-failed:assignment-stale");
+        return;
+      }
+      let clearedSticky = false;
+      if (floating.isSticky(active)) {
+        if (!clearSticky(active)) {
+          diagnostic("tile-failed:sticky-clear-failed");
+          return;
+        }
+        clearedSticky = true;
+      }
+      let managed = false;
+      try {
+        managed = manageTile(target.decoded.tile, active, mutation);
+      } catch (error) {
+        void error;
+      }
+      if (!managed) {
+        if (clearedSticky && !pinSticky(active)) {
+          diagnostic("tile-failed:sticky-restore-failed");
+        }
+        diagnostic("tile-failed:assignment-failed");
+        return;
+      }
+      if (clearedSticky) {
+        diagnostic("sticky-disabled");
+      }
+      rememberCurrentFloatGeometry(active);
+      floating.clearFloating(active);
+      floating.clearDetached(active);
+      diagnostic("tile-completed");
+    }
+    function clearSticky(window) {
+      let cleared = false;
+      try {
+        cleared = setWindowOnAllDesktops(window, false);
+      } catch (error) {
+        void error;
+      }
+      if (!cleared) {
+        return false;
+      }
+      floating.clearSticky(window);
+      return true;
+    }
+    function pinSticky(window) {
+      let pinned = false;
+      try {
+        pinned = setWindowOnAllDesktops(window, true);
+      } catch (error) {
+        void error;
+      }
+      if (!pinned) {
+        return false;
+      }
+      floating.markSticky(window);
+      return true;
+    }
+    function rememberCurrentFloatGeometry(window) {
+      try {
+        const current = window.frameGeometry;
+        if (isRect(current) && current.width > 0 && current.height > 0) {
+          geometry.remember(window, current);
+        }
+      } catch (error) {
+        void error;
+      }
+    }
+    function detachRevalidates(currentScope, active, originTile) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope)) {
+        return false;
+      }
+      if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshOrigin = operationLeafForTile2(topology, originTile);
+      return freshOrigin !== null && windowIndex2(freshOrigin.windows, active) >= 0;
+    }
+    function attachRevalidates(currentScope, active, target) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope)) {
+        return false;
+      }
+      if (active.tile !== null) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshTarget = operationLeafForTile2(topology, target.decoded.tile);
+      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
+    }
+    function floatRevalidates(currentScope, active, originTile) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope)) {
+        return false;
+      }
+      if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshOrigin = operationLeafForTile2(topology, originTile);
+      return freshOrigin !== null && windowIndex2(freshOrigin.windows, active) >= 0;
+    }
+    function tileFloatRevalidates(currentScope, active, target) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || active.tile !== null) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshTarget = operationLeafForTile2(topology, target.decoded.tile);
+      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
+    }
+    function fillAssignmentRevalidates(currentScope, active, candidate, target) {
+      if (environment.activeWindow() !== active) {
+        return false;
+      }
+      const freshScope = scope.scopeForWindow(active);
+      if (freshScope === null || !sameScope3(freshScope.scope, currentScope.scope) || !windowInScope2(active, freshScope) || !windowInScope2(candidate, freshScope) || candidate.tile !== null) {
+        return false;
+      }
+      const topology = scope.topologyForScope(freshScope);
+      if (topology === null) {
+        return false;
+      }
+      const freshTarget = operationLeafForTile2(topology, target);
+      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
+    }
+    function firstEmptyLeaf(topology) {
+      for (const entry of topology) {
+        if (entry.leaf.isLayout || !isCustomTile(entry.decoded.tile) || entry.windows.length !== 0) {
+          continue;
+        }
+        return entry;
+      }
+      return null;
+    }
+    function emptyAuthoredLeaves(topology) {
+      return topology.filter((entry) => !entry.leaf.isLayout && isCustomTile(entry.decoded.tile) && entry.windows.length === 0);
+    }
+    function fillCandidates(currentScope, active) {
+      const windows = decodeSequential(environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
+      if (!windows.ok) {
+        return null;
+      }
+      callbacks.decodedBoundary("workspace-window-list");
+      const candidates = windows.value.filter((window) => windowInScope2(window, currentScope) && window.tile === null && !floating.isFloating(window));
+      const ordered = [...candidates];
+      const anchorIndex = ordered.indexOf(active);
+      if (anchorIndex >= 0) {
+        const anchor = ordered[anchorIndex];
+        if (anchor !== void 0) {
+          ordered.splice(anchorIndex, 1);
+          ordered.unshift(anchor);
+        }
+      }
+      return Object.freeze(ordered);
+    }
+    function workAreaForScope(currentScope) {
+      let value;
+      try {
+        value = environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION2, currentScope.output, currentScope.desktop);
+      } catch (error) {
+        void error;
+        return null;
+      }
+      return isRect(value) && value.width > 0 && value.height > 0 ? value : null;
+    }
+    function centeredFloatGeometry(workArea) {
+      const width = Math.floor(workArea.width * FLOAT_WORK_AREA_FRACTION);
+      const height = Math.floor(workArea.height * FLOAT_WORK_AREA_FRACTION);
+      return {
+        x: Math.floor(workArea.x + (workArea.width - width) / 2),
+        y: Math.floor(workArea.y + (workArea.height - height) / 2),
+        width,
+        height
+      };
+    }
+    function boundFloatGeometry(value, workArea) {
+      const width = Math.min(value.width, workArea.width);
+      const height = Math.min(value.height, workArea.height);
+      return {
+        x: Math.min(Math.max(value.x, workArea.x), workArea.x + workArea.width - width),
+        y: Math.min(Math.max(value.y, workArea.y), workArea.y + workArea.height - height),
+        width,
+        height
+      };
+    }
+    function sameScope3(left, right) {
+      return left.output === right.output && left.desktopId === right.desktopId;
+    }
+    return {
+      detachActiveWindow,
+      attachActiveWindow,
+      floatActiveWindow,
+      stickyActiveWindow,
+      fillScope,
+      writeFloatGeometry
+    };
+  }
+
+  // src/controller.ts
+  var HORIZONTAL_LAYOUT_DIRECTION5 = 1;
+  var VERTICAL_LAYOUT_DIRECTION5 = 2;
+  var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+  var MINIMUM_TILE_FRACTION2 = 0.15;
+  var WORK_AREA_CLIENT_AREA_OPTION3 = 5;
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var GROUP_OUTLINE_DURATION_MS = 700;
   var MAX_YIELD_REARM_PER_PHASE = 2;
@@ -1996,13 +3236,6 @@
       // Deferred Meta+0 trailing-empty focus/creation outputs, drained through the
       // same bounded settle queue as the Meta+Shift+0 intents (spec F).
       this.pendingWorkspaceZeroOutputs = [];
-      // COSMIC split resize mode (catalog `resize-mode-outwards`/`-inwards`).
-      // KWin scripting cannot observe a held key or a bare next-key modal input,
-      // so entry is a deterministic toggle and the mode is driven only through
-      // the separately registered directional focus rows (spec I). While active,
-      // those directional keys dispatch a resize step instead of a focus step.
-      this.resizeModeActive = false;
-      this.resizeModeDirection = "outwards";
       // Parsed `workspaceMode` configuration (spec D). Set from readConfig at
       // startup; invalid input falls back to the default with a diagnostic. The
       // mode dispatch is Unit 05; this field is the parsed seam every mode reads.
@@ -2146,6 +3379,49 @@
       this.desktopChangeState = {
         currentDesktopChangeOutput: () => this.recentDesktopChangeOutput
       };
+      this.inputActions = createInputActions({
+        environment: this.environment,
+        scope: this.scopeResolution,
+        topologyHelpers: {
+          operationLeafForTile,
+          targetOccupantForActive,
+          windowInScope,
+          windowIndex
+        },
+        geometryHelpers: {
+          parentHasSameSplitAxis,
+          splitDirection: splitDirection2
+        },
+        pending: this.pendingKeyboardState,
+        floating: this.floatingWindowState,
+        mutation: this.markStructuralMutation,
+        diagnostics: {
+          diagnostic: (event) => this.diagnostic(event),
+          disable: (reason) => this.gate.disable(reason, (disabledReason) => this.disabled(disabledReason)),
+          decodedBoundary: (kind) => this.decodedBoundary(kind)
+        }
+      });
+      this.windowActions = createWindowActions({
+        environment: this.environment,
+        scope: this.scopeResolution,
+        topologyHelpers: {
+          operationLeafForTile,
+          windowInScope,
+          windowIndex
+        },
+        floating: this.floatingWindowState,
+        geometry: {
+          remembered: (window) => this.floatGeometries.get(window),
+          remember: (window, geometry) => this.floatGeometries.set(window, geometry)
+        },
+        mutation: this.markStructuralMutation,
+        callbacks: {
+          afterDetach: (scope, origin) => this.reflowAfterDetach(scope, origin),
+          isMaximized: (window) => this.maximizedWindows.has(window),
+          decodedBoundary: (kind) => this.decodedBoundary(kind)
+        },
+        diagnostics: { diagnostic: (event) => this.diagnostic(event) }
+      });
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -2159,7 +3435,7 @@
     // Read-only mode snapshot for tests: entry/inverse/switch/exit are
     // deterministic and observable without mutating topology or assignments.
     resizeModeSnapshot() {
-      return { active: this.resizeModeActive, direction: this.resizeModeDirection };
+      return this.inputActions.resizeModeSnapshot();
     }
     // Parsed workspace mode (spec D). Read-only snapshot for tests and the
     // Unit 05 mode dispatch; the value is set once at startup.
@@ -2496,277 +3772,18 @@
     // re-arm atomically replaces the source and the recorded direction, so a
     // later arm always supersedes an earlier one.
     armKeyboardInsertion(direction) {
-      this.gate.run(() => {
-        this.diagnostic("keyboard-invoked");
-        const hadPending = this.pendingKeyboardState.current() !== void 0;
-        this.pendingKeyboardState.clear();
-        if (hadPending) {
-          this.diagnostic("keyboard-pending-replaced");
-        }
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("keyboard-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-          return;
-        }
-        const scope = this.scopeResolution.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("keyboard-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("keyboard-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.scopeResolution.topologyForScope(scope, (reason) => {
-          this.diagnostic(`keyboard-rejected:${reason}`);
-        });
-        if (topology === null || active.tile === null || !isTile(active.tile)) {
-          if (topology !== null) {
-            this.diagnostic("keyboard-rejected:active-tile-association");
-          }
-          return;
-        }
-        const target = operationLeafForTile(topology, active.tile);
-        if (target === null || target.leaf.isLayout) {
-          this.diagnostic("keyboard-rejected:target-occupancy-validity");
-          return;
-        }
-        for (const occupant of target.windows) {
-          if (!windowInScope(occupant, scope)) {
-            this.diagnostic("keyboard-rejected:target-occupancy-validity");
-            return;
-          }
-        }
-        const targetOccupant = targetOccupantForActive(target, active);
-        if (targetOccupant === null) {
-          this.diagnostic("keyboard-rejected:target-occupancy-validity");
-          return;
-        }
-        const disconnect = this.environment.onPendingTargetChanged(targetOccupant.window, () => this.clearPending());
-        this.pendingKeyboardState.replace({
-          scope,
-          sourceWindow: active,
-          targetWindow: targetOccupant.window,
-          targetTile: active.tile,
-          direction,
-          disconnect
-        });
-        if (!targetOccupant.usesActiveWrapper) {
-          this.diagnostic("keyboard-armed:target-occupant-wrapper");
-        }
-        this.diagnostic("keyboard-armed");
-      }, (reason) => this.disabled(reason));
-    }
-    focusNeighbor(direction) {
-      this.gate.run(() => {
-        this.diagnostic("focus-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("focus-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("focus-rejected:fullscreen");
-          return;
-        }
-        if (isWindow(active) && active.onAllDesktops === true) {
-          this.diagnostic("focus-rejected:sticky");
-          return;
-        }
-        if (isWindow(active) && isNativelyMaximized(active)) {
-          this.diagnostic("focus-rejected:maximized");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("focus-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("focus-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`focus-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        if (active.tile === null || !isTile(active.tile)) {
-          this.diagnostic("focus-rejected:active-tile-association");
-          return;
-        }
-        const focused = operationLeafForTile(topology, active.tile);
-        if (focused === null || focused.leaf.isLayout || focused.windows.length === 0 || windowIndex(focused.windows, active) < 0) {
-          this.diagnostic("focus-rejected:focused-occupancy-validity");
-          return;
-        }
-        for (const occupant of focused.windows) {
-          if (!windowInScope(occupant, scope)) {
-            this.diagnostic("focus-rejected:focused-occupancy-validity");
-            return;
-          }
-        }
-        const candidates = topology.filter(
-          (entry) => !entry.leaf.isLayout && entry.windows.length > 0 && entry.windows.every((occupant) => windowInScope(occupant, scope))
-        ).map((entry) => entry.leaf);
-        const neighborLeaf = findNeighborLeaf(candidates, focused.leaf, direction);
-        if (neighborLeaf === null) {
-          this.diagnostic("focus-rejected:no-neighbor");
-          return;
-        }
-        let target = null;
-        for (const entry of topology) {
-          if (entry.leaf === neighborLeaf) {
-            target = entry;
-            break;
-          }
-        }
-        if (target === null || target.leaf.isLayout || target.windows.length === 0) {
-          this.diagnostic("focus-rejected:target-occupancy-validity");
-          return;
-        }
-        for (const occupant of target.windows) {
-          if (!windowInScope(occupant, scope)) {
-            this.diagnostic("focus-rejected:target-occupancy-validity");
-            return;
-          }
-        }
-        const targetWindow = target.windows[0];
-        if (targetWindow === void 0) {
-          this.diagnostic("focus-rejected:target-occupancy-validity");
-          return;
-        }
-        this.environment.setActiveWindow(targetWindow);
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.inputActions.armKeyboardInsertion(direction), (reason) => this.disabled(reason));
+      return;
     }
     moveActiveWindow(direction) {
-      this.gate.run(() => {
-        this.diagnostic("move-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("move-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-          return;
-        }
-        if (isWindow(active) && active.onAllDesktops === true) {
-          this.diagnostic("move-rejected:sticky");
-          return;
-        }
-        if (isWindow(active) && isNativelyMaximized(active)) {
-          this.diagnostic("move-rejected:maximized");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("move-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("move-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`move-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        if (active.tile === null || !isTile(active.tile)) {
-          this.diagnostic("move-rejected:active-tile-association");
-          return;
-        }
-        const source = operationLeafForTile(topology, active.tile);
-        if (source === null || source.leaf.isLayout || source.windows.length !== 1 || windowIndex(source.windows, active) < 0 || topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1) {
-          this.diagnostic("move-rejected:source-occupancy-validity");
-          return;
-        }
-        for (const occupant of source.windows) {
-          if (!windowInScope(occupant, scope)) {
-            this.diagnostic("move-rejected:source-occupancy-validity");
-            return;
-          }
-        }
-        const candidates = topology.filter(
-          (entry) => !entry.leaf.isLayout && entry.leaf !== source.leaf
-        ).map((entry) => entry.leaf);
-        const targetLeaf = findNeighborLeaf(candidates, source.leaf, direction);
-        if (targetLeaf === null) {
-          this.diagnostic("move-rejected:no-target");
-          return;
-        }
-        let target = null;
-        for (const entry of topology) {
-          if (entry.leaf === targetLeaf) {
-            target = entry;
-            break;
-          }
-        }
-        if (target === null || target.leaf.isLayout) {
-          this.diagnostic("move-rejected:target-occupancy-validity");
-          return;
-        }
-        if (target.windows.length === 0) {
-          if (!this.moveAssignmentRevalidates(scope, active, source, target, direction)) {
-            this.diagnostic("move-rejected:assignment-stale");
-            return;
-          }
-          let assigned = false;
-          try {
-            assigned = manageTile(target.decoded.tile, active, this.markStructuralMutation);
-          } catch (error) {
-            void error;
-            this.diagnostic("move-rejected:assignment-failed");
-            return;
-          }
-          if (!assigned) {
-            this.diagnostic("move-rejected:assignment-failed");
-            return;
-          }
-          this.diagnostic("move-completed");
-          return;
-        }
-        this.swapToOccupiedTarget(scope, active, source, target, direction);
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.inputActions.moveActiveWindow(direction), (reason) => this.disabled(reason));
+      return;
     }
-    // Directional focus dispatch, COSMIC resize-mode aware. While the catalog
-    // resize mode is active the separately registered directional focus rows
-    // drive a resize step instead of a focus step; otherwise they focus.
-    // Exactly one directional shortcut fires per key press (each alias keeps a
-    // distinct shortcut ID), so a resize step never runs twice for one press.
     focusOrResize(direction) {
-      if (this.resizeModeActive) {
-        this.resizeActiveWindow(direction, this.resizeModeDirection);
-      } else {
-        this.focusNeighbor(direction);
-      }
+      this.gate.run(() => this.inputActions.focusOrResize(direction), (reason) => this.disabled(reason));
     }
-    // COSMIC split resize mode (spec C / catalog resize-mode-* rows). KWin
-    // scripting cannot observe a held key or register an arbitrary next-key
-    // modal input, so entry is a deterministic toggle: activating the same
-    // binding again exits the mode, and activating the other binding switches
-    // the direction (matching COSMIC's Resizing(Outwards)/Resizing(Inwards)
-    // alternate/inverse meaning). While active the mode only consumes the
-    // separately registered directional focus rows via `focusOrResize`.
     enterOrExitResizeMode(mode) {
-      this.gate.run(() => {
-        if (this.resizeModeActive && this.resizeModeDirection === mode) {
-          this.resizeModeActive = false;
-          this.diagnostic("resize-mode-exited");
-          return;
-        }
-        const entering = !this.resizeModeActive;
-        this.resizeModeDirection = mode;
-        this.resizeModeActive = true;
-        this.diagnostic(entering ? `resize-mode-entered:${mode}` : `resize-mode-switched:${mode}`);
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.inputActions.enterOrExitResizeMode(mode), (reason) => this.disabled(reason));
     }
     // One safe split-resize step of the active window. `mode` is outwards
     // (COSMIC Resizing(Outwards), bspwm resize-expand): the focused window
@@ -2786,997 +3803,32 @@
     // the result before `resize-completed` is claimed; there is no window
     // geometry write, no structural call, and no dual-write rollback path.
     resizeActiveWindow(direction, mode) {
-      this.gate.run(() => {
-        this.diagnostic("resize-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("resize-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("resize-rejected:fullscreen");
-          return;
-        }
-        if (isWindow(active) && active.onAllDesktops === true) {
-          this.diagnostic("resize-rejected:sticky");
-          return;
-        }
-        if (isWindow(active) && isNativelyMaximized(active)) {
-          this.diagnostic("resize-rejected:maximized");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("resize-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("resize-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`resize-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        if (active.tile === null || !isTile(active.tile)) {
-          this.diagnostic("resize-rejected:active-tile-association");
-          return;
-        }
-        const focused = operationLeafForTile(topology, active.tile);
-        if (focused === null || focused.leaf.isLayout || focused.windows.length === 0 || windowIndex(focused.windows, active) < 0) {
-          this.diagnostic("resize-rejected:focused-occupancy-validity");
-          return;
-        }
-        const axis = direction === "left" || direction === "right" ? "x" : "y";
-        const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION4 : VERTICAL_LAYOUT_DIRECTION4;
-        const target = this.resolveResizeSplit(active.tile, expectedLayoutDirection, direction, mode);
-        if (target === null) {
-          this.diagnostic("resize-rejected:no-parent");
-          return;
-        }
-        const parentGeometry = target.split.relativeGeometry;
-        const parentExtent = axis === "x" ? parentGeometry.width : parentGeometry.height;
-        const focusedGeometry = target.focused.relativeGeometry;
-        const focusedExtent = axis === "x" ? focusedGeometry.width : focusedGeometry.height;
-        const neighborGeometry = target.neighbor.relativeGeometry;
-        const neighborExtent = axis === "x" ? neighborGeometry.width : neighborGeometry.height;
-        if (!(parentExtent > 0) || !(focusedExtent > 0) || !(neighborExtent > 0)) {
-          this.diagnostic("resize-rejected:no-parent");
-          return;
-        }
-        const delta = RESIZE_STEP_FRACTION * parentExtent;
-        const focusedProposed = mode === "outwards" ? focusedExtent + delta : focusedExtent - delta;
-        const pairExtent = focusedExtent + neighborExtent;
-        const neighborProposed = pairExtent - focusedProposed;
-        if (focusedProposed <= 0 || neighborProposed <= 0) {
-          this.diagnostic("resize-rejected:no-parent");
-          return;
-        }
-        if (this.resizeWouldViolateMinimum(scope, target.split, focusedProposed, neighborProposed, axis)) {
-          this.diagnostic("resize-rejected:at-floor");
-          return;
-        }
-        const positionShift = target.neighborIndex > target.focusedIndex ? 0 : mode === "outwards" ? -delta : delta;
-        const focusedTarget = axis === "x" ? { x: focusedGeometry.x + positionShift, y: focusedGeometry.y, width: focusedProposed, height: focusedGeometry.height } : { x: focusedGeometry.x, y: focusedGeometry.y + positionShift, width: focusedGeometry.width, height: focusedProposed };
-        const written = setTileRelativeGeometry(target.focused, focusedTarget);
-        if (!written) {
-          this.diagnostic("resize-rejected:write-failed");
-          return;
-        }
-        const fresh = this.topologyForScope(scope);
-        if (fresh === null) {
-          this.diagnostic("resize-rejected:post-decode");
-          return;
-        }
-        const freshActive = operationLeafForTile(fresh, active.tile);
-        if (freshActive === null || freshActive.leaf.isLayout || windowIndex(freshActive.windows, active) < 0) {
-          this.diagnostic("resize-rejected:postcondition");
-          return;
-        }
-        const freshOrdered = customTileSplitSeam.decodeChildren(target.split);
-        if (freshOrdered === null || freshOrdered.length !== target.ordered.length) {
-          this.diagnostic("resize-rejected:postcondition");
-          return;
-        }
-        for (let index = 0; index < target.ordered.length; index += 1) {
-          if (freshOrdered[index] !== target.ordered[index]) {
-            this.diagnostic("resize-rejected:postcondition");
-            return;
-          }
-        }
-        const freshFocusedGeometry = target.focused.relativeGeometry;
-        const freshNeighborGeometry = target.neighbor.relativeGeometry;
-        const freshFocusedExtent = axis === "x" ? freshFocusedGeometry.width : freshFocusedGeometry.height;
-        const freshNeighborExtent = axis === "x" ? freshNeighborGeometry.width : freshNeighborGeometry.height;
-        if (Math.abs(freshFocusedExtent - focusedProposed) > RELATIVE_GEOMETRY_EPSILON || Math.abs(freshNeighborExtent - neighborProposed) > RELATIVE_GEOMETRY_EPSILON) {
-          this.diagnostic("resize-rejected:postcondition");
-          return;
-        }
-        this.diagnostic("resize-completed");
-      }, (reason) => this.disabled(reason));
-    }
-    // COSMIC resize target resolution: the nearest matching-orientation
-    // ancestor split where the current positioned node (the focused leaf,
-    // then each climbed ancestor) is a direct child and has a sibling on the
-    // mode-mapped pressed side. Outwards uses the sibling in the pressed
-    // direction (grow); inwards uses the sibling opposite the pressed
-    // direction (the flipped edge, shrink). A node at the outer edge of a
-    // matching split climbs to the next ancestor, exactly like cosmic-comp
-    // (shell/layout/tiling/mod.rs resize()); no climb target returns null.
-    resolveResizeSplit(focusedTile, expectedLayoutDirection, direction, mode) {
-      const dirSign = direction === "right" || direction === "down" ? 1 : -1;
-      let node = focusedTile;
-      while (node !== null) {
-        const parent = node.parent;
-        if (parent === null) {
-          return null;
-        }
-        if (isCustomTile(parent) && parent.isLayout && parent.layoutDirection === expectedLayoutDirection) {
-          const ordered = customTileSplitSeam.decodeChildren(parent);
-          if (ordered !== null) {
-            const focusedIndex = ordered.indexOf(node);
-            if (focusedIndex >= 0) {
-              const neighborIndex = mode === "outwards" ? focusedIndex + dirSign : focusedIndex - dirSign;
-              if (neighborIndex >= 0 && neighborIndex < ordered.length) {
-                const focused = ordered[focusedIndex];
-                const neighbor = ordered[neighborIndex];
-                if (focused !== void 0 && neighbor !== void 0) {
-                  return { split: parent, ordered, focusedIndex, neighborIndex, focused, neighbor };
-                }
-              }
-            }
-          }
-        }
-        if (!isTile(node)) {
-          return null;
-        }
-        node = parent;
-      }
-      return null;
-    }
-    // Whether the proposed post-step child extents (screen-relative along the
-    // split axis) fall below KWin's minimum tile size. The floor is
-    // MINIMUM_TILE_FRACTION of the per-output working area extent on the axis,
-    // scaled to screen-relative units through the split's own absolute extent.
-    // An unreadable working area never refuses: the preflight must not invent a
-    // floor it cannot prove.
-    resizeWouldViolateMinimum(scope, split, firstProposed, secondProposed, axis) {
-      const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
-      if (!isRect(workArea)) {
-        return false;
-      }
-      const workExtent = axis === "x" ? workArea.width : workArea.height;
-      if (!(workExtent > 0)) {
-        return false;
-      }
-      const absoluteExtent = axis === "x" ? split.absoluteGeometry.width : split.absoluteGeometry.height;
-      const relativeExtent = axis === "x" ? split.relativeGeometry.width : split.relativeGeometry.height;
-      if (!(absoluteExtent > 0) || !(relativeExtent > 0)) {
-        return false;
-      }
-      const scale = absoluteExtent / relativeExtent;
-      const floor = MINIMUM_TILE_FRACTION * workExtent;
-      return firstProposed * scale < floor || secondProposed * scale < floor;
-    }
-    // Directional occupied-target swap: when the nearest ranked non-layout
-    // directional leaf is occupied, its exactly-one eligible in-scope occupant
-    // swaps with the active source. Two guarded `window.tile` writes each
-    // revalidate immediately before the write, decode their postcondition, and
-    // stop at the first failure. On a failed second write a single best-effort
-    // restoration returns the source to its original leaf; no rollback is
-    // claimed in any other path. Assignment-only: no topology method is ever
-    // called.
-    swapToOccupiedTarget(scope, active, source, target, direction) {
-      this.diagnostic("move-swap-invoked");
-      if (active.fullScreen === true) {
-        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-        return;
-      }
-      if (target.leaf.isLayout || target.windows.length !== 1) {
-        this.diagnostic("move-rejected:swap-occupancy-validity");
-        return;
-      }
-      const occupant = target.windows[0];
-      if (occupant === void 0 || !windowInScope(occupant, scope)) {
-        this.diagnostic("move-rejected:swap-occupant-ineligible");
-        return;
-      }
-      if (occupant.fullScreen === true) {
-        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-        return;
-      }
-      if (!this.swapRevalidates(scope, active, occupant, source, target, direction, "before-first")) {
-        this.diagnostic("move-swap-rejected:stale");
-        return;
-      }
-      let firstAssigned = false;
-      try {
-        firstAssigned = assignWindowToTile(active, target.decoded.tile, this.markStructuralMutation);
-      } catch (error) {
-        void error;
-      }
-      if (!firstAssigned) {
-        this.diagnostic("move-swap-failed:first-write");
-        return;
-      }
-      if (!this.swapRevalidates(scope, active, occupant, source, target, direction, "before-second")) {
-        this.swapSecondWriteFailed(scope, active, source);
-        return;
-      }
-      let secondAssigned = false;
-      try {
-        secondAssigned = assignWindowToTile(occupant, source.decoded.tile, this.markStructuralMutation);
-      } catch (error) {
-        void error;
-      }
-      if (!secondAssigned) {
-        this.swapSecondWriteFailed(scope, active, source);
-        return;
-      }
-      if (!this.swapDecodesFinal(scope, active, occupant, source, target)) {
-        this.swapSecondWriteFailed(scope, active, source);
-        return;
-      }
-      this.diagnostic("move-swap-completed");
-    }
-    // Re-derives active identity, exact scope/root, both occupant associations,
-    // and both leaf realizations immediately before a guarded swap write. The
-    // expected leaf contents depend on the phase: before the first write the
-    // source leaf holds only the active window and the target leaf only the
-    // occupant; before the second write the source leaf is empty and the target
-    // leaf briefly holds both (the pinned setTileCompatibility contract
-    // evacuates-then-adds, so the destination leaf transiently double-occupies).
-    swapRevalidates(scope, active, occupant, source, target, direction, phase) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope) || !windowInScope(occupant, freshScope)) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null || active.tile === null || !isTile(active.tile) || occupant.tile === null || !isTile(occupant.tile) || occupant.tile !== target.decoded.tile) {
-        return false;
-      }
-      const expectedActiveTile = phase === "before-first" ? source.decoded.tile : target.decoded.tile;
-      if (active.tile !== expectedActiveTile) {
-        return false;
-      }
-      const freshSource = operationLeafForTile(topology, source.decoded.tile);
-      const freshTarget = operationLeafForTile(topology, target.decoded.tile);
-      if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
-        return false;
-      }
-      if (phase === "before-first") {
-        if (freshSource.windows.length !== 1 || windowIndex(freshSource.windows, active) < 0) {
-          return false;
-        }
-        if (freshTarget.windows.length !== 1 || windowIndex(freshTarget.windows, occupant) < 0) {
-          return false;
-        }
-      } else {
-        if (freshSource.windows.length !== 0) {
-          return false;
-        }
-        if (freshTarget.windows.length !== 2 || windowIndex(freshTarget.windows, active) < 0 || windowIndex(freshTarget.windows, occupant) < 0) {
-          return false;
-        }
-      }
-      if (active === occupant || topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1 || topology.filter((entry) => windowIndex(entry.windows, occupant) >= 0).length !== 1) {
-        return false;
-      }
-      if (phase === "before-first") {
-        const freshCandidates = topology.filter(
-          (entry) => !entry.leaf.isLayout && entry.leaf !== freshSource.leaf
-        ).map((entry) => entry.leaf);
-        return findNeighborLeaf(freshCandidates, freshSource.leaf, direction) === freshTarget.leaf;
-      }
-      return true;
-    }
-    // Fresh decoded final postcondition: the occupant occupies the original
-    // source leaf and the active source the target leaf, each leaf holding
-    // exactly one window. No topology method is called.
-    swapDecodesFinal(scope, active, occupant, source, target) {
-      const topology = this.topologyForScope(scope);
-      if (topology === null || active.tile !== target.decoded.tile || occupant.tile !== source.decoded.tile) {
-        return false;
-      }
-      const freshSource = operationLeafForTile(topology, source.decoded.tile);
-      const freshTarget = operationLeafForTile(topology, target.decoded.tile);
-      if (freshSource === null || freshTarget === null || freshSource.leaf.isLayout || freshTarget.leaf.isLayout) {
-        return false;
-      }
-      return freshSource.windows.length === 1 && windowIndex(freshSource.windows, occupant) >= 0 && freshTarget.windows.length === 1 && windowIndex(freshTarget.windows, active) >= 0;
-    }
-    // Second-write failure leaves the source in the target leaf (possible
-    // stranded window): report the fixed diagnostic, then attempt exactly one
-    // best-effort restoration of the source to its original leaf and report the
-    // verified outcome. No rollback claim beyond that single guarded write.
-    swapSecondWriteFailed(scope, active, source) {
-      this.diagnostic("move-swap-failed:second-write");
-      const restored = this.restoreSwapFirst(scope, active, source);
-      if (restored && active.tile === source.decoded.tile) {
-        this.diagnostic("move-swap-restored:verified");
-      } else {
-        this.diagnostic("move-swap-restored:unverified");
-      }
-    }
-    // One guarded best-effort write returning the active source to its original
-    // leaf after a failed second swap write. Active identity, exact scope,
-    // fresh root/topology, original source leaf reachability/non-layout status,
-    // and the active window's own association with an in-scope non-layout
-    // decoded leaf are all re-derived first; any failure skips the write.
-    restoreSwapFirst(scope, active, source) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope)) {
-        return false;
-      }
-      if (active.tile === null || !isTile(active.tile)) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshSource = operationLeafForTile(topology, source.decoded.tile);
-      if (freshSource === null || freshSource.leaf.isLayout) {
-        return false;
-      }
-      const freshActive = operationLeafForTile(topology, active.tile);
-      if (freshActive === null || freshActive.leaf.isLayout || windowIndex(freshActive.windows, active) < 0) {
-        return false;
-      }
-      let restored = false;
-      try {
-        restored = assignWindowToTile(active, source.decoded.tile, this.markStructuralMutation);
-      } catch (error) {
-        void error;
-      }
-      return restored;
+      this.gate.run(() => this.inputActions.resizeActiveWindow(direction, mode), (reason) => this.disabled(reason));
+      return;
     }
     detachActiveWindow() {
-      this.gate.run(() => {
-        this.diagnostic("detach-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("detach-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("detach-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("detach-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`detach-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        if (active.tile === null) {
-          this.diagnostic("detach-rejected:no-tile");
-          return;
-        }
-        if (!isCustomTile(active.tile)) {
-          this.diagnostic("detach-rejected:active-tile-association");
-          return;
-        }
-        if (active.tile.isLayout) {
-          this.diagnostic("detach-rejected:layout-tile");
-          return;
-        }
-        const origin = operationLeafForTile(topology, active.tile);
-        if (origin === null || windowIndex(origin.windows, active) < 0) {
-          this.diagnostic("detach-rejected:occupancy-validity");
-          return;
-        }
-        const originTile = active.tile;
-        if (!this.detachRevalidates(scope, active, originTile)) {
-          this.diagnostic("detach-rejected:assignment-stale");
-          return;
-        }
-        let detached = false;
-        try {
-          detached = detachWindowFromTile(active);
-        } catch (error) {
-          void error;
-          this.diagnostic("detach-rejected:assignment-failed");
-          return;
-        }
-        if (!detached) {
-          this.diagnostic("detach-rejected:assignment-failed");
-          return;
-        }
-        if (active.tile !== null) {
-          this.diagnostic("detach-failed:postcondition");
-          return;
-        }
-        this.diagnostic("detach-completed");
-        this.recordDetached(active);
-        this.reflowAfterDetach(scope, originTile);
-      }, (reason) => this.disabled(reason));
-    }
-    // Active window identity, scope, eligibility, and the exact tile
-    // association are all re-derived immediately before the single detach
-    // write, so any change between selection and the write rejects without a
-    // write.
-    detachRevalidates(scope, active, originTile) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope)) {
-        return false;
-      }
-      if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshOrigin = operationLeafForTile(topology, originTile);
-      return freshOrigin !== null && windowIndex(freshOrigin.windows, active) >= 0;
+      this.gate.run(() => this.windowActions.detachActiveWindow(), (reason) => this.disabled(reason));
+      return;
     }
     // Assignment-only inverse of detach: one guarded `window.tile = target`
     // write for the active eligible floating window into the deterministic
     // first available empty non-layout leaf of the exact scope. Never changes
     // topology or another occupant.
     attachActiveWindow() {
-      this.gate.run(() => {
-        this.diagnostic("attach-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("attach-rejected:no-active-window");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("attach-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("attach-rejected:active-window-eligibility");
-          return;
-        }
-        if (active.tile !== null) {
-          this.diagnostic("attach-rejected:already-assigned");
-          return;
-        }
-        if (this.isFloating(active)) {
-          this.tileFloatingActive(scope, active);
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`attach-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        const target = this.firstEmptyLeaf(topology);
-        if (target === null) {
-          this.diagnostic("attach-rejected:no-available-tile");
-          return;
-        }
-        if (!this.attachRevalidates(scope, active, target)) {
-          this.diagnostic("attach-rejected:assignment-stale");
-          return;
-        }
-        let assigned = false;
-        try {
-          assigned = assignWindowToTile(active, target.decoded.tile, this.markStructuralMutation);
-        } catch (error) {
-          void error;
-          this.diagnostic("attach-rejected:assignment-failed");
-          return;
-        }
-        if (!assigned) {
-          this.diagnostic("attach-rejected:assignment-failed");
-          return;
-        }
-        if (active.tile !== target.decoded.tile) {
-          this.diagnostic("attach-failed:postcondition");
-          return;
-        }
-        this.diagnostic("attach-completed");
-        this.detachedWindows.delete(active);
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.windowActions.attachActiveWindow(), (reason) => this.disabled(reason));
+      return;
     }
-    // Shared active-window guard for the float/sticky actions: every rejection
-    // is an explicit reason log, and fullscreen windows are ignored through the
-    // established fullscreen diagnostic. Returns the re-validated active window
-    // and its scope, or null after emitting exactly one rejection reason.
-    activeActionGuard(action) {
-      const active = this.environment.activeWindow();
-      if (active === null) {
-        this.diagnostic(`${action}-rejected:no-active-window`);
-        return null;
-      }
-      if (isWindow(active) && active.fullScreen === true) {
-        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-        return null;
-      }
-      if (!isWindow(active)) {
-        this.diagnostic(`${action}-rejected:not-a-window`);
-        return null;
-      }
-      if (!active.normalWindow) {
-        this.diagnostic(`${action}-rejected:not-normal-window`);
-        return null;
-      }
-      if (!active.managed) {
-        this.diagnostic(`${action}-rejected:not-managed`);
-        return null;
-      }
-      if (!active.resizeable) {
-        this.diagnostic(`${action}-rejected:not-resizeable`);
-        return null;
-      }
-      if (active.appletPopup) {
-        this.diagnostic(`${action}-rejected:applet-popup`);
-        return null;
-      }
-      const scope = this.scopeForWindow(active);
-      if (scope === null) {
-        this.diagnostic(`${action}-rejected:desktop-output-scope`);
-        return null;
-      }
-      return { active, scope };
-    }
-    // Meta+G float/tile toggle. Floating leaves the tile tree intact: the
-    // vacated leaf is retained (unmanage never collapses), the window leaves
-    // the placement population, and its centered 60% work-area geometry (or the
-    // session-remembered one, bounded to the work area) is written. Tiling back
-    // uses the established `tile.manage()` adoption into the first available
-    // empty leaf; capacity (no available leaf) and floor (assignment) failures
-    // leave it floating with the exact reason logged. A sticky window being
-    // tiled first clears its all-desktop pin because sticky implies floating.
     floatActiveWindow() {
-      this.gate.run(() => {
-        this.diagnostic("float-invoked");
-        const guard = this.activeActionGuard("float");
-        if (guard === null) {
-          return;
-        }
-        if (this.maximizedWindows.has(guard.active)) {
-          this.diagnostic("float-rejected:maximized");
-          return;
-        }
-        if (guard.active.tile !== null) {
-          if (!isCustomTile(guard.active.tile) || guard.active.tile.isLayout) {
-            this.diagnostic("float-rejected:active-tile-association");
-            return;
-          }
-          this.floatTiledActive(guard.scope, guard.active);
-          return;
-        }
-        this.tileFloatingActive(guard.scope, guard.active);
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.windowActions.floatActiveWindow(), (reason) => this.disabled(reason));
+      return;
     }
-    // Float an already-tiled active window. Re-derives active identity, scope,
-    // and the exact tile association immediately before the single unmanage
-    // write, then writes the float geometry. No structural call is ever made.
-    floatTiledActive(scope, active) {
-      const originTile = active.tile;
-      if (originTile === null || !isCustomTile(originTile) || originTile.isLayout) {
-        this.diagnostic("float-rejected:active-tile-association");
-        return;
-      }
-      if (!this.floatRevalidates(scope, active, originTile)) {
-        this.diagnostic("float-rejected:assignment-stale");
-        return;
-      }
-      let unmanaged = false;
-      try {
-        unmanaged = unmanageTile(originTile, active);
-      } catch (error) {
-        void error;
-        this.diagnostic("float-rejected:assignment-failed");
-        return;
-      }
-      if (!unmanaged) {
-        this.diagnostic("float-rejected:assignment-failed");
-        return;
-      }
-      if (active.tile !== null) {
-        this.diagnostic("float-failed:postcondition");
-        return;
-      }
-      this.floatingWindows.add(active);
-      this.floatScopes.set(active, scope.scope);
-      if (!this.writeFloatGeometry(active, scope)) {
-        this.diagnostic("float-geometry-failed");
-      }
-      this.diagnostic("float-completed");
-    }
-    floatRevalidates(scope, active, originTile) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
-        return false;
-      }
-      if (active.tile !== originTile || !isCustomTile(active.tile) || active.tile.isLayout) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshOrigin = operationLeafForTile(topology, originTile);
-      return freshOrigin !== null && windowIndex(freshOrigin.windows, active) >= 0;
-    }
-    // Tile a floating active window through the established safe adoption
-    // `tile.manage()` into the deterministic first available empty non-layout
-    // leaf. Every failure path - topology, capacity (no available leaf), stale
-    // revalidation, and floor (assignment) - leaves the float unchanged with
-    // the exact reason. A sticky window's all-desktop pin is cleared before any
-    // tile write, so a failed clear leaves it sticky floating (never tiled). If
-    // the clear succeeds but the subsequent `tile.manage` fails, the pin and
-    // sticky tracking are restored before returning so the failed transition
-    // leaves the original sticky floating state intact; a failed restore is
-    // logged with its own reason. Only after a successful manage does the
-    // infallible floating/sticky state cleanup run.
-    tileFloatingActive(scope, active) {
-      const topology = this.topologyForScope(scope, (reason) => {
-        this.diagnostic(`tile-failed:${reason}`);
-      });
-      if (topology === null) {
-        return;
-      }
-      const target = this.firstEmptyLeaf(topology);
-      if (target === null) {
-        this.diagnostic("tile-failed:no-available-leaf");
-        return;
-      }
-      if (!this.tileFloatRevalidates(scope, active, target)) {
-        this.diagnostic("tile-failed:assignment-stale");
-        return;
-      }
-      let clearedSticky = false;
-      if (this.isSticky(active)) {
-        if (!this.clearSticky(active)) {
-          this.diagnostic("tile-failed:sticky-clear-failed");
-          return;
-        }
-        clearedSticky = true;
-      }
-      let managed = false;
-      try {
-        managed = manageTile(target.decoded.tile, active, this.markStructuralMutation);
-      } catch (error) {
-        void error;
-      }
-      if (!managed) {
-        if (clearedSticky) {
-          if (!this.pinSticky(active)) {
-            this.diagnostic("tile-failed:sticky-restore-failed");
-          }
-        }
-        this.diagnostic("tile-failed:assignment-failed");
-        return;
-      }
-      if (clearedSticky) {
-        this.diagnostic("sticky-disabled");
-      }
-      this.rememberCurrentFloatGeometry(active);
-      this.floatingWindows.delete(active);
-      this.floatScopes.delete(active);
-      this.detachedWindows.delete(active);
-      this.diagnostic("tile-completed");
-    }
-    tileFloatRevalidates(scope, active, target) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
-        return false;
-      }
-      if (active.tile !== null) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshTarget = operationLeafForTile(topology, target.decoded.tile);
-      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
-    }
-    // Remember the live frame geometry at the moment a floating window tiles,
-    // so a user resize while floating is the geometry restored on the next
-    // float. Also called immediately before a fullscreen-exit restoration so a
-    // user-adjusted float geometry survives the fullscreen round trip, not the
-    // geometry recorded at the initial float. Read-only observation; a failed
-    // or invalid read keeps the prior record.
-    rememberCurrentFloatGeometry(window) {
-      try {
-        const geometry = window.frameGeometry;
-        if (isRect(geometry) && positiveGeometry(geometry)) {
-          this.floatGeometries.set(window, geometry);
-        }
-      } catch (error) {
-        void error;
-      }
-    }
-    clearSticky(window) {
-      let cleared = false;
-      try {
-        cleared = setWindowOnAllDesktops(window, false);
-      } catch (error) {
-        void error;
-      }
-      if (!cleared) {
-        return false;
-      }
-      this.stickyWindows.delete(window);
-      return true;
-    }
-    pinSticky(window) {
-      let pinned = false;
-      try {
-        pinned = setWindowOnAllDesktops(window, true);
-      } catch (error) {
-        void error;
-      }
-      if (!pinned) {
-        return false;
-      }
-      this.stickyWindows.add(window);
-      return true;
-    }
-    // Meta+Shift+G sticky toggle. Sticky implies floating: enabling on a tiled
-    // window floats it first (unmanage + float geometry) then pins it across
-    // all desktops via the documented writable `onAllDesktops`. Disabling
-    // clears the pin but the window remains floating. Never touches keepAbove
-    // or any equivalent.
     stickyActiveWindow() {
-      this.gate.run(() => {
-        this.diagnostic("sticky-invoked");
-        const guard = this.activeActionGuard("sticky");
-        if (guard === null) {
-          return;
-        }
-        const { active, scope } = guard;
-        if (this.isSticky(active)) {
-          if (!this.clearSticky(active)) {
-            this.diagnostic("sticky-failed:on-all-desktops-write");
-            return;
-          }
-          this.diagnostic("sticky-disabled");
-          return;
-        }
-        if (this.maximizedWindows.has(active)) {
-          this.diagnostic("sticky-rejected:maximized");
-          return;
-        }
-        if (!this.isFloating(active)) {
-          if (active.tile !== null) {
-            if (!isCustomTile(active.tile) || active.tile.isLayout) {
-              this.diagnostic("sticky-rejected:active-tile-association");
-              return;
-            }
-            this.floatTiledActive(scope, active);
-            if (!this.isFloating(active)) {
-              return;
-            }
-          } else {
-            if (!this.writeFloatGeometry(active, scope)) {
-              this.diagnostic("sticky-rejected:float-geometry-failed");
-              return;
-            }
-            this.floatingWindows.add(active);
-            this.floatScopes.set(active, scope.scope);
-            this.diagnostic("float-completed");
-          }
-        }
-        if (!this.pinSticky(active)) {
-          this.diagnostic("sticky-failed:on-all-desktops-write");
-          return;
-        }
-        this.diagnostic("sticky-enabled");
-      }, (reason) => this.disabled(reason));
+      this.gate.run(() => this.windowActions.stickyActiveWindow(), (reason) => this.disabled(reason));
+      return;
     }
-    // Deterministic first available empty non-layout leaf in the exact decoded
-    // traversal order. Layout and occupied leaves are skipped; valid explicitly
-    // selected overlay leaves are ordinary authored tree leaves and participate
-    // through the same traversal.
-    firstEmptyLeaf(topology) {
-      for (const entry of topology) {
-        if (entry.leaf.isLayout || !isCustomTile(entry.decoded.tile) || entry.windows.length !== 0) {
-          continue;
-        }
-        return entry;
-      }
-      return null;
-    }
-    // Active identity, scope, eligibility, unassigned source, exact
-    // output/desktop root, target reachability, non-layout status, and
-    // emptiness are all re-derived immediately before the single attach write.
-    attachRevalidates(scope, active, target) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope)) {
-        return false;
-      }
-      if (active.tile !== null) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshTarget = operationLeafForTile(topology, target.decoded.tile);
-      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
-    }
-    // Explicit assignment-only scope fill: the active normal eligible window
-    // anchors the exact desktop/output scope whether it is tiled or floating.
-    // Only existing empty authored Custom Tile leaves are filled, in
-    // deterministic decoded traversal order, with eligible unassigned windows
-    // from the proven windowList collection. No topology mutation, no
-    // compaction or reflow, and no selected-overlay record is created.
     fillScope() {
-      this.gate.run(() => {
-        this.diagnostic("fill-invoked");
-        const active = this.environment.activeWindow();
-        if (active === null) {
-          this.diagnostic("fill-rejected:no-active-window");
-          return;
-        }
-        if (isWindow(active) && active.fullScreen === true) {
-          this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-          return;
-        }
-        const scope = this.scopeForWindow(active);
-        if (scope === null) {
-          this.diagnostic("fill-rejected:desktop-output-scope");
-          return;
-        }
-        if (!windowInScope(active, scope)) {
-          this.diagnostic("fill-rejected:active-window-eligibility");
-          return;
-        }
-        const topology = this.topologyForScope(scope, (reason) => {
-          this.diagnostic(`fill-rejected:${reason}`);
-        });
-        if (topology === null) {
-          return;
-        }
-        const leaves = this.emptyAuthoredLeaves(topology);
-        if (leaves.length === 0) {
-          this.diagnostic("fill-inert:no-leaves");
-          return;
-        }
-        const candidates = this.fillCandidates(scope, active);
-        if (candidates === null) {
-          this.diagnostic("fill-rejected:window-list-decode");
-          return;
-        }
-        if (candidates.length === 0) {
-          this.diagnostic("fill-inert:no-candidates");
-          return;
-        }
-        const count = Math.min(leaves.length, candidates.length);
-        const plan = [];
-        for (let index = 0; index < count; index += 1) {
-          const candidate = candidates[index];
-          const leaf = leaves[index];
-          if (candidate === void 0 || leaf === void 0) {
-            this.diagnostic("fill-rejected:preflight");
-            return;
-          }
-          plan.push({ window: candidate, target: leaf.decoded.tile });
-        }
-        let writes = 0;
-        for (const entry of plan) {
-          if (!this.fillAssignmentRevalidates(scope, active, entry.window, entry.target)) {
-            this.diagnostic(
-              writes === 0 ? "fill-rejected:assignment-stale" : "fill-partial:assignment-stale"
-            );
-            return;
-          }
-          let assigned = false;
-          try {
-            assigned = assignWindowToTile(entry.window, entry.target, this.markStructuralMutation);
-          } catch (error) {
-            void error;
-            this.diagnostic(
-              writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed"
-            );
-            return;
-          }
-          if (!assigned) {
-            this.diagnostic(
-              writes === 0 ? "fill-rejected:assignment-failed" : "fill-partial:assignment-failed"
-            );
-            return;
-          }
-          if (!isWindow(entry.window) || entry.window.tile !== entry.target) {
-            this.diagnostic(
-              writes === 0 ? "fill-failed:postcondition" : "fill-partial:postcondition"
-            );
-            return;
-          }
-          writes += 1;
-        }
-        this.diagnostic("fill-completed");
-      }, (reason) => this.disabled(reason));
-    }
-    // Empty authored non-layout Custom Tile leaves in the exact decoded
-    // traversal order. Layout tiles, occupied leaves, and generic (non-Custom)
-    // tiles are skipped; valid selected-overlay leaves are ordinary authored
-    // leaves and participate through the same traversal.
-    emptyAuthoredLeaves(topology) {
-      const leaves = [];
-      for (const entry of topology) {
-        if (entry.leaf.isLayout || !isCustomTile(entry.decoded.tile) || entry.windows.length !== 0) {
-          continue;
-        }
-        leaves.push(entry);
-      }
-      return leaves;
-    }
-    // Eligible unassigned exact-scope windows from the proven all-window
-    // collection, in collection order. The active window is anchored first only
-    // when it is itself present in that collection and eligible and unassigned;
-    // a distinct active wrapper that is not in the collection is never injected
-    // as a candidate.
-    fillCandidates(scope, active) {
-      const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
-      if (!windows.ok) {
-        return null;
-      }
-      this.decodedBoundary("workspace-window-list");
-      const candidates = [];
-      for (const window of windows.value) {
-        if (windowInScope(window, scope) && window.tile === null && !this.isFloating(window)) {
-          candidates.push(window);
-        }
-      }
-      const anchorIndex = windowIndex(candidates, active);
-      if (anchorIndex >= 0) {
-        const anchor = candidates[anchorIndex];
-        if (anchor !== void 0) {
-          candidates.splice(anchorIndex, 1);
-          candidates.unshift(anchor);
-        }
-      }
-      return Object.freeze(candidates);
-    }
-    // Active identity, exact scope, eligibility, candidate identity/eligibility/
-    // scope/still-unassigned state, and target reachability/non-layout/emptiness
-    // are all re-derived immediately before every guarded write, so any change
-    // between planning and the write stops the fill without claiming rollback.
-    fillAssignmentRevalidates(scope, active, candidate, target) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope) || !windowInScope(candidate, freshScope) || candidate.tile !== null) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null) {
-        return false;
-      }
-      const freshTarget = operationLeafForTile(topology, target);
-      return freshTarget !== null && !freshTarget.leaf.isLayout && isCustomTile(freshTarget.decoded.tile) && freshTarget.windows.length === 0;
+      this.gate.run(() => this.windowActions.fillScope(), (reason) => this.disabled(reason));
+      return;
     }
     applyPreset(kind) {
       this.gate.run(() => {
@@ -4135,33 +4187,6 @@
       }
       const freshScope = this.scopeForWindow(active);
       return freshScope !== null && sameScope(freshScope.scope, scope.scope) && windowInScope(active, freshScope) && windowInScope(occupant.window, freshScope) && occupant.window.tile === occupant.originTile;
-    }
-    // Active scope, source association, and target emptiness are re-derived
-    // immediately before the single tile assignment, so any change between
-    // selection and the write rejects without a write.
-    moveAssignmentRevalidates(scope, active, source, target, direction) {
-      if (this.environment.activeWindow() !== active) {
-        return false;
-      }
-      const freshScope = this.scopeForWindow(active);
-      if (freshScope === null || !sameScope(freshScope.scope, scope.scope) || !windowInScope(active, freshScope)) {
-        return false;
-      }
-      const topology = this.topologyForScope(freshScope);
-      if (topology === null || active.tile === null || !isTile(active.tile)) {
-        return false;
-      }
-      const freshSource = operationLeafForTile(topology, active.tile);
-      if (freshSource === null || freshSource.decoded.tile !== source.decoded.tile || freshSource.leaf.isLayout || freshSource.windows.length !== 1 || windowIndex(freshSource.windows, active) < 0 || topology.filter((entry) => windowIndex(entry.windows, active) >= 0).length !== 1) {
-        return false;
-      }
-      const freshTarget = operationLeafForTile(topology, target.decoded.tile);
-      if (freshTarget === null || freshTarget.leaf.isLayout || freshTarget.windows.length !== 0) {
-        return false;
-      }
-      const freshCandidates = topology.filter((entry) => !entry.leaf.isLayout && entry.windows.length === 0).map((entry) => entry.leaf);
-      const freshTargetLeaf = findNeighborLeaf(freshCandidates, freshSource.leaf, direction);
-      return freshTargetLeaf === freshTarget.leaf;
     }
     clearPending() {
       const pending = this.pending.current;
@@ -5549,7 +5574,7 @@
     // invent a floor it cannot prove.
     splitAxisWouldViolateMinimum(scope, geometry, axis) {
       const leafExtent = axis === "x" ? geometry.width : geometry.height;
-      const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+      const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION3, scope.output, scope.desktop);
       if (!isRect(workArea)) {
         return false;
       }
@@ -5557,7 +5582,7 @@
       if (!(workExtent > 0)) {
         return false;
       }
-      return leafExtent / 2 < MINIMUM_TILE_FRACTION * workExtent;
+      return leafExtent / 2 < MINIMUM_TILE_FRACTION2 * workExtent;
     }
     // Split a drop target leaf into the direction-derived children and manage
     // the original occupant onto the opposite child and the dragged window
@@ -5691,7 +5716,7 @@
     workAreaForScope(scope) {
       let value;
       try {
-        value = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+        value = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION3, scope.output, scope.desktop);
       } catch (error) {
         void error;
         return null;
@@ -5701,28 +5726,48 @@
       }
       return value;
     }
-    // Centered 60% x 60% of the working area, floored to integer pixels and
-    // strictly inside it (60% of a positive rect always fits).
-    centeredFloatGeometry(workArea) {
-      const width = Math.floor(workArea.width * FLOAT_WORK_AREA_FRACTION);
-      const height = Math.floor(workArea.height * FLOAT_WORK_AREA_FRACTION);
-      return {
-        x: Math.floor(workArea.x + (workArea.width - width) / 2),
-        y: Math.floor(workArea.y + (workArea.height - height) / 2),
-        width,
-        height
-      };
+    rememberCurrentFloatGeometry(window) {
+      try {
+        const geometry = window.frameGeometry;
+        if (isRect(geometry) && positiveGeometry(geometry)) {
+          this.floatGeometries.set(window, geometry);
+        }
+      } catch (error) {
+        void error;
+      }
     }
-    // Clamp a remembered float geometry so the window stays fully inside the
-    // current work area (bounded to it) when the output geometry changed.
-    boundFloatGeometry(geometry, workArea) {
-      const width = Math.min(geometry.width, workArea.width);
-      const height = Math.min(geometry.height, workArea.height);
-      const maxX = workArea.x + workArea.width - width;
-      const maxY = workArea.y + workArea.height - height;
-      const x = Math.min(Math.max(geometry.x, workArea.x), maxX);
-      const y = Math.min(Math.max(geometry.y, workArea.y), maxY);
-      return { x, y, width, height };
+    activeActionGuard(action) {
+      const active = this.environment.activeWindow();
+      if (active === null) {
+        this.diagnostic(`${action}-rejected:no-active-window`);
+        return null;
+      }
+      if (isWindow(active) && active.fullScreen === true) {
+        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return null;
+      }
+      if (!isWindow(active)) {
+        this.diagnostic(`${action}-rejected:not-a-window`);
+        return null;
+      }
+      if (!active.normalWindow) {
+        this.diagnostic(`${action}-rejected:not-normal-window`);
+        return null;
+      }
+      if (!active.managed) {
+        this.diagnostic(`${action}-rejected:not-managed`);
+        return null;
+      }
+      if (!active.resizeable) {
+        this.diagnostic(`${action}-rejected:not-resizeable`);
+        return null;
+      }
+      if (active.appletPopup) {
+        this.diagnostic(`${action}-rejected:applet-popup`);
+        return null;
+      }
+      const scope = this.scopeForWindow(active);
+      return scope === null ? (this.diagnostic(`${action}-rejected:desktop-output-scope`), null) : { active, scope };
     }
     // Write the float geometry: the session-remembered geometry bounded to the
     // current work area, or the centered 60% default when none is remembered.
@@ -5731,91 +5776,11 @@
     // guarded write reported success; the record is kept even on a failed write
     // so the remembered size survives the fullscreen seam.
     writeFloatGeometry(window, scope) {
-      const workArea = this.workAreaForScope(scope);
-      if (workArea === null) {
-        return false;
-      }
-      const remembered = this.floatGeometries.get(window);
-      const geometry = remembered !== void 0 ? this.boundFloatGeometry(remembered, workArea) : this.centeredFloatGeometry(workArea);
-      const written = writeWindowFrameGeometry(window, geometry);
-      this.floatGeometries.set(window, geometry);
-      return written;
+      return this.windowActions.writeFloatGeometry(window, scope);
     }
     completeKeyboardInsertion(window, pending) {
-      const active = this.environment.activeWindow();
-      const activeScope = this.scopeForWindow(active);
-      const scope = this.scopeForWindow(window);
-      if (activeScope === null || scope === null || !sameScope(activeScope.scope, pending.scope.scope) || !sameScope(scope.scope, pending.scope.scope) || !windowInScope(active, activeScope) || !windowInScope(window, scope) || !windowInScope(pending.targetWindow, scope) || active.tile !== pending.targetTile) {
-        return;
-      }
-      if (window.fullScreen === true || active.fullScreen === true || pending.targetWindow.fullScreen === true) {
-        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-        return;
-      }
-      const topology = this.topologyForScope(scope);
-      if (topology === null) {
-        return;
-      }
-      const target = operationLeafForTile(topology, pending.targetTile);
-      if (target === null || target.leaf.isLayout || !isCustomTile(target.decoded.tile)) {
-        return;
-      }
-      const targetIndex = windowIndex(target.windows, pending.targetWindow);
-      if (targetIndex < 0) {
-        return;
-      }
-      for (const occupant of target.windows) {
-        if (!windowInScope(occupant, scope)) {
-          return;
-        }
-      }
-      const focused = target.refs[targetIndex];
-      if (focused === void 0) {
-        return;
-      }
-      const plan = planKeyboardInsertion({
-        scope: scope.scope,
-        direction: pending.direction,
-        focusedLeaf: target.leaf,
-        focusedWindow: focused,
-        incoming: { id: "incoming", normal: window.normalWindow, managed: window.managed },
-        record: { scope: scope.scope, leafId: target.leaf.id, windowId: focused.id }
-      });
-      if (!plan.ok) {
-        return;
-      }
-      const requestedAxis = pending.direction === "left" || pending.direction === "right" ? "x" : "y";
-      if (parentHasSameSplitAxis(target.decoded.tile, requestedAxis)) {
-        this.floatingWindows.add(window);
-        this.floatScopes.set(window, scope.scope);
-        this.diagnostic("keyboard-rejected:same-axis-parent");
-        return;
-      }
-      splitCustomTile(target.decoded.tile, splitDirection2(pending.direction), this.markStructuralMutation);
-      const decoded = decodeSequential(target.decoded.tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-      if (!decoded.ok) {
-        this.gate.disable("keyboard-split-result-invalid", (reason) => this.disabled(reason));
-        return;
-      }
-      this.decodedBoundary("split-result");
-      const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
-      const first = children == null ? void 0 : children[0];
-      const second = children == null ? void 0 : children[1];
-      if (children === null || children.length !== 2 || first === void 0 || second === void 0) {
-        this.gate.disable("keyboard-split-child-selection-failed", (reason) => this.disabled(reason));
-        return;
-      }
-      const occupantChild = pending.direction === "left" || pending.direction === "up" ? second : first;
-      const incomingChild = occupantChild === first ? second : first;
-      if (!manageTile(occupantChild, pending.targetWindow, this.markStructuralMutation)) {
-        this.diagnostic("keyboard-failed:first-assignment");
-        return;
-      }
-      if (!manageTile(incomingChild, window, this.markStructuralMutation)) {
-        this.diagnostic("keyboard-failed:second-assignment");
-        return;
-      }
-      this.diagnostic("keyboard-completed");
+      this.inputActions.completeKeyboardInsertion(window, pending);
+      return;
     }
     // Returns the placement outcome. Managed-scope dwindle ownership reuses
     // this deterministic empty-leaf placement so a full owned tree keeps the
@@ -6923,7 +6888,7 @@
         this.diagnostic("drag-reflow-normalize-skipped:not-siblings");
         return topology;
       }
-      const axis = parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION4 ? "x" : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION4 ? "y" : null;
+      const axis = parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION5 ? "x" : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION5 ? "y" : null;
       if (axis === null) {
         this.diagnostic("drag-reflow-normalize-skipped:floating-parent");
         return topology;
