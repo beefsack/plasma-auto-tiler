@@ -999,124 +999,7 @@
     return buildBlueprintByDepth(count, presetOrientation(kind));
   }
 
-  // src/topology-reset.ts
-  function validSnapshot(snapshot, root) {
-    if (snapshot.root !== root || snapshot.tiles.length === 0) {
-      return false;
-    }
-    const known = /* @__PURE__ */ new Set();
-    let rootCount = 0;
-    for (const entry of snapshot.tiles) {
-      if (known.has(entry.tile)) {
-        return false;
-      }
-      known.add(entry.tile);
-      if (entry.tile === root) {
-        rootCount += 1;
-      }
-      const children = /* @__PURE__ */ new Set();
-      const occupants = /* @__PURE__ */ new Set();
-      for (const child of entry.children) {
-        if (child === entry.tile || children.has(child)) {
-          return false;
-        }
-        children.add(child);
-      }
-      for (const occupant of entry.occupants) {
-        if (occupants.has(occupant)) {
-          return false;
-        }
-        occupants.add(occupant);
-      }
-    }
-    return rootCount === 1;
-  }
-  function removableLeaf(snapshot) {
-    for (let index = snapshot.tiles.length - 1; index >= 0; index -= 1) {
-      const entry = snapshot.tiles[index];
-      if (entry !== void 0 && entry.removable && entry.children.length === 0 && entry.occupants.length === 0) {
-        return entry;
-      }
-    }
-    return null;
-  }
-  function collapseToRootLeaf(seam) {
-    const first = seam.snapshot();
-    if (first === null || !validSnapshot(first, first.root)) {
-      return { ok: false, stage: "pre-mutation-rejection", removed: 0 };
-    }
-    const root = first.root;
-    let unmanaged = 0;
-    for (const entry of first.tiles) {
-      for (const occupant of entry.occupants) {
-        let unmanagedCurrent = false;
-        try {
-          unmanagedCurrent = seam.unmanage(entry.tile, occupant);
-        } catch (error) {
-          void error;
-          return {
-            ok: false,
-            stage: unmanaged === 0 ? "pre-mutation-rejection" : "reset-may-have-mutated",
-            removed: 0
-          };
-        }
-        if (!unmanagedCurrent) {
-          return {
-            ok: false,
-            stage: unmanaged === 0 ? "pre-mutation-rejection" : "reset-may-have-mutated",
-            removed: 0
-          };
-        }
-        unmanaged += 1;
-      }
-    }
-    let removed = 0;
-    while (true) {
-      const snapshot = seam.snapshot();
-      if (snapshot === null || !validSnapshot(snapshot, root)) {
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-      if (snapshot.tiles.length === 1) {
-        const only = snapshot.tiles[0];
-        if (only !== void 0 && only.tile === root && only.children.length === 0 && only.occupants.length === 0) {
-          return { ok: true, removed };
-        }
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-      const leaf = removableLeaf(snapshot);
-      if (leaf === null) {
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-      let removedLeaf = false;
-      try {
-        removedLeaf = seam.remove(leaf.tile);
-      } catch (error) {
-        void error;
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-      if (!removedLeaf) {
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-      removed += 1;
-      const after = seam.snapshot();
-      if (after === null || !validSnapshot(after, root) || after.tiles.length >= snapshot.tiles.length) {
-        return { ok: false, stage: "reset-may-have-mutated", removed };
-      }
-    }
-  }
-
-  // src/controller.ts
-  var MAX_TILES = MAX_SEQUENTIAL_LENGTH;
-  var HORIZONTAL_LAYOUT_DIRECTION2 = 1;
-  var VERTICAL_LAYOUT_DIRECTION2 = 2;
-  var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
-  var MINIMUM_TILE_FRACTION = 0.15;
-  var RESIZE_STEP_FRACTION = 0.05;
-  var WORK_AREA_CLIENT_AREA_OPTION = 5;
-  var FLOAT_WORK_AREA_FRACTION = 0.6;
-  var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
-  var GROUP_OUTLINE_DURATION_MS = 700;
-  var MAX_YIELD_REARM_PER_PHASE = 2;
+  // src/controller-config.ts
   var UNRESOLVABLE_CLASSIFICATIONS = Object.freeze([
     "deferred",
     "component-requirement"
@@ -1231,74 +1114,6 @@
     }
     return best;
   }
-  function outputTuple(output) {
-    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
-  }
-  var SessionOutputKeys = class {
-    constructor(reportUnknown) {
-      this.reportUnknown = reportUnknown;
-      this.slots = [];
-      this.byOutput = /* @__PURE__ */ new Map();
-      // Current rebuild's known tuples in first-seen slot order (spec E). The
-      // first entry is the deterministic resolution for a colliding tuple.
-      this.tupleKeys = /* @__PURE__ */ new Map();
-      // Tuples already reported as unknown/stale this session (diagnostics dedupe).
-      this.reportedUnknown = /* @__PURE__ */ new Set();
-      this.next = 0;
-    }
-    rebuild(outputs) {
-      this.byOutput.clear();
-      this.tupleKeys.clear();
-      const consumed = /* @__PURE__ */ new Set();
-      for (const output of outputs) {
-        const tuple = outputTuple(output);
-        let matchedIndex = -1;
-        let entry;
-        for (let index = 0; index < this.slots.length; index += 1) {
-          if (consumed.has(index)) {
-            continue;
-          }
-          const candidate = this.slots[index];
-          if (candidate !== void 0 && candidate.tuple === tuple) {
-            matchedIndex = index;
-            entry = candidate;
-            break;
-          }
-        }
-        if (entry === void 0) {
-          matchedIndex = this.slots.length;
-          entry = { key: `output-${this.next}`, tuple };
-          this.next += 1;
-          this.slots.push(entry);
-        }
-        consumed.add(matchedIndex);
-        this.byOutput.set(output, entry.key);
-        const keys = this.tupleKeys.get(tuple);
-        if (keys === void 0) {
-          this.tupleKeys.set(tuple, [entry.key]);
-        } else if (!keys.includes(entry.key)) {
-          keys.push(entry.key);
-        }
-      }
-    }
-    keyFor(output) {
-      var _a;
-      const direct = this.byOutput.get(output);
-      if (direct !== void 0) {
-        return direct;
-      }
-      const tuple = outputTuple(output);
-      const keys = this.tupleKeys.get(tuple);
-      if (keys !== void 0 && keys.length > 0) {
-        return keys[0];
-      }
-      if (!this.reportedUnknown.has(tuple)) {
-        this.reportedUnknown.add(tuple);
-        (_a = this.reportUnknown) == null ? void 0 : _a.call(this, tuple);
-      }
-      return void 0;
-    }
-  };
   var COSMIC_REF = "[C-KR] cosmic-comp data/keybindings.ron";
   var HYPRLAND_REF = "[H-Ex] Hyprland example/hyprland.lua";
   var BSPWM_REF = "[B1-EX] bspwm examples/sxhkdrc";
@@ -1549,6 +1364,193 @@
     }
     return Object.freeze(diagnostics);
   }
+
+  // src/topology-reset.ts
+  function validSnapshot(snapshot, root) {
+    if (snapshot.root !== root || snapshot.tiles.length === 0) {
+      return false;
+    }
+    const known = /* @__PURE__ */ new Set();
+    let rootCount = 0;
+    for (const entry of snapshot.tiles) {
+      if (known.has(entry.tile)) {
+        return false;
+      }
+      known.add(entry.tile);
+      if (entry.tile === root) {
+        rootCount += 1;
+      }
+      const children = /* @__PURE__ */ new Set();
+      const occupants = /* @__PURE__ */ new Set();
+      for (const child of entry.children) {
+        if (child === entry.tile || children.has(child)) {
+          return false;
+        }
+        children.add(child);
+      }
+      for (const occupant of entry.occupants) {
+        if (occupants.has(occupant)) {
+          return false;
+        }
+        occupants.add(occupant);
+      }
+    }
+    return rootCount === 1;
+  }
+  function removableLeaf(snapshot) {
+    for (let index = snapshot.tiles.length - 1; index >= 0; index -= 1) {
+      const entry = snapshot.tiles[index];
+      if (entry !== void 0 && entry.removable && entry.children.length === 0 && entry.occupants.length === 0) {
+        return entry;
+      }
+    }
+    return null;
+  }
+  function collapseToRootLeaf(seam) {
+    const first = seam.snapshot();
+    if (first === null || !validSnapshot(first, first.root)) {
+      return { ok: false, stage: "pre-mutation-rejection", removed: 0 };
+    }
+    const root = first.root;
+    let unmanaged = 0;
+    for (const entry of first.tiles) {
+      for (const occupant of entry.occupants) {
+        let unmanagedCurrent = false;
+        try {
+          unmanagedCurrent = seam.unmanage(entry.tile, occupant);
+        } catch (error) {
+          void error;
+          return {
+            ok: false,
+            stage: unmanaged === 0 ? "pre-mutation-rejection" : "reset-may-have-mutated",
+            removed: 0
+          };
+        }
+        if (!unmanagedCurrent) {
+          return {
+            ok: false,
+            stage: unmanaged === 0 ? "pre-mutation-rejection" : "reset-may-have-mutated",
+            removed: 0
+          };
+        }
+        unmanaged += 1;
+      }
+    }
+    let removed = 0;
+    while (true) {
+      const snapshot = seam.snapshot();
+      if (snapshot === null || !validSnapshot(snapshot, root)) {
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+      if (snapshot.tiles.length === 1) {
+        const only = snapshot.tiles[0];
+        if (only !== void 0 && only.tile === root && only.children.length === 0 && only.occupants.length === 0) {
+          return { ok: true, removed };
+        }
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+      const leaf = removableLeaf(snapshot);
+      if (leaf === null) {
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+      let removedLeaf = false;
+      try {
+        removedLeaf = seam.remove(leaf.tile);
+      } catch (error) {
+        void error;
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+      if (!removedLeaf) {
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+      removed += 1;
+      const after = seam.snapshot();
+      if (after === null || !validSnapshot(after, root) || after.tiles.length >= snapshot.tiles.length) {
+        return { ok: false, stage: "reset-may-have-mutated", removed };
+      }
+    }
+  }
+
+  // src/controller.ts
+  var MAX_TILES = MAX_SEQUENTIAL_LENGTH;
+  var HORIZONTAL_LAYOUT_DIRECTION2 = 1;
+  var VERTICAL_LAYOUT_DIRECTION2 = 2;
+  var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+  var MINIMUM_TILE_FRACTION = 0.15;
+  var RESIZE_STEP_FRACTION = 0.05;
+  var WORK_AREA_CLIENT_AREA_OPTION = 5;
+  var FLOAT_WORK_AREA_FRACTION = 0.6;
+  var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
+  var GROUP_OUTLINE_DURATION_MS = 700;
+  var MAX_YIELD_REARM_PER_PHASE = 2;
+  function outputTuple(output) {
+    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
+  }
+  var SessionOutputKeys = class {
+    constructor(reportUnknown) {
+      this.reportUnknown = reportUnknown;
+      this.slots = [];
+      this.byOutput = /* @__PURE__ */ new Map();
+      // Current rebuild's known tuples in first-seen slot order (spec E). The
+      // first entry is the deterministic resolution for a colliding tuple.
+      this.tupleKeys = /* @__PURE__ */ new Map();
+      // Tuples already reported as unknown/stale this session (diagnostics dedupe).
+      this.reportedUnknown = /* @__PURE__ */ new Set();
+      this.next = 0;
+    }
+    rebuild(outputs) {
+      this.byOutput.clear();
+      this.tupleKeys.clear();
+      const consumed = /* @__PURE__ */ new Set();
+      for (const output of outputs) {
+        const tuple = outputTuple(output);
+        let matchedIndex = -1;
+        let entry;
+        for (let index = 0; index < this.slots.length; index += 1) {
+          if (consumed.has(index)) {
+            continue;
+          }
+          const candidate = this.slots[index];
+          if (candidate !== void 0 && candidate.tuple === tuple) {
+            matchedIndex = index;
+            entry = candidate;
+            break;
+          }
+        }
+        if (entry === void 0) {
+          matchedIndex = this.slots.length;
+          entry = { key: `output-${this.next}`, tuple };
+          this.next += 1;
+          this.slots.push(entry);
+        }
+        consumed.add(matchedIndex);
+        this.byOutput.set(output, entry.key);
+        const keys = this.tupleKeys.get(tuple);
+        if (keys === void 0) {
+          this.tupleKeys.set(tuple, [entry.key]);
+        } else if (!keys.includes(entry.key)) {
+          keys.push(entry.key);
+        }
+      }
+    }
+    keyFor(output) {
+      var _a;
+      const direct = this.byOutput.get(output);
+      if (direct !== void 0) {
+        return direct;
+      }
+      const tuple = outputTuple(output);
+      const keys = this.tupleKeys.get(tuple);
+      if (keys !== void 0 && keys.length > 0) {
+        return keys[0];
+      }
+      if (!this.reportedUnknown.has(tuple)) {
+        this.reportedUnknown.add(tuple);
+        (_a = this.reportUnknown) == null ? void 0 : _a.call(this, tuple);
+      }
+      return void 0;
+    }
+  };
   function windowInScope(window, scope) {
     if (!isWindow(window)) {
       return false;
