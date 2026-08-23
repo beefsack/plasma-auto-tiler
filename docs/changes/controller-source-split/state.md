@@ -1,12 +1,12 @@
 # State: Controller Source Split
 
-- Current unit: unit 03 - narrow shared state and capabilities.
-- Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23.
+- Current unit: unit 04 - input and window actions, not started.
+- Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
 - Blockers: none.
-- Next dispatch: unit 03, subject to Lead execution thresholds and its independent-review checkpoint.
-- Status: units 01-02 accepted; unit 03 not started.
-- Semantic units completed: 2/7.
-- Independent reviews: 0.
+- Next dispatch: unit 04 - input and window actions, with the accepted unit 03 contracts; shortcut registration callbacks remain in `controller.ts`.
+- Status: units 01-03 accepted; unit 04 not started.
+- Semantic units completed: 3/7.
+- Independent reviews: 1.
 - Circuit breakers: 0.
 - Baseline: 965 tests / 91 suites / 0 failures; typecheck clean; dogfood
   347/0. No live KWin operations.
@@ -36,4 +36,26 @@
   347 passes / 0 failures. `npm test` remains the separate script-local
   255-pass / 0-failure gate. Two normal bundle builds matched SHA-256
   `778b54716f476f907373747d0c98f1519902362b9ae4dbb3433ffa7bb32e1c05`.
+  No live KWin operations occurred.
+- Unit 03 checkpoint: `controller.ts` retains all state ownership and public
+  facade/composition responsibilities. Its private, narrow composition seams
+  cover scope/topology resolution, structural mutation reporting, keyboard
+  state, window action state, drag/watch/outline state, reflow state,
+  reconstruction state, and workspace lifecycle state. No dispatch or domain
+  behavior moved, no public API changed, and no test files changed.
+- Review: one independent review reported 3 P1 broad-context findings: combined
+  drag/watch/outline state, combined workspace lifecycle state, and a mutable
+  pending-rebuild getter. One bounded same-scope correction split the first two
+  into focused contracts and removed the mutable getter. Findings: 3 total, 3
+  corrected, 0 open. Static inspection found `entry.ts` is the sole runtime
+  importer of `controller.ts`; no extracted domain imports it or a sibling
+  domain. One production `flashFocusedGroup()` call and one
+  `flushStructuralMutation()` implementation remain.
+- Verification: focused controller characterization 173 tests / 13 suites / 0
+  failures; both TypeScript configurations clean; full JS suite 965 tests / 91
+  suites / 0 failures with 0 skipped; established dogfood
+  `bash scripts/dogfood-install.test.sh` 347 passes / 0 failures. `npm test`
+  also reported its script-local 255 passes / 0 failures. Two normal bundle
+  builds matched SHA-256
+  `af5dfd49f430bc803d7289824201d2e1b421aab27bf28b318bd9cf13d82625a8`.
   No live KWin operations occurred.

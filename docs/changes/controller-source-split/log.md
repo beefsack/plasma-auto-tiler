@@ -61,3 +61,32 @@ Append-only record of artifact creation and approved execution checkpoints.
   No live KWin operations.
 - Notes / blocker: modules are 372, 65, and 158 lines; no size exception or
   circuit breaker. Unit 03 has not started.
+
+## 2026-08-23 - unit 03 acceptance
+
+- Role / unit: Lead / unit 03 - narrow shared state and capabilities.
+- Result: added private, named controller composition seams for only the
+  later input/action, drag/reflow, reconstruction, and workspace state needs.
+  `TileController` remains the sole state owner, composition root, and public
+  facade. No dispatch/domain behavior or shortcut registration callbacks moved;
+  no public API, test file, or product behavior changed.
+- Review: one fresh independent review found 3 P1 broad-context issues: the
+  original combined drag/watch/outline seam, combined workspace lifecycle seam,
+  and a mutable pending-rebuild getter. The one permitted same-scope correction
+  split the first two into focused contracts and removed the mutable getter.
+  Findings: 3 total, 3 corrected, 0 open. No initialization/identity/order
+  drift, cycles, mutation-observer duplication, speculative fields, public API
+  drift, or missing-test finding remained. No second independent review ran.
+- Verification: focused controller characterization 173 tests / 13 suites / 0
+  failures; both TypeScript configurations clean; full JS suite 965 tests / 91
+  suites / 0 failures with 0 skipped; `npm test` script-local 255 passes / 0
+  failures; established dogfood `bash scripts/dogfood-install.test.sh` 347
+  passes / 0 failures. Two normal bundle builds matched SHA-256
+  `af5dfd49f430bc803d7289824201d2e1b421aab27bf28b318bd9cf13d82625a8`.
+  Static import inspection found `entry.ts` is the sole runtime importer of
+  `controller.ts`; no extracted domain imports the controller or a sibling
+  domain. Static symbol inspection retained one production
+  `flashFocusedGroup()` call and one `flushStructuralMutation()` implementation.
+  No live KWin operations occurred.
+- Notes / blocker: none. Circuit breakers remain 0. Unit 04 is next and has
+  not started.

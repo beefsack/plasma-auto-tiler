@@ -25,6 +25,7 @@ import {
     type CustomTileCapability,
     type OutputCapability,
     type RectCapability,
+    type StructuralMutationReporter,
     type TileCapability,
     type VirtualDesktopCapability,
     type WindowCapability,
@@ -253,6 +254,109 @@ export interface CurrentScope {
     readonly desktop: VirtualDesktopCapability;
 }
 
+// These are private composition seams for the later source split. They expose
+// operations on controller-owned state rather than the state collections or a
+// controller-shaped context.
+interface ScopeResolutionCapability {
+    readonly scopeForWindow: (window: unknown) => CurrentScope | null;
+    readonly topologyForScope: (
+        scope: CurrentScope,
+        onRejected?: (reason: TopologyRejection) => void,
+    ) => readonly OperationLeaf[] | null;
+}
+
+interface StructuralMutationCapability {
+    readonly report: StructuralMutationReporter;
+    readonly flush: () => void;
+}
+
+interface PendingKeyboardState {
+    readonly current: () => PendingKeyboard | undefined;
+    readonly replace: (pending: PendingKeyboard) => void;
+    readonly clear: () => void;
+}
+
+interface FloatingWindowState {
+    readonly isFloating: (window: WindowCapability) => boolean;
+    readonly floatingScope: (window: WindowCapability) => Scope | undefined;
+    readonly markFloating: (window: WindowCapability, scope: Scope) => void;
+    readonly clearFloating: (window: WindowCapability) => void;
+    readonly isSticky: (window: WindowCapability) => boolean;
+    readonly markSticky: (window: WindowCapability) => void;
+    readonly clearSticky: (window: WindowCapability) => void;
+    readonly isDetached: (window: WindowCapability) => boolean;
+    readonly markDetached: (window: WindowCapability) => void;
+    readonly clearDetached: (window: WindowCapability) => void;
+}
+
+interface WindowCoverState {
+    readonly fullscreenRecord: (window: WindowCapability) => FullscreenRecord | undefined;
+    readonly setFullscreenRecord: (window: WindowCapability, record: FullscreenRecord) => void;
+    readonly clearFullscreenRecord: (window: WindowCapability) => void;
+    readonly maximizeRecord: (window: WindowCapability) => MaximizeRecord | undefined;
+    readonly setMaximizeRecord: (window: WindowCapability, record: MaximizeRecord) => void;
+    readonly clearMaximizeRecord: (window: WindowCapability) => void;
+}
+
+interface DragState {
+    readonly current: () => ActiveDrag | undefined;
+    readonly replace: (drag: ActiveDrag) => void;
+    readonly clear: () => void;
+    readonly isLive: () => boolean;
+}
+
+interface InteractiveWatchState {
+    readonly interactiveWatch: (window: WindowCapability) => InteractiveWatch | undefined;
+    readonly setInteractiveWatch: (window: WindowCapability, watch: InteractiveWatch) => void;
+    readonly clearInteractiveWatch: (window: WindowCapability) => void;
+}
+
+interface DropOutlineCapability {
+    readonly showDropOutline: (geometry: RectCapability) => void;
+    readonly hideDropOutline: () => void;
+}
+
+interface ReflowState {
+    readonly selectedOverlay: (scope: CurrentScope) => SelectedOverlay | null;
+    readonly recordSelectedOverlay: (
+        scope: CurrentScope,
+        preset: PresetKind,
+        root: TileCapability,
+        leaves: readonly TileCapability[],
+    ) => void;
+    readonly removedOccupant: (window: WindowCapability) => boolean;
+    readonly noteRemovedOccupant: (window: WindowCapability) => void;
+}
+
+interface ManagedScopeState {
+    readonly managedScope: (scope: CurrentScope) => ManagedScope | null;
+    readonly setManagedScope: (scope: CurrentScope) => void;
+    readonly markScopeInert: (scope: CurrentScope, reason: string) => void;
+}
+
+interface PendingRebuildState {
+    readonly setPendingRebuild: (scope: CurrentScope, pending: PendingRebuild) => void;
+    readonly dropPendingRebuild: (scope: CurrentScope, pending: PendingRebuild) => void;
+}
+
+interface PendingMoveState {
+    readonly hasPendingMove: (window: WindowCapability) => boolean;
+    readonly markPendingMove: (window: WindowCapability) => void;
+    readonly clearPendingMove: (window: WindowCapability) => void;
+}
+
+interface WorkspaceMutationGuard {
+    readonly workspaceMutationDeferred: () => boolean;
+}
+
+interface WorkspaceModeState {
+    readonly workspaceMode: () => WorkspaceMode;
+}
+
+interface DesktopChangeState {
+    readonly currentDesktopChangeOutput: () => OutputCapability | null;
+}
+
 // Explicit ephemeral selected-overlay record for a future bounded
 // assignment-only reflow. It carries only in-memory identity and preset/scope
 // requirements: no titles, app IDs, geometry, or persisted data.
@@ -451,7 +555,7 @@ interface PresetOccupant {
 }
 
 export class TileController {
-    private readonly gate = new FeatureGate(() => this.flushStructuralMutation());
+    private readonly gate = new FeatureGate(() => this.structuralMutation.flush());
     private readonly pending = new TransientState<PendingKeyboard>();
     private readonly drag = new TransientState<ActiveDrag>();
     private shownDropOutline: RectCapability | null = null;
@@ -601,7 +705,116 @@ export class TileController {
     // never persisted; empty for every non-shared mode.
     private sharedWorkspaces: string[] = [];
 
-    constructor(private readonly environment: ControllerEnvironment) {}
+    private readonly structuralMutation: StructuralMutationCapability;
+    private readonly scopeResolution: ScopeResolutionCapability;
+    private readonly pendingKeyboardState: PendingKeyboardState;
+    private readonly floatingWindowState: FloatingWindowState;
+    private readonly windowCoverState: WindowCoverState;
+    private readonly dragState: DragState;
+    private readonly interactiveWatchState: InteractiveWatchState;
+    private readonly dropOutline: DropOutlineCapability;
+    private readonly reflowState: ReflowState;
+    private readonly managedScopeState: ManagedScopeState;
+    private readonly pendingRebuildState: PendingRebuildState;
+    private readonly pendingMoveState: PendingMoveState;
+    private readonly workspaceMutationGuard: WorkspaceMutationGuard;
+    private readonly workspaceModeState: WorkspaceModeState;
+    private readonly desktopChangeState: DesktopChangeState;
+
+    constructor(private readonly environment: ControllerEnvironment) {
+        this.structuralMutation = {
+            report: this.markStructuralMutation,
+            flush: () => this.flushStructuralMutation(),
+        };
+        this.scopeResolution = {
+            scopeForWindow: (window) => this.scopeForWindow(window),
+            topologyForScope: (scope, onRejected) => this.topologyForScope(scope, onRejected),
+        };
+        this.pendingKeyboardState = {
+            current: () => this.pending.current,
+            replace: (pending) => this.pending.set(pending),
+            clear: () => this.clearPending(),
+        };
+        this.floatingWindowState = {
+            isFloating: (window) => this.floatingWindows.has(window),
+            floatingScope: (window) => this.floatScopes.get(window),
+            markFloating: (window, scope) => {
+                this.floatingWindows.add(window);
+                this.floatScopes.set(window, scope);
+            },
+            clearFloating: (window) => {
+                this.floatingWindows.delete(window);
+                this.floatScopes.delete(window);
+            },
+            isSticky: (window) => this.stickyWindows.has(window),
+            markSticky: (window) => this.stickyWindows.add(window),
+            clearSticky: (window) => this.stickyWindows.delete(window),
+            isDetached: (window) => this.detachedWindows.has(window),
+            markDetached: (window) => this.recordDetached(window),
+            clearDetached: (window) => this.detachedWindows.delete(window),
+        };
+        this.windowCoverState = {
+            fullscreenRecord: (window) => this.fullscreenWindows.get(window),
+            setFullscreenRecord: (window, record) => this.fullscreenWindows.set(window, record),
+            clearFullscreenRecord: (window) => this.fullscreenWindows.delete(window),
+            maximizeRecord: (window) => this.maximizedWindows.get(window),
+            setMaximizeRecord: (window, record) => this.maximizedWindows.set(window, record),
+            clearMaximizeRecord: (window) => this.maximizedWindows.delete(window),
+        };
+        this.dragState = {
+            current: () => this.drag.current,
+            replace: (drag) => this.drag.set(drag),
+            clear: () => this.clearDrag(),
+            isLive: () => this.trackedDragLive(),
+        };
+        this.interactiveWatchState = {
+            interactiveWatch: (window) => this.interactiveWindows.get(window),
+            setInteractiveWatch: (window, watch) => this.interactiveWindows.set(window, watch),
+            clearInteractiveWatch: (window) => this.interactiveWindows.delete(window),
+        };
+        this.dropOutline = {
+            showDropOutline: (geometry) => this.showDropOutline(geometry),
+            hideDropOutline: () => this.hideDropOutline(),
+        };
+        this.reflowState = {
+            selectedOverlay: (scope) => this.readSelectedOverlay(scope),
+            recordSelectedOverlay: (scope, preset, root, leaves) =>
+                this.recordSelectedOverlay(scope, preset, root, leaves),
+            removedOccupant: (window) => this.removedOccupants.has(window),
+            noteRemovedOccupant: (window) => this.noteRemovedOccupant(window),
+        };
+        this.managedScopeState = {
+            managedScope: (scope) => this.managedRecord(scope),
+            setManagedScope: (scope) => this.setManaged(scope),
+            markScopeInert: (scope, reason) => this.markInert(scope, reason),
+        };
+        this.pendingRebuildState = {
+            setPendingRebuild: (scope, pending) => {
+                let byDesktop = this.pendingRebuilds.get(scope.output);
+                if (byDesktop === undefined) {
+                    byDesktop = new Map<string, PendingRebuild>();
+                    this.pendingRebuilds.set(scope.output, byDesktop);
+                }
+                byDesktop.set(scope.desktop.id, pending);
+            },
+            dropPendingRebuild: (scope, pending) => this.dropPendingRebuild(scope, pending),
+        };
+        this.pendingMoveState = {
+            hasPendingMove: (window) => this.pendingMoves.has(window),
+            markPendingMove: (window) => this.pendingMoves.add(window),
+            clearPendingMove: (window) => this.pendingMoves.delete(window),
+        };
+        this.workspaceMutationGuard = {
+            workspaceMutationDeferred: () =>
+                this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0,
+        };
+        this.workspaceModeState = {
+            workspaceMode: () => this.workspaceMode,
+        };
+        this.desktopChangeState = {
+            currentDesktopChangeOutput: () => this.recentDesktopChangeOutput,
+        };
+    }
 
     get isEnabled(): boolean {
         return this.gate.isEnabled;
@@ -624,7 +837,7 @@ export class TileController {
     // Parsed workspace mode (spec D). Read-only snapshot for tests and the
     // Unit 05 mode dispatch; the value is set once at startup.
     workspaceModeSnapshot(): WorkspaceMode {
-        return this.workspaceMode;
+        return this.workspaceModeState.workspaceMode();
     }
 
     // Parsed tiling algorithm. Read-only snapshot for tests; the value is set
@@ -653,7 +866,7 @@ export class TileController {
     // (spec F), or null before any such event. Preserved through the typed
     // boundary for the Unit 05 per-output scope re-resolution.
     currentDesktopChangeOutput(): OutputCapability | null {
-        return this.recentDesktopChangeOutput;
+        return this.desktopChangeState.currentDesktopChangeOutput();
     }
 
     // Session-owned desktop id snapshot for tests and diagnostics: exactly the
@@ -779,7 +992,7 @@ export class TileController {
     }
 
     private disabled(reason: string): void {
-        this.hideDropOutline();
+        this.dropOutline.hideDropOutline();
         this.diagnostic(`disabled:${reason}`);
     }
 
@@ -1037,8 +1250,8 @@ export class TileController {
     armKeyboardInsertion(direction: Direction): void {
         this.gate.run(() => {
             this.diagnostic("keyboard-invoked");
-            const hadPending = this.pending.current !== undefined;
-            this.clearPending();
+            const hadPending = this.pendingKeyboardState.current() !== undefined;
+            this.pendingKeyboardState.clear();
             if (hadPending) {
                 this.diagnostic("keyboard-pending-replaced");
             }
@@ -1051,7 +1264,7 @@ export class TileController {
                 this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
                 return;
             }
-            const scope = this.scopeForWindow(active);
+            const scope = this.scopeResolution.scopeForWindow(active);
             if (scope === null) {
                 this.diagnostic("keyboard-rejected:desktop-output-scope");
                 return;
@@ -1060,7 +1273,7 @@ export class TileController {
                 this.diagnostic("keyboard-rejected:active-window-eligibility");
                 return;
             }
-            const topology = this.topologyForScope(scope, (reason) => {
+            const topology = this.scopeResolution.topologyForScope(scope, (reason) => {
                 this.diagnostic(`keyboard-rejected:${reason}`);
             });
             if (topology === null || active.tile === null || !isTile(active.tile)) {
@@ -1086,7 +1299,7 @@ export class TileController {
                 return;
             }
             const disconnect = this.environment.onPendingTargetChanged(targetOccupant.window, () => this.clearPending());
-            this.pending.set({
+            this.pendingKeyboardState.replace({
                 scope,
                 sourceWindow: active,
                 targetWindow: targetOccupant.window,
@@ -2718,7 +2931,7 @@ export class TileController {
         scope: CurrentScope,
         candidate?: WindowCapability,
     ): ReflowOutcome {
-        const overlay = this.readSelectedOverlay(scope);
+        const overlay = this.reflowState.selectedOverlay(scope);
         if (overlay === null) {
             return { kind: "no-selection" };
         }
@@ -3050,7 +3263,7 @@ export class TileController {
     // This is the authoritative active-drag signal: the captured-origin latch is
     // never used on its own to decide that a drag is still in progress.
     private trackedDragLive(): boolean {
-        const drag = this.drag.current;
+        const drag = this.dragState.current();
         return drag !== undefined && (drag.window.move || drag.window.resize);
     }
 
@@ -3401,16 +3614,16 @@ export class TileController {
             () => this.handleMoveResizedChanged(),
             () => this.handleInteractiveInvalidated(window),
         );
-        this.interactiveWindows.set(window, { disconnect: watched.disconnect, kind: "unknown" });
+        this.interactiveWatchState.setInteractiveWatch(window, { disconnect: watched.disconnect, kind: "unknown" });
         return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
     }
 
     private detachInteractiveWindow(window: WindowCapability): void {
-        const watch = this.interactiveWindows.get(window);
+        const watch = this.interactiveWatchState.interactiveWatch(window);
         if (watch === undefined) {
             return;
         }
-        this.interactiveWindows.delete(window);
+        this.interactiveWatchState.clearInteractiveWatch(window);
         watch.disconnect();
     }
 
@@ -3459,7 +3672,7 @@ export class TileController {
     // live drag on the entering window is dropped so finish cannot complete a
     // half-captured drop.
     private enterFullscreen(window: WindowCapability): void {
-        if (this.fullscreenWindows.has(window)) {
+        if (this.windowCoverState.fullscreenRecord(window) !== undefined) {
             return;
         }
         if (this.drag.current?.window === window) {
@@ -3468,11 +3681,11 @@ export class TileController {
         const scope = this.scopeForWindow(window);
         const preservedTile = window.tile;
         if (preservedTile !== null && isTile(preservedTile) && scope !== null) {
-            this.fullscreenWindows.set(window, { scope, preservedTile, wasTiled: true });
+            this.windowCoverState.setFullscreenRecord(window, { scope, preservedTile, wasTiled: true });
             this.diagnostic("fullscreen:enter preserved");
             return;
         }
-        this.fullscreenWindows.set(window, { scope, preservedTile: null, wasTiled: false });
+        this.windowCoverState.setFullscreenRecord(window, { scope, preservedTile: null, wasTiled: false });
         this.diagnostic("fullscreen:enter unmanaged");
     }
 
@@ -4746,11 +4959,11 @@ export class TileController {
     // ---- Floating and sticky window state ----
 
     private isFloating(window: WindowCapability): boolean {
-        return this.floatingWindows.has(window);
+        return this.floatingWindowState.isFloating(window);
     }
 
     private isSticky(window: WindowCapability): boolean {
-        return this.stickyWindows.has(window);
+        return this.floatingWindowState.isSticky(window);
     }
 
     // Floating windows whose preserved leaf lives in this exact scope. Sticky
@@ -5004,7 +5217,7 @@ export class TileController {
     }
 
     private isOwned(scope: CurrentScope): boolean {
-        const record = this.managedRecord(scope);
+        const record = this.managedScopeState.managedScope(scope);
         return record !== null && !record.inert;
     }
 
@@ -5055,7 +5268,7 @@ export class TileController {
         if (population.length === 0) {
             return;
         }
-        this.setManaged(scope);
+        this.managedScopeState.setManagedScope(scope);
         if (this.scopeHasFloating(scope)) {
             // A scope with floating windows preserves its tree as the user
             // left it: the vacated leaves must never be collapsed, so the
@@ -5169,7 +5382,8 @@ export class TileController {
         const existing = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
         if (existing !== undefined) {
             existing.rearmCount += 1;
-            if (existing.rearmCount > MAX_YIELD_REARM_PER_PHASE) {
+            const rearmCount = existing.rearmCount;
+            if (rearmCount > MAX_YIELD_REARM_PER_PHASE) {
                 this.markInert(scope, "rearm-budget-exhausted");
                 this.dropPendingRebuild(scope, existing);
                 return;
@@ -5181,12 +5395,7 @@ export class TileController {
             return;
         }
         const pending: PendingRebuild = { scope, phase: "awaiting-collapse", rearmCount: 0 };
-        let byDesktop = this.pendingRebuilds.get(scope.output);
-        if (byDesktop === undefined) {
-            byDesktop = new Map<string, PendingRebuild>();
-            this.pendingRebuilds.set(scope.output, byDesktop);
-        }
-        byDesktop.set(scope.desktop.id, pending);
+        this.pendingRebuildState.setPendingRebuild(scope, pending);
         if (!this.armRebuildYield(scope, pending)) {
             this.markInert(scope, "initial-yield-arm-failed");
             this.dropPendingRebuild(scope, pending);
@@ -6684,7 +6893,7 @@ export class TileController {
     // creation and removal are deferred in exactly these conditions and
     // retried through the existing settle/yield seams.
     private workspaceMutationDeferred(): boolean {
-        return this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0;
+        return this.workspaceMutationGuard.workspaceMutationDeferred();
     }
 
     // Queue a deferred Meta+Shift+0 trailing-empty creation request for later
@@ -7037,12 +7246,12 @@ export class TileController {
             return;
         }
         this.collapseMovedSourceLeaf(window, sourceScope);
-        this.pendingMoves.add(window);
+        this.pendingMoveState.markPendingMove(window);
         let armed = false;
         try {
             armed = this.environment.yieldOnce(() => {
                 try {
-                    this.pendingMoves.delete(window);
+                    this.pendingMoveState.clearPendingMove(window);
                     this.adoptMovedWindow(window, targetScope);
                 } finally {
                     this.flushStructuralMutation();
@@ -7052,7 +7261,7 @@ export class TileController {
             void error;
         }
         if (!armed) {
-            this.pendingMoves.delete(window);
+            this.pendingMoveState.clearPendingMove(window);
             this.adoptMovedWindow(window, targetScope);
             // The armed path's follow write (`setCurrentDesktop`) happens after
             // the collapse and the deferred adoption is scheduled; the
