@@ -61,22 +61,74 @@ controller-types module is permitted.
 - Verification: focused controller action tests, all existing tests, both
   typechecks, and static textual shortcut checks; no live KWin operations.
 
-### Unit 05 - Reflow, Observers, and Drag
+### Unit 05 - Frozen Reflow, Observers, and Drag
 
-- Dependencies: unit 04 accepted; unit 03 review complete.
-- Bounded scope: reflow scheduling, observers, drag lifecycle, and related
-  deferred work, without moving reconstruction/dwindle/workspace logic.
-- Invariants: signal registration/disconnection, deferred ordering and
-  cancellation, drag/reflow geometry and recovery semantics, and exactly one
-  structural-mutation reporting/flush path and one production
-  `flashFocusedGroup()` call site.
-- Verification: focused observer/drag/reflow tests, full suite, typechecks,
-  import/lifetime inspection, and the second independent review after lifecycle
-  and drag extraction.
+- Status: permanently frozen before implementation. It retains attempts 2,
+  cancellations 0, corrections 0, independent reviews 0, and circuit breaker
+  1. Both attempts stopped at malformed Worker preflight with no source work,
+  verification, or candidate to recover; another attempt is prohibited.
+
+### Unit 05A - Reflow and Lifecycle Observers (`unit-05a-reflow-observers`)
+
+- Dependencies: unit 04 accepted; unit 03 independent review complete.
+- Bounded scope: selected-overlay reflow state and execution; reflow callbacks
+  after removal, detach, and addition; non-interactive lifecycle observer
+  callbacks; and the one-shot desktop-scope eligibility reevaluation with its
+  token-identity cancellation on removal.
+- Exclusions: interactive-watch attachment, drag state, outline, geometry-drop
+  behavior, drag-origin deferred-work coordination, reconstruction, dwindle,
+  workspace execution, public facade ownership, and shortcut registration.
+- Invariants: preserve observer registration, callback identity, lifecycle
+  order, selected-overlay reflow ordering and rejection behavior, and exactly
+  one eligibility callback per window. A stale eligibility callback is inert and
+  removal cancels it before later removal processing. The domain receives only
+  existing narrow capabilities and has no runtime import of another extracted
+  domain.
+- Shared mutation ownership: `controller.ts` remains composition root and the
+  sole owner of `StructuralMutationCapability`, its pending flag,
+  `flushStructuralMutation()`, and the only production
+  `flashFocusedGroup()` invocation. This unit reports reflow writes only through
+  that existing capability and creates no mutation or flush path.
+- Verification: focused reflow/observer and eligibility-cancellation
+  characterization as needed; both TypeScript configurations; the full existing
+  suite; dogfood; two normal builds with matching generated-bundle SHA-256;
+  `git diff --check`; and static facade export, import-cycle, runtime
+  sibling-import, signal-lifetime, callback-order, and sole mutation-path
+  inspection. No independent review occurs at this checkpoint.
+
+### Unit 05B - Drag and Deferred-Work Coordination (`unit-05b-drag-deferred-work`)
+
+- Dependencies: `unit-05a-reflow-observers` accepted.
+- Bounded scope: interactive-watch attachment/disconnection, `DragState`,
+  interactive callbacks, drop-outline state, drag geometry/drop recovery, drag
+  snapshots, and drag-specific deferred-work coordination.
+- Exclusions: non-interactive lifecycle observers and eligibility timer;
+  reconstruction, dwindle, workspace algorithms, and pending-rebuild ownership;
+  fullscreen/maximize behavior; public facade ownership; and shortcut
+  registration.
+- Deferred-work ownership: this unit owns live-drag detection, owed-invariant
+  queueing and settlement ordering, and `armedDeferredRemoval`. It requests the
+  existing deferred removal-collapse operation through a narrow facade callback;
+  Unit 06 retains that operation's collapse/reconstruction execution and yield
+  implementation.
+- Invariants: preserve drag signal lifetimes, finish-only structural mutation,
+  geometry/recovery behavior, and outline cleanup. An armed deferred removal
+  suppresses immediate invariant settlement, which occurs after the existing
+  deferred-removal completion; no duplicate or stale drag callback may act.
+- Shared mutation ownership: `controller.ts` retains the sole structural
+  reporting/flush implementation and production `flashFocusedGroup()` call site.
+  This unit receives only the same existing narrow mutation capability and never
+  creates a pending flag, flush implementation, or flash call site.
+- Verification: focused interactive-watch, drag, outline, deferred-removal
+  ordering, and owed-invariant tests; both TypeScript configurations; the full
+  existing suite; dogfood; two normal builds with matching generated-bundle
+  SHA-256; `git diff --check`; static facade/import/lifetime inspection; and the
+  second independent review after this unit only.
 
 ### Unit 06 - Reconstruction, Dwindle, and Workspaces
 
-- Dependencies: unit 05 accepted and independently reviewed.
+- Dependencies: `unit-05a-reflow-observers` accepted and
+  `unit-05b-drag-deferred-work` accepted and independently reviewed.
 - Bounded scope: reconstruction, dwindle/layout execution coordination, and
   workspace-specific flows not already owned by unit 02.
 - Invariants: preserve all layout execution, insertion, workspace, recovery,
@@ -86,7 +138,9 @@ controller-types module is permitted.
 
 ### Unit 07 - Facade and Bundle Finalization
 
-- Dependencies: units 01-06 accepted; all required reviews complete.
+- Dependencies: units 01-04, `unit-05a-reflow-observers`,
+  `unit-05b-drag-deferred-work`, and unit 06 accepted; all required reviews
+  complete.
 - Bounded scope: reduce `controller.ts` to the public facade/composition root,
   remove only obsolete internal code, regenerate the bundle normally, and
   reconcile package/typecheck inputs.
@@ -104,10 +158,15 @@ controller-types module is permitted.
 | Unit | Attempts | Cancellations | Corrections | Independent reviews | Status |
 |---|---:|---:|---:|---:|---|
 | Unit 04 | 2 | 1 | 1 | 1 | Accepted: attempt 2 recovered the candidate; its one P1 input ownership finding was corrected and Lead-confirmed. |
+| Unit 05 | 2 | 0 | 0 | 0 | Frozen permanently before implementation: two malformed Worker preflights performed no source work; circuit breaker 1 prohibits another attempt. |
+| Unit 05A | 1 | 0 | 0 | 0 | Accepted: extracted reflow state/execution, lifecycle reflow callbacks, and eligibility token cancellation behind the approved narrow seam. |
+| Unit 05B | 0 | 0 | 0 | 0 | Approved reset replacement: drag and deferred-work coordination; not started. |
 
 - Change-wide independent reviews: 2, belonging to accepted Unit 03 and Unit 04.
-- Circuit breakers: 0.
-- Next semantic unit: Unit 05 - reflow, observers, and drag.
+- Circuit breakers: 1 - frozen Unit 05 reached its attempt limit before
+  implementation; no third attempt is authorized. The approved semantic reset
+  creates independently accountable Units 05A and 05B with fresh counters.
+- Next semantic unit: Unit 05B - drag and deferred-work coordination.
 - Reconciliation evidence before Unit 04 attempt 2: the candidate changes
   `controller.ts`, adds the input/window action domains, and has an unverified
   generated bundle with 22 trailing-whitespace findings. The facade contains
@@ -128,6 +187,21 @@ controller-types module is permitted.
   domain runtime import of `controller.ts` or its sibling, one production
   `flashFocusedGroup()` invocation, and the existing sole structural
   reporting/flush path.
+- Unit 05A acceptance evidence, all static: focused existing reflow/observer
+  and eligibility-cancellation suites reported 46 tests / 3 suites / 0
+  failures; `npm --prefix kwin run typecheck` passed both configurations;
+  `npm --prefix kwin test` reported 965 tests / 91 suites / 0 failures / 0
+  skipped; `bash scripts/dogfood-install.test.sh` reported 347 passes / 0
+  failures; `git diff --check` was clean; two normal builds produced matching
+  `kwin/contents/code/main.js` SHA-256
+  `fbbfb573f9e5ab3e57a2edcedd9a424112a66da71afd7f2b768719fdd10275c0`.
+  Lead inspection found `controller-reflow-observers.ts` is 393 lines, imports
+  only boundary and type-only logic/catalog dependencies, and is composed by
+  `controller.ts` without runtime sibling-domain imports. The facade retains
+  the sole structural pending/flush implementation and sole production
+  `flashFocusedGroup()` invocation; removal cancels eligibility before reflow
+  and deferred eligibility re-enters the pre-existing placement, cleanup, and
+  intent-drain order. No tests were changed and no independent review is due.
 
 ## Checkpoints and Circuit Breakers
 

@@ -3136,13 +3136,296 @@
     };
   }
 
+  // src/controller-reflow-observers.ts
+  var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
+  function createReflowObservers(capabilities) {
+    const selectedOverlays = /* @__PURE__ */ new Map();
+    const removedOccupants = /* @__PURE__ */ new Set();
+    const deferredEligibility = /* @__PURE__ */ new Map();
+    const {
+      rootTile,
+      scopeForWindow,
+      windowInScope: windowInScope2,
+      decodeTileTree: decodeTileTree2,
+      collectPresetLeaves: collectPresetLeaves2,
+      scopeHasFullscreen,
+      reflowTouchesMaximized,
+      mutation,
+      diagnostic,
+      onceDiagnostic,
+      desktopScopeCheck: desktopScopeCheck2,
+      scheduleOnce,
+      runGuarded,
+      onEligibleDeferred
+    } = capabilities;
+    const recordSelectedOverlay = (scope, preset, root, leaves) => {
+      let byDesktop = selectedOverlays.get(scope.output);
+      if (byDesktop === void 0) {
+        byDesktop = /* @__PURE__ */ new Map();
+        selectedOverlays.set(scope.output, byDesktop);
+      }
+      byDesktop.set(scope.desktop.id, { scope, preset, root, leaves });
+    };
+    const selectedOverlayValid = (overlay) => {
+      const root = rootTile(overlay.scope.output, overlay.scope.desktop);
+      if (!isTile(root)) {
+        return false;
+      }
+      const tiles = decodeTileTree2(root);
+      if (tiles === null || !tiles.some((tile) => tile === overlay.root)) {
+        return false;
+      }
+      const realized = collectPresetLeaves2(overlay.root);
+      if (realized === null || realized.length !== overlay.leaves.length) {
+        return false;
+      }
+      for (let index = 0; index < realized.length; index += 1) {
+        if (realized[index] !== overlay.leaves[index]) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const readSelectedOverlay = (scope) => {
+      const byDesktop = selectedOverlays.get(scope.output);
+      const overlay = byDesktop == null ? void 0 : byDesktop.get(scope.desktop.id);
+      if (overlay === void 0) {
+        return null;
+      }
+      if (!selectedOverlayValid(overlay)) {
+        byDesktop == null ? void 0 : byDesktop.delete(scope.desktop.id);
+        diagnostic("selected-overlay-invalidated");
+        return null;
+      }
+      return overlay;
+    };
+    const reflowTargetIsAvailable = (target) => {
+      const windows = decodeSequential(target.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+      if (!windows.ok) {
+        return false;
+      }
+      for (const occupant of windows.value) {
+        if (!removedOccupants.has(occupant) && occupant.tile === target) {
+          return false;
+        }
+      }
+      return true;
+    };
+    const reflowAssignmentRevalidates = (scope, window, source, target) => {
+      if (!windowInScope2(window, scope) || window.tile !== source) {
+        return false;
+      }
+      const overlay = readSelectedOverlay(scope);
+      return overlay !== null && overlay.leaves.includes(target) && reflowTargetIsAvailable(target);
+    };
+    const reflowSelectedOverlay = (scope, candidate) => {
+      const overlay = readSelectedOverlay(scope);
+      if (overlay === null) {
+        return { kind: "no-selection" };
+      }
+      if (reflowTouchesMaximized(scope, overlay)) {
+        diagnostic("maximize:ignored reflow while maximized");
+        return { kind: "no-op" };
+      }
+      if (overlay.leaves.length === 0) {
+        return { kind: "rejected", reason: "topology-decode" };
+      }
+      const occupants = [];
+      const seen = /* @__PURE__ */ new Set();
+      for (const leaf of overlay.leaves) {
+        const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+          return { kind: "rejected", reason: "topology-decode" };
+        }
+        for (const window of windows.value) {
+          if (seen.has(window)) {
+            return { kind: "rejected", reason: "occupancy-validity" };
+          }
+          if (window.tile !== leaf || removedOccupants.has(window)) {
+            continue;
+          }
+          if (!windowInScope2(window, scope)) {
+            return { kind: "rejected", reason: "occupancy-validity" };
+          }
+          seen.add(window);
+          occupants.push(window);
+        }
+      }
+      if (candidate !== void 0) {
+        if (!windowInScope2(candidate, scope) || candidate.tile !== null || seen.has(candidate) || removedOccupants.has(candidate)) {
+          return { kind: "rejected", reason: "candidate-eligibility" };
+        }
+        if (occupants.length >= overlay.leaves.length) {
+          return { kind: "no-capacity" };
+        }
+        occupants.push(candidate);
+      }
+      if (occupants.length > overlay.leaves.length) {
+        return { kind: "rejected", reason: "capacity" };
+      }
+      const plan = [];
+      for (let index = 0; index < occupants.length; index += 1) {
+        const occupant = occupants[index];
+        const target = overlay.leaves[index];
+        if (occupant === void 0 || target === void 0) {
+          return { kind: "rejected", reason: "capacity" };
+        }
+        if (occupant.tile === target) {
+          continue;
+        }
+        const source = occupant.tile;
+        if (source !== null && !isTile(source)) {
+          return { kind: "rejected", reason: "source-validity" };
+        }
+        plan.push({ window: occupant, source, target });
+      }
+      if (plan.length === 0) {
+        return { kind: "no-op" };
+      }
+      let writes = 0;
+      for (const entry of plan) {
+        if (!reflowAssignmentRevalidates(scope, entry.window, entry.source, entry.target)) {
+          return writes === 0 ? { kind: "rejected", reason: "assignment-stale" } : { kind: "partial", reason: "assignment-stale", writes };
+        }
+        let assigned = false;
+        try {
+          assigned = assignWindowToTile(entry.window, entry.target, mutation);
+        } catch (error) {
+          void error;
+          return writes === 0 ? { kind: "rejected", reason: "assignment-failed" } : { kind: "partial", reason: "assignment-failed", writes };
+        }
+        if (!assigned) {
+          return writes === 0 ? { kind: "rejected", reason: "assignment-failed" } : { kind: "partial", reason: "assignment-failed", writes };
+        }
+        writes += 1;
+      }
+      return { kind: "completed", writes };
+    };
+    const runReflow = (scope, candidate) => {
+      if (scopeHasFullscreen(scope)) {
+        diagnostic("fullscreen:ignored lifecycle while fullscreen");
+        return { kind: "no-op" };
+      }
+      const outcome = reflowSelectedOverlay(scope, candidate);
+      switch (outcome.kind) {
+        case "no-op":
+          diagnostic("reflow-noop");
+          break;
+        case "no-capacity":
+          diagnostic("reflow-no-capacity");
+          break;
+        case "completed":
+          diagnostic("reflow-completed");
+          break;
+        case "rejected":
+          diagnostic(`reflow-rejected:${outcome.reason}`);
+          break;
+        case "partial":
+          diagnostic(`reflow-partial:${outcome.reason}`);
+          break;
+        case "no-selection":
+          break;
+      }
+      return outcome;
+    };
+    const noteRemovedOccupant = (window) => {
+      if (removedOccupants.size >= MAX_SEQUENTIAL_LENGTH) {
+        const stale = removedOccupants.values().next().value;
+        if (stale !== void 0) {
+          removedOccupants.delete(stale);
+        }
+      }
+      removedOccupants.add(window);
+    };
+    const reflowSelectedScopesContaining = (window) => {
+      for (const byDesktop of selectedOverlays.values()) {
+        for (const overlay of byDesktop.values()) {
+          const current = readSelectedOverlay(overlay.scope);
+          if (current === null) {
+            continue;
+          }
+          for (const leaf of current.leaves) {
+            const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+            if (windows.ok && windows.value.includes(window)) {
+              runReflow(current.scope);
+              break;
+            }
+          }
+        }
+      }
+    };
+    const afterRemoval = (window) => {
+      var _a;
+      noteRemovedOccupant(window);
+      const scope = scopeForWindow(window);
+      if (scope === null) {
+        reflowSelectedScopesContaining(window);
+        return;
+      }
+      if (((_a = selectedOverlays.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) === void 0) {
+        return;
+      }
+      runReflow(scope);
+    };
+    const afterDetach = (scope, origin) => {
+      const overlay = readSelectedOverlay(scope);
+      if (overlay !== null && overlay.leaves.includes(origin)) {
+        runReflow(scope);
+      }
+    };
+    const deferDesktopScopeReevaluation = (window, scope) => {
+      if (deferredEligibility.size >= MAX_SEQUENTIAL_LENGTH || deferredEligibility.has(window)) {
+        return;
+      }
+      onceDiagnostic(`window-added-deferred:${desktopScopeCheck2(window, scope)}`);
+      const cancel = scheduleOnce(DESKTOP_SCOPE_REEVALUATION_DELAY_MS, () => {
+        if (deferredEligibility.get(window) !== cancel) {
+          return;
+        }
+        deferredEligibility.delete(window);
+        runGuarded(() => {
+          const freshScope = scopeForWindow(window);
+          if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
+            onceDiagnostic("window-added-rejected-deferred:scope-changed");
+            return;
+          }
+          onceDiagnostic(`window-added-reevaluated:${desktopScopeCheck2(window, freshScope)}`);
+          if (!windowInScope2(window, freshScope)) {
+            onceDiagnostic("window-added-rejected-deferred:desktop-scope-mismatch");
+            return;
+          }
+          onceDiagnostic("window-added-eligible-deferred");
+          onEligibleDeferred(window, freshScope);
+        });
+      });
+      deferredEligibility.set(window, cancel);
+    };
+    const cancelDeferredEligibility = (window) => {
+      const cancel = deferredEligibility.get(window);
+      if (cancel === void 0) {
+        return;
+      }
+      deferredEligibility.delete(window);
+      cancel();
+    };
+    return {
+      recordSelectedOverlay,
+      readSelectedOverlay,
+      runReflow,
+      afterRemoval,
+      afterDetach,
+      afterAddition: (window, scope) => runReflow(scope, window),
+      deferDesktopScopeReevaluation,
+      cancelDeferredEligibility
+    };
+  }
+
   // src/controller.ts
   var HORIZONTAL_LAYOUT_DIRECTION5 = 1;
   var VERTICAL_LAYOUT_DIRECTION5 = 2;
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
   var MINIMUM_TILE_FRACTION2 = 0.15;
   var WORK_AREA_CLIENT_AREA_OPTION3 = 5;
-  var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var GROUP_OUTLINE_DURATION_MS = 700;
   var MAX_YIELD_REARM_PER_PHASE = 2;
   function describeWorkspaceFailure(error) {
@@ -3173,16 +3456,8 @@
       // maximized records, observed to clear the classification on a real native
       // unmaximize. Bounded like the other identity sets.
       this.maximizeWatches = /* @__PURE__ */ new Map();
-      this.deferredEligibility = /* @__PURE__ */ new Map();
       this.decodedBoundaries = /* @__PURE__ */ new Set();
       this.onceDiagnostics = /* @__PURE__ */ new Set();
-      this.selectedOverlays = /* @__PURE__ */ new Map();
-      // Windows removed since the last reflow read of their scope. Removal can
-      // arrive while KWin still lists the window in its tile's window array;
-      // this bounded identity guard keeps the reflow from ever reassigning a
-      // removed window. Entries for settled (array-absent) windows are never
-      // consulted and the set is capped so it cannot grow unboundedly.
-      this.removedOccupants = /* @__PURE__ */ new Set();
       // Per-output/per-desktop session-local managed-scope ownership for
       // automatic ratio-free dwindle. A scope is managed only when it holds
       // owned windows; a failed or damaged scope is recorded inert for the
@@ -3193,7 +3468,7 @@
       this.pendingRebuilds = /* @__PURE__ */ new Map();
       // Explicitly detached windows (the detach action writes `window.tile` to
       // null) are excluded from the owned population and the dwindle rebuild.
-      // Bounded like removedOccupants so it cannot grow without limit.
+      // Bounded like the other session identity sets so it cannot grow without limit.
       this.detachedWindows = /* @__PURE__ */ new Set();
       // Session-local floating state. A floating window left its tile through
       // `tile.unmanage(window)` with its vacated leaf retained; it is excluded
@@ -3343,12 +3618,26 @@
         showDropOutline: (geometry) => this.showDropOutline(geometry),
         hideDropOutline: () => this.hideDropOutline()
       };
-      this.reflowState = {
-        selectedOverlay: (scope) => this.readSelectedOverlay(scope),
-        recordSelectedOverlay: (scope, preset, root, leaves) => this.recordSelectedOverlay(scope, preset, root, leaves),
-        removedOccupant: (window) => this.removedOccupants.has(window),
-        noteRemovedOccupant: (window) => this.noteRemovedOccupant(window)
-      };
+      this.reflowObservers = createReflowObservers({
+        rootTile: (output, desktop) => this.environment.rootTile(output, desktop),
+        scopeForWindow: (window) => this.scopeForWindow(window),
+        windowInScope,
+        decodeTileTree,
+        collectPresetLeaves,
+        scopeHasFullscreen: (scope) => this.scopeHasFullscreen(scope),
+        reflowTouchesMaximized: (scope, overlay) => this.reflowTouchesMaximized(scope, overlay),
+        mutation: this.markStructuralMutation,
+        diagnostic: (event) => this.diagnostic(event),
+        onceDiagnostic: (event) => this.onceDiagnostic(event),
+        desktopScopeCheck,
+        scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
+        runGuarded: (operation) => this.gate.run(operation, (reason) => this.disabled(reason)),
+        onEligibleDeferred: (window, scope) => {
+          this.placeEligibleAdded(window, scope);
+          this.cleanupDesktops();
+          this.drainPendingDesktopIntents();
+        }
+      });
       this.managedScopeState = {
         managedScope: (scope) => this.managedRecord(scope),
         setManagedScope: (scope) => this.setManaged(scope),
@@ -3416,7 +3705,7 @@
         },
         mutation: this.markStructuralMutation,
         callbacks: {
-          afterDetach: (scope, origin) => this.reflowAfterDetach(scope, origin),
+          afterDetach: (scope, origin) => this.reflowObservers.afterDetach(scope, origin),
           isMaximized: (window) => this.maximizedWindows.has(window),
           decodedBoundary: (kind) => this.decodedBoundary(kind)
         },
@@ -3539,23 +3828,8 @@
         }
       }
     }
-    // Narrow read/self-validation seam for a future bounded assignment-only
-    // reflow. The overlay for the exact scope is returned only when its
-    // recorded root and ordinal leaves remain intact beneath the same current
-    // Custom Tile root. Structural drift is discarded inertly with one fixed
-    // private diagnostic; reading never mutates topology or assignments.
     readSelectedOverlay(scope) {
-      const byDesktop = this.selectedOverlays.get(scope.output);
-      const overlay = byDesktop == null ? void 0 : byDesktop.get(scope.desktop.id);
-      if (overlay === void 0) {
-        return null;
-      }
-      if (!this.selectedOverlayValid(overlay)) {
-        byDesktop == null ? void 0 : byDesktop.delete(scope.desktop.id);
-        this.diagnostic("selected-overlay-invalidated");
-        return null;
-      }
-      return overlay;
+      return this.reflowObservers.readSelectedOverlay(scope);
     }
     diagnostic(event) {
       try {
@@ -3912,231 +4186,12 @@
             return;
           }
         }
-        this.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
+        this.reflowObservers.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
         this.diagnostic(`preset-applied:${kind}`);
       }, (reason) => this.disabled(reason));
     }
-    // Record the selected overlay only after the whole preset realization
-    // succeeded, keyed by the exact current desktop/output scope. A later
-    // successful application on the same scope atomically replaces it.
-    recordSelectedOverlay(scope, preset, root, leaves) {
-      let byDesktop = this.selectedOverlays.get(scope.output);
-      if (byDesktop === void 0) {
-        byDesktop = /* @__PURE__ */ new Map();
-        this.selectedOverlays.set(scope.output, byDesktop);
-      }
-      byDesktop.set(scope.desktop.id, { scope, preset, root, leaves });
-    }
-    selectedOverlayValid(overlay) {
-      const root = this.environment.rootTile(overlay.scope.output, overlay.scope.desktop);
-      if (!isCustomTile(root)) {
-        return false;
-      }
-      const tiles = decodeTileTree(root);
-      if (tiles === null || !tiles.some((tile) => tile === overlay.root)) {
-        return false;
-      }
-      const realized = collectPresetLeaves(overlay.root);
-      if (realized === null || realized.length !== overlay.leaves.length) {
-        return false;
-      }
-      for (let index = 0; index < realized.length; index += 1) {
-        if (realized[index] !== overlay.leaves[index]) {
-          return false;
-        }
-      }
-      return true;
-    }
-    // Entry point for a bounded assignment-only selected-overlay reflow after
-    // a lifecycle change. Emits one fixed private diagnostic per distinct
-    // outcome; "no-selection" stays silent so unrelated removals or additions
-    // never claim a reflow. `candidate` supplies a newly added eligible window
-    // that may fill the first trailing leaf only when the overlay has capacity.
-    runReflow(scope, candidate) {
-      if (this.scopeHasFullscreen(scope)) {
-        this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-        return { kind: "no-op" };
-      }
-      const outcome = this.reflowSelectedOverlay(scope, candidate);
-      switch (outcome.kind) {
-        case "no-op":
-          this.diagnostic("reflow-noop");
-          break;
-        case "no-capacity":
-          this.diagnostic("reflow-no-capacity");
-          break;
-        case "completed":
-          this.diagnostic("reflow-completed");
-          break;
-        case "rejected":
-          this.diagnostic(`reflow-rejected:${outcome.reason}`);
-          break;
-        case "partial":
-          this.diagnostic(`reflow-partial:${outcome.reason}`);
-          break;
-        case "no-selection":
-          break;
-      }
-      return outcome;
-    }
-    reflowSelectedOverlay(scope, candidate) {
-      const overlay = this.reflowState.selectedOverlay(scope);
-      if (overlay === null) {
-        return { kind: "no-selection" };
-      }
-      if (this.reflowTouchesMaximized(scope, overlay)) {
-        this.diagnostic("maximize:ignored reflow while maximized");
-        return { kind: "no-op" };
-      }
-      if (overlay.leaves.length === 0) {
-        return { kind: "rejected", reason: "topology-decode" };
-      }
-      const occupants = [];
-      const seen = /* @__PURE__ */ new Set();
-      for (const leaf of overlay.leaves) {
-        const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-          return { kind: "rejected", reason: "topology-decode" };
-        }
-        for (const window of windows.value) {
-          if (seen.has(window)) {
-            return { kind: "rejected", reason: "occupancy-validity" };
-          }
-          if (window.tile !== leaf || this.removedOccupants.has(window)) {
-            continue;
-          }
-          if (!windowInScope(window, scope)) {
-            return { kind: "rejected", reason: "occupancy-validity" };
-          }
-          seen.add(window);
-          occupants.push(window);
-        }
-      }
-      if (candidate !== void 0) {
-        if (!windowInScope(candidate, scope) || candidate.tile !== null || seen.has(candidate) || this.removedOccupants.has(candidate)) {
-          return { kind: "rejected", reason: "candidate-eligibility" };
-        }
-        if (occupants.length >= overlay.leaves.length) {
-          return { kind: "no-capacity" };
-        }
-        occupants.push(candidate);
-      }
-      if (occupants.length > overlay.leaves.length) {
-        return { kind: "rejected", reason: "capacity" };
-      }
-      const plan = [];
-      for (let index = 0; index < occupants.length; index += 1) {
-        const occupant = occupants[index];
-        const target = overlay.leaves[index];
-        if (occupant === void 0 || target === void 0) {
-          return { kind: "rejected", reason: "capacity" };
-        }
-        if (occupant.tile === target) {
-          continue;
-        }
-        const source = occupant.tile;
-        if (source !== null && !isTile(source)) {
-          return { kind: "rejected", reason: "source-validity" };
-        }
-        plan.push({ window: occupant, source, target });
-      }
-      if (plan.length === 0) {
-        return { kind: "no-op" };
-      }
-      let writes = 0;
-      for (const entry of plan) {
-        if (!this.reflowAssignmentRevalidates(scope, entry.window, entry.source, entry.target)) {
-          return writes === 0 ? { kind: "rejected", reason: "assignment-stale" } : { kind: "partial", reason: "assignment-stale", writes };
-        }
-        let assigned = false;
-        try {
-          assigned = assignWindowToTile(entry.window, entry.target, this.markStructuralMutation);
-        } catch (error) {
-          void error;
-          return writes === 0 ? { kind: "rejected", reason: "assignment-failed" } : { kind: "partial", reason: "assignment-failed", writes };
-        }
-        if (!assigned) {
-          return writes === 0 ? { kind: "rejected", reason: "assignment-failed" } : { kind: "partial", reason: "assignment-failed", writes };
-        }
-        writes += 1;
-      }
-      return { kind: "completed", writes };
-    }
-    // Re-derives identity, scope, current source, and target availability
-    // immediately before each guarded write, so any change between planning
-    // and the write stops the reflow without claiming rollback.
-    reflowAssignmentRevalidates(scope, window, source, target) {
-      if (!windowInScope(window, scope)) {
-        return false;
-      }
-      if (window.tile !== source) {
-        return false;
-      }
-      const overlay = this.readSelectedOverlay(scope);
-      if (overlay === null) {
-        return false;
-      }
-      return overlay.leaves.includes(target) && this.reflowTargetIsAvailable(target);
-    }
-    reflowTargetIsAvailable(target) {
-      const windows = decodeSequential(target.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-      if (!windows.ok) {
-        return false;
-      }
-      for (const occupant of windows.value) {
-        if (!this.removedOccupants.has(occupant) && occupant.tile === target) {
-          return false;
-        }
-      }
-      return true;
-    }
-    reflowAfterRemoval(window) {
-      var _a;
-      this.noteRemovedOccupant(window);
-      const scope = this.scopeForWindow(window);
-      if (scope === null) {
-        this.reflowSelectedScopesContaining(window);
-        return;
-      }
-      if (((_a = this.selectedOverlays.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id)) === void 0) {
-        return;
-      }
-      this.runReflow(scope);
-    }
-    reflowAfterDetach(scope, origin) {
-      const overlay = this.readSelectedOverlay(scope);
-      if (overlay !== null && overlay.leaves.includes(origin)) {
-        this.runReflow(scope);
-      }
-    }
-    reflowSelectedScopesContaining(window) {
-      for (const byDesktop of this.selectedOverlays.values()) {
-        for (const overlay of byDesktop.values()) {
-          const current = this.readSelectedOverlay(overlay.scope);
-          if (current === null) {
-            continue;
-          }
-          for (const leaf of current.leaves) {
-            const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-            if (windows.ok && windows.value.includes(window)) {
-              this.runReflow(current.scope);
-              break;
-            }
-          }
-        }
-      }
-    }
-    noteRemovedOccupant(window) {
-      if (this.removedOccupants.size >= MAX_SEQUENTIAL_LENGTH) {
-        const stale = this.removedOccupants.values().next().value;
-        if (stale !== void 0) {
-          this.removedOccupants.delete(stale);
-        }
-      }
-      this.removedOccupants.add(window);
-    }
     refillOrPlaceAutomatically(window, scope) {
-      const outcome = this.runReflow(scope, window);
+      const outcome = this.reflowObservers.afterAddition(window, scope);
       if (outcome.kind === "no-selection" || outcome.kind === "no-capacity") {
         if (window.tile !== null) {
           return;
@@ -4288,7 +4343,7 @@
         }
         if (isWindow(window)) {
           this.detachInteractiveWindow(window);
-          this.cancelDeferredEligibility(window);
+          this.reflowObservers.cancelDeferredEligibility(window);
           this.detachedWindows.delete(window);
           this.floatingWindows.delete(window);
           this.floatScopes.delete(window);
@@ -4296,7 +4351,7 @@
           this.floatGeometries.delete(window);
           this.maximizedWindows.delete(window);
           this.detachMaximizeWindow(window);
-          this.reflowAfterRemoval(window);
+          this.reflowObservers.afterRemoval(window);
           this.dwindleMaybeRemove(window);
           this.detachFullscreenWindow(window);
           this.fullscreenWindows.delete(window);
@@ -4320,7 +4375,7 @@
             if (scope === null || !windowInScope(window, scope)) {
               const reason = this.windowAddedRejection(window, scope);
               if (reason === "desktop-scope-mismatch" && scope !== null && isWindow(window)) {
-                this.deferDesktopScopeReevaluation(window, scope);
+                this.reflowObservers.deferDesktopScopeReevaluation(window, scope);
               } else {
                 this.onceDiagnostic(`window-added-rejected:${reason}`);
               }
@@ -4340,53 +4395,8 @@
         this.drainPendingDesktopIntents();
       }, (reason) => this.disabled(reason));
     }
-    // `desktop-scope-mismatch` is the one `windowAddedRejection` sub-code
-    // that can be a timing artifact rather than genuine ineligibility
-    // (unit-05/attempt-16): `window.desktops` may still be settling at the
-    // exact `windowAdded` instant. Every other sub-code stays an immediate
-    // terminal rejection. Bounded to exactly one short re-evaluation per
-    // window; cancelled by `cancelDeferredEligibility` if the window closes
-    // first, so nothing leaks or retries unboundedly.
-    deferDesktopScopeReevaluation(window, scope) {
-      if (this.deferredEligibility.size >= MAX_SEQUENTIAL_LENGTH || this.deferredEligibility.has(window)) {
-        return;
-      }
-      this.onceDiagnostic(`window-added-deferred:${desktopScopeCheck(window, scope)}`);
-      const cancel = this.environment.scheduleOnce(DESKTOP_SCOPE_REEVALUATION_DELAY_MS, () => {
-        if (this.deferredEligibility.get(window) !== cancel) {
-          return;
-        }
-        this.deferredEligibility.delete(window);
-        this.reevaluateDesktopScope(window, scope);
-      });
-      this.deferredEligibility.set(window, cancel);
-    }
-    reevaluateDesktopScope(window, scope) {
-      this.gate.run(() => {
-        const freshScope = this.scopeForWindow(window);
-        if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
-          this.onceDiagnostic("window-added-rejected-deferred:scope-changed");
-          return;
-        }
-        this.onceDiagnostic(`window-added-reevaluated:${desktopScopeCheck(window, freshScope)}`);
-        if (!windowInScope(window, freshScope)) {
-          this.onceDiagnostic("window-added-rejected-deferred:desktop-scope-mismatch");
-          return;
-        }
-        this.onceDiagnostic("window-added-eligible-deferred");
-        this.placeEligibleAdded(window, freshScope);
-        this.cleanupDesktops();
-        this.drainPendingDesktopIntents();
-      }, (reason) => this.disabled(reason));
-    }
-    cancelDeferredEligibility(window) {
-      const cancel = this.deferredEligibility.get(window);
-      if (cancel === void 0) {
-        return;
-      }
-      this.deferredEligibility.delete(window);
-      cancel();
-    }
+    // `desktop-scope-mismatch` is deferred by the reflow/observer domain so a
+    // newly mapped window can settle its desktop membership once.
     windowAddedRejection(window, scope) {
       if (scope === null || !isWindow(window)) {
         return "scope-unavailable";
@@ -6484,7 +6494,7 @@
     // splits-only dwindle insertion split the deepest leaf. No removal is ever
     // part of an add dispatch.
     dwindleAdd(window, scope) {
-      const outcome = this.runReflow(scope, window);
+      const outcome = this.reflowObservers.afterAddition(window, scope);
       if (outcome.kind !== "no-selection" && outcome.kind !== "no-capacity") {
         return;
       }

@@ -153,3 +153,41 @@ Append-only record of artifact creation and approved execution checkpoints.
   Unit 03; circuit breakers remain 0. The dogfood script emitted its existing
   non-fatal temporary-data `find` warning. Unit 05 is next after this accepted
   checkpoint is committed.
+
+## 2026-08-23 - unit 05 attempt 1 reconciliation
+
+- Role / unit: Lead / unit 05 / attempt 1 pre-dispatch reconciliation.
+- Result: Unit 04 is accepted and committed at `641f4cf7c327f08cc156a9c19b3c19afcf7ca1cf`; Unit 05 is unblocked. The current facade retains a coherent reflow, observer/signal lifecycle, and interactive-drag extraction boundary. Reconstruction, dwindle, workspace flows, public facade ownership, and shortcut registration remain excluded.
+- Baseline / scope: `git status --short` reported only the declared unrelated untracked `CMakeFiles/`, `test-output`, and `Project Technical Report and Implementation Plan.md`; these paths are not inspected or touched. Artifact accounting reconciles to Unit 04 attempts 2, cancellations 1, corrections 1, independent reviews 1; change-wide independent reviews 2; circuit breakers 0. The accepted source baseline is 965 tests / 91 suites / 0 failures / 0 skipped, clean dual typecheck, dogfood 347/0, and bundle SHA-256 `3434ccd9de8b264665083f83ba24485d0ba37ab78f78ea1dd34e88c4cf2b9e52`.
+- Notes / blocker: none. Unit 05 attempt 1 is dispatched as one bounded implementation slice; its required independent review has not run.
+
+## 2026-08-23 - unit 05 attempt 1 preflight stop
+
+- Role / unit: implementation Worker / unit 05 / attempt 1.
+- Result: stopped before code inspection or modification because the host Worker protocol required the parent Lead identity in its dispatch brief. No implementation or verification ran.
+- Files / commit: no files changed and no commit.
+- Notes / blocker: this counts as Unit 05 attempt 1 under semantic-unit accounting. No correction or independent review occurred. The one remaining attempt is re-briefed with the required identity; circuit breakers remain 0.
+
+## 2026-08-23 - unit 05 attempt 2 preflight stop and circuit breaker
+
+- Role / unit: implementation Worker / unit 05 / attempt 2.
+- Result: stopped before code inspection or modification because its host treated the declared unrelated untracked `CMakeFiles/`, `test-output`, and `Project Technical Report and Implementation Plan.md` paths as an ownership conflict, despite explicit instructions not to inspect or touch them. It also reported a host role mismatch: actual Worker, configured Lead, parent Lead OpenCode.
+- Files / commit: no implementation files changed, staged, committed, deleted, or built. No verification ran.
+- Notes / blocker: Unit 05 now has attempts 2, corrections 0, independent reviews 0. Dispatching a third attempt would violate the semantic attempt limit, so the circuit breaker is 1. No independent review can run without a reviewable candidate. Escalate for an Orchestrator host-resolution/reset decision; no source recovery is required.
+
+## 2026-08-23 - approved Unit 05 semantic circuit-breaker reset
+
+- Role / unit: Lead / frozen unit 05; approved replacement units `unit-05a-reflow-observers` and `unit-05b-drag-deferred-work`.
+- Result: the Orchestrator approved the semantic reset without a specification or governance change. Original Unit 05 is permanently frozen at attempts 2, cancellations 0, corrections 0, independent reviews 0, and circuit breaker 1 because both malformed preflights ended before source work, verification, or a candidate existed.
+- Plan / dependencies: Unit 05A owns reflow and non-interactive lifecycle observers, including eligibility token cancellation; Unit 05B owns interactive drag and deferred-work coordination. Unit 06 now waits for accepted 05A and accepted, independently reviewed 05B; Unit 07 waits for both replacements and Unit 06. The Unit 05 independent-review checkpoint is placed after 05B only.
+- Ownership: `controller.ts` remains the sole composition root and owner of structural mutation reporting/flush state and the single production `flashFocusedGroup()` invocation. The replacements use only existing narrow capabilities.
+- Files / commit: updated `plan.md`, `state.md`, and this append-only log; no production files, tests, generated bundle, staging, commit, push, or live operation.
+
+## 2026-08-23 - unit-05a-reflow-observers attempt 01 acceptance
+
+- Role / unit: Lead / `unit-05a-reflow-observers` / attempt 01.
+- Result: accepted. The Worker extracted selected-overlay reflow state and execution, lifecycle reflow callbacks, and one-shot eligibility reevaluation/cancellation into `controller-reflow-observers.ts`. `controller.ts` remains the composition root and retains facade fan-out order.
+- Lead inspection: the new 393-line module imports only boundary plus type-only logic/catalog dependencies and has no runtime extracted-domain sibling import. The facade cancels deferred eligibility before its existing reflow/removal processing; deferred eligibility calls the existing placement, cleanup, and intent-drain sequence. The sole structural pending/flush implementation and sole production `flashFocusedGroup()` invocation remain in `controller.ts`.
+- Verification: focused existing reflow/observer and eligibility suites 46 tests / 3 suites / 0 failures; dual typecheck clean; full suite 965 tests / 91 suites / 0 failures / 0 skipped; dogfood 347/0; `git diff --check` clean; two normal builds matched generated-bundle SHA-256 `fbbfb573f9e5ab3e57a2edcedd9a424112a66da71afd7f2b768719fdd10275c0`.
+- Files / commit: added `kwin/src/controller-reflow-observers.ts`; modified `kwin/src/controller.ts` and generated `kwin/contents/code/main.js`; updated `plan.md`, `state.md`, and this log. No tests changed, no independent review is due, and no staging, commit, push, or live operation occurred.
+- Notes / blocker: Unit 05A counts are attempts 1, cancellations 0, corrections 0, independent reviews 0. Unit 05B is next but not dispatched. Dogfood emitted its existing non-fatal temporary-data `find` warning.

@@ -129,6 +129,13 @@ import {
     type PendingKeyboard as InputPendingKeyboard,
 } from "./controller-input-actions";
 import { createWindowActions, type WindowActions } from "./controller-window-actions";
+import {
+    createReflowObservers,
+    type CurrentScope,
+    type ReflowObservers,
+    type SelectedOverlay,
+} from "./controller-reflow-observers";
+export type { CurrentScope, SelectedOverlay } from "./controller-reflow-observers";
 
 const HORIZONTAL_LAYOUT_DIRECTION = 1;
 const VERTICAL_LAYOUT_DIRECTION = 2;
@@ -147,11 +154,6 @@ const MINIMUM_TILE_FRACTION = 0.15;
 const WORK_AREA_CLIENT_AREA_OPTION = 5;
 // Default float geometry is 60% x 60% of the current output work area,
 // centered within it (roadmap floating-windows default geometry).
-// A newly-mapped window's `desktops` value can still be settling at the
-// exact `windowAdded` instant (unit-05/attempt-16 live evidence). One short,
-// bounded re-evaluation gives it a chance to settle before being treated as
-// permanently out of scope.
-const DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
 const GROUP_OUTLINE_DURATION_MS = 700;
 // Bounded re-drive budget per pending reconstruction phase. A lifecycle event
 // while a reconstruction is pending re-arms that phase's one-shot yield so a
@@ -248,12 +250,6 @@ export interface ControllerEnvironment {
     readonly log: (message: string) => void;
 }
 
-export interface CurrentScope {
-    readonly scope: Scope;
-    readonly output: OutputCapability;
-    readonly desktop: VirtualDesktopCapability;
-}
-
 // These are private composition seams for the later source split. They expose
 // operations on controller-owned state rather than the state collections or a
 // controller-shaped context.
@@ -316,18 +312,6 @@ interface DropOutlineCapability {
     readonly hideDropOutline: () => void;
 }
 
-interface ReflowState {
-    readonly selectedOverlay: (scope: CurrentScope) => SelectedOverlay | null;
-    readonly recordSelectedOverlay: (
-        scope: CurrentScope,
-        preset: PresetKind,
-        root: TileCapability,
-        leaves: readonly TileCapability[],
-    ) => void;
-    readonly removedOccupant: (window: WindowCapability) => boolean;
-    readonly noteRemovedOccupant: (window: WindowCapability) => void;
-}
-
 interface ManagedScopeState {
     readonly managedScope: (scope: CurrentScope) => ManagedScope | null;
     readonly setManagedScope: (scope: CurrentScope) => void;
@@ -355,16 +339,6 @@ interface WorkspaceModeState {
 
 interface DesktopChangeState {
     readonly currentDesktopChangeOutput: () => OutputCapability | null;
-}
-
-// Explicit ephemeral selected-overlay record for a future bounded
-// assignment-only reflow. It carries only in-memory identity and preset/scope
-// requirements: no titles, app IDs, geometry, or persisted data.
-export interface SelectedOverlay {
-    readonly scope: CurrentScope;
-    readonly preset: PresetKind;
-    readonly root: TileCapability;
-    readonly leaves: readonly TileCapability[];
 }
 
 // Session-local managed-scope ownership record for automatic ratio-free
@@ -494,29 +468,6 @@ type GeometryDropResolution =
       }
     | GeometryDropBail;
 
-// One guarded `window.tile` assignment produced by reflow planning. `source`
-// is the occupant's current tile at plan time (null only for an untiled
-// addition candidate); `target` is the exact ordinal overlay leaf.
-interface ReflowWrite {
-    readonly window: WindowCapability;
-    readonly source: TileCapability | null;
-    readonly target: TileCapability;
-}
-
-// One guarded `window.tile` assignment produced by explicit scope fill. The
-// full bounded plan is built before any write, then each entry revalidates
-// before its own write and stops fail-fast on the first failure.
-// Outcome of a bounded assignment-only selected-overlay reflow. Fixed private
-// diagnostics map to distinct no-op/no-capacity, success, and failure/partial
-// states; no-selection is silent and never claims a reflow happened.
-type ReflowOutcome =
-    | { readonly kind: "no-selection" }
-    | { readonly kind: "no-op" }
-    | { readonly kind: "no-capacity" }
-    | { readonly kind: "completed"; readonly writes: number }
-    | { readonly kind: "rejected"; readonly reason: string }
-    | { readonly kind: "partial"; readonly reason: string; readonly writes: number };
-
 // Outcome of a deterministic empty-leaf automatic placement. `managed` records
 // the single guarded manage; every failure variant is a distinct reason for a
 // decisive no-op diagnostic in the generic (non-owned) fallback path.
@@ -562,16 +513,8 @@ export class TileController {
     // maximized records, observed to clear the classification on a real native
     // unmaximize. Bounded like the other identity sets.
     private readonly maximizeWatches = new Map<WindowCapability, () => void>();
-    private readonly deferredEligibility = new Map<WindowCapability, () => void>();
     private readonly decodedBoundaries = new Set<BoundaryKind>();
     private readonly onceDiagnostics = new Set<string>();
-    private readonly selectedOverlays = new Map<OutputCapability, Map<string, SelectedOverlay>>();
-    // Windows removed since the last reflow read of their scope. Removal can
-    // arrive while KWin still lists the window in its tile's window array;
-    // this bounded identity guard keeps the reflow from ever reassigning a
-    // removed window. Entries for settled (array-absent) windows are never
-    // consulted and the set is capped so it cannot grow unboundedly.
-    private readonly removedOccupants = new Set<WindowCapability>();
     // Per-output/per-desktop session-local managed-scope ownership for
     // automatic ratio-free dwindle. A scope is managed only when it holds
     // owned windows; a failed or damaged scope is recorded inert for the
@@ -582,7 +525,7 @@ export class TileController {
     private readonly pendingRebuilds = new Map<OutputCapability, Map<string, PendingRebuild>>();
     // Explicitly detached windows (the detach action writes `window.tile` to
     // null) are excluded from the owned population and the dwindle rebuild.
-    // Bounded like removedOccupants so it cannot grow without limit.
+    // Bounded like the other session identity sets so it cannot grow without limit.
     private readonly detachedWindows = new Set<WindowCapability>();
     // Session-local floating state. A floating window left its tile through
     // `tile.unmanage(window)` with its vacated leaf retained; it is excluded
@@ -694,7 +637,7 @@ export class TileController {
     private readonly dragState: DragState;
     private readonly interactiveWatchState: InteractiveWatchState;
     private readonly dropOutline: DropOutlineCapability;
-    private readonly reflowState: ReflowState;
+    private readonly reflowObservers: ReflowObservers;
     private readonly managedScopeState: ManagedScopeState;
     private readonly pendingRebuildState: PendingRebuildState;
     private readonly pendingMoveState: PendingMoveState;
@@ -759,13 +702,26 @@ export class TileController {
             showDropOutline: (geometry) => this.showDropOutline(geometry),
             hideDropOutline: () => this.hideDropOutline(),
         };
-        this.reflowState = {
-            selectedOverlay: (scope) => this.readSelectedOverlay(scope),
-            recordSelectedOverlay: (scope, preset, root, leaves) =>
-                this.recordSelectedOverlay(scope, preset, root, leaves),
-            removedOccupant: (window) => this.removedOccupants.has(window),
-            noteRemovedOccupant: (window) => this.noteRemovedOccupant(window),
-        };
+        this.reflowObservers = createReflowObservers({
+            rootTile: (output, desktop) => this.environment.rootTile(output, desktop),
+            scopeForWindow: (window) => this.scopeForWindow(window),
+            windowInScope,
+            decodeTileTree,
+            collectPresetLeaves,
+            scopeHasFullscreen: (scope) => this.scopeHasFullscreen(scope),
+            reflowTouchesMaximized: (scope, overlay) => this.reflowTouchesMaximized(scope, overlay),
+            mutation: this.markStructuralMutation,
+            diagnostic: (event) => this.diagnostic(event),
+            onceDiagnostic: (event) => this.onceDiagnostic(event),
+            desktopScopeCheck,
+            scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
+            runGuarded: (operation) => this.gate.run(operation, (reason) => this.disabled(reason)),
+            onEligibleDeferred: (window, scope) => {
+                this.placeEligibleAdded(window, scope);
+                this.cleanupDesktops();
+                this.drainPendingDesktopIntents();
+            },
+        });
         this.managedScopeState = {
             managedScope: (scope) => this.managedRecord(scope),
             setManagedScope: (scope) => this.setManaged(scope),
@@ -834,7 +790,7 @@ export class TileController {
             },
             mutation: this.markStructuralMutation,
             callbacks: {
-                afterDetach: (scope, origin) => this.reflowAfterDetach(scope, origin),
+                afterDetach: (scope, origin) => this.reflowObservers.afterDetach(scope, origin),
                 isMaximized: (window) => this.maximizedWindows.has(window),
                 decodedBoundary: (kind) => this.decodedBoundary(kind),
             },
@@ -973,23 +929,8 @@ export class TileController {
         }
     }
 
-    // Narrow read/self-validation seam for a future bounded assignment-only
-    // reflow. The overlay for the exact scope is returned only when its
-    // recorded root and ordinal leaves remain intact beneath the same current
-    // Custom Tile root. Structural drift is discarded inertly with one fixed
-    // private diagnostic; reading never mutates topology or assignments.
     readSelectedOverlay(scope: CurrentScope): SelectedOverlay | null {
-        const byDesktop = this.selectedOverlays.get(scope.output);
-        const overlay = byDesktop?.get(scope.desktop.id);
-        if (overlay === undefined) {
-            return null;
-        }
-        if (!this.selectedOverlayValid(overlay)) {
-            byDesktop?.delete(scope.desktop.id);
-            this.diagnostic("selected-overlay-invalidated");
-            return null;
-        }
-        return overlay;
+        return this.reflowObservers.readSelectedOverlay(scope);
     }
 
     private diagnostic(event: string): void {
@@ -1433,274 +1374,13 @@ export class TileController {
                     return;
                 }
             }
-            this.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
+            this.reflowObservers.recordSelectedOverlay(scope, kind, source.decoded.tile, execution.leaves);
             this.diagnostic(`preset-applied:${kind}`);
         }, (reason) => this.disabled(reason));
     }
 
-    // Record the selected overlay only after the whole preset realization
-    // succeeded, keyed by the exact current desktop/output scope. A later
-    // successful application on the same scope atomically replaces it.
-    private recordSelectedOverlay(
-        scope: CurrentScope,
-        preset: PresetKind,
-        root: TileCapability,
-        leaves: readonly TileCapability[],
-    ): void {
-        let byDesktop = this.selectedOverlays.get(scope.output);
-        if (byDesktop === undefined) {
-            byDesktop = new Map<string, SelectedOverlay>();
-            this.selectedOverlays.set(scope.output, byDesktop);
-        }
-        byDesktop.set(scope.desktop.id, { scope, preset, root, leaves });
-    }
-
-    private selectedOverlayValid(overlay: SelectedOverlay): boolean {
-        const root = this.environment.rootTile(overlay.scope.output, overlay.scope.desktop);
-        if (!isCustomTile(root)) {
-            return false;
-        }
-        const tiles = decodeTileTree(root);
-        if (tiles === null || !tiles.some((tile) => tile === overlay.root)) {
-            return false;
-        }
-        const realized = collectPresetLeaves(overlay.root);
-        if (realized === null || realized.length !== overlay.leaves.length) {
-            return false;
-        }
-        for (let index = 0; index < realized.length; index += 1) {
-            if (realized[index] !== overlay.leaves[index]) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    // Entry point for a bounded assignment-only selected-overlay reflow after
-    // a lifecycle change. Emits one fixed private diagnostic per distinct
-    // outcome; "no-selection" stays silent so unrelated removals or additions
-    // never claim a reflow. `candidate` supplies a newly added eligible window
-    // that may fill the first trailing leaf only when the overlay has capacity.
-    private runReflow(scope: CurrentScope, candidate?: WindowCapability): ReflowOutcome {
-        if (this.scopeHasFullscreen(scope)) {
-            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-            return { kind: "no-op" };
-        }
-        const outcome = this.reflowSelectedOverlay(scope, candidate);
-        switch (outcome.kind) {
-            case "no-op":
-                this.diagnostic("reflow-noop");
-                break;
-            case "no-capacity":
-                this.diagnostic("reflow-no-capacity");
-                break;
-            case "completed":
-                this.diagnostic("reflow-completed");
-                break;
-            case "rejected":
-                this.diagnostic(`reflow-rejected:${outcome.reason}`);
-                break;
-            case "partial":
-                this.diagnostic(`reflow-partial:${outcome.reason}`);
-                break;
-            case "no-selection":
-                break;
-        }
-        return outcome;
-    }
-
-    private reflowSelectedOverlay(
-        scope: CurrentScope,
-        candidate?: WindowCapability,
-    ): ReflowOutcome {
-        const overlay = this.reflowState.selectedOverlay(scope);
-        if (overlay === null) {
-            return { kind: "no-selection" };
-        }
-        if (this.reflowTouchesMaximized(scope, overlay)) {
-            this.diagnostic("maximize:ignored reflow while maximized");
-            return { kind: "no-op" };
-        }
-        if (overlay.leaves.length === 0) {
-            return { kind: "rejected", reason: "topology-decode" };
-        }
-        // Deterministic occupants: ordinal leaf traversal only, omitting
-        // windows that left the overlay, left scope, or were removed, and
-        // preserving the current traversal order. Active-first ordering is
-        // never rerun after a lifecycle event.
-        const occupants: WindowCapability[] = [];
-        const seen = new Set<WindowCapability>();
-        for (const leaf of overlay.leaves) {
-            const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-            if (!windows.ok) {
-                return { kind: "rejected", reason: "topology-decode" };
-            }
-            for (const window of windows.value) {
-                if (seen.has(window)) {
-                    return { kind: "rejected", reason: "occupancy-validity" };
-                }
-                if (window.tile !== leaf || this.removedOccupants.has(window)) {
-                    continue;
-                }
-                if (!windowInScope(window, scope)) {
-                    return { kind: "rejected", reason: "occupancy-validity" };
-                }
-                seen.add(window);
-                occupants.push(window);
-            }
-        }
-        if (candidate !== undefined) {
-            if (
-                !windowInScope(candidate, scope) ||
-                candidate.tile !== null ||
-                seen.has(candidate) ||
-                this.removedOccupants.has(candidate)
-            ) {
-                return { kind: "rejected", reason: "candidate-eligibility" };
-            }
-            if (occupants.length >= overlay.leaves.length) {
-                return { kind: "no-capacity" };
-            }
-            occupants.push(candidate);
-        }
-        if (occupants.length > overlay.leaves.length) {
-            return { kind: "rejected", reason: "capacity" };
-        }
-        // Build the complete assignment plan before any write, compacting
-        // occupants to ordinal leaves and skipping already-correct entries.
-        const plan: ReflowWrite[] = [];
-        for (let index = 0; index < occupants.length; index += 1) {
-            const occupant = occupants[index];
-            const target = overlay.leaves[index];
-            if (occupant === undefined || target === undefined) {
-                return { kind: "rejected", reason: "capacity" };
-            }
-            if (occupant.tile === target) {
-                continue;
-            }
-            const source = occupant.tile;
-            if (source !== null && !isTile(source)) {
-                return { kind: "rejected", reason: "source-validity" };
-            }
-            plan.push({ window: occupant, source, target });
-        }
-        if (plan.length === 0) {
-            return { kind: "no-op" };
-        }
-        let writes = 0;
-        for (const entry of plan) {
-            if (!this.reflowAssignmentRevalidates(scope, entry.window, entry.source, entry.target)) {
-                return writes === 0
-                    ? { kind: "rejected", reason: "assignment-stale" }
-                    : { kind: "partial", reason: "assignment-stale", writes };
-            }
-            let assigned = false;
-            try {
-                assigned = assignWindowToTile(entry.window, entry.target, this.markStructuralMutation);
-            } catch (error) {
-                void error;
-                return writes === 0
-                    ? { kind: "rejected", reason: "assignment-failed" }
-                    : { kind: "partial", reason: "assignment-failed", writes };
-            }
-            if (!assigned) {
-                return writes === 0
-                    ? { kind: "rejected", reason: "assignment-failed" }
-                    : { kind: "partial", reason: "assignment-failed", writes };
-            }
-            writes += 1;
-        }
-        return { kind: "completed", writes };
-    }
-
-    // Re-derives identity, scope, current source, and target availability
-    // immediately before each guarded write, so any change between planning
-    // and the write stops the reflow without claiming rollback.
-    private reflowAssignmentRevalidates(
-        scope: CurrentScope,
-        window: WindowCapability,
-        source: TileCapability | null,
-        target: TileCapability,
-    ): boolean {
-        if (!windowInScope(window, scope)) {
-            return false;
-        }
-        if (window.tile !== source) {
-            return false;
-        }
-        const overlay = this.readSelectedOverlay(scope);
-        if (overlay === null) {
-            return false;
-        }
-        return overlay.leaves.includes(target) && this.reflowTargetIsAvailable(target);
-    }
-
-    private reflowTargetIsAvailable(target: TileCapability): boolean {
-        const windows = decodeSequential(target.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-            return false;
-        }
-        for (const occupant of windows.value) {
-            if (!this.removedOccupants.has(occupant) && occupant.tile === target) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    private reflowAfterRemoval(window: WindowCapability): void {
-        this.noteRemovedOccupant(window);
-        const scope = this.scopeForWindow(window);
-        if (scope === null) {
-            // Without a decoded scope, act only on an overlay that still
-            // identifies this exact wrapper. A settled removal with no such
-            // association is inert rather than writing an unrelated scope.
-            this.reflowSelectedScopesContaining(window);
-            return;
-        }
-        if (this.selectedOverlays.get(scope.output)?.get(scope.desktop.id) === undefined) {
-            return;
-        }
-        this.runReflow(scope);
-    }
-
-    private reflowAfterDetach(scope: CurrentScope, origin: TileCapability): void {
-        const overlay = this.readSelectedOverlay(scope);
-        if (overlay !== null && overlay.leaves.includes(origin)) {
-            this.runReflow(scope);
-        }
-    }
-
-    private reflowSelectedScopesContaining(window: WindowCapability): void {
-        for (const byDesktop of this.selectedOverlays.values()) {
-            for (const overlay of byDesktop.values()) {
-                const current = this.readSelectedOverlay(overlay.scope);
-                if (current === null) {
-                    continue;
-                }
-                for (const leaf of current.leaves) {
-                    const windows = decodeSequential(leaf.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-                    if (windows.ok && windows.value.includes(window)) {
-                        this.runReflow(current.scope);
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    private noteRemovedOccupant(window: WindowCapability): void {
-        if (this.removedOccupants.size >= MAX_SEQUENTIAL_LENGTH) {
-            const stale = this.removedOccupants.values().next().value;
-            if (stale !== undefined) {
-                this.removedOccupants.delete(stale);
-            }
-        }
-        this.removedOccupants.add(window);
-    }
-
     private refillOrPlaceAutomatically(window: WindowCapability, scope: CurrentScope): void {
-        const outcome = this.runReflow(scope, window);
+        const outcome = this.reflowObservers.afterAddition(window, scope);
         if (outcome.kind === "no-selection" || outcome.kind === "no-capacity") {
             // An already-tiled window is not a no-op; only a still-floating
             // window that cannot be placed emits the decisive reason.
@@ -1889,7 +1569,7 @@ export class TileController {
             }
             if (isWindow(window)) {
                 this.detachInteractiveWindow(window);
-                this.cancelDeferredEligibility(window);
+                this.reflowObservers.cancelDeferredEligibility(window);
                 this.detachedWindows.delete(window);
                 // Floating close cleanup only drops session state; it never
                 // removes or collapses a tile (the floating window left its
@@ -1905,7 +1585,7 @@ export class TileController {
                 // reconstruction through their own live records.
                 this.maximizedWindows.delete(window);
                 this.detachMaximizeWindow(window);
-                this.reflowAfterRemoval(window);
+                this.reflowObservers.afterRemoval(window);
                 this.dwindleMaybeRemove(window);
                 // The fullscreen record stays alive through both removal paths:
                 // removing any window (including the fullscreen window itself)
@@ -1939,7 +1619,7 @@ export class TileController {
                     if (scope === null || !windowInScope(window, scope)) {
                         const reason = this.windowAddedRejection(window, scope);
                         if (reason === "desktop-scope-mismatch" && scope !== null && isWindow(window)) {
-                            this.deferDesktopScopeReevaluation(window, scope);
+                            this.reflowObservers.deferDesktopScopeReevaluation(window, scope);
                         } else {
                             this.onceDiagnostic(`window-added-rejected:${reason}`);
                         }
@@ -1963,62 +1643,8 @@ export class TileController {
         }, (reason) => this.disabled(reason));
     }
 
-    // `desktop-scope-mismatch` is the one `windowAddedRejection` sub-code
-    // that can be a timing artifact rather than genuine ineligibility
-    // (unit-05/attempt-16): `window.desktops` may still be settling at the
-    // exact `windowAdded` instant. Every other sub-code stays an immediate
-    // terminal rejection. Bounded to exactly one short re-evaluation per
-    // window; cancelled by `cancelDeferredEligibility` if the window closes
-    // first, so nothing leaks or retries unboundedly.
-    private deferDesktopScopeReevaluation(window: WindowCapability, scope: CurrentScope): void {
-        if (this.deferredEligibility.size >= MAX_SEQUENTIAL_LENGTH || this.deferredEligibility.has(window)) {
-            return;
-        }
-        this.onceDiagnostic(`window-added-deferred:${desktopScopeCheck(window, scope)}`);
-        const cancel = this.environment.scheduleOnce(DESKTOP_SCOPE_REEVALUATION_DELAY_MS, () => {
-            // The entry can already be gone: `handleWindowRemoved` cancels and
-            // deletes it, or a later defer superseded it. Only this exact
-            // pending operation may act, so an already-cancelled callback that
-            // fires anyway is inert and cannot place a removed window.
-            if (this.deferredEligibility.get(window) !== cancel) {
-                return;
-            }
-            this.deferredEligibility.delete(window);
-            this.reevaluateDesktopScope(window, scope);
-        });
-        this.deferredEligibility.set(window, cancel);
-    }
-
-    private reevaluateDesktopScope(window: WindowCapability, scope: CurrentScope): void {
-        this.gate.run(() => {
-            const freshScope = this.scopeForWindow(window);
-            if (freshScope === null || !sameScope(freshScope.scope, scope.scope)) {
-                this.onceDiagnostic("window-added-rejected-deferred:scope-changed");
-                return;
-            }
-            this.onceDiagnostic(`window-added-reevaluated:${desktopScopeCheck(window, freshScope)}`);
-            if (!windowInScope(window, freshScope)) {
-                this.onceDiagnostic("window-added-rejected-deferred:desktop-scope-mismatch");
-                return;
-            }
-            this.onceDiagnostic("window-added-eligible-deferred");
-            this.placeEligibleAdded(window, freshScope);
-            // A deferred window arrival on the script-owned trailing empty also
-            // makes it occupied, so reconcile here as well.
-            this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
-        }, (reason) => this.disabled(reason));
-    }
-
-    private cancelDeferredEligibility(window: WindowCapability): void {
-        const cancel = this.deferredEligibility.get(window);
-        if (cancel === undefined) {
-            return;
-        }
-        this.deferredEligibility.delete(window);
-        cancel();
-    }
-
+    // `desktop-scope-mismatch` is deferred by the reflow/observer domain so a
+    // newly mapped window can settle its desktop membership once.
     private windowAddedRejection(window: unknown, scope: CurrentScope | null): string {
         if (scope === null || !isWindow(window)) {
             return "scope-unavailable";
@@ -4355,7 +3981,7 @@ export class TileController {
     // splits-only dwindle insertion split the deepest leaf. No removal is ever
     // part of an add dispatch.
     private dwindleAdd(window: WindowCapability, scope: CurrentScope): void {
-        const outcome = this.runReflow(scope, window);
+        const outcome = this.reflowObservers.afterAddition(window, scope);
         if (outcome.kind !== "no-selection" && outcome.kind !== "no-capacity") {
             return;
         }

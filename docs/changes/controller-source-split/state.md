@@ -1,18 +1,45 @@
 # State: Controller Source Split
 
-- Current unit: unit 05 - reflow, observers, and drag, not started.
+- Current unit: `unit-05b-drag-deferred-work` - drag and deferred-work
+  coordination, approved and not started.
 - Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
-- Blockers: none.
-- Next dispatch: unit 05 - reflow, observers, and drag, after this accepted Unit
-  04 checkpoint is committed.
-- Status: units 01-04 accepted; unit 04 attempt 1 was cancelled and
-  non-resumable, attempt 2 recovered the candidate, and its one review finding
-  was corrected and confirmed. Unit 05 is next.
-- Semantic units completed: 4/7.
+- Blockers: none. Original Unit 05 remains permanently frozen after its
+  malformed Worker preflights; it is not a dispatch target.
+- Next dispatch: none. Unit 05B awaits a fresh approved Worker dispatch.
+- Status: units 01-04 and Unit 05A accepted; frozen Unit 05 is replaced by
+  approved Units 05A and 05B. Unit 05B is the next implementation unit.
+- Semantic units completed: 5/8.
 - Unit 04 accounting: attempts 2, cancellations 1, corrections 1, independent
   reviews 1.
 - Change-wide independent reviews: 2 (unit 03 and unit 04).
-- Circuit breakers: 0.
+- Circuit breakers: 1 - frozen Unit 05 attempt limit reached; no third attempt
+  may be dispatched on that semantic unit.
+- Frozen Unit 05 accounting: attempts 2, cancellations 0, corrections 0,
+  independent reviews 0, circuit breaker 1. Both attempts stopped at malformed
+  Worker preflight before source work, verification, or a reviewable candidate;
+  no source recovery is required.
+- Unit 05A accounting: attempts 1, cancellations 0, corrections 0,
+  independent reviews 0, accepted 2026-08-23. It extracted selected-overlay
+  reflow and lifecycle callbacks, including token-identity eligibility
+  cancellation, into `controller-reflow-observers.ts`; drag and reconstruction
+  remain excluded. Focused existing suites reported 46 tests / 3 suites / 0
+  failures; the full suite reported 965 tests / 91 suites / 0 failures / 0
+  skipped; both typechecks passed; dogfood reported 347/0; two normal builds
+  matched SHA-256 `fbbfb573f9e5ab3e57a2edcedd9a424112a66da71afd7f2b768719fdd10275c0`.
+  Lead inspection confirmed no runtime sibling-domain import, one production
+  `flashFocusedGroup()` invocation, and the existing sole structural
+  reporting/flush implementation. No independent review is scheduled.
+- Unit 05B accounting: attempts 0, cancellations 0, corrections 0, independent
+  reviews 0. Scope: drag and deferred-work coordination; its one independent
+  review occurs after acceptance evidence is available.
+- Reset ownership: `controller.ts` remains the composition root and sole owner
+  of `StructuralMutationCapability`, its pending flag,
+  `flushStructuralMutation()`, and the one production `flashFocusedGroup()`
+  invocation. Units 05A and 05B receive only existing narrow capabilities.
+- Dependency reset: Unit 06 now depends on accepted Units 05A and 05B, with
+  Unit 05B independently reviewed. Unit 07 depends on accepted Units 01-04,
+  05A, 05B, and 06 with all required reviews complete; neither later unit's
+  semantic scope changed.
 - Baseline: 965 tests / 91 suites / 0 failures; typecheck clean; dogfood
   347/0. No live KWin operations.
 - Unit 01 checkpoint: `controller-config.ts` owns configuration interpretation,
