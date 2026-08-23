@@ -30,7 +30,7 @@ compatibility shim.
   controller import surface, or a dumping-ground `controller-types` module.
 - Do not split artificially or add one-use abstractions. Module line counts are
   cohesion targets, not acceptance criteria. Any module materially over about
-  1,000 lines must be justified in `plan.md` and `state.md`.
+  1,000 lines must be justified in `plan.md`.
 - Preserve callback identity and lifetimes, signal registration and
   disconnection, deferred ordering and cancellation, and mutation flush timing.
 - Preserve exactly one production `flashFocusedGroup()` call site and exactly

@@ -12,8 +12,8 @@ closures before making any local cleanup.
 
 Line counts are cohesion targets only. A module materially above about 1,000
 lines is acceptable only when its ownership and boundaries are documented in
-the unit checkpoint and `state.md`; no artificial split or dumping-ground
-controller-types module is permitted.
+the unit checkpoint; no artificial split or dumping-ground controller-types
+module is permitted.
 
 ## Work Units
 
@@ -168,7 +168,8 @@ controller-types module is permitted.
 - Circuit breakers: 1 - frozen Unit 05 reached its attempt limit before
   implementation; no third attempt is authorized. The approved semantic reset
   creates independently accountable Units 05A and 05B with fresh counters.
-- Unit 07 accepted; completion awaits Orchestrator alignment and the later completion transaction.
+- Unit 07 accepted; Orchestrator alignment and autonomous result approval were
+  granted for the completion transaction.
 - Reconciliation evidence before Unit 04 attempt 2: the candidate changes
   `controller.ts`, adds the input/window action domains, and has an unverified
   generated bundle with 22 trailing-whitespace findings. The facade contains
@@ -272,7 +273,55 @@ controller-types module is permitted.
   typecheck, and dogfood - commands above; normal generated bundle - two-build
   hash; baseline/no live operation - test and dogfood counts above with no live
   command run. The mandatory independent review inspected the full active-change
-  and finalization diffs and returned no findings.
+   and finalization diffs and returned no findings.
+
+## Final Acceptance Evidence
+
+- Sole public facade and composition root, equivalent public exports, and
+  shortcut callback ownership: final facade diff and static review confirm
+  `controller.ts` retains those responsibilities.
+- Narrow domain contracts without runtime extracted-domain imports: final static
+  import review confirms `entry.ts` is the sole runtime importer of
+  `controller.ts`; extracted-domain references are type-only.
+- Callback, signal, deferred-work, cancellation, and structural-flush lifetime
+  preservation: full suite and static inspection confirm one production
+  `flashFocusedGroup()` invocation and one `flushStructuralMutation()`
+  implementation.
+- Existing tests and static verification: `npm --prefix kwin run typecheck`
+  passed both configurations; `npm --prefix kwin test` reported 965 tests / 91
+  suites / 0 failures / 0 skipped; `bash scripts/dogfood-install.test.sh`
+  reported 347 assertions / 0 failures; `git diff --check` was clean.
+- Normal generated-bundle regeneration: two normal builds produced matching
+  `kwin/contents/code/main.js` SHA-256
+  `51af50efc153ba82dfaa2543ba973b443ef6b92f2c098409ae46e9a197c8f02b`.
+- No live KWin operation was run or claimed.
+
+## Reset History
+
+- Original Unit 05 is permanently frozen with 2 attempts, 0 cancellations, 0
+  corrections, 0 independent reviews, and circuit breaker 1. Both malformed
+  preflights stopped before source work, verification, or a candidate existed.
+- The approved semantic reset created Unit 05A and Unit 05B. Both replacements
+  are accepted; Unit 05B completed its required independent review. No Unit 05
+  recovery was attempted.
+
+## Residual Risks
+
+- Required process-role first-line assertions were omitted in recorded Worker
+  reports. No process-role mismatch or technical acceptance gap resulted.
+- The dogfood command emitted its existing non-fatal temporary-data `find`
+  warning. Its result remained 347 assertions / 0 failures.
+- No product blockers, unresolved serious findings, pending user decisions, or
+  acceptance gaps remain.
+
+## Final Outcome
+
+- Status: accepted. Units 01-04, 05A, 05B, 06, and 07 are accepted; all 8
+  executable semantic units are complete. Change-wide independent reviews: 5.
+- The frozen original Unit 05 remains historical circuit-breaker evidence only;
+  its accepted replacement units satisfy downstream dependencies.
+- Final implementation acceptance is recorded by Unit 07 commit `e17b9ee`
+  (`refactor(controller-source-split): finalize controller facade bundle`).
 
 ## Checkpoints and Circuit Breakers
 
@@ -283,8 +332,8 @@ lifetime invariant, a second structural flush or flash call site, a forbidden
 runtime domain import, a test weakening/removal, or an unexplained module over
 the line-count target. The worker stops and reports the finding; the next
 dispatch requires correction or explicit Orchestrator approval. Counters are
-recorded in `state.md`; no live-testing counter is opened because live testing
-is excluded.
+recorded in the execution record; no live-testing counter is opened because live
+testing is excluded.
 
 Units may be subdivided before implementation only to keep one Worker bounded.
 Such subdivisions must preserve the unit's semantic boundary. Semantic plan
