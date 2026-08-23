@@ -160,13 +160,13 @@ controller-types module is permitted.
 | Unit 04 | 2 | 1 | 1 | 1 | Accepted: attempt 2 recovered the candidate; its one P1 input ownership finding was corrected and Lead-confirmed. |
 | Unit 05 | 2 | 0 | 0 | 0 | Frozen permanently before implementation: two malformed Worker preflights performed no source work; circuit breaker 1 prohibits another attempt. |
 | Unit 05A | 1 | 0 | 0 | 0 | Accepted: extracted reflow state/execution, lifecycle reflow callbacks, and eligibility token cancellation behind the approved narrow seam. |
-| Unit 05B | 0 | 0 | 0 | 0 | Approved reset replacement: drag and deferred-work coordination; not started. |
+| Unit 05B | 1 | 0 | 1 | 1 | Accepted: attempt 1 extracted drag and deferred-work coordination; its three independent-review findings were corrected and Lead-confirmed. The Worker omitted its required identity-preflight line, a recorded process-compliance defect with no role mismatch or technical acceptance gap. |
 
-- Change-wide independent reviews: 2, belonging to accepted Unit 03 and Unit 04.
+- Change-wide independent reviews: 3, belonging to accepted Units 03, 04, and 05B.
 - Circuit breakers: 1 - frozen Unit 05 reached its attempt limit before
   implementation; no third attempt is authorized. The approved semantic reset
   creates independently accountable Units 05A and 05B with fresh counters.
-- Next semantic unit: Unit 05B - drag and deferred-work coordination.
+- Next semantic unit: Unit 06 - reconstruction, dwindle, and workspaces.
 - Reconciliation evidence before Unit 04 attempt 2: the candidate changes
   `controller.ts`, adds the input/window action domains, and has an unverified
   generated bundle with 22 trailing-whitespace findings. The facade contains
@@ -200,8 +200,28 @@ controller-types module is permitted.
   `controller.ts` without runtime sibling-domain imports. The facade retains
   the sole structural pending/flush implementation and sole production
   `flashFocusedGroup()` invocation; removal cancels eligibility before reflow
-  and deferred eligibility re-enters the pre-existing placement, cleanup, and
-  intent-drain order. No tests were changed and no independent review is due.
+   and deferred eligibility re-enters the pre-existing placement, cleanup, and
+   intent-drain order. No tests were changed and no independent review is due.
+- Unit 05B acceptance evidence, all static: focused existing interactive-watch,
+  drag, and outline suites reported 43 tests / 3 suites / 0 failures;
+  `npm --prefix kwin run typecheck` passed both configurations;
+  `npm --prefix kwin test` reported 965 tests / 91 suites / 0 failures / 0
+  skipped; `bash scripts/dogfood-install.test.sh` reported 347 passes / 0
+  failures; `git diff --check` was clean; two normal `npm --prefix kwin run
+  build` runs produced matching `kwin/contents/code/main.js` SHA-256
+  `cd4145bd8b0d2b27d1e634483ab6ddb7936abb548a66382da72f268842c242cc`.
+  Independent review found explicit QRectF geometry capture, runtime
+  extracted-domain imports, and disabled-path drag-state clearing. One
+  same-scope correction restored explicit field capture, replaced runtime
+  sibling imports with narrow facade helper callbacks, and restored
+  outline-only disabled cleanup; Lead confirmation checked only those findings.
+  The implementation Worker omitted its required identity-preflight line; this
+  is a recorded process-compliance defect, not a technical acceptance gap.
+  Static inspection found type-only extracted-domain imports in
+  `controller-interactive-drag.ts`, `entry.ts` as the sole runtime importer of
+  `controller.ts`, one production `flashFocusedGroup()` invocation, and the
+  existing sole structural reporting/flush path. No second independent review
+  ran or is available.
 
 ## Checkpoints and Circuit Breakers
 

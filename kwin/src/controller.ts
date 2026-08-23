@@ -8,15 +8,14 @@ import {
     isCustomTile,
     isNativelyMaximized,
     isOutput,
-    isPoint,
     isRect,
     isTile,
     isVirtualDesktop,
     isWindow,
     manageTile,
     removeCustomTile,
-    sameScope,
     setTileRelativeGeometry,
+    sameScope,
     splitCustomTile,
     unmanageTile,
     writeWindowDesktops,
@@ -40,7 +39,6 @@ import {
     positiveGeometry,
     sameGeometry,
     splitDirection,
-    type GeometryDropBail,
 } from "./controller-geometry";
 import {
     collectPresetLeaves,
@@ -83,10 +81,8 @@ import {
     planGeometryDrop,
     rectCenter,
     type Direction,
-    type Point,
     type Scope,
     type SplitAxis,
-    type WindowRef,
 } from "./logic";
 import { buildPreset, presetBlueprint, type PresetKind } from "./preset-catalog";
 export * from "./controller-config";
@@ -135,16 +131,17 @@ import {
     type ReflowObservers,
     type SelectedOverlay,
 } from "./controller-reflow-observers";
+import {
+    createInteractiveDragController,
+    type InteractiveDragController,
+} from "./controller-interactive-drag";
 export type { CurrentScope, SelectedOverlay } from "./controller-reflow-observers";
 
-const HORIZONTAL_LAYOUT_DIRECTION = 1;
-const VERTICAL_LAYOUT_DIRECTION = 2;
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
 // KWin tile minimumSize default is QSizeF(0.15, 0.15) in working-area-relative
 // units (src/tiles/tile.h:179, pinned v6.7.3). A position-directed 50/50 drop
 // split produces two equal halves; when either half falls below this floor KWin
 // clamps the children and corrupts the geometry, so the split must be refused.
-const MINIMUM_TILE_FRACTION = 0.15;
 // Fixed direct resize step: each Meta+Ctrl+H/J/K/L press moves the nearest
 // relevant ancestor split's shared edge by this fraction of the parent extent.
 // src/scripting/workspace_wrapper.h ClientAreaOption ordering: PlacementArea=0,
@@ -294,24 +291,6 @@ interface WindowCoverState {
     readonly clearMaximizeRecord: (window: WindowCapability) => void;
 }
 
-interface DragState {
-    readonly current: () => ActiveDrag | undefined;
-    readonly replace: (drag: ActiveDrag) => void;
-    readonly clear: () => void;
-    readonly isLive: () => boolean;
-}
-
-interface InteractiveWatchState {
-    readonly interactiveWatch: (window: WindowCapability) => InteractiveWatch | undefined;
-    readonly setInteractiveWatch: (window: WindowCapability, watch: InteractiveWatch) => void;
-    readonly clearInteractiveWatch: (window: WindowCapability) => void;
-}
-
-interface DropOutlineCapability {
-    readonly showDropOutline: (geometry: RectCapability) => void;
-    readonly hideDropOutline: () => void;
-}
-
 interface ManagedScopeState {
     readonly managedScope: (scope: CurrentScope) => ManagedScope | null;
     readonly setManagedScope: (scope: CurrentScope) => void;
@@ -392,29 +371,6 @@ interface DwindleInsertionTarget {
 
 type PendingKeyboard = InputPendingKeyboard;
 
-interface ActiveDrag {
-    readonly scope: CurrentScope;
-    readonly window: WindowCapability;
-    readonly originTile: CustomTileCapability;
-    readonly originGeometry: RectCapability;
-    // Set once a changed drop has armed a deferred origin removal. The finish
-    // dispatch must not settle owed invariants immediately in that case: the
-    // origin is transiently empty until the removal settle completes, so a
-    // check there would spuriously reconstruct.
-    armedDeferredRemoval: boolean;
-}
-
-// The kind of interactive window gesture read from the live `move` / `resize`
-// booleans at gesture start. KWin clears both booleans before emitting the
-// finished signal, so the finish dispatch attributes bails from the kind
-// captured here rather than a stale live read.
-type InteractiveKind = "move" | "resize" | "unknown";
-
-interface InteractiveWatch {
-    readonly disconnect: () => void;
-    kind: InteractiveKind;
-}
-
 // Session-local fullscreen cover-and-restore record. A managed tiled window
 // that enters fullscreen preserves its exact tile and scope (wasTiled true) and
 // is restored to that slot on exit; a created/floating fullscreen window
@@ -447,27 +403,12 @@ interface MaximizeRecord {
 // stable window identity across the deferred origin-collapse yield; their
 // tiles are re-resolved from a fresh topology, never retained as stale
 // wrappers.
-interface ReflowLeaves {
-    readonly dragged: WindowCapability;
-    readonly occupant: WindowCapability;
-}
-
 // Why a finish-only drop resolved no geometry target. `resolved` carries the
 // winning OperationLeaf plus whether it is empty (direct-placement target) or
 // occupied (split target); every other variant is a distinct bail branch whose
 // center point (when resolvable) is the decisive live value. `pointSource`
 // records whether that point came from the documented workspace cursor or the
 // final frame center fallback.
-type GeometryDropResolution =
-    | {
-          readonly kind: "resolved";
-          readonly target: OperationLeaf;
-          readonly center: Point;
-          readonly pointSource: "cursor" | "frame-center";
-          readonly empty: boolean;
-      }
-    | GeometryDropBail;
-
 // Outcome of a deterministic empty-leaf automatic placement. `managed` records
 // the single guarded manage; every failure variant is a distinct reason for a
 // decisive no-op diagnostic in the generic (non-owned) fallback path.
@@ -496,11 +437,8 @@ interface PresetOccupant {
 export class TileController {
     private readonly gate = new FeatureGate(() => this.structuralMutation.flush());
     private readonly pending = new TransientState<PendingKeyboard>();
-    private readonly drag = new TransientState<ActiveDrag>();
-    private shownDropOutline: RectCapability | null = null;
     private groupOutlineIdentity: object | null = null;
     private structuralMutationPending = false;
-    private readonly interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
     // Per-window fullscreen watch disconnects and enter/exit records. Both are
     // bounded like the other identity sets so they cannot grow without limit.
     private readonly fullscreenWatches = new Map<WindowCapability, () => void>();
@@ -542,10 +480,6 @@ export class TileController {
     // Last floated geometry per window for the session, restored on re-float
     // and across sticky toggles and a fullscreen round trip.
     private readonly floatGeometries = new Map<WindowCapability, RectCapability>();
-    // Scopes whose dwindle invariant check was deferred while a live drag was
-    // in progress. Each scope owes exactly one later check, run once the
-    // tracked drag window is no longer live-moving/resizing.
-    private readonly owedInvariantScopes = new Map<OutputCapability, Map<string, CurrentScope>>();
     // Session-only script-owned virtual desktops (by desktop id). A desktop the
     // controller appended via Meta+0 / Meta+Shift+0 is owned for this session
     // only; no identity survives restart and pre-existing desktops are never
@@ -634,9 +568,7 @@ export class TileController {
     private readonly pendingKeyboardState: PendingKeyboardState;
     private readonly floatingWindowState: FloatingWindowState;
     private readonly windowCoverState: WindowCoverState;
-    private readonly dragState: DragState;
-    private readonly interactiveWatchState: InteractiveWatchState;
-    private readonly dropOutline: DropOutlineCapability;
+    private readonly interactiveDrag: InteractiveDragController;
     private readonly reflowObservers: ReflowObservers;
     private readonly managedScopeState: ManagedScopeState;
     private readonly pendingRebuildState: PendingRebuildState;
@@ -687,21 +619,73 @@ export class TileController {
             setMaximizeRecord: (window, record) => this.maximizedWindows.set(window, record),
             clearMaximizeRecord: (window) => this.maximizedWindows.delete(window),
         };
-        this.dragState = {
-            current: () => this.drag.current,
-            replace: (drag) => this.drag.set(drag),
-            clear: () => this.clearDrag(),
-            isLive: () => this.trackedDragLive(),
-        };
-        this.interactiveWatchState = {
-            interactiveWatch: (window) => this.interactiveWindows.get(window),
-            setInteractiveWatch: (window, watch) => this.interactiveWindows.set(window, watch),
-            clearInteractiveWatch: (window) => this.interactiveWindows.delete(window),
-        };
-        this.dropOutline = {
-            showDropOutline: (geometry) => this.showDropOutline(geometry),
-            hideDropOutline: () => this.hideDropOutline(),
-        };
+        this.interactiveDrag = createInteractiveDragController({
+            geometryHelpers: {
+                dragGeometryBail,
+                positiveGeometry,
+                sameGeometry,
+                splitDirection,
+            },
+            topologyHelpers: {
+                operationLeafForTile,
+                windowIndex,
+            },
+            planningHelpers: {
+                equalAlongAxis,
+                pickDropLeaf,
+                planEqualSplit,
+                planGeometryDrop,
+                rectCenter,
+            },
+            tileHelpers: {
+                decodeChildren: (tile) => customTileSplitSeam.decodeChildren(tile),
+                setRelativeGeometry: setTileRelativeGeometry,
+            },
+            snapshotCaption,
+            windowList: () => this.environment.windowList(),
+            cursorPos: () => this.environment.cursorPos(),
+            clientArea: (option, output, desktop) => this.environment.clientArea(option, output, desktop),
+            watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) =>
+                this.environment.watchInteractiveWindow(
+                    window,
+                    started,
+                    finished,
+                    stepped,
+                    moveResizedChanged,
+                    invalidated,
+                ),
+            showOutline: (x, y, width, height) => this.environment.showOutline(x, y, width, height),
+            hideOutline: () => this.environment.hideOutline(),
+            scopeForWindow: (window) => this.scopeForWindow(window),
+            topologyForScope: (scope, onRejected) => this.topologyForScope(scope, onRejected),
+            windowInScope,
+            isFloating: (window) => this.floatingWindows.has(window),
+            isInert: (scope) => this.isInert(scope),
+            isMaximized: (window) => this.maximizedWindows.has(window),
+            dropOutlinePreview: () => this.dropOutlinePreview,
+            mutation: this.markStructuralMutation,
+            decodedBoundary: (kind) => this.decodedBoundary(kind),
+            diagnostic: (event) => this.diagnostic(event),
+            onceDiagnostic: (event) => this.onceDiagnostic(event),
+            runGuarded: (operation) => this.gate.run(operation, (reason) => this.disabled(reason)),
+            disable: (reason) => this.gate.disable(reason, (disabledReason) => this.disabled(disabledReason)),
+            deferRemovalCollapse: (window, scope, leafTile, afterDragSnapshot, onDragSettled) =>
+                this.deferRemovalCollapse(window, scope, leafTile, afterDragSnapshot, onDragSettled),
+            ensureInvariant: (scope) => this.presetEnsureInvariant(scope),
+            afterFinished: () => {
+                this.cleanupDesktops();
+                this.drainPendingDesktopIntents();
+            },
+            onExistingWindow: (window) => {
+                this.attachFullscreenWindow(window);
+                if (window.fullScreen === true) {
+                    this.enterFullscreen(window);
+                }
+                if (isNativelyMaximized(window)) {
+                    this.recordStartupMaximize(window);
+                }
+            },
+        });
         this.reflowObservers = createReflowObservers({
             rootTile: (output, desktop) => this.environment.rootTile(output, desktop),
             scopeForWindow: (window) => this.scopeForWindow(window),
@@ -745,7 +729,7 @@ export class TileController {
         };
         this.workspaceMutationGuard = {
             workspaceMutationDeferred: () =>
-                this.trackedDragLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0,
+                this.interactiveDrag.isLive() || this.pendingRebuilds.size > 0 || this.pendingMoves.size > 0,
         };
         this.workspaceModeState = {
             workspaceMode: () => this.workspaceMode,
@@ -796,6 +780,7 @@ export class TileController {
             },
             diagnostics: { diagnostic: (event) => this.diagnostic(event) },
         });
+        void this.showDropOutline;
     }
 
     get isEnabled(): boolean {
@@ -807,7 +792,7 @@ export class TileController {
     }
 
     get hasActiveDrag(): boolean {
-        return this.drag.current !== undefined;
+        return this.interactiveDrag.hasActive();
     }
 
     // Read-only mode snapshot for tests: entry/inverse/switch/exit are
@@ -959,7 +944,7 @@ export class TileController {
     }
 
     private disabled(reason: string): void {
-        this.dropOutline.hideDropOutline();
+        this.interactiveDrag.hideDropOutline();
         this.diagnostic(`disabled:${reason}`);
     }
 
@@ -1022,7 +1007,7 @@ export class TileController {
             // keyboard or lifecycle event resolves a workspace.
             this.cleanupDesktops();
             this.adoptStartupFloatingWindows();
-            this.attachExistingInteractiveWindows(true);
+            this.interactiveDrag.attachExisting(true);
             const insertionRegistered = this.environment.registerShortcut(
                 "plasma-auto-tiler-insert-right",
                 "Insert next window right of focused leaf",
@@ -1466,7 +1451,15 @@ export class TileController {
 
     private clearDrag(): void {
         this.hideDropOutline();
-        this.drag.clearForScopeChange();
+        this.interactiveDrag.clear();
+    }
+
+    private showDropOutline(geometry: RectCapability): void {
+        this.interactiveDrag.showDropOutline(geometry);
+    }
+
+    private hideDropOutline(): void {
+        this.interactiveDrag.hideDropOutline();
     }
 
     // Whether the tracked drag window is currently live-moving or
@@ -1474,42 +1467,21 @@ export class TileController {
     // This is the authoritative active-drag signal: the captured-origin latch is
     // never used on its own to decide that a drag is still in progress.
     private trackedDragLive(): boolean {
-        const drag = this.dragState.current();
-        return drag !== undefined && (drag.window.move || drag.window.resize);
+        return this.interactiveDrag.isLive();
     }
 
     // Record exactly one owed invariant check for a scope whose check was
     // deferred by a live drag. A scope that already owes a check is neither
     // re-marked nor re-logged, keeping the diagnostic non-noisy.
     private markOwedInvariant(scope: CurrentScope): void {
-        let byDesktop = this.owedInvariantScopes.get(scope.output);
-        if (byDesktop === undefined) {
-            byDesktop = new Map<string, CurrentScope>();
-            this.owedInvariantScopes.set(scope.output, byDesktop);
-        }
-        if (!byDesktop.has(scope.desktop.id)) {
-            byDesktop.set(scope.desktop.id, scope);
-            this.diagnostic("ownership-invariant-deferred:drag-live");
-        }
+        this.interactiveDrag.markOwedInvariant(scope);
     }
 
     // Run every owed invariant check exactly once, after the tracked drag is no
     // longer live. Owed scopes are cleared before their check runs so a
     // still-live drag re-marks rather than double-running.
     private settleOwedInvariants(): void {
-        if (this.trackedDragLive() || this.owedInvariantScopes.size === 0) {
-            return;
-        }
-        const owed: CurrentScope[] = [];
-        for (const byDesktop of this.owedInvariantScopes.values()) {
-            for (const scope of byDesktop.values()) {
-                owed.push(scope);
-            }
-        }
-        this.owedInvariantScopes.clear();
-        for (const scope of owed) {
-            this.presetEnsureInvariant(scope);
-        }
+        this.interactiveDrag.settleOwedInvariants();
     }
 
     // screensChanged -> rebuild the deterministic session output keys, then
@@ -1545,7 +1517,7 @@ export class TileController {
             this.clearPending();
             this.clearDrag();
             this.settleOwedInvariants();
-            this.attachExistingInteractiveWindows(false);
+            this.interactiveDrag.attachExisting(false);
             this.engageCurrentScope();
             // A current-desktop change can move the sole trailing owned empty
             // into or out of occupancy (for example a pager move onto it), so
@@ -1564,11 +1536,11 @@ export class TileController {
             ) {
                 this.clearPending();
             }
-            if (this.drag.current?.window === window) {
-                this.clearDrag();
+            if (this.interactiveDrag.current()?.window === window) {
+                this.interactiveDrag.clear();
             }
             if (isWindow(window)) {
-                this.detachInteractiveWindow(window);
+                this.interactiveDrag.detach(window);
                 this.reflowObservers.cancelDeferredEligibility(window);
                 this.detachedWindows.delete(window);
                 // Floating close cleanup only drops session state; it never
@@ -1608,7 +1580,7 @@ export class TileController {
     private handleWindowAdded(window: unknown): void {
         this.gate.run(() => {
             this.onceDiagnostic("window-added-observed");
-            this.attachInteractiveWindow(window);
+            this.interactiveDrag.attach(window);
             this.attachFullscreenWindow(window);
             if (isWindow(window) && window.fullScreen === true) {
                 this.enterFullscreen(window);
@@ -1708,82 +1680,6 @@ export class TileController {
         }
     }
 
-    private attachExistingInteractiveWindows(emitSummary: boolean): void {
-        const windows = decodeSequential(this.environment.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-            this.diagnostic("drag-attach-skipped:window-list-decode-failed");
-            return;
-        }
-        this.decodedBoundary("workspace-window-list");
-        let attempted = 0;
-        let ok = 0;
-        let failed = 0;
-        for (const window of windows.value) {
-            this.attachFullscreenWindow(window);
-            if (isWindow(window) && window.fullScreen === true) {
-                this.enterFullscreen(window);
-            }
-            if (isWindow(window) && isNativelyMaximized(window)) {
-                this.recordStartupMaximize(window);
-            }
-            const result = this.attachInteractiveWindow(window);
-            if (result === null) {
-                continue;
-            }
-            attempted += result.attempted;
-            ok += result.ok;
-            failed += result.failed;
-        }
-        if (emitSummary) {
-            this.diagnostic(`drag-attach-summary:${attempted}:${ok}:${failed}`);
-        }
-    }
-
-    private attachInteractiveWindow(
-        window: unknown,
-    ): { readonly attempted: number; readonly ok: number; readonly failed: number } | null {
-        if (this.interactiveWindows.size >= MAX_SEQUENTIAL_LENGTH) {
-            this.diagnostic("drag-attach-skipped:max-windows");
-            return null;
-        }
-        if (!isWindow(window)) {
-            this.diagnostic("drag-attach-skipped:not-window");
-            return null;
-        }
-        if (this.interactiveWindows.has(window)) {
-            this.diagnostic("drag-attach-skipped:duplicate");
-            return null;
-        }
-        const scope = this.scopeForWindow(window);
-        if (scope === null) {
-            this.diagnostic("drag-attach-skipped:no-scope");
-            return null;
-        }
-        if (!windowInScope(window, scope)) {
-            this.diagnostic("drag-attach-skipped:out-of-scope");
-            return null;
-        }
-        const watched = this.environment.watchInteractiveWindow(
-            window,
-            () => this.handleInteractiveStarted(window),
-            () => this.handleInteractiveFinished(window),
-            (geometry) => this.handleInteractiveStepped(geometry),
-            () => this.handleMoveResizedChanged(),
-            () => this.handleInteractiveInvalidated(window),
-        );
-        this.interactiveWatchState.setInteractiveWatch(window, { disconnect: watched.disconnect, kind: "unknown" });
-        return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
-    }
-
-    private detachInteractiveWindow(window: WindowCapability): void {
-        const watch = this.interactiveWatchState.interactiveWatch(window);
-        if (watch === undefined) {
-            return;
-        }
-        this.interactiveWatchState.clearInteractiveWatch(window);
-        watch.disconnect();
-    }
-
     // ---- Fullscreen cover-and-restore passthrough ----
 
     // Attach the documented `fullScreenChanged` notify signal for a managed
@@ -1832,8 +1728,8 @@ export class TileController {
         if (this.windowCoverState.fullscreenRecord(window) !== undefined) {
             return;
         }
-        if (this.drag.current?.window === window) {
-            this.clearDrag();
+            if (this.interactiveDrag.current()?.window === window) {
+                this.interactiveDrag.clear();
         }
         const scope = this.scopeForWindow(window);
         const preservedTile = window.tile;
@@ -2287,237 +2183,6 @@ export class TileController {
         return false;
     }
 
-    private handleInteractiveInvalidated(window: WindowCapability): void {
-        this.gate.run(() => {
-            if (this.drag.current?.window === window) {
-                this.diagnostic("drag-bail:window-invalidated");
-                this.clearDrag();
-            }
-            // A maximized window's own output/desktop lifecycle events must not
-            // detach it or drive invariant settlement: the cover record owns
-            // the workspace and the geometry cover stays until an explicit
-            // un-maximize or a successful restore-first move.
-            if (this.maximizedWindows.has(window)) {
-                this.diagnostic("maximize:ignored lifecycle while maximized");
-                return;
-            }
-            this.detachInteractiveWindow(window);
-            this.settleOwedInvariants();
-        }, (reason) => this.disabled(reason));
-    }
-
-    private handleInteractiveStarted(window: WindowCapability): void {
-        this.diagnostic("drag-started");
-        this.gate.run(() => {
-            if (window.fullScreen === true) {
-                this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-                return;
-            }
-            if (this.maximizedWindows.has(window)) {
-                this.diagnostic("maximize:ignored lifecycle while maximized");
-                return;
-            }
-            const watch = this.interactiveWindows.get(window);
-            if (watch !== undefined) {
-                watch.kind = window.resize ? "resize" : window.move ? "move" : "unknown";
-            }
-            if (this.drag.current !== undefined) {
-                if (this.trackedDragLive()) {
-                    this.diagnostic("drag-origin-capture-failed:already-active");
-                    return;
-                }
-                // A stale captured record whose window is no longer
-                // live-moving/resizing must not block a new drag.
-                this.clearDrag();
-                this.settleOwedInvariants();
-            }
-            if (window.resize) {
-                this.diagnostic("drag-origin-capture-failed:resize");
-                return;
-            }
-            if (!window.move) {
-                this.diagnostic("drag-origin-capture-failed:not-move");
-                return;
-            }
-            // Floating and sticky windows are excluded from drag/drop retile:
-            // a move on one is ignored with an explicit reason before any scope
-            // or tile capture.
-            if (this.isFloating(window)) {
-                this.diagnostic("drag-origin-capture-failed:floating");
-                return;
-            }
-            const scope = this.scopeForWindow(window);
-            if (scope === null || !windowInScope(window, scope)) {
-                this.diagnostic("drag-origin-capture-failed:scope");
-                return;
-            }
-            if (window.tile === null || !isCustomTile(window.tile)) {
-                this.diagnostic("drag-origin-capture-failed:tile-association");
-                return;
-            }
-            if (this.isInert(scope)) {
-                this.diagnostic("drag-origin-capture-failed:scope-inert");
-                return;
-            }
-            const topology = this.topologyForScope(scope);
-            if (topology === null) {
-                this.diagnostic("drag-origin-capture-failed:topology");
-                return;
-            }
-            if (!positiveGeometry(window.frameGeometry)) {
-                this.diagnostic("drag-origin-capture-failed:geometry-invalid");
-                return;
-            }
-            const origin = operationLeafForTile(topology, window.tile);
-            if (origin === null || origin.leaf.isLayout || windowIndex(origin.windows, window) < 0) {
-                this.diagnostic("drag-origin-capture-failed:origin-occupancy");
-                return;
-            }
-            this.drag.set({
-                scope,
-                window,
-                originTile: window.tile,
-                originGeometry: {
-                    x: window.frameGeometry.x,
-                    y: window.frameGeometry.y,
-                    width: window.frameGeometry.width,
-                    height: window.frameGeometry.height,
-                },
-                armedDeferredRemoval: false,
-            });
-            this.diagnostic("drag-origin-captured");
-        }, (reason) => this.disabled(reason));
-    }
-
-    private handleInteractiveFinished(window: WindowCapability): void {
-        this.gate.run(() => {
-            if (window.fullScreen === true) {
-                this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-                this.hideDropOutline();
-                return;
-            }
-            if (this.maximizedWindows.has(window)) {
-                this.diagnostic("maximize:ignored lifecycle while maximized");
-                this.hideDropOutline();
-                return;
-            }
-            const watch = this.interactiveWindows.get(window);
-            const wasResize = watch?.kind === "resize";
-            if (watch !== undefined) {
-                watch.kind = "unknown";
-            }
-            const drag = this.drag.current;
-            if (drag === undefined) {
-                if (wasResize) {
-                    this.diagnostic("drag-bail:no-tracked-drag:resize");
-                } else {
-                    this.diagnostic("drag-bail:no-tracked-drag");
-                }
-                return;
-            }
-            if (drag.window !== window) {
-                this.diagnostic("drag-bail:window-mismatch");
-                return;
-            }
-            try {
-                this.completeDrag(drag);
-            } finally {
-                this.clearDrag();
-            }
-            // A drop that armed a deferred origin removal leaves the origin
-            // transiently empty; its removal settle runs the owed recovery.
-            if (!drag.armedDeferredRemoval) {
-                this.settleOwedInvariants();
-            }
-            // Retry desktop cleanup deferred by the just-settled live drag: the
-            // drag no longer tracks as live, so a previously deferred cleanup
-            // is no longer blocked and nothing re-triggers it otherwise.
-            this.cleanupDesktops();
-            this.drainPendingDesktopIntents();
-        }, (reason) => this.disabled(reason));
-    }
-
-    // Stepped derives a read-only destination cue only. Finished remains the
-    // sole drag path that may change tile structure.
-    private handleInteractiveStepped(geometry: RectCapability): void {
-        this.gate.run(() => {
-            if (!this.dropOutlinePreview) {
-                return;
-            }
-            const drag = this.drag.current;
-            if (drag === undefined) {
-                return;
-            }
-            const scope = this.scopeForWindow(drag.window);
-            if (
-                scope === null ||
-                !sameScope(scope.scope, drag.scope.scope) ||
-                !windowInScope(drag.window, scope)
-            ) {
-                this.hideDropOutline();
-                return;
-            }
-            const topology = this.topologyForScope(scope);
-            if (topology === null) {
-                this.hideDropOutline();
-                return;
-            }
-            const origin = operationLeafForTile(topology, drag.originTile);
-            if (origin === null || origin.leaf.isLayout) {
-                this.hideDropOutline();
-                return;
-            }
-            const originIndex = windowIndex(origin.windows, drag.window);
-            const draggedRef = origin.refs[originIndex];
-            if (originIndex < 0 || draggedRef === undefined) {
-                this.hideDropOutline();
-                return;
-            }
-            const cursorPoint = this.readCursorPoint();
-            const center = cursorPoint ?? (isRect(geometry) && positiveGeometry(geometry) ? rectCenter(geometry) : null);
-            const pointSource: "cursor" | "frame-center" = cursorPoint !== null ? "cursor" : "frame-center";
-            const target = this.geometryDropTarget(topology, origin, center, pointSource);
-            if (target.kind !== "resolved") {
-                this.hideDropOutline();
-                return;
-            }
-            const plan = planGeometryDrop({
-                scope: scope.scope,
-                originLeaf: origin.leaf,
-                targetLeaf: target.target.leaf,
-                draggedWindow: draggedRef,
-                pointer: target.center,
-                record: {
-                    scope: drag.scope.scope,
-                    originLeafId: origin.leaf.id,
-                    windowId: draggedRef.id,
-                    geometry: drag.originGeometry,
-                },
-            });
-            if (!plan.ok || (plan.value.kind === "geometry-drop" && this.splitWouldViolateMinimum(scope, target.target, plan.value.direction))) {
-                this.hideDropOutline();
-                return;
-            }
-            this.showDropOutline(target.target.leaf.geometry);
-        }, (reason) => this.disabled(reason));
-    }
-
-    private showDropOutline(geometry: RectCapability): void {
-        if (this.shownDropOutline !== null && sameGeometry(this.shownDropOutline, geometry)) {
-            return;
-        }
-        this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
-        this.shownDropOutline = { ...geometry };
-    }
-
-    private hideDropOutline(): void {
-        if (this.shownDropOutline === null) {
-            return;
-        }
-        this.environment.hideOutline();
-        this.shownDropOutline = null;
-    }
-
     private markStructuralMutation = (): void => {
         this.structuralMutationPending = true;
     };
@@ -2531,7 +2196,7 @@ export class TileController {
     }
 
     private flashFocusedGroup(): void {
-        if (this.shownDropOutline !== null) {
+        if (this.interactiveDrag.isOutlineShown()) {
             return;
         }
         const focused = this.environment.activeWindow();
@@ -2552,533 +2217,12 @@ export class TileController {
         const geometry = parent.absoluteGeometry;
         this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
         this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
-            if (this.groupOutlineIdentity !== identity || this.shownDropOutline !== null) {
+            if (this.groupOutlineIdentity !== identity || this.interactiveDrag.isOutlineShown()) {
                 return;
             }
             this.environment.hideOutline();
             this.groupOutlineIdentity = null;
         });
-    }
-
-    private handleMoveResizedChanged(): void {
-        this.diagnostic("drag-move-resized-changed");
-        this.gate.run(() => {
-            this.settleOwedInvariants();
-        }, (reason) => this.disabled(reason));
-    }
-
-    // Read the documented workspace cursor exactly once for drag target recovery,
-    // under safe validation. Returns the finite cursor point, or null when the
-    // read throws or the value is not a finite point; each failure emits a one-time
-    // fallback diagnostic and the caller falls back to the frame center.
-    private readCursorPoint(): Point | null {
-        let value: unknown;
-        try {
-            value = this.environment.cursorPos();
-        } catch (error) {
-            void error;
-            this.onceDiagnostic("drag-point-fallback:cursor-read-threw");
-            return null;
-        }
-        if (!isPoint(value)) {
-            this.onceDiagnostic("drag-point-fallback:cursor-not-a-point");
-            return null;
-        }
-        return { x: value.x, y: value.y };
-    }
-
-    // Compact one-line JSON observability for the drop-only finish. Each stage
-    // builds a plain-data payload and serializes it; any observation or
-    // serialization error is swallowed into a fixed `drag-snapshot-failed`
-    // diagnostic so observability never affects the guarded tiling operation.
-    private dragSnapshot(stage: "before" | "target" | "after" | "final", produce: () => unknown): void {
-        let data: unknown;
-        try {
-            data = produce();
-        } catch (error) {
-            void error;
-            this.diagnostic(`drag-snapshot-failed:${stage}:observe`);
-            return;
-        }
-        let payload: string;
-        try {
-            payload = JSON.stringify(data);
-        } catch (error) {
-            void error;
-            this.diagnostic(`drag-snapshot-failed:${stage}:serialize`);
-            return;
-        }
-        const prefix = stage === "target" ? "drag-target" : `drag-snapshot-${stage}`;
-        this.diagnostic(`${prefix}:${payload}`);
-    }
-
-    private topologyLeavesData(topology: readonly OperationLeaf[]): unknown {
-        return topology.map((entry) => ({
-            id: entry.leaf.id,
-            geometry: {
-                x: entry.leaf.geometry.x,
-                y: entry.leaf.geometry.y,
-                width: entry.leaf.geometry.width,
-                height: entry.leaf.geometry.height,
-            },
-            occupants: entry.refs.map((ref, index) => ({
-                id: ref.id,
-                caption: snapshotCaption(entry.windows[index]?.caption),
-            })),
-        }));
-    }
-
-    private dragSnapshotBefore(
-        drag: ActiveDrag,
-        topology: readonly OperationLeaf[] | null,
-        topologyStatus: string | null,
-        center: Point | null,
-        pointSource: "cursor" | "frame-center" | null = null,
-    ): void {
-        this.dragSnapshot("before", () => {
-            const geometry = drag.window.frameGeometry;
-            const payload: Record<string, unknown> = {
-                geometry: {
-                    x: geometry.x,
-                    y: geometry.y,
-                    width: geometry.width,
-                    height: geometry.height,
-                },
-                center: center === null ? null : { x: center.x, y: center.y },
-                leaves: topology === null ? null : this.topologyLeavesData(topology),
-            };
-            if (pointSource !== null) {
-                payload.pointSource = pointSource;
-            }
-            if (topology === null) {
-                payload.topology = topologyStatus;
-            }
-            return payload;
-        });
-    }
-
-    private dragTargetResolution(target: GeometryDropResolution): void {
-        this.dragSnapshot("target", () => {
-            if (target.kind === "resolved") {
-                return {
-                    kind: "resolved",
-                    leaf: target.target.leaf.id,
-                    center: { x: target.center.x, y: target.center.y },
-                    pointSource: target.pointSource,
-                    occupancy: target.empty ? "empty" : "occupied",
-                };
-            }
-            if (target.kind === "center-unresolved") {
-                return { kind: "center-unresolved" };
-            }
-            return {
-                kind: target.kind,
-                center: { x: target.center.x, y: target.center.y },
-                pointSource: target.pointSource,
-            };
-        });
-    }
-
-    private dragSnapshotAfter(topology: readonly OperationLeaf[]): void {
-        this.dragSnapshot("after", () => ({ leaves: this.topologyLeavesData(topology) }));
-    }
-
-    private dragSnapshotFinal(topology: readonly OperationLeaf[]): void {
-        this.dragSnapshot("final", () => ({ leaves: this.topologyLeavesData(topology) }));
-    }
-
-    private restoreOrigin(drag: ActiveDrag): boolean {
-        const scope = this.scopeForWindow(drag.window);
-        if (
-            scope === null ||
-            !sameScope(scope.scope, drag.scope.scope) ||
-            !windowInScope(drag.window, scope) ||
-            !isCustomTile(drag.originTile) ||
-            drag.window.tile === drag.originTile
-        ) {
-            return false;
-        }
-        const topology = this.topologyForScope(scope);
-        if (topology === null || operationLeafForTile(topology, drag.originTile) === null) {
-            return false;
-        }
-        if (!manageTile(drag.originTile, drag.window, this.markStructuralMutation)) {
-            return false;
-        }
-        this.diagnostic("drag-origin-restored");
-        return true;
-    }
-
-    private completeDrag(drag: ActiveDrag): void {
-        // Distinctive drag-hook entry log emitted before any decision or bail
-        // logic, so a live drag either leaves a trail here or is provably not
-        // reaching the finish hook at all.
-        this.diagnostic("drag-finished");
-        if (drag.window.fullScreen === true) {
-            this.diagnostic("fullscreen:ignored lifecycle while fullscreen");
-            return;
-        }
-        const scope = this.scopeForWindow(drag.window);
-        if (scope === null) {
-            this.dragSnapshotBefore(drag, null, "scope-unavailable", null);
-            this.bailDrag("drag-bail:scope-unavailable", drag);
-            return;
-        }
-        if (!sameScope(scope.scope, drag.scope.scope)) {
-            this.dragSnapshotBefore(drag, null, "scope-changed", null);
-            this.bailDrag("drag-bail:scope-changed", drag);
-            return;
-        }
-        if (!windowInScope(drag.window, scope)) {
-            this.dragSnapshotBefore(drag, null, "window-out-of-scope", null);
-            this.bailDrag("drag-bail:window-out-of-scope", drag);
-            return;
-        }
-        if (!isCustomTile(drag.originTile)) {
-            this.dragSnapshotBefore(drag, null, "origin-tile-not-custom", null);
-            this.bailDrag("drag-bail:origin-tile-not-custom", drag);
-            return;
-        }
-        if (drag.window.tile === drag.originTile && sameGeometry(drag.window.frameGeometry, drag.originGeometry)) {
-            this.dragSnapshotBefore(drag, null, "unchanged", null);
-            this.diagnostic("drag-unchanged");
-            return;
-        }
-        let topologyRejection: TopologyRejection | null = null;
-        const topology = this.topologyForScope(scope, (reason) => {
-            topologyRejection = reason;
-        });
-        if (topology === null) {
-            this.dragSnapshotBefore(drag, null, topologyRejection ?? "unknown", null);
-            this.bailDrag(`drag-bail:topology-unavailable:${topologyRejection ?? "unknown"}`, drag);
-            return;
-        }
-        if (!positiveGeometry(drag.window.frameGeometry)) {
-            this.dragSnapshotBefore(drag, topology, null, null);
-            this.bailDrag("drag-bail:geometry-invalid", drag);
-            return;
-        }
-        const cursorPoint = this.readCursorPoint();
-        const frameCenter = rectCenter(drag.window.frameGeometry);
-        const center = cursorPoint ?? frameCenter;
-        const pointSource: "cursor" | "frame-center" = cursorPoint !== null ? "cursor" : "frame-center";
-        this.dragSnapshotBefore(drag, topology, null, center, pointSource);
-        const origin = operationLeafForTile(topology, drag.originTile);
-        if (origin === null) {
-            this.bailDrag("drag-bail:origin-unresolved", drag);
-            return;
-        }
-        if (origin.leaf.isLayout) {
-            this.bailDrag("drag-bail:origin-is-layout", drag);
-            return;
-        }
-        this.recoverGeometryDrop(drag, scope, topology, origin, center, pointSource);
-    }
-
-    // The OperationLeaf of a native Shift-drop target, or null unless the
-    // dragged window's current tile is a non-layout custom-tile leaf holding
-    // exactly the dragged window plus one other eligible in-scope occupant,
-    // with the dragged window appearing in no other leaf.
-    private nativeDropTarget(
-        drag: ActiveDrag,
-        scope: CurrentScope,
-        topology: readonly OperationLeaf[],
-    ): OperationLeaf | null {
-        if (drag.window.tile === drag.originTile || !isCustomTile(drag.window.tile) || drag.window.tile.isLayout) {
-            return null;
-        }
-        const target = operationLeafForTile(topology, drag.window.tile);
-        if (target === null || target.leaf.isLayout || !isCustomTile(target.decoded.tile)) {
-            return null;
-        }
-        if (windowIndex(target.windows, drag.window) < 0 || target.windows.length !== 2) {
-            return null;
-        }
-        if (topology.filter((entry) => windowIndex(entry.windows, drag.window) >= 0).length !== 1) {
-            return null;
-        }
-        const occupant = target.windows.find((window) => window !== drag.window);
-        if (occupant === undefined || !windowInScope(occupant, scope)) {
-            return null;
-        }
-        return target;
-    }
-
-    // Finish-only reflow of every changed drag. The drop target and split
-    // direction are derived authoritatively from the dragged window's final
-    // frame geometry against the freshly decoded tile tree, excluding the
-    // origin leaf, so a plain floating drop, an origin-still-associated drop
-    // (KWin's unmanage lagging the finish hook), and a native Shift drop all
-    // converge on the same reflow. Native overlap state, when present, is
-    // validated only as a safety precondition and never selects the target or
-    // direction. Structural safety: the finish dispatch performs exactly one
-    // structural call, the position-directed split; the vacated origin's
-    // collapse is then deferred to the established one-shot event-loop yield,
-    // so the origin is never removed before the split.
-    private recoverGeometryDrop(
-        drag: ActiveDrag,
-        scope: CurrentScope,
-        topology: readonly OperationLeaf[],
-        origin: OperationLeaf,
-        center: Point | null,
-        pointSource: "cursor" | "frame-center",
-    ): void {
-        const native = this.nativeDropTarget(drag, scope, topology);
-        const target = this.geometryDropTarget(topology, origin, center, pointSource);
-        this.dragTargetResolution(target);
-        if (target.kind !== "resolved") {
-            this.bailDrag(dragGeometryBail(target), drag);
-            return;
-        }
-        if (native !== null && native.leaf !== target.target.leaf) {
-            // KWin managed the dragged window into a tile that the final frame
-            // geometry does not back: inconsistent state, never reflow it.
-            this.bailDrag("drag-bail:geometry-native-mismatch", drag);
-            return;
-        }
-        if (native !== null) {
-            this.diagnostic("drag-native-overlap");
-        }
-        const draggedIndex = windowIndex(target.target.windows, drag.window);
-        let draggedRef: WindowRef;
-        if (draggedIndex >= 0) {
-            const ref = target.target.refs[draggedIndex];
-            if (ref === undefined) {
-                this.bailDrag("drag-bail:geometry-plan-rejected:ref-unresolved", drag);
-                return;
-            }
-            draggedRef = ref;
-        } else {
-            draggedRef = {
-                id: "window-dragged",
-                normal: drag.window.normalWindow,
-                managed: drag.window.managed,
-            };
-        }
-        const plan = planGeometryDrop({
-            scope: scope.scope,
-            originLeaf: origin.leaf,
-            targetLeaf: target.target.leaf,
-            draggedWindow: draggedRef,
-            pointer: target.center,
-            record: {
-                scope: scope.scope,
-                originLeafId: origin.leaf.id,
-                windowId: draggedRef.id,
-                geometry: drag.originGeometry,
-            },
-        });
-        if (!plan.ok) {
-            this.bailDrag(`drag-bail:geometry-plan-rejected:${plan.reason.kind}`, drag);
-            return;
-        }
-        if (plan.value.kind === "geometry-drop-empty") {
-            this.diagnostic("drag-empty-target");
-            this.applyEmptyDrop(drag, scope, target.target);
-            return;
-        }
-        this.diagnostic("drag-geometry-target");
-        this.applyDropSplit(drag, scope, target.target, plan.value.direction);
-    }
-
-    // The non-layout leaf (occupied or empty) under the chosen resolver point
-    // (the documented workspace cursor when finite, else the dragged window's
-    // final frame geometry center), excluding the origin leaf, or a distinct
-    // bail branch when the point resolves nowhere. The smallest eligible leaf
-    // wins by the same ordering rule as the classic cursor target selection.
-    // An empty leaf resolves as a direct-placement target, not a bail.
-    private geometryDropTarget(
-        topology: readonly OperationLeaf[],
-        origin: OperationLeaf,
-        center: Point | null,
-        pointSource: "cursor" | "frame-center",
-    ): GeometryDropResolution {
-        if (center === null) {
-            return { kind: "center-unresolved" };
-        }
-        const leaf = pickDropLeaf(topology.map((entry) => entry.leaf), center);
-        if (leaf === null) {
-            return { kind: "no-target-leaf", center, pointSource };
-        }
-        if (leaf.id === origin.leaf.id) {
-            return { kind: "target-is-origin", center, pointSource };
-        }
-        for (const entry of topology) {
-            if (entry.leaf === leaf) {
-                return { kind: "resolved", target: entry, center, pointSource, empty: entry.windows.length === 0 };
-            }
-        }
-        return { kind: "leaf-not-in-topology", center, pointSource };
-    }
-
-    private bailDrag(reason: string, drag: ActiveDrag): void {
-        this.diagnostic(reason);
-        this.restoreOrigin(drag);
-    }
-
-    // Direct placement of the dragged window into a resolved empty non-layout
-    // target leaf: a single guarded manage with no split and no occupied-leaf
-    // reflow, then the vacated origin's collapse is deferred to the established
-    // one-shot yield exactly like the split path.
-    private applyEmptyDrop(drag: ActiveDrag, scope: CurrentScope, target: OperationLeaf): void {
-        let managed = false;
-        try {
-            managed = manageTile(target.decoded.tile, drag.window, this.markStructuralMutation);
-        } catch (error) {
-            void error;
-        }
-        if (!managed) {
-            this.bailDrag("drag-bail:empty-placement-failed", drag);
-            return;
-        }
-        this.diagnostic("drag-empty-placement");
-        drag.armedDeferredRemoval = true;
-        this.deferRemovalCollapse(drag.window, scope, drag.originTile, true);
-    }
-
-    // Split a resolved drop target leaf into the direction-derived children and
-    // manage the original occupant onto the opposite child and the dragged
-    // window onto the selected child, then defer the vacated origin's collapse
-    // to the established one-shot yield. Shared by the native Shift-drop and
-    // plain geometry-drop paths.
-    private applyDropSplit(
-        drag: ActiveDrag,
-        scope: CurrentScope,
-        target: OperationLeaf,
-        direction: Direction,
-    ): void {
-        const occupant = target.windows.find((window) => window !== drag.window);
-        if (occupant === undefined || !windowInScope(occupant, scope)) {
-            this.bailDrag("drag-bail:target-occupant-invalid", drag);
-            return;
-        }
-        if (this.splitWouldViolateMinimum(scope, target, direction)) {
-            this.bailDrag("drag-refused:undersized-split", drag);
-            return;
-        }
-        if (!this.splitDropTarget(target, occupant, drag, direction)) {
-            return;
-        }
-        this.diagnostic("drag-overlap-split-completed");
-        drag.armedDeferredRemoval = true;
-        this.deferRemovalCollapse(drag.window, scope, drag.originTile, true, {
-            dragged: drag.window,
-            occupant,
-        });
-    }
-
-    // Whether the equal 50/50 drop split of the resolved target leaf along the
-    // split direction would put either half below KWin's minimum tile size. The
-    // floor is MINIMUM_TILE_FRACTION of the per-output working area extent on
-    // the split axis (x for left/right, y for up/down). An unreadable working
-    // area never refuses: the preflight must not invent a floor it cannot prove.
-    private splitWouldViolateMinimum(scope: CurrentScope, target: OperationLeaf, direction: Direction): boolean {
-        const axis: SplitAxis = direction === "left" || direction === "right" ? "x" : "y";
-        return this.splitAxisWouldViolateMinimum(scope, target.leaf.geometry, axis);
-    }
-
-    // Whether an equal 50/50 split of a leaf with the given geometry along the
-    // split axis would put either half below KWin's minimum tile size. The floor
-    // is MINIMUM_TILE_FRACTION of the per-output working area extent on the
-    // axis. An unreadable working area never refuses: the preflight must not
-    // invent a floor it cannot prove.
-    private splitAxisWouldViolateMinimum(scope: CurrentScope, geometry: RectCapability, axis: SplitAxis): boolean {
-        const leafExtent = axis === "x" ? geometry.width : geometry.height;
-        const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
-        if (!isRect(workArea)) {
-            return false;
-        }
-        const workExtent = axis === "x" ? workArea.width : workArea.height;
-        if (!(workExtent > 0)) {
-            return false;
-        }
-        return leafExtent / 2 < MINIMUM_TILE_FRACTION * workExtent;
-    }
-
-    // Split a drop target leaf into the direction-derived children and manage
-    // the original occupant onto the opposite child and the dragged window
-    // onto the selected child. Shared by every changed-drag reflow (plain
-    // floating, origin-still-associated, and native Shift). A malformed split
-    // result or a failed manage disables the gate, matching the established
-    // drag contract.
-    private splitDropTarget(
-        target: OperationLeaf,
-        occupant: WindowCapability,
-        drag: ActiveDrag,
-        direction: Direction,
-    ): boolean {
-        if (!isCustomTile(target.decoded.tile)) {
-            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return false;
-        }
-        const parent = target.decoded.tile.parent;
-        const axisDirection = splitDirection(direction);
-        const sameAxis =
-            parent !== null && isTile(parent) && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === axisDirection;
-        if (sameAxis) {
-            return this.splitDropTargetSameAxis(target.decoded.tile, parent, drag, direction);
-        }
-        splitCustomTile(target.decoded.tile, splitDirection(direction), this.markStructuralMutation);
-        const children = customTileSplitSeam.decodeChildren(target.decoded.tile);
-        if (children !== null && children.length === 2) {
-            this.decodedBoundary("split-result");
-        }
-        const first = children?.[0];
-        const second = children?.[1];
-        if (children === null || children.length !== 2 || first === undefined || second === undefined) {
-            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return false;
-        }
-        const selected = direction === "left" || direction === "up" ? first : second;
-        const opposite = selected === first ? second : first;
-        const occupantManaged = manageTile(opposite, occupant, this.markStructuralMutation);
-        const draggedManaged = occupantManaged && manageTile(selected, drag.window, this.markStructuralMutation);
-        if (!occupantManaged || !draggedManaged) {
-            this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
-            return false;
-        }
-        return true;
-    }
-
-    // Same-axis drop split: the drop target's parent is already a layout
-    // split along the requested direction's axis, so native `split()` takes
-    // the add-cell branch and inserts one new direct sibling into the parent
-    // (native-binding-evidence.md:22-30), rather than wrapping the target in
-    // a new two-child container. The new sibling is identified by the
-    // adapter-decoded child order set difference before and after the call,
-    // never by raw array index or a direction-to-side
-    // mapping (multi-ordinal native array order is unproven). The dragged
-    // window is managed onto the new sibling; the occupant stays on the
-    // unchanged target and is never re-managed.
-    private splitDropTargetSameAxis(
-        target: CustomTileCapability,
-        parent: CustomTileCapability,
-        drag: ActiveDrag,
-        direction: Direction,
-    ): boolean {
-        const before = customTileSplitSeam.decodeChildren(parent);
-        if (before === null || !before.includes(target)) {
-            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return false;
-        }
-        splitCustomTile(target, splitDirection(direction), this.markStructuralMutation);
-        const after = customTileSplitSeam.decodeChildren(parent);
-        if (after === null || after.length !== before.length + 1 || !after.includes(target)) {
-            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return false;
-        }
-        this.decodedBoundary("split-result");
-        const added = after.filter((candidate) => !before.includes(candidate));
-        const newTile = added[0];
-        if (added.length !== 1 || newTile === undefined) {
-            this.gate.disable("drag-split-result-invalid", (reason) => this.disabled(reason));
-            return false;
-        }
-        if (!manageTile(newTile, drag.window, this.markStructuralMutation)) {
-            this.gate.disable("drag-manage-failed", (reason) => this.disabled(reason));
-            return false;
-        }
-        return true;
     }
 
     private scopeForWindow(window: unknown): CurrentScope | null {
@@ -3094,6 +2238,16 @@ export class TileController {
             desktop,
             scope: { output: window.output, desktopId: desktop.id },
         };
+    }
+
+    private splitAxisWouldViolateMinimum(scope: CurrentScope, geometry: RectCapability, axis: SplitAxis): boolean {
+        const leafExtent = axis === "x" ? geometry.width : geometry.height;
+        const workArea = this.environment.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop);
+        if (!isRect(workArea)) {
+            return false;
+        }
+        const workExtent = axis === "x" ? workArea.width : workArea.height;
+        return workExtent > 0 && leafExtent / 2 < 0.15 * workExtent;
     }
 
     private topologyForScope(
@@ -3734,7 +2888,7 @@ export class TileController {
             if (pending.dragFinalSnapshot) {
                 const finalTopology = this.topologyForScope(scope);
                 if (finalTopology !== null) {
-                    this.dragSnapshotFinal(finalTopology);
+                    this.interactiveDrag.dragSnapshotFinal(finalTopology);
                 }
             }
         }
@@ -4334,13 +3488,13 @@ export class TileController {
         scope: CurrentScope,
         leafTile: TileCapability,
         afterDragSnapshot = false,
-        reflowLeaves?: ReflowLeaves,
+        onDragSettled?: (topology: readonly OperationLeaf[], collapsed: boolean) => readonly OperationLeaf[],
     ): void {
         let armed = false;
         try {
             armed = this.environment.yieldOnce(() => {
                 try {
-                    this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, reflowLeaves);
+                    this.settleRemovalCollapse(window, scope, leafTile, afterDragSnapshot, onDragSettled);
                     this.settleOwedInvariants();
                 } finally {
                     this.flushStructuralMutation();
@@ -4368,7 +3522,7 @@ export class TileController {
         scope: CurrentScope,
         leafTile: TileCapability,
         afterDragSnapshot: boolean,
-        reflowLeaves?: ReflowLeaves,
+        onDragSettled?: (topology: readonly OperationLeaf[], collapsed: boolean) => readonly OperationLeaf[],
     ): void {
         if (this.isInert(scope) || !this.isOwned(scope)) {
             return;
@@ -4391,53 +3545,25 @@ export class TileController {
         }
         const leaf = operationLeafForTile(topology, leafTile);
         if (leaf === null || leaf.leaf.isLayout || !isCustomTile(leaf.decoded.tile)) {
-            if (afterDragSnapshot) {
-                this.dragSnapshotAfter(topology);
-            }
+            if (afterDragSnapshot) onDragSettled?.(topology, false);
             return;
         }
         if (windowIndex(leaf.windows, window) >= 0) {
-            if (afterDragSnapshot) {
-                this.dragSnapshotAfter(topology);
-            }
+            if (afterDragSnapshot) onDragSettled?.(topology, false);
             return;
         }
         if (leaf.windows.some((value) => value !== window && windowInScope(value, scope))) {
-            if (afterDragSnapshot) {
-                this.dragSnapshotAfter(topology);
-            }
+            if (afterDragSnapshot) onDragSettled?.(topology, false);
             return;
         }
         const after = this.collapseFreedLeaf(scope, topology, leaf.decoded.tile);
         if (afterDragSnapshot && after !== null) {
-            // Normalize the two reflow leaves to equal 50/50 relative geometry
-            // after the settled origin collapse, before the final snapshot so
-            // the reported ratios are the ones the user sees.
-            const finalTopology = this.normalizeReflowLeaves(scope, reflowLeaves, after);
-            this.dragSnapshotAfter(finalTopology);
-            // The collapse may have queued a full reconstruction (the freed
-            // leaf's removal left the tree non-dwindle). Its settle then emits
-            // one drag-snapshot-final of the rebuilt tree, after the after
-            // snapshot above.
+            onDragSettled?.(after, true);
             const pending = this.pendingRebuilds.get(scope.output)?.get(scope.desktop.id);
             if (pending !== undefined) {
                 pending.dragFinalSnapshot = true;
             }
         }
-    }
-
-    // The OperationLeaf holding a window in a fresh topology, resolved from the
-    // window's current `tile` association. The window is a stable identity
-    // carried across a yield; only its live tile read is used, so no stale tile
-    // wrapper is ever retained.
-    private leafForWindow(
-        topology: readonly OperationLeaf[],
-        window: WindowCapability,
-    ): OperationLeaf | null {
-        if (window.tile === null || !isTile(window.tile)) {
-            return null;
-        }
-        return operationLeafForTile(topology, window.tile);
     }
 
     // Equalize the two reflow leaves created by a drop split to 50/50 relative
@@ -4453,79 +3579,6 @@ export class TileController {
     // topology untouched; a write or post-decode failure emits
     // `drag-reflow-normalize-failed:<reason>` and preserves the existing safe
     // behavior. No remove, split, timer, or other structural call runs here.
-    private normalizeReflowLeaves(
-        scope: CurrentScope,
-        reflowLeaves: ReflowLeaves | undefined,
-        topology: readonly OperationLeaf[],
-    ): readonly OperationLeaf[] {
-        if (reflowLeaves === undefined) {
-            return topology;
-        }
-        const draggedLeaf = this.leafForWindow(topology, reflowLeaves.dragged);
-        const occupantLeaf = this.leafForWindow(topology, reflowLeaves.occupant);
-        if (
-            draggedLeaf === null ||
-            occupantLeaf === null ||
-            draggedLeaf.decoded.tile === occupantLeaf.decoded.tile ||
-            draggedLeaf.leaf.isLayout ||
-            occupantLeaf.leaf.isLayout
-        ) {
-            this.diagnostic("drag-reflow-normalize-skipped:leaf-resolution");
-            return topology;
-        }
-        const parent = draggedLeaf.decoded.tile.parent;
-        if (parent === null || !isTile(parent) || !isCustomTile(parent) || !parent.isLayout) {
-            this.diagnostic("drag-reflow-normalize-skipped:no-layout-parent");
-            return topology;
-        }
-        if (occupantLeaf.decoded.tile.parent !== parent) {
-            this.diagnostic("drag-reflow-normalize-skipped:not-siblings");
-            return topology;
-        }
-        const axis: SplitAxis | null =
-            parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION
-                ? "x"
-                : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION
-                    ? "y"
-                    : null;
-        if (axis === null) {
-            this.diagnostic("drag-reflow-normalize-skipped:floating-parent");
-            return topology;
-        }
-        const draggedGeometry = draggedLeaf.decoded.tile.relativeGeometry;
-        const occupantGeometry = occupantLeaf.decoded.tile.relativeGeometry;
-        const plan = planEqualSplit(parent.relativeGeometry, draggedGeometry, occupantGeometry, axis);
-        if (plan === null) {
-            this.diagnostic("drag-reflow-normalize-skipped:geometry-incompatible");
-            return topology;
-        }
-        const draggedNear = axis === "x" ? draggedGeometry.x : draggedGeometry.y;
-        const occupantNear = axis === "x" ? occupantGeometry.x : occupantGeometry.y;
-        const firstTile = draggedNear <= occupantNear ? draggedLeaf.decoded.tile : occupantLeaf.decoded.tile;
-        const written = setTileRelativeGeometry(firstTile, plan.first);
-        if (!written) {
-            this.diagnostic("drag-reflow-normalize-failed:write");
-            return topology;
-        }
-        const fresh = this.topologyForScope(scope);
-        if (fresh === null) {
-            this.diagnostic("drag-reflow-normalize-failed:post-decode");
-            return topology;
-        }
-        const freshDragged = this.leafForWindow(fresh, reflowLeaves.dragged);
-        const freshOccupant = this.leafForWindow(fresh, reflowLeaves.occupant);
-        if (
-            freshDragged === null ||
-            freshOccupant === null ||
-            !equalAlongAxis(freshDragged.decoded.tile.relativeGeometry, freshOccupant.decoded.tile.relativeGeometry, axis)
-        ) {
-            this.diagnostic("drag-reflow-normalize-failed:mismatch");
-            return fresh;
-        }
-        this.diagnostic("drag-reflow-normalized");
-        return fresh;
-    }
-
     // Exactly one guarded `CustomTile.remove()` of a provably-freed decoded
     // leaf, a fresh whole-root decode immediately afterwards, and a strict
     // one-fewer-leaf postcondition. The invariant check that follows may start

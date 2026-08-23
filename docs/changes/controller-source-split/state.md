@@ -1,17 +1,17 @@
 # State: Controller Source Split
 
-- Current unit: `unit-05b-drag-deferred-work` - drag and deferred-work
-  coordination, approved and not started.
+- Current unit: `unit-06-reconstruction-dwindle-workspaces` - next approved
+  successor after accepted Unit 05B.
 - Completed units: unit 01 - config/catalog, accepted 2026-08-23; unit 02 - topology and workspace state, accepted 2026-08-23; unit 03 - narrow shared state and capabilities, accepted 2026-08-23.
 - Blockers: none. Original Unit 05 remains permanently frozen after its
   malformed Worker preflights; it is not a dispatch target.
-- Next dispatch: none. Unit 05B awaits a fresh approved Worker dispatch.
-- Status: units 01-04 and Unit 05A accepted; frozen Unit 05 is replaced by
-  approved Units 05A and 05B. Unit 05B is the next implementation unit.
-- Semantic units completed: 5/8.
+- Next dispatch: Unit 06 may be dispatched as the next approved successor.
+- Status: units 01-04, Unit 05A, and Unit 05B accepted; frozen Unit 05 remains
+  replaced by the accepted reset units. Unit 06 is next.
+- Semantic units completed: 6/8.
 - Unit 04 accounting: attempts 2, cancellations 1, corrections 1, independent
   reviews 1.
-- Change-wide independent reviews: 2 (unit 03 and unit 04).
+- Change-wide independent reviews: 3 (units 03, 04, and 05B).
 - Circuit breakers: 1 - frozen Unit 05 attempt limit reached; no third attempt
   may be dispatched on that semantic unit.
 - Frozen Unit 05 accounting: attempts 2, cancellations 0, corrections 0,
@@ -29,17 +29,31 @@
   Lead inspection confirmed no runtime sibling-domain import, one production
   `flashFocusedGroup()` invocation, and the existing sole structural
   reporting/flush implementation. No independent review is scheduled.
-- Unit 05B accounting: attempts 0, cancellations 0, corrections 0, independent
-  reviews 0. Scope: drag and deferred-work coordination; its one independent
-  review occurs after acceptance evidence is available.
+- Unit 05B accounting: attempts 1, cancellations 0, corrections 1, independent
+  reviews 1, accepted 2026-08-23. It extracted interactive watches, drag state,
+  outlines, geometry/drop recovery, snapshots, and drag-specific deferred-work
+  coordination into `controller-interactive-drag.ts`. Its independent review
+  found explicit QRectF geometry capture, runtime extracted-domain imports, and
+  disabled-path drag-state clearing; one same-scope correction fixed all three
+  and Lead confirmation checked only that finding set. Focused existing suites
+  reported 43 tests / 3 suites / 0 failures; the full suite reported 965 tests /
+  91 suites / 0 failures / 0 skipped; both typechecks passed; dogfood reported
+  347/0; two normal builds matched SHA-256
+  `cd4145bd8b0d2b27d1e634483ab6ddb7936abb548a66382da72f268842c242cc`.
+  Static inspection found only type imports from extracted domains, `entry.ts`
+  as the sole runtime importer of `controller.ts`, one production
+  `flashFocusedGroup()` invocation, and the existing sole structural
+  reporting/flush implementation. The implementation Worker omitted its
+  required identity-preflight line; this is a recorded process-compliance
+  defect, not a technical acceptance gap. No second independent review ran.
 - Reset ownership: `controller.ts` remains the composition root and sole owner
   of `StructuralMutationCapability`, its pending flag,
   `flushStructuralMutation()`, and the one production `flashFocusedGroup()`
   invocation. Units 05A and 05B receive only existing narrow capabilities.
-- Dependency reset: Unit 06 now depends on accepted Units 05A and 05B, with
-  Unit 05B independently reviewed. Unit 07 depends on accepted Units 01-04,
-  05A, 05B, and 06 with all required reviews complete; neither later unit's
-  semantic scope changed.
+- Dependency reset: Unit 06 has accepted Units 05A and 05B, with Unit 05B
+  independently reviewed. Unit 07 depends on accepted Units 01-04, 05A, 05B,
+  and 06 with all required reviews complete; neither later unit's semantic scope
+  changed.
 - Baseline: 965 tests / 91 suites / 0 failures; typecheck clean; dogfood
   347/0. No live KWin operations.
 - Unit 01 checkpoint: `controller-config.ts` owns configuration interpretation,
