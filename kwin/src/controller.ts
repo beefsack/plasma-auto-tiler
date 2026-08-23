@@ -4,7 +4,6 @@ import {
     TransientState,
     assignWindowToTile,
     decodeSequential,
-    desktopNumber,
     detachWindowFromTile,
     isCustomTile,
     isNativelyMaximized,
@@ -31,9 +30,50 @@ import {
     type WindowCapability,
 } from "./boundary";
 import { customTileSplitSeam } from "./custom-tile-split";
-import { type Blueprint, type Orientation } from "./layout-blueprint";
+import { type Orientation } from "./layout-blueprint";
 import { executeBlueprintInstructions } from "./layout-executor";
 import { type BlueprintPath } from "./layout-instructions";
+import {
+    dragGeometryBail,
+    layoutDirectionFor,
+    parentHasSameSplitAxis,
+    positiveGeometry,
+    sameGeometry,
+    splitDirection,
+    type GeometryDropBail,
+} from "./controller-geometry";
+import {
+    collectPresetLeaves,
+    decodeLeaves,
+    decodeTileTree,
+    decodeUsableLeaves,
+    dwindleBijectionTreeMatches,
+    dwindleLeafDepths,
+    makeOperationLeaves,
+    ordinalClass,
+    operationLeafForTile,
+    presetNodeMatches,
+    targetOccupantForActive,
+    windowInScope,
+    windowIndex,
+    type OperationLeaf,
+} from "./controller-topology";
+import {
+    desktopScopeCheck,
+    ensureTrailingEmptyDesktop,
+    orderedDesktops,
+    SessionOutputKeys,
+    snapshotCaption,
+} from "./controller-workspace-state";
+export {
+    ensureTrailingEmptyDesktop,
+    SessionOutputKeys,
+    outputTuple,
+} from "./controller-workspace-state";
+export type {
+    TrailingEmptyDomainRequest,
+    TrailingEmptyDomainResult,
+} from "./controller-workspace-state";
 import {
     compareLeaves,
     equalAlongAxis,
@@ -45,7 +85,6 @@ import {
     planKeyboardInsertion,
     rectCenter,
     RELATIVE_GEOMETRY_EPSILON,
-    type Leaf,
     type Direction,
     type Point,
     type Scope,
@@ -88,7 +127,6 @@ import {
     type ResetTile,
 } from "./topology-reset";
 
-const MAX_TILES = MAX_SEQUENTIAL_LENGTH;
 const HORIZONTAL_LAYOUT_DIRECTION = 1;
 const VERTICAL_LAYOUT_DIRECTION = 2;
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
@@ -122,101 +160,7 @@ const GROUP_OUTLINE_DURATION_MS = 700;
 // session-local inert state.
 const MAX_YIELD_REARM_PER_PHASE = 2;
 
-// ==== Session output identity (Unit 04) ====
-//
-// The physical output ID (spec B/E) is the ordered tuple of the four scriptable
-// Output properties. Delimiting with NUL makes the tuple unambiguous when a
-// field is empty or itself contains the separator.
-export function outputTuple(output: OutputCapability): string {
-    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\u0000");
-}
-
-// Session-local deterministic output key registry (spec E). Keys are derived
-// from the ordered (manufacturer, model, serialNumber, name) tuple and assigned
-// in first-seen order. A rebuild matches each output against the earliest
-// unconsumed slot with the same tuple, so a surviving output keeps its key and
-// a colliding tuple (two outputs indistinguishable by the scriptable API) gets
-// a distinct first-seen key. Keys are session-only and never persisted.
-//
-// Resolution is tuple-based, never dependent on QJS object identity: KWin can
-// expose the same physical output through distinct wrappers (workspace.screens,
-// a window's `output` property, `workspace.activeScreen`), so a foreign wrapper
-// resolves through the current rebuild's tuple map. A stale or unknown output
-// (no matching current rebuild entry) resolves to undefined and is reported
-// once per session.
-export class SessionOutputKeys {
-    private readonly slots: Array<{ readonly key: string; readonly tuple: string }> = [];
-    private readonly byOutput = new Map<OutputCapability, string>();
-    // Current rebuild's known tuples in first-seen slot order (spec E). The
-    // first entry is the deterministic resolution for a colliding tuple.
-    private readonly tupleKeys = new Map<string, string[]>();
-    // Tuples already reported as unknown/stale this session (diagnostics dedupe).
-    private readonly reportedUnknown = new Set<string>();
-    private next = 0;
-
-    constructor(
-        private readonly reportUnknown?: (tuple: string) => void,
-    ) {}
-
-    rebuild(outputs: readonly OutputCapability[]): void {
-        this.byOutput.clear();
-        this.tupleKeys.clear();
-        const consumed = new Set<number>();
-        for (const output of outputs) {
-            const tuple = outputTuple(output);
-            let matchedIndex = -1;
-            let entry: { readonly key: string; readonly tuple: string } | undefined;
-            for (let index = 0; index < this.slots.length; index += 1) {
-                if (consumed.has(index)) {
-                    continue;
-                }
-                const candidate = this.slots[index];
-                if (candidate !== undefined && candidate.tuple === tuple) {
-                    matchedIndex = index;
-                    entry = candidate;
-                    break;
-                }
-            }
-            if (entry === undefined) {
-                matchedIndex = this.slots.length;
-                entry = { key: `output-${this.next}`, tuple };
-                this.next += 1;
-                this.slots.push(entry);
-            }
-            consumed.add(matchedIndex);
-            this.byOutput.set(output, entry.key);
-            const keys = this.tupleKeys.get(tuple);
-            if (keys === undefined) {
-                this.tupleKeys.set(tuple, [entry.key]);
-            } else if (!keys.includes(entry.key)) {
-                keys.push(entry.key);
-            }
-        }
-    }
-
-    keyFor(output: OutputCapability): string | undefined {
-        const direct = this.byOutput.get(output);
-        if (direct !== undefined) {
-            return direct;
-        }
-        // A distinct wrapper of a currently connected output matches by the
-        // physical tuple. A colliding tuple resolves deterministically to the
-        // first-seen current key; the rebuild's slots already disambiguated
-        // the outputs at first-seen order (spec E collision).
-        const tuple = outputTuple(output);
-        const keys = this.tupleKeys.get(tuple);
-        if (keys !== undefined && keys.length > 0) {
-            return keys[0];
-        }
-        // Stale (disconnected) or never-seen output: safe undefined resolution,
-        // reported once per session tuple.
-        if (!this.reportedUnknown.has(tuple)) {
-            this.reportedUnknown.add(tuple);
-            this.reportUnknown?.(tuple);
-        }
-        return undefined;
-    }
-}
+// Session output identity and key allocation live in controller-workspace-state.ts.
 
 type BoundaryKind = "workspace-window-list" | "tile-children" | "tile-occupancy" | "split-result";
 
@@ -359,18 +303,6 @@ export interface PendingRebuild {
 // defers while a drag, reconstruction, or unsettled move is live, never acting
 // or navigating mid-mutation.
 
-interface DecodedLeaf {
-    readonly tile: TileCapability;
-    readonly windows: readonly WindowCapability[];
-}
-
-interface OperationLeaf {
-    readonly decoded: DecodedLeaf;
-    readonly leaf: Leaf;
-    readonly windows: readonly WindowCapability[];
-    readonly refs: readonly WindowRef[];
-}
-
 // The resolved dwindle insertion split: the leaf to split, its depth in the
 // current tree, and its sole eligible occupant. The split axis comes from the
 // selected leaf's geometry at insertion time.
@@ -465,12 +397,6 @@ type GeometryDropResolution =
       }
     | GeometryDropBail;
 
-type GeometryDropBail =
-    | { readonly kind: "center-unresolved" }
-    | { readonly kind: "no-target-leaf"; readonly center: Point; readonly pointSource: "cursor" | "frame-center" }
-    | { readonly kind: "target-is-origin"; readonly center: Point; readonly pointSource: "cursor" | "frame-center" }
-    | { readonly kind: "leaf-not-in-topology"; readonly center: Point; readonly pointSource: "cursor" | "frame-center" };
-
 // One guarded `window.tile` assignment produced by reflow planning. `source`
 // is the occupant's current tile at plan time (null only for an untiled
 // addition candidate); `target` is the exact ordinal overlay leaf.
@@ -508,53 +434,6 @@ type AutomaticPlacementOutcome =
     | { readonly kind: "no-empty-leaf" }
     | { readonly kind: "assignment-failed" };
 
-function windowInScope(window: unknown, scope: CurrentScope): window is WindowCapability {
-    if (!isWindow(window)) {
-        return false;
-    }
-    if (
-        !window.normalWindow ||
-        !window.managed ||
-        !window.resizeable ||
-        window.appletPopup ||
-        window.output !== scope.output
-    ) {
-        return false;
-    }
-    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
-    return desktops.ok && desktops.value.some((desktop) => desktop.id === scope.scope.desktopId);
-}
-
-// Fixed, privacy-safe bucket describing why `window.desktops` did or did not
-// contain the current desktop, for diagnostics only. Desktop ids and counts
-// are scope identity and are never logged directly; this is deliberately
-// coarser than that.
-type DesktopScopeCheck = "decode-failed" | "no-desktops" | "no-match" | "match";
-
-function desktopScopeCheck(window: WindowCapability, scope: CurrentScope): DesktopScopeCheck {
-    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
-    if (!desktops.ok) {
-        return "decode-failed";
-    }
-    if (desktops.value.length === 0) {
-        return "no-desktops";
-    }
-    return desktops.value.some((desktop) => desktop.id === scope.scope.desktopId) ? "match" : "no-match";
-}
-
-// Order a decoded `workspace.desktops` list by ascending 1-based X11 desktop
-// number when every entry carries one; otherwise preserve the given list order
-// (positional order is the fallback index source). Identity is always the
-// string `id`, never the number.
-function orderedDesktops(desktops: readonly VirtualDesktopCapability[]): readonly VirtualDesktopCapability[] {
-    const indexed = desktops.map((desktop, index) => ({ desktop, number: desktopNumber(desktop), index }));
-    const allNumbered = indexed.every((entry) => entry.number !== null);
-    const ordered = allNumbered
-        ? indexed.slice().sort((a, b) => (a.number as number) - (b.number as number))
-        : indexed.slice().sort((a, b) => a.index - b.index);
-    return ordered.map((entry) => entry.desktop);
-}
-
 // Fixed, privacy-safe error description for workspace-command failure logging.
 // The controller's own boundary seams throw errors whose messages are authored
 // here ("kwin-workspace-surface-missing:..."), so the message is safe to log
@@ -566,478 +445,9 @@ function describeWorkspaceFailure(error: unknown): string {
     return String(error);
 }
 
-function decodeLeaves(
-    root: TileCapability,
-    decodedBoundary: (kind: "tile-children" | "tile-occupancy") => void,
-): readonly DecodedLeaf[] | null {
-    const pending: TileCapability[] = [root];
-    const visited = new Set<object>([root]);
-    const leaves: DecodedLeaf[] = [];
-    while (pending.length > 0) {
-        const tile = pending.pop();
-        if (tile === undefined) {
-            return null;
-        }
-        const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-        if (!children.ok) {
-            return null;
-        }
-        decodedBoundary("tile-children");
-        for (const child of children.value) {
-            if (visited.has(child)) {
-                return null;
-            }
-            if (visited.size >= MAX_TILES) {
-                return null;
-            }
-            visited.add(child);
-            pending.push(child);
-        }
-        if (!tile.isLayout) {
-            const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-            if (!windows.ok) {
-                return null;
-            }
-            decodedBoundary("tile-occupancy");
-            leaves.push({ tile, windows: windows.value });
-        }
-    }
-    return leaves;
-}
-
-// Walk every tile reachable beneath a root with strict acyclic bounded
-// decoding. Returns null on any structural defect, otherwise all tiles.
-function decodeTileTree(root: TileCapability): readonly TileCapability[] | null {
-    const pending: TileCapability[] = [root];
-    const visited = new Set<object>([root]);
-    const tiles: TileCapability[] = [root];
-    while (pending.length > 0) {
-        const tile = pending.pop();
-        if (tile === undefined) {
-            return null;
-        }
-        const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-        if (!children.ok) {
-            return null;
-        }
-        for (const child of children.value) {
-            if (visited.has(child)) {
-                return null;
-            }
-            if (visited.size >= MAX_TILES) {
-                return null;
-            }
-            visited.add(child);
-            tiles.push(child);
-            pending.push(child);
-        }
-    }
-    return tiles;
-}
-
-// A usable leaf of a dwindle-owned scope, per the coherent leaf/occupancy
-// model: a non-layout tile, or a layout root with zero children (a collapsed
-// scope root is itself the sole usable leaf). Interior layout tiles with one
-// or more children are never usable.
-interface UsableLeaf {
-    readonly tile: TileCapability;
-    readonly windows: readonly WindowCapability[];
-}
-
-// Walk the scope tree and return its usable leaves in decoded order with their
-// decoded occupancy. Returns null on any structural decode failure, matching
-// decodeTileTree's strictness.
-function decodeUsableLeaves(root: TileCapability): readonly UsableLeaf[] | null {
-    const tiles = decodeTileTree(root);
-    if (tiles === null) {
-        return null;
-    }
-    const leaves: UsableLeaf[] = [];
-    for (const tile of tiles) {
-        if (!tile.isLayout) {
-            const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-            if (!windows.ok) {
-                return null;
-            }
-            leaves.push({ tile, windows: windows.value });
-            continue;
-        }
-        if (tile !== root) {
-            continue;
-        }
-        const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-        if (!children.ok) {
-            return null;
-        }
-        if (children.value.length === 0) {
-            const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-            if (!windows.ok) {
-                return null;
-            }
-            leaves.push({ tile, windows: windows.value });
-        }
-    }
-    return leaves;
-}
-
-// Depth of every usable leaf beneath a scope root, keyed by tile identity, so
-// a fallback insertion candidate can derive its own dwindle orientation the
-// same way `deepestLeaf` derives the intended leaf's. Depth is the number of
-// layout ancestors above the leaf; a non-layout root and a zero-child layout
-// root are both depth zero. Null on a structural decode failure.
-function dwindleLeafDepths(root: CustomTileCapability): Map<CustomTileCapability, number> | null {
-    const depths = new Map<CustomTileCapability, number>();
-    const walk = (tile: CustomTileCapability, depth: number): boolean => {
-        if (!tile.isLayout) {
-            depths.set(tile, depth);
-            return true;
-        }
-        const children = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-        if (!children.ok) {
-            return false;
-        }
-        if (children.value.length === 0) {
-            depths.set(tile, depth);
-            return true;
-        }
-        for (const child of children.value) {
-            if (child === undefined || !walk(child, depth + 1)) {
-                return false;
-            }
-        }
-        return true;
-    };
-    return walk(root, 0) ? depths : null;
-}
-
-// Pre-order left-to-right realization of a preset overlay root, mirroring the
-// executor's decoded split children. A non-layout root realizes to itself; a
-// layout root must decode to exactly two custom-tile children per level, so any
-// manual split, removal, or reorder of the overlay subtree returns null.
-// Child order is derived by the split adapter from relativeGeometry, not from
-// tiles[] array index: multi-ordinal native array order is unestablished
-// (custom-tile-split.ts:18-23).
-function collectPresetLeaves(root: TileCapability): readonly TileCapability[] | null {
-    if (!isCustomTile(root)) {
-        return null;
-    }
-    if (!root.isLayout) {
-        return [root];
-    }
-    const ordered = customTileSplitSeam.decodeChildren(root);
-    if (ordered === null || ordered.length !== 2) {
-        return null;
-    }
-    const left = ordered[0];
-    const right = ordered[1];
-    if (left === undefined || right === undefined) {
-        return null;
-    }
-    const leftLeaves = collectPresetLeaves(left);
-    if (leftLeaves === null) {
-        return null;
-    }
-    const rightLeaves = collectPresetLeaves(right);
-    if (rightLeaves === null) {
-        return null;
-    }
-    return [...leftLeaves, ...rightLeaves];
-}
-
-function makeOperationLeaves(leaves: readonly DecodedLeaf[]): readonly OperationLeaf[] {
-    const result: OperationLeaf[] = [];
-    let windowIndex = 0;
-    for (let tileIndex = 0; tileIndex < leaves.length; tileIndex += 1) {
-        const decoded = leaves[tileIndex];
-        if (decoded === undefined) {
-            return [];
-        }
-        const refs: WindowRef[] = [];
-        for (const window of decoded.windows) {
-            refs.push({
-                id: `window-${windowIndex}`,
-                normal: window.normalWindow,
-                managed: window.managed,
-            });
-            windowIndex += 1;
-        }
-        result.push({
-            decoded,
-            windows: decoded.windows,
-            refs,
-            leaf: {
-                id: `tile-${tileIndex}`,
-                isLayout: decoded.tile.isLayout,
-                geometry: decoded.tile.absoluteGeometry,
-                windows: refs,
-            },
-        });
-    }
-    return result;
-}
-
-function operationLeafForTile(leaves: readonly OperationLeaf[], tile: TileCapability): OperationLeaf | null {
-    for (const leaf of leaves) {
-        if (leaf.decoded.tile === tile) {
-            return leaf;
-        }
-    }
-    return null;
-}
-
-function windowIndex(windows: readonly WindowCapability[], target: WindowCapability): number {
-    for (let index = 0; index < windows.length; index += 1) {
-        if (windows[index] === target) {
-            return index;
-        }
-    }
-    return -1;
-}
-
-interface TargetOccupant {
-    readonly window: WindowCapability;
-    readonly usesActiveWrapper: boolean;
-}
-
 interface PresetOccupant {
     readonly window: WindowCapability;
     readonly originTile: TileCapability;
-}
-
-function targetOccupantForActive(target: OperationLeaf, active: WindowCapability): TargetOccupant | null {
-    if (windowIndex(target.windows, active) >= 0) {
-        return { window: active, usesActiveWrapper: true };
-    }
-    // KWin can expose the same singleton native window through distinct QJS
-    // wrappers. A singleton eligible tile occupant remains unambiguous.
-    if (target.windows.length !== 1) {
-        return null;
-    }
-    const occupant = target.windows[0];
-    return occupant === undefined ? null : { window: occupant, usesActiveWrapper: false };
-}
-
-function ordinalClass(ordinal: number): "first" | "later" {
-    return ordinal === 0 ? "first" : "later";
-}
-
-function sameGeometry(a: RectCapability, b: RectCapability): boolean {
-    return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-}
-
-function positiveGeometry(geometry: RectCapability): boolean {
-    return geometry.width > 0 && geometry.height > 0;
-}
-
-function formatCoordinate(value: number): string {
-    return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "non-finite";
-}
-
-// Concise `x,y` point for bail diagnostics; coordinates are session-local
-// geometry, never scope identity.
-function formatPoint(point: Point): string {
-    return `${formatCoordinate(point.x)},${formatCoordinate(point.y)}`;
-}
-
-function dragGeometryBail(target: GeometryDropBail): string {
-    switch (target.kind) {
-        case "center-unresolved":
-            return "drag-bail:center-unresolved";
-        case "no-target-leaf":
-            return `drag-bail:no-target-leaf:${formatPoint(target.center)}`;
-        case "target-is-origin":
-            return `drag-bail:target-is-origin:${formatPoint(target.center)}`;
-        case "leaf-not-in-topology":
-            return `drag-bail:leaf-not-in-topology:${formatPoint(target.center)}`;
-    }
-}
-
-// Bounded plain-string caption for snapshot occupants. Read-only, truncated to
-// a fixed modest length so no caption can bloat a log line, and never a full
-// window serialization. A non-string caption collapses to the empty string.
-const SNAPSHOT_CAPTION_LIMIT = 40;
-
-function snapshotCaption(value: unknown): string {
-    const caption = typeof value === "string" ? value : "";
-    return caption.length > SNAPSHOT_CAPTION_LIMIT ? caption.slice(0, SNAPSHOT_CAPTION_LIMIT) : caption;
-}
-
-function splitDirection(direction: Direction): number {
-    return direction === "left" || direction === "right"
-        ? HORIZONTAL_LAYOUT_DIRECTION
-        : VERTICAL_LAYOUT_DIRECTION;
-}
-
-function layoutDirectionFor(orientation: Orientation): number {
-    return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION;
-}
-
-function parentHasSameSplitAxis(tile: CustomTileCapability, axis: SplitAxis): boolean {
-    const parent = tile.parent;
-    return (
-        parent !== null &&
-        isCustomTile(parent) &&
-        parent.isLayout &&
-        parent.layoutDirection === (axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION : VERTICAL_LAYOUT_DIRECTION)
-    );
-}
-
-// Structural preset-shape match: a live custom-tile subtree must realize the
-// blueprint node with the node's own orientation (the deterministic
-// orientation of the configured preset at that position). The two children are
-// accepted in either decoded order because the executor's "left"/"right" path
-// mapping follows the split-return order.
-function presetNodeMatches(tile: CustomTileCapability, node: Blueprint): boolean {
-    if (node.kind === "leaf") {
-        return !tile.isLayout;
-    }
-    if (!tile.isLayout) {
-        return false;
-    }
-    if (tile.layoutDirection !== layoutDirectionFor(node.orientation)) {
-        return false;
-    }
-    const children = decodeSequential(tile.tiles, isCustomTile, 2);
-    if (!children.ok || children.value.length !== 2) {
-        return false;
-    }
-    const first = children.value[0];
-    const second = children.value[1];
-    if (first === undefined || second === undefined) {
-        return false;
-    }
-    return (
-        (presetNodeMatches(first, node.left) && presetNodeMatches(second, node.right)) ||
-        (presetNodeMatches(first, node.right) && presetNodeMatches(second, node.left))
-    );
-}
-
-// Occupancy bijection for a dwindle-matched scope: every usable leaf must be
-// occupied by exactly one owned-population window whose recorded `tile` is that
-// leaf, and every population window must occupy exactly one leaf. An empty,
-// duplicate, extra, or wrong-window leaf occupancy (or a population window
-// missing from any leaf) is a mismatch, so a persisted same-shape tree with
-// drifted occupancy is never adopted unchanged.
-function dwindleOccupancyMatches(
-    scope: CurrentScope,
-    leaves: readonly UsableLeaf[],
-    population: readonly WindowCapability[],
-): boolean {
-    if (leaves.length !== population.length) {
-        return false;
-    }
-    const occupied = new Set<object>();
-    for (const leaf of leaves) {
-        let occupants = 0;
-        for (const value of leaf.windows) {
-            if (windowInScope(value, scope) && value.tile === leaf.tile) {
-                occupants += 1;
-                occupied.add(value);
-            }
-        }
-        if (occupants !== 1) {
-            return false;
-        }
-    }
-    for (const window of population) {
-        if (!occupied.has(window)) {
-            return false;
-        }
-    }
-    return true;
-}
-
-// Bijection-only dwindle tree predicate: whether the live tree beneath the
-// root realizes a window-to-leaf occupancy bijection with the owned population,
-// without any shape requirement. Reuses the leaf-level occupancy bijection
-// logic, so a persisted tree that is not dwindle-shaped but whose leaves happen
-// to hold the population is never mistaken for an adoptable scope by callers
-// that combine this with the separate shape predicate.
-function dwindleBijectionTreeMatches(
-    scope: CurrentScope,
-    root: CustomTileCapability,
-    population: readonly WindowCapability[],
-): boolean {
-    const leaves = decodeUsableLeaves(root);
-    if (leaves === null) {
-        return false;
-    }
-    return dwindleOccupancyMatches(scope, leaves, population);
-}
-
-// ==== Trailing empty workspace invariant (COSMIC-style reuse) ====
-//
-// One shared, stateless helper enforcing "exactly one trailing empty
-// desktop" for a single domain (one connected output's local list in
-// per-output-local mode, or the one global list in global-unique/shared
-// mode). The trailing empty is identified structurally on every call - the
-// desktop at the literal last position of `orderedIds`, if it is currently
-// empty - never cached across dispatches, matching spec.md's ban on any
-// ownership/identity Set for this concept. `isEmpty`/`isVisible` let the
-// caller compose this with the existing "empty AND invisible on every
-// connected output" cleanup predicate (see `planDesktopCleanup`) without
-// this helper reimplementing visibility semantics itself.
-
-export interface TrailingEmptyDomainRequest {
-    // Domain-ordered desktop ids, most-recent live snapshot, pre-removal.
-    readonly orderedIds: readonly string[];
-    readonly isEmpty: (id: string) => boolean;
-    readonly isVisible: (id: string) => boolean;
-    // Removes the desktop for id; returns whether it was actually removed.
-    readonly removeDesktop: (id: string) => boolean;
-    // Creates one new empty desktop in this domain; returns its id, or null
-    // on failure (defensively treated as a no-op by the helper).
-    readonly createDesktop: () => string | null;
-}
-
-export interface TrailingEmptyDomainResult {
-    readonly removedIds: readonly string[];
-    readonly appendedId: string | null;
-}
-
-// Enforces the trailing-empty invariant for one domain in a single pass:
-// 1. Identify the current trailing empty structurally: the desktop at the
-//    literal last position of `orderedIds`, only if it is currently empty
-//    (otherwise there is no trailing empty to protect right now). Exclude it
-//    from removal.
-// 2. Remove every other id that is empty and invisible (identical
-//    eligibility to today's existing cleanup rule - no new removal cases).
-//    A non-trailing empty desktop earlier in domain order is removable even
-//    if it happens to be the only other empty desktop; it is never treated
-//    as "the" trailing empty.
-// 3. Re-read the domain list *after* removal and check the invariant: an
-//    empty desktop at the trailing (last) position. If present, done. If not
-//    (occupied last desktop, or an empty domain), append exactly one new
-//    empty desktop and stop.
-// No loop, no debounce/timer: a dispatch against unchanged state removes
-// and appends nothing, so repeated calls are idempotent.
-export function ensureTrailingEmptyDesktop(
-    request: TrailingEmptyDomainRequest,
-): TrailingEmptyDomainResult {
-    const { orderedIds, isEmpty, isVisible, removeDesktop, createDesktop } = request;
-    const lastId = orderedIds[orderedIds.length - 1];
-    const trailingEmptyId = lastId !== undefined && isEmpty(lastId) ? lastId : null;
-    const removedIds: string[] = [];
-    for (const id of orderedIds) {
-        if (id === trailingEmptyId) {
-            continue;
-        }
-        if (!isEmpty(id) || isVisible(id)) {
-            continue;
-        }
-        if (removeDesktop(id)) {
-            removedIds.push(id);
-        }
-    }
-    const removed = new Set(removedIds);
-    const remainingIds = orderedIds.filter((id) => !removed.has(id));
-    const trailingId = remainingIds[remainingIds.length - 1];
-    const trailingSatisfied = trailingId !== undefined && isEmpty(trailingId);
-    if (trailingSatisfied) {
-        return { removedIds, appendedId: null };
-    }
-    const appendedId = createDesktop();
-    return { removedIds, appendedId };
 }
 
 export class TileController {

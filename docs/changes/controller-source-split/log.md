@@ -35,3 +35,29 @@ Append-only record of artifact creation and approved execution checkpoints.
   `npm test` also reported its current script-local check as 255 passes / 0
   failures; Unit 01 has no dogfood checkpoint gate. No live KWin operations.
 - Notes / blocker: none. Circuit breakers remain 0.
+
+## 2026-08-23 - unit 02 acceptance
+
+- Role / unit: Lead / unit 02 - topology and workspace state.
+- Result: extracted pure topology and occupancy helpers to
+  `controller-topology.ts`, pure geometry predicates and drag diagnostics to
+  `controller-geometry.ts`, and session output-key/workspace state helpers to
+  `controller-workspace-state.ts`. `controller.ts` remains the sole facade and
+  composition root, retaining all pre-existing public workspace exports.
+- Review: topology imports only `boundary` and the existing split adapter at
+  runtime; geometry and workspace modules import only `boundary` at runtime.
+  Type-only imports erase from the bundle. No extracted module imports
+  `controller.ts` or another extracted domain, and no cycle exists. Adapter
+  ordering, opaque split return, zero-extent guard, N-ary direct-child decoding,
+  occupancy identity, output-key identity, and literal-last-index trailing-empty
+  handling remain unchanged. Static inspection retained one production
+  `flashFocusedGroup()` invocation and did not alter structural mutation/flush.
+- Verification: focused topology/workspace tests 47 tests / 8 suites / 0
+  failures; both TypeScript configurations clean; full JS suite 965 tests / 91
+  suites / 0 failures. The established `bash scripts/dogfood-install.test.sh`
+  gate reported 347 passes / 0 failures; this is distinct from `npm test`'s
+  script-local 255-pass / 0-failure check. Two normal bundle builds matched
+  SHA-256 `778b54716f476f907373747d0c98f1519902362b9ae4dbb3433ffa7bb32e1c05`.
+  No live KWin operations.
+- Notes / blocker: modules are 372, 65, and 158 lines; no size exception or
+  circuit breaker. Unit 03 has not started.

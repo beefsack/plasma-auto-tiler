@@ -467,6 +467,429 @@
     }
   }
 
+  // src/controller-geometry.ts
+  var HORIZONTAL_LAYOUT_DIRECTION2 = 1;
+  var VERTICAL_LAYOUT_DIRECTION2 = 2;
+  function sameGeometry(a, b) {
+    return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
+  }
+  function positiveGeometry(geometry) {
+    return geometry.width > 0 && geometry.height > 0;
+  }
+  function formatCoordinate(value) {
+    return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "non-finite";
+  }
+  function formatPoint(point) {
+    return `${formatCoordinate(point.x)},${formatCoordinate(point.y)}`;
+  }
+  function dragGeometryBail(target) {
+    switch (target.kind) {
+      case "center-unresolved":
+        return "drag-bail:center-unresolved";
+      case "no-target-leaf":
+        return `drag-bail:no-target-leaf:${formatPoint(target.center)}`;
+      case "target-is-origin":
+        return `drag-bail:target-is-origin:${formatPoint(target.center)}`;
+      case "leaf-not-in-topology":
+        return `drag-bail:leaf-not-in-topology:${formatPoint(target.center)}`;
+    }
+  }
+  function splitDirection2(direction) {
+    return direction === "left" || direction === "right" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
+  }
+  function layoutDirectionFor(orientation) {
+    return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
+  }
+  function parentHasSameSplitAxis(tile, axis) {
+    const parent = tile.parent;
+    return parent !== null && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === (axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2);
+  }
+
+  // src/controller-topology.ts
+  var MAX_TILES = MAX_SEQUENTIAL_LENGTH;
+  var HORIZONTAL_LAYOUT_DIRECTION3 = 1;
+  var VERTICAL_LAYOUT_DIRECTION3 = 2;
+  function windowInScope(window, scope) {
+    if (!isWindow(window)) {
+      return false;
+    }
+    if (!window.normalWindow || !window.managed || !window.resizeable || window.appletPopup || window.output !== scope.output) {
+      return false;
+    }
+    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
+    return desktops.ok && desktops.value.some((desktop) => desktop.id === scope.scope.desktopId);
+  }
+  function decodeLeaves(root, decodedBoundary) {
+    const pending = [root];
+    const visited = /* @__PURE__ */ new Set([root]);
+    const leaves = [];
+    while (pending.length > 0) {
+      const tile = pending.pop();
+      if (tile === void 0) {
+        return null;
+      }
+      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+      if (!children.ok) {
+        return null;
+      }
+      decodedBoundary("tile-children");
+      for (const child of children.value) {
+        if (visited.has(child)) {
+          return null;
+        }
+        if (visited.size >= MAX_TILES) {
+          return null;
+        }
+        visited.add(child);
+        pending.push(child);
+      }
+      if (!tile.isLayout) {
+        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+          return null;
+        }
+        decodedBoundary("tile-occupancy");
+        leaves.push({ tile, windows: windows.value });
+      }
+    }
+    return leaves;
+  }
+  function decodeTileTree(root) {
+    const pending = [root];
+    const visited = /* @__PURE__ */ new Set([root]);
+    const tiles = [root];
+    while (pending.length > 0) {
+      const tile = pending.pop();
+      if (tile === void 0) {
+        return null;
+      }
+      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+      if (!children.ok) {
+        return null;
+      }
+      for (const child of children.value) {
+        if (visited.has(child)) {
+          return null;
+        }
+        if (visited.size >= MAX_TILES) {
+          return null;
+        }
+        visited.add(child);
+        tiles.push(child);
+        pending.push(child);
+      }
+    }
+    return tiles;
+  }
+  function decodeUsableLeaves(root) {
+    const tiles = decodeTileTree(root);
+    if (tiles === null) {
+      return null;
+    }
+    const leaves = [];
+    for (const tile of tiles) {
+      if (!tile.isLayout) {
+        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+          return null;
+        }
+        leaves.push({ tile, windows: windows.value });
+        continue;
+      }
+      if (tile !== root) {
+        continue;
+      }
+      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
+      if (!children.ok) {
+        return null;
+      }
+      if (children.value.length === 0) {
+        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
+        if (!windows.ok) {
+          return null;
+        }
+        leaves.push({ tile, windows: windows.value });
+      }
+    }
+    return leaves;
+  }
+  function dwindleLeafDepths(root) {
+    const depths = /* @__PURE__ */ new Map();
+    const walk = (tile, depth) => {
+      if (!tile.isLayout) {
+        depths.set(tile, depth);
+        return true;
+      }
+      const children = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
+      if (!children.ok) {
+        return false;
+      }
+      if (children.value.length === 0) {
+        depths.set(tile, depth);
+        return true;
+      }
+      for (const child of children.value) {
+        if (child === void 0 || !walk(child, depth + 1)) {
+          return false;
+        }
+      }
+      return true;
+    };
+    return walk(root, 0) ? depths : null;
+  }
+  function collectPresetLeaves(root) {
+    if (!isCustomTile(root)) {
+      return null;
+    }
+    if (!root.isLayout) {
+      return [root];
+    }
+    const ordered = customTileSplitSeam.decodeChildren(root);
+    if (ordered === null || ordered.length !== 2) {
+      return null;
+    }
+    const left = ordered[0];
+    const right = ordered[1];
+    if (left === void 0 || right === void 0) {
+      return null;
+    }
+    const leftLeaves = collectPresetLeaves(left);
+    if (leftLeaves === null) {
+      return null;
+    }
+    const rightLeaves = collectPresetLeaves(right);
+    if (rightLeaves === null) {
+      return null;
+    }
+    return [...leftLeaves, ...rightLeaves];
+  }
+  function makeOperationLeaves(leaves) {
+    const result = [];
+    let windowIndex2 = 0;
+    for (let tileIndex = 0; tileIndex < leaves.length; tileIndex += 1) {
+      const decoded = leaves[tileIndex];
+      if (decoded === void 0) {
+        return [];
+      }
+      const refs = [];
+      for (const window of decoded.windows) {
+        refs.push({
+          id: `window-${windowIndex2}`,
+          normal: window.normalWindow,
+          managed: window.managed
+        });
+        windowIndex2 += 1;
+      }
+      result.push({
+        decoded,
+        windows: decoded.windows,
+        refs,
+        leaf: {
+          id: `tile-${tileIndex}`,
+          isLayout: decoded.tile.isLayout,
+          geometry: decoded.tile.absoluteGeometry,
+          windows: refs
+        }
+      });
+    }
+    return result;
+  }
+  function operationLeafForTile(leaves, tile) {
+    for (const leaf of leaves) {
+      if (leaf.decoded.tile === tile) {
+        return leaf;
+      }
+    }
+    return null;
+  }
+  function windowIndex(windows, target) {
+    for (let index = 0; index < windows.length; index += 1) {
+      if (windows[index] === target) {
+        return index;
+      }
+    }
+    return -1;
+  }
+  function targetOccupantForActive(target, active) {
+    if (windowIndex(target.windows, active) >= 0) {
+      return { window: active, usesActiveWrapper: true };
+    }
+    if (target.windows.length !== 1) {
+      return null;
+    }
+    const occupant = target.windows[0];
+    return occupant === void 0 ? null : { window: occupant, usesActiveWrapper: false };
+  }
+  function ordinalClass(ordinal) {
+    return ordinal === 0 ? "first" : "later";
+  }
+  function presetNodeMatches(tile, node) {
+    if (node.kind === "leaf") {
+      return !tile.isLayout;
+    }
+    if (!tile.isLayout) {
+      return false;
+    }
+    if (tile.layoutDirection !== (node.orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION3 : VERTICAL_LAYOUT_DIRECTION3)) {
+      return false;
+    }
+    const children = decodeSequential(tile.tiles, isCustomTile, 2);
+    if (!children.ok || children.value.length !== 2) {
+      return false;
+    }
+    const first = children.value[0];
+    const second = children.value[1];
+    if (first === void 0 || second === void 0) {
+      return false;
+    }
+    return presetNodeMatches(first, node.left) && presetNodeMatches(second, node.right) || presetNodeMatches(first, node.right) && presetNodeMatches(second, node.left);
+  }
+  function dwindleOccupancyMatches(scope, leaves, population) {
+    if (leaves.length !== population.length) {
+      return false;
+    }
+    const occupied = /* @__PURE__ */ new Set();
+    for (const leaf of leaves) {
+      let occupants = 0;
+      for (const value of leaf.windows) {
+        if (windowInScope(value, scope) && value.tile === leaf.tile) {
+          occupants += 1;
+          occupied.add(value);
+        }
+      }
+      if (occupants !== 1) {
+        return false;
+      }
+    }
+    for (const window of population) {
+      if (!occupied.has(window)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function dwindleBijectionTreeMatches(scope, root, population) {
+    const leaves = decodeUsableLeaves(root);
+    if (leaves === null) {
+      return false;
+    }
+    return dwindleOccupancyMatches(scope, leaves, population);
+  }
+
+  // src/controller-workspace-state.ts
+  function outputTuple(output) {
+    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
+  }
+  var SessionOutputKeys = class {
+    constructor(reportUnknown) {
+      this.reportUnknown = reportUnknown;
+      this.slots = [];
+      this.byOutput = /* @__PURE__ */ new Map();
+      this.tupleKeys = /* @__PURE__ */ new Map();
+      this.reportedUnknown = /* @__PURE__ */ new Set();
+      this.next = 0;
+    }
+    rebuild(outputs) {
+      this.byOutput.clear();
+      this.tupleKeys.clear();
+      const consumed = /* @__PURE__ */ new Set();
+      for (const output of outputs) {
+        const tuple = outputTuple(output);
+        let matchedIndex = -1;
+        let entry;
+        for (let index = 0; index < this.slots.length; index += 1) {
+          if (consumed.has(index)) {
+            continue;
+          }
+          const candidate = this.slots[index];
+          if (candidate !== void 0 && candidate.tuple === tuple) {
+            matchedIndex = index;
+            entry = candidate;
+            break;
+          }
+        }
+        if (entry === void 0) {
+          matchedIndex = this.slots.length;
+          entry = { key: `output-${this.next}`, tuple };
+          this.next += 1;
+          this.slots.push(entry);
+        }
+        consumed.add(matchedIndex);
+        this.byOutput.set(output, entry.key);
+        const keys = this.tupleKeys.get(tuple);
+        if (keys === void 0) {
+          this.tupleKeys.set(tuple, [entry.key]);
+        } else if (!keys.includes(entry.key)) {
+          keys.push(entry.key);
+        }
+      }
+    }
+    keyFor(output) {
+      var _a;
+      const direct = this.byOutput.get(output);
+      if (direct !== void 0) {
+        return direct;
+      }
+      const tuple = outputTuple(output);
+      const keys = this.tupleKeys.get(tuple);
+      if (keys !== void 0 && keys.length > 0) {
+        return keys[0];
+      }
+      if (!this.reportedUnknown.has(tuple)) {
+        this.reportedUnknown.add(tuple);
+        (_a = this.reportUnknown) == null ? void 0 : _a.call(this, tuple);
+      }
+      return void 0;
+    }
+  };
+  function desktopScopeCheck(window, scope) {
+    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
+    if (!desktops.ok) {
+      return "decode-failed";
+    }
+    if (desktops.value.length === 0) {
+      return "no-desktops";
+    }
+    return desktops.value.some((desktop) => desktop.id === scope.scope.desktopId) ? "match" : "no-match";
+  }
+  function orderedDesktops(desktops) {
+    const indexed = desktops.map((desktop, index) => ({ desktop, number: desktopNumber(desktop), index }));
+    const allNumbered = indexed.every((entry) => entry.number !== null);
+    const ordered = allNumbered ? indexed.slice().sort((a, b) => a.number - b.number) : indexed.slice().sort((a, b) => a.index - b.index);
+    return ordered.map((entry) => entry.desktop);
+  }
+  var SNAPSHOT_CAPTION_LIMIT = 40;
+  function snapshotCaption(value) {
+    const caption = typeof value === "string" ? value : "";
+    return caption.length > SNAPSHOT_CAPTION_LIMIT ? caption.slice(0, SNAPSHOT_CAPTION_LIMIT) : caption;
+  }
+  function ensureTrailingEmptyDesktop(request) {
+    const { orderedIds, isEmpty, isVisible, removeDesktop, createDesktop } = request;
+    const lastId = orderedIds[orderedIds.length - 1];
+    const trailingEmptyId = lastId !== void 0 && isEmpty(lastId) ? lastId : null;
+    const removedIds = [];
+    for (const id of orderedIds) {
+      if (id === trailingEmptyId) {
+        continue;
+      }
+      if (!isEmpty(id) || isVisible(id)) {
+        continue;
+      }
+      if (removeDesktop(id)) {
+        removedIds.push(id);
+      }
+    }
+    const removed = new Set(removedIds);
+    const remainingIds = orderedIds.filter((id) => !removed.has(id));
+    const trailingId = remainingIds[remainingIds.length - 1];
+    const trailingSatisfied = trailingId !== void 0 && isEmpty(trailingId);
+    if (trailingSatisfied) {
+      return { removedIds, appendedId: null };
+    }
+    const appendedId = createDesktop();
+    return { removedIds, appendedId };
+  }
+
   // src/logic.ts
   function isEligibleWindow(window) {
     return window.normal && window.managed;
@@ -1472,9 +1895,8 @@
   }
 
   // src/controller.ts
-  var MAX_TILES = MAX_SEQUENTIAL_LENGTH;
-  var HORIZONTAL_LAYOUT_DIRECTION2 = 1;
-  var VERTICAL_LAYOUT_DIRECTION2 = 2;
+  var HORIZONTAL_LAYOUT_DIRECTION4 = 1;
+  var VERTICAL_LAYOUT_DIRECTION4 = 2;
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
   var MINIMUM_TILE_FRACTION = 0.15;
   var RESIZE_STEP_FRACTION = 0.05;
@@ -1483,426 +1905,11 @@
   var DESKTOP_SCOPE_REEVALUATION_DELAY_MS = 50;
   var GROUP_OUTLINE_DURATION_MS = 700;
   var MAX_YIELD_REARM_PER_PHASE = 2;
-  function outputTuple(output) {
-    return [output.manufacturer, output.model, output.serialNumber, output.name].join("\0");
-  }
-  var SessionOutputKeys = class {
-    constructor(reportUnknown) {
-      this.reportUnknown = reportUnknown;
-      this.slots = [];
-      this.byOutput = /* @__PURE__ */ new Map();
-      // Current rebuild's known tuples in first-seen slot order (spec E). The
-      // first entry is the deterministic resolution for a colliding tuple.
-      this.tupleKeys = /* @__PURE__ */ new Map();
-      // Tuples already reported as unknown/stale this session (diagnostics dedupe).
-      this.reportedUnknown = /* @__PURE__ */ new Set();
-      this.next = 0;
-    }
-    rebuild(outputs) {
-      this.byOutput.clear();
-      this.tupleKeys.clear();
-      const consumed = /* @__PURE__ */ new Set();
-      for (const output of outputs) {
-        const tuple = outputTuple(output);
-        let matchedIndex = -1;
-        let entry;
-        for (let index = 0; index < this.slots.length; index += 1) {
-          if (consumed.has(index)) {
-            continue;
-          }
-          const candidate = this.slots[index];
-          if (candidate !== void 0 && candidate.tuple === tuple) {
-            matchedIndex = index;
-            entry = candidate;
-            break;
-          }
-        }
-        if (entry === void 0) {
-          matchedIndex = this.slots.length;
-          entry = { key: `output-${this.next}`, tuple };
-          this.next += 1;
-          this.slots.push(entry);
-        }
-        consumed.add(matchedIndex);
-        this.byOutput.set(output, entry.key);
-        const keys = this.tupleKeys.get(tuple);
-        if (keys === void 0) {
-          this.tupleKeys.set(tuple, [entry.key]);
-        } else if (!keys.includes(entry.key)) {
-          keys.push(entry.key);
-        }
-      }
-    }
-    keyFor(output) {
-      var _a;
-      const direct = this.byOutput.get(output);
-      if (direct !== void 0) {
-        return direct;
-      }
-      const tuple = outputTuple(output);
-      const keys = this.tupleKeys.get(tuple);
-      if (keys !== void 0 && keys.length > 0) {
-        return keys[0];
-      }
-      if (!this.reportedUnknown.has(tuple)) {
-        this.reportedUnknown.add(tuple);
-        (_a = this.reportUnknown) == null ? void 0 : _a.call(this, tuple);
-      }
-      return void 0;
-    }
-  };
-  function windowInScope(window, scope) {
-    if (!isWindow(window)) {
-      return false;
-    }
-    if (!window.normalWindow || !window.managed || !window.resizeable || window.appletPopup || window.output !== scope.output) {
-      return false;
-    }
-    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
-    return desktops.ok && desktops.value.some((desktop) => desktop.id === scope.scope.desktopId);
-  }
-  function desktopScopeCheck(window, scope) {
-    const desktops = decodeSequential(window.desktops, isVirtualDesktop, MAX_SEQUENTIAL_LENGTH);
-    if (!desktops.ok) {
-      return "decode-failed";
-    }
-    if (desktops.value.length === 0) {
-      return "no-desktops";
-    }
-    return desktops.value.some((desktop) => desktop.id === scope.scope.desktopId) ? "match" : "no-match";
-  }
-  function orderedDesktops(desktops) {
-    const indexed = desktops.map((desktop, index) => ({ desktop, number: desktopNumber(desktop), index }));
-    const allNumbered = indexed.every((entry) => entry.number !== null);
-    const ordered = allNumbered ? indexed.slice().sort((a, b) => a.number - b.number) : indexed.slice().sort((a, b) => a.index - b.index);
-    return ordered.map((entry) => entry.desktop);
-  }
   function describeWorkspaceFailure(error) {
     if (error instanceof Error) {
       return error.message === "" ? error.name : error.message;
     }
     return String(error);
-  }
-  function decodeLeaves(root, decodedBoundary) {
-    const pending = [root];
-    const visited = /* @__PURE__ */ new Set([root]);
-    const leaves = [];
-    while (pending.length > 0) {
-      const tile = pending.pop();
-      if (tile === void 0) {
-        return null;
-      }
-      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-      if (!children.ok) {
-        return null;
-      }
-      decodedBoundary("tile-children");
-      for (const child of children.value) {
-        if (visited.has(child)) {
-          return null;
-        }
-        if (visited.size >= MAX_TILES) {
-          return null;
-        }
-        visited.add(child);
-        pending.push(child);
-      }
-      if (!tile.isLayout) {
-        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-          return null;
-        }
-        decodedBoundary("tile-occupancy");
-        leaves.push({ tile, windows: windows.value });
-      }
-    }
-    return leaves;
-  }
-  function decodeTileTree(root) {
-    const pending = [root];
-    const visited = /* @__PURE__ */ new Set([root]);
-    const tiles = [root];
-    while (pending.length > 0) {
-      const tile = pending.pop();
-      if (tile === void 0) {
-        return null;
-      }
-      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-      if (!children.ok) {
-        return null;
-      }
-      for (const child of children.value) {
-        if (visited.has(child)) {
-          return null;
-        }
-        if (visited.size >= MAX_TILES) {
-          return null;
-        }
-        visited.add(child);
-        tiles.push(child);
-        pending.push(child);
-      }
-    }
-    return tiles;
-  }
-  function decodeUsableLeaves(root) {
-    const tiles = decodeTileTree(root);
-    if (tiles === null) {
-      return null;
-    }
-    const leaves = [];
-    for (const tile of tiles) {
-      if (!tile.isLayout) {
-        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-          return null;
-        }
-        leaves.push({ tile, windows: windows.value });
-        continue;
-      }
-      if (tile !== root) {
-        continue;
-      }
-      const children = decodeSequential(tile.tiles, isTile, MAX_SEQUENTIAL_LENGTH);
-      if (!children.ok) {
-        return null;
-      }
-      if (children.value.length === 0) {
-        const windows = decodeSequential(tile.windows, isWindow, MAX_SEQUENTIAL_LENGTH);
-        if (!windows.ok) {
-          return null;
-        }
-        leaves.push({ tile, windows: windows.value });
-      }
-    }
-    return leaves;
-  }
-  function dwindleLeafDepths(root) {
-    const depths = /* @__PURE__ */ new Map();
-    const walk = (tile, depth) => {
-      if (!tile.isLayout) {
-        depths.set(tile, depth);
-        return true;
-      }
-      const children = decodeSequential(tile.tiles, isCustomTile, MAX_SEQUENTIAL_LENGTH);
-      if (!children.ok) {
-        return false;
-      }
-      if (children.value.length === 0) {
-        depths.set(tile, depth);
-        return true;
-      }
-      for (const child of children.value) {
-        if (child === void 0 || !walk(child, depth + 1)) {
-          return false;
-        }
-      }
-      return true;
-    };
-    return walk(root, 0) ? depths : null;
-  }
-  function collectPresetLeaves(root) {
-    if (!isCustomTile(root)) {
-      return null;
-    }
-    if (!root.isLayout) {
-      return [root];
-    }
-    const ordered = customTileSplitSeam.decodeChildren(root);
-    if (ordered === null || ordered.length !== 2) {
-      return null;
-    }
-    const left = ordered[0];
-    const right = ordered[1];
-    if (left === void 0 || right === void 0) {
-      return null;
-    }
-    const leftLeaves = collectPresetLeaves(left);
-    if (leftLeaves === null) {
-      return null;
-    }
-    const rightLeaves = collectPresetLeaves(right);
-    if (rightLeaves === null) {
-      return null;
-    }
-    return [...leftLeaves, ...rightLeaves];
-  }
-  function makeOperationLeaves(leaves) {
-    const result = [];
-    let windowIndex2 = 0;
-    for (let tileIndex = 0; tileIndex < leaves.length; tileIndex += 1) {
-      const decoded = leaves[tileIndex];
-      if (decoded === void 0) {
-        return [];
-      }
-      const refs = [];
-      for (const window of decoded.windows) {
-        refs.push({
-          id: `window-${windowIndex2}`,
-          normal: window.normalWindow,
-          managed: window.managed
-        });
-        windowIndex2 += 1;
-      }
-      result.push({
-        decoded,
-        windows: decoded.windows,
-        refs,
-        leaf: {
-          id: `tile-${tileIndex}`,
-          isLayout: decoded.tile.isLayout,
-          geometry: decoded.tile.absoluteGeometry,
-          windows: refs
-        }
-      });
-    }
-    return result;
-  }
-  function operationLeafForTile(leaves, tile) {
-    for (const leaf of leaves) {
-      if (leaf.decoded.tile === tile) {
-        return leaf;
-      }
-    }
-    return null;
-  }
-  function windowIndex(windows, target) {
-    for (let index = 0; index < windows.length; index += 1) {
-      if (windows[index] === target) {
-        return index;
-      }
-    }
-    return -1;
-  }
-  function targetOccupantForActive(target, active) {
-    if (windowIndex(target.windows, active) >= 0) {
-      return { window: active, usesActiveWrapper: true };
-    }
-    if (target.windows.length !== 1) {
-      return null;
-    }
-    const occupant = target.windows[0];
-    return occupant === void 0 ? null : { window: occupant, usesActiveWrapper: false };
-  }
-  function ordinalClass(ordinal) {
-    return ordinal === 0 ? "first" : "later";
-  }
-  function sameGeometry(a, b) {
-    return a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height;
-  }
-  function positiveGeometry(geometry) {
-    return geometry.width > 0 && geometry.height > 0;
-  }
-  function formatCoordinate(value) {
-    return Number.isFinite(value) ? String(Math.round(value * 100) / 100) : "non-finite";
-  }
-  function formatPoint(point) {
-    return `${formatCoordinate(point.x)},${formatCoordinate(point.y)}`;
-  }
-  function dragGeometryBail(target) {
-    switch (target.kind) {
-      case "center-unresolved":
-        return "drag-bail:center-unresolved";
-      case "no-target-leaf":
-        return `drag-bail:no-target-leaf:${formatPoint(target.center)}`;
-      case "target-is-origin":
-        return `drag-bail:target-is-origin:${formatPoint(target.center)}`;
-      case "leaf-not-in-topology":
-        return `drag-bail:leaf-not-in-topology:${formatPoint(target.center)}`;
-    }
-  }
-  var SNAPSHOT_CAPTION_LIMIT = 40;
-  function snapshotCaption(value) {
-    const caption = typeof value === "string" ? value : "";
-    return caption.length > SNAPSHOT_CAPTION_LIMIT ? caption.slice(0, SNAPSHOT_CAPTION_LIMIT) : caption;
-  }
-  function splitDirection2(direction) {
-    return direction === "left" || direction === "right" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
-  }
-  function layoutDirectionFor(orientation) {
-    return orientation === "horizontal" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
-  }
-  function parentHasSameSplitAxis(tile, axis) {
-    const parent = tile.parent;
-    return parent !== null && isCustomTile(parent) && parent.isLayout && parent.layoutDirection === (axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2);
-  }
-  function presetNodeMatches(tile, node) {
-    if (node.kind === "leaf") {
-      return !tile.isLayout;
-    }
-    if (!tile.isLayout) {
-      return false;
-    }
-    if (tile.layoutDirection !== layoutDirectionFor(node.orientation)) {
-      return false;
-    }
-    const children = decodeSequential(tile.tiles, isCustomTile, 2);
-    if (!children.ok || children.value.length !== 2) {
-      return false;
-    }
-    const first = children.value[0];
-    const second = children.value[1];
-    if (first === void 0 || second === void 0) {
-      return false;
-    }
-    return presetNodeMatches(first, node.left) && presetNodeMatches(second, node.right) || presetNodeMatches(first, node.right) && presetNodeMatches(second, node.left);
-  }
-  function dwindleOccupancyMatches(scope, leaves, population) {
-    if (leaves.length !== population.length) {
-      return false;
-    }
-    const occupied = /* @__PURE__ */ new Set();
-    for (const leaf of leaves) {
-      let occupants = 0;
-      for (const value of leaf.windows) {
-        if (windowInScope(value, scope) && value.tile === leaf.tile) {
-          occupants += 1;
-          occupied.add(value);
-        }
-      }
-      if (occupants !== 1) {
-        return false;
-      }
-    }
-    for (const window of population) {
-      if (!occupied.has(window)) {
-        return false;
-      }
-    }
-    return true;
-  }
-  function dwindleBijectionTreeMatches(scope, root, population) {
-    const leaves = decodeUsableLeaves(root);
-    if (leaves === null) {
-      return false;
-    }
-    return dwindleOccupancyMatches(scope, leaves, population);
-  }
-  function ensureTrailingEmptyDesktop(request) {
-    const { orderedIds, isEmpty, isVisible, removeDesktop, createDesktop } = request;
-    const lastId = orderedIds[orderedIds.length - 1];
-    const trailingEmptyId = lastId !== void 0 && isEmpty(lastId) ? lastId : null;
-    const removedIds = [];
-    for (const id of orderedIds) {
-      if (id === trailingEmptyId) {
-        continue;
-      }
-      if (!isEmpty(id) || isVisible(id)) {
-        continue;
-      }
-      if (removeDesktop(id)) {
-        removedIds.push(id);
-      }
-    }
-    const removed = new Set(removedIds);
-    const remainingIds = orderedIds.filter((id) => !removed.has(id));
-    const trailingId = remainingIds[remainingIds.length - 1];
-    const trailingSatisfied = trailingId !== void 0 && isEmpty(trailingId);
-    if (trailingSatisfied) {
-      return { removedIds, appendedId: null };
-    }
-    const appendedId = createDesktop();
-    return { removedIds, appendedId };
   }
   var TileController = class {
     constructor(environment) {
@@ -2733,7 +2740,7 @@
           return;
         }
         const axis = direction === "left" || direction === "right" ? "x" : "y";
-        const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION2 : VERTICAL_LAYOUT_DIRECTION2;
+        const expectedLayoutDirection = axis === "x" ? HORIZONTAL_LAYOUT_DIRECTION4 : VERTICAL_LAYOUT_DIRECTION4;
         const target = this.resolveResizeSplit(active.tile, expectedLayoutDirection, direction, mode);
         if (target === null) {
           this.diagnostic("resize-rejected:no-parent");
@@ -6830,7 +6837,7 @@
         this.diagnostic("drag-reflow-normalize-skipped:not-siblings");
         return topology;
       }
-      const axis = parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION2 ? "x" : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION2 ? "y" : null;
+      const axis = parent.layoutDirection === HORIZONTAL_LAYOUT_DIRECTION4 ? "x" : parent.layoutDirection === VERTICAL_LAYOUT_DIRECTION4 ? "y" : null;
       if (axis === null) {
         this.diagnostic("drag-reflow-normalize-skipped:floating-parent");
         return topology;
