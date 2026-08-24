@@ -25,7 +25,7 @@ target for geometry-ordering changes. Test scope is limited to
 | `unit-01` | Approval | Define the narrow directional strategy seam and compose COSMIC only from `controller.ts`; retain facade, callbacks, guards, and capability boundaries. | Static implementation | Accepted | 1 | 1 | 0 | 0 |
 | `unit-02` | `unit-01` | Build the COSMIC structural planner over ordered topology; consume adapter re-decode results and never infer native split shape. | Static implementation | Accepted | 1 | 0 | 0 | 0 |
 | `unit-03` | `unit-02` | Original guarded R1-R4 runtime integration objective. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 1 | 1 |
-| `unit-03a-runtime-transaction-safety` | `unit-02` | Runtime topology decode, preflight, mutation transactions, recovery, and focused runtime tests. | Static implementation | Not started | 0 | 0 | 0 | 0 |
+| `unit-03a-runtime-transaction-safety` | `unit-02` | Runtime topology decode, preflight, mutation transactions, recovery, and focused runtime tests. | Static implementation | Accepted | 1 | 1 | 1 | 0 |
 | `unit-03b-cosmic-integration-closure` | `unit-03a-runtime-transaction-safety` | COSMIC-only controller composition, directional entry closure, legacy-path removal, and focused entry tests. | Static implementation | Not started | 0 | 0 | 0 | 0 |
 | `unit-04` | `unit-03b-cosmic-integration-closure` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 | 0 |
 | `unit-05` | `unit-04` | Run focused and full static acceptance, dual typechecks, dogfood, and deterministic bundle build; record the post-change bundle hash. | Static verification | Not started | 0 | 0 | 0 | 0 |
@@ -131,6 +131,23 @@ does not block Unit 05.
   never repairs code. A failed required gate returns a concrete finding to a
   newly approved unit.
 
+## Unit 03A Review Record
+
+- `unit-03a-runtime-transaction-safety/attempt-01` reached mandatory
+  independent review 01. The review found: optional planned postconditions;
+  incomplete topology and assignment recovery verification; missing
+  native-maximized target-occupant rejection; non-layout tiles accepted with
+  children; incomplete post-mutation output/workspace validation; and escaping
+  capability getter failures. All six findings are accepted as fixes within the
+  approved runtime/test scope. Correction 01 is the sole permitted same-scope
+  correction; no further independent review is permitted.
+- Correction 01 made planned postconditions mandatory, expanded verified
+  recovery snapshots, rejected native-maximized occupants and non-layout child
+  topologies, validated every post-mutation tile/output/workspace association,
+  and contained capability getter failures. Lead confirmation inspected those
+  changes and the focused regression evidence. The finding set is accepted;
+  no confirmation review was dispatched.
+
 ## Stop Conditions
 
 - Any existing test failure, binary serialization drift, malformed or stale
@@ -143,12 +160,12 @@ does not block Unit 05.
 
 ## Initial State
 
-- Units 01-02 are accepted. Original `unit-03` is frozen with breaker 1.
-  `unit-03a-runtime-transaction-safety` and
-  `unit-03b-cosmic-integration-closure` are approved but not started; Units
+- Units 01-02 and `unit-03a-runtime-transaction-safety` are accepted. Original
+  `unit-03` is frozen with breaker 1.
+  `unit-03b-cosmic-integration-closure` is approved but not started; Units
   04-05 remain unauthorized and not started.
-- The two replacement units and Units 04-05 start at zero attempts, correction
-  rounds, independent reviews, and breakers.
+- `unit-03b-cosmic-integration-closure` and Units 04-05 start at zero attempts,
+  correction rounds, independent reviews, and breakers.
 - No product or enduring governance change is introduced by this reset.
 
 ## Attempt Record
@@ -172,3 +189,13 @@ does not block Unit 05.
   permitted without a changed-path reset.
 - The approved changed-path reset permanently freezes `unit-03`; it does not
   relabel or clear its counters. The named stash is rejected evidence only.
+- `unit-03a-runtime-transaction-safety/attempt-01` is accepted after one
+  independent review and correction 01. `node --test
+  kwin/dist/tests/directional-movement-runtime.test.js` passed 11 tests in 1
+  suite with 0 failures and 0 skipped. `npm --prefix kwin test` passed 990
+  tests in 95 suites with 0 failures and 0 skipped; `npm --prefix kwin run
+  typecheck`, `bash scripts/dogfood-install.test.sh` (347/0), and `bash
+  scripts/build-kpackage.test.sh` passed. `npm --prefix kwin run build` produced
+  `b90f9b23f9e2e290f7b581acaef9743a4ff48c320e895f7a06fa7de005d074dc` for
+  `kwin/contents/code/main.js`; `git diff --check` passed. No live operation
+  was run.

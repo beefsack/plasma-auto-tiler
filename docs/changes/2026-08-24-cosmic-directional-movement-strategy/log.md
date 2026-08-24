@@ -34,3 +34,15 @@
   `unit-03b-cosmic-integration-closure`; `unit-05` remains dependent on
   `unit-04`. One independent review is reserved for Unit 03A transaction
   safety only. No product or enduring governance change.
+- Unit 03A attempt 01 reached its mandatory independent review. Six accepted
+  runtime-safety findings require one same-scope correction: mandatory planned
+  postconditions, complete recovery verification, maximized target-occupant
+  rejection, non-layout child rejection, post-mutation output/workspace
+  validation, and fail-closed capability getter handling. Correction 01 is in
+  progress; a second Unit 03A review is prohibited.
+- Unit 03A is accepted after correction 01 and Lead confirmation of the six
+  findings. Evidence: focused runtime tests 11/1 with 0 failures/skips; full
+  suite 990/95 with 0 failures/skips; dual typecheck clean; dogfood 347/0;
+  package contract checks passed; and build SHA-256
+  `b90f9b23f9e2e290f7b581acaef9743a4ff48c320e895f7a06fa7de005d074dc`.
+  No second review, live operation, staging, commit, or push occurred.
