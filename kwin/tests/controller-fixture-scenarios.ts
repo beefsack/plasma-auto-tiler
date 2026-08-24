@@ -571,6 +571,318 @@ export function countEvent(logs: readonly string[], event: string): number {
     return logs.filter((entry) => entry === `plasma-auto-tiler:${event}`).length;
 }
 
+// Independent fixture capability and observability contract for the
+// interactive-drag reflow work. The fixture instruments test-fixture operations
+// (manage/unmanage/split/remove) and observations (recursive snapshot/decode,
+// membership, focus) only. It never runs, orders, or asserts the production
+// transaction, never reconstructs topology, and never retries a final manage.
+// It cannot prove native KWin frame realization or compositor presentation; the
+// production unit owns ordering, target-occupant preservation, recursive
+// collapse, normalization, final manage, bijection/focus, and reconstruction.
+export type FixtureOpName = "unmanage" | "split" | "remove" | "manage";
+
+export type FixtureInjectorName =
+    | "unmanage-throws"
+    | "split-throws"
+    | "remove-fails"
+    | "manage-fails"
+    | "malformed-topology"
+    | "duplicate-membership"
+    | "focus-failure";
+
+export interface FixtureTrace {
+    readonly kind: "op" | "observation";
+    readonly op: FixtureOpName | null;
+    readonly subject: string;
+    readonly outcome: "ok" | "failed";
+    readonly failure: FixtureInjectorName | null;
+}
+
+export interface RecoveryRequiredRecord {
+    readonly failure: FixtureInjectorName;
+    readonly at: string;
+    readonly recovery: "required";
+}
+
+export interface TileObservation {
+    readonly role: string;
+    readonly isLayout: boolean;
+    readonly layoutDirection: number;
+    readonly windows: readonly string[];
+    readonly children: readonly TileObservation[];
+    readonly malformed: boolean;
+}
+
+export interface ScopeObservation {
+    readonly root: string;
+    readonly tree: TileObservation;
+    readonly membership: readonly string[];
+    readonly duplicates: readonly string[];
+    readonly unassigned: readonly string[];
+    readonly active: string | null;
+    readonly focusStatus: "ok" | "missing" | "failed";
+    readonly malformed: readonly string[];
+}
+
+export interface ReflowFixture {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly root: TestTile;
+    readonly origin: TestTile;
+    readonly target: TestTile;
+    readonly left: TestTile;
+    readonly right: TestTile;
+    readonly dragged: TestWindow;
+    readonly occupant: TestWindow;
+    readonly unrelated: TestWindow;
+    readonly traces: readonly FixtureTrace[];
+    readonly recoveryRequired: readonly RecoveryRequiredRecord[];
+    arm(name: FixtureInjectorName): void;
+    snapshot(): ScopeObservation;
+    decode(): ScopeObservation;
+}
+
+const opForInjector: Readonly<Record<FixtureInjectorName, FixtureOpName | null>> = {
+    "unmanage-throws": "unmanage",
+    "split-throws": "split",
+    "remove-fails": "remove",
+    "manage-fails": "manage",
+    "malformed-topology": "split",
+    "duplicate-membership": null,
+    "focus-failure": null,
+};
+
+// Build a role-keyed two-leaf scope (origin holds the dragged window, target
+// holds the occupant) with every tile op instrumented for trace capture and
+// injectable failure. Ops are wrapped only after `controller.start()`, so the
+// trace array starts empty and only records test-driven operations.
+export function reflowFixture(): ReflowFixture {
+    const harness = new Harness();
+    const root = tile(RECT, true);
+    const origin = tile();
+    const target = tile({ x: 200, y: 0, width: 100, height: 100 });
+    const left = tile({ x: 200, y: 0, width: 100, height: 50 });
+    const right = tile({ x: 200, y: 50, width: 100, height: 50 });
+    const dragged = window({ tile: origin, caption: "dragged" });
+    const occupant = window({ tile: target, caption: "occupant" });
+    const unrelated = window({ caption: "unrelated" });
+    origin.windows = [dragged];
+    target.windows = [occupant];
+    root.tiles = [origin, target];
+    harness.root = root;
+    harness.active = dragged;
+    harness.windows = [dragged, occupant, unrelated];
+
+    const realManage =
+        (leaf: TestTile) =>
+        (win: unknown): boolean => {
+            (win as TestWindow).tile = leaf;
+            leaf.windows = [win as TestWindow];
+            return true;
+        };
+    const realUnmanage =
+        (leaf: TestTile) =>
+        (win: unknown): boolean => {
+            leaf.windows = (leaf.windows as TestWindow[]).filter((value) => value !== win);
+            (win as TestWindow).tile = null;
+            return true;
+        };
+    const realSplit =
+        (branch: TestTile, childA: TestTile, childB: TestTile) =>
+        (direction: unknown): unknown => {
+            branch.isLayout = true;
+            branch.layoutDirection = direction as number;
+            const occupants = branch.windows as TestWindow[];
+            branch.windows = [];
+            childA.windows = occupants;
+            childB.windows = [];
+            branch.tiles = [childA, childB];
+            return [childA, childB];
+        };
+    const realRemove =
+        (leaf: TestTile, parent: TestTile) =>
+        (): boolean => {
+            parent.tiles = (parent.tiles as TestTile[]).filter((entry) => entry !== leaf);
+            return true;
+        };
+
+    const roleByTile = new Map<TestTile, string>([
+        [root, "root"],
+        [origin, "origin"],
+        [target, "target"],
+        [left, "left"],
+        [right, "right"],
+    ]);
+    for (const [subject, parent] of [
+        [origin, root],
+        [target, root],
+        [left, target],
+        [right, target],
+    ] as const) {
+        subject.manage = realManage(subject);
+        subject.unmanage = realUnmanage(subject);
+        subject.split = realSplit(subject, left, right);
+        subject.remove = realRemove(subject, parent);
+    }
+
+    const controller = new TileController(harness.environment());
+    controller.start();
+
+    const traces: FixtureTrace[] = [];
+    const recoveryRequired: RecoveryRequiredRecord[] = [];
+    let failureMode: FixtureInjectorName | null = null;
+
+    const recordFailure = (failure: FixtureInjectorName, at: string): void => {
+        recoveryRequired.push({ failure, at, recovery: "required" });
+    };
+    const wrap = (
+        subject: TestTile,
+        role: string,
+        op: FixtureOpName,
+        impl: (...args: unknown[]) => unknown,
+    ): void => {
+        (subject as unknown as Record<string, unknown>)[op] = (...args: unknown[]): unknown => {
+            if (failureMode !== null && opForInjector[failureMode] === op) {
+                if (failureMode === "malformed-topology") {
+                    // A split that reports success but realizes an invalid
+                    // topology (a layout with no children): the malformed/no-op
+                    // topology injection, detected by the decode observation.
+                    subject.isLayout = true;
+                    subject.layoutDirection = args[0] as number;
+                    subject.tiles = [];
+                    traces.push({ kind: "op", op, subject: role, outcome: "ok", failure: null });
+                    return [];
+                }
+                traces.push({ kind: "op", op, subject: role, outcome: "failed", failure: failureMode });
+                recordFailure(failureMode, `${op}:${role}`);
+                return op === "split" ? [] : false;
+            }
+            const result = impl(...args);
+            traces.push({ kind: "op", op, subject: role, outcome: "ok", failure: null });
+            return result;
+        };
+    };
+    for (const subject of [origin, target, left, right]) {
+        const role = roleByTile.get(subject) ?? "node";
+        for (const op of ["manage", "unmanage", "split", "remove"] as const) {
+            wrap(subject, role, op, (subject as unknown as Record<string, unknown>)[op] as (...args: unknown[]) => unknown);
+        }
+    }
+
+    const buildObservation = (record: boolean): ScopeObservation => {
+        const seen: string[] = [];
+        const build = (subject: TestTile): TileObservation => {
+            const children = (subject.tiles as TestTile[]).map(build);
+            const windows = (subject.windows as TestWindow[]).map((value) => value.caption);
+            const isLayout = subject.isLayout;
+            const malformed = isLayout ? children.length === 0 || windows.length > 0 : children.length > 0;
+            seen.push(...windows);
+            return {
+                role: roleByTile.get(subject) ?? "node",
+                isLayout,
+                layoutDirection: subject.layoutDirection,
+                windows,
+                children,
+                malformed,
+            };
+        };
+        const tree = build(root);
+        const counts = new Map<string, number>();
+        for (const caption of seen) {
+            counts.set(caption, (counts.get(caption) ?? 0) + 1);
+        }
+        const duplicates = [...counts].filter(([, count]) => count > 1).map(([caption]) => caption);
+        const membership = [...new Set(seen)];
+        const malformedRoles: string[] = [];
+        const walk = (node: TileObservation): void => {
+            if (node.malformed) {
+                malformedRoles.push(node.role);
+            }
+            for (const child of node.children) {
+                walk(child);
+            }
+        };
+        walk(tree);
+        const activeWindow = harness.active as TestWindow | null;
+        let active: string | null = null;
+        let focusStatus: "ok" | "missing" | "failed" = "ok";
+        if (activeWindow === null) {
+            focusStatus = "missing";
+        } else if (typeof (activeWindow as { caption?: unknown }).caption === "string") {
+            active = activeWindow.caption;
+            if (!membership.includes(active)) {
+                focusStatus = "missing";
+            }
+        } else {
+            focusStatus = "failed";
+        }
+        const unassigned = (harness.windows as TestWindow[])
+            .map((value) => value.caption)
+            .filter((caption) => !membership.includes(caption));
+        if (record) {
+            if (malformedRoles.length > 0) {
+                traces.push({
+                    kind: "observation",
+                    op: null,
+                    subject: "decode",
+                    outcome: "failed",
+                    failure: "malformed-topology",
+                });
+                recordFailure("malformed-topology", "decode:malformed");
+            }
+            if (duplicates.length > 0) {
+                traces.push({
+                    kind: "observation",
+                    op: null,
+                    subject: "decode",
+                    outcome: "failed",
+                    failure: "duplicate-membership",
+                });
+                recordFailure("duplicate-membership", "decode:duplicate");
+            }
+            if (focusStatus !== "ok") {
+                traces.push({
+                    kind: "observation",
+                    op: null,
+                    subject: "decode",
+                    outcome: "failed",
+                    failure: "focus-failure",
+                });
+                recordFailure("focus-failure", "decode:focus");
+            }
+        }
+        return { root: "root", tree, membership, duplicates, unassigned, active, focusStatus, malformed: malformedRoles };
+    };
+    const deepFreeze = <T>(value: T): T => {
+        if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+            Object.freeze(value);
+            for (const key of Object.keys(value)) {
+                deepFreeze((value as Record<string, unknown>)[key]);
+            }
+        }
+        return value;
+    };
+    return {
+        harness,
+        controller,
+        root,
+        origin,
+        target,
+        left,
+        right,
+        dragged,
+        occupant,
+        unrelated,
+        traces,
+        recoveryRequired,
+        arm: (name) => {
+            failureMode = name;
+        },
+        snapshot: () => deepFreeze(buildObservation(false)),
+        decode: () => buildObservation(true),
+    };
+}
+
 // A dwindle(2) scope H[a, b] where dragging `a` onto `b` with a left-horizontal
 // split leaves `a` floating (the drop manage reports success but never
 // assigns), so the occupancy bijection fails on the origin collapse and queues

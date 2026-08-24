@@ -297,6 +297,84 @@ describe("TileController drag snapshot diagnostics", () => {
         ]);
     });
 
+    it("emits a complete controller-settled diagnostic transaction with explicit geometry limits", () => {
+        const { harness, term2Win } = nativeDropSetup();
+        startDrag(term2Win);
+        term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
+        term2Win.tile = null;
+        term2Win.interactiveMoveResizeFinished.emit();
+        harness.flushNextYield();
+
+        const transactions = snapshotPayloads(harness.logs, "drag-diagnostic:");
+        assert.equal(transactions.length, 1);
+        const payload = transactions[0] as {
+            transactionId: number;
+            stage: string;
+            draggedClientId: string;
+            resolvedTargetLeafId: string;
+            outputId: unknown;
+            workArea: { x: number; y: number; width: number; height: number };
+            finalLeafId: string;
+            finalLeafRectangle: { x: number; y: number; width: number; height: number };
+            finalOccupantId: string;
+            finalLeaves: Array<{
+                leafId: string;
+                rectangle: { x: number; y: number; width: number; height: number };
+                occupancy: string;
+                occupantIds: string[];
+            }>;
+            occupiedClients: Array<{
+                clientId: string;
+                clientGeometry: unknown;
+                frameGeometry: { x: number; y: number; width: number; height: number };
+            }>;
+            postSettle: { status: string; reason: string };
+            ordering: string[];
+        };
+        assert.equal(payload.transactionId, 1);
+        assert.equal(payload.stage, "controller-settled");
+        assert.equal(payload.draggedClientId, "window-1");
+        assert.equal(payload.resolvedTargetLeafId, "tile-2");
+        assert.notEqual(payload.outputId, "unavailable");
+        assert.deepEqual(payload.workArea, { x: 0, y: 0, width: 100, height: 100 });
+        assert.equal(payload.finalLeafId, "tile-1");
+        assert.deepEqual(payload.finalLeafRectangle, { x: 0, y: 50, width: 100, height: 50 });
+        assert.equal(payload.finalOccupantId, "window-1");
+        assert.deepEqual(payload.finalLeaves, [
+            {
+                leafId: "tile-0",
+                rectangle: { x: 100, y: 50, width: 100, height: 50 },
+                occupancy: "occupied",
+                occupantIds: ["window-0"],
+            },
+            {
+                leafId: "tile-1",
+                rectangle: { x: 0, y: 50, width: 100, height: 50 },
+                occupancy: "occupied",
+                occupantIds: ["window-1"],
+            },
+            {
+                leafId: "tile-2",
+                rectangle: { x: 0, y: 0, width: 100, height: 50 },
+                occupancy: "occupied",
+                occupantIds: ["window-2"],
+            },
+        ]);
+        assert.deepEqual(
+            payload.occupiedClients.map((client) => client.clientId).sort(),
+            ["window-0", "window-1", "window-2"],
+        );
+        for (const client of payload.occupiedClients) {
+            assert.equal(client.clientGeometry, "unavailable");
+            assert.ok(client.frameGeometry.width > 0 && client.frameGeometry.height > 0);
+        }
+        assert.deepEqual(payload.postSettle, {
+            status: "unavailable",
+            reason: "no-supported-client-geometry-event-after-controller-settled",
+        });
+        assert.deepEqual(payload.ordering, ["origin-removal", "collapse", "normalization", "after-snapshot"]);
+    });
+
     it("reuses the resolution and collapse decodes so a successful drop adds no whole-root decode", () => {
         const { harness, term2Win } = nativeDropSetup();
         startDrag(term2Win);

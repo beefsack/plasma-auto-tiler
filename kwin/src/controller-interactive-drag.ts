@@ -48,6 +48,19 @@ interface InteractiveWatch {
     kind: InteractiveKind;
 }
 
+const DIAGNOSTIC_UNAVAILABLE = "unavailable" as const;
+
+interface DragDiagnosticTransaction {
+    readonly transactionId: number;
+    readonly draggedWindow: WindowCapability;
+    draggedClientId: string;
+    readonly outputId: unknown;
+    readonly workArea: unknown;
+    readonly occupiedClients: Array<{ readonly clientId: string; readonly window: WindowCapability }>;
+    readonly ordering: string[];
+    resolvedTargetLeafId: string;
+}
+
 export type GeometryDropResolution =
     | {
           readonly kind: "resolved";
@@ -161,6 +174,7 @@ export interface InteractiveDragController {
         collapsed: boolean,
         reflowLeaves: ReflowLeaves | undefined,
         scope: CurrentScope,
+        transaction?: DragDiagnosticTransaction,
     ) => readonly OperationLeaf[];
     readonly isOutlineShown: () => boolean;
 }
@@ -172,6 +186,7 @@ export function createInteractiveDragController(
     const interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
     const owedInvariantScopes = new Map<OutputCapability, Map<string, CurrentScope>>();
     let shownDropOutline: RectCapability | null = null;
+    let nextDiagnosticTransactionId = 1;
 
     const diagnostic = capabilities.diagnostic;
     const { dragGeometryBail, positiveGeometry, sameGeometry, splitDirection } = capabilities.geometryHelpers;
@@ -335,6 +350,121 @@ export function createInteractiveDragController(
         dragSnapshot("final", () => ({ leaves: topologyLeavesData(topology) }));
     };
 
+    const diagnosticGeometry = (value: unknown): unknown => {
+        if (!isRect(value)) {
+            return DIAGNOSTIC_UNAVAILABLE;
+        }
+        return { x: value.x, y: value.y, width: value.width, height: value.height };
+    };
+
+    const diagnosticFrameGeometry = (window: WindowCapability): unknown => {
+        try {
+            return diagnosticGeometry(window.frameGeometry);
+        } catch (error) {
+            void error;
+            return DIAGNOSTIC_UNAVAILABLE;
+        }
+    };
+
+    const diagnosticOutputId = (value: unknown): unknown => value ?? DIAGNOSTIC_UNAVAILABLE;
+
+    const diagnosticWorkArea = (scope: CurrentScope): unknown => {
+        try {
+            return diagnosticGeometry(capabilities.clientArea(WORK_AREA_CLIENT_AREA_OPTION, scope.output, scope.desktop));
+        } catch (error) {
+            void error;
+            return DIAGNOSTIC_UNAVAILABLE;
+        }
+    };
+
+    const addDiagnosticOccupiedClients = (
+        transaction: DragDiagnosticTransaction,
+        topology: readonly OperationLeaf[],
+    ): void => {
+        for (const entry of topology) {
+            for (let index = 0; index < entry.windows.length; index += 1) {
+                const window = entry.windows[index];
+                if (window === undefined || transaction.occupiedClients.some((client) => client.window === window)) {
+                    continue;
+                }
+                transaction.occupiedClients.push({
+                    clientId: entry.refs[index]?.id ?? DIAGNOSTIC_UNAVAILABLE,
+                    window,
+                });
+            }
+        }
+    };
+
+    const createDiagnosticTransaction = (
+        drag: ActiveDrag,
+        scope: CurrentScope,
+        draggedClientId: string,
+        target: OperationLeaf,
+    ): DragDiagnosticTransaction => {
+        const transaction: DragDiagnosticTransaction = {
+            transactionId: nextDiagnosticTransactionId,
+            draggedWindow: drag.window,
+            draggedClientId,
+            outputId: diagnosticOutputId(scope.scope.output),
+            workArea: diagnosticWorkArea(scope),
+            occupiedClients: [],
+            ordering: [],
+            resolvedTargetLeafId: target.leaf.id,
+        };
+        nextDiagnosticTransactionId += 1;
+        return transaction;
+    };
+
+    const emitDiagnosticTransaction = (
+        transaction: DragDiagnosticTransaction,
+        topology: readonly OperationLeaf[],
+    ): void => {
+        addDiagnosticOccupiedClients(transaction, topology);
+        const finalEntry = topology.find((entry) => windowIndex(entry.windows, transaction.draggedWindow) >= 0);
+        const finalIndex = finalEntry === undefined ? -1 : windowIndex(finalEntry.windows, transaction.draggedWindow);
+        if (finalEntry !== undefined && finalEntry.refs[finalIndex] !== undefined) {
+            transaction.draggedClientId = finalEntry.refs[finalIndex].id;
+        }
+        const payload = {
+            transactionId: transaction.transactionId,
+            stage: "controller-settled",
+            draggedClientId: transaction.draggedClientId,
+            resolvedTargetLeafId: transaction.resolvedTargetLeafId,
+            outputId: transaction.outputId,
+            workArea: transaction.workArea,
+            finalLeafId: finalEntry?.leaf.id ?? DIAGNOSTIC_UNAVAILABLE,
+            finalLeafRectangle: finalEntry === undefined ? DIAGNOSTIC_UNAVAILABLE : diagnosticGeometry(finalEntry.leaf.geometry),
+            finalOccupantId: finalEntry === undefined
+                ? DIAGNOSTIC_UNAVAILABLE
+                : finalEntry.refs[finalIndex]?.id ?? DIAGNOSTIC_UNAVAILABLE,
+            finalLeaves: topology.map((entry) => ({
+                leafId: entry.leaf.id,
+                rectangle: diagnosticGeometry(entry.leaf.geometry),
+                occupancy: entry.windows.length === 0 ? "empty" : "occupied",
+                occupantIds: entry.windows.map((_, index) => entry.refs[index]?.id ?? DIAGNOSTIC_UNAVAILABLE),
+            })),
+            occupiedClients: transaction.occupiedClients.map((client) => ({
+                clientId: client.clientId,
+                clientGeometry: DIAGNOSTIC_UNAVAILABLE,
+                frameGeometry: diagnosticFrameGeometry(client.window),
+            })),
+            postSettle: {
+                status: DIAGNOSTIC_UNAVAILABLE,
+                reason: "no-supported-client-geometry-event-after-controller-settled",
+            },
+            ordering: transaction.ordering,
+        };
+        let serialized: string;
+        try {
+            serialized = JSON.stringify(payload);
+        } catch (error) {
+            void error;
+            diagnostic("drag-diagnostic-failed:serialize");
+            return;
+        }
+        diagnostic(`drag-diagnostic:${serialized}`);
+    };
+
     const restoreOrigin = (drag: ActiveDrag): boolean => {
         const scope = capabilities.scopeForWindow(drag.window);
         if (
@@ -488,7 +618,12 @@ export function createInteractiveDragController(
         return { kind: "leaf-not-in-topology", center, pointSource };
     };
 
-    const applyEmptyDrop = (drag: ActiveDrag, scope: CurrentScope, target: OperationLeaf): void => {
+    const applyEmptyDrop = (
+        drag: ActiveDrag,
+        scope: CurrentScope,
+        target: OperationLeaf,
+        transaction: DragDiagnosticTransaction,
+    ): void => {
         let managed = false;
         try {
             managed = manageTile(target.decoded.tile, drag.window, capabilities.mutation);
@@ -506,11 +641,17 @@ export function createInteractiveDragController(
             scope,
             drag.originTile,
             true,
-            (topology, collapsed) => afterDeferredRemoval(topology, collapsed, undefined, scope),
+            (topology, collapsed) => afterDeferredRemoval(topology, collapsed, undefined, scope, transaction),
         );
     };
 
-    const applyDropSplit = (drag: ActiveDrag, scope: CurrentScope, target: OperationLeaf, direction: Direction): void => {
+    const applyDropSplit = (
+        drag: ActiveDrag,
+        scope: CurrentScope,
+        target: OperationLeaf,
+        direction: Direction,
+        transaction: DragDiagnosticTransaction,
+    ): void => {
         const occupant = target.windows.find((window) => window !== drag.window);
         if (occupant === undefined || !capabilities.windowInScope(occupant, scope)) {
             bailDrag("drag-bail:target-occupant-invalid", drag);
@@ -530,7 +671,7 @@ export function createInteractiveDragController(
             scope,
             drag.originTile,
             true,
-            (topology, collapsed) => afterDeferredRemoval(topology, collapsed, { dragged: drag.window, occupant }, scope),
+            (topology, collapsed) => afterDeferredRemoval(topology, collapsed, { dragged: drag.window, occupant }, scope, transaction),
         );
     };
 
@@ -587,11 +728,13 @@ export function createInteractiveDragController(
         }
         if (plan.value.kind === "geometry-drop-empty") {
             diagnostic("drag-empty-target");
-            applyEmptyDrop(drag, scope, target.target);
+            const transaction = createDiagnosticTransaction(drag, scope, draggedRef.id, target.target);
+            applyEmptyDrop(drag, scope, target.target, transaction);
             return;
         }
         diagnostic("drag-geometry-target");
-        applyDropSplit(drag, scope, target.target, plan.value.direction);
+        const transaction = createDiagnosticTransaction(drag, scope, draggedRef.id, target.target);
+        applyDropSplit(drag, scope, target.target, plan.value.direction, transaction);
     };
 
     const completeDrag = (drag: ActiveDrag): void => {
@@ -1009,9 +1152,24 @@ export function createInteractiveDragController(
         collapsed: boolean,
         reflowLeaves: ReflowLeaves | undefined,
         scope: CurrentScope,
+        transaction?: DragDiagnosticTransaction,
     ): readonly OperationLeaf[] => {
+        if (transaction !== undefined) {
+            transaction.ordering.push("origin-removal");
+            if (collapsed) {
+                transaction.ordering.push("collapse");
+                transaction.ordering.push(reflowLeaves === undefined ? "normalization-unavailable" : "normalization");
+            } else {
+                transaction.ordering.push("collapse-unavailable");
+                transaction.ordering.push("normalization-unavailable");
+            }
+        }
         const after = collapsed ? normalizeReflowLeaves(scope, reflowLeaves, topology) : topology;
         dragSnapshotAfter(after);
+        if (transaction !== undefined) {
+            transaction.ordering.push("after-snapshot");
+            emitDiagnosticTransaction(transaction, after);
+        }
         return after;
     };
 

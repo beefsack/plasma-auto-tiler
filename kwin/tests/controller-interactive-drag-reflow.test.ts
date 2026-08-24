@@ -7,8 +7,22 @@ import {
     countEvent,
     movedGeometry,
     nativeDropSetup,
+    reflowFixture,
     startDrag,
+    type FixtureInjectorName,
+    type ReflowFixture,
+    type ScopeObservation,
 } from "./controller-fixture-scenarios";
+
+function isDeepFrozen(value: unknown): boolean {
+    if (value === null || typeof value !== "object") {
+        return true;
+    }
+    if (!Object.isFrozen(value)) {
+        return false;
+    }
+    return Object.values(value).every(isDeepFrozen);
+}
 
 describe("TileController interactive drag native/plain reflow and cursor-derived finish decisions", () => {
     it("reflows a plain drop from the final frame geometry into the accepted three-window example", () => {
@@ -23,7 +37,6 @@ describe("TileController interactive drag native/plain reflow and cursor-derived
         term2Win.frameGeometry = { x: 0, y: 50, width: 100, height: 50 };
         term2Win.tile = null;
         term2Win.interactiveMoveResizeFinished.emit();
-
         // The drag-hook entry log fires before any decision, then the geometry
         // target resolves and the shared reflow split runs with the origin
         // collapse deferred, exactly like the native Shift path.
@@ -310,4 +323,185 @@ describe("TileController interactive drag native/plain reflow and cursor-derived
         const b = { x: 100, y: 0, width: 100, height: 100 };
         assert.equal(planEqualSplit(parent, a, b, "x"), null);
     });
+
+    it("fixture self-contract: public interactive start/finish route, operation tracing, recursive snapshot/decode, membership and focus observations", () => {
+        // Public interactive start/finish route: drive the real public signals
+        // and observe their boundary. The finish is prepared as a lagged plain
+        // drop whose final frame center resolves back to the origin, so the
+        // controller only logs its drag-finished hook entry and clears the
+        // active drag. No reflow transaction runs here, keeping this phase free
+        // of production-order and production-outcome claims.
+        const route = reflowFixture();
+        const started: unknown[] = [];
+        const finished: unknown[] = [];
+        route.dragged.interactiveMoveResizeStarted.connect(() => started.push(true));
+        route.dragged.interactiveMoveResizeFinished.connect(() => finished.push(true));
+        startDrag(route.dragged);
+        assert.equal(started.length, 1);
+        route.dragged.frameGeometry = { x: 0, y: 0, width: 100, height: 50 };
+        route.dragged.tile = null;
+        route.origin.windows = [route.dragged];
+        route.dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(finished.length, 1);
+        assert.equal(countEvent(route.harness.logs, "drag-finished"), 1);
+        assert.equal(route.controller.hasActiveDrag, false);
+
+        // Operation tracing, recursive snapshot/decode, and membership/focus
+        // observations, exercised directly through the instrumented fixture
+        // ops. This is fixture-level capability proof only; it is not a
+        // prescribed production transaction order and asserts no production
+        // outcome.
+        const fixture = reflowFixture();
+        const pre = fixture.snapshot();
+        assert.ok(isDeepFrozen(pre));
+        assert.equal(pre.root, "root");
+        assert.equal(pre.tree.isLayout, true);
+        assert.deepEqual(pre.tree.children.map((child) => child.role), ["origin", "target"]);
+        assert.deepEqual([...pre.membership].sort(), ["dragged", "occupant"]);
+        assert.deepEqual([...pre.duplicates], []);
+        assert.deepEqual([...pre.malformed], []);
+        assert.deepEqual([...pre.unassigned], ["unrelated"]);
+        assert.equal(pre.active, "dragged");
+        assert.equal(pre.focusStatus, "ok");
+
+        fixture.origin.unmanage(fixture.dragged);
+        fixture.target.split(1);
+        fixture.right.manage(fixture.dragged);
+        fixture.origin.remove?.();
+
+        for (const op of ["unmanage", "split", "manage", "remove"] as const) {
+            assert.equal(fixture.traces.filter((trace) => trace.op === op).length, 1);
+            assert.equal(fixture.traces.find((trace) => trace.op === op)?.outcome, "ok");
+        }
+        assert.equal(fixture.recoveryRequired.length, 0);
+
+        const post = fixture.decode();
+        assert.equal(post.tree.children.length, 1);
+        assert.equal(post.tree.children[0]?.role, "target");
+        assert.equal(post.tree.children[0]?.isLayout, true);
+        assert.deepEqual(post.tree.children[0]?.children.map((child) => child.role), ["left", "right"]);
+        assert.deepEqual(post.tree.children[0]?.children[0]?.windows, ["occupant"]);
+        assert.deepEqual(post.tree.children[0]?.children[1]?.windows, ["dragged"]);
+        assert.deepEqual([...post.membership].sort(), ["dragged", "occupant"]);
+        assert.deepEqual([...post.duplicates], []);
+        assert.deepEqual([...post.malformed], []);
+        assert.equal(post.active, "dragged");
+        assert.equal(post.focusStatus, "ok");
+
+        // The pre-failure snapshot stays immutable and reflects the pre-drive
+        // topology even after the live tree was mutated and re-decoded.
+        assert.deepEqual(pre.tree.children.map((child) => child.role), ["origin", "target"]);
+        assert.deepEqual([...pre.membership].sort(), ["dragged", "occupant"]);
+    });
+
+    it("fixture failure injectors each yield an immutable pre-failure snapshot, a decoded post-failure observation, a trace marker, and exactly one recovery-required record", () => {
+        const cases: ReadonlyArray<{
+            readonly name: FixtureInjectorName;
+            readonly drive: (fixture: ReflowFixture) => void;
+            readonly expect: (fixture: ReflowFixture, observation: ScopeObservation) => void;
+        }> = [
+            {
+                name: "unmanage-throws",
+                drive: (fixture) => {
+                    fixture.origin.unmanage(fixture.dragged);
+                },
+                expect: (_fixture, observation) => {
+                    assert.equal(observation.tree.children[0]?.role, "origin");
+                    assert.deepEqual(observation.tree.children[0]?.windows, ["dragged"]);
+                    assert.equal(observation.focusStatus, "ok");
+                },
+            },
+            {
+                name: "split-throws",
+                drive: (fixture) => {
+                    fixture.target.split(1);
+                },
+                expect: (_fixture, observation) => {
+                    assert.equal(observation.tree.children[1]?.isLayout, false);
+                    assert.deepEqual(observation.tree.children[1]?.windows, ["occupant"]);
+                    assert.deepEqual(observation.tree.children[1]?.children, []);
+                },
+            },
+            {
+                name: "remove-fails",
+                drive: (fixture) => {
+                    fixture.origin.remove?.();
+                },
+                expect: (_fixture, observation) => {
+                    assert.deepEqual(observation.tree.children.map((child) => child.role), ["origin", "target"]);
+                },
+            },
+            {
+                name: "manage-fails",
+                drive: (fixture) => {
+                    fixture.target.manage(fixture.dragged);
+                },
+                expect: (_fixture, observation) => {
+                    assert.deepEqual(observation.tree.children[0]?.windows, ["dragged"]);
+                    assert.deepEqual(observation.tree.children[1]?.windows, ["occupant"]);
+                    assert.equal(observation.focusStatus, "ok");
+                },
+            },
+            {
+                name: "malformed-topology",
+                drive: (fixture) => {
+                    fixture.target.split(1);
+                },
+                expect: (_fixture, observation) => {
+                    assert.deepEqual(observation.malformed, ["target"]);
+                    assert.equal(observation.tree.children[1]?.isLayout, true);
+                    assert.deepEqual(observation.tree.children[1]?.children, []);
+                },
+            },
+            {
+                name: "duplicate-membership",
+                drive: (fixture) => {
+                    fixture.target.manage(fixture.dragged);
+                },
+                expect: (_fixture, observation) => {
+                    assert.deepEqual(observation.duplicates, ["dragged"]);
+                    assert.ok(observation.tree.children[0]?.windows.includes("dragged"));
+                    assert.ok(observation.tree.children[1]?.windows.includes("dragged"));
+                    assert.ok(observation.unassigned.includes("occupant"));
+                },
+            },
+            {
+                name: "focus-failure",
+                drive: (fixture) => {
+                    fixture.harness.active = fixture.unrelated;
+                },
+                expect: (_fixture, observation) => {
+                    assert.equal(observation.active, "unrelated");
+                    assert.equal(observation.focusStatus, "missing");
+                    assert.deepEqual(observation.unassigned, ["unrelated"]);
+                },
+            },
+        ];
+
+        for (const testCase of cases) {
+            const fixture = reflowFixture();
+            fixture.arm(testCase.name);
+            const snapshot = fixture.snapshot();
+            assert.ok(isDeepFrozen(snapshot));
+            assert.equal(snapshot.root, "root");
+            assert.deepEqual(snapshot.tree.children.map((child) => child.role), ["origin", "target"]);
+            assert.deepEqual([...snapshot.membership].sort(), ["dragged", "occupant"]);
+            assert.deepEqual([...snapshot.duplicates], []);
+            assert.deepEqual([...snapshot.malformed], []);
+            assert.equal(snapshot.active, "dragged");
+            assert.equal(snapshot.focusStatus, "ok");
+
+            testCase.drive(fixture);
+            const observation = fixture.decode();
+            testCase.expect(fixture, observation);
+
+            assert.equal(fixture.traces.filter((trace) => trace.failure === testCase.name).length, 1);
+            assert.equal(fixture.recoveryRequired.length, 1);
+            assert.equal(fixture.recoveryRequired[0]?.failure, testCase.name);
+            assert.equal(fixture.recoveryRequired[0]?.recovery, "required");
+            assert.deepEqual([...snapshot.membership].sort(), ["dragged", "occupant"]);
+            assert.equal(snapshot.active, "dragged");
+        }
+    });
+
 });
