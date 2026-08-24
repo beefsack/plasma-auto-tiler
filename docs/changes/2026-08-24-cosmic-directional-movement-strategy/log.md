@@ -135,3 +135,20 @@
   This is prohibited behavior integration, not fixture-only evidence. No
   correction, further reset, review, or integration dispatch is permitted; Unit
   04 and Unit 05 remain blocked.
+- Read-only inspection of rejected stash
+  `8578bbf4f0e4e953be8c0128506c051de863fe0f` confirms its focused keyboard
+  test added a separate `runtimeHarness` that directly constructs
+  `createDirectionalMovementRuntime`, bypassing the controller-owned
+  composition. Its production candidate also retained a `legacyMove` fallback.
+  Alongside the already recorded empty-output R4, maximized-occupant,
+  duplicate-occupancy, and partial-swap recovery defects, this rejected the
+  candidate as an integration and process-proof failure, not product
+  infeasibility.
+- Read-only inspection of rejected stash
+  `f2553e69eefe0433ab0c1ae2a79c8c97756a18f4` confirms the 03B focused test
+  replacement removed substantial accepted keyboard coverage and used direct
+  planner operation-kind assertions plus weak non-equality checks for several
+  movement cases. It therefore did not prove controller-to-runtime R1-R4
+  structural realization or complete snapshot restoration. This is a
+  coverage and integration-proof rejection, not evidence that COSMIC is
+  technically infeasible.
