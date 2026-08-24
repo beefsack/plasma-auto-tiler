@@ -67,7 +67,8 @@ recovery work.
 
 - [x] unit-01 - accepted
 - [x] unit-02 - accepted
-- [ ] unit-03 - parked: no user live work available
+- [ ] unit-03 - parked: generic pointer interactive resize is baseline; Steam
+  live troubleshooting follows resize and remains user-run
 
 ## Attempt Accounting
 
@@ -83,11 +84,10 @@ recovery work.
 
 ## Pending User Decisions
 
-- Whether the currently unsupported interactive-resize behavior becomes product
-  scope. Until approved, resize implementation and resize-specific acceptance
-  are excluded.
-- User-run Steam move/placement acceptance is parked because no live user work
-  is available.
+- Resolved: generic pointer interactive resize is baseline product scope; pointer
+  tiled resize adjusts shared split boundaries or ratios and reflows neighbors.
+- User-run Steam move/placement troubleshooting remains parked until after
+  resize and user-run live work; no Steam-specific branch is selected.
 
 ## Acceptance-Criterion Evidence
 
@@ -102,9 +102,11 @@ recovery work.
 
 - Static fixtures cannot prove live KWin signal delivery or Steam's add-time
   desktop settlement.
-- Interactive resize remains unsupported by deliberate current behavior and is
-  not evidence that the generic deferred-handler fix is insufficient.
+- Generic pointer interactive resize is now baseline scope; its live behavior
+  still requires user-run evidence and does not alter the generic deferred
+  handler boundary.
 
 ## Final Outcome
 
-- Not started.
+- Static deferred-handler units are accepted; the Steam live unit remains parked
+  behind the baseline resize work and user-run live availability.

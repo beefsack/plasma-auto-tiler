@@ -2,8 +2,9 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Approved 2026-08-25 by Orchestrator under autonomous mode; execution
-  is parked on the user-owned Core Distribution decision.
+- Status: Approved 2026-08-25 by Orchestrator under autonomous mode; Core
+  Distribution wording is decision-resolved and the remaining scope is
+  documentation-only.
 - Commit/push: allowed for this proposal record; Lead owns staging.
 
 ## Technical Approach
@@ -44,8 +45,8 @@ before a future implementation touches the corresponding script or tests.
 
 ## Progress
 
-- [ ] unit-01 - parked: pending user decision.
-- [ ] unit-02 - blocked by unit-01.
+- [x] unit-01 - accepted: Core Distribution wording decision resolved.
+- [ ] unit-02 - open: documentation alignment and backlog resolution.
 - [ ] unit-03 - deferred: no script/test implementation is in this change.
 
 ## Attempt Accounting
@@ -67,25 +68,22 @@ before a future implementation touches the corresponding script or tests.
 
 ## Pending User Decisions
 
-- Approve or revise this addition to `docs/decisions.md#core-distribution`:
-  "Release artifact construction and local dogfood installation are separate
-  contracts. `scripts/build-kpackage.sh` produces and validates the script-only
-  KPackage archive and checksum in disposable roots without mutating a live KWin
-  session. `scripts/dogfood-install.sh` manages the local script and native-effect
-  dogfood lifecycle, including `setup`, KWin configuration, and its documented
-  D-Bus operations; it is not a release-artifact publisher. Shared
-  script-package assembly logic remains a separate maintenance concern and does
-  not merge these contracts."
+- Resolved: `scripts/build-kpackage.sh` exclusively owns non-mutating,
+  script-only release archive and checksum construction and validation in
+  disposable roots without mutating a live KWin session. `scripts/dogfood-install.sh`
+  owns local script/native-effect installation, setup, configuration, and the
+  documented D-Bus lifecycle; it is not a release-artifact publisher. Shared
+  script-package assembly duplication remains a separate maintenance concern.
 
 ## Acceptance-Criterion Evidence
 
 | Acceptance criterion | Gate ID | Literal canonical command or observation | Expected baseline | Evidence |
 |---|---|---|---|---|
-| User approves the formal split wording. | `D-01` | User approval of the Pending User Decisions text. | Approval before decision edit. | Pending. |
-| Decision records the distinct safety and mutation boundaries. | `D-01` | Inspect approved `docs/decisions.md#core-distribution` diff. | Exact approved text only. | Blocked. |
-| Documentation preserves existing contracts without behavioral change. | `D-02` | `git diff --check` and scoped diff inspection. | No whitespace errors; no script/test changes. | Blocked. |
-| Backlog item is resolved with evidence. | `D-02` | Inspect linked backlog and change-record diff. | One linked entry reflects accepted completion. | Blocked. |
-| Shared logic remains a separately scoped follow-up. | `D-01` | Inspect approved Core Distribution wording and change record. | No helper or script change in this change. | Pending. |
+| User approves the formal split wording. | `D-01` | User approval of the Pending User Decisions text. | Approval before decision edit. | resolved by explicit user approval |
+| Decision records the distinct safety and mutation boundaries. | `D-01` | Inspect approved `docs/decisions.md#core-distribution` diff. | Exact approved text only. | recorded |
+| Documentation preserves existing contracts without behavioral change. | `D-02` | `git diff --check` and scoped diff inspection. | No whitespace errors; no script/test changes. | open documentation scope |
+| Backlog item is resolved with evidence. | `D-02` | Inspect linked backlog and change-record diff. | One linked entry reflects accepted completion. | recorded as open documentation scope |
+| Shared logic remains a separately scoped follow-up. | `D-01` | Inspect approved Core Distribution wording and change record. | No helper or script change in this change. | recorded |
 
 ## Residual Risks
 
@@ -94,10 +92,10 @@ before a future implementation touches the corresponding script or tests.
 - The four script members are declared independently in the release script and
   two dogfood paths. A future member-set change can drift until its tests catch
   it.
-- The user may reject or revise the proposed wording; all decision and
-  documentation editing remains parked until then.
+- Documentation alignment remains open; no script or test implementation is
+  authorized by this record.
 
 ## Final Outcome
 
-- Proposal created and backlog item paused. No implementation or documentation
-  decision editing has occurred.
+- Core Distribution wording is resolved; documentation alignment remains open.
+  No script or test implementation has occurred.

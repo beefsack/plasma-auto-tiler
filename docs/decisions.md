@@ -116,7 +116,8 @@ Git history and archived change records.
   generic scripted KCM page. Native border changes hot-apply; script settings
   save with clear reload/session-restart-required messaging for now. Existing
   script groups/keys/values are preserved with no migration. Instant
-  per-workspace and tray behavior remain out of scope.
+  per-workspace behavior remains out of scope. The KCM remains the sole settings
+  owner; the tray may expose state, actions, and open-settings only.
 - **Consequences:** One KCM owns the whole settings surface; the generic
   scripted KCM page is removed once the native KCM ships.
 - **Reconsider when:** A separately approved requirement needs instant
@@ -147,12 +148,57 @@ Git history and archived change records.
 - **Rationale:** Retaining the script KPackage keeps the established path simple
   and consistent while the native effect and KCM gain a platform-native package
   path.
-- **Scope:** The script KPackage remains the retained script artifact.
-  Platform-native packages for the native effect and KCM are approved alongside
-  it. Exact native package formats and publication remain gated.
+- **Scope:** `scripts/build-kpackage.sh` exclusively owns non-mutating,
+  script-only release archive and checksum construction and validation in
+  disposable roots. `scripts/dogfood-install.sh` owns local script/native-effect
+  installation, setup, configuration, and the documented D-Bus lifecycle. It is
+  not a release-artifact publisher. Shared script-package assembly duplication
+  is separate maintenance and does not merge these contracts. Platform-native
+  packages for the native effect and KCM are approved alongside the retained
+  script artifact; exact native package formats and publication remain gated.
 - **Consequences:** This selects the release target only; no archive or
   publication is claimed as delivered. The native effect and KCM gain an
   approved platform-native package path whose formats and publication are not
-  yet selected.
+  yet selected. The Core Distribution decision does not extend Native Effect
+  Live Validation by analogy.
 - **Reconsider when:** Exact native package formats or publication channels are
   selected for delivery.
+
+## Tray
+
+- **Decision:** Use a portable Rust StatusNotifierItem carrier, with the KWin
+  backend first, and fail closed without a watcher. Use a proof-first fixed
+  D-Bus bridge with a whitelist, outbound state snapshots, reconnect and
+  idempotence, and no shell or input injection.
+- **Scope:** The KCM remains the sole settings owner. The tray exposes state,
+  approved actions, and open-settings only. Development is dogfood-only. Before
+  release, the helper becomes official core, while the tiler remains functional
+  without it. Standing authorization covers reversible, namespaced user-local
+  helper build, stage, start, and stop operations, its graphical-session
+  autostart entry, and session D-Bus operations; non-project state is
+  prohibited.
+- **Consequences:** The KWin backend and bridge proof precede broader carrier or
+  distribution work. The helper is not required for core tiler operation.
+- **Reconsider when:** A separately approved requirement changes the carrier,
+  bridge, settings ownership, or distribution boundary.
+
+## Layout-Aware Shifted Shortcuts
+
+- **Decision:** At startup, the exact US layout registers the existing shifted
+  aliases. Non-US, unknown, unavailable, or malformed layout state omits only
+  layout-sensitive move aliases and preserves unrelated shortcuts. Layout
+  changes require reload. Agents may snapshot, reconcile, and roll back only
+  this project's affected KGlobalAccel records; mutation of non-project records
+  requires separate approval.
+- **Scope:** The policy is fail-closed and reload-only. No dynamic layout-change
+  subscription is selected.
+- **Reconsider when:** A separately supported layout-change signal contract or
+  a different supported layout matrix is approved.
+
+## Interactive Resize
+
+- **Decision:** Pointer-based resize of a tiled window adjusts the shared split
+  boundaries or ratios and reflows neighboring tiles.
+- **Scope:** Generic pointer interactive resize is baseline product scope.
+- **Reconsider when:** A separately approved resize behavior or safety boundary
+  is required.

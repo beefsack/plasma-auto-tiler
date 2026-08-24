@@ -1,11 +1,13 @@
 # State: Drag-Drop Client Gap Diagnostics
 
 Expanded state created because proven tile coverage does not establish settled
-client/frame or rendered geometry. The user and Orchestrator now approved the
-supported final-topology-management correction.
+client/frame or rendered geometry. The production correction remains parked and
+separately scoped. Portable cross-WM/OS layout-engine research follows the COSMIC
+successor and interactive-resize work; the proven KWin client-realization gap is
+not classified as an engine defect.
 
-- Execution mode: Autonomous for the remainder of this session. Governance and
-  user-owned decisions remain parked; user-run live actions are unavailable.
+- Execution mode: Autonomous for the remainder of this session. The production
+  correction remains parked; user-run live actions are unavailable.
 
 - Current major unit / attempt: `unit-drag-gap-final-manage-production` / parked
   after attempt 02.
@@ -15,8 +17,9 @@ supported final-topology-management correction.
 - Blockers: the production unit reached the three-dispatch no-progress breaker.
   The final user-run retry remains blocked until static integration acceptance,
   user-run protocol, and user availability.
-- Next dispatch: none. The production unit is parked pending Orchestrator reset,
-  scope-reduction, or partial-acceptance decision.
+- Next dispatch: none. The production unit is parked pending a separately
+  approved reset, scope reduction, or successor decision; portable engine
+  research follows COSMIC and interactive resize.
 - Separate host record: one cancelled read-only Lead host attempt; it is not an
   implementation dispatch.
 

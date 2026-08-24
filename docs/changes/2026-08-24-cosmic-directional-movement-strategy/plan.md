@@ -86,9 +86,9 @@ target for geometry-ordering changes. Test scope is limited to
   replacement environment for rollback assertions, which is prohibited behavior
   integration rather than fixture-only evidence. No correction, reset, or
   integration dispatch is permitted.
-- Future production integration is neither authorized nor planned until Unit 03E
-  is accepted and the user separately approves it. Unit 04 and Unit 05 remain
-  blocked; neither may repair runtime behavior.
+- Future production integration is successor-scoped under the approved
+  one-successor exception; the old units remain blocked and are not resumed.
+  Unit 04 and Unit 05 remain not started and may not repair runtime behavior.
 - The replacement preserves R1-R4/S1-S4 intent, facade and shortcut ownership,
   guards, focus and workspace limits, opaque native split results, adapter
   re-decode, geometry-ordering locality in `custom-tile-split.ts`, controller
@@ -103,7 +103,7 @@ target for geometry-ordering changes. Test scope is limited to
 | Native-maximized guard is bypassed | `unit-03a-runtime-transaction-safety` | It must reject before mutation. |
 | Failed occupied-swap second assignment is unrecovered | `unit-03a-runtime-transaction-safety` | It is multi-step assignment transaction safety. |
 | Duplicate active-window occupancy is accepted | `unit-03a-runtime-transaction-safety` | It is preflight and decoded postcondition validity. |
-| Legacy internal non-COSMIC fallback remains | Parked pending separately approved production integration | It is controller entry and strategy closure, outside Unit 03E. |
+| Legacy internal non-COSMIC fallback remains | Parked pending the approved successor dispatch | It is controller entry and strategy closure, outside Unit 03E. |
 | Deleted or weakened accepted keyboard coverage | Unit 03E immutable-test boundary | The accepted file is immutable during fixture work. |
 
 - Rejected evidence is preserved in stash
@@ -135,8 +135,8 @@ target for geometry-ordering changes. Test scope is limited to
 | Runtime preflight, empty R4, maximized/duplicate rejection, transaction rollback, postconditions, recovery, and focus | `kwin/tests/directional-movement-runtime.test.ts`. |
 | Accepted keyboard test preservation | Immutable baseline SHA-256 and four-suite/37-test identity and coverage-category lock before and after Unit 03E. |
 | Stateful native fixture foundation | Unmet: Unit 03E directly constructed a runtime with a replacement environment, violating fixture-only scope. |
-| COSMIC-only directional entry and R1-R4 realization | Parked pending separately approved production integration after Unit 03E acceptance. |
-| Complete runtime snapshot restoration | Parked pending separately approved production integration; Unit 03E establishes fixture snapshot/re-decode capability only. |
+| COSMIC-only directional entry and R1-R4 realization | Successor-scoped under the approved controller-integration exception after Unit 03E acceptance. |
+| Complete runtime snapshot restoration | Successor-scoped under the approved controller-integration exception; Unit 03E establishes fixture snapshot/re-decode capability only. |
 | Opaque split re-decode, direct-child N-ary behavior, and new-window preservation | `kwin/tests/controller-keyboard-placement.test.ts` and archived N-ary frozen contracts. |
 | Drag behavior remains distinct and stable | `kwin/tests/controller-interactive-drag.test.ts` and `kwin/tests/controller-interactive-drag-reflow.test.ts`. |
 | Binary preservation | `kwin/tests/nary-characterization.test.ts`. |
@@ -152,7 +152,7 @@ and two `npm --prefix kwin run build` plus
 
 ## Live Checkpoint
 
-A COSMIC-only runtime corpus replay is a later, separately approved live
+A COSMIC-only runtime corpus replay is the approved successor's later live
 checkpoint. It is outside this plan's static implementation acceptance and
 does not block Unit 05.
 
@@ -181,8 +181,8 @@ does not block Unit 05.
   corrections 0, reviews 0, breaker 1 after an out-of-scope direct runtime
   construction. No correction, reset, independent review, or integration
   dispatch is permitted.
-- Unit 04 and Unit 05 remain blocked. Future production integration requires
-  separate user approval after Unit 03E acceptance.
+- Unit 04 and Unit 05 remain blocked at zero counters. Future production
+  integration is tracked only by the approved successor exception below.
 
 ## Unit 03A Review Record
 
@@ -286,20 +286,17 @@ does not block Unit 05.
   COSMIC change is parked without correction, reset, review, or integration
   dispatch.
 
-## Successor Feasibility Ruling
+## Successor Decision And Status
 
 - The only credible successor is a controller-owned runtime adapter accepted by
   live controller-path corpus evidence before any selector is advertised or
-  activated by default. It would avoid the original direct-harness and legacy
-  fallback defects, 03B's weakened planner-only proof, the checkpoint route's
-  controller bypass and non-stateful children, and 03E's replacement
-  environment.
-- This remains the parked controller-integration objective with a changed
-  acceptance mechanism, not a new objective. The change-wide changed-kind reset
-  is already consumed, so implementation would be a prohibited second
-  descendant reset rather than a process-legitimate successor.
-- Pending explicit user process-exception decision: authorize a second
-  changed-kind descendant reset for controller-owned adapter integration and
-  live controller-path corpus validation, or retain the COSMIC controller
-  integration as parked. No new units, attempts, corrections, reviews, resets,
-  or acceptance changes are recorded by this ruling.
+  activated by default. The approved one-successor exception authorizes this
+  controller-owned adapter and live controller-path corpus, without resuming or
+  relabelling the old change.
+- The working production objective is reliable directional movement through the
+  controller path. Topology corruption, duplicate occupancy, unsafe rollback,
+  lost windows, and false restoration are strict safety invariants and are not
+  deferrable. Minor visual or edge defects may defer.
+- The successor is a process exception to the consumed changed-kind reset, not
+  a reset or relabelling of the historical change. No successor implementation
+  unit, attempt, correction, review, or acceptance change has started.

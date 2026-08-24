@@ -23,7 +23,7 @@ user selection.
 
 | Stable ID | Dependency | Scope | Classification | Progress | Attempts | Corrections | Reviews | Breaker |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: | ---: |
-| `unit-01` | Pending user decisions | Add the pure layout resolver, asynchronous startup/reload query, fail-closed registration, and deterministic D-Bus fixture seam. | Static implementation | Blocked | 0 | 0 | 0 | 0 |
+| `unit-01` | Decision resolved | Add the pure layout resolver, asynchronous startup/reload query, fail-closed registration, and deterministic D-Bus fixture seam. | Static implementation | Open | 0 | 0 | 0 | 0 |
 | `unit-02` | `unit-01` | Run focused resolver/controller tests and required static gates; record resulting baselines. | Static verification | Blocked | 0 | 0 | 0 | 0 |
 | `unit-03` | User-run live ownership and selected contract | Validate approved layouts, collision avoidance, unavailable service, and reload or signal-bridge behavior on a live host. | Live acceptance | Parked | 0 | 0 | 0 | 0 |
 
@@ -39,9 +39,9 @@ user selection.
 
 | Gate ID | Observation | Status |
 | --- | --- | --- |
-| `L1` | Physical move-alias delivery and `Meta+<digit>` collision avoidance on each approved layout/variant. | Parked pending support matrix and live ownership. |
-| `L2` | Layout change followed by the selected reload-only or supported signal-bridge contract. | Parked pending contract selection. |
-| `L3` | Unknown or unavailable keyboard service omits only move aliases and preserves unrelated shortcuts. | Parked pending fail-closed product decision and live ownership. |
+| `L1` | Physical move-alias delivery and `Meta+<digit>` collision avoidance on each approved layout/variant. | Parked pending implementation and live ownership. |
+| `L2` | Layout change followed by the selected reload-only or supported signal-bridge contract. | Reload-only policy resolved; parked pending implementation and live ownership. |
+| `L3` | Unknown or unavailable keyboard service omits only move aliases and preserves unrelated shortcuts. | Fail-closed policy resolved; parked pending implementation and live ownership. |
 
 ## Acceptance-Evidence Map
 
@@ -56,10 +56,14 @@ user selection.
 
 ## Pending User Decisions
 
-- The supported layout/variant matrix and its resolver identity representation.
-- Startup/reload-only behavior versus a separately scoped supported signal bridge.
-- Whether unresolved layout state disables only layout-sensitive move aliases.
-- Live-acceptance ownership and resolution of user-owned KGlobalAccel shadowing.
+- Resolved: exact US registers the existing shifted aliases.
+- Resolved: non-US, unknown, unavailable, or malformed layout state omits only
+  layout-sensitive move aliases and preserves unrelated shortcuts.
+- Resolved: layout changes require reload; no dynamic subscription contract is
+  selected.
+- Resolved: agents may snapshot, reconcile, and roll back only this project's
+  affected KGlobalAccel records; non-project mutation requires separate
+  approval.
 
 ## Stop Conditions
 
