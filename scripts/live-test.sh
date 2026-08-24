@@ -14,6 +14,7 @@ NPM_BIN="${NPM_BIN:-npm}"
 PGREP_BIN="${PGREP_BIN:-pgrep}"
 JOURNALCTL_BIN="${JOURNALCTL_BIN:-journalctl}"
 JQ_BIN="${JQ_BIN:-jq}"
+SLEEP_BIN="${SLEEP_BIN:-sleep}"
 
 # Lock and nonce-owned evidence live under a base outside the repository
 # (never under the protected test-output path). Override for tests.
@@ -403,13 +404,6 @@ cmd_run() {
   manifest_write installed-before "$INSTALLED_BEFORE"
   manifest_write enabled-before "$ENABLED_BEFORE"
 
-  direct_status="$(bash "$START_TEST_SH" status)" || fail "start-test status failed"
-  echo "=== direct controller status (read-only) ==="
-  echo "$direct_status"
-  if ! grep -qFx 'loaded: not-loaded' <<<"$direct_status"; then
-    fail "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
-  fi
-
   # Disable only the exact installed plugin if it is enabled, so KWin does not
   # auto-load it while start-test.sh loads it directly. Fail closed if the
   # plugin reports enabled but is not actually installed.
@@ -421,6 +415,47 @@ cmd_run() {
     DISABLED_BY_US=1
     manifest_write disabled-by-us yes
     echo "disabled installed plugin (was enabled); will restore on exit"
+  fi
+
+  # Post-disable direct loaded-state ownership gate: after disabling the exact
+  # enabled plugin, poll bounded times until the controller reports exactly
+  # 'loaded: not-loaded', then this run may take ownership with a nonce-owned
+  # start. A residual loaded controller, malformed output, a status failure, or
+  # timeout fails closed without starting.
+  local poll_attempts=30 poll_delay=0.1 poll_count=0 poll_ok=0 poll_sample
+  : > "$EVIDENCE_DIR/post-disable-status.txt"
+  while [[ "$poll_count" -lt "$poll_attempts" ]]; do
+    poll_count=$((poll_count + 1))
+    poll_sample="$(bash "$START_TEST_SH" status)" || {
+      printf '%s\n' "$poll_sample" >> "$EVIDENCE_DIR/post-disable-status.txt"
+      manifest_write post-disable-poll-count "$poll_count"
+      manifest_write post-disable-result timeout
+      fail "start-test status failed during post-disable ownership poll"
+    }
+    printf '%s\n' "$poll_sample" >> "$EVIDENCE_DIR/post-disable-status.txt"
+    if grep -qFx 'loaded: not-loaded' <<<"$poll_sample"; then
+      poll_ok=1
+      break
+    fi
+    # Only an exact 'loaded: loaded' is retryable; anything else fails closed.
+    if ! grep -qFx 'loaded: loaded' <<<"$poll_sample"; then
+      manifest_write post-disable-poll-count "$poll_count"
+      manifest_write post-disable-result timeout
+      fail "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
+    fi
+    if [[ "$poll_count" -lt "$poll_attempts" ]]; then
+      "$SLEEP_BIN" "$poll_delay"
+    fi
+  done
+  manifest_write post-disable-poll-count "$poll_count"
+  if [[ "$poll_ok" -eq 1 ]]; then
+    manifest_write post-disable-result ready
+    echo "=== direct controller status (read-only) ==="
+    echo "post-disable ownership ready after $poll_count status call(s)"
+    echo "$poll_sample"
+  else
+    manifest_write post-disable-result timeout
+    fail "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
   fi
 
   capture_pid_cursor

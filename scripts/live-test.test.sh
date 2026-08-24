@@ -110,6 +110,12 @@ case "$cmd" in
       exit 1
     fi
     rm -f "$state/enabled"
+    # Disabling the enabled plugin normally unloads the auto-loaded controller,
+    # unless a residual loaded state is simulated (KWin failed to unload it) or
+    # a delayed unload is simulated (KWin unloads it shortly after).
+    if [[ ! -f "$state/residual-loaded" && ! -f "$state/delayed-unload" ]]; then
+      rm -f "$state/loaded"
+    fi
     printf 'disabled: plasma-auto-tiler-kwinEnabled set to false and KWin reconfigured\n'
     ;;
 esac
@@ -131,6 +137,17 @@ case "$cmd" in
     fi
     if [[ -f "$state/loaded-bogus" ]]; then
       printf 'loaded: bogus\n'
+    elif [[ -f "$state/delayed-unload" && -f "$state/loaded" ]]; then
+      n=0
+      [[ -f "$state/status-count" ]] && n="$(cat "$state/status-count")"
+      n=$((n + 1))
+      printf '%s\n' "$n" > "$state/status-count"
+      if [[ "$n" -le 2 ]]; then
+        printf 'loaded: loaded\n'
+      else
+        rm -f "$state/loaded"
+        printf 'loaded: not-loaded\n'
+      fi
     elif [[ -f "$state/loaded" ]]; then
       printf 'loaded: loaded\n'
     else
@@ -506,6 +523,101 @@ assert_contains "direct status does not report exactly 'loaded: not-loaded'; can
 assert_calls_not_contains "start-test start"
 assert_calls_not_contains "dogfood disable"
 
+# clean-reboot enabled-and-loaded: the enabled installed plugin must be
+# disabled before the post-disable direct loaded-state ownership gate, then the
+# nonce-owned start path is reached, and the prior enabled state is restored on
+# exit. The fake models that disabling the enabled plugin unloads the
+# auto-loaded controller, so the runner owns and starts cleanly.
+reset_state
+touch "$WORK/state/installed"
+touch "$WORK/state/enabled"
+touch "$WORK/state/loaded"
+run_script run
+check_exit 0
+if disable_line="$(grep -nF 'dogfood disable' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && status_line="$(grep -nF 'start-test status' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && start_line="$(grep -nF 'start-test start' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && [[ -n "$disable_line" && -n "$status_line" && -n "$start_line" \
+       && "$disable_line" -lt "$status_line" && "$status_line" -lt "$start_line" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: enabled plugin disable must precede the post-disable status gate and the nonce-owned start" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+fi
+assert_contains "restore verified: plugin enabled again"
+assert_file "$WORK/state/enabled"
+
+# residual loaded after disable: a controller that remains loaded after the
+# exact plugin disable still fails closed at the post-disable status gate and
+# never reaches the nonce-owned start.
+reset_state
+touch "$WORK/state/installed"
+touch "$WORK/state/enabled"
+touch "$WORK/state/loaded"
+touch "$WORK/state/residual-loaded"
+run_script run
+check_exit 1
+if disable_line="$(grep -nF 'dogfood disable' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && post_status_line="$(grep -nF 'start-test status' "$WORK/calls.log" | awk -F: -v d="$disable_line" '$1>d' | head -1 | cut -d: -f1)" \
+   && [[ -n "$disable_line" && -n "$post_status_line" ]] \
+   && ! grep -qF 'start-test start' "$WORK/calls.log"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: residual loaded after disable must fail closed at the post-disable status gate without start" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+fi
+
+# delayed unload after disable: the controller remains loaded through the first
+# two post-disable status polls, then reports not-loaded; the runner survives
+# those loaded observations, disables before the first post-disable status, and
+# only starts the nonce controller after the not-loaded observation, restoring
+# the enabled state on exit. Four counted assertions.
+reset_state
+touch "$WORK/state/installed"
+touch "$WORK/state/enabled"
+touch "$WORK/state/loaded"
+touch "$WORK/state/delayed-unload"
+run_script run
+# assertion 1: runner survives two loaded observations and reaches not-loaded
+# (at least three post-disable status polls) with exit 0
+if [[ "$EXIT" -eq 0 ]] && [[ "$(grep -cF 'start-test status' "$WORK/calls.log" || true)" -ge 3 ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: runner must survive two loaded observations and reach not-loaded with exit 0" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+fi
+# assertion 2: exact plugin disable precedes the first post-disable status poll
+if disable_line="$(grep -nF 'dogfood disable' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && first_status_line="$(grep -nF 'start-test status' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && [[ -n "$disable_line" && -n "$first_status_line" && "$disable_line" -lt "$first_status_line" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: exact plugin disable must precede the first post-disable status poll" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+fi
+# assertion 3: nonce start occurs only after the final not-loaded status
+if start_line="$(grep -nF 'start-test start' "$WORK/calls.log" | head -1 | cut -d: -f1)" \
+   && last_pre_status_line="$(grep -nF 'start-test status' "$WORK/calls.log" | awk -F: -v s="$start_line" '$1<s' | tail -1 | cut -d: -f1)" \
+   && [[ -n "$start_line" && -n "$last_pre_status_line" && "$last_pre_status_line" -lt "$start_line" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: nonce start must occur only after the final not-loaded status observation" >&2
+  cat "$WORK/calls.log" >&2
+  FAIL=$((FAIL + 1))
+fi
+# assertion 4: restoration output and enabled state are both restored
+if grep -Fq "restore verified: plugin enabled again" "$OUTPUT" && [[ -f "$WORK/state/enabled" ]]; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: restoration output and enabled state were not both restored" >&2
+  cat "$OUTPUT" >&2
+  FAIL=$((FAIL + 1))
+fi
+
 # fail closed when direct status reports a non-exact loaded value
 reset_state
 touch "$WORK/state/loaded-bogus"
@@ -513,6 +625,14 @@ run_script run
 check_exit 1
 assert_contains "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
 assert_calls_not_contains "start-test start"
+MANIFEST="$(find "$LIVE_BASE" -name manifest.txt | head -1)"
+if [[ -f "$MANIFEST" ]] && grep -qF "post-disable-poll-count: 1" "$MANIFEST" && grep -qF "post-disable-result: timeout" "$MANIFEST"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: malformed status scenario must record poll count 1 and timeout in the manifest" >&2
+  cat "$MANIFEST" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 # fail closed when the direct read-only status fails
 reset_state
@@ -521,6 +641,14 @@ run_script run
 check_exit 1
 assert_contains "start-test status failed"
 assert_calls_not_contains "start-test start"
+MANIFEST="$(find "$LIVE_BASE" -name manifest.txt | head -1)"
+if [[ -f "$MANIFEST" ]] && grep -qF "post-disable-poll-count: 1" "$MANIFEST" && grep -qF "post-disable-result: timeout" "$MANIFEST"; then
+  PASS=$((PASS + 1))
+else
+  echo "FAIL: status-failure scenario must record poll count 1 and timeout in the manifest" >&2
+  cat "$MANIFEST" >&2
+  FAIL=$((FAIL + 1))
+fi
 
 # fail closed when disabling the installed plugin fails
 reset_state
