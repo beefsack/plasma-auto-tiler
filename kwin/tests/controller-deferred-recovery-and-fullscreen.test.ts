@@ -78,6 +78,37 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(state.harness.yields.length, 0);
     });
 
+    it("attaches interaction handlers when deferred desktop eligibility settles", () => {
+        const state = setup();
+        const empty = tile({ x: 50, y: 0, width: 50, height: 100 });
+        const incoming = window({ desktops: [] });
+        empty.manage = (value) => {
+            incoming.tile = empty;
+            empty.windows = [incoming];
+            return value === incoming;
+        };
+        state.root.tiles = [state.target, empty];
+        state.harness.windows = [state.focused, incoming];
+
+        state.harness.emitAdded(incoming);
+        assert.equal(incoming.interactiveMoveResizeStarted.subscriberCount, 0);
+        assert.equal(incoming.interactiveMoveResizeFinished.subscriberCount, 0);
+        assert.equal(state.harness.scheduled.length, 1);
+
+        incoming.desktops = [DESKTOP];
+        state.harness.fireScheduled(0);
+        assert.equal(incoming.tile, empty);
+        assert.equal(incoming.interactiveMoveResizeStarted.subscriberCount, 1);
+        assert.equal(incoming.interactiveMoveResizeFinished.subscriberCount, 1);
+
+        incoming.move = true;
+        incoming.interactiveMoveResizeStarted.emit();
+        assert.equal(countEvent(state.harness.logs, "drag-origin-captured"), 1);
+        incoming.move = false;
+        incoming.interactiveMoveResizeFinished.emit();
+        assert.equal(countEvent(state.harness.logs, "drag-unchanged"), 1);
+    });
+
     it("defers the dwindle invariant during a live drag without structural work", () => {
         const harness = new Harness();
         const root = tile(RECT, true);
@@ -993,4 +1024,3 @@ describe("TileController fullscreen passthrough", () => {
         assert.deepEqual(root.tiles, [target]);
     });
 });
-

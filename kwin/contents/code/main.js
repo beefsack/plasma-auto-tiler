@@ -4840,6 +4840,7 @@
         scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
         runGuarded: (operation) => this.gate.run(operation, (reason) => this.disabled(reason)),
         onEligibleDeferred: (window, scope) => {
+          this.interactiveDrag.attach(window);
           this.layoutDomain.placeEligibleAdded(window, scope);
           this.cleanupDesktops();
           this.workspaceDomain.drainPendingDesktopIntents();
