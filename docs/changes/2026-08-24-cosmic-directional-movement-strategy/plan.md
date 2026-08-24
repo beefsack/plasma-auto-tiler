@@ -285,3 +285,21 @@ does not block Unit 05.
   replacement environment. That is prohibited behavior integration, so the
   COSMIC change is parked without correction, reset, review, or integration
   dispatch.
+
+## Successor Feasibility Ruling
+
+- The only credible successor is a controller-owned runtime adapter accepted by
+  live controller-path corpus evidence before any selector is advertised or
+  activated by default. It would avoid the original direct-harness and legacy
+  fallback defects, 03B's weakened planner-only proof, the checkpoint route's
+  controller bypass and non-stateful children, and 03E's replacement
+  environment.
+- This remains the parked controller-integration objective with a changed
+  acceptance mechanism, not a new objective. The change-wide changed-kind reset
+  is already consumed, so implementation would be a prohibited second
+  descendant reset rather than a process-legitimate successor.
+- Pending explicit user process-exception decision: authorize a second
+  changed-kind descendant reset for controller-owned adapter integration and
+  live controller-path corpus validation, or retain the COSMIC controller
+  integration as parked. No new units, attempts, corrections, reviews, resets,
+  or acceptance changes are recorded by this ruling.

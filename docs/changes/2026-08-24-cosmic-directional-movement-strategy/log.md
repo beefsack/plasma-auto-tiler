@@ -152,3 +152,14 @@
   structural realization or complete snapshot restoration. This is a
   coverage and integration-proof rejection, not evidence that COSMIC is
   technically infeasible.
+- Successor feasibility ruling: a controller-owned runtime adapter with live
+  controller-path corpus evidence is the only credible route. It has a changed
+  acceptance mechanism, but remains the same parked controller-integration
+  objective and would require a prohibited second changed-kind descendant reset.
+  The original direct-harness and legacy fallback route, 03B's weakened proof,
+  the checkpoint route's controller bypass and non-stateful children, and 03E's
+  replacement environment cannot be repeated.
+- Pending explicit user process-exception decision: authorize that second reset
+  for controller-owned adapter integration and live validation, or retain the
+  change as parked. This read-only ruling records no new counters, attempts,
+  corrections, reviews, resets, or acceptance changes.
