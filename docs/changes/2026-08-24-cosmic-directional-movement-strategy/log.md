@@ -11,3 +11,6 @@
 - Unit 01 is accepted after a same-scope verification correction: the approved
   `scripts/dogfood-install.test.sh` gate reported 347 assertions and 0
   failures. No independent review was triggered.
+- Unit 02 is accepted: the pure ordered-topology planner, focused
+  corpus-referenced coverage, fail-closed validation, and static gates passed
+  without runtime integration. No independent review was triggered.
