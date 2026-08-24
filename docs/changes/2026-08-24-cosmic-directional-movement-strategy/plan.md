@@ -4,14 +4,17 @@
 
 This plan implements only the approved COSMIC directional keyboard-movement
 strategy. Source scope is limited to the controller directional-movement seam,
-its input-action collaborator, and a narrow runtime strategy module:
+its input-action collaborator, a narrow controller runtime adapter, and the
+accepted runtime strategy modules:
 `kwin/src/controller.ts`, `kwin/src/controller-input-actions.ts`,
+`kwin/src/controller-directional-movement.ts`,
 `kwin/src/directional-movement-strategy.ts`, and
 `kwin/src/directional-movement-runtime.ts`.
 `kwin/src/custom-tile-split.ts` is an adapter-contract dependency, not a
 target for geometry-ordering changes. Test scope is limited to
 `kwin/tests/directional-movement-runtime.test.ts`,
 `kwin/tests/controller-keyboard-move-and-swap.test.ts`,
+`kwin/tests/controller-cosmic-directional-runtime-integration.test.ts`,
 `kwin/tests/controller-keyboard-placement.test.ts`,
 `kwin/tests/controller-interactive-drag.test.ts`,
 `kwin/tests/controller-interactive-drag-reflow.test.ts`,
@@ -26,8 +29,10 @@ target for geometry-ordering changes. Test scope is limited to
 | `unit-02` | `unit-01` | Build the COSMIC structural planner over ordered topology; consume adapter re-decode results and never infer native split shape. | Static implementation | Accepted | 1 | 0 | 0 | 0 |
 | `unit-03` | `unit-02` | Original guarded R1-R4 runtime integration objective. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 1 | 1 |
 | `unit-03a-runtime-transaction-safety` | `unit-02` | Runtime topology decode, preflight, mutation transactions, recovery, and focused runtime tests. | Static implementation | Accepted | 1 | 1 | 1 | 0 |
-| `unit-03b-cosmic-integration-closure` | `unit-03a-runtime-transaction-safety` | COSMIC-only controller composition, directional entry closure, legacy-path removal, and focused entry tests. | Static implementation | Not started | 0 | 0 | 0 | 0 |
-| `unit-04` | `unit-03b-cosmic-integration-closure` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 | 0 |
+| `unit-03b-cosmic-integration-closure` | `unit-03a-runtime-transaction-safety` | Original COSMIC-only controller composition, directional entry closure, legacy-path removal, and focused entry-test objective. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 0 | 1 |
+| `unit-03c-keyboard-contract-lock` | `unit-03a-runtime-transaction-safety` | Lock and migrate the accepted keyboard move/swap contract one-to-one, without deleting or weakening coverage. | Test-contract implementation | Approved, not started | 0 | 0 | 0 | 0 |
+| `unit-03d-cosmic-runtime-adapter-integration` | `unit-03c-keyboard-contract-lock` | Fresh COSMIC controller/runtime adapter integration, legacy-route removal, and stateful end-to-end runtime evidence. | Static implementation | Approved, not started | 0 | 0 | 0 | 0 |
+| `unit-04` | `unit-03d-cosmic-runtime-adapter-integration` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 | 0 |
 | `unit-05` | `unit-04` | Run focused and full static acceptance, dual typechecks, dogfood, and deterministic bundle build; record the post-change bundle hash. | Static verification | Not started | 0 | 0 | 0 | 0 |
 
 ## Reset Unit Scope
@@ -41,15 +46,32 @@ target for geometry-ordering changes. Test scope is limited to
   rollback or atomically fail closed with verified postconditions and recovery.
   It may not change controller composition, the strategy seam, input actions,
   planner semantics, `custom-tile-split.ts`, or the generated bundle.
-- `unit-03b-cosmic-integration-closure` may change only
-  `kwin/src/controller.ts`, `kwin/src/directional-movement-strategy.ts`,
-  `kwin/src/controller-input-actions.ts`, and
-  `kwin/tests/controller-keyboard-move-and-swap.test.ts`. It must retain the
-  controller facade as composition owner and prove every valid directional
-  entry reaches COSMIC or fails closed. It removes the legacy directional
-  movement path rather than retaining it as fallback. It may not change runtime
-  implementation, planner semantics, `custom-tile-split.ts`, selectors,
-  settings, shortcut catalogs, or the generated bundle.
+- `unit-03b-cosmic-integration-closure` is permanently frozen at attempts 1,
+  corrections 1, reviews 0, breaker 1. Correction 01 removed required focused
+  coverage and did not prove actual R1-R4 structural realization or verified
+  snapshot restoration. A second correction is prohibited and no review is
+  dispatched.
+- `unit-03c-keyboard-contract-lock` may change only
+  `kwin/tests/controller-keyboard-move-and-swap.test.ts`. It locks the accepted
+  Unit 03A baseline at SHA-256
+  `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`,
+  four suites, and 37 test identities. It must preserve every test identity and
+  coverage category. Each legacy geometry assertion must have a one-to-one
+  recorded COSMIC successor with equivalent-or-stronger coverage; deletion,
+  skipped coverage, weakened assertions, and reduced counts are prohibited.
+  It may not change production code, generated output, or any non-directional
+  test behavior.
+- `unit-03d-cosmic-runtime-adapter-integration` may change only
+  `kwin/src/controller.ts`, `kwin/src/controller-input-actions.ts`, new
+  `kwin/src/controller-directional-movement.ts`, and new
+  `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts`.
+  `controller.ts` remains the facade and composition root; the new module
+  receives narrow controller capabilities rather than controller state. Unit
+  03D must not edit the locked
+  `kwin/tests/controller-keyboard-move-and-swap.test.ts`. It removes the legacy
+  directional path rather than retaining it as fallback. It may not change the
+  accepted runtime, planner semantics, strategy seam, `custom-tile-split.ts`,
+  selectors, settings, shortcut catalogs, or the generated bundle.
 - `unit-04` is test-only within the approved test scope. `unit-05` owns static
   verification and generated-bundle evidence only. Neither may repair runtime
   behavior.
@@ -67,23 +89,35 @@ target for geometry-ordering changes. Test scope is limited to
 | Native-maximized guard is bypassed | `unit-03a-runtime-transaction-safety` | It must reject before mutation. |
 | Failed occupied-swap second assignment is unrecovered | `unit-03a-runtime-transaction-safety` | It is multi-step assignment transaction safety. |
 | Duplicate active-window occupancy is accepted | `unit-03a-runtime-transaction-safety` | It is preflight and decoded postcondition validity. |
-| Legacy internal non-COSMIC fallback remains | `unit-03b-cosmic-integration-closure` | It is controller entry and strategy closure. |
+| Legacy internal non-COSMIC fallback remains | `unit-03d-cosmic-runtime-adapter-integration` | It is controller entry and strategy closure. |
+| Deleted or weakened accepted keyboard coverage | `unit-03c-keyboard-contract-lock` | The contract is locked before production integration and cannot be rewritten by Unit 03D. |
 
 - Rejected evidence is preserved in stash
   `8578bbf4f0e4e953be8c0128506c051de863fe0f`
-  (`rejected cosmic unit-03 candidate`). Replacement work starts from accepted
-  Unit 02 and may use the stash only as read-only comparison evidence. No
-  candidate code, test, or generated behavior is an accepted baseline or may
-  be copied wholesale.
+  (`rejected cosmic unit-03 candidate`):
+  `kwin/contents/code/main.js`, `kwin/src/controller-input-actions.ts`,
+  `kwin/src/controller.ts`, `kwin/src/directional-movement-strategy.ts`, and
+  `kwin/tests/controller-keyboard-move-and-swap.test.ts`.
+- The frozen 03B candidate is preserved separately in stash
+  `f2553e69eefe0433ab0c1ae2a79c8c97756a18f4`
+  (`rejected cosmic unit-03b candidate`):
+  `docs/changes/2026-08-24-cosmic-directional-movement-strategy/log.md`,
+  `docs/changes/2026-08-24-cosmic-directional-movement-strategy/plan.md`,
+  `kwin/src/controller-input-actions.ts`, `kwin/src/controller.ts`, and
+  `kwin/tests/controller-keyboard-move-and-swap.test.ts`.
+- Both stashes are read-only comparison evidence, never accepted baselines.
+  Replacement work starts from accepted Unit 03A and may not copy either
+  candidate wholesale.
 
 ## Acceptance-Evidence Map
 
 | Acceptance criterion | Evidence |
 | --- | --- |
 | Runtime preflight, empty R4, maximized/duplicate rejection, transaction rollback, postconditions, recovery, and focus | `kwin/tests/directional-movement-runtime.test.ts`. |
-| COSMIC-only directional entry closure | `kwin/tests/controller-keyboard-move-and-swap.test.ts`. |
-| COSMIC R1-R4 behavior and S1-S4 sizing | Focused keyboard coverage mapped to `docs/cosmic-move-conformance.md` case groups P1-P5, F1-F3, G1-G2, M1-M4, U1-U2, and S1-S23. |
-| Current keyboard guards, empty/occupied behavior, focus, and restoration | `kwin/tests/controller-keyboard-move-and-swap.test.ts`. |
+| Accepted keyboard test preservation | Unit 03C lineage matrix, baseline SHA-256, four-suite/37-test count, and focused test evidence before Unit 03D starts. |
+| COSMIC-only directional entry and R1-R4 realization | `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts` drives `TileController` shortcuts through the COSMIC strategy, accepted runtime, and stateful native-capability fixture. |
+| R1-R4 structure and S1-S4 sizing | The Unit 03D integration fixture re-decodes and asserts actual R1, R2a, both R2b operations, R2c, R3, and occupied/empty R4 topology, assignment, focus, output, and workspace results; it maps cases to `docs/cosmic-move-conformance.md` groups P1-P5, F1-F3, G1-G2, M1-M4, U1-U2, and S1-S23. |
+| Complete snapshot restoration | Unit 03D injects structural, occupied-swap, and cross-output partial failures through the controller adapter, then proves the accepted runtime re-decodes an exact pre-mutation snapshot. Mock-only planner or route invocation is insufficient. |
 | Opaque split re-decode, direct-child N-ary behavior, and new-window preservation | `kwin/tests/controller-keyboard-placement.test.ts` and archived N-ary frozen contracts. |
 | Drag behavior remains distinct and stable | `kwin/tests/controller-interactive-drag.test.ts` and `kwin/tests/controller-interactive-drag-reflow.test.ts`. |
 | Binary preservation | `kwin/tests/nary-characterization.test.ts`. |
@@ -119,14 +153,16 @@ does not block Unit 05.
   reviews 1, breaker 1. The breaker reason is that the mandatory findings would
   require prohibited correction 2 and potentially review 2 on the same
   semantic unit.
-- Each replacement implementation unit starts at attempts 0, corrections 0,
-  and reviews 0, with at most two attempts, one correction, and one independent
-  review. A third attempt, second correction, or second review trips its
-  breaker and returns `decision-needed`.
-- One independent review occurs only for
-  `unit-03a-runtime-transaction-safety`, after focused evidence and before
-  acceptance, because rollback and fail-closed recovery are costly to unwind.
-  No independent review is preplanned for `unit-03b`, `unit-04`, or `unit-05`.
+- `unit-03c-keyboard-contract-lock` and
+  `unit-03d-cosmic-runtime-adapter-integration` start at attempts 0,
+  corrections 0, reviews 0, and breaker 0. Each permits at most two attempts
+  and one correction. A third attempt, second correction, second review,
+  repeated invariant failure, or no acceptance progress trips its breaker and
+  returns `decision-needed`.
+- No independent review applies to frozen Unit 03B. Unit 03C has no independent
+  review. Unit 03D receives one independent review after focused evidence and
+  before acceptance because native structural mutation and recovery are costly
+  to unwind. No independent review is preplanned for Unit 04 or Unit 05.
 - `unit-04` may correct test-only work once. `unit-05` records failures but
   never repairs code. A failed required gate returns a concrete finding to a
   newly approved unit.
@@ -157,15 +193,21 @@ does not block Unit 05.
 - Any scope expansion beyond directional keyboard movement.
 - Any unverified transaction recovery, non-COSMIC directional route, or failed
   authoritative corpus case.
+- Any Unit 03D edit to the locked keyboard move/swap test file, test-identity
+  loss, coverage-category loss, test weakening, or count reduction.
+- Any R1-R4 assertion that does not traverse the controller, COSMIC strategy,
+  accepted runtime, and stateful native-capability fixture, or any restoration
+  assertion that does not prove a complete re-decoded snapshot.
 
 ## Initial State
 
 - Units 01-02 and `unit-03a-runtime-transaction-safety` are accepted. Original
   `unit-03` is frozen with breaker 1.
-  `unit-03b-cosmic-integration-closure` is approved but not started; Units
-  04-05 remain unauthorized and not started.
-- `unit-03b-cosmic-integration-closure` and Units 04-05 start at zero attempts,
-  correction rounds, independent reviews, and breakers.
+  `unit-03b-cosmic-integration-closure` is permanently frozen with breaker 1.
+  Units 03C and 03D are approved but not started; Unit 04 depends on 03D and
+  Unit 05 depends on Unit 04.
+- Units 03C, 03D, 04, and 05 start at zero attempts, correction rounds,
+  independent reviews, and breakers.
 - No product or enduring governance change is introduced by this reset.
 
 ## Attempt Record
@@ -199,3 +241,8 @@ does not block Unit 05.
   `b90f9b23f9e2e290f7b581acaef9743a4ff48c320e895f7a06fa7de005d074dc` for
   `kwin/contents/code/main.js`; `git diff --check` passed. No live operation
   was run.
+- `unit-03b-cosmic-integration-closure/attempt-01` and correction 01 are
+  permanently frozen: focused coverage was removed and the candidate did not
+  prove actual R1-R4 structural realization or complete verified snapshot
+  restoration. Its counters remain attempts 1, corrections 1, reviews 0,
+  breaker 1. No correction 02 or Unit 03B review is permitted.

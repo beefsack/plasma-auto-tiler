@@ -46,3 +46,32 @@
   package contract checks passed; and build SHA-256
   `b90f9b23f9e2e290f7b581acaef9743a4ff48c320e895f7a06fa7de005d074dc`.
   No second review, live operation, staging, commit, or push occurred.
+- User approved the changed-kind reset without replacement implementation
+  authorization. Unit 03B is permanently frozen at attempts 1, corrections 1,
+  reviews 0, breaker 1: correction 01 removed required focused coverage and did
+  not prove actual R1-R4 structural realization or complete verified snapshot
+  restoration. No correction 02 or Unit 03B review is permitted.
+- Preserved the frozen 03B candidate as read-only evidence in path-scoped stash
+  `f2553e69eefe0433ab0c1ae2a79c8c97756a18f4`
+  (`rejected cosmic unit-03b candidate`) containing exactly `plan.md`,
+  `log.md`, `kwin/src/controller.ts`, `kwin/src/controller-input-actions.ts`,
+  and `kwin/tests/controller-keyboard-move-and-swap.test.ts` at their active
+  change paths. Original read-only rejected evidence remains
+  `8578bbf4f0e4e953be8c0128506c051de863fe0f`
+  (`rejected cosmic unit-03 candidate`) at its shifted stash index. Neither is
+  an accepted baseline.
+- Restored the five 03B worktree paths to accepted Unit 03A commit
+  `eebd535d9e7f7b32c261f8c03f24309226768fb7`; replacement implementation has
+  not started.
+- Approved `unit-03c-keyboard-contract-lock` after Unit 03A and
+  `unit-03d-cosmic-runtime-adapter-integration` after 03C. Unit 04 now depends
+  on 03D; Unit 05 remains dependent on Unit 04. Both replacement units start at
+  zero attempts, corrections, reviews, and breakers. Unit 03D alone receives
+  one independent review.
+- Approved the four-suite, 37-test identity and coverage-category lock from
+  baseline SHA-256 `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`.
+  Unit 03C must record one-to-one equivalent-or-stronger COSMIC assertion
+  lineage; Unit 03D may not edit the locked test file. Required Unit 03D proof
+  is controller-to-strategy-to-accepted-runtime-to-stateful-native-fixture
+  execution of R1-R4 and complete re-decoded snapshot restoration, not
+  mock-only route invocation. No product or enduring governance change.
