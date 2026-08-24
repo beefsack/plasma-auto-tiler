@@ -25,7 +25,7 @@
   correction 2 and potentially review 2 on the same semantic unit.
 - Preserved rejected candidate evidence in path-scoped stash
   `8578bbf4f0e4e953be8c0128506c051de863fe0f`
-  (`rejected cosmic unit-03 candidate`) containing only the six approved
+  (`rejected cosmic unit-03 candidate`) containing only the five approved
   candidate production, test, and generated paths. It is not an accepted
   baseline and will be read-only comparison evidence for replacements.
 - Approved replacement dependencies: `unit-03a-runtime-transaction-safety`
@@ -75,3 +75,28 @@
   is controller-to-strategy-to-accepted-runtime-to-stateful-native-fixture
   execution of R1-R4 and complete re-decoded snapshot restoration, not
   mock-only route invocation. No product or enduring governance change.
+- The user-approved 03C/03D reset was committed before this simplification as
+  `f7683563d32c6c4566cf971c91defe21a7aa7998`
+  (`docs: reset COSMIC directional integration plan`), containing only this
+  plan and log. Units 03C and 03D were never dispatched and are superseded
+  before start at attempts 0, corrections 0, reviews 0, breaker 0; their
+  committed record remains historical.
+- User approved `unit-03c-checkpointed-integration-recovery`, dependent on
+  accepted Unit 03A. Unit 04 now depends on the replacement and Unit 05 remains
+  dependent on Unit 04. This reduces process and token overhead, locks the
+  accepted tests before production work, and runs broad gates once after the
+  complete candidate. It introduces no spec, product, or governance change.
+- The accepted keyboard move/swap file is immutable at four suites, 37 test
+  identities and coverage categories, and SHA-256
+  `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`.
+  Checkpoint A adds only the stateful integration fixture and records focused
+  pre-integration failures as falsifiable evidence after Lead inspection.
+  Checkpoint B may edit only the controller, input actions, and new controller
+  directional-movement module; it cannot edit either checkpoint test or the
+  locked accepted test file.
+- The replacement permits one Worker attempt across both checkpoints and one
+  correction total, allocated to Checkpoint A or B but never both. One
+  independent review occurs once after Checkpoint B. No attempt 02, second
+  correction, second review, or post-review broad correction is permitted.
+  Full suite, typecheck, dogfood, package/build, and deterministic bundle
+  evidence remain Unit 05 gates and run once after the complete candidate.

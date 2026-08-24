@@ -30,9 +30,10 @@ target for geometry-ordering changes. Test scope is limited to
 | `unit-03` | `unit-02` | Original guarded R1-R4 runtime integration objective. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 1 | 1 |
 | `unit-03a-runtime-transaction-safety` | `unit-02` | Runtime topology decode, preflight, mutation transactions, recovery, and focused runtime tests. | Static implementation | Accepted | 1 | 1 | 1 | 0 |
 | `unit-03b-cosmic-integration-closure` | `unit-03a-runtime-transaction-safety` | Original COSMIC-only controller composition, directional entry closure, legacy-path removal, and focused entry-test objective. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 0 | 1 |
-| `unit-03c-keyboard-contract-lock` | `unit-03a-runtime-transaction-safety` | Lock and migrate the accepted keyboard move/swap contract one-to-one, without deleting or weakening coverage. | Test-contract implementation | Approved, not started | 0 | 0 | 0 | 0 |
-| `unit-03d-cosmic-runtime-adapter-integration` | `unit-03c-keyboard-contract-lock` | Fresh COSMIC controller/runtime adapter integration, legacy-route removal, and stateful end-to-end runtime evidence. | Static implementation | Approved, not started | 0 | 0 | 0 | 0 |
-| `unit-04` | `unit-03d-cosmic-runtime-adapter-integration` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 | 0 |
+| `unit-03c-keyboard-contract-lock` | `unit-03a-runtime-transaction-safety` | Superseded before dispatch by checkpointed integration recovery; retained as committed historical record. | Test-contract implementation | Replaced before start | 0 | 0 | 0 | 0 |
+| `unit-03d-cosmic-runtime-adapter-integration` | `unit-03c-keyboard-contract-lock` | Superseded before dispatch by checkpointed integration recovery; retained as committed historical record. | Static implementation | Replaced before start | 0 | 0 | 0 | 0 |
+| `unit-03c-checkpointed-integration-recovery` | `unit-03a-runtime-transaction-safety` | One test-first, checkpointed controller/runtime integration and recovery unit. | Static implementation | Approved, not started | 0 | 0 | 0 | 0 |
+| `unit-04` | `unit-03c-checkpointed-integration-recovery` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 | 0 |
 | `unit-05` | `unit-04` | Run focused and full static acceptance, dual typechecks, dogfood, and deterministic bundle build; record the post-change bundle hash. | Static verification | Not started | 0 | 0 | 0 | 0 |
 
 ## Reset Unit Scope
@@ -51,34 +52,41 @@ target for geometry-ordering changes. Test scope is limited to
   coverage and did not prove actual R1-R4 structural realization or verified
   snapshot restoration. A second correction is prohibited and no review is
   dispatched.
-- `unit-03c-keyboard-contract-lock` may change only
-  `kwin/tests/controller-keyboard-move-and-swap.test.ts`. It locks the accepted
-  Unit 03A baseline at SHA-256
+- `unit-03c-keyboard-contract-lock` and
+  `unit-03d-cosmic-runtime-adapter-integration` are superseded before start.
+  Their zero execution counters and the committed historical record remain
+  intact; neither is dispatched or resumed.
+- `unit-03c-checkpointed-integration-recovery` locks
+  `kwin/tests/controller-keyboard-move-and-swap.test.ts` at accepted Unit 03A
+  baseline SHA-256
   `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`,
-  four suites, and 37 test identities. It must preserve every test identity and
-  coverage category. Each legacy geometry assertion must have a one-to-one
-  recorded COSMIC successor with equivalent-or-stronger coverage; deletion,
-  skipped coverage, weakened assertions, and reduced counts are prohibited.
-  It may not change production code, generated output, or any non-directional
-  test behavior.
-- `unit-03d-cosmic-runtime-adapter-integration` may change only
-  `kwin/src/controller.ts`, `kwin/src/controller-input-actions.ts`, new
-  `kwin/src/controller-directional-movement.ts`, and new
-  `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts`.
+  four suites, and 37 test identities and coverage categories. It may not
+  delete, weaken, migrate, skip, or edit that file.
+- Checkpoint A is test-first and may add only
+  `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts`. It
+  creates a stateful native-capability fixture and executable R1-R4 plus
+  complete-snapshot-restoration expectations through the intended
+  `TileController` -> COSMIC strategy -> accepted Unit 03A runtime path. No
+  production edit is allowed before Lead checkpoint inspection. Focused checks
+  run at this checkpoint; expected pre-integration failures are recorded as
+  falsifiable evidence, not accepted behavior. The Lead returns either
+  `continue` or the unit's one permitted checkpoint correction.
+- Checkpoint B may change only `kwin/src/controller.ts`,
+  `kwin/src/controller-input-actions.ts`, and new
+  `kwin/src/controller-directional-movement.ts`. It may not edit Checkpoint A
+  tests, the locked 37-test file, runtime, planner, strategy seam, adapters,
+  generated bundle, configuration, shortcuts, or unrelated domains.
   `controller.ts` remains the facade and composition root; the new module
-  receives narrow controller capabilities rather than controller state. Unit
-  03D must not edit the locked
-  `kwin/tests/controller-keyboard-move-and-swap.test.ts`. It removes the legacy
-  directional path rather than retaining it as fallback. It may not change the
-  accepted runtime, planner semantics, strategy seam, `custom-tile-split.ts`,
-  selectors, settings, shortcut catalogs, or the generated bundle.
+  receives narrow controller capabilities rather than controller state.
+  Checkpoint B removes the legacy directional movement route so all eight
+  directional entries reach COSMIC or fail closed.
 - `unit-04` is test-only within the approved test scope. `unit-05` owns static
   verification and generated-bundle evidence only. Neither may repair runtime
   behavior.
-- Both replacement units preserve R1-R4/S1-S4 intent, no workspace crossing,
-  focus on success, opaque native split results, adapter re-decode,
-  geometry-ordering locality in `custom-tile-split.ts`, controller facade
-  ownership, COSMIC-only/no-selector behavior, and all non-directional
+- The replacement preserves R1-R4/S1-S4 intent, facade and shortcut ownership,
+  guards, focus and workspace limits, opaque native split results, adapter
+  re-decode, geometry-ordering locality in `custom-tile-split.ts`, controller
+  split boundaries, COSMIC-only/no-selector behavior, and all non-directional
   invariants.
 
 ## Finding Allocation And Salvage
@@ -89,8 +97,8 @@ target for geometry-ordering changes. Test scope is limited to
 | Native-maximized guard is bypassed | `unit-03a-runtime-transaction-safety` | It must reject before mutation. |
 | Failed occupied-swap second assignment is unrecovered | `unit-03a-runtime-transaction-safety` | It is multi-step assignment transaction safety. |
 | Duplicate active-window occupancy is accepted | `unit-03a-runtime-transaction-safety` | It is preflight and decoded postcondition validity. |
-| Legacy internal non-COSMIC fallback remains | `unit-03d-cosmic-runtime-adapter-integration` | It is controller entry and strategy closure. |
-| Deleted or weakened accepted keyboard coverage | `unit-03c-keyboard-contract-lock` | The contract is locked before production integration and cannot be rewritten by Unit 03D. |
+| Legacy internal non-COSMIC fallback remains | `unit-03c-checkpointed-integration-recovery` Checkpoint B | It is controller entry and strategy closure. |
+| Deleted or weakened accepted keyboard coverage | `unit-03c-checkpointed-integration-recovery` Checkpoint A/B boundary | The accepted file is immutable before production integration. |
 
 - Rejected evidence is preserved in stash
   `8578bbf4f0e4e953be8c0128506c051de863fe0f`
@@ -114,10 +122,10 @@ target for geometry-ordering changes. Test scope is limited to
 | Acceptance criterion | Evidence |
 | --- | --- |
 | Runtime preflight, empty R4, maximized/duplicate rejection, transaction rollback, postconditions, recovery, and focus | `kwin/tests/directional-movement-runtime.test.ts`. |
-| Accepted keyboard test preservation | Unit 03C lineage matrix, baseline SHA-256, four-suite/37-test count, and focused test evidence before Unit 03D starts. |
-| COSMIC-only directional entry and R1-R4 realization | `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts` drives `TileController` shortcuts through the COSMIC strategy, accepted runtime, and stateful native-capability fixture. |
-| R1-R4 structure and S1-S4 sizing | The Unit 03D integration fixture re-decodes and asserts actual R1, R2a, both R2b operations, R2c, R3, and occupied/empty R4 topology, assignment, focus, output, and workspace results; it maps cases to `docs/cosmic-move-conformance.md` groups P1-P5, F1-F3, G1-G2, M1-M4, U1-U2, and S1-S23. |
-| Complete snapshot restoration | Unit 03D injects structural, occupied-swap, and cross-output partial failures through the controller adapter, then proves the accepted runtime re-decodes an exact pre-mutation snapshot. Mock-only planner or route invocation is insufficient. |
+| Accepted keyboard test preservation | Immutable baseline SHA-256, four-suite/37-test identity and coverage-category lock before Checkpoint A and after Checkpoint B. |
+| COSMIC-only directional entry and R1-R4 realization | Checkpoint A test-first and Checkpoint B completion in `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts` drive `TileController` shortcuts through the COSMIC strategy, accepted runtime, and stateful native-capability fixture. |
+| R1-R4 structure and S1-S4 sizing | The checkpointed integration fixture re-decodes and asserts actual R1, R2a, both R2b operations, R2c, R3, and occupied/empty R4 topology, assignment, focus, output, and workspace results; it maps cases to `docs/cosmic-move-conformance.md` groups P1-P5, F1-F3, G1-G2, M1-M4, U1-U2, and S1-S23. |
+| Complete snapshot restoration | The checkpointed fixture injects structural, occupied-swap, and cross-output partial failures through the controller adapter, then proves the accepted runtime re-decodes an exact pre-mutation snapshot. Mock-only planner or route invocation is insufficient. |
 | Opaque split re-decode, direct-child N-ary behavior, and new-window preservation | `kwin/tests/controller-keyboard-placement.test.ts` and archived N-ary frozen contracts. |
 | Drag behavior remains distinct and stable | `kwin/tests/controller-interactive-drag.test.ts` and `kwin/tests/controller-interactive-drag-reflow.test.ts`. |
 | Binary preservation | `kwin/tests/nary-characterization.test.ts`. |
@@ -153,16 +161,19 @@ does not block Unit 05.
   reviews 1, breaker 1. The breaker reason is that the mandatory findings would
   require prohibited correction 2 and potentially review 2 on the same
   semantic unit.
-- `unit-03c-keyboard-contract-lock` and
-  `unit-03d-cosmic-runtime-adapter-integration` start at attempts 0,
-  corrections 0, reviews 0, and breaker 0. Each permits at most two attempts
-  and one correction. A third attempt, second correction, second review,
-  repeated invariant failure, or no acceptance progress trips its breaker and
-  returns `decision-needed`.
-- No independent review applies to frozen Unit 03B. Unit 03C has no independent
-  review. Unit 03D receives one independent review after focused evidence and
-  before acceptance because native structural mutation and recovery are costly
-  to unwind. No independent review is preplanned for Unit 04 or Unit 05.
+- Superseded Units 03C and 03D remain at attempts 0, corrections 0, reviews 0,
+  and breaker 0. Their committed record is historical only.
+- `unit-03c-checkpointed-integration-recovery` starts at attempts 0,
+  corrections 0, reviews 0, breaker 0. It permits one semantic attempt, which
+  spans Checkpoint A then Checkpoint B with the same Worker. Each named
+  checkpoint has a ceiling of one correction, but the semantic-unit ceiling is
+  one correction total: the Lead may allocate it to A or B, never both. There
+  is no attempt 02 and no broad correction after review.
+- One independent review runs once after Checkpoint B focused evidence and
+  before acceptance. A second review, a review finding requiring correction, a
+  repeated same-class failure, or no acceptance progress trips the replacement
+  breaker and returns `decision-needed`. No independent review applies to
+  frozen Unit 03B, superseded Units 03C/03D, Unit 04, or Unit 05.
 - `unit-04` may correct test-only work once. `unit-05` records failures but
   never repairs code. A failed required gate returns a concrete finding to a
   newly approved unit.
@@ -193,21 +204,26 @@ does not block Unit 05.
 - Any scope expansion beyond directional keyboard movement.
 - Any unverified transaction recovery, non-COSMIC directional route, or failed
   authoritative corpus case.
-- Any Unit 03D edit to the locked keyboard move/swap test file, test-identity
-  loss, coverage-category loss, test weakening, or count reduction.
+- Any replacement-unit edit to the locked keyboard move/swap test file,
+  test-identity loss, coverage-category loss, test weakening, or count
+  reduction.
 - Any R1-R4 assertion that does not traverse the controller, COSMIC strategy,
   accepted runtime, and stateful native-capability fixture, or any restoration
   assertion that does not prove a complete re-decoded snapshot.
+- Inability to create the stateful path proof, need to edit excluded
+  runtime/planner/strategy code, workspace crossing, focus loss, incomplete
+  snapshot restoration, scope expansion, or a second review.
 
 ## Initial State
 
 - Units 01-02 and `unit-03a-runtime-transaction-safety` are accepted. Original
   `unit-03` is frozen with breaker 1.
   `unit-03b-cosmic-integration-closure` is permanently frozen with breaker 1.
-  Units 03C and 03D are approved but not started; Unit 04 depends on 03D and
-  Unit 05 depends on Unit 04.
-- Units 03C, 03D, 04, and 05 start at zero attempts, correction rounds,
-  independent reviews, and breakers.
+  Units 03C and 03D are superseded before start with zero counters.
+  `unit-03c-checkpointed-integration-recovery` is approved but not started;
+  Unit 04 depends on it and Unit 05 depends on Unit 04.
+- The replacement, Unit 04, and Unit 05 start at zero attempts, correction
+  rounds, independent reviews, and breakers.
 - No product or enduring governance change is introduced by this reset.
 
 ## Attempt Record
@@ -246,3 +262,7 @@ does not block Unit 05.
   prove actual R1-R4 structural realization or complete verified snapshot
   restoration. Its counters remain attempts 1, corrections 1, reviews 0,
   breaker 1. No correction 02 or Unit 03B review is permitted.
+- `unit-03c-keyboard-contract-lock` and
+  `unit-03d-cosmic-runtime-adapter-integration` were superseded before dispatch
+  at attempts 0, corrections 0, reviews 0, breaker 0. Their historical record
+  remains in commit `f7683563d32c6c4566cf971c91defe21a7aa7998`.
