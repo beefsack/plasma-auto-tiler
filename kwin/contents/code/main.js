@@ -2535,6 +2535,11 @@
     };
   }
 
+  // src/directional-movement-strategy.ts
+  function createCosmicDirectionalMovementStrategy(capabilities) {
+    return { move: capabilities.moveActiveWindow };
+  }
+
   // src/controller-window-actions.ts
   var WORK_AREA_CLIENT_AREA_OPTION2 = 5;
   var FLOAT_WORK_AREA_FRACTION = 0.6;
@@ -4837,6 +4842,9 @@
           decodedBoundary: (kind) => this.decodedBoundary(kind)
         }
       });
+      this.directionalMovementStrategy = createCosmicDirectionalMovementStrategy({
+        moveActiveWindow: (direction) => this.inputActions.moveActiveWindow(direction)
+      });
       this.windowActions = createWindowActions({
         environment: this.environment,
         scope: this.scopeResolution,
@@ -5198,7 +5206,7 @@
       return;
     }
     moveActiveWindow(direction) {
-      this.gate.run(() => this.inputActions.moveActiveWindow(direction), (reason) => this.disabled(reason));
+      this.gate.run(() => this.directionalMovementStrategy.move(direction), (reason) => this.disabled(reason));
       return;
     }
     focusOrResize(direction) {

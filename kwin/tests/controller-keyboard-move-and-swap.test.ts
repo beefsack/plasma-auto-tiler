@@ -23,6 +23,22 @@ import {
     swapSetup,
 } from "./controller-fixture-scenarios";
 import { TileController } from "../src/controller";
+import { createCosmicDirectionalMovementStrategy } from "../src/directional-movement-strategy";
+
+describe("Directional movement strategy seam", () => {
+    it("composes the sole COSMIC strategy over the existing movement action", () => {
+        let moved: string | undefined;
+        const strategy = createCosmicDirectionalMovementStrategy({
+            moveActiveWindow: (direction) => {
+                moved = direction;
+            },
+        });
+
+        strategy.move("right");
+
+        assert.equal(moved, "right");
+    });
+});
 
 describe("TileController keyboard move", () => {
     const moveActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [

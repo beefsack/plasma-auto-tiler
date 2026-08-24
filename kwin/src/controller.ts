@@ -124,6 +124,10 @@ import {
     type InputActions,
     type PendingKeyboard as InputPendingKeyboard,
 } from "./controller-input-actions";
+import {
+    createCosmicDirectionalMovementStrategy,
+    type DirectionalMovementStrategy,
+} from "./directional-movement-strategy";
 import { createWindowActions, type WindowActions } from "./controller-window-actions";
 import {
     createReflowObservers,
@@ -558,6 +562,7 @@ export class TileController {
     private readonly workspaceModeState: WorkspaceModeState;
     private readonly desktopChangeState: DesktopChangeState;
     private readonly inputActions: InputActions;
+    private readonly directionalMovementStrategy: DirectionalMovementStrategy;
     private readonly windowActions: WindowActions;
     private readonly layoutDomain: LayoutDomain;
     private readonly workspaceDomain: WorkspaceDomain;
@@ -801,6 +806,9 @@ export class TileController {
                 disable: (reason) => this.gate.disable(reason, (disabledReason) => this.disabled(disabledReason)),
                 decodedBoundary: (kind) => this.decodedBoundary(kind),
             },
+        });
+        this.directionalMovementStrategy = createCosmicDirectionalMovementStrategy({
+            moveActiveWindow: (direction) => this.inputActions.moveActiveWindow(direction),
         });
         this.windowActions = createWindowActions({
             environment: this.environment,
@@ -1248,7 +1256,7 @@ export class TileController {
     }
 
     private moveActiveWindow(direction: Direction): void {
-        this.gate.run(() => this.inputActions.moveActiveWindow(direction), (reason) => this.disabled(reason));
+        this.gate.run(() => this.directionalMovementStrategy.move(direction), (reason) => this.disabled(reason));
         return;
     }
 

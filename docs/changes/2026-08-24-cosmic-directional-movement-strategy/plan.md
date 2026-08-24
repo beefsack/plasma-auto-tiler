@@ -20,7 +20,7 @@ target for geometry-ordering changes. Test scope is limited to
 
 | Unit | Dependency | Scope | Classification | Progress | Attempts | Corrections | Reviews |
 | --- | --- | --- | --- | --- | ---: | ---: | ---: |
-| 01 | Approval | Define the narrow directional strategy seam and compose COSMIC only from `controller.ts`; retain facade, callbacks, guards, and capability boundaries. | Static implementation | Not started | 0 | 0 | 0 |
+| 01 | Approval | Define the narrow directional strategy seam and compose COSMIC only from `controller.ts`; retain facade, callbacks, guards, and capability boundaries. | Static implementation | Accepted | 1 | 1 | 0 |
 | 02 | 01 | Build the COSMIC structural planner over ordered topology; consume adapter re-decode results and never infer native split shape. | Static implementation | Not started | 0 | 0 | 0 |
 | 03 | 02 | Integrate guarded R1-R4 mutations, S1-S4 sizing, focus preservation, workspace limits, and fail-closed postconditions. | Static implementation | Not started | 0 | 0 | 0 |
 | 04 | 03 | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Not started | 0 | 0 | 0 |
@@ -64,6 +64,17 @@ does not block Unit 05.
 
 ## Initial State
 
-- No implementation is authorized or started.
-- All units have zero attempts, correction rounds, and independent reviews.
+- Unit 01 implementation was authorized and started; Units 02-05 remain
+  unauthorized and not started.
+- Unit 01 has one attempt; Units 02-05 have zero attempts, correction rounds,
+  and independent reviews.
 - No circuit breaker is active.
+
+## Attempt Record
+
+- `unit-01/attempt-01` is accepted after one same-scope verification
+  correction. The initial `scripts/start-test.test.sh` result was not dogfood
+  evidence. The approved `bash scripts/dogfood-install.test.sh` gate passed
+  with 347 assertions and 0 failures. Focused seam coverage, dual typecheck,
+  the full suite, two matching builds, and static audit passed. No independent
+  review was triggered.
