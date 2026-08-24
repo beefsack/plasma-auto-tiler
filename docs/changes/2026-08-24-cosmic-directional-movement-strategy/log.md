@@ -126,3 +126,12 @@
   `f2553e69eefe0433ab0c1ae2a79c8c97756a18f4` (`rejected cosmic unit-03b
   candidate`) and `8578bbf4f0e4e953be8c0128506c051de863fe0f` (`rejected cosmic
   unit-03 candidate`); all three are rejected evidence only.
+- `unit-03e-stateful-custom-tile-fixture-foundation/attempt-01` is parked at
+  attempts 1, corrections 0, reviews 0, breaker 1. The Worker added the
+  recursive stateful fixture within the two test paths and reported focused tests
+  (4 tests in 2 suites, 0 failures/skips), typecheck, diff check, and static
+  scope checks. Lead inspection found that the rollback assertion directly
+  constructs `createDirectionalMovementRuntime` with a replacement environment.
+  This is prohibited behavior integration, not fixture-only evidence. No
+  correction, further reset, review, or integration dispatch is permitted; Unit
+  04 and Unit 05 remain blocked.

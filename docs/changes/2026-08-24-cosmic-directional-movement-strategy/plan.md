@@ -33,7 +33,7 @@ target for geometry-ordering changes. Test scope is limited to
 | `unit-03c-keyboard-contract-lock` | `unit-03a-runtime-transaction-safety` | Superseded before dispatch by checkpointed integration recovery; retained as committed historical record. | Test-contract implementation | Replaced before start | 0 | 0 | 0 | 0 |
 | `unit-03d-cosmic-runtime-adapter-integration` | `unit-03c-keyboard-contract-lock` | Superseded before dispatch by checkpointed integration recovery; retained as committed historical record. | Static implementation | Replaced before start | 0 | 0 | 0 | 0 |
 | `unit-03c-checkpointed-integration-recovery` | `unit-03a-runtime-transaction-safety` | Test-first checkpointed controller/runtime integration and recovery. | Static implementation | Frozen permanently: breaker tripped | 1 | 1 | 0 | 1 |
-| `unit-03e-stateful-custom-tile-fixture-foundation` | `unit-03a-runtime-transaction-safety` | Establish only the reusable stateful native Custom Tile test fixture and public-shortcut compatibility. | Test-fixture implementation | Approved, not started | 0 | 0 | 0 | 0 |
+| `unit-03e-stateful-custom-tile-fixture-foundation` | `unit-03a-runtime-transaction-safety` | Establish only the reusable stateful native Custom Tile test fixture and public-shortcut compatibility. | Test-fixture implementation | Frozen permanently: acceptance failure | 1 | 0 | 0 | 1 |
 | `unit-04` | `unit-03e-stateful-custom-tile-fixture-foundation` | Extend focused keyboard and N-ary tests using authoritative P/F/G/M/U/S case references; keep the conformance model reference-only. | Static implementation | Blocked by Unit 03E fixture foundation | 0 | 0 | 0 | 0 |
 | `unit-05` | `unit-04` | Run focused and full static acceptance, dual typechecks, dogfood, and deterministic bundle build; record the post-change bundle hash. | Static verification | Not started | 0 | 0 | 0 | 0 |
 
@@ -81,9 +81,11 @@ target for geometry-ordering changes. Test scope is limited to
   runs no broad gates. The immutable keyboard move/swap test remains four suites,
   37 identities and coverage categories, and SHA-256
   `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`.
-- Unit 03E has one attempt, zero corrections, and zero independent reviews. Any
-  failed acceptance check, required production edit, or fixture ambiguity parks
-  this COSMIC change with no further reset or integration dispatch.
+- Unit 03E is frozen at attempts 1, corrections 0, reviews 0, breaker 1. Its
+  sole attempt directly constructed `createDirectionalMovementRuntime` with a
+  replacement environment for rollback assertions, which is prohibited behavior
+  integration rather than fixture-only evidence. No correction, reset, or
+  integration dispatch is permitted.
 - Future production integration is neither authorized nor planned until Unit 03E
   is accepted and the user separately approves it. Unit 04 and Unit 05 remain
   blocked; neither may repair runtime behavior.
@@ -132,7 +134,7 @@ target for geometry-ordering changes. Test scope is limited to
 | --- | --- |
 | Runtime preflight, empty R4, maximized/duplicate rejection, transaction rollback, postconditions, recovery, and focus | `kwin/tests/directional-movement-runtime.test.ts`. |
 | Accepted keyboard test preservation | Immutable baseline SHA-256 and four-suite/37-test identity and coverage-category lock before and after Unit 03E. |
-| Stateful native fixture foundation | Unit 03E focused fixture tests prove recursive depth 2-3 state, parent/layout/geometry/window state, live native mutation, assignment observation, opaque split return, reversed raw children, failure injection, snapshot/re-decode restoration, reset isolation, and registered-shortcut compatibility. |
+| Stateful native fixture foundation | Unmet: Unit 03E directly constructed a runtime with a replacement environment, violating fixture-only scope. |
 | COSMIC-only directional entry and R1-R4 realization | Parked pending separately approved production integration after Unit 03E acceptance. |
 | Complete runtime snapshot restoration | Parked pending separately approved production integration; Unit 03E establishes fixture snapshot/re-decode capability only. |
 | Opaque split re-decode, direct-child N-ary behavior, and new-window preservation | `kwin/tests/controller-keyboard-placement.test.ts` and archived N-ary frozen contracts. |
@@ -175,10 +177,10 @@ does not block Unit 05.
 - `unit-03c-checkpointed-integration-recovery` is frozen at attempts 1,
   corrections 1, reviews 0, breaker 1. No correction, review, or dispatch is
   permitted.
-- `unit-03e-stateful-custom-tile-fixture-foundation` permits exactly one
-  attempt, zero corrections, and zero independent reviews. A failed acceptance
-  check, required production edit, or fixture ambiguity parks the COSMIC change;
-  no further reset or integration dispatch is permitted.
+- `unit-03e-stateful-custom-tile-fixture-foundation` is frozen at attempts 1,
+  corrections 0, reviews 0, breaker 1 after an out-of-scope direct runtime
+  construction. No correction, reset, independent review, or integration
+  dispatch is permitted.
 - Unit 04 and Unit 05 remain blocked. Future production integration requires
   separate user approval after Unit 03E acceptance.
 
@@ -227,10 +229,9 @@ does not block Unit 05.
   `unit-03b-cosmic-integration-closure` is permanently frozen with breaker 1.
    Units 03C and 03D are superseded before start with zero counters.
    `unit-03c-checkpointed-integration-recovery` is frozen with breaker 1 after
-   its sole correction. Unit 03E is approved but not started; Unit 04 depends on
-   it and Unit 05 depends on Unit 04.
-- Unit 03E starts at zero attempts, corrections, independent reviews, and
-  breaker. Unit 04 and Unit 05 remain blocked at zero counters.
+   its sole correction. Unit 03E is frozen with breaker 1 after its sole
+   out-of-scope attempt; Unit 04 depends on it and Unit 05 depends on Unit 04.
+- Unit 04 and Unit 05 remain blocked at zero counters.
 - No product or enduring governance change is introduced by this reset.
 
 ## Attempt Record
@@ -278,7 +279,9 @@ does not block Unit 05.
   controller-owned runtime; correction 01 restored public shortcut routing but
   newly split fixture children retained default non-stateful native methods.
   A second correction is prohibited.
-- `unit-03e-stateful-custom-tile-fixture-foundation` is the final changed-kind
-  reset, authorized but not started. It has one attempt and no correction or
-  review budget; failure parks the COSMIC change without further reset or
-  integration dispatch.
+- `unit-03e-stateful-custom-tile-fixture-foundation/attempt-01` is frozen at
+  attempts 1, corrections 0, reviews 0, breaker 1. The candidate's rollback
+  assertion directly constructed `createDirectionalMovementRuntime` with a
+  replacement environment. That is prohibited behavior integration, so the
+  COSMIC change is parked without correction, reset, review, or integration
+  dispatch.
