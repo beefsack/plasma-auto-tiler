@@ -100,3 +100,29 @@
   correction, second review, or post-review broad correction is permitted.
   Full suite, typecheck, dogfood, package/build, and deterministic bundle
   evidence remain Unit 05 gates and run once after the complete candidate.
+- `unit-03c-checkpointed-integration-recovery/attempt-01` is frozen at attempts
+  1, corrections 1, reviews 0, breaker 1. Its first fixture bypassed the
+  controller-owned runtime; correction 01 restored public registered-shortcut
+  routing, but newly split children retained default non-stateful native methods.
+  Permitted production integration cannot create re-decodable occupancy without
+  prohibited correction 02.
+- User authorized one final changed-kind reset without implementation
+  authorization: `unit-03e-stateful-custom-tile-fixture-foundation`, dependent
+  on accepted Unit 03A. It may edit only
+  `kwin/tests/controller-fixture-scenarios.ts` and
+  `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts`, reuse
+  the established controller fixtures and recursive splitter pattern, and run
+  only focused fixture tests, test typecheck, diff check, and static scope checks.
+  It has one attempt, zero corrections, and zero independent reviews. Any failed
+  acceptance check, required production edit, or fixture ambiguity parks this
+  COSMIC change with no further reset or integration dispatch. Unit 04 and Unit
+  05 remain blocked; production integration requires separate user approval.
+- Preserved the blocked checkpointed candidate as rejected read-only evidence in
+  path-scoped stash `2c15d895b128200070f7f772e2f98b6e8fe96b90`
+  (`rejected cosmic checkpointed integration fixture candidate`) containing
+  exactly `plan.md`, `log.md`, and
+  `kwin/tests/controller-cosmic-directional-runtime-integration.test.ts` at
+  their active change paths. The older rejected evidence remains
+  `f2553e69eefe0433ab0c1ae2a79c8c97756a18f4` (`rejected cosmic unit-03b
+  candidate`) and `8578bbf4f0e4e953be8c0128506c051de863fe0f` (`rejected cosmic
+  unit-03 candidate`); all three are rejected evidence only.
