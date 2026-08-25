@@ -31,12 +31,10 @@ EFFECT_PLUGIN_ID="plasma-auto-tiler-active-border"
 # Derived from EFFECT_PLUGIN_ID so there is one place this identifier is
 # spelled out, not two.
 EFFECT_CONFIG_KEY="${EFFECT_PLUGIN_ID}Enabled"
-# Pinned Nix store KWin dev-package cmake config dir, used only when present
-# (see cmd_effect_install below). Test-only override: DOGFOOD_KWIN_DEV_CMAKE_DIR.
-# On a non-Nix host without this exact path, cmake falls through to plain
-# find_package(KWin REQUIRED) resolution - kwin/native-effect/CMakeLists.txt
-# already supports this unmodified.
-KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-/nix/store/483vmk08g6bjaa3bvf3abn10cwpw6ap9-kwin-6.7.3-dev/lib/cmake/KWin}"
+# KWin dev-package cmake config dir, used only when present (see
+# cmd_effect_install below). DOGFOOD_KWIN_DEV_CMAKE_DIR is a test-only
+# override with precedence over the development environment default.
+KWIN_DEV_CMAKE_DIR="${DOGFOOD_KWIN_DEV_CMAKE_DIR:-${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}}"
 
 # Normal roots derive from XDG paths. Test-only overrides: DOGFOOD_DATA_ROOT and
 # DOGFOOD_CONFIG_ROOT point the script at a throwaway tree so shell tests never
@@ -131,7 +129,7 @@ DOGFOOD_CONFIG_ROOT. Test-only effect-status session-delivery overrides:
 DOGFOOD_KWIN_ENVIRON_FILE (read this path instead of scanning /proc),
 DOGFOOD_KWIN_NOT_RUNNING (force the "process not found" branch).
 Test-only effect-install override: DOGFOOD_KWIN_DEV_CMAKE_DIR (overrides the
-pinned -DKWin_DIR= path used only when it exists on disk).
+default -DKWin_DIR= path used only when it exists on disk).
 
 install and uninstall never touch KWin configuration; enable, disable, and
 reload mutate kwinrc and reconfigure the running KWin session.
