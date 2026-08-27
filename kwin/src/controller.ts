@@ -4242,7 +4242,7 @@ export class TileController {
                 orderedIds,
                 isEmpty: (id) => !occupied.has(id),
                 isVisible: (id) => visible.has(id),
-                removeDesktop: (id) => this.removeOwnedEmptyShared(id, desktops, visible),
+                removeDesktop: (id) => this.removeOwnedEmptyShared(id, visible),
                 createDesktop: () => this.appendDesktopForShared()?.id ?? null,
             });
         } finally {
@@ -4301,14 +4301,17 @@ export class TileController {
 
     private removeOwnedEmptyShared(
         id: string,
-        desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
-        const position = desktops.findIndex((desktop) => desktop.id === id);
-        const desktop = desktops[position];
+        const currentDesktops = this.liveDesktops();
+        if (currentDesktops === null || currentDesktops.length <= 2) {
+            return false;
+        }
+        const position = currentDesktops.findIndex((desktop) => desktop.id === id);
+        const desktop = currentDesktops[position];
         if (desktop === undefined) {
             return false;
         }
@@ -4384,7 +4387,7 @@ export class TileController {
                     orderedIds,
                     isEmpty: (id) => !occupied.has(id),
                     isVisible: (id) => visible.has(id),
-                    removeDesktop: (id) => this.removeOwnedEmptyDesktop(id, desktops, visible),
+                    removeDesktop: (id) => this.removeOwnedEmptyDesktop(id, visible),
                     createDesktop: () => this.appendDesktopForOutputKey(key)?.id ?? null,
                 });
             }
@@ -4416,7 +4419,7 @@ export class TileController {
                 if (assigned.has(id) || occupied.has(id) || visible.has(id)) {
                     continue;
                 }
-                this.removeOwnedEmptyDesktop(id, remaining, visible);
+                this.removeOwnedEmptyDesktop(id, visible);
             }
         } finally {
             this.reconcilingDesktops = false;
@@ -4552,14 +4555,17 @@ export class TileController {
     // never a structural tiling mutation.
     private removeOwnedEmptyDesktop(
         id: string,
-        desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
-        const position = desktops.findIndex((desktop) => desktop.id === id);
-        const desktop = desktops[position];
+        const currentDesktops = this.liveDesktops();
+        if (currentDesktops === null || currentDesktops.length <= 2) {
+            return false;
+        }
+        const position = currentDesktops.findIndex((desktop) => desktop.id === id);
+        const desktop = currentDesktops[position];
         if (desktop === undefined) {
             return false;
         }
@@ -4923,7 +4929,7 @@ export class TileController {
                     orderedIds,
                     isEmpty: (id) => !occupied.has(id),
                     isVisible: (id) => visible.has(id),
-                    removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, desktops, visible),
+                    removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, visible),
                     createDesktop: () => this.appendDesktopForGlobalUniqueKey(key)?.id ?? null,
                 });
             }
@@ -4969,14 +4975,17 @@ export class TileController {
     // preserved.
     private removeOwnedEmptyGlobalUnique(
         id: string,
-        desktops: readonly VirtualDesktopCapability[],
         visible: ReadonlySet<string>,
     ): boolean {
         if (visible.has(id)) {
             return false;
         }
-        const position = desktops.findIndex((desktop) => desktop.id === id);
-        const desktop = desktops[position];
+        const currentDesktops = this.liveDesktops();
+        if (currentDesktops === null || currentDesktops.length <= 2) {
+            return false;
+        }
+        const position = currentDesktops.findIndex((desktop) => desktop.id === id);
+        const desktop = currentDesktops[position];
         if (desktop === undefined) {
             return false;
         }

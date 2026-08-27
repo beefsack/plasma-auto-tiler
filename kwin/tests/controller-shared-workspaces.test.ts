@@ -140,6 +140,63 @@ describe("TileController shared workspaces (Unit 07)", () => {
         assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
     });
 
+    it("retains exactly two empty shared desktops after switching to the second desktop", () => {
+        const { harness, controller } = sharedSetup();
+        harness.windows = [];
+        harness.active = null;
+        harness.desktopsList = [DESKTOP_1, DESKTOP_2];
+        harness.nextDesktopNumber = 2;
+        harness.currentDesktop = DESKTOP_1;
+        harness.currentDesktopValue = DESKTOP_1;
+        harness.currentDesktopByOutput.set(OUTPUT_E, DESKTOP_1);
+        harness.currentDesktopByOutput.set(OUTPUT_L, DESKTOP_1);
+        harness.emitDesktopsChanged();
+        harness.removedDesktops.length = 0;
+
+        invokeShortcut(harness, "plasma-auto-tiler-workspace-2");
+        harness.emitDesktopsChanged();
+
+        assert.deepEqual(bothOutputsOn(harness), ["desktop-2", "desktop-2"]);
+        assert.deepEqual(
+            (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+            ["desktop-1", "desktop-2"],
+        );
+        assert.equal(harness.removedDesktops.length, 0);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-1", "desktop-2"]);
+    });
+
+    it("global-unique cleanup stops multiple removals at the global floor", () => {
+        const desktop3 = { id: "desktop-3", x11DesktopNumber: 3 };
+        const desktop4 = { id: "desktop-4", x11DesktopNumber: 4 };
+        const desktop5 = { id: "desktop-5", x11DesktopNumber: 5 };
+        const harness = new Harness();
+        harness.configValues.set(WORKSPACE_MODE_CONFIG_KEY, "global-unique");
+        harness.screensList = [OUTPUT_E];
+        harness.desktopsList = [DESKTOP_1, DESKTOP_2, desktop3, desktop4, desktop5];
+        harness.nextDesktopNumber = 5;
+        harness.currentDesktop = null;
+        harness.currentDesktopValue = null;
+        harness.currentDesktopForOutputOverride = (output) =>
+            harness.currentDesktopByOutput.get(output) ?? harness.currentDesktop;
+        const controller = new TileController(harness.environment());
+        controller.start();
+
+        harness.currentDesktop = desktop5;
+        harness.currentDesktopValue = desktop5;
+        harness.currentDesktopByOutput.set(OUTPUT_E, desktop5);
+        harness.emitDesktopsChanged();
+
+        assert.deepEqual(
+            harness.removedDesktops.map((desktop) => (desktop as { id: string }).id),
+            ["desktop-1", "desktop-2", "desktop-3"],
+        );
+        assert.deepEqual(
+            (harness.desktopsList as Array<{ id: string }>).map((desktop) => desktop.id),
+            ["desktop-4", "desktop-5"],
+        );
+        assert.deepEqual(Object.values(controller.globalUniqueAssignmentSnapshot()), [["desktop-4", "desktop-5"]]);
+    });
+
     it("an absent shared index is a specific no-op with no write or create", () => {
         const { harness } = sharedSetup();
         harness.active = null;
@@ -279,12 +336,13 @@ describe("TileController shared workspaces (Unit 07)", () => {
         assert.equal(maximized.createDesktopCalls.length, createsMax);
     });
 
-    it("cleanup never removes the current shared desktop, but removes every other empty invisible non-trailing one", () => {
+    it("cleanup never removes the current shared desktop, and stops at the global floor", () => {
         // The owned trailing empty (desktop-3) becomes the synchronized
         // current desktop on every output; a reconciliation must keep it
         // (current + visible, and also the structurally-last domain entry).
         // The other empty desktops (desktop-1 and desktop-2, neither the
-        // trailing position, no windows in scope) are removed. Windows are
+        // trailing position, no windows in scope) are eligible, but cleanup
+        // stops after desktop-1 so the global count remains two. Windows are
         // cleared so no scope/reconstruction defers cleanup.
         const { harness, controller } = sharedSetup();
         harness.windows = [];
@@ -297,10 +355,10 @@ describe("TileController shared workspaces (Unit 07)", () => {
         harness.emitDesktopsChanged();
         assert.deepEqual(
             harness.removedDesktops.map((entry) => (entry as { id: string }).id).sort(),
-            ["desktop-1", "desktop-2"],
+            ["desktop-1"],
         );
         assert.deepEqual([...controller.ownedDesktopIdSnapshot()], ["desktop-3"]);
-        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-3"]);
+        assert.deepEqual([...controller.sharedWorkspaceSnapshot()], ["desktop-2", "desktop-3"]);
     });
 
     it("hotplug adds a new output at the current shared workspace and never creates a desktop", () => {
