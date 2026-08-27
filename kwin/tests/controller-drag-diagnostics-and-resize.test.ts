@@ -3,7 +3,12 @@ import assert from "node:assert/strict";
 
 import {
     Harness,
+    NativePointerResizeFixture,
     RECT,
+    nativeLayout,
+    nativeTile,
+    qv4MethodSignal,
+    qv4PayloadMethodSignal,
     type TestTile,
     type TestWindow,
     setFullscreen,
@@ -1345,5 +1350,300 @@ describe("TileController bspwm direct resize bindings", () => {
         assert.equal(state.second.relativeGeometry.x, 110);
         assert.equal(state.second.relativeGeometry.width, 90);
         assert.equal(state.first.relativeGeometry.width, 110);
+    });
+});
+
+function nativePointerResizeSetup(): {
+    readonly fixture: NativePointerResizeFixture;
+    readonly focus: ReturnType<typeof nativeTile>;
+    readonly focusLeft: ReturnType<typeof nativeTile>;
+    readonly focusRight: ReturnType<typeof nativeTile>;
+    readonly focusRow: ReturnType<typeof nativeLayout>;
+    readonly lower: ReturnType<typeof nativeTile>;
+    readonly nested: ReturnType<typeof nativeLayout>;
+    readonly upper: ReturnType<typeof nativeTile>;
+} {
+    const outerLeft = nativeTile("outer-left", { x: 0, y: 0, width: 100, height: 300 });
+    const outerRight = nativeTile("outer-right", { x: 300, y: 0, width: 100, height: 300 });
+    const upper = nativeTile("upper", { x: 100, y: 0, width: 200, height: 100 });
+    const lower = nativeTile("lower", { x: 100, y: 200, width: 200, height: 100 });
+    const focusLeft = nativeTile("focus-left", { x: 100, y: 100, width: 60, height: 100 });
+    const focus = nativeTile("focus", { x: 160, y: 100, width: 80, height: 100 });
+    const focusRight = nativeTile("focus-right", { x: 240, y: 100, width: 60, height: 100 });
+    const focusRow = nativeLayout("focus-row", { x: 100, y: 100, width: 200, height: 100 }, "x", [
+        focusLeft,
+        focus,
+        focusRight,
+    ]);
+    const nested = nativeLayout("nested", { x: 100, y: 0, width: 200, height: 300 }, "y", [
+        upper,
+        focusRow,
+        lower,
+    ]);
+    const root = nativeLayout("root", { x: 0, y: 0, width: 400, height: 300 }, "x", [
+        outerLeft,
+        nested,
+        outerRight,
+    ]);
+    return {
+        fixture: new NativePointerResizeFixture(root),
+        focus,
+        focusLeft,
+        focusRight,
+        focusRow,
+        lower,
+        nested,
+        upper,
+    };
+}
+
+describe("TileController native pointer resize", () => {
+    it("models KWin-native edges, corners, ratios, Escape, and invalidation without controller writes", () => {
+        const edges = [
+            "left",
+            "right",
+            "top",
+            "bottom",
+            "top-left",
+            "top-right",
+            "bottom-left",
+            "bottom-right",
+        ] as const;
+        const expectedFinalState: Record<
+            (typeof edges)[number],
+            Readonly<Record<string, {
+                readonly geometry: typeof RECT;
+                readonly ratio: number;
+            }>>
+        > = {
+            left: {
+                "focus-left": { geometry: { x: 100, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+                focus: { geometry: { x: 150, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+            },
+            right: {
+                focus: { geometry: { x: 160, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+                "focus-right": { geometry: { x: 250, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+            },
+            top: {
+                "focus-row": { geometry: { x: 100, y: 90, width: 200, height: 110 }, ratio: 0.367 },
+                upper: { geometry: { x: 100, y: 0, width: 200, height: 90 }, ratio: 0.3 },
+            },
+            bottom: {
+                "focus-row": { geometry: { x: 100, y: 100, width: 200, height: 110 }, ratio: 0.367 },
+                lower: { geometry: { x: 100, y: 210, width: 200, height: 90 }, ratio: 0.3 },
+            },
+            "top-left": {
+                "focus-left": { geometry: { x: 100, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+                focus: { geometry: { x: 150, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+                "focus-row": { geometry: { x: 100, y: 90, width: 200, height: 110 }, ratio: 0.367 },
+                upper: { geometry: { x: 100, y: 0, width: 200, height: 90 }, ratio: 0.3 },
+            },
+            "top-right": {
+                focus: { geometry: { x: 160, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+                "focus-right": { geometry: { x: 250, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+                "focus-row": { geometry: { x: 100, y: 90, width: 200, height: 110 }, ratio: 0.367 },
+                upper: { geometry: { x: 100, y: 0, width: 200, height: 90 }, ratio: 0.3 },
+            },
+            "bottom-left": {
+                "focus-left": { geometry: { x: 100, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+                focus: { geometry: { x: 150, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+                "focus-row": { geometry: { x: 100, y: 100, width: 200, height: 110 }, ratio: 0.367 },
+                lower: { geometry: { x: 100, y: 210, width: 200, height: 90 }, ratio: 0.3 },
+            },
+            "bottom-right": {
+                focus: { geometry: { x: 160, y: 100, width: 90, height: 100 }, ratio: 0.45 },
+                "focus-right": { geometry: { x: 250, y: 100, width: 50, height: 100 }, ratio: 0.25 },
+                "focus-row": { geometry: { x: 100, y: 100, width: 200, height: 110 }, ratio: 0.367 },
+                lower: { geometry: { x: 100, y: 210, width: 200, height: 90 }, ratio: 0.3 },
+            },
+        };
+
+        for (const edge of edges) {
+            const state = nativePointerResizeSetup();
+            let started = 0;
+            let finished = 0;
+            let stepped = 0;
+            state.fixture.interactiveMoveResizeStarted.connect(() => {
+                started += 1;
+            });
+            state.fixture.interactiveMoveResizeFinished.connect(() => {
+                finished += 1;
+            });
+            state.fixture.interactiveMoveResizeStepped.connect(() => {
+                stepped += 1;
+            });
+
+            state.fixture.start(state.focus, edge);
+            state.fixture.move(edge.includes("left") ? -10 : edge.includes("right") ? 10 : 0, edge.includes("top") ? -10 : edge.includes("bottom") ? 10 : 0);
+            state.fixture.finish();
+
+            assert.equal(started, 1, edge);
+            assert.equal(finished, 1, edge);
+            assert.equal(stepped, 0, edge);
+            assert.equal(state.fixture.events[0], "interactiveMoveResizeStarted", edge);
+            assert.equal(state.fixture.events[1], "native-tile-mutation", edge);
+            assert.equal(state.fixture.nativeGeometryWrites.length, edge.includes("-") ? 4 : 2, edge);
+            const expectedTiles = expectedFinalState[edge];
+            const tilesById = new Map([
+                [state.focusLeft.id, state.focusLeft],
+                [state.focus.id, state.focus],
+                [state.focusRight.id, state.focusRight],
+                [state.focusRow.id, state.focusRow],
+                [state.upper.id, state.upper],
+                [state.lower.id, state.lower],
+            ]);
+            assert.deepEqual(
+                Object.fromEntries(
+                    Object.keys(expectedTiles).map((tileId) => {
+                        const tile = tilesById.get(tileId);
+                        if (tile === undefined) {
+                            throw new Error(`${edge}: missing final tile ${tileId}`);
+                        }
+                        return [tileId, { geometry: tile.geometry, ratio: tile.ratio }];
+                    }),
+                ),
+                expectedTiles,
+                edge,
+            );
+            const selectedTileIds = state.fixture.selectedDividers.flatMap(({ subject, neighbor }) => [subject.id, neighbor.id]);
+            assert.deepEqual([...new Set(selectedTileIds)].sort(), Object.keys(expectedTiles).sort(), edge);
+            const writeCounts = new Map<string, number>();
+            for (const write of state.fixture.nativeGeometryWrites) {
+                assert.equal(write.owner, "kwin-native-pointer-resize", edge);
+                writeCounts.set(write.tileId, (writeCounts.get(write.tileId) ?? 0) + 1);
+            }
+            assert.deepEqual(
+                Object.fromEntries([...writeCounts.entries()].sort()),
+                Object.fromEntries(Object.keys(expectedTiles).sort().map((tileId) => [tileId, 1])),
+                edge,
+            );
+            assert.deepEqual(
+                state.fixture.events,
+                ["interactiveMoveResizeStarted", "native-tile-mutation", "interactiveMoveResizeFinished"],
+                edge,
+            );
+        }
+
+        const selection = nativePointerResizeSetup();
+        selection.fixture.start(selection.focus, "right");
+        assert.equal(selection.fixture.selectedDividers[0]?.subject.id, "focus");
+        assert.equal(selection.fixture.selectedDividers[0]?.neighbor.id, "focus-right");
+        selection.fixture.finish();
+        selection.fixture.start(selection.focus, "top");
+        assert.equal(selection.fixture.selectedDividers[0]?.subject.id, "focus-row");
+        assert.equal(selection.fixture.selectedDividers[0]?.neighbor.id, "upper");
+        selection.fixture.finish();
+        selection.fixture.start(selection.upper, "right");
+        assert.equal(selection.fixture.selectedDividers[0]?.subject.id, "nested");
+        assert.equal(selection.fixture.selectedDividers[0]?.neighbor.id, "outer-right");
+        selection.fixture.finish();
+
+        const rounded = nativePointerResizeSetup();
+        rounded.fixture.start(rounded.focus, "right");
+        rounded.fixture.move(10.6, 0);
+        rounded.fixture.finish(true);
+        assert.deepEqual(rounded.focus.geometry, { x: 160, y: 100, width: 91, height: 100 });
+        assert.deepEqual(rounded.focusRight.geometry, { x: 251, y: 100, width: 49, height: 100 });
+        assert.equal(rounded.focus.ratio, 0.455);
+        assert.equal(rounded.focusRight.ratio, 0.245);
+        assert.deepEqual(rounded.fixture.events, [
+            "interactiveMoveResizeStarted",
+            "native-tile-mutation",
+            "interactiveMoveResizeFinished:Escape",
+        ]);
+        assert.equal(rounded.fixture.events[rounded.fixture.events.length - 1], "interactiveMoveResizeFinished:Escape");
+
+        const floor = nativePointerResizeSetup();
+        floor.fixture.start(floor.focus, "right");
+        floor.fixture.move(1000, 0);
+        floor.fixture.finish();
+        assert.equal(floor.focus.geometry.width, 110);
+        assert.equal(floor.focusRight.geometry.width, 30);
+        assert.ok(floor.focus.geometry.width >= 200 * 0.15);
+        assert.ok(floor.focusRight.geometry.width >= 200 * 0.15);
+
+        for (const kind of ["outputChanged", "desktopsChanged", "tileChanged", "moveResizedChanged"] as const) {
+            const invalidated = nativePointerResizeSetup();
+            let finished = 0;
+            invalidated.fixture.interactiveMoveResizeFinished.connect(() => {
+                finished += 1;
+            });
+            invalidated.fixture.start(invalidated.focus, "right");
+            invalidated.fixture.move(10, 0);
+            invalidated.fixture[kind].connect(() => {
+                assert.equal(invalidated.fixture.active, false, `${kind}: state cleared before callback`);
+                invalidated.fixture.finish();
+            });
+            invalidated.fixture.invalidate(kind);
+            invalidated.fixture.finish();
+            assert.equal(invalidated.fixture.active, false, kind);
+            assert.equal(invalidated.fixture.nativeGeometryWrites.length, 2, kind);
+            assert.equal(finished, 0, kind);
+            assert.equal(
+                invalidated.fixture.events.join(","),
+                `interactiveMoveResizeStarted,native-tile-mutation,native-invalidation:${kind}`,
+                kind,
+            );
+        }
+
+    });
+});
+
+describe("TileController native pointer resize signal contract", () => {
+    it("attaches source-typed signals and disconnects every subscription deterministically", () => {
+        const harness = new Harness();
+        const target = window({
+            outputChanged: qv4MethodSignal(),
+            desktopsChanged: qv4MethodSignal(),
+            tileChanged: qv4MethodSignal(),
+            interactiveMoveResizeStarted: qv4MethodSignal(),
+            interactiveMoveResizeStepped: qv4PayloadMethodSignal(),
+            interactiveMoveResizeFinished: qv4MethodSignal(),
+            moveResizedChanged: qv4MethodSignal(),
+        });
+        const events: string[] = [];
+        const stepped: unknown[] = [];
+        const watch = harness.environment().watchInteractiveWindow(
+            target,
+            () => events.push("started"),
+            () => events.push("finished"),
+            (geometry) => stepped.push(geometry),
+            () => events.push("move-resized"),
+            () => events.push("invalidated"),
+        );
+
+        assert.deepEqual({ ok: watch.ok, failed: watch.failed }, { ok: 7, failed: 0 });
+        assert.equal(target.interactiveMoveResizeStarted.subscriberCount, 1);
+        assert.equal(target.interactiveMoveResizeStepped.subscriberCount, 1);
+        assert.equal(target.interactiveMoveResizeFinished.subscriberCount, 1);
+        assert.equal(target.moveResizedChanged.subscriberCount, 1);
+        assert.equal(target.outputChanged.subscriberCount, 1);
+        assert.equal(target.desktopsChanged.subscriberCount, 1);
+        assert.equal(target.tileChanged.subscriberCount, 1);
+
+        target.interactiveMoveResizeStarted.emit();
+        target.interactiveMoveResizeStepped.emit(RECT);
+        target.interactiveMoveResizeFinished.emit();
+        target.moveResizedChanged.emit();
+        target.outputChanged.emit();
+        target.desktopsChanged.emit();
+        target.tileChanged.emit();
+        assert.deepEqual(events, ["started", "finished", "move-resized", "invalidated", "invalidated", "invalidated"]);
+        assert.deepEqual(stepped, [RECT]);
+
+        watch.disconnect();
+        watch.disconnect();
+        assert.equal(target.interactiveMoveResizeStarted.subscriberCount, 0);
+        assert.equal(target.interactiveMoveResizeStepped.subscriberCount, 0);
+        assert.equal(target.interactiveMoveResizeFinished.subscriberCount, 0);
+        assert.equal(target.moveResizedChanged.subscriberCount, 0);
+        assert.equal(target.outputChanged.subscriberCount, 0);
+        assert.equal(target.desktopsChanged.subscriberCount, 0);
+        assert.equal(target.tileChanged.subscriberCount, 0);
+
+        target.interactiveMoveResizeStarted.emit();
+        target.interactiveMoveResizeStepped.emit(RECT);
+        assert.deepEqual(events, ["started", "finished", "move-resized", "invalidated", "invalidated", "invalidated"]);
+        assert.deepEqual(stepped, [RECT]);
     });
 });
