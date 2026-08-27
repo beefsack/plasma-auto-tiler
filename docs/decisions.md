@@ -184,16 +184,14 @@ Git history and archived change records.
 
 ## Layout-Aware Shifted Shortcuts
 
-- **Decision:** At startup, the exact US layout registers the existing shifted
-  aliases. Non-US, unknown, unavailable, or malformed layout state omits only
-  layout-sensitive move aliases and preserves unrelated shortcuts. Layout
-  changes require reload. Agents may snapshot, reconcile, and roll back only
-  this project's affected KGlobalAccel records; mutation of non-project records
-  requires separate approval.
-- **Scope:** The policy is fail-closed and reload-only. No dynamic layout-change
-  subscription is selected.
-- **Reconsider when:** A separately supported layout-change signal contract or
-  a different supported layout matrix is approved.
+- **Decision:** The initial release supports standard US keyboards only and
+  preserves the existing hardcoded shifted aliases. It does not select layout
+  detection, shortcut omission, opt-in configuration, shortcut migration, or
+  KGlobalAccel reconciliation.
+- **Scope:** No source behavior changes for layout support are selected for the
+  initial release.
+- **Reconsider when:** The initial release is complete and separately approved
+  post-release scope defines complete layout support.
 
 ## Interactive Resize
 
