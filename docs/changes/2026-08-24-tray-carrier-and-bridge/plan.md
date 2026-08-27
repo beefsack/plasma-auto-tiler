@@ -78,8 +78,9 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
 - [x] unit-02a-bridge-contract-fixture accepted after semantic attempt 2 under the approved fixture-delivery reset.
 - [ ] unit-02b-kwin-publisher blocked pending reconciliation of concurrent
   `kwin/src/entry.ts` ownership, despite its accepted fixture dependency.
-- [ ] unit-02c-helper-endpoint is ready for implementation after dispatch
-  preflight; it depends only on accepted unit-02a.
+- [x] unit-02c-helper-endpoint accepted after semantic attempt 1, the approved
+  nonce-build-directory gate amendment, host-unknown verification recovery, and
+  closure of its one frozen startup owner-race finding.
 - [ ] unit-03 blocked on units 02b and 02c.
 - [ ] unit-04 blocked on unit-01 and unit-03.
 - [ ] unit-05 blocked on units 02b-04 and user live authorization.
@@ -143,6 +144,24 @@ It is acyclic. The pre-start split is not a changed-kind reset.
   no findings. It confirmed the selected semantics across this plan, `spec.md`,
   and the accepted fixture vectors; scoped `git diff --check` passed. This docs
   review increments only the change-wide independent-review record.
+- 2026-08-27: Successor-Lead preflight is `dispatch-invalid` before source work.
+  The repaired packet's nonnegative revision rule conflicts with the accepted
+  fixture transition that accepts generation `limits` at revision
+  `-2147483648`. The semantic scope therefore cannot both consume the fixture
+  and enforce the supplied rule. No Worker dispatch, packet repair, source
+  change, or static gate run is authorized; escalation is required.
+- 2026-08-28: The user explicitly authorized one fresh `unit-02c-helper-endpoint`
+  implementation dispatch after the two recorded packet failures. Preflight is
+  valid: Worker `process_role=Worker` and `parent_process_role=Lead` match;
+  parent-recorded selector `worker-openai`, unspecified model preference, and
+  distinct host persona are non-blocking metadata. One-child Task depth and
+  `processed-beef-work-unit` availability reconcile. Accepted dependency
+  `unit-02a` commit `925d3ab` is present and the graph remains acyclic. The
+  mutable Rust paths have no concurrent owner. `gate.tray-helper-static`
+  literally matches the approved command and its all-exit-zero baseline. This
+  valid dispatch begins unit-02c semantic attempt 1; the prior two
+  `dispatch-invalid` records remain budget-neutral and no further packet repair
+  is authorized.
 
 ### Fixture-Delivery Reset
 
@@ -158,7 +177,7 @@ It is acyclic. The pre-start split is not a changed-kind reset.
 | unit-01 | 0 | 0 | 0 | 0 |
 | unit-02a-bridge-contract-fixture | 2 | 0 | 1 | 1 |
 | unit-02b-kwin-publisher | 0 | 0 | 0 | 0 |
-| unit-02c-helper-endpoint | 0 | 0 | 0 | 0 |
+| unit-02c-helper-endpoint | 1 | 0 | 1 | 1 |
 | unit-03 | 0 | 0 | 0 | 0 |
 | unit-04 | 0 | 0 | 0 | 0 |
 | unit-05 | 0 | 0 | 0 | 0 |
@@ -190,7 +209,7 @@ It is acyclic. The pre-start split is not a changed-kind reset.
 
 | Implementation dispatches | Dispatch-invalids | Pre-review corrections | Finding-fix corrections | Independent reviews | Changed-kind resets | Broad gate runs | Worker tool-call proxy | Lead tool-call proxy | Acceptance criteria moved | No-progress streak |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2 | 1 | 0 | 2 | 3 | 1 | 3 | 0 | 35 | 4 | 0 |
+| 3 | 2 | 0 | 3 | 4 | 1 | 3 | 0 | 36 | 5 | 0 |
 
 ## Resolved Governance And Remaining Technical Work
 
@@ -239,9 +258,14 @@ generated output under tracked `kwin/dist`.
   Expected baseline: exit 0, 0 failures; only the named source/test files and
   accepted fixture input are copied.
 - `gate.tray-helper-static`:
-  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-helper-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export CARGO_TARGET_DIR="$ATTEMPT/target" CARGO_TERM_COLOR=never; cargo fmt --check && cargo test --locked && cargo check --locked)`
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-helper-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export CARGO_TARGET_DIR="$ATTEMPT/target" CARGO_BUILD_BUILD_DIR="$ATTEMPT/target" CARGO_TERM_COLOR=never; cargo fmt --check && cargo test --locked && cargo check --locked)`
   Expected baseline: all commands exit 0 and Rust target output is only under
-  `ATTEMPT/target`.
+  `ATTEMPT/target`; the current deterministic tests have zero failures and no
+  live bus is used. The prior command exported only `CARGO_TARGET_DIR`; Cargo
+  1.97 placed reused test artifacts in its separate build directory
+  `/home/beefsack/.cache/cargo/build`, so its exit-zero result was not accepting
+  evidence. The approved `CARGO_BUILD_BUILD_DIR` addition makes both Cargo
+  output directories the nonce target without changing the acceptance mechanism.
 
 Each production child receives one independent public/security-contract review
 before acceptance. No additional independently accepted harness is required:
@@ -266,7 +290,7 @@ evidence; neither folds in fixture delivery or unrelated work.
 | Fixture paths typecheck with repository-managed dependencies. | `gate.tray-bridge-typecheck` | `npm --prefix kwin run typecheck` | Exit 0. | Same semantic-attempt-2 source snapshot; fresh output exit 0. |
 | Broad KWin suite accepts the isolated allowed snapshot. | `gate.tray-bridge-broad` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" 6466c99dd497779d8499e0fef41cc5618593bff2 && mkdir -p "$ATTEMPT/test-fixtures" "$ATTEMPT/kwin/tests" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/tray-bridge-v1.json" && cp kwin/tests/tray-bridge-protocol.test.ts "$ATTEMPT/kwin/tests/tray-bridge-protocol.test.ts" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))` | Exit 0, 0 failures; the fresh worktree contains only the two uncommitted tray fixture inputs and uses the source-snapshot `TRAY_BRIDGE_FIXTURE`; no pointer, COSMIC candidate, or other untracked input is copied. | Same semantic-attempt-2 source snapshot copied into a fresh detached worktree; fresh output: 996 passed, 0 failures. This formerly unmet canonical baseline advanced. |
 | KWin publisher has focused, typecheck, build, and isolated broad evidence. | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | See Production Gate Map. | All production gate baselines pass on the same scoped snapshot. | Pending `unit-02b-kwin-publisher`; blocked on `kwin/src/entry.ts` ownership reconciliation. |
-| Rust helper endpoint validates cache and owner-liveness behavior. | `gate.tray-helper-static` | See Production Gate Map. | Format, test, and check exit 0 on the same scoped snapshot. | Pending `unit-02c-helper-endpoint`. |
+| Rust helper endpoint validates cache and owner-liveness behavior. | `gate.tray-helper-static` | See Production Gate Map. | Format, test, and check exit 0 with Rust target output only under `ATTEMPT/target`. | Attempt-1 scoped snapshot: HEAD `882fc0fe3264740012c69c22fcbcb75123d3e26f`, modified `Cargo.toml` and `src/main.rs`, new `Cargo.lock`, `src/lib.rs`, `src/tray_endpoint.rs`, and `tests/tray_endpoint.rs`. The superseded command's format, test (5 passed), and check commands exited 0, but reused artifacts were under `/home/beefsack/.cache/cargo/build`; baseline unmet. The first amended verification timed out during check. Host-unknown recovery reran the exact amended command with a 600000-ms execution boundary: format, test (5 passed, 0 failed), and check exit 0; emitted Cargo paths were contained in `/tmp/opencode/tray-helper-7f4KdPTo/target`; no live bus ran. The sole finding-fix added deterministic startup owner-loss proof; its fresh amended gate passed with 1 unit test and 5 integration tests, 0 failures, and output contained in `/tmp/opencode/tray-helper-WFxhPyqg/target`. SHA-256: `Cargo.toml` `3c1b288d17ccd5541b57405fcaae213dccebf429ad677663e650d98d488f9465`, `Cargo.lock` `b37e719f335012cf2ed4932a3d354825b347c5d413e6d29f9ee2b11289a26a1b`, `src/main.rs` `64be74af655e7850852db5cd0956cc2dd18a427dba81615b622ed481f99a8a4c`, `src/lib.rs` `e89c11a7806b9d191254aa0f134c056b46c548fa97588d4fe75e1d5a6290a4e8`, `src/tray_endpoint.rs` `3eeb7612d75f987ec584ad2e3c198fee3d2130c8bd2af61d8b11117ac16f8e36`, `tests/tray_endpoint.rs` `725a45a8e04a9330e5e60340598f290a5657c447fb9e83ed72165a4efd237c92`; fixture `33b1c33a29b5ab391773fbfad34c8fb8421932cd1c839b9314b6a7d5630689cc`. The frozen review finding is confirmed closed. |
 
 ## Residual Risks
 
@@ -279,6 +303,9 @@ evidence; neither folds in fixture delivery or unrelated work.
 - KWin `callDBus` has no delivery acknowledgement. Heartbeat re-invocation is a
   retry attempt, not proof of delivery; platform dispatch remains a production
   and live-validation risk.
+- The helper endpoint's semantic attempt is unaccepted because host Cargo target
+  configuration overrides the canonical gate's nonce-target expectation. The
+  approved mutable scope excludes a host or Cargo configuration correction.
 - `unit-02b-kwin-publisher` cannot start until concurrent ownership of
   `kwin/src/entry.ts` is reconciled. `unit-02c-helper-endpoint` has no such
   source-path blocker.

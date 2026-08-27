@@ -213,3 +213,156 @@
   0; pre-review corrections 0; finding-fix corrections 2; independent reviews
   2; changed-kind resets 1; broad gates 3; acceptance criteria moved 4;
   no-progress streak 0. Unit counters remain unchanged.
+
+## 2026-08-27
+
+- Role / unit: Successor Lead / `unit-02c-helper-endpoint` repaired-packet preflight.
+- Result: `dispatch-invalid` before source work. The packet requires a signed
+  nonnegative revision, while the independently accepted fixture requires
+  acceptance of signed revision `-2147483648` for generation `limits`.
+- Files / commit: `plan.md` and `log.md` record only; no Worker dispatch, source,
+  dependency, fixture, test, Cargo lock, runtime state, commit, or push.
+- Verification: The approved `spec.md` constraint and accepted fixture's signed
+  revision boundary vector conflict with the repaired packet. The exact
+  `gate.tray-helper-static` was not run because source work is not authorized.
+- Notes: This consumes no implementation, correction, or review budget. No
+  second packet repair is authorized. Change-wide dispatch-invalids are now 2;
+  implementation dispatches remain 2; unit-02c counters remain zero.
+
+## 2026-08-28
+
+- Role / unit: Lead / `unit-02c-helper-endpoint` fresh implementation dispatch preflight.
+- Result: Valid under the user's explicit one-dispatch exception after the two
+  prior packet failures. This begins semantic attempt 1.
+- Files / commit: `plan.md` and `log.md` record only; no source, fixture, Cargo
+  lock, runtime state, commit, or push changed before dispatch.
+- Verification: Worker/Lead `process_role` fields match. Parent-recorded
+  `worker-openai` selector, unspecified model preference, and host persona are
+  distinct non-blocking metadata. One-child Task depth and
+  `processed-beef-work-unit` availability reconcile. Accepted `unit-02a`
+  dependency commit `925d3ab`, acyclic graph, exact Rust path ownership, and
+  literal `gate.tray-helper-static` command and all-exit-zero baseline reconcile.
+- Notes: The two earlier `dispatch-invalid` records remain budget-neutral. No
+  further packet repair is authorized. Change-wide implementation dispatches are
+  3; dispatch-invalids 2; no-progress streak 1.
+
+- Role / unit: Lead / `unit-02c-helper-endpoint` semantic attempt 1 gate review.
+- Result: Blocked. Scoped implementation inspection found no pre-review source
+  correction. The literal static command exits 0 and its five deterministic
+  fixture-driven tests pass, but the target-output baseline is unmet.
+- Files / commit: `Cargo.toml`, `src/main.rs`, new `Cargo.lock`, `src/lib.rs`,
+  `src/tray_endpoint.rs`, and `tests/tray_endpoint.rs` remain unstaged; tray
+  records remain unstaged; no commit or push.
+- Verification: At HEAD `882fc0fe3264740012c69c22fcbcb75123d3e26f`, the exact
+  `gate.tray-helper-static` command runs `fmt`, `test`, and `check` successfully.
+  Tests: 5 passed, 0 failed. Despite its `CARGO_TARGET_DIR="$ATTEMPT/target"`
+  export, Cargo writes under `/home/beefsack/.cache/cargo/build` rather than the
+  nonce-owned target path required by the gate baseline. No live bus was used.
+- Notes: This is a host/configuration output-boundary blocker outside the
+  authorized mutable paths. The unit is not accepted; no independent review,
+  commit, or push is authorized. Counters remain implementation dispatches 3;
+  dispatch-invalids 2; pre-review corrections 0; unit-02c independent reviews
+  0; acceptance criteria moved 4; no-progress streak 1.
+
+- Role / unit: Orchestrator approval and Lead / `unit-02c-helper-endpoint` gate amendment.
+- Result: Approved semantic amendment of `gate.tray-helper-static` only. The
+  acceptance mechanism remains nonce-contained Cargo output.
+- Files / commit: `plan.md` and `log.md` record only; no helper source, lock,
+  fixture, runtime state, commit, or push changed.
+- Verification: The superseded literal command is non-accepting evidence: all
+  commands exited 0 with 5 passing tests, but Cargo 1.97 reused artifacts from
+  `/home/beefsack/.cache/cargo/build`. The amended literal command additionally
+  exports `CARGO_BUILD_BUILD_DIR="$ATTEMPT/target"`, alongside
+  `CARGO_TARGET_DIR="$ATTEMPT/target"` and `CARGO_TERM_COLOR=never`.
+- Notes: This is not a semantic attempt, correction, repair, reset, or changed
+  acceptance mechanism. A fresh read-only gate verification is required before
+  helper inspection and the required independent public/security review.
+
+- Role / unit: Read-only Worker verification / `unit-02c-helper-endpoint` amended gate.
+- Result: Blocked. The exact amended `gate.tray-helper-static` did not complete
+  before the Worker host timeout.
+- Files / commit: No Worker file changes, staging, commit, or push. The literal
+  trap owns and removes only its nonce path.
+- Verification: `cargo fmt --check` passed. `cargo test --locked` passed with 5
+  tests, 0 failures, and no live bus. Emitted Cargo paths were under
+  `/tmp/opencode/tray-helper-Vyk5KPhT/target`. `cargo check --locked` exceeded
+  the 120-second Worker timeout, so the all-exit-zero baseline and required
+  source-hash/output correspondence are incomplete.
+- Notes: This is verification evidence only, not an implementation dispatch,
+  correction, repair, reset, or review. Stop conditions prohibit helper diff
+  acceptance, independent review, staging, commit, and push. Counters remain
+  implementation dispatches 3; dispatch-invalids 2; pre-review corrections 0;
+  finding-fix corrections 2; independent reviews 3; acceptance criteria moved
+  4; no-progress streak 1.
+
+- Role / unit: Lead / `unit-02c-helper-endpoint` host-unknown verification reconciliation.
+- Result: The prior read-only Worker interruption is a host-unknown result after
+  valid source work, caused by the host's 120-second execution boundary during
+  cold nonce-contained `cargo check`. It is not a semantic attempt, correction,
+  repair, reset, or gate amendment.
+- Files / commit: `log.md` record only; no helper source, lock, fixture, staging,
+  commit, or push changed.
+- Verification: Prior format and test evidence remains partial only: format
+  passed, 5 tests passed with 0 failures, and emitted paths were nonce-contained;
+  check, hashes, and complete correspondence were interrupted.
+- Notes: A fresh compressed read-only verification Worker is authorized with the
+  unchanged amended literal command and a host execution timeout of at least
+  600000 milliseconds. Counters remain unchanged.
+
+- Role / unit: Read-only Worker verification / `unit-02c-helper-endpoint` host recovery.
+- Result: Recovery gate passed. The prior timeout is reconciled as host-unknown
+  verification evidence and does not change implementation or correction counts.
+- Files / commit: No Worker file changes, staging, commit, or push. The literal
+  trap cleaned only its nonce-owned path.
+- Verification: The exact amended command ran once from repository root with a
+  600000-ms execution boundary. Format, test, and check exited 0; test reported
+  5 passed and 0 failed; no live bus ran. Emitted Cargo output was contained in
+  `/tmp/opencode/tray-helper-7f4KdPTo/target`. Full scoped SHA-256 correspondence
+  is recorded in the plan evidence row. The Worker result did not retain elapsed
+  duration beyond successful completion within the configured boundary.
+- Notes: Fresh static evidence permits the one already-authorized independent
+  public/security review. Counters remain unchanged.
+
+- Role / unit: Independent Worker review / `unit-02c-helper-endpoint`.
+- Result: One frozen medium public/security finding set. The initial KWin owner
+  lookup can race owner loss: `name_has_owner` succeeds, `get_name_owner` then
+  errors, and the helper exits instead of starting empty.
+- Files / commit: No review changes, staging, commit, or push.
+- Verification: Finding evidence is `src/tray_endpoint.rs:165-173` against the
+  owner-liveness requirement in the approved tray spec and plan. No gate or live
+  test ran during review.
+- Notes: The sole finding-fix correction is limited to fail-closed startup owner
+  reconciliation and regression proof within the existing helper scope. Counters
+  are implementation dispatches 3; dispatch-invalids 2; finding-fix corrections
+  2 change-wide and 0 for unit-02c before this correction; independent reviews 4
+  change-wide and 1 for unit-02c.
+
+- Role / unit: Worker finding-fix and Lead confirmation / `unit-02c-helper-endpoint`.
+- Result: The frozen startup owner-race finding is closed. The initial resolution
+  treats `NameHasNoOwner` after successful observation as an empty owner state;
+  other D-Bus errors still propagate.
+- Files / commit: Only `src/tray_endpoint.rs` changed in the correction; no
+  staging, commit, or push yet.
+- Verification: Deterministic regression proves observe then resolve ordering and
+  empty startup on owner loss. The exact amended gate passed with a 600000-ms
+  execution boundary: 1 unit test and 5 integration tests passed, 0 failures;
+  format and check exited 0; no live bus ran; Cargo output was contained in
+  `/tmp/opencode/tray-helper-WFxhPyqg/target` before trap cleanup. Lead
+  confirmation checked only this frozen finding and its scoped SHA-256 snapshot.
+- Notes: This consumes unit-02c's sole finding-fix correction. The finding is
+  closed, the helper acceptance criterion is newly met, and no second review or
+  correction occurred. Change-wide counters: implementation dispatches 3;
+  dispatch-invalids 2; finding-fix corrections 3; independent reviews 4;
+  acceptance criteria moved 5; no-progress streak 0.
+
+- Role / unit: Lead acceptance / `unit-02c-helper-endpoint`.
+- Result: Accepted pending the authorized commit transaction.
+- Files / commit: Accepted helper paths are `Cargo.toml`, `Cargo.lock`,
+  `src/main.rs`, `src/lib.rs`, `src/tray_endpoint.rs`, and
+  `tests/tray_endpoint.rs`; tray `plan.md` and `log.md` are acceptance records.
+- Verification: Fixed zbus route and `InvalidSnapshot` name, fixture-driven
+  signed state transitions, 30000-ms freshness, owner invalidation and startup
+  reconciliation, minimal dependencies, no live bus tests, fresh nonce-contained
+  canonical gate, and the closed frozen review finding are mapped in the plan.
+- Notes: No serious finding or acceptance gap remains in unit-02c. The next
+  action is scoped status/diff/log/staging inspection and the authorized commit.
