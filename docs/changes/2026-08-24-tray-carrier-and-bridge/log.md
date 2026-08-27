@@ -161,6 +161,43 @@
 
 ## 2026-08-27
 
+- Role / unit: Lead / `unit-02c-helper-endpoint` preflight.
+- Result: `dispatch-invalid` before source work. Role metadata, Task depth,
+  Worker skill availability, accepted fixture dependency `925d3ab`, acyclic
+  graph, authorized Rust-path ownership, and the exact static gate reconcile.
+  The supplied 3000-millisecond stale threshold and revision-0-only
+  new-generation rule conflict with the approved 30000-millisecond contract and
+  fixture vector accepting `beta` revision 1.
+- Files / commit: `plan.md` and `log.md` record only; no source, dependency,
+  fixture, test, Cargo lock, or runtime state changed; no commit.
+- Verification: `gate.tray-helper-static` was compared literally, not run,
+  because source work has not begun. The user selected the accepted fixture
+  semantics: 30000-millisecond staleness, KWin revision 0 at startup and
+  rollover, and helper acceptance of semantically valid new generations at
+  nonzero revisions, including `beta` and post-reacquisition `gamma` revision 1.
+  The one repaired packet is ready after docs acceptance.
+- Notes: Unit and change-wide implementation, correction, and review counters
+  remain unchanged. This preflight invalid result is not a semantic attempt.
+
+## 2026-08-27
+
+- Role / unit: Lead and independent Worker / tray contract reconciliation.
+- Result: The user selected the accepted fixture semantics. `spec.md` and
+  `plan.md` now distinguish KWin's revision-0 publication requirement from the
+  helper's acceptance of any semantically valid different generation after owner
+  reacquisition. No public route, signature, security, carrier, settings, or
+  distribution behavior changed.
+- Verification: One fresh read-only Worker contract-consistency review found no
+  findings across the scoped records and accepted fixture; scoped `git diff
+  --check` passed. No source or static gate ran.
+- Notes: The prior `dispatch-invalid` remains pre-source and budget-neutral. The
+  repaired implementation packet is ready. Change-wide independent reviews are
+  3; implementation dispatches 2, dispatch-invalids 1, corrections 0/2,
+  changed-kind resets 1, broad gates 3, acceptance criteria moved 4, and
+  no-progress streak 0. Unit-02c counters remain unchanged.
+
+## 2026-08-27
+
 - Role / unit: Independent Worker review and Lead finding-fix / pre-start
   production split
 - Result: The frozen public/security-plan finding set identified three

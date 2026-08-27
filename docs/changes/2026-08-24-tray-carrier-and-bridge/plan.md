@@ -57,7 +57,8 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
   signed-int maximum, and treats heartbeat re-invocation as one-way retry.
   `unit-02c` owns endpoint validation, cache, freshness, and KWin owner
   observation; it observes before resolving the exact current KWin owner and
-  accepts revision `0` only after owner reacquisition.
+  accepts any semantically valid snapshot after owner reacquisition, including a
+  valid different generation at a nonzero revision.
 
 ## Work Units
 
@@ -120,6 +121,29 @@ It is acyclic. The pre-start split is not a changed-kind reset.
   the work-unit and evidence maps at lines 45-46 and 127-129. No packet repair
   was required.
 
+### unit-02c Dispatch Preflight
+
+- 2026-08-27: Pre-source dispatch is `dispatch-invalid`. Lead/Orchestrator and
+  proposed Worker/Lead process roles, `worker-openai` parent selector,
+  unspecified model preference, distinct host persona, 150000 budget, one-child
+  Task depth, and `processed-beef-work-unit` availability reconcile. The accepted
+  `unit-02a` dependency commit `925d3ab` is an ancestor, its graph edge is
+  acyclic, and no production workaround is proposed. The authorized Rust paths
+  have no concurrent working-tree owner.
+- `gate.tray-helper-static` exactly matches its plan evidence-map ID, literal
+  command, working directory, environment, and exit-zero baseline. The supplied
+  implementation packet required staleness at 3000 milliseconds and revision 0
+  for every new generation, so this pre-source result consumed no attempt,
+  correction, or review counter. The user selected the accepted fixture semantics:
+  30000-millisecond staleness; KWin revision 0 at startup and rollover; and
+  helper acceptance of any semantically valid different generation, including
+  `beta` revision 1 and a post-reacquisition `gamma` revision 1. The single
+  repaired packet is ready for implementation dispatch after docs acceptance.
+- 2026-08-27: One fresh independent read-only contract-consistency review found
+  no findings. It confirmed the selected semantics across this plan, `spec.md`,
+  and the accepted fixture vectors; scoped `git diff --check` passed. This docs
+  review increments only the change-wide independent-review record.
+
 ### Fixture-Delivery Reset
 
 - 2026-08-27: The Orchestrator approved the sole changed-kind reset. It makes
@@ -166,7 +190,7 @@ It is acyclic. The pre-start split is not a changed-kind reset.
 
 | Implementation dispatches | Dispatch-invalids | Pre-review corrections | Finding-fix corrections | Independent reviews | Changed-kind resets | Broad gate runs | Worker tool-call proxy | Lead tool-call proxy | Acceptance criteria moved | No-progress streak |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2 | 0 | 0 | 2 | 2 | 1 | 3 | 0 | 35 | 4 | 0 |
+| 2 | 1 | 0 | 2 | 3 | 1 | 3 | 0 | 35 | 4 | 0 |
 
 ## Resolved Governance And Remaining Technical Work
 

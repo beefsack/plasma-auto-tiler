@@ -69,8 +69,9 @@ Non-goals:
   each heartbeat invocation is its retry. The helper installs exact
   `org.kde.KWin` owner-change observation before resolving the current owner,
   reconciles that owner without authenticating a sender, clears cache and
-  freshness on owner loss or change, and remains empty until a valid revision
-  `0` publish after reacquisition.
+  freshness on owner loss or change, and remains stale until a semantically valid
+  publish after reacquisition. Helper acceptance does not require revision `0`
+  for a valid different generation.
 - A valid first snapshot or a valid new generation replaces the accepted state
   and refreshes liveness. For the current generation, a higher revision replaces
   and refreshes; an equal revision with the same `enabled` is replay-idempotent
