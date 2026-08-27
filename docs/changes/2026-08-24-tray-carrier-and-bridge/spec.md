@@ -2,9 +2,10 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: The Orchestrator approved this state-only contract amendment on
-  2026-08-27 under the user's autonomous authorization. It is a fixture contract,
-  not production bridge implementation.
+- Status: The Orchestrator approved the fixture-first contract and the
+  pre-start production split on 2026-08-27 under the user's autonomous
+  authorization. This document records scope only; it does not implement either
+  production unit.
 
 ## Intent and Desired Outcome
 
@@ -33,8 +34,8 @@ Non-goals:
 - Make a sender-authentication claim. Session-bus placement plus this fixed,
   state-only whitelist is the security boundary.
 - Reproduce COSMIC styling or controls exactly.
-- Change `docs/decisions.md`, source outside the two fixture paths, or existing
-  packaging behavior.
+- Change `docs/decisions.md`, source outside the exact path list approved for
+  the currently dispatched unit, or existing packaging behavior.
 
 ## Applicable Principles and Decisions
 
@@ -59,6 +60,17 @@ Non-goals:
   ownership is the liveness guard, not sender authentication: owner loss clears
   the snapshot and freshness immediately; reacquisition remains empty until a
   new valid publish.
+- `enabled` is `TileController.isEnabled`. KWin creates one valid generation for
+  its process lifetime, publishes revision `0` at startup, increments the
+  revision on each enabled-state transition, and publishes immediately on that
+  transition and every 1,000 milliseconds. A transition after revision
+  `2147483647` creates a new generation and publishes revision `0`.
+- KWin invokes `callDBus` one-way. It makes no delivery or acknowledgement claim;
+  each heartbeat invocation is its retry. The helper installs exact
+  `org.kde.KWin` owner-change observation before resolving the current owner,
+  reconciles that owner without authenticating a sender, clears cache and
+  freshness on owner loss or change, and remains empty until a valid revision
+  `0` publish after reacquisition.
 - A valid first snapshot or a valid new generation replaces the accepted state
   and refreshes liveness. For the current generation, a higher revision replaces
   and refreshes; an equal revision with the same `enabled` is replay-idempotent
@@ -80,8 +92,12 @@ Non-goals:
   constraints, settings boundary, distribution boundary, and Rust-only scope.
 - [x] The exact fixed state-only contract, public-route boundary, state owner,
   liveness rules, and restart rules are recorded.
-- [ ] `unit-02a-bridge-contract-fixture` independently accepts a fixture-local
-  codec and state-machine proof before any production integration.
+- [x] `unit-02a-bridge-contract-fixture` independently accepted a fixture-local
+  codec and state-machine proof before production integration.
+- [ ] `unit-02b-kwin-publisher` proves KWin publication without expanding the
+  fixed public route.
+- [ ] `unit-02c-helper-endpoint` proves helper endpoint cache and owner-liveness
+  behavior without expanding the fixed public route.
 
 ## Unresolved Questions
 
@@ -99,3 +115,6 @@ Non-goals:
 
 Production integration does not begin until the exact bridge contract has an
 independently accepted fixture or harness proof and literal canonical gates.
+The accepted `unit-02a-bridge-contract-fixture` is that prerequisite for both
+production children; neither production child imports its fixture-local codec or
+state machine.

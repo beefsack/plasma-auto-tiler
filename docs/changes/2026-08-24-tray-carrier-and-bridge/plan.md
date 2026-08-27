@@ -2,8 +2,8 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: The Orchestrator approved the exact state-only semantic amendment on
-  2026-08-27. This plan authorizes a fixture-first contract unit only.
+- Status: The Orchestrator approved the fixture-first contract and this pre-start
+  production split on 2026-08-27. The split consumes no attempt or reset.
 
 ## Technical Approach
 
@@ -38,32 +38,58 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
   changes, D-Bus registration, signals, actions, `OpenSettings`, shell or input
   execution, helper-to-KWin traffic, sender-auth claims, live operations, and
   unrelated tracked or untracked paths.
+- `unit-02b-kwin-publisher` may modify `kwin/src/entry.ts` and
+  `kwin/src/controller.ts`, and add `kwin/src/tray-publisher.ts` and
+  `kwin/tests/tray-publisher.test.ts`. It reads
+  `test-fixtures/tray-bridge-v1.json` only as a canonical test input and does not
+  modify `kwin/contents/code/main.js`, `kwin/dist`, package manifests, or build
+  scripts.
+- `unit-02c-helper-endpoint` may modify `Cargo.toml` and `src/main.rs`, and add
+  `Cargo.lock`, `src/lib.rs`, `src/tray_endpoint.rs`, and
+  `tests/tray_endpoint.rs`. The root Rust crate owns the endpoint. `zbus` with
+  its blocking API, plus only necessary Rust crate or dev dependencies for
+  shared-fixture consumption, is permitted. No system dependency or
+  `devenv.nix` change is permitted.
+- Both production children preserve the sole public method and all fixture
+  contract prohibitions. `unit-02b` observes `TileController.isEnabled`, uses a
+  process-lifetime generation, publishes revision `0` at startup, increments on
+  enabled transitions, heartbeats every 1,000 milliseconds, rolls generation at
+  signed-int maximum, and treats heartbeat re-invocation as one-way retry.
+  `unit-02c` owns endpoint validation, cache, freshness, and KWin owner
+  observation; it observes before resolving the exact current KWin owner and
+  accepts revision `0` only after owner reacquisition.
 
 ## Work Units
 
-| ID | Objective | Depends on | File or subsystem scope | Gate ID and literal canonical command (static or live) | Expected baseline |
+| ID | Objective | Depends on | File or subsystem scope | Gate IDs | Expected baseline |
 |---|---|---|---|---|---|
 | unit-01 | Historical governance reconciliation: record the active Tray decision for carrier, high-level bridge constraints, KCM ownership, distribution boundary, Rust-only scope, and bounded host authorization. | - | `docs/decisions.md`, product governance | `gate.user-governance`: user-approved written decisions | Decisions resolved and recorded. |
 | unit-02a-bridge-contract-fixture | Independently prove the fixed state-only contract with a JSON fixture and local test codec/state machine. | unit-01 | Only `test-fixtures/tray-bridge-v1.json`, `kwin/tests/tray-bridge-protocol.test.ts` | `gate.tray-bridge-focused`: `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | Fixture conformance tests: 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; the only generated bundle is under fresh nonce-owned `ATTEMPT`. |
-| unit-02b-production-bridge | Implement the later approved KWin publisher and helper endpoint from the accepted fixture contract. | unit-02a-bridge-contract-fixture | KWin script and approved helper surface | `gate.bridge-static`: selected with production scope approval | Not started. |
-| unit-03 | Implement the minimal Rust SNI helper, D-Bus menu, icon, whitelist, and fail-closed behavior. | unit-02b-production-bridge | New helper package only | `gate.sni-static`: command selected with the approved helper toolchain | Implementation not started. |
+| unit-02b-kwin-publisher | Implement the fixed one-way KWin snapshot publisher from the accepted fixture contract. | unit-02a-bridge-contract-fixture | `kwin/src/entry.ts`, `kwin/src/controller.ts`, new publisher and test paths named above | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | Focused: 0 failures, 0 skips. Typecheck/build: exit 0. Broad: exit 0, 0 failures. |
+| unit-02c-helper-endpoint | Implement the fixed Rust helper D-Bus endpoint, cache, freshness, and KWin owner-liveness boundary. | unit-02a-bridge-contract-fixture | Root Rust crate paths named above | `gate.tray-helper-static` | Format, tests, and check exit 0. |
+| unit-03 | Implement the minimal Rust SNI helper, D-Bus menu, icon, whitelist, and fail-closed behavior. | unit-02b-kwin-publisher, unit-02c-helper-endpoint | Existing root helper crate only | `gate.sni-static`: command selected with the approved helper toolchain | Implementation not started. |
 | unit-04 | Define and implement approved distribution, installation, autostart, update, and removal contracts. | unit-01, unit-03 | Approved packaging and installer boundary | `gate.package-static`: command selected after distribution approval | Implementation not started. |
-| unit-05 | Run user-authorized live validation of registration, rendering, actions, state synchronization, restart recovery, and removal. | unit-02b-production-bridge, unit-03, unit-04 | User Plasma/KWin session | `gate.sni-live`: user-authorized live observation | Parked pending implementation and user-run live observation. |
+| unit-05 | Run user-authorized live validation of registration, rendering, actions, state synchronization, restart recovery, and removal. | unit-02b-kwin-publisher, unit-02c-helper-endpoint, unit-03, unit-04 | User Plasma/KWin session | `gate.sni-live`: user-authorized live observation | Parked pending implementation and user-run live observation. |
 
 ## Progress
 
 - [x] unit-01 historical governance reconciliation is accepted and recorded.
 - [x] unit-02a-bridge-contract-fixture accepted after semantic attempt 2 under the approved fixture-delivery reset.
-- [ ] unit-02b-production-bridge blocked on accepted unit-02a-bridge-contract-fixture.
-- [ ] unit-03 blocked on unit-02b-production-bridge.
+- [ ] unit-02b-kwin-publisher blocked pending reconciliation of concurrent
+  `kwin/src/entry.ts` ownership, despite its accepted fixture dependency.
+- [ ] unit-02c-helper-endpoint is ready for implementation after dispatch
+  preflight; it depends only on accepted unit-02a.
+- [ ] unit-03 blocked on units 02b and 02c.
 - [ ] unit-04 blocked on unit-01 and unit-03.
 - [ ] unit-05 blocked on units 02b-04 and user live authorization.
 
-`unit-02a-bridge-contract-fixture` is the sole newly authorized implementation
-unit. Its acceptance is an independent fixture dependency for all production
-integration. The graph is `unit-01 -> unit-02a-bridge-contract-fixture ->
-unit-02b-production-bridge -> unit-03 -> unit-04 -> unit-05`, with unit-04
-also depending on unit-01; it is acyclic.
+`unit-02a-bridge-contract-fixture` is the independently accepted fixture
+dependency for both production children. The graph is
+`unit-01 -> unit-02a-bridge-contract-fixture -> unit-02b-kwin-publisher ->
+unit-03 -> unit-04 -> unit-05` and
+`unit-02a-bridge-contract-fixture -> unit-02c-helper-endpoint -> unit-03`,
+with unit-04 also depending on unit-01 and unit-05 on both production children.
+It is acyclic. The pre-start split is not a changed-kind reset.
 
 ## Attempt Accounting
 
@@ -107,7 +133,8 @@ also depending on unit-01; it is acyclic.
 |---|---:|---:|---:|---:|
 | unit-01 | 0 | 0 | 0 | 0 |
 | unit-02a-bridge-contract-fixture | 2 | 0 | 1 | 1 |
-| unit-02b-production-bridge | 0 | 0 | 0 | 0 |
+| unit-02b-kwin-publisher | 0 | 0 | 0 | 0 |
+| unit-02c-helper-endpoint | 0 | 0 | 0 | 0 |
 | unit-03 | 0 | 0 | 0 | 0 |
 | unit-04 | 0 | 0 | 0 | 0 |
 | unit-05 | 0 | 0 | 0 | 0 |
@@ -139,7 +166,7 @@ also depending on unit-01; it is acyclic.
 
 | Implementation dispatches | Dispatch-invalids | Pre-review corrections | Finding-fix corrections | Independent reviews | Changed-kind resets | Broad gate runs | Worker tool-call proxy | Lead tool-call proxy | Acceptance criteria moved | No-progress streak |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 2 | 0 | 0 | 1 | 1 | 1 | 3 | 0 | 35 | 4 | 0 |
+| 2 | 0 | 0 | 2 | 2 | 1 | 3 | 0 | 35 | 4 | 0 |
 
 ## Resolved Governance And Remaining Technical Work
 
@@ -154,6 +181,10 @@ also depending on unit-01; it is acyclic.
 - Resolved: standing authorization covers reversible, namespaced user-local
   helper build, stage, start, and stop operations, its graphical-session
   autostart entry, and session D-Bus; non-project state is prohibited.
+- This standing authorization does not authorize live operations for either
+  production child. Build, start, stop, autostart, and session observation remain
+  outside their static scope and are deferred to the separately authorized live
+  unit.
 - Resolved: the implementation is Rust-only, with no additional native C++ scope
   selected.
 - Resolved fixture contract: the sole state-only method, schema, value domains,
@@ -162,6 +193,41 @@ also depending on unit-01; it is acyclic.
 - Pending production work: an implementation of this contract, any separately
   approved mutating action whitelist, and package mechanics. None are authorized
   by the fixture unit.
+
+## Production Gate Map
+
+All static commands run from repository root in the existing `devenv`
+environment. They use fresh nonce-owned `/tmp/opencode` output and do not write
+generated output under tracked `kwin/dist`.
+
+- `gate.tray-publisher-focused`:
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-publisher.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-publisher.test.js" && node --test "$ATTEMPT/tray-publisher.test.js")`
+  Expected baseline: 0 failures, 0 skips; only the fresh bundle is generated.
+- `gate.tray-publisher-typecheck`:
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-typecheck-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && npm --prefix kwin run typecheck))`
+  Expected baseline: exit 0 in an isolated source snapshot with no generated
+  tracked output.
+- `gate.tray-publisher-build`:
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-build-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; kwin/node_modules/.bin/esbuild kwin/src/entry.ts --bundle --format=iife --target=es2017 --outfile="$ATTEMPT/main.js")`
+  Expected baseline: exit 0; only `ATTEMPT/main.js` is generated.
+- `gate.tray-publisher-broad`:
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))`
+  Expected baseline: exit 0, 0 failures; only the named source/test files and
+  accepted fixture input are copied.
+- `gate.tray-helper-static`:
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-helper-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export CARGO_TARGET_DIR="$ATTEMPT/target" CARGO_TERM_COLOR=never; cargo fmt --check && cargo test --locked && cargo check --locked)`
+  Expected baseline: all commands exit 0 and Rust target output is only under
+  `ATTEMPT/target`.
+
+Each production child receives one independent public/security-contract review
+before acceptance. No additional independently accepted harness is required:
+unit-02a remains the fixture prerequisite, and production tests may consume its
+vectors without importing its fixture-local codec or state machine. A separate
+bus-process harness would require a new semantic approval.
+
+The semantic-amendment documentation commits separately. Each accepted
+production child then commits only its approved paths and current canonical gate
+evidence; neither folds in fixture delivery or unrelated work.
 
 ## Acceptance-Criterion Evidence
 
@@ -175,6 +241,8 @@ also depending on unit-01; it is acyclic.
 | Fixture vectors enforce schema, generation, revision, enabled, owner, liveness, replay, restart, transport, malformed, and route-rejection rules. | `gate.tray-bridge-focused` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; only generated bundle under fresh `ATTEMPT`. | Semantic-attempt-2 snapshot: HEAD `6466c99dd497779d8499e0fef41cc5618593bff2`; untracked fixture SHA-256 `33b1c33a29b5ab391773fbfad34c8fb8421932cd1c839b9314b6a7d5630689cc`; untracked test SHA-256 `5a5b568efd228e7e2e5e31f556d6dd878d0c13f15087d8a24fc280141b06f18c`; fresh nonce output: 2 passed, 0 failures, 0 skips. |
 | Fixture paths typecheck with repository-managed dependencies. | `gate.tray-bridge-typecheck` | `npm --prefix kwin run typecheck` | Exit 0. | Same semantic-attempt-2 source snapshot; fresh output exit 0. |
 | Broad KWin suite accepts the isolated allowed snapshot. | `gate.tray-bridge-broad` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" 6466c99dd497779d8499e0fef41cc5618593bff2 && mkdir -p "$ATTEMPT/test-fixtures" "$ATTEMPT/kwin/tests" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/tray-bridge-v1.json" && cp kwin/tests/tray-bridge-protocol.test.ts "$ATTEMPT/kwin/tests/tray-bridge-protocol.test.ts" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))` | Exit 0, 0 failures; the fresh worktree contains only the two uncommitted tray fixture inputs and uses the source-snapshot `TRAY_BRIDGE_FIXTURE`; no pointer, COSMIC candidate, or other untracked input is copied. | Same semantic-attempt-2 source snapshot copied into a fresh detached worktree; fresh output: 996 passed, 0 failures. This formerly unmet canonical baseline advanced. |
+| KWin publisher has focused, typecheck, build, and isolated broad evidence. | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | See Production Gate Map. | All production gate baselines pass on the same scoped snapshot. | Pending `unit-02b-kwin-publisher`; blocked on `kwin/src/entry.ts` ownership reconciliation. |
+| Rust helper endpoint validates cache and owner-liveness behavior. | `gate.tray-helper-static` | See Production Gate Map. | Format, test, and check exit 0 on the same scoped snapshot. | Pending `unit-02c-helper-endpoint`. |
 
 ## Residual Risks
 
@@ -184,9 +252,16 @@ also depending on unit-01; it is acyclic.
   the resolved Core Distribution boundary.
 - Static evidence cannot establish panel/tray rendering, watcher lifecycle, or
   restart behavior; these remain live-host risks.
+- KWin `callDBus` has no delivery acknowledgement. Heartbeat re-invocation is a
+  retry attempt, not proof of delivery; platform dispatch remains a production
+  and live-validation risk.
+- `unit-02b-kwin-publisher` cannot start until concurrent ownership of
+  `kwin/src/entry.ts` is reconciled. `unit-02c-helper-endpoint` has no such
+  source-path blocker.
 
 ## Final Outcome
 
-- Governance and the fixture contract are reconciled. The fixture proof,
-  production bridge, helper work, distribution work, and applicable live
-  validation remain open.
+- Governance, the fixture contract, and the pre-start production split are
+  reconciled. `unit-02c-helper-endpoint` is the next eligible implementation
+  unit; the KWin publisher, SNI work, distribution work, and live validation
+  remain open.

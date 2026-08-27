@@ -140,3 +140,39 @@
   corrections 0; finding-fix corrections 1; independent reviews 1;
   changed-kind resets 1; broad gates 3; acceptance criteria moved 4;
   no-progress streak 0.
+
+## 2026-08-27
+
+- Role / unit: Lead / pre-start production split
+- Result: The Orchestrator approved replacement of the unattempted monolithic
+  `unit-02b-production-bridge` with `unit-02b-kwin-publisher` and
+  `unit-02c-helper-endpoint`. Both retain the accepted fixture dependency; the
+  split is not a changed-kind reset and changes no attempt counter.
+- Files / commit: `spec.md`, `plan.md`, and `log.md` amended; no source, test,
+  Cargo, dependency, fixture, or governance file changed.
+- Verification: Pending independent public/security-plan review and scoped docs
+  consistency checks.
+- Notes: `unit-02c-helper-endpoint` is the next eligible implementation unit.
+  `unit-02b-kwin-publisher` is blocked until concurrent `kwin/src/entry.ts`
+  ownership is reconciled. Change-wide counters remain implementation dispatches
+  2; dispatch-invalids 0; pre-review corrections 0; finding-fix corrections 1;
+  independent reviews 1; changed-kind resets 1; broad gates 3; acceptance
+  criteria moved 4; no-progress streak 0.
+
+## 2026-08-27
+
+- Role / unit: Independent Worker review and Lead finding-fix / pre-start
+  production split
+- Result: The frozen public/security-plan finding set identified three
+  documentation inconsistencies. The one authorized docs-only correction closes
+  all three: fixture-path wording now permits only exact dispatched-unit paths,
+  standing host authorization is explicitly excluded from production-child live
+  scope, and publisher typecheck uses an isolated source snapshot.
+- Files / commit: `spec.md`, `plan.md`, and `log.md` modified; no source, test,
+  Cargo, dependency, fixture, or governance file changed.
+- Verification: Independent read-only review completed; scoped docs consistency
+  inspection and `git diff --check` passed.
+- Notes: Change-wide counters are implementation dispatches 2; dispatch-invalids
+  0; pre-review corrections 0; finding-fix corrections 2; independent reviews
+  2; changed-kind resets 1; broad gates 3; acceptance criteria moved 4;
+  no-progress streak 0. Unit counters remain unchanged.
