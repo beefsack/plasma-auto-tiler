@@ -2,107 +2,191 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Approved 2026-08-25 by Autonomous Orchestrator; all architecture,
-  distribution, settings, bridge, and dogfood authorization decisions are
-  resolved, while implementation remains open.
+- Status: The Orchestrator approved the exact state-only semantic amendment on
+  2026-08-27. This plan authorizes a fixture-first contract unit only.
 
 ## Technical Approach
 
-This is an Expanded documentation-only route because a tray carrier crosses
-KWin, session D-Bus, resident-process, autostart, distribution, security, and
-live-host boundaries. The recommended implementation, if approved, is an
-external Rust SNI helper plus a separately proven supported command/state bridge
-to the KWin script. The script does not own the tray item. A Plasma applet is a
-possible panel control but is not automatically a strict System Tray item.
+This is an Expanded fixture-first route because a tray carrier crosses KWin,
+session D-Bus, resident-process, autostart, distribution, security, and
+live-host boundaries. The approved carrier is an external Rust SNI helper plus a
+separately proven supported command/state bridge to the KWin script. The script
+not automatically a strict System Tray item.
 
-The minimum useful MVP is one SNI icon, one truthful state indicator, a small
-whitelist of existing actions, and a settings entry point. The helper uses fixed
-user-owned D-Bus identities, validates inputs, performs no shell execution or
-input injection, fails closed when KWin is unavailable, and reconnects safely.
-COSMIC menu structure is inspiration only; its workspace behavior, active hint,
-exact icon, styling, and dynamic shortcut display are not requirements.
+The fixture contract proves only an outbound snapshot boundary. It has no action
+whitelist beyond its one state method, no shell or input injection, and no
+helper-to-KWin path. The helper must fail closed when KWin state is absent or
+stale. COSMIC menu structure is inspiration only; its workspace behavior, active
+hint, exact icon, styling, and dynamic shortcut display are not requirements.
+
+## Contract And Scope
+
+- Fixed public surface: session-bus service `org.plasmaautotiler.Tray`, object
+  `/org/plasmaautotiler/Tray`, interface `org.plasmaautotiler.Tray1`, and only
+  `PublishSnapshot(i schema, s generation, i revision, b enabled)` from KWin to
+  helper.
+- Allowed fixture semantics: schema `1`; generation `[a-z0-9-]{1,32}`;
+  signed-int revision `-2147483648..2147483647`; boolean enabled; the exact
+  owner, state transition, replay, transport-failure, and 30-second stale rules
+  in `spec.md` Constraints.
+- Allowed `unit-02a-bridge-contract-fixture` paths only:
+  `test-fixtures/tray-bridge-v1.json` and
+  `kwin/tests/tray-bridge-protocol.test.ts`. The test owns a fixture-local codec
+  and state machine, imports no production module, and receives the fixture only
+  through the explicit `TRAY_BRIDGE_FIXTURE` canonical-gate input.
+- Prohibited: production bridge or Rust helper code, package or dependency
+  changes, D-Bus registration, signals, actions, `OpenSettings`, shell or input
+  execution, helper-to-KWin traffic, sender-auth claims, live operations, and
+  unrelated tracked or untracked paths.
 
 ## Work Units
 
 | ID | Objective | Depends on | File or subsystem scope | Gate ID and literal canonical command (static or live) | Expected baseline |
 |---|---|---|---|---|---|
-| unit-01 | Obtain user decisions on carrier, bridge semantics, Unified Settings scope, distribution/autostart, and language/native scope; retain no implementation as an option. | - | `docs/decisions.md`, product governance | `gate.user-governance`: user-approved written decisions | Decisions resolved and recorded. |
-| unit-02 | Prove and specify a supported command/state bridge with ownership, authorization, state synchronization, reconnect, and failure semantics. | unit-01 | KWin script and approved bridge surface | `gate.bridge-static`: command selected after unit-01 | Approved semantics recorded; implementation not started. |
-| unit-03 | Implement the minimal Rust SNI helper, D-Bus menu, icon, whitelist, and fail-closed behavior. | unit-02 | New helper package only | `gate.sni-static`: command selected with the approved helper toolchain | Implementation not started. |
+| unit-01 | Historical governance reconciliation: record the active Tray decision for carrier, high-level bridge constraints, KCM ownership, distribution boundary, Rust-only scope, and bounded host authorization. | - | `docs/decisions.md`, product governance | `gate.user-governance`: user-approved written decisions | Decisions resolved and recorded. |
+| unit-02a-bridge-contract-fixture | Independently prove the fixed state-only contract with a JSON fixture and local test codec/state machine. | unit-01 | Only `test-fixtures/tray-bridge-v1.json`, `kwin/tests/tray-bridge-protocol.test.ts` | `gate.tray-bridge-focused`: `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | Fixture conformance tests: 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; the only generated bundle is under fresh nonce-owned `ATTEMPT`. |
+| unit-02b-production-bridge | Implement the later approved KWin publisher and helper endpoint from the accepted fixture contract. | unit-02a-bridge-contract-fixture | KWin script and approved helper surface | `gate.bridge-static`: selected with production scope approval | Not started. |
+| unit-03 | Implement the minimal Rust SNI helper, D-Bus menu, icon, whitelist, and fail-closed behavior. | unit-02b-production-bridge | New helper package only | `gate.sni-static`: command selected with the approved helper toolchain | Implementation not started. |
 | unit-04 | Define and implement approved distribution, installation, autostart, update, and removal contracts. | unit-01, unit-03 | Approved packaging and installer boundary | `gate.package-static`: command selected after distribution approval | Implementation not started. |
-| unit-05 | Run user-authorized live validation of registration, rendering, actions, state synchronization, restart recovery, and removal. | unit-02, unit-03, unit-04 | User Plasma/KWin session | `gate.sni-live`: user-authorized live observation | Parked pending implementation and user-run live observation. |
+| unit-05 | Run user-authorized live validation of registration, rendering, actions, state synchronization, restart recovery, and removal. | unit-02b-production-bridge, unit-03, unit-04 | User Plasma/KWin session | `gate.sni-live`: user-authorized live observation | Parked pending implementation and user-run live observation. |
 
 ## Progress
 
-- [x] unit-01 proposal decisions are resolved and recorded.
-- [ ] unit-02 open: bridge proof and specification.
-- [ ] unit-03 blocked on unit-02.
+- [x] unit-01 historical governance reconciliation is accepted and recorded.
+- [x] unit-02a-bridge-contract-fixture accepted after semantic attempt 2 under the approved fixture-delivery reset.
+- [ ] unit-02b-production-bridge blocked on accepted unit-02a-bridge-contract-fixture.
+- [ ] unit-03 blocked on unit-02b-production-bridge.
 - [ ] unit-04 blocked on unit-01 and unit-03.
-- [ ] unit-05 blocked on units 02-04 and user live authorization.
+- [ ] unit-05 blocked on units 02b-04 and user live authorization.
+
+`unit-02a-bridge-contract-fixture` is the sole newly authorized implementation
+unit. Its acceptance is an independent fixture dependency for all production
+integration. The graph is `unit-01 -> unit-02a-bridge-contract-fixture ->
+unit-02b-production-bridge -> unit-03 -> unit-04 -> unit-05`, with unit-04
+also depending on unit-01; it is acyclic.
 
 ## Attempt Accounting
 
-No implementation units have started.
+### F-03 Ruling
+
+- The prior F-03 confirmation incorrectly attempted a post-implementation gate
+  before its approved new test input existed. F-03 concerns only command
+  destination and construction, not pre-existing source.
+- It is closed by static command inspection: the literal
+  `gate.tray-bridge-focused` command resolves
+  `kwin/tests/tray-bridge-protocol.test.ts` from repository root and writes its
+  only generated bundle to a freshly bound nonce-owned `/tmp/opencode` ATTEMPT
+  path. Actual execution is fixture-unit acceptance evidence after the Worker
+  creates that approved file. No pre-source gate is run.
+
+### unit-02a Dispatch Preflight
+
+- 2026-08-27: Valid before-source preflight for the first semantic attempt.
+  Lead role and parent Orchestrator role match supplied metadata; Task capability,
+  one Worker depth, and required `processed-beef-work-unit` availability are
+  confirmed. The dispatched Worker receives `process_role=Worker`,
+  `parent_process_role=Lead`, parent-recorded `agent_selector=worker-openai`,
+  unspecified model preference, distinct host-persona metadata, and context
+  budget `150000`.
+- The accepted `unit-01` dependency, `unit-02a` two-path scope, and
+  `gate.tray-bridge-focused`, `gate.tray-bridge-typecheck`, and
+  `gate.tray-bridge-broad` IDs, literal commands, and expected baselines match
+  the work-unit and evidence maps at lines 45-46 and 127-129. No packet repair
+  was required.
+
+### Fixture-Delivery Reset
+
+- 2026-08-27: The Orchestrator approved the sole changed-kind reset. It makes
+  the test-only fixture location an explicit `TRAY_BRIDGE_FIXTURE` canonical-gate
+  input rather than inferring it from a generated bundle's working directory.
+  This changes the oracle/fixture-delivery acceptance mechanism only; it does
+  not change the public route, security boundary, fixture semantics, typecheck,
+  or the two approved fixture paths. The reset enables semantic attempt 2.
 
 | Unit | Implementation attempts | Pre-review corrections | Finding-fix corrections | Independent reviews |
 |---|---:|---:|---:|---:|
-| no entries | 0 | 0 | 0 | 0 |
+| unit-01 | 0 | 0 | 0 | 0 |
+| unit-02a-bridge-contract-fixture | 2 | 0 | 1 | 1 |
+| unit-02b-production-bridge | 0 | 0 | 0 | 0 |
+| unit-03 | 0 | 0 | 0 | 0 |
+| unit-04 | 0 | 0 | 0 | 0 |
+| unit-05 | 0 | 0 | 0 | 0 |
+
+### unit-02a Independent Review
+
+- 2026-08-27: The required independent public/security-contract review froze one
+  serious finding set against fixture blob `23be817842a2a17b6950949c756f6c5e7302873a`
+  and test blob `1d8bf57140f5ab8747af78964718d5e233d3478d` at HEAD
+  `6466c99dd497779d8499e0fef41cc5618593bff2`. `generationPattern` uses `$`,
+  which JavaScript accepts before a trailing line terminator; the local decoder
+  therefore accepts a malformed generation such as `alpha\n`. The one permitted
+  finding-fix correction is limited to exact full-string generation validation
+  and a regression vector.
+- 2026-08-27: The sole finding-fix changed only the two authorized fixture paths
+  and closes the frozen newline finding: focused and typecheck evidence passes
+  on fixture blob `45c8c63233d0b7afe580ee75ec23c1b9556cab76` and test blob
+  `a49ccad3667e8f45fb1a79912d524f9090985928`. The required fresh isolated broad
+  gate failed because the generated test working directory could not locate the
+  fixture. This is not localized to the correction's generation validation and
+  no correction-regression repair is authorized. `unit-02a` is parked pending a
+  new approved boundary or other authorized reset.
+- 2026-08-27: Post-reset acceptance confirmation inspected only the frozen
+  generation-newline finding set. The explicit fixture input preserves the exact
+  full-string validation and `alpha\n` vector, so that finding remains closed.
+  No second independent review was conducted and no new finding set exists.
 
 ### Change-Wide Ledger
 
 | Implementation dispatches | Dispatch-invalids | Pre-review corrections | Finding-fix corrections | Independent reviews | Changed-kind resets | Broad gate runs | Worker tool-call proxy | Lead tool-call proxy | Acceptance criteria moved | No-progress streak |
 |---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|
-| 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 2 | 0 |
+| 2 | 0 | 0 | 1 | 1 | 1 | 3 | 0 | 35 | 4 | 0 |
 
-## Startup VCS Policy
-
-- Autonomous mode: enabled for durable proposal artifacts only; it does not approve governance or implementation.
-- Agent commits: yes, after accepted documentation scope.
-- Agent pushes: yes, after accepted documentation scope.
-- Staging owner: Lead.
-- User commit required: no.
-- Candidate preservation container: none.
-- Manifest and cleanup owner: not applicable; no rejected work is preserved.
-
-## Pending User Decisions
+## Resolved Governance And Remaining Technical Work
 
 - Resolved: use a portable Rust StatusNotifierItem helper, with the KWin backend
   first; fail closed without a watcher.
-- Resolved: use a proof-first fixed D-Bus bridge with a whitelist, outbound state
-  snapshots, reconnect and idempotence, and no shell or input injection.
-- Resolved: KCM remains the sole settings owner; tray behavior is limited to
-  state, approved actions, and open-settings.
+- Resolved: use a proof-first fixed D-Bus bridge with outbound state snapshots,
+  reconnect and idempotence, no shell or input injection, and no action route.
+- Resolved: KCM remains the sole settings owner; the fixture has no settings
+  entry point.
 - Resolved: development is dogfood-only; before release the helper becomes
   official core, while the tiler remains functional without it.
 - Resolved: standing authorization covers reversible, namespaced user-local
   helper build, stage, start, and stop operations, its graphical-session
   autostart entry, and session D-Bus; non-project state is prohibited.
-- Resolved: the implementation is Rust-only, with no additional native C++
-  scope selected.
-- Resolved: live validation remains user-run and requires explicit applicable
-  authorization before execution.
+- Resolved: the implementation is Rust-only, with no additional native C++ scope
+  selected.
+- Resolved fixture contract: the sole state-only method, schema, value domains,
+  owner/liveness transitions, restart/replay behavior, stale timing, and literal
+  canonical gates are recorded in `spec.md` and this plan.
+- Pending production work: an implementation of this contract, any separately
+  approved mutating action whitelist, and package mechanics. None are authorized
+  by the fixture unit.
 
 ## Acceptance-Criterion Evidence
 
 | Acceptance criterion | Gate ID | Literal canonical command or observation | Expected baseline | Evidence |
 |---|---|---|---|---|
-| KWin script carrier limitation and strict SNI requirement are recorded. | `gate.proposal-inspection` | Inspect `spec.md` and `plan.md`. | Recorded without source changes. | `spec.md` Technical Approach and Constraints; `plan.md` Technical Approach. |
-| MVP, security boundaries, no-implementation option, and COSMIC limits are recorded. | `gate.proposal-inspection` | Inspect `spec.md` and `plan.md`. | Recorded without implementation claims. | `spec.md` Scope, Constraints, and Consequential Decisions. |
-| User governance decisions are explicit before implementation. | `gate.user-governance` | User-approved written decisions. | Resolved. | `plan.md` Pending User Decisions. |
-| Live validation remains user-authorized. | `gate.sni-live` | User-authorized live observation. | Pending. | `plan.md` unit-05. |
+| KWin script carrier limitation and strict SNI requirement are recorded. | `gate.proposal-inspection` | Inspect `spec.md` and `plan.md`. | Recorded without source changes. | `spec.md` Intent and Scope; `plan.md` Technical Approach. |
+| MVP, security boundaries, and COSMIC limits are recorded. | `gate.proposal-inspection` | Inspect `spec.md` and `plan.md`. | Recorded without implementation claims. | `spec.md` Scope and Constraints. |
+| User governance decisions are explicit before implementation. | `gate.user-governance` | User-approved written decisions. | Resolved. | `docs/decisions.md#tray`; `plan.md` Resolved Governance And Remaining Technical Work. |
+| Live validation uses only bounded host authorization. | `gate.sni-live` | User-authorized live observation. | Pending. | `plan.md` unit-05; `docs/decisions.md#tray`. |
+| The fixed bridge surface and state rules are recorded without routes outside `PublishSnapshot`. | `gate.bridge-contract-inspection` | Inspect `spec.md` Constraints and `plan.md` Contract And Scope. | Exact fixed surface and prohibitions recorded. | Pending post-amendment inspection. |
+| Fixture vectors enforce schema, generation, revision, enabled, owner, liveness, replay, restart, transport, malformed, and route-rejection rules. | `gate.tray-bridge-focused` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; only generated bundle under fresh `ATTEMPT`. | Semantic-attempt-2 snapshot: HEAD `6466c99dd497779d8499e0fef41cc5618593bff2`; untracked fixture SHA-256 `33b1c33a29b5ab391773fbfad34c8fb8421932cd1c839b9314b6a7d5630689cc`; untracked test SHA-256 `5a5b568efd228e7e2e5e31f556d6dd878d0c13f15087d8a24fc280141b06f18c`; fresh nonce output: 2 passed, 0 failures, 0 skips. |
+| Fixture paths typecheck with repository-managed dependencies. | `gate.tray-bridge-typecheck` | `npm --prefix kwin run typecheck` | Exit 0. | Same semantic-attempt-2 source snapshot; fresh output exit 0. |
+| Broad KWin suite accepts the isolated allowed snapshot. | `gate.tray-bridge-broad` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" 6466c99dd497779d8499e0fef41cc5618593bff2 && mkdir -p "$ATTEMPT/test-fixtures" "$ATTEMPT/kwin/tests" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/tray-bridge-v1.json" && cp kwin/tests/tray-bridge-protocol.test.ts "$ATTEMPT/kwin/tests/tray-bridge-protocol.test.ts" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))` | Exit 0, 0 failures; the fresh worktree contains only the two uncommitted tray fixture inputs and uses the source-snapshot `TRAY_BRIDGE_FIXTURE`; no pointer, COSMIC candidate, or other untracked input is copied. | Same semantic-attempt-2 source snapshot copied into a fresh detached worktree; fresh output: 996 passed, 0 failures. This formerly unmet canonical baseline advanced. |
 
 ## Residual Risks
 
-- No supported inbound command/state bridge is currently established; an SNI
-  helper without it could present stale state or non-functional actions.
+- The fixture model is not an actual D-Bus endpoint. Production integration must
+  prove platform dispatch and lifecycle semantics separately.
 - The resident helper and autostart artifact remain implementation work under
   the resolved Core Distribution boundary.
-- A tray interface can imply immediate workspace behavior that current Unified
-  Settings explicitly excludes.
 - Static evidence cannot establish panel/tray rendering, watcher lifecycle, or
   restart behavior; these remain live-host risks.
 
 ## Final Outcome
 
-- Governance is resolved. Implementation remains open pending the bridge proof,
-  helper work, distribution work, and user-run live authorization.
+- Governance and the fixture contract are reconciled. The fixture proof,
+  production bridge, helper work, distribution work, and applicable live
+  validation remain open.

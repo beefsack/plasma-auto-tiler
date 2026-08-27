@@ -1,0 +1,181 @@
+{
+  "contract": {
+    "service": "org.plasmaautotiler.Tray",
+    "object": "/org/plasmaautotiler/Tray",
+    "interface": "org.plasmaautotiler.Tray1",
+    "method": "PublishSnapshot",
+    "signature": "isib",
+    "schema": 1,
+    "generationPattern": "^[a-z0-9-]{1,32}$(?![\\s\\S])",
+    "freshnessMs": 30000
+  },
+  "routes": {
+    "accepted": {
+      "service": "org.plasmaautotiler.Tray",
+      "object": "/org/plasmaautotiler/Tray",
+      "interface": "org.plasmaautotiler.Tray1",
+      "method": "PublishSnapshot"
+    },
+    "rejected": [
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "OtherMethod"
+      },
+      {
+        "service": "org.other.Service",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "PublishSnapshot"
+      },
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/other/Object",
+        "interface": "org.plasmaautotiler.Tray1",
+        "method": "PublishSnapshot"
+      },
+      {
+        "service": "org.plasmaautotiler.Tray",
+        "object": "/org/plasmaautotiler/Tray",
+        "interface": "org.other.Interface",
+        "method": "PublishSnapshot"
+      }
+    ]
+  },
+  "scenarios": [
+    {
+      "name": "owner freshness replay and invalidation",
+      "events": [
+        {
+          "op": "publish",
+          "args": [1, "alpha", 1, true],
+          "expected": {"owner": false, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "alpha", 1, true],
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 0, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "alpha\n", 2, false],
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 0, "current": true}
+        },
+        {
+          "op": "advance",
+          "ms": 29999,
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 0, "current": true}
+        },
+        {
+          "op": "advance",
+          "ms": 1,
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 0, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "alpha", 1, true],
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 30000, "current": true}
+        },
+        {
+          "op": "advance",
+          "ms": 1,
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 1, "enabled": true}, "refreshedAt": 30000, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "alpha", 2, false],
+          "expected": {"owner": true, "snapshot": {"generation": "alpha", "revision": 2, "enabled": false}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 1, true],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 0, false],
+          "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 1, true],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 1, false],
+          "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 1, true],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "transport-failure",
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [2, "beta", 2, false],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "BAD", 2, false],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 2147483648, false],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "beta", 2, "false"],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "owner-lost",
+          "expected": {"owner": false, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "gamma", 1, false],
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 1, "enabled": false}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "restart",
+          "expected": {"owner": false, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "owner-acquired",
+          "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}
+        },
+        {
+          "op": "publish",
+          "args": [1, "gamma", 1, false],
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 1, "enabled": false}, "refreshedAt": 30001, "current": true}
+        }
+      ]
+    },
+    {
+      "name": "signed revision boundaries",
+      "events": [
+        {"op": "owner-acquired", "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}},
+        {"op": "publish", "args": [1, "limits", -2147483648, true], "expected": {"owner": true, "snapshot": {"generation": "limits", "revision": -2147483648, "enabled": true}, "refreshedAt": 0, "current": true}},
+        {"op": "publish", "args": [1, "limits", 2147483647, false], "expected": {"owner": true, "snapshot": {"generation": "limits", "revision": 2147483647, "enabled": false}, "refreshedAt": 0, "current": true}},
+        {"op": "publish", "args": [1, "limits", 2147483646, true], "expected": {"owner": true, "snapshot": null, "refreshedAt": null, "current": false}}
+      ]
+    }
+  ]
+}

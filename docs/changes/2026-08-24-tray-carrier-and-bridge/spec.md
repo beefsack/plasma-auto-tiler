@@ -2,13 +2,15 @@
 
 Ownership and approval:
 - Owner: Lead
-- Status: Approved 2026-08-25 by Autonomous Orchestrator for durable proposal artifacts only; implementation and governance remain unapproved.
+- Status: The Orchestrator approved this state-only contract amendment on
+  2026-08-27 under the user's autonomous authorization. It is a fixture contract,
+  not production bridge implementation.
 
 ## Intent and Desired Outcome
 
-Record a durable, implementation-ready boundary for this project's potential
-tray control without claiming that the current KWin script can own a tray item
-or that any tray behavior is approved.
+Record the smallest independently provable state boundary for the approved tray
+direction. The KWin script remains unable to own a tray item; this contract does
+not implement the D-Bus service, Rust helper, or KWin publisher.
 
 ## Scope and Non-Goals
 
@@ -16,75 +18,84 @@ In scope:
 
 - Record that the KWin script cannot truthfully own a persistent system tray
   item or menu.
-- Propose an external Rust StatusNotifierItem (SNI) helper as the minimum
-  strict-tray MVP, contingent on user approval.
-- Define the required command/state bridge, security constraints, lifecycle,
-  and validation boundaries.
-- Preserve no implementation as a valid user option.
+- Use the approved external Rust StatusNotifierItem (SNI) helper as the
+  strict-tray carrier.
+- Define and fixture-prove one state-only KWin-to-helper snapshot contract.
 - Treat `docs/reference-cosmic-tray-menu.md` as design inspiration only.
 
 Non-goals:
 
-- Implement a tray item, applet, helper, D-Bus service, autostart entry, or
-  command/state bridge.
+- Implement a tray item, applet, Rust helper, D-Bus service, KWin publisher,
+  autostart entry, or production command/state bridge.
 - Treat a Plasma applet as a strict System Tray carrier.
+- Expose signals, actions, `OpenSettings`, shell execution, input injection,
+  helper-to-KWin traffic, or any route beyond `PublishSnapshot`.
+- Make a sender-authentication claim. Session-bus placement plus this fixed,
+  state-only whitelist is the security boundary.
 - Reproduce COSMIC styling or controls exactly.
-- Use input injection, shell execution, or a broad command interface.
-- Change `docs/decisions.md`, source, tests, or existing packaging behavior.
+- Change `docs/decisions.md`, source outside the two fixture paths, or existing
+  packaging behavior.
 
 ## Applicable Principles and Decisions
 
-- `docs/decisions.md#unified-settings`: tray behavior remains out of scope
-  until separately approved.
-- `docs/decisions.md#core-distribution`: the current approved distribution is
-  the script KPackage plus permitted native effect/KCM packages; an SNI helper
-  and autostart artifact are not approved by this decision.
-- `docs/decisions.md#native-c-safety-policy`: any new C++ scope requires its
-  own approved safety and packaging boundary.
+- `docs/decisions.md#tray`: the Rust SNI carrier, KWin-first backend, KCM
+  ownership, distribution boundary, dogfood-only development, and bounded
+  user-local authorization are active user-approved decisions.
+- `docs/decisions.md#native-c-safety-policy`: the approved Rust-only helper
+  selects no additional native C++ scope.
 
 ## Constraints
 
-- A strict tray carrier must be an external SNI helper with fixed user-owned
-  D-Bus identities.
-- The helper must expose only a whitelist of approved actions, validate all
-  arguments, avoid shell execution, fail closed when KWin is unavailable, and
-  reconnect safely across helper and KWin/script restarts.
-- The command/state bridge must be supported and explicitly specify ownership,
-  authorization, stale-state behavior, and restart semantics.
-- No input injection may substitute for the bridge.
-- The initial MVP is one icon, one truthful state indicator, a small whitelist
-  of existing actions, and a settings entry point.
+- The fixed session-bus contract is service `org.plasmaautotiler.Tray`, object
+  `/org/plasmaautotiler/Tray`, interface `org.plasmaautotiler.Tray1`, with its
+  sole method `PublishSnapshot(i schema, s generation, i revision, b enabled)`.
+  It is KWin-to-helper only.
+- Schema is exactly `1`; `generation` matches `[a-z0-9-]{1,32}`; `revision` is
+  an integer from `-2147483648` through `2147483647`; and `enabled` is boolean.
+  Positional D-Bus arity and type dispatch errors are outside the method and are
+  not custom parser behavior.
+- The helper owns its accepted snapshot and freshness clock. KWin owns
+  publication and retries after a transport failure. `org.kde.KWin` name
+  ownership is the liveness guard, not sender authentication: owner loss clears
+  the snapshot and freshness immediately; reacquisition remains empty until a
+  new valid publish.
+- A valid first snapshot or a valid new generation replaces the accepted state
+  and refreshes liveness. For the current generation, a higher revision replaces
+  and refreshes; an equal revision with the same `enabled` is replay-idempotent
+  and refreshes; a lower revision or equal revision with different `enabled`
+  invalidates the state without refreshing. Invalid semantic values, an absent
+  KWin owner, and transport failure preserve the prior state without refresh.
+- A helper restart begins empty. A later replay after KWin owner reacquisition
+  is accepted as a first snapshot. Accepted state is stale when
+  `now - refreshedAt >= 30_000` milliseconds; stale state is not exposed as
+  current until a valid refresh.
 
 ## Acceptance Criteria
 
 - [x] The proposal states that the KWin script is not a tray carrier and that
   a strict tray requires an external SNI helper plus a supported bridge.
-- [x] The proposal records a minimal Rust SNI MVP, no-implementation option,
-  security constraints, and COSMIC-reference limits.
-- [ ] The user selects a carrier and approves bridge semantics, settings scope,
-  distribution/autostart, and language/native scope.
-- [ ] The user authorizes required live Plasma/KWin validation before any live
-  work starts.
+- [x] The proposal records a minimal Rust SNI MVP, security constraints, and
+  COSMIC-reference limits.
+- [x] The active Tray decision selects the carrier, high-level bridge safety
+  constraints, settings boundary, distribution boundary, and Rust-only scope.
+- [x] The exact fixed state-only contract, public-route boundary, state owner,
+  liveness rules, and restart rules are recorded.
+- [ ] `unit-02a-bridge-contract-fixture` independently accepts a fixture-local
+  codec and state-machine proof before any production integration.
 
 ## Unresolved Questions
 
-- Does the user select no implementation, a Plasma applet, or an external SNI
-  helper as the carrier?
-- What supported command/state bridge can control and observe the KWin script?
-- Which actions and state indicator belong in the minimal MVP?
-- Does tray behavior become an approved Unified Settings requirement?
-- How is the helper and autostart artifact distributed, installed, updated, and
-  removed?
-- Is Rust required for the helper, or is further native C++ scope approved?
+- Which existing actions, if any, can enter a later mutating whitelist without
+  widening the active Tray decision?
+- What exact package, installation, update, and removal mechanics implement the
+  approved distribution boundary?
 
 ## Consequential Decisions
 
-- Recommendation: select an external Rust SNI helper only after the user
-  approves a supported bridge. It is the smallest route that is truthfully a
-  strict tray item while avoiding an expansion of the native C++ boundary.
-- Alternative: select no implementation and retain the current KCM/settings
-  surface. This is a valid outcome if the bridge, distribution, or lifecycle
-  cost is not justified.
+- The fixture is deliberately local to the contract proof: it imports no
+  production code and supplies no production implementation. Production work
+  may begin only after this unit is independently accepted; it must not broaden
+  the sole-method route or treat fixture behavior as a sender-auth mechanism.
 
-Implementation does not begin until the pending user decisions and live
-authorization are resolved.
+Production integration does not begin until the exact bridge contract has an
+independently accepted fixture or harness proof and literal canonical gates.
