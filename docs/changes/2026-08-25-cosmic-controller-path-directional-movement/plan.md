@@ -169,34 +169,29 @@ Successor counters begin at zero. The prior parked change remains historical:
 - The consumed changed-kind reset retires the blocked shared-fixture Unit 01.
   Its candidate remains non-authoritative audit/reference material and cannot be
   read, applied, copied, altered, relabeled, or used as acceptance evidence.
-- Unit 02 and every downstream unit remain stopped until the new unit is
-  independently accepted after its mandatory independent review. Pointer-owned
-  paths and all host/live operations remain prohibited during this static phase.
+- Unit 02 waits for the authorized Unit 01 promotion refresh and its independent
+  correspondence review to pass. Downstream units remain blocked by Unit 02;
+  pointer-owned paths and all host/live operations remain prohibited during this
+  static phase.
 - Unit 02's prior preflight was `dispatch-invalid`, not a semantic attempt or
   correction, because its then-approved semantic row supplied neither exact
   allowed paths nor literal controller-path gate commands and baselines. The
   Orchestrator approved this amendment under autonomous authorization on
    2026-08-27. The accepted Unit 01 dependency does not authorize candidate use
    or inference.
-- Unit 02 attempt-01 is paused without promotion or review. Its adapter obtains
-  a `directionalMovement` runtime capability that existing controller
-  environments do not provide. Frozen directional-controller coverage then
-  requires legacy input-action behavior. Retaining that behavior is a prohibited
-  fallback; supplying the capability requires a scope expansion into an excluded
-  fixture or integration path. The canonical G-02-04 directory invocation also
-  fails under the current Node runner before assertion output. An Orchestrator
-  scope and gate decision is required before any continuation.
-- The G-02-04 command correction is approved, but no rerun is authorized while
-  Unit 02 is parked. The isolated attempt remains unaccepted and ineligible
-  evidence at its recorded nonce-owned path. Unit 02 requires a user decision
-  whether locked legacy directional behavior is product-required, followed by
-  a separately approved capability boundary, before any fresh semantic work.
+- Unit 02 attempt-01 remains unaccepted and ineligible evidence. The current
+  authorization resolves its former capability blocker: it may carry
+  `directionalMovement` through production controller composition and tests only
+  as necessary, migrate locked legacy expectations to COSMIC, and retain no
+  legacy fallback or dual route. The G-02-04 command correction remains part of
+  the authorized static path.
 - Unit 01 is historically accepted after the one authorized correction,
   independent review, and finding-fix confirmation, but its two fixture files
   remain untracked and uncommitted. The current promotion cannot reuse that
   acceptance: G-04 lacks fresh passing evidence because its canonical output
   contract omitted package-relative paths and tray environment. The sole reset
-  is consumed; no second review, correction, or reset is authorized.
+  is consumed; except for the current G-04-only refresh below, no second review,
+  correction, or reset is authorized.
 
 ## Final Outcome
 
@@ -204,6 +199,18 @@ Successor counters begin at zero. The prior parked change remains historical:
   consumed finding-fix breaker. The approved single changed-kind reset
   historically accepted `unit-01-cosmic-local-fixture`; its untracked,
   uncommitted promotion lacks fresh G-04 evidence and remains unaccepted as a
-  promotion. Unit 02 remains parked pending the recorded product and capability
-  decisions; all later units and host work remain blocked by their recorded
+  promotion. Unit 02 may proceed only under the current COSMIC replacement
+  authorization; all later units and host work remain blocked by their recorded
   dependencies and approvals.
+
+## Current Authorization
+
+- One isolated refresh of the current Unit 01 promotion is authorized. It may
+  correct only G-04 package-relative paths and tray environment. Run G-01,
+  G-02, G-03, and G-04 from that isolated snapshot, then obtain independent
+  source/output correspondence review. Any failure parks the promotion.
+- Unit 02 is authorized to replace legacy directional expectations with COSMIC
+  and to expand only as necessary to carry `directionalMovement` through
+  production controller composition and tests. No legacy fallback is allowed.
+- The old candidate remains prohibited: do not read, use, promote, relabel, or
+  treat it as evidence. No live work or unrelated source scope is authorized.

@@ -171,6 +171,27 @@
 - Notes: The sole changed-kind reset is consumed. No second review, correction, reset, source action, candidate action, gate run, or Unit 02 continuation is authorized. Unit 02 remains parked pending whether locked legacy directional behavior is product-required and a separately approved runtime-capability/migration direction.
 - Change-wide telemetry: unchanged - implementation dispatches 3; dispatch-invalids 1; pre-review corrections 2; finding-fix corrections 2; independent reviews 2; changed-kind resets 1; broad gates 5; Worker tool-call proxy 4 plus Unit 01 Workers unreported plus Unit 02 attempt-01 unreported; Lead tool-call proxy 122; acceptance criteria moved 2 plus canonical-gate advances G-02-01/G-02-02/G-02-03; no-progress streak 0.
 
+## Current Authorization - 2026-08-30
+
+- One isolated current Unit 01 promotion refresh is authorized. It may correct
+  only G-04 package-relative paths and tray environment. The sequence is G-01,
+  G-02, G-03, G-04, then independent source/output correspondence review;
+  failure parks the promotion.
+- Unit 02 may carry `directionalMovement` through production controller
+  composition and tests only as necessary. COSMIC replaces legacy directional
+  movement with no fallback, and legacy expectations migrate to COSMIC.
+- The old candidate remains prohibited from reading, use, promotion,
+  relabelling, or acceptance evidence. No unrelated source or live work is
+  authorized.
+
+## Current Reconciliation - 2026-08-30
+
+- This authorization supersedes only the prior Unit 02 product/capability
+  blocker. COSMIC replaces legacy directional behavior; `directionalMovement`
+  may reach production controller composition and corresponding tests only as
+  necessary, with no legacy fallback or dual route. The historical attempt and
+  old candidate remain unaccepted and protected.
+
 ## 2026-08-27
 
 - Role / unit: Successor Lead / `unit-02-controller-adapter` / attempt-01 reconciliation

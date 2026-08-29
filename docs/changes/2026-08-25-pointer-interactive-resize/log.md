@@ -290,3 +290,11 @@
   `unit-02b-observer-integration` remains parked unaccepted: F-01 is frozen at
   the `handleStarted` stale-drag invariant after its sole finding-fix correction.
   No retry, correction, repair, unit-03 dispatch, or live work is authorized.
+
+## Current Authorization - 2026-08-30
+
+- The prior no-retry status is superseded only for one F-01-only correction.
+  The required sequence after that correction is R-09, R-02, R-01, then
+  independent review; any failure parks the unit.
+- No second correction, broader retry, production expansion, broad gate, live
+  operation, staging, commit, or push is authorized.

@@ -200,3 +200,85 @@ Git history and archived change records.
 - **Scope:** Generic pointer interactive resize is baseline product scope.
 - **Reconsider when:** A separately approved resize behavior or safety boundary
   is required.
+
+## COSMIC Directional Movement
+
+- **Decision:** The COSMIC directional-movement path replaces legacy
+  directional movement. There is no legacy fallback.
+- **Scope:** Unit 02 may expand only as necessary to carry
+  `directionalMovement` through production controller composition and its
+  focused tests. Existing legacy directional expectations migrate to COSMIC.
+  The old candidate remains historical and is not read or used.
+- **Reconsider when:** A separately approved replacement changes the COSMIC
+  capability boundary.
+
+## Current Static Promotions
+
+- **Decision:** Authorize one isolated refresh of the current COSMIC fixture
+  promotion, correcting only G-04 package-relative paths and tray environment.
+  Run G-01 through G-04, then perform an independent source/output
+  correspondence review. Park on any failure.
+- **Scope:** No second correction, reset, candidate promotion, old-candidate
+  use, or live operation is selected by this decision.
+
+- **Decision:** Authorize one pointer correction limited to frozen F-01. After
+  that correction, run R-09, R-02, and R-01 in that order, perform independent
+  review, and park on any failure.
+- **Scope:** This does not authorize another retry, broader correction,
+  production expansion, broad gate, or live operation.
+
+## Shortcut Registration
+
+- **Decision:** Shortcut changes use KCM apply and revert. Default registration
+  is nonconflicting; conflicts are handled only by an explicit override.
+  Focus-right is exactly Meta+L, while KDE lock remains Meta+Esc.
+- **Scope:** The KCM detects conflicts and snapshots only displaced bindings.
+  Meta+L override rebinds KDE lock to Meta+Esc and activates focus-right;
+  revert reverses both. Restore changes only values still owned by the selected
+  profile. Installation performs no shortcut mutation.
+
+## Release And Live Gates
+
+- **Decision:** Multi-output acceptance is a later manual hardware gate.
+  Physical drag behavior, COSMIC shortcuts, KCM behavior, and core state
+  journeys are manual live gates and remain separate from autonomous static
+  work. Tray panel rendering and autostart/session-boundary behavior are
+  separate manual gates.
+- **Scope:** Package formats and publication formats are deferred. Manual
+  gates do not block completion of authorized static units.
+
+## Tray Recovery And Protocol
+
+- **Decision:** After fresh revalidation of exact project ownership, the tray
+  recovery command is `bash /tmp/opencode/tray-unit-02b-a716b83/scripts/dogfood-install.sh tray-remove`.
+  It may remove only the validated project-owned data root, autostart entry,
+  and PID record. Then run exactly one fresh bounded helper-mechanics attempt;
+  proceed to protocol work only after that attempt passes.
+- **Scope:** No unrelated cleanup, session-boundary action, panel action,
+  publisher delivery, or retry is included.
+
+## Deferred Implementation Research
+
+- **Decision:** Retain JavaScript for discrete window add/remove management and
+  research alternatives after the initial release. Defer group behavior,
+  inactive borders, and Steam-specific interaction handling.
+- **Scope:** Portable cross-WM/OS layout-engine research follows completion of
+  the COSMIC and pointer static paths. The proven KWin client-realization drag
+  gap is not classified as an engine defect. Floor-ratio work is an isolated
+  and nested-boundary proof with the current fallback retained on failure.
+
+## VCS And Standing Authority
+
+- **Decision:** Agents may commit and non-force push independently accepted,
+  narrowly scoped work, excluding unrelated changes and preservation artifacts.
+  Clean disposable integration and pushes to `main` stop on conflicts or remote
+  divergence and never overwrite unrelated dirty worktree changes.
+- **Standing live authority:** One independently reviewed, reversible,
+  project-owned live protocol may run when its preflight fails closed and it has
+  exact restoration. A materially corrected independently reviewed protocol may
+  receive its own one attempt.
+- **Scope:** Session boundaries, synthetic input, manual visual acceptance,
+  ambiguous cleanup, unrelated state, and retries after a protocol failure are
+  excluded. No sudo, system paths, Home Manager-managed files, unrelated
+  environment entries, unrelated state cleanup, or broad host mutation is
+  authorized.

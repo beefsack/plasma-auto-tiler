@@ -266,3 +266,11 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
   `handleStarted` stale-drag invariant. Its sole finding-fix correction is
   spent; no retry, correction, or repair is authorized. `unit-03` and live work
   remain blocked by that parked unit and the existing live prerequisites.
+
+## Current Authorization
+
+- The prior no-retry status is superseded only for one correction limited to
+  frozen F-01. After that correction, run R-09, R-02, and R-01 in order,
+  obtain independent review, and park immediately on any failure.
+- No second correction, broader retry, production expansion, broad gate, live
+  operation, staging, commit, or push is authorized by this exception.
