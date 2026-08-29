@@ -166,7 +166,7 @@ export interface InteractiveDragController {
     readonly handleInvalidated: (window: WindowCapability) => void;
     readonly handleStarted: (window: WindowCapability) => void;
     readonly handleFinished: (window: WindowCapability) => void;
-    readonly handleStepped: (geometry: RectCapability) => void;
+    readonly handleStepped: (window: WindowCapability, geometry: RectCapability) => void;
     readonly handleMoveResizedChanged: () => void;
     readonly dragSnapshotFinal: (topology: readonly OperationLeaf[]) => void;
     readonly afterDeferredRemoval: (
@@ -184,6 +184,7 @@ export function createInteractiveDragController(
 ): InteractiveDragController {
     const dragState: { current: ActiveDrag | undefined } = { current: undefined };
     const interactiveWindows = new Map<WindowCapability, InteractiveWatch>();
+    const resizeObservations = new Set<WindowCapability>();
     const owedInvariantScopes = new Map<OutputCapability, Map<string, CurrentScope>>();
     let shownDropOutline: RectCapability | null = null;
     let nextDiagnosticTransactionId = 1;
@@ -802,6 +803,11 @@ export function createInteractiveDragController(
 
     const handleInvalidated = (window: WindowCapability): void => {
         capabilities.runGuarded(() => {
+            if (resizeObservations.delete(window)) {
+                diagnostic("resize-observer-invalidated");
+                detach(window);
+                return;
+            }
             if (dragState.current?.window === window) {
                 diagnostic("drag-bail:window-invalidated");
                 clear();
@@ -824,6 +830,11 @@ export function createInteractiveDragController(
             }
             if (capabilities.isMaximized(window)) {
                 diagnostic("maximize:ignored lifecycle while maximized");
+                return;
+            }
+            if (window.resize && window.tile !== null && isCustomTile(window.tile)) {
+                resizeObservations.add(window);
+                diagnostic("resize-observer-started");
                 return;
             }
             const watch = interactiveWindows.get(window);
@@ -895,6 +906,10 @@ export function createInteractiveDragController(
 
     const handleFinished = (window: WindowCapability): void => {
         capabilities.runGuarded(() => {
+            if (resizeObservations.delete(window)) {
+                diagnostic("resize-observer-finished");
+                return;
+            }
             if (window.fullScreen === true) {
                 diagnostic("fullscreen:ignored lifecycle while fullscreen");
                 hideDropOutline();
@@ -931,8 +946,11 @@ export function createInteractiveDragController(
         });
     };
 
-    const handleStepped = (geometry: RectCapability): void => {
+    const handleStepped = (window: WindowCapability, geometry: RectCapability): void => {
         capabilities.runGuarded(() => {
+            if (resizeObservations.has(window) || interactiveWindows.get(window)?.kind === "resize") {
+                return;
+            }
             if (!capabilities.dropOutlinePreview()) {
                 return;
             }
@@ -1023,7 +1041,7 @@ export function createInteractiveDragController(
             window,
             () => handleStarted(window),
             () => handleFinished(window),
-            (geometry) => handleStepped(geometry),
+            (geometry) => handleStepped(window, geometry),
             () => handleMoveResizedChanged(),
             () => handleInvalidated(window),
         );
@@ -1035,6 +1053,9 @@ export function createInteractiveDragController(
         const watch = interactiveWindows.get(window);
         if (watch === undefined) {
             return;
+        }
+        if (resizeObservations.delete(window)) {
+            diagnostic("resize-observer-invalidated");
         }
         interactiveWindows.delete(window);
         watch.disconnect();

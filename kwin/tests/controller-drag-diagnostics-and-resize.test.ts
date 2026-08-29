@@ -1397,6 +1397,156 @@ function nativePointerResizeSetup(): {
     };
 }
 
+function nativePointerResizeObserverSetup(): {
+    readonly harness: Harness;
+    readonly controller: TileController;
+    readonly fixture: NativePointerResizeFixture;
+    readonly nativeFocus: ReturnType<typeof nativeTile>;
+    readonly focused: TestWindow;
+    readonly geometryWrites: number[];
+    readonly topologyWrites: number[];
+} {
+    const harness = new Harness();
+    const root = tile({ x: 0, y: 0, width: 200, height: 200 }, true);
+    root.layoutDirection = 1;
+    const first = tile({ x: 0, y: 0, width: 100, height: 200 });
+    const second = tile({ x: 100, y: 0, width: 100, height: 200 });
+    first.parent = root;
+    second.parent = root;
+    root.tiles = [first, second];
+    const focused = window({ tile: first, resize: true, caption: "focused" });
+    const neighbor = window({ tile: second, caption: "neighbor" });
+    first.windows = [focused];
+    second.windows = [neighbor];
+    harness.root = root;
+    harness.active = focused;
+    harness.windows = [focused, neighbor];
+
+    const geometryWrites: number[] = [];
+    const topologyWrites: number[] = [];
+    let geometry = first.relativeGeometry;
+    Object.defineProperty(first, "relativeGeometry", {
+        configurable: true,
+        get: () => geometry,
+        set: (next: typeof RECT) => {
+            geometryWrites.push(1);
+            geometry = next;
+        },
+    });
+    first.manage = () => {
+        topologyWrites.push(1);
+        return true;
+    };
+    first.unmanage = () => {
+        topologyWrites.push(1);
+        return true;
+    };
+    first.split = () => {
+        topologyWrites.push(1);
+        return [];
+    };
+
+    const native = nativePointerResizeSetup();
+    const fixture = native.fixture;
+    const nativeSignals = {
+        interactiveMoveResizeStarted: fixture.interactiveMoveResizeStarted,
+        interactiveMoveResizeStepped: fixture.interactiveMoveResizeStepped,
+        interactiveMoveResizeFinished: fixture.interactiveMoveResizeFinished,
+        moveResizedChanged: fixture.moveResizedChanged,
+        outputChanged: fixture.outputChanged,
+        desktopsChanged: fixture.desktopsChanged,
+        tileChanged: fixture.tileChanged,
+    };
+    Object.assign(focused, nativeSignals);
+    const controller = new TileController(harness.environment());
+    controller.start();
+    return { harness, controller, fixture, nativeFocus: native.focus, focused, geometryWrites, topologyWrites };
+}
+
+describe("TileController native pointer resize observer integration", () => {
+    it("observes native tiled resize lifecycle without owning native mutation", () => {
+        for (const escaped of [false, true]) {
+            const state = nativePointerResizeObserverSetup();
+            let stepped = 0;
+            state.fixture.interactiveMoveResizeStepped.connect(() => {
+                stepped += 1;
+            });
+            state.focused.move = true;
+            state.focused.resize = false;
+            state.focused.interactiveMoveResizeStarted.emit();
+            state.focused.resize = true;
+            assert.equal(state.controller.hasActiveDrag, true);
+            state.fixture.start(state.nativeFocus, "right");
+            state.fixture.interactiveMoveResizeStepped.emit(RECT);
+            state.fixture.move(10, 0);
+            if (escaped) {
+                state.fixture.finish(true);
+            } else {
+                state.fixture.finish();
+            }
+
+            assert.equal(countEvent(state.harness.logs, "resize-observer-started"), 1, escaped ? "Escape start" : "release start");
+            assert.equal(countEvent(state.harness.logs, "resize-observer-finished"), 1, escaped ? "Escape finish" : "release finish");
+            assert.equal(
+                state.fixture.events[state.fixture.events.length - 1],
+                escaped ? "interactiveMoveResizeFinished:Escape" : "interactiveMoveResizeFinished",
+            );
+            assert.equal(stepped, 1);
+            assert.equal(state.fixture.nativeGeometryWrites.length, 2);
+            assert.equal(state.fixture.nativeGeometryWrites.every((write) => write.owner === "kwin-native-pointer-resize"), true);
+            assert.equal(state.geometryWrites.length, 0);
+            assert.equal(state.topologyWrites.length, 0);
+            assert.equal(state.harness.activeWrites.length, 0);
+            assert.equal(state.harness.showOutlineCalls.length, 0);
+            assert.equal(state.controller.hasActiveDrag, true);
+            assert.equal(countEvent(state.harness.logs, "drag-finished"), 0);
+            assert.equal(countEvent(state.harness.logs, "resize-observer-invalidated"), 0);
+        }
+
+        for (const kind of ["outputChanged", "tileChanged"] as const) {
+            const state = nativePointerResizeObserverSetup();
+            state.focused.move = true;
+            state.focused.resize = false;
+            state.focused.interactiveMoveResizeStarted.emit();
+            state.focused.resize = true;
+            assert.equal(state.controller.hasActiveDrag, true, kind);
+            state.fixture.start(state.nativeFocus, "right");
+            state.fixture.interactiveMoveResizeStepped.emit(RECT);
+            state.fixture.move(10, 0);
+            state.fixture.invalidate(kind);
+            state.fixture.interactiveMoveResizeFinished.emit();
+
+            assert.equal(countEvent(state.harness.logs, "resize-observer-started"), 1, kind);
+            assert.equal(countEvent(state.harness.logs, "resize-observer-invalidated"), 1, kind);
+            assert.equal(countEvent(state.harness.logs, "resize-observer-finished"), 0, kind);
+            assert.equal(state.fixture.active, false, kind);
+            assert.equal(state.fixture.nativeGeometryWrites.length, 2, kind);
+            assert.equal(state.fixture.events[state.fixture.events.length - 1], `native-invalidation:${kind}`, kind);
+            assert.equal(state.geometryWrites.length, 0, kind);
+            assert.equal(state.topologyWrites.length, 0, kind);
+            assert.equal(state.harness.activeWrites.length, 0, kind);
+            assert.equal(state.harness.showOutlineCalls.length, 0, kind);
+            assert.equal(state.controller.hasActiveDrag, true, kind);
+            assert.equal(countEvent(state.harness.logs, "drag-finished"), 0, kind);
+        }
+    });
+
+    it("does not clear a stale move drag when a tiled resize starts", () => {
+        const state = nativePointerResizeObserverSetup();
+        state.focused.move = true;
+        state.focused.resize = false;
+        state.focused.interactiveMoveResizeStarted.emit();
+        assert.equal(state.controller.hasActiveDrag, true);
+
+        state.focused.move = false;
+        state.focused.resize = true;
+        state.focused.interactiveMoveResizeStarted.emit();
+
+        assert.equal(state.controller.hasActiveDrag, true);
+        assert.equal(countEvent(state.harness.logs, "drag-origin-capture-failed:resize"), 0);
+    });
+});
+
 describe("TileController native pointer resize", () => {
     it("models KWin-native edges, corners, ratios, Escape, and invalidation without controller writes", () => {
         const edges = [

@@ -1,7 +1,7 @@
-// Narrow KWin 6.7.3 scripting-surface subset, pinned to the KWin source
+// Narrow KWin 6.7.4 scripting-surface subset, pinned to the KWin source
 // fidelity reference recorded in
 // docs/changes/custom-tile-vertical-slice/research/type-provenance.md
-// (tag v6.7.3, commit 45ec9a6d0ed312a803ff5658a2a3e61f221566c6).
+// (realized source tarball, sha256-23p9unGqyh5SGHM7gPkKmY2E4qs25NYtDj6gA3bFgC0=).
 //
 // Ambient and import-free so these declarations stay global. Strict controls:
 // no `any`, `Function`, broad index signatures, unchecked casts, non-null
@@ -128,7 +128,7 @@ interface Window {
     // boundary seam for workspace moves.
     desktops: unknown;
     readonly output: Output | null;
-    // Writable: src/window.h at pinned v6.7.3 declares
+    // Writable: src/window.h at pinned v6.7.4 declares
     //     Q_PROPERTY(KWin::Tile *tile READ requestedTile WRITE
     //     setTileCompatibility NOTIFY tileChanged)
     // Assigning null detaches the window from its requested tile (unmanage)
@@ -272,10 +272,10 @@ interface Workspace {
     // Read-write: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::VirtualDesktop *currentDesktop READ currentDesktop
     //     WRITE setCurrentDesktop NOTIFY currentDesktopChanged)
-    // at pinned v6.7.3. Assigning switches the current virtual desktop.
+    // at pinned v6.7.4. Assigning switches the current virtual desktop.
     currentDesktop: VirtualDesktop | null;
-    // src/scripting/workspace_wrapper.h at pinned v6.7.3 commit
-    // 45ec9a6d0ed312a803ff5658a2a3e61f221566c6:
+    // src/scripting/workspace_wrapper.h at pinned v6.7.4 source tarball
+    // sha256-23p9unGqyh5SGHM7gPkKmY2E4qs25NYtDj6gA3bFgC0=:
     //     Q_SCRIPTABLE void createDesktop(int position, const QString &name)
     //     const
     // Creates a desktop at the 1-based position and returns nothing. The
@@ -292,7 +292,8 @@ interface Workspace {
     // Writable: src/scripting/workspace_wrapper.h declares the WRITE setter
     //     Q_PROPERTY(KWin::Window *activeWindow READ activeWindow WRITE
     //     setActiveWindow NOTIFY windowActivated)
-    // at pinned v6.7.3 commit 45ec9a6d0ed312a803ff5658a2a3e61f221566c6.
+    // at pinned v6.7.4 source tarball
+    // sha256-23p9unGqyh5SGHM7gPkKmY2E4qs25NYtDj6gA3bFgC0=.
     activeWindow: Window | null;
     currentDesktopForScreen(output: Output): VirtualDesktop | null;
     rootTile(output: Output, desktop: VirtualDesktop): Tile | null;

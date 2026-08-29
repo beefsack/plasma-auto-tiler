@@ -88,27 +88,27 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
 - [ ] unit-02 - parked: finding-fix-01 R-02 failed; third implementation attempt without acceptance movement
 - [x] recovery-c - accepted 2026-08-25: isolated checkpoint C and ordered candidate verified; active source restored to C
 - [x] unit-02a-signal-contract - accepted, committed, and pushed as `e9f71aa35c4058ca37fc31cce7753b6f949597ae` after the bounded correction, fresh R-08/R-01/R-02 evidence, and clean independent review
-- [ ] unit-02b-observer-integration - parked: independent-review F-01 remains open at the frozen `handleStarted` stale-drag invariant after the sole finding-fix correction; no retry is authorized
-- [ ] unit-03 - blocked by parked unit-02b
+- [x] unit-02b-observer-integration - accepted 2026-08-30 after the one F-01-only correction, R-09/R-02/R-01, and clean independent review
+- [ ] unit-03 - dependency satisfied, but not authorized in this Lead
 - [ ] unit-04 - blocked: explicit user live authorization and disposable/restoration layout
 
 ## Attempt Accounting
 
-- Change-wide implementation dispatches: 10
+- Change-wide implementation dispatches: 11
 - Change-wide dispatch-invalid results: 0
 - Change-wide pre-review corrections: 2
-- Change-wide finding-fix corrections: 3
-- Change-wide independent reviews: 4
+- Change-wide finding-fix corrections: 4
+- Change-wide independent reviews: 5
 - Change-wide changed-kind resets: 2 (reset-02 is user-approved exceptional override; no source dispatch yet)
 - Change-wide broad-gate runs: 1
-- Change-wide acceptance criteria moved: 2
-- Change-wide no-progress streak: 1
+- Change-wide acceptance criteria moved: 3
+- Change-wide no-progress streak: 0
 - Change-wide verification/harness repair claims: 0
 - Read-only baseline dispatches: 2 (not implementation attempts; first stopped at R-02, second passed R-02 through R-07)
 - unit-01: 2 attempts; 0 pre-review corrections; 1 finding-fix correction; 1 independent review
 - unit-02: 3 attempts; 1 pre-review correction; 1 finding-fix correction; 1 independent review; parked
 - unit-02a-signal-contract: 1 semantic attempt; 1 pre-review correction; 0 finding-fix corrections; 1 independent review; accepted
-- unit-02b-observer-integration: 1 semantic attempt; 0 pre-review corrections; 1 finding-fix correction; 1 independent review; parked with F-01 open
+- unit-02b-observer-integration: 1 semantic attempt; 0 pre-review corrections; 2 finding-fix corrections; 2 independent reviews; accepted
 - unit-03: 0 attempts
 - unit-04: 0 attempts
 
@@ -118,7 +118,7 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
 |---|---|---|
 | KWin-native contract is version-pinned | R-00 source observation | met |
 | Native fixture safely isolates KWin mutation ownership | R-01 and R-02; original finding set under reset-01 final-state evidence boundary | met |
-| Controller observes without mutating | R-09/R-02/R-01 from the unit-02b isolated post-finding-fix snapshot; frozen F-01 confirmation | pending: gates pass, but F-01 remains open |
+| Controller observes without mutating | active-source R-09/R-02/R-01 and independent F-01 review | met: one F-01-only early exit prevents resize start from reaching stale move-drag cleanup |
 | Signal-contract fixture/harness is independently accepted | R-01, R-08, R-02; checkpoint C source/output correspondence and mandatory independent review | met: R-08/R-01/R-02 pass after the bounded correction; independent review clean |
 | Static integration remains sound | R-02 through R-07 | baseline passes; rerun required after integration |
 | Live behavior is accepted | L-01 user evidence | blocked |
@@ -269,8 +269,29 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
 
 ## Current Authorization
 
-- The prior no-retry status is superseded only for one correction limited to
-  frozen F-01. After that correction, run R-09, R-02, and R-01 in order,
-  obtain independent review, and park immediately on any failure.
-- No second correction, broader retry, production expansion, broad gate, live
-  operation, staging, commit, or push is authorized by this exception.
+- The one F-01-only correction is accepted. R-09, R-02, and R-01 passed in
+  order against active observer source, and the independent review is clean.
+- Unit-03, broad gates, live work, and any further pointer correction remain
+  outside this accepted correction.
+
+## F-01 Acceptance Evidence
+
+- The correction adds an early return in `handleStarted` immediately after a
+  tiled resize is recorded as an observation. This keeps that resize path out
+  of the subsequent stale move-drag clear and invariant settlement branch.
+  The closest controller test covers a stale move drag followed by tiled resize
+  start and proves the existing drag remains active.
+- R-09: `cd kwin && ./node_modules/.bin/esbuild "tests/controller-drag-diagnostics-and-resize.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile=/tmp/opencode/pointer-resize-observer-integration.cjs && node --test --test-name-pattern='^TileController native pointer resize observer integration$' /tmp/opencode/pointer-resize-observer-integration.cjs` exited 0 with 2 passed and 0 failed.
+- R-02: `npm --prefix kwin run typecheck` exited 0.
+- R-01: `mkdir -p /tmp/opencode/pointer-f01-verification/output && (cd kwin && ./node_modules/.bin/esbuild "tests/controller-drag-diagnostics-and-resize.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile=/tmp/opencode/pointer-f01-verification/output/pointer-resize-focused.cjs && node --test --test-name-pattern='^TileController native pointer resize$' /tmp/opencode/pointer-f01-verification/output/pointer-resize-focused.cjs)` exited 0 with 1 passed and 0 failed.
+- R-09, R-02, and R-01 used the active-source forms because the promotion-only
+  R-01/R-02 commands in the gate table bind an earlier unit-02a snapshot and
+  cannot correspond to this F-01 source. SHA-256 values for the four active
+  observer paths were identical before and after every gate: `controller-interactive-drag.ts` `ea1400279fba510b9c8d52595fbe486bc5399f6932a8facc9e866d56e2f3443c`,
+  `entry.ts` `bf1c983d91ec35b16e175ebced55070464726a952f3641dcaa5af707ae37f840`,
+  `kwin-globals.d.ts` `349fa6262be7d4ee2511416e5e92e132a735bb821f120afc6d89603ef2bef7a8`,
+  and `controller-drag-diagnostics-and-resize.test.ts` `5f99438ac9129a42da235e88b477c7e37c0dac113cabc4e18ca55be81a546dd8`.
+- Independent F-01 review found no findings. It confirmed resize start returns
+  before stale move-drag cleanup, finish/invalidation/stepped resize paths stay
+  isolated, non-tiled resize and move-drag cleanup are unchanged, and no KWin
+  ownership boundary is crossed.

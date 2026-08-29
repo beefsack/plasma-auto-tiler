@@ -298,3 +298,22 @@
   independent review; any failure parks the unit.
 - No second correction, broader retry, production expansion, broad gate, live
   operation, staging, commit, or push is authorized.
+
+- 2026-08-30 | unit-02b-observer-integration/F-01 correction and acceptance |
+  Fresh implementation changed only `kwin/src/controller-interactive-drag.ts`
+  and `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`. Tiled resize
+  start now returns immediately after recording the resize observation, before
+  shared stale move-drag cleanup and invariant settlement. The closest
+  controller regression test proves a tiled resize start does not clear an
+  existing stale move drag. Fresh active-source gates passed in order: R-09
+  exited 0 with 2 passed/0 failed, R-02 exited 0, and R-01 exited 0 with 1
+  passed/0 failed. The promotion-only R-01/R-02 snapshot commands were not
+  source-correspondent for this F-01 correction, so the gate command forms ran
+  against current active source; the four observer source hashes were unchanged
+  before and after every gate. Fresh independent review made no edits and found
+  no F-01 or regression-boundary findings. It confirms KWin retains divider,
+  ratio/geometry, reflow, floor, rounding, and final Escape/release ownership.
+  Unit-02b is accepted. Change-wide implementation dispatches: 11;
+  finding-fix corrections: 4; independent reviews: 5; acceptance criteria
+  moved: 3; no-progress streak resets to 0. No Unit-03, broad gate, live work,
+  preservation action, or unrelated pointer semantic change occurred.

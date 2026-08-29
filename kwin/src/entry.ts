@@ -1,5 +1,4 @@
 import { TileController } from "./controller";
-import { type RectCapability } from "./boundary";
 import { prepareManagedRoot } from "./managed-root";
 
 function isKWinWindowSurface(value: unknown): value is Window {
@@ -93,14 +92,39 @@ const controller = new TileController({
     onScreensChanged: (handler) => workspace.screensChanged.connect(handler),
     onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
     watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
-        const surface = window as unknown as Record<string, unknown>;
-        const connected: Array<[string, (geometry: RectCapability) => void]> = [];
-        const attach = (name: string, handler: (geometry: RectCapability) => void): boolean => {
+        const surface = window as unknown as Window;
+        const connected: Array<() => void> = [];
+        const attachPayloadFree = (
+            name:
+                | "interactiveMoveResizeStarted"
+                | "interactiveMoveResizeFinished"
+                | "moveResizedChanged"
+                | "desktopsChanged",
+            handler: () => void,
+        ): boolean => {
+            let signal: Signal;
             let value: unknown;
             try {
-                value = surface[name];
-                (value as { connect: (next: (geometry: RectCapability) => void) => void }).connect(handler);
-                connected.push([name, handler]);
+                switch (name) {
+                    case "interactiveMoveResizeStarted":
+                        signal = surface.interactiveMoveResizeStarted;
+                        value = signal;
+                        break;
+                    case "interactiveMoveResizeFinished":
+                        signal = surface.interactiveMoveResizeFinished;
+                        value = signal;
+                        break;
+                    case "moveResizedChanged":
+                        signal = surface.moveResizedChanged;
+                        value = signal;
+                        break;
+                    case "desktopsChanged":
+                        signal = surface.desktopsChanged;
+                        value = signal;
+                        break;
+                }
+                signal.connect(handler);
+                connected.push(() => signal.disconnect(handler));
                 console.log(`plasma-auto-tiler:drag-attach-ok:${name}`);
                 return true;
             } catch (error) {
@@ -110,18 +134,70 @@ const controller = new TileController({
                 return false;
             }
         };
-        const attempts: ReadonlyArray<readonly [string, (geometry: RectCapability) => void]> = [
-            ["interactiveMoveResizeStarted", started],
-            ["interactiveMoveResizeStepped", stepped],
-            ["interactiveMoveResizeFinished", finished],
-            ["moveResizedChanged", moveResizedChanged],
-            ["outputChanged", invalidated],
-            ["desktopsChanged", invalidated],
+        const attachTileChanged = (): boolean => {
+            let value: unknown;
+            try {
+                const handler = (_tile: Tile | null): void => invalidated();
+                const signal = surface.tileChanged;
+                value = signal;
+                signal.connect(handler);
+                connected.push(() => signal.disconnect(handler));
+                console.log("plasma-auto-tiler:drag-attach-ok:tileChanged");
+                return true;
+            } catch (error) {
+                console.log(
+                    `plasma-auto-tiler:drag-attach-failed:tileChanged:${String(error)} (observed typeof ${typeof value})`,
+                );
+                return false;
+            }
+        };
+        const attachOutputChanged = (): boolean => {
+            let value: unknown;
+            try {
+                const handler = (_output: Output | null): void => invalidated();
+                const signal = surface.outputChanged;
+                value = signal;
+                signal.connect(handler);
+                connected.push(() => signal.disconnect(handler));
+                console.log("plasma-auto-tiler:drag-attach-ok:outputChanged");
+                return true;
+            } catch (error) {
+                console.log(
+                    `plasma-auto-tiler:drag-attach-failed:outputChanged:${String(error)} (observed typeof ${typeof value})`,
+                );
+                return false;
+            }
+        };
+        const attachStepped = (): boolean => {
+            let signal: Signal1<Rect>;
+            let value: unknown;
+            try {
+                signal = surface.interactiveMoveResizeStepped;
+                value = signal;
+                signal.connect(stepped);
+                connected.push(() => signal.disconnect(stepped));
+                console.log("plasma-auto-tiler:drag-attach-ok:interactiveMoveResizeStepped");
+                return true;
+            } catch (error) {
+                console.log(
+                    `plasma-auto-tiler:drag-attach-failed:interactiveMoveResizeStepped:${String(error)} (observed typeof ${typeof value})`,
+                );
+                return false;
+            }
+        };
+        const attempts: ReadonlyArray<() => boolean> = [
+            () => attachPayloadFree("interactiveMoveResizeStarted", started),
+            attachStepped,
+            () => attachPayloadFree("interactiveMoveResizeFinished", finished),
+            () => attachPayloadFree("moveResizedChanged", moveResizedChanged),
+            attachOutputChanged,
+            () => attachPayloadFree("desktopsChanged", invalidated),
+            attachTileChanged,
         ];
         let ok = 0;
         let failed = 0;
-        for (const [name, handler] of attempts) {
-            if (attach(name, handler)) {
+        for (const attempt of attempts) {
+            if (attempt()) {
                 ok += 1;
             } else {
                 failed += 1;
@@ -129,11 +205,9 @@ const controller = new TileController({
         }
         return {
             disconnect: () => {
-                for (const [name, handler] of connected) {
+                for (const disconnect of connected) {
                     try {
-                        (surface[name] as {
-                            disconnect: (next: (geometry: RectCapability) => void) => void;
-                        }).disconnect(handler);
+                        disconnect();
                     } catch (error) {
                         void error;
                     }
