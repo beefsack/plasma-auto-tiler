@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+rustix = { version = "1", features = ["fs", "process", "runtime"] }
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
 [dev-dependencies]

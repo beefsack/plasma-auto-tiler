@@ -429,6 +429,7 @@ dependencies = [
 name = "plasma-auto-tiler"
 version = "0.1.0"
 dependencies = [
+ "rustix",
  "serde",
  "serde_json",
  "zbus",

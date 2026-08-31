@@ -366,3 +366,30 @@
   canonical gate, and the closed frozen review finding are mapped in the plan.
 - Notes: No serious finding or acceptance gap remains in unit-02c. The next
   action is scoped status/diff/log/staging inspection and the authorized commit.
+
+## 2026-08-31
+
+- Role / unit: Lead / `unit-02d-helper-lifecycle` normal-path boundary.
+- Result: The controlling user decision restores the original host-install
+  boundary. Crash and power-loss recovery, durable transaction state, and
+  automatic post-crash retry are excluded. Ordinary commands lock before
+  preflight; normal rollback remains required; ambiguous residue fails closed.
+- Verification: Non-live gates passed: 25 Rust tests, 19 focused lifecycle and
+  endpoint tests, 1002 JS tests, 255 start fixtures, 347 installer fixtures,
+  build-package, nine shell syntax checks, and `git diff --check`. Independent
+  review remains blocking: normal remove cannot restore a first artifact after
+  a later deletion failure without an explicitly selected transaction model.
+- Notes: No host, KWin, D-Bus, helper, or session mutation ran. No lifecycle
+  source is accepted, staged, committed, or pushed.
+
+- Role / unit: Lead acceptance / `unit-02d-helper-lifecycle` normal-path
+  rollback correction.
+- Result: Accepted. `tray-remove` holds identity-checked PID, data, and desktop
+  rollback copies only during a command; it restores only absent canonical
+  artifacts and retains unsafe partial-quarantine or replacement residue with
+  `recovery-required`. No durable crash or power-loss recovery is claimed.
+- Verification: Final static gates passed: 33 Rust tests, 20 focused lifecycle
+  and endpoint tests, 347 installer assertions, nine shell syntax checks, 255
+  start fixtures, package build/checksum, and 1002 KWin tests across 98 suites.
+  Final independent security review accepted with no findings.
+- Notes: No host, KWin, D-Bus, helper, or session mutation ran.

@@ -176,7 +176,11 @@ Git history and archived change records.
   without it. Standing authorization covers reversible, namespaced user-local
   helper build, stage, start, and stop operations, its graphical-session
   autostart entry, and session D-Bus operations; non-project state is
-  prohibited.
+  prohibited. Ordinary helper lifecycle commands acquire the project lock before
+  any artifact preflight or mutation. Normal in-process rollback and exact
+  cleanup are required. Interruption, crash, power loss, malformed or replaced
+  owned state, and ownership ambiguity fail closed; no durable transaction
+  journal, automatic rollback, or later recovery retry is selected.
 - **Consequences:** The KWin backend and bridge proof precede broader carrier or
   distribution work. The helper is not required for core tiler operation.
 - **Reconsider when:** A separately approved requirement changes the carrier,
@@ -247,15 +251,23 @@ Git history and archived change records.
 - **Scope:** Package formats and publication formats are deferred. Manual
   gates do not block completion of authorized static units.
 
-## Tray Recovery And Protocol
+## Tray Lifecycle Recovery Boundary
 
-- **Decision:** After fresh revalidation of exact project ownership, the tray
-  recovery command is `bash /tmp/opencode/tray-unit-02b-a716b83/scripts/dogfood-install.sh tray-remove`.
-  It may remove only the validated project-owned data root, autostart entry,
-  and PID record. Then run exactly one fresh bounded helper-mechanics attempt;
-  proceed to protocol work only after that attempt passes.
-- **Scope:** No unrelated cleanup, session-boundary action, panel action,
-  publisher delivery, or retry is included.
+- **Decision:** Restore the original host-install decision: crash and
+  power-loss recovery are out of scope. The normal lifecycle owns only exact
+  project artifacts and must preserve replacements or ambiguous residue for
+  manual resolution.
+- **Scope:** Every ordinary install, start, status, stop, and remove command
+  locks before preflight. Normal-path rollback and cleanup remain required.
+  `tray-remove` may hold identity-checked rollback copies only for its command
+  duration, restoring only absent exact artifact paths and retaining any
+  replacement or unsafe residue for manual resolution. No durable copies,
+  journal, or crash recovery are selected.
+  No automatic durable transaction recovery, post-crash retry, unrelated
+  cleanup, session-boundary action, panel action, or publisher transition is
+  selected. Hostile same-user replacement is out of scope; accidental symlinks
+  and replacements, malformed state, PID reuse, and ordinary concurrent project
+  commands remain in scope.
 
 ## Deferred Implementation Research
 

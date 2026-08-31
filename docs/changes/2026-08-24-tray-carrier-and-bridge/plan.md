@@ -68,6 +68,7 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
 | unit-02a-bridge-contract-fixture | Independently prove the fixed state-only contract with a JSON fixture and local test codec/state machine. | unit-01 | Only `test-fixtures/tray-bridge-v1.json`, `kwin/tests/tray-bridge-protocol.test.ts` | `gate.tray-bridge-focused`: `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | Fixture conformance tests: 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; the only generated bundle is under fresh nonce-owned `ATTEMPT`. |
 | unit-02b-kwin-publisher | Implement the fixed one-way KWin snapshot publisher from the accepted fixture contract. | unit-02a-bridge-contract-fixture | `kwin/src/entry.ts`, `kwin/src/controller.ts`, new publisher and test paths named above | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | Focused: 0 failures, 0 skips. Typecheck/build: exit 0. Broad: exit 0, 0 failures. |
 | unit-02c-helper-endpoint | Implement the fixed Rust helper D-Bus endpoint, cache, freshness, and KWin owner-liveness boundary. | unit-02a-bridge-contract-fixture | Root Rust crate paths named above | `gate.tray-helper-static` | Format, tests, and check exit 0. |
+| unit-02d-helper-lifecycle | Implement normal-path-only helper install/start/status/stop/remove lifecycle safety without changing the endpoint or publisher route. | unit-02c-helper-endpoint | Root Rust helper, focused lifecycle tests, and tray records | Rust/static, installer fixture, shell, package, and independent security gates | Lock before preflight; descriptor-safe ownership; exact PID binding; normal rollback; residual ambiguity fails closed; no durable recovery. |
 | unit-03 | Implement the minimal Rust SNI helper, D-Bus menu, icon, whitelist, and fail-closed behavior. | unit-02b-kwin-publisher, unit-02c-helper-endpoint | Existing root helper crate only | `gate.sni-static`: command selected with the approved helper toolchain | Implementation not started. |
 | unit-04 | Define and implement approved distribution, installation, autostart, update, and removal contracts. | unit-01, unit-03 | Approved packaging and installer boundary | `gate.package-static`: command selected after distribution approval | Implementation not started. |
 | unit-05 | Run user-authorized live validation of registration, rendering, actions, state synchronization, restart recovery, and removal. | unit-02b-kwin-publisher, unit-02c-helper-endpoint, unit-03, unit-04 | User Plasma/KWin session | `gate.sni-live`: user-authorized live observation | Parked pending implementation and user-run live observation. |
@@ -81,7 +82,10 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
 - [x] unit-02c-helper-endpoint accepted after semantic attempt 1, the approved
   nonce-build-directory gate amendment, host-unknown verification recovery, and
   closure of its one frozen startup owner-race finding.
-- [ ] unit-03 blocked on units 02b and 02c.
+- [x] unit-02d-helper-lifecycle accepted: ephemeral identity-checked
+  command-duration rollback copies restore normal partial removal failures,
+  while unsafe residue fails closed. Durable crash recovery remains excluded.
+- [ ] unit-03 blocked on unit-02b.
 - [ ] unit-04 blocked on unit-01 and unit-03.
 - [ ] unit-05 blocked on units 02b-04 and user live authorization.
 

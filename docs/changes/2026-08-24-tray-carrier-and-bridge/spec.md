@@ -27,7 +27,7 @@ In scope:
 Non-goals:
 
 - Implement a tray item, applet, Rust helper, D-Bus service, KWin publisher,
-  autostart entry, or production command/state bridge.
+  autostart entry, or production command/state bridge beyond accepted units.
 - Treat a Plasma applet as a strict System Tray carrier.
 - Expose signals, actions, `OpenSettings`, shell execution, input injection,
   helper-to-KWin traffic, or any route beyond `PublishSnapshot`.
@@ -36,6 +36,18 @@ Non-goals:
 - Reproduce COSMIC styling or controls exactly.
 - Change `docs/decisions.md`, source outside the exact path list approved for
   the currently dispatched unit, or existing packaging behavior.
+
+### Lifecycle Boundary
+
+- The helper lifecycle has no durable recovery protocol. Each ordinary
+  install/start/status/stop/remove command acquires its project lifecycle lock
+  before artifact preflight or mutation.
+- Normal in-process rollback and exact cleanup remain required. An interrupted
+  operation, malformed/replaced artifact, PID ambiguity, watcher error, or
+  waiter error fails closed and retains residual state; a later command does not
+  infer ownership or retry recovery.
+- This boundary preserves the sole `PublishSnapshot` method and excludes 05b
+  publisher transitions, crash/power-loss rollback, and hostile same-user races.
 
 ## Applicable Principles and Decisions
 

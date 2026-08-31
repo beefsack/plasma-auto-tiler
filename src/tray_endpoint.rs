@@ -162,7 +162,7 @@ impl TrayEndpoint {
 pub fn run() -> zbus::Result<()> {
     let connection = Connection::session()?;
     let dbus = DBusProxy::new(&connection)?;
-    let mut owner_changes = dbus.receive_name_owner_changed_with_args(&[(0, KWIN_SERVICE)])?;
+    let owner_changes = dbus.receive_name_owner_changed_with_args(&[(0, KWIN_SERVICE)])?;
     let initial_owner = reconcile_initial_owner(
         || dbus.name_has_owner(KWIN_SERVICE.try_into().unwrap()),
         || {
@@ -175,13 +175,50 @@ pub fn run() -> zbus::Result<()> {
     connection.object_server().at(OBJECT, endpoint.clone())?;
     connection.request_name(SERVICE)?;
 
-    while let Some(signal) = owner_changes.next() {
-        let args = signal.args()?;
-        let owner = args.new_owner().as_ref().map(ToString::to_string);
-        endpoint.owner_changed(owner.as_deref());
+    if let Err(error) = crate::tray_lifecycle::create_current_record() {
+        let cleanup = crate::tray_lifecycle::cleanup_current_record();
+        return Err(lifecycle_error(
+            format!("create tray PID record: {error}"),
+            cleanup,
+        ));
     }
+    if let Err(error) = crate::tray_lifecycle::signal_current_record_ready() {
+        let cleanup = crate::tray_lifecycle::cleanup_current_record();
+        return Err(lifecycle_error(
+            format!("signal tray endpoint readiness: {error}"),
+            cleanup,
+        ));
+    }
+    let result: zbus::Result<()> = (|| {
+        for signal in owner_changes {
+            let args = signal.args()?;
+            let owner = args.new_owner().as_ref().map(ToString::to_string);
+            endpoint.owner_changed(owner.as_deref());
+        }
+        Ok(())
+    })();
+    let cleanup = crate::tray_lifecycle::cleanup_current_record();
+    finish_watcher(result, cleanup)
+}
 
-    Ok(())
+fn finish_watcher(result: zbus::Result<()>, cleanup: Result<(), String>) -> zbus::Result<()> {
+    match (result, cleanup) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(zbus::Error::Failure(format!(
+            "clean tray PID record: {error}"
+        ))),
+        (Err(error), Err(cleanup)) => Err(zbus::Error::Failure(format!(
+            "{error}; clean tray PID record: {cleanup}"
+        ))),
+    }
+}
+
+fn lifecycle_error(message: String, cleanup: Result<(), String>) -> zbus::Error {
+    zbus::Error::Failure(match cleanup {
+        Ok(()) => message,
+        Err(cleanup) => format!("{message}; cleanup: {cleanup}"),
+    })
 }
 
 fn reconcile_initial_owner<Observed, Resolved>(
@@ -222,12 +259,25 @@ mod tests {
             },
             || {
                 resolved_calls.borrow_mut().push("resolve");
-                Err(zbus::fdo::Error::NameHasNoOwner(KWIN_SERVICE.to_owned()).into())
+                Err(zbus::fdo::Error::NameHasNoOwner(KWIN_SERVICE.to_owned()))
             },
         )
         .unwrap();
 
         assert_eq!(*calls.borrow(), ["observe", "resolve"]);
         assert_eq!(initial_owner, None);
+    }
+
+    #[test]
+    fn watcher_error_keeps_cleanup_error() {
+        let result = super::finish_watcher(
+            Err(zbus::Error::Failure("watcher failed".to_owned())),
+            Err("record cleanup failed".to_owned()),
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(result.contains("watcher failed"));
+        assert!(result.contains("record cleanup failed"));
     }
 }
