@@ -6,19 +6,16 @@ This is an executable runbook for verifying, on a real running KWin/Plasma
 session, that the trailing-empty-workspace anti-oscillation design holds
 under actual KWin event-loop timing, signal re-entrancy, and QML/D-Bus event
 coalescing - none of which the static `node --test` suite (mocked `Harness`)
-can exercise. It closes the live-runtime residual risk recorded in
-`docs/changes/archive/2026-08-20-trailing-empty-workspace/plan.md` Residual
-Risks.
+  can exercise. It closes the remaining live-runtime risk for the delivered
+  trailing-empty workspace model.
 
 Read `docs/live-kwin-testing.md` in full before running any part of this
 document. It is the authoritative operational contract; this document does
-not grant any additional mutation authorization. The standing-authorized
-operations here are exactly the ones `docs/live-kwin-testing.md` Safety
-Boundary already lists: KWin script install/enable/disable/reload/reconfigure via
-`kpackagetool6`/`kwriteconfig6`/`qdbus6`/`dogfood-install.sh`, and read-only
-journal/status queries. Every scenario below stays inside that boundary -
-window creation, drags, and keyboard presses use one disposable throwaway
-window on a purpose-made desktop, never the user's real windows or desktops.
+  not grant mutation authorization. The script lifecycle operations are within
+  the standing dogfood boundary, but every scenario's window creation, drag,
+  keyboard input, and desktop mutation requires fresh explicit authorization.
+  Use one disposable throwaway window on a purpose-made desktop and never touch
+  the user's real windows or desktops.
 
 ## Applicability
 
@@ -116,9 +113,8 @@ output before starting any scenario.
    `pgrep -a kwin_wayland`
 2. Confirm the plugin is installed and enabled:
    `devenv shell --impure -- bash scripts/dogfood-install.sh status`
-   Expect `installed: yes`, `enabled: yes`. If not, follow
-   `docs/live-kwin-testing.md` Native Effect Host Session-Boundary Exception
-   / Safety Boundary to install and enable before proceeding.
+    Expect `installed: yes`, `enabled: yes`. If not, stop and obtain the
+    required authorization under the Safety Boundary before proceeding.
 3. Confirm the installed bundle matches the current repository checkout -
    do not assume it does:
    `sha256sum ~/.local/share/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js kwin/contents/code/main.js`
@@ -429,8 +425,7 @@ desktop, and never calls the swap helper.
   structurally-last (protected) member instead of the survivor's own
   trailing empty, so the survivor's own trailing empty is removed like any
   other non-trailing empty desktop and the folded-in one is kept. This is
-  accepted, not a defect (`docs/changes/archive/2026-08-20-trailing-empty-workspace/plan.md`
-  Q-Domain ruling; regression-tested at
+  accepted, not a defect; regression-tested at
   `kwin/tests/controller.test.ts:16213`). Self-healing: once a window
   occupies the protected-but-"wrong" desktop, the group's last position
   becomes occupied and the next cleanup dispatch appends exactly one new

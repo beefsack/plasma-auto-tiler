@@ -202,8 +202,8 @@ direction, resulting tree. Each result is the input to the next row.
 | S3-13 | T4 | down | `V[T2,H[T1,T4,T3]]` | 2a (descend into container) |
 | S3-14 | T4 | down | `V[T2,V[H[T1,T3],T4]]` | 1 |
 
-Per-transition rule annotations are sourced from
-`docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/move-conformance-trace.md`, the
+Per-transition rule annotations are sourced from the
+[move-conformance research](research/cosmic-evidence-mining/move-conformance-trace.md), the
 raw output of the executable replay (see below), not hand-derived - a
 second, independent hand-derivation would only repeat the error risk the
 first hand-derivation already carries.

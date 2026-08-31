@@ -2,8 +2,7 @@
 
 Purpose: decision-support reference for the plasma-auto-tiler product surface.
 Compares bspwm, Hyprland, and COSMIC across ten window-management behaviours so
-that roadmap decisions in `docs/roadmap.md` (Unit 02) follow established
-Hyprland/COSMIC precedent over bspwm.
+that product decisions follow established Hyprland/COSMIC precedent over bspwm.
 
 Scope and status: research-only. No live KWin/Plasma testing was authorised and
 none was performed. Every KWin-targeted behaviour is labelled
@@ -29,10 +28,10 @@ against a primary source).
 | [C-Bas] | System76 Pop!_OS Basics, https://system76.com/support/articles/pop-basics |
 | [C-KR] | cosmic-comp default keybindings, https://github.com/pop-os/cosmic-comp/blob/master/data/keybindings.ron |
 | [C-OBS-1] | Local screenshot evidence, `~/Pictures/Screenshots/Screenshot_2026-08-20_12-30-58.png` through `_12-33-06.png` (10 files, inclusive range), captured 2026-08-20 on a COSMIC desktop showing a sequence of keyboard-driven tiled-window layouts; measured via programmatic pixel/byte analysis (ffmpeg raw-frame extraction + python3 run-length scanning), not visual estimation. |
-| [C-OBS-3] | User hand-transcription, 2026-08-20, of the user's own COSMIC directional-window-move testing session (the same session captured in `~/2026-08-20 12-36-28.mp4`, 2560x1440/59.25s/60fps). The transcript records ~45 discrete tile-tree transitions (starting tree, direction moved, resulting tree) as the user directly observed them while performing the moves; it is a transcript of direct observation, not a frame-by-frame machine reading of the video - the video was used as a spot-check/cross-reference resource only, not the primary evidence source, after an automated frame-interpretation attempt (`docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/video-timeline.md`) hit an unresolved evidence-legibility problem. A single rule set (below) was derived from the transcript by the Lead and reproduces every recorded transition, including predicting two transcription errors the user had not fully flagged (see below). |
+| [C-OBS-3] | User hand-transcription, 2026-08-20, of the user's own COSMIC directional-window-move testing session (the same session captured in `~/2026-08-20 12-36-28.mp4`, 2560x1440/59.25s/60fps). The transcript records ~45 discrete tile-tree transitions (starting tree, direction moved, resulting tree) as the user directly observed them while performing the moves; it is a transcript of direct observation, not a frame-by-frame machine reading of the video - the video was used as a spot-check/cross-reference resource only, not the primary evidence source, after an automated frame-interpretation attempt ([video timeline](research/cosmic-evidence-mining/video-timeline.md)) hit an unresolved evidence-legibility problem. A single rule set reproduces every recorded transition, including predicting two transcription errors the user had not fully flagged (see below). |
 | [C-302] | cosmic-epoch issue #302 (sticky windows), https://github.com/pop-os/cosmic-epoch/issues/302 |
 | [C-3377] | cosmic-epoch issue #3377 (floating layering), https://github.com/pop-os/cosmic-epoch/issues/3377 |
-| [PAT-Shift] | Project-internal source, not an external WM reference: KWin 6.7.3 `src/xkb.cpp` `Xkb::modifiersRelevantForGlobalShortcuts`/`toQtKey` strip the Shift modifier from `Meta+Shift+<digit>` global-shortcut delivery on QWERTY-family layouts (the digit key's Shift level produces a non-letter symbol, so Shift is "consumed" and the letter-only exemption for BUG 370341 does not apply); see `docs/changes/workspace-management-fixes/` for the diagnosis and fix. |
+| [PAT-Shift] | Project-internal source, not an external WM reference: KWin 6.7.3 `src/xkb.cpp` `Xkb::modifiersRelevantForGlobalShortcuts`/`toQtKey` strip the Shift modifier from `Meta+Shift+<digit>` global-shortcut delivery on QWERTY-family layouts (the digit key's Shift level produces a non-letter symbol, so Shift is "consumed" and the letter-only exemption for BUG 370341 does not apply); the diagnosis is source-backed in KWin's shortcut handling. |
 
 ---
 
@@ -113,7 +112,7 @@ Hyprland `fullscreen_state` and COSMIC Super+M/Super+F11.
 Agreements: Hyprland and COSMIC both provide tabbed grouping as a tile-level
 construct. Differences: bspwm has none (monocle only). Adoption recommendation:
 adopt tabbed groups/stacks with an active-tab affordance as the remedy for the
-KWin geometry-floor overflow (see `docs/handover.md` section 12), following
+KWin geometry-floor overflow (see [stacked-window feasibility](research/stacked-window-feasibility/feasibility.md)), following
 COSMIC stacks and Hyprland groups.
 
 ## 6. Drag/drop previews
@@ -129,11 +128,11 @@ COSMIC draw a drop overlay is `unverified` (negative inference / community only)
 so no reference-WM precedent for a drop preview is established here.
 Differences: bspwm is command/preselect-driven, Hyprland reflows live, COSMIC
 docks into zones/stacks (COSMIC `unverified`). Adoption recommendation
-(autonomous, per Unit 02 roadmap): ship a drop-destination overlay/preview
+(product recommendation): ship a drop-destination overlay/preview
 rectangle plus drop-time reflow. The preview rectangle is a product requirement,
 not a reference-WM precedent; its nearest grounded analogue is bspwm's
 preselection feedback area ([B1]). Live-reflow-as-preview remains deferred
-(`docs/handover.md` section 6).
+(live reflow as preview remains deferred).
 
 ## 7. Dynamic workspaces
 
@@ -259,7 +258,7 @@ section states findings, that document proves them by execution.
 ### Method and evidence provenance
 
 The user hand-transcribed ~45 discrete tile-tree transitions from their own
-COSMIC test session (see `[C-OBS-3]`). The Lead derived a single rule set
+COSMIC test session (see `[C-OBS-3]`). A single rule set was derived
 from the transcript that reproduces every recorded transition without
 exception, including predicting two apparent transcription errors before the
 user had fully flagged them (see "Predicted transcription corrections"
@@ -269,8 +268,8 @@ the training data. The screen recording (`~/2026-08-20 12-36-28.mp4`) was
 retained as a spot-check resource but was not the primary evidence source for
 this section: an automated frame-by-frame interpretation attempt hit an
 unresolved evidence-legibility problem (see
-`docs/changes/archive/2026-08-20-cosmic-evidence-mining/plan.md`, unit-C2
-history) and was
+the [COSMIC video timeline](research/cosmic-evidence-mining/video-timeline.md)
+and was
 superseded by the transcript before that problem was root-caused.
 
 ### The derived model `observed` [C-OBS-3]
@@ -351,13 +350,13 @@ the tree in a single step.
   evidence** and must be reported as such rather than guessed. (The
   original automated video-frame attempt flagged two candidate
   screen-edge-adjacent frames, t=51.383s/52.35s in
-  `docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/video-timeline.md`, before
+  the [COSMIC video timeline](research/cosmic-evidence-mining/video-timeline.md), before
   being superseded by the transcript approach - those remain unresolved,
   available for spot-checking if this question becomes load-bearing later.)
 - **The model requires N-ary split containers** (rule 2b explicitly creates
   and consumes 3+-child splits). This project's own tile tree was
   investigated for N-ary support in
-  `docs/changes/archive/2026-08-20-cosmic-evidence-mining/research/tile-tree-nary-support.md`
+  [N-ary split support](research/cosmic-evidence-mining/tile-tree-nary-support.md)
   (project-internal source, not COSMIC evidence): the underlying KWin
   native tile type is not structurally binary, but this project's own logic
   layer (`kwin/src/controller.ts`, `kwin/src/logic.ts`) is binary
@@ -390,7 +389,7 @@ Hyprland do not fold rotation into directional movement.
 
 ---
 
-## Decision ledger (autonomous decisions under Hyprland/COSMIC precedent)
+## Historical Product Decisions
 
 | # | Decision | Justification |
 |---|---|---|
