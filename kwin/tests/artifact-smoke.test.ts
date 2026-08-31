@@ -8,7 +8,7 @@ const SHIPPED_BUNDLE = "contents/code/main.js";
 const EXPECTED_SHORTCUT_COUNT = 62;
 const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
-const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:6:6:0";
+const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:7:7:0";
 
 // Post-ES2017 syntax and non-transpiled built-ins this KWin QJSEngine (ES2017)
 // rejects. These are the confirmed-unsupported tokens; pre-ES2017 methods are
@@ -151,7 +151,7 @@ describe("shipped artifact smoke execution", () => {
             assert.fail(`evaluating ${SHIPPED_BUNDLE} threw ${String(error)}`);
         }
         assert.equal(stub.counts.workspaceConnects, 4);
-        assert.equal(stub.counts.windowConnects, 6);
+        assert.equal(stub.counts.windowConnects, 7);
         assert.equal(stub.registeredShortcuts.length, EXPECTED_SHORTCUT_COUNT);
         const names = stub.registeredShortcuts.map(([name]) => name);
         assert.ok(names.includes("plasma-auto-tiler-float-toggle"));
@@ -186,7 +186,7 @@ describe("shipped artifact smoke execution", () => {
             assert.fail(`evaluating ${SHIPPED_BUNDLE} threw ${String(error)}`);
         }
         assert.equal(stub.counts.workspaceConnects, 4);
-        assert.equal(stub.counts.windowConnects, 5);
+        assert.equal(stub.counts.windowConnects, 6);
         assert.ok(stub.diagnostics.includes(STARTUP_HANDLERS_READY_DIAGNOSTIC));
         const failed = stub.diagnostics.find((entry) =>
             entry.startsWith("plasma-auto-tiler:drag-attach-failed:moveResizedChanged:"),

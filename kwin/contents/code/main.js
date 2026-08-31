@@ -3415,6 +3415,7 @@
   function createInteractiveDragController(capabilities) {
     const dragState = { current: void 0 };
     const interactiveWindows = /* @__PURE__ */ new Map();
+    const resizeObservations = /* @__PURE__ */ new Set();
     const owedInvariantScopes = /* @__PURE__ */ new Map();
     let shownDropOutline = null;
     let nextDiagnosticTransactionId = 1;
@@ -3946,6 +3947,11 @@
     const handleInvalidated = (window) => {
       capabilities.runGuarded(() => {
         var _a;
+        if (resizeObservations.delete(window)) {
+          diagnostic("resize-observer-invalidated");
+          detach(window);
+          return;
+        }
         if (((_a = dragState.current) == null ? void 0 : _a.window) === window) {
           diagnostic("drag-bail:window-invalidated");
           clear();
@@ -3967,6 +3973,11 @@
         }
         if (capabilities.isMaximized(window)) {
           diagnostic("maximize:ignored lifecycle while maximized");
+          return;
+        }
+        if (window.resize && window.tile !== null && isCustomTile(window.tile)) {
+          resizeObservations.add(window);
+          diagnostic("resize-observer-started");
           return;
         }
         const watch = interactiveWindows.get(window);
@@ -4037,6 +4048,10 @@
     };
     const handleFinished = (window) => {
       capabilities.runGuarded(() => {
+        if (resizeObservations.delete(window)) {
+          diagnostic("resize-observer-finished");
+          return;
+        }
         if (window.fullScreen === true) {
           diagnostic("fullscreen:ignored lifecycle while fullscreen");
           hideDropOutline();
@@ -4072,8 +4087,12 @@
         capabilities.afterFinished();
       });
     };
-    const handleStepped = (geometry) => {
+    const handleStepped = (window, geometry) => {
       capabilities.runGuarded(() => {
+        var _a;
+        if (resizeObservations.has(window) || ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.kind) === "resize") {
+          return;
+        }
         if (!capabilities.dropOutlinePreview()) {
           return;
         }
@@ -4156,7 +4175,7 @@
         window,
         () => handleStarted(window),
         () => handleFinished(window),
-        (geometry) => handleStepped(geometry),
+        (geometry) => handleStepped(window, geometry),
         () => handleMoveResizedChanged(),
         () => handleInvalidated(window)
       );
@@ -4167,6 +4186,9 @@
       const watch = interactiveWindows.get(window);
       if (watch === void 0) {
         return;
+      }
+      if (resizeObservations.delete(window)) {
+        diagnostic("resize-observer-invalidated");
       }
       interactiveWindows.delete(window);
       watch.disconnect();
@@ -7936,7 +7958,7 @@
           orderedIds,
           isEmpty: (id) => !occupied.has(id),
           isVisible: (id) => visible.has(id),
-          removeDesktop: (id) => this.removeOwnedEmptyShared(id, desktops, visible),
+          removeDesktop: (id) => this.removeOwnedEmptyShared(id, visible),
           createDesktop: () => {
             var _a, _b;
             return (_b = (_a = this.appendDesktopForShared()) == null ? void 0 : _a.id) != null ? _b : null;
@@ -7992,12 +8014,16 @@
       }
       return created;
     }
-    removeOwnedEmptyShared(id, desktops, visible) {
+    removeOwnedEmptyShared(id, visible) {
       if (visible.has(id)) {
         return false;
       }
-      const position = desktops.findIndex((desktop2) => desktop2.id === id);
-      const desktop = desktops[position];
+      const currentDesktops = this.liveDesktops();
+      if (currentDesktops === null || currentDesktops.length <= 2) {
+        return false;
+      }
+      const position = currentDesktops.findIndex((desktop2) => desktop2.id === id);
+      const desktop = currentDesktops[position];
       if (desktop === void 0) {
         return false;
       }
@@ -8071,7 +8097,7 @@
             orderedIds,
             isEmpty: (id) => !occupied.has(id),
             isVisible: (id) => visible.has(id),
-            removeDesktop: (id) => this.removeOwnedEmptyDesktop(id, desktops, visible),
+            removeDesktop: (id) => this.removeOwnedEmptyDesktop(id, visible),
             createDesktop: () => {
               var _a2, _b2;
               return (_b2 = (_a2 = this.appendDesktopForOutputKey(key)) == null ? void 0 : _a2.id) != null ? _b2 : null;
@@ -8090,7 +8116,7 @@
           if (assigned.has(id) || occupied.has(id) || visible.has(id)) {
             continue;
           }
-          this.removeOwnedEmptyDesktop(id, remaining, visible);
+          this.removeOwnedEmptyDesktop(id, visible);
         }
       } finally {
         this.reconcilingDesktops = false;
@@ -8219,12 +8245,16 @@
     // desktop, are never removed. Returns whether it was removed; a throwing
     // remove is reported and preserved. Always a plain removeDesktop call -
     // never a structural tiling mutation.
-    removeOwnedEmptyDesktop(id, desktops, visible) {
+    removeOwnedEmptyDesktop(id, visible) {
       if (visible.has(id)) {
         return false;
       }
-      const position = desktops.findIndex((desktop2) => desktop2.id === id);
-      const desktop = desktops[position];
+      const currentDesktops = this.liveDesktops();
+      if (currentDesktops === null || currentDesktops.length <= 2) {
+        return false;
+      }
+      const position = currentDesktops.findIndex((desktop2) => desktop2.id === id);
+      const desktop = currentDesktops[position];
       if (desktop === void 0) {
         return false;
       }
@@ -8573,7 +8603,7 @@
             orderedIds,
             isEmpty: (id) => !occupied.has(id),
             isVisible: (id) => visible.has(id),
-            removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, desktops, visible),
+            removeDesktop: (id) => this.removeOwnedEmptyGlobalUnique(id, visible),
             createDesktop: () => {
               var _a, _b;
               return (_b = (_a = this.appendDesktopForGlobalUniqueKey(key)) == null ? void 0 : _a.id) != null ? _b : null;
@@ -8618,12 +8648,16 @@
     // remaining global desktop, are never removed. Plain removeDesktop only -
     // never a structural tiling mutation. A throwing remove is reported and
     // preserved.
-    removeOwnedEmptyGlobalUnique(id, desktops, visible) {
+    removeOwnedEmptyGlobalUnique(id, visible) {
       if (visible.has(id)) {
         return false;
       }
-      const position = desktops.findIndex((desktop2) => desktop2.id === id);
-      const desktop = desktops[position];
+      const currentDesktops = this.liveDesktops();
+      if (currentDesktops === null || currentDesktops.length <= 2) {
+        return false;
+      }
+      const position = currentDesktops.findIndex((desktop2) => desktop2.id === id);
+      const desktop = currentDesktops[position];
       if (desktop === void 0) {
         return false;
       }
@@ -8795,12 +8829,30 @@
     watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
       const surface = window;
       const connected = [];
-      const attach = (name, handler) => {
+      const attachPayloadFree = (name, handler) => {
+        let signal;
         let value;
         try {
-          value = surface[name];
-          value.connect(handler);
-          connected.push([name, handler]);
+          switch (name) {
+            case "interactiveMoveResizeStarted":
+              signal = surface.interactiveMoveResizeStarted;
+              value = signal;
+              break;
+            case "interactiveMoveResizeFinished":
+              signal = surface.interactiveMoveResizeFinished;
+              value = signal;
+              break;
+            case "moveResizedChanged":
+              signal = surface.moveResizedChanged;
+              value = signal;
+              break;
+            case "desktopsChanged":
+              signal = surface.desktopsChanged;
+              value = signal;
+              break;
+          }
+          signal.connect(handler);
+          connected.push(() => signal.disconnect(handler));
           console.log(`plasma-auto-tiler:drag-attach-ok:${name}`);
           return true;
         } catch (error) {
@@ -8810,18 +8862,70 @@
           return false;
         }
       };
+      const attachTileChanged = () => {
+        let value;
+        try {
+          const handler = (_tile) => invalidated();
+          const signal = surface.tileChanged;
+          value = signal;
+          signal.connect(handler);
+          connected.push(() => signal.disconnect(handler));
+          console.log("plasma-auto-tiler:drag-attach-ok:tileChanged");
+          return true;
+        } catch (error) {
+          console.log(
+            `plasma-auto-tiler:drag-attach-failed:tileChanged:${String(error)} (observed typeof ${typeof value})`
+          );
+          return false;
+        }
+      };
+      const attachOutputChanged = () => {
+        let value;
+        try {
+          const handler = (_output) => invalidated();
+          const signal = surface.outputChanged;
+          value = signal;
+          signal.connect(handler);
+          connected.push(() => signal.disconnect(handler));
+          console.log("plasma-auto-tiler:drag-attach-ok:outputChanged");
+          return true;
+        } catch (error) {
+          console.log(
+            `plasma-auto-tiler:drag-attach-failed:outputChanged:${String(error)} (observed typeof ${typeof value})`
+          );
+          return false;
+        }
+      };
+      const attachStepped = () => {
+        let signal;
+        let value;
+        try {
+          signal = surface.interactiveMoveResizeStepped;
+          value = signal;
+          signal.connect(stepped);
+          connected.push(() => signal.disconnect(stepped));
+          console.log("plasma-auto-tiler:drag-attach-ok:interactiveMoveResizeStepped");
+          return true;
+        } catch (error) {
+          console.log(
+            `plasma-auto-tiler:drag-attach-failed:interactiveMoveResizeStepped:${String(error)} (observed typeof ${typeof value})`
+          );
+          return false;
+        }
+      };
       const attempts = [
-        ["interactiveMoveResizeStarted", started],
-        ["interactiveMoveResizeStepped", stepped],
-        ["interactiveMoveResizeFinished", finished],
-        ["moveResizedChanged", moveResizedChanged],
-        ["outputChanged", invalidated],
-        ["desktopsChanged", invalidated]
+        () => attachPayloadFree("interactiveMoveResizeStarted", started),
+        attachStepped,
+        () => attachPayloadFree("interactiveMoveResizeFinished", finished),
+        () => attachPayloadFree("moveResizedChanged", moveResizedChanged),
+        attachOutputChanged,
+        () => attachPayloadFree("desktopsChanged", invalidated),
+        attachTileChanged
       ];
       let ok = 0;
       let failed2 = 0;
-      for (const [name, handler] of attempts) {
-        if (attach(name, handler)) {
+      for (const attempt of attempts) {
+        if (attempt()) {
           ok += 1;
         } else {
           failed2 += 1;
@@ -8829,9 +8933,9 @@
       }
       return {
         disconnect: () => {
-          for (const [name, handler] of connected) {
+          for (const disconnect of connected) {
             try {
-              surface[name].disconnect(handler);
+              disconnect();
             } catch (error) {
               void error;
             }

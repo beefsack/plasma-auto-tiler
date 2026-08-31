@@ -28,8 +28,8 @@ observation transaction without mutation.
 | R-03 | static | `bash scripts/build-kpackage.test.sh` | exit 0 | pass |
 | R-04 | static | `bash scripts/start-test.test.sh` | exit 0; 255 passes | pass |
 | R-05 | static | `bash scripts/live-test.test.sh` | exit 0; 207 passes | pass |
-| R-06 | static | `npm --prefix kwin test` | exit 0; 994 passes, 0 failures | pass |
-| R-07 | static | `npm --prefix kwin run build` then `wc -c kwin/contents/code/main.js` and `sha256sum kwin/contents/code/main.js` | exit 0; 362668 bytes; `8d547fe268cf3ed4ebc1345675a36b2d906318d6f4a501cdaba9f5b2ef6a4780`; no bundle diff | pass; only `kwin/contents/code/main.js` generated |
+| R-06 | static | `npm --prefix kwin test` | exit 0; 1002 passes, 0 failures; lifecycle tail 255 passes, 0 failures | pass |
+| R-07 | static | `npm --prefix kwin run build` then `wc -c kwin/contents/code/main.js` and `sha256sum kwin/contents/code/main.js` | exit 0; 366448 bytes; `133e935329855c1c06511524ee9266f121d4441f90eba549bb1e4f7b6e1d9c44`; only canonical bundle output changed | pass; only `kwin/contents/code/main.js` generated |
  | R-08 | static | `ATTEMPT=/tmp/opencode/pointer-signal-contract-promotion-dd4449705-20260827 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output" && (cd "$WORKTREE/kwin" && ./node_modules/.bin/esbuild "tests/controller-drag-diagnostics-and-resize.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/output/pointer-resize-signal-contract.cjs" && node --test --test-name-pattern='^TileController native pointer resize signal contract$' "$ATTEMPT/output/pointer-resize-signal-contract.cjs")` | exit 0; 1 focused test passed, 0 failed | signal-contract fixture/harness passes |
 | R-09 | static | `cd kwin && ./node_modules/.bin/esbuild "tests/controller-drag-diagnostics-and-resize.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile=/tmp/opencode/pointer-resize-observer-integration.cjs && node --test --test-name-pattern='^TileController native pointer resize observer integration$' /tmp/opencode/pointer-resize-observer-integration.cjs` | exit 0; 1 focused test passed, 0 failed | observer integration passes |
 | L-01 | live | `bash scripts/live-test.sh run` | blocked: no authorized disposable/restoration layout | user-authorized live evidence recorded |
@@ -292,6 +292,22 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
   `kwin-globals.d.ts` `349fa6262be7d4ee2511416e5e92e132a735bb821f120afc6d89603ef2bef7a8`,
   and `controller-drag-diagnostics-and-resize.test.ts` `5f99438ac9129a42da235e88b477c7e37c0dac113cabc4e18ca55be81a546dd8`.
 - Independent F-01 review found no findings. It confirmed resize start returns
-  before stale move-drag cleanup, finish/invalidation/stepped resize paths stay
-  isolated, non-tiled resize and move-drag cleanup are unchanged, and no KWin
-  ownership boundary is crossed.
+   before stale move-drag cleanup, finish/invalidation/stepped resize paths stay
+   isolated, non-tiled resize and move-drag cleanup are unchanged, and no KWin
+   ownership boundary is crossed.
+
+## Current-Main R-06/R-07 Stabilization
+
+- Clean `origin/main` `da05cd60ed386bda60d624300e2f0869b7959356` reproduced
+  exactly nine R-06 failures: two artifact-smoke, two deferred/fullscreen resize,
+  four interactive-drag attachment, and one tray-bridge fixture failure.
+- The accepted corrections restore seven-signal and resize-observer test
+  contracts, provide the fixture only to the test runner, and regenerate the
+  canonical bundle. They do not change production source or the fixed tray route.
+- R-06 passed with 1002 tests and 0 failures, including the 255-pass shell
+  lifecycle tail. R-07 passed with only `kwin/contents/code/main.js` generated:
+  366448 bytes, SHA-256
+  `133e935329855c1c06511524ee9266f121d4441f90eba549bb1e4f7b6e1d9c44`.
+- Fresh independent review found no semantic drift, F-01 regression, tray route
+  widening, artifact startup regression, or test/production crossover. L-01
+  remains a separate user-authorized live gate.

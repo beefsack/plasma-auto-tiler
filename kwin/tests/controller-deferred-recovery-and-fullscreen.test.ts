@@ -597,28 +597,27 @@ describe("TileController deferred invariant recovery", () => {
     it("logs an interactive resize separately from an unknown non-move and attributes its follow-on bail", () => {
         const { harness, controller, dragged, targetWindow } = dragSetup();
 
-        // An interactive resize (resize live, move not live) is not captured
-        // and is logged as a resize, distinct from an unknown non-move.
+        // An interactive resize (resize live, move not live) is observed
+        // separately from an unknown non-move and is not captured as a drag.
         dragged.resize = true;
         dragged.move = false;
         dragged.interactiveMoveResizeStarted.emit();
-        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:resize"), 1);
+        assert.equal(countEvent(harness.logs, "resize-observer-started"), 1);
         assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:not-move"), 0);
         assert.equal(countEvent(harness.logs, "drag-origin-captured"), 0);
         assert.equal(controller.hasActiveDrag, false);
 
-        // The resize finish sees no tracked drag and the bail is attributed to
-        // the resize rather than a generic no-tracked-drag.
+        // The observer consumes the matching resize finish without a drag bail.
         dragged.resize = false;
         dragged.interactiveMoveResizeFinished.emit();
-        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+        assert.equal(countEvent(harness.logs, "resize-observer-finished"), 1);
         assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 0);
 
         // An unknown non-move (neither move nor resize) keeps the generic
         // not-move capture failure and generic no-tracked-drag finish bail.
         targetWindow.interactiveMoveResizeStarted.emit();
         assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:not-move"), 1);
-        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:resize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-origin-capture-failed:resize"), 0);
         targetWindow.interactiveMoveResizeFinished.emit();
         assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
     });
@@ -631,12 +630,12 @@ describe("TileController deferred invariant recovery", () => {
         dragged.interactiveMoveResizeStarted.emit();
         dragged.resize = false;
         dragged.interactiveMoveResizeFinished.emit();
-        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+        assert.equal(countEvent(harness.logs, "resize-observer-finished"), 1);
 
         // A later finish with no preceding start must not be attributed to the
         // consumed resize gesture.
         dragged.interactiveMoveResizeFinished.emit();
-        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 1);
+        assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag:resize"), 0);
         assert.equal(countEvent(harness.logs, "drag-bail:no-tracked-drag"), 1);
     });
 

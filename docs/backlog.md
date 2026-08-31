@@ -13,7 +13,7 @@
   add/remove replacement research remain post-release or deferred scope.
 
 - P1 | next | dependencies: current isolated promotion snapshot | refresh the current COSMIC fixture promotion by correcting only G-04 package-relative paths and tray environment, run G-01 through G-04, then perform independent source/output correspondence review; park on failure | [change](changes/2026-08-25-cosmic-controller-path-directional-movement/)
-- P1 | next after COSMIC static refresh | dependencies: COSMIC promotion refresh complete | apply the one authorized pointer correction limited to F-01, then run R-09, R-02, R-01, and independent review; park on failure | [change](changes/2026-08-25-pointer-interactive-resize/)
+- P1 | completed static stabilization | dependencies: COSMIC promotion refresh remains separate | the one authorized pointer F-01 correction, R-09/R-02/R-01, and independent review are complete; current-main R-06 passed 1002/1002 and R-07 canonical output is 366448 bytes, `133e935329855c1c06511524ee9266f121d4441f90eba549bb1e4f7b6e1d9c44`; L-01 remains separate and blocked | [change](changes/2026-08-25-pointer-interactive-resize/)
 - P2 | not yet scoped | dependencies: COSMIC successor and interactive resize | research a portable cross-WM/OS layout engine; do not classify the proven KWin client-realization drag gap as an engine bug | (not yet scoped)
 
 - P1 | paused | dependencies: [sustained-workload-validation](changes/sustained-workload-validation/) completion and one combined user decision | discrete window add/remove management has a final negative native-plugin verdict; retain the change and do not archive until the sustained-workload evidence can be reviewed with it | [change](changes/js-baseline-measurement/)

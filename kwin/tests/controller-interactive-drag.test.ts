@@ -366,11 +366,11 @@ describe("TileController interactive drag", () => {
 
     it("emits exactly one startup drag-attach summary aggregating per-signal results", () => {
         const { harness } = dragSetup();
-        assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:14:14:0"), 1);
         assert.equal(countEvent(harness.logs, "drag-attach-summary:6:6:0"), 0);
 
         harness.emitCurrentDesktopChanged(null, null, null);
-        assert.equal(countEvent(harness.logs, "drag-attach-summary:12:12:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:14:14:0"), 1);
     });
 
     it("reports a per-signal attach failure with a useful detail without skipping the window", () => {
@@ -386,7 +386,7 @@ describe("TileController interactive drag", () => {
         const controller = new TileController(harness.environment());
         controller.start();
         assert.equal(dragged.interactiveMoveResizeStarted.subscriberCount, 1);
-        assert.equal(countEvent(harness.logs, "drag-attach-summary:6:5:1"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:7:6:1"), 1);
         assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-interaction-signals"), 0);
         const failed = harness.logs.find((entry) =>
             entry.startsWith("plasma-auto-tiler:drag-attach-failed:moveResizedChanged:"),
@@ -432,7 +432,7 @@ describe("TileController interactive drag", () => {
         harness.windows = [dragged];
         const controller = new TileController(harness.environment());
         controller.start();
-        assert.equal(countEvent(harness.logs, "drag-attach-summary:6:6:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:7:7:0"), 1);
         assert.equal(countEvent(harness.logs, "drag-attach-skipped:no-interaction-signals"), 0);
         assert.equal(
             harness.logs.some((entry) => entry.startsWith("plasma-auto-tiler:drag-attach-failed:")),
@@ -487,7 +487,7 @@ describe("TileController interactive drag", () => {
         harness.windows = windows;
         const controller = new TileController(harness.environment());
         controller.start();
-        assert.equal(countEvent(harness.logs, "drag-attach-summary:6144:6144:0"), 1);
+        assert.equal(countEvent(harness.logs, "drag-attach-summary:7168:7168:0"), 1);
         const overflow = window({ tile: null });
         harness.emitAdded(overflow);
         assert.equal(countEvent(harness.logs, "drag-attach-skipped:max-windows"), 1);
