@@ -317,3 +317,9 @@
   finding-fix corrections: 4; independent reviews: 5; acceptance criteria
   moved: 3; no-progress streak resets to 0. No Unit-03, broad gate, live work,
   preservation action, or unrelated pointer semantic change occurred.
+- 2026-08-30 | unit-03 static integration attempt | After accepted
+   Unit-02b/F-01, R-02 through R-05 passed, but R-06 failed in a clean
+   current-main attribution context. R-07 and independent static review did not
+   run under stop-on-failure. No pointer source/test correction, preservation,
+   staging, commit, push, or live operation occurred. This intermediate failure
+   does not supersede the authoritative later R-06/R-07 static completion.

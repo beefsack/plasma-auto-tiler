@@ -171,11 +171,12 @@
 - Notes: The sole changed-kind reset is consumed. No second review, correction, reset, source action, candidate action, gate run, or Unit 02 continuation is authorized. Unit 02 remains parked pending whether locked legacy directional behavior is product-required and a separately approved runtime-capability/migration direction.
 - Change-wide telemetry: unchanged - implementation dispatches 3; dispatch-invalids 1; pre-review corrections 2; finding-fix corrections 2; independent reviews 2; changed-kind resets 1; broad gates 5; Worker tool-call proxy 4 plus Unit 01 Workers unreported plus Unit 02 attempt-01 unreported; Lead tool-call proxy 122; acceptance criteria moved 2 plus canonical-gate advances G-02-01/G-02-02/G-02-03; no-progress streak 0.
 
-## Consumed Authorization - 2026-08-30
+## Current Authorization - 2026-08-30
 
-- The one isolated current Unit 01 promotion refresh was consumed and parked at
-  G-01. G-02 through G-04 and independent source/output correspondence review
-  did not run; no retry, correction, promotion, or review is authorized.
+- The prior isolated current Unit 01 promotion refresh was consumed and parked
+  at G-01. G-02 through G-04 and independent source/output correspondence
+  review did not run. A later user-authorized fresh promotion attempt has not
+  occurred; the promotion remains unaccepted and has no production acceptance.
 - Unit 02 remains parked. No production controller composition, test migration,
   capability work, legacy fallback, or dual route is authorized.
 - The old candidate remains prohibited from reading, use, promotion,
@@ -185,8 +186,10 @@
 ## Current Reconciliation - 2026-08-30
 
 - COSMIC remains the selected replacement for legacy directional behavior, but
-  the failed Unit 01 refresh leaves Unit 02 blocked. The historical attempt and
-  old candidate remain unaccepted and protected.
+  the failed Unit 01 refresh leaves Unit 02 blocked. A later user-authorized
+  fresh promotion attempt has not occurred. The historical attempt and old
+  candidate remain unaccepted and protected, and no production acceptance
+  exists.
 
 ## 2026-08-30
 

@@ -187,9 +187,10 @@ Successor counters begin at zero. The prior parked change remains historical:
 - Unit 01 is historically accepted after the one authorized correction,
   independent review, and finding-fix confirmation, but its two fixture files
   remain untracked and uncommitted. The current promotion cannot reuse that
-  acceptance: G-01 failed before the permitted G-04 correction or fresh G-04
-  evidence. The sole reset is consumed; no retry, review, correction, or reset
-  is authorized.
+  acceptance: its latest authorized refresh stopped at G-01 because required
+  tooling was unavailable, so G-02 through G-04 did not run. A later
+  user-authorized fresh promotion attempt has not occurred; the promotion
+  remains unaccepted and has no production acceptance.
 
 ## Final Outcome
 
@@ -197,14 +198,15 @@ Successor counters begin at zero. The prior parked change remains historical:
   consumed finding-fix breaker. The approved single changed-kind reset
   historically accepted `unit-01-cosmic-local-fixture`; its untracked,
   uncommitted promotion remains unaccepted after its latest refresh stopped at
-  G-01. Unit 02 and all later units remain blocked by their recorded dependencies
-  and approvals.
+  G-01. A later user-authorized fresh promotion attempt has not occurred, and
+  no production acceptance exists. Unit 02 and all later units remain blocked by
+  their recorded dependencies and approvals.
 
 ## Current Authorization
 
-- The one authorized isolated refresh of the current Unit 01 promotion was
-  consumed and parked at G-01. No retry, correction, promotion, or review is
-  authorized.
+- The prior isolated refresh of the current Unit 01 promotion was consumed and
+  parked at G-01. A later user-authorized fresh promotion attempt has not
+  occurred; the promotion remains unaccepted and has no production acceptance.
 - Unit 02 remains parked. No controller capability, legacy fallback, dual route,
   locked-test change, or product-semantic decision is authorized.
 - The old candidate remains prohibited: do not read, use, promote, relabel, or
