@@ -380,8 +380,7 @@
   and `kwin/tests/tray-publisher.test.ts`; tray records and backlog updated.
 - Verification: Focused publisher 9 passed, typecheck passed, nonce build SHA-256
   `d80744656b464153785bb92dae5c96bf4c1f639ee4c63f8fdd408a7119c0bccc`, and
-  broad KWin 1011 passed across 98 suites. Start, live-test, installer, and
-  package static gates passed. Independent review found no findings.
+  broad KWin 1011 passed across 98 suites. Independent review found no findings.
 - Notes: No live KWin, session, helper, or host operation ran. The fixed public
   route remains outbound-only and no action or helper-to-KWin path was added.
 
@@ -417,3 +416,8 @@
   start fixtures, package build/checksum, and 1002 KWin tests across 98 suites.
   Final independent security review accepted with no findings.
 - Notes: No host, KWin, D-Bus, helper, or session mutation ran.
+
+- Role / unit: Lead / current-main reconciliation record.
+- Result: Static production/lifecycle work is accepted on main through `2a626a9`; immediate publisher work is accepted through `69ad080`.
+- Verification: Historical 05a direct-helper result was 75/0/0 on an old candidate; current-main live helper validation remains pending after lifecycle changes. The reconstructed 05a static harness was accepted at 95/0/0 but is uncommitted because the installer gate was environment blocked, so it is not main evidence.
+- Notes: 05b KWin live acceptance is unaccepted. The earlier reported run had no attributable evidence, and later preflight stopped before mutation because of a KWin identity mismatch. Static evidence and identity corrections remain only in the preserved candidate, not main; no positive 05b KWin-origin delivery claim exists. Panel rendering, physical/manual checks, and login-autostart remain separate manual release gates.
