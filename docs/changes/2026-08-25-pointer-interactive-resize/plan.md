@@ -202,16 +202,22 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
 
 ## Reset-02 Preservation and Evidence
 
-- One ordered preservation container is authorized at
-  `unit-02-reset-02-candidate.tar`, retained through 2026-09-08. It contains a
-  base-to-C accepted unit-01 checkpoint patch, a C-to-current parked unit-02
-  delta patch, and a manifest. Container SHA-256:
+- 2026-09-01: the user authorized early cleanup of
+  `unit-02-reset-02-candidate.tar`. Its recorded SHA-256
+  `20459f88e167342f175923322c57fde0e1f9104e288e7f89e85039ede4f2010a`
+  matched before deletion. This ends retention early and does not affect
+  acceptance or evidence; pointer static work remains accepted and pushed, and
+  separate L-01 remains unchanged.
+- One ordered preservation container was authorized at
+  `unit-02-reset-02-candidate.tar` with intended retention through 2026-09-08.
+  It contained a base-to-C accepted unit-01 checkpoint patch, a C-to-current
+  parked unit-02 delta patch, and a manifest. Container SHA-256:
   `20459f88e167342f175923322c57fde0e1f9104e288e7f89e85039ede4f2010a`.
-- The manifest binds base `6466c99dd497779d8499e0fef41cc5618593bff2`, component
+- The manifest bound base `6466c99dd497779d8499e0fef41cc5618593bff2`, component
   and container SHA-256 values, ordered application proof, tracked/untracked
   inventory, source/output correspondence, reason, owner, retention, deadline,
-  cleanup owner, and cleanup disposition. Lead owns cleanup; removal requires
-  explicit completion or container-cleanup approval.
+  cleanup owner, and cleanup disposition. The 2026-09-01 user authorization
+  supplied the required early cleanup approval.
 - Candidate paths are `kwin/src/controller-interactive-drag.ts`,
   `kwin/src/entry.ts`, `kwin/src/kwin-globals.d.ts`,
   `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`, and
@@ -228,7 +234,7 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
   `88da3cdba5cbdb6bd3a40f070279c943ce090dfda91024da7f4c2ea6aab1743e`;
   C-to-current is
   `e46d69ba2580f43f696e36cddcf1471814ca98099a0f9b0fc5789c81e06a83f2`.
-- The retained container binds the pre-waiver C-to-current parked candidate.
+- The former container bound the pre-waiver C-to-current parked candidate.
   The later failed unit-02a test-only delta remains active and unsealed because
   a second preservation container is prohibited and no replacement-container or
   destructive restoration authorization exists. Its snapshot evidence is under
@@ -237,8 +243,8 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
   limited to tracked `kwin/tests/controller-fixtures.ts` and
   `kwin/tests/controller-drag-diagnostics-and-resize.test.ts`. It is owned by
   the parked pointer change and may not be edited, restored, deleted, staged,
-  or included in other work. The existing container remains the sole immutable
-  preservation container; no cleanup disposition is authorized.
+  or included in other work. The now-deleted container was the sole immutable
+  preservation container; its cleanup disposition is recorded above.
 
 ## Unit-02b Evidence
 
@@ -255,7 +261,7 @@ Escape final state, and fullscreen/float/maximize/workspace/output guards.
   remains `118c29b6cbfc216e743c1e5c3ba01820cc23d8cc9ab446be2cd4740106dfdec9`.
 - Lead confirmation closed F-02 but found F-01 still open in
   `handleStarted`: the observer add does not return before stale move-drag
-  cleanup. No acceptance credit applies. The retained old candidate is not
+  cleanup. No acceptance credit applies. The deleted former candidate is not
   evidence for this unit.
 
 ## Reconciliation

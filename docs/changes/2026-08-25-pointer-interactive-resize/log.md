@@ -323,3 +323,9 @@
    run under stop-on-failure. No pointer source/test correction, preservation,
    staging, commit, push, or live operation occurred. This intermediate failure
    does not supersede the authoritative later R-06/R-07 static completion.
+- 2026-09-01 | user-authorized Reset-02 preservation cleanup |
+  `unit-02-reset-02-candidate.tar` was retired before its retention deadline
+  and deleted after its recorded SHA-256
+  `20459f88e167342f175923322c57fde0e1f9104e288e7f89e85039ede4f2010a`
+  matched. The deletion has no acceptance or evidence effect. Pointer static
+  work remains accepted and pushed; separate L-01 remains unchanged.
