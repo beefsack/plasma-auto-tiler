@@ -4623,9 +4623,11 @@
     return String(error);
   }
   var TileController = class {
-    constructor(environment) {
+    constructor(environment, onEnabledChanged) {
       this.environment = environment;
+      this.onEnabledChanged = onEnabledChanged;
       this.gate = new FeatureGate(() => this.structuralMutation.flush());
+      this.notifiedEnabled = true;
       this.pending = new TransientState();
       this.groupOutlineIdentity = null;
       this.structuralMutationPending = false;
@@ -5150,8 +5152,19 @@
       this.diagnostic(event);
     }
     disabled(reason) {
+      var _a;
       this.interactiveDrag.hideDropOutline();
       this.diagnostic(`disabled:${reason}`);
+      const enabled = this.gate.isEnabled;
+      if (enabled === this.notifiedEnabled) {
+        return;
+      }
+      this.notifiedEnabled = enabled;
+      try {
+        (_a = this.onEnabledChanged) == null ? void 0 : _a.call(this, enabled);
+      } catch (error) {
+        void error;
+      }
     }
     start() {
       this.gate.run(() => {
@@ -8748,10 +8761,81 @@
     return root;
   }
 
+  // src/tray-publisher.ts
+  var TRAY_SCHEMA = 1;
+  var TRAY_HEARTBEAT_MS = 1e3;
+  var MAX_SIGNED_REVISION = 2147483647;
+  function processGeneration() {
+    return `${Date.now().toString(36)}-${Math.floor(Math.random() * 4294967296).toString(36)}`;
+  }
+  var TrayPublisher = class {
+    constructor(environment) {
+      this.environment = environment;
+      this.revision = 0;
+      this.enabled = false;
+      this.started = false;
+      this.disposed = false;
+      var _a, _b;
+      this.generation = (_b = (_a = environment.createGeneration) == null ? void 0 : _a.call(environment)) != null ? _b : processGeneration();
+    }
+    start() {
+      if (this.started || this.disposed) {
+        return;
+      }
+      this.started = true;
+      this.enabled = this.environment.isEnabled();
+      this.publish();
+      this.scheduleHeartbeat();
+    }
+    scheduleHeartbeat() {
+      if (this.disposed) {
+        return;
+      }
+      this.environment.scheduleOnce(TRAY_HEARTBEAT_MS, () => {
+        if (this.disposed) {
+          return;
+        }
+        this.heartbeat();
+        this.scheduleHeartbeat();
+      });
+    }
+    notifyEnabledChanged(enabled) {
+      if (!this.started || this.disposed || enabled === this.enabled) {
+        return;
+      }
+      this.enabled = enabled;
+      this.advanceRevision();
+      this.publish();
+    }
+    heartbeat() {
+      this.publish();
+    }
+    advanceRevision() {
+      var _a, _b, _c;
+      if (this.revision === MAX_SIGNED_REVISION) {
+        this.generation = (_c = (_b = (_a = this.environment).createGeneration) == null ? void 0 : _b.call(_a)) != null ? _c : processGeneration();
+        this.revision = 0;
+      } else {
+        this.revision += 1;
+      }
+    }
+    dispose() {
+      this.disposed = true;
+    }
+    publish() {
+      try {
+        this.environment.publishSnapshot(TRAY_SCHEMA, this.generation, this.revision, this.enabled);
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
   // src/entry.ts
   function isKWinWindowSurface(value) {
     return typeof value === "object" && value !== null && "activeChanged" in value && "desktopsChanged" in value && "outputChanged" in value && "tileChanged" in value && "interactiveMoveResizeStarted" in value && "interactiveMoveResizeStepped" in value && "interactiveMoveResizeFinished" in value;
   }
+  var trayPublisher;
   var controller = new TileController({
     activeWindow: () => workspace.activeWindow,
     setActiveWindow: (window) => {
@@ -9071,6 +9155,38 @@
     registerShortcut,
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message)
+  }, (enabled) => trayPublisher == null ? void 0 : trayPublisher.notifyEnabledChanged(enabled));
+  var trayTimers = /* @__PURE__ */ new Set();
+  trayPublisher = new TrayPublisher({
+    isEnabled: () => controller.isEnabled,
+    publishSnapshot: (schema, generation, revision, enabled) => {
+      callDBus(
+        "org.plasmaautotiler.Tray",
+        "/org/plasmaautotiler/Tray",
+        "org.plasmaautotiler.Tray1",
+        "PublishSnapshot",
+        schema,
+        generation,
+        revision,
+        enabled
+      );
+    },
+    scheduleOnce: (delayMs, callback) => {
+      var _a, _b;
+      const timer = new QTimer();
+      trayTimers.add(timer);
+      timer.interval = delayMs;
+      timer.singleShot = true;
+      (_a = timer.timeout) == null ? void 0 : _a.connect(() => {
+        try {
+          callback();
+        } finally {
+          trayTimers.delete(timer);
+        }
+      });
+      (_b = timer.start) == null ? void 0 : _b.call(timer);
+    }
   });
   controller.start();
+  trayPublisher.start();
 })();
