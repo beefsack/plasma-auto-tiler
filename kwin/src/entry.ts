@@ -1,5 +1,6 @@
 import { TileController } from "./controller";
 import { prepareManagedRoot } from "./managed-root";
+import { TrayPublisher } from "./tray-publisher";
 
 function isKWinWindowSurface(value: unknown): value is Window {
     return (
@@ -14,6 +15,8 @@ function isKWinWindowSurface(value: unknown): value is Window {
         "interactiveMoveResizeFinished" in value
     );
 }
+
+let trayPublisher: TrayPublisher | undefined;
 
 const controller = new TileController({
     activeWindow: () => workspace.activeWindow,
@@ -341,6 +344,38 @@ const controller = new TileController({
     registerShortcut,
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message),
+}, (enabled) => trayPublisher?.notifyEnabledChanged(enabled));
+
+const trayTimers = new Set<QTimer>();
+trayPublisher = new TrayPublisher({
+    isEnabled: () => controller.isEnabled,
+    publishSnapshot: (schema, generation, revision, enabled) => {
+        callDBus(
+            "org.plasmaautotiler.Tray",
+            "/org/plasmaautotiler/Tray",
+            "org.plasmaautotiler.Tray1",
+            "PublishSnapshot",
+            schema,
+            generation,
+            revision,
+            enabled,
+        );
+    },
+    scheduleOnce: (delayMs, callback) => {
+        const timer = new QTimer();
+        trayTimers.add(timer);
+        timer.interval = delayMs;
+        timer.singleShot = true;
+        timer.timeout?.connect(() => {
+            try {
+                callback();
+            } finally {
+                trayTimers.delete(timer);
+            }
+        });
+        timer.start?.();
+    },
 });
 
 controller.start();
+trayPublisher.start();

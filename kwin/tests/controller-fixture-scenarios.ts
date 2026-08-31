@@ -18,7 +18,7 @@ import {
     window,
 } from "./controller-fixtures";
 
-export function setup(): {
+export function setup(onEnabledChanged?: (enabled: boolean) => void): {
     readonly harness: Harness;
     readonly controller: TileController;
     readonly root: TestTile;
@@ -34,7 +34,7 @@ export function setup(): {
     harness.root = root;
     harness.active = focused;
     harness.windows = [focused];
-    const controller = new TileController(harness.environment());
+    const controller = new TileController(harness.environment(), onEnabledChanged);
     controller.start();
     return { harness, controller, root, target, focused };
 }

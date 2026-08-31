@@ -426,6 +426,7 @@ interface PresetOccupant {
 
 export class TileController {
     private readonly gate = new FeatureGate(() => this.structuralMutation.flush());
+    private notifiedEnabled = true;
     private readonly pending = new TransientState<PendingKeyboard>();
     private groupOutlineIdentity: object | null = null;
     private structuralMutationPending = false;
@@ -567,7 +568,10 @@ export class TileController {
     private readonly layoutDomain: LayoutDomain;
     private readonly workspaceDomain: WorkspaceDomain;
 
-    constructor(private readonly environment: ControllerEnvironment) {
+    constructor(
+        private readonly environment: ControllerEnvironment,
+        private readonly onEnabledChanged?: (enabled: boolean) => void,
+    ) {
         this.structuralMutation = {
             report: this.markStructuralMutation,
             flush: () => this.flushStructuralMutation(),
@@ -998,6 +1002,16 @@ export class TileController {
     private disabled(reason: string): void {
         this.interactiveDrag.hideDropOutline();
         this.diagnostic(`disabled:${reason}`);
+        const enabled = this.gate.isEnabled;
+        if (enabled === this.notifiedEnabled) {
+            return;
+        }
+        this.notifiedEnabled = enabled;
+        try {
+            this.onEnabledChanged?.(enabled);
+        } catch (error) {
+            void error;
+        }
     }
 
     start(): void {

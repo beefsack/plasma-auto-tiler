@@ -369,6 +369,30 @@
 
 ## 2026-08-31
 
+- Role / unit: Lead / `unit-02b-kwin-publisher` reconstruction and integration.
+- Result: Accepted. The reconstructed publisher sends revision 0 at startup,
+  immediately sends each authoritative enabled-state transition through the
+  existing one-way `PublishSnapshot` route, and retains the 1000-ms heartbeat
+  for retry and freshness. Same-state writes and heartbeats do not advance the
+  revision; signed rollover creates a new generation at revision 0.
+- Files / commit: `kwin/src/controller.ts`, `kwin/src/entry.ts`,
+  `kwin/src/tray-publisher.ts`, `kwin/tests/controller-fixture-scenarios.ts`,
+  and `kwin/tests/tray-publisher.test.ts`; tray records and backlog updated.
+- Verification: Focused publisher 9 passed, typecheck passed, nonce build SHA-256
+  `d80744656b464153785bb92dae5c96bf4c1f639ee4c63f8fdd408a7119c0bccc`, and
+  broad KWin 1011 passed across 98 suites. Start, live-test, installer, and
+  package static gates passed. Independent review found no findings.
+- Notes: No live KWin, session, helper, or host operation ran. The fixed public
+  route remains outbound-only and no action or helper-to-KWin path was added.
+
+- Role / unit: Lead / isolated publisher-gate fixture repair.
+- Result: The first literal isolated typecheck exposed an omitted test scenario
+  helper. The gate now copies that already-scoped helper with the tray test; no
+  production behavior, route, ownership, or test oracle changed.
+- Verification: The corrected literal isolated typecheck passed; its isolated
+  broad gate passed with 1011 tests across 98 suites, 0 failures, and 0 skips.
+  All nonce worktrees and outputs were removed.
+
 - Role / unit: Lead / `unit-02d-helper-lifecycle` normal-path boundary.
 - Result: The controlling user decision restores the original host-install
   boundary. Crash and power-loss recovery, durable transaction state, and

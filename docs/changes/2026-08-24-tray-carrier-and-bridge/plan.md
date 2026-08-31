@@ -38,9 +38,9 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
   changes, D-Bus registration, signals, actions, `OpenSettings`, shell or input
   execution, helper-to-KWin traffic, sender-auth claims, live operations, and
   unrelated tracked or untracked paths.
-- `unit-02b-kwin-publisher` may modify `kwin/src/entry.ts` and
-  `kwin/src/controller.ts`, and add `kwin/src/tray-publisher.ts` and
-  `kwin/tests/tray-publisher.test.ts`. It reads
+- `unit-02b-kwin-publisher` may modify `kwin/src/entry.ts`,
+  `kwin/src/controller.ts`, and its existing test fixture support, and add
+  `kwin/src/tray-publisher.ts` and `kwin/tests/tray-publisher.test.ts`. It reads
   `test-fixtures/tray-bridge-v1.json` only as a canonical test input and does not
   modify `kwin/contents/code/main.js`, `kwin/dist`, package manifests, or build
   scripts.
@@ -77,15 +77,16 @@ hint, exact icon, styling, and dynamic shortcut display are not requirements.
 
 - [x] unit-01 historical governance reconciliation is accepted and recorded.
 - [x] unit-02a-bridge-contract-fixture accepted after semantic attempt 2 under the approved fixture-delivery reset.
-- [ ] unit-02b-kwin-publisher blocked pending reconciliation of concurrent
-  `kwin/src/entry.ts` ownership, despite its accepted fixture dependency.
+- [x] unit-02b-kwin-publisher accepted: controller-owned enabled transitions
+  publish immediately through the fixed one-way snapshot route; the 1000-ms
+  heartbeat remains retry and freshness publication.
 - [x] unit-02c-helper-endpoint accepted after semantic attempt 1, the approved
   nonce-build-directory gate amendment, host-unknown verification recovery, and
   closure of its one frozen startup owner-race finding.
 - [x] unit-02d-helper-lifecycle accepted: ephemeral identity-checked
   command-duration rollback copies restore normal partial removal failures,
   while unsafe residue fails closed. Durable crash recovery remains excluded.
-- [ ] unit-03 blocked on unit-02b.
+- [ ] unit-03 not started; its publisher dependency is accepted.
 - [ ] unit-04 blocked on unit-01 and unit-03.
 - [ ] unit-05 blocked on units 02b-04 and user live authorization.
 
@@ -180,7 +181,7 @@ It is acyclic. The pre-start split is not a changed-kind reset.
 |---|---:|---:|---:|---:|
 | unit-01 | 0 | 0 | 0 | 0 |
 | unit-02a-bridge-contract-fixture | 2 | 0 | 1 | 1 |
-| unit-02b-kwin-publisher | 0 | 0 | 0 | 0 |
+| unit-02b-kwin-publisher | 1 | 0 | 0 | 1 |
 | unit-02c-helper-endpoint | 1 | 0 | 1 | 1 |
 | unit-03 | 0 | 0 | 0 | 0 |
 | unit-04 | 0 | 0 | 0 | 0 |
@@ -251,14 +252,14 @@ generated output under tracked `kwin/dist`.
   `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-publisher.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-publisher.test.js" && node --test "$ATTEMPT/tray-publisher.test.js")`
   Expected baseline: 0 failures, 0 skips; only the fresh bundle is generated.
 - `gate.tray-publisher-typecheck`:
-  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-typecheck-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && npm --prefix kwin run typecheck))`
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-typecheck-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts kwin/tests/controller-fixture-scenarios.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && npm --prefix kwin run typecheck))`
   Expected baseline: exit 0 in an isolated source snapshot with no generated
   tracked output.
 - `gate.tray-publisher-build`:
   `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-build-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; kwin/node_modules/.bin/esbuild kwin/src/entry.ts --bundle --format=iife --target=es2017 --outfile="$ATTEMPT/main.js")`
   Expected baseline: exit 0; only `ATTEMPT/main.js` is generated.
 - `gate.tray-publisher-broad`:
-  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))`
+  `ATTEMPT="$(mktemp -d /tmp/opencode/tray-publisher-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" HEAD && mkdir -p "$ATTEMPT/kwin/src" "$ATTEMPT/kwin/tests" "$ATTEMPT/test-fixtures" && cp kwin/src/entry.ts kwin/src/controller.ts kwin/src/tray-publisher.ts "$ATTEMPT/kwin/src/" && cp kwin/tests/tray-publisher.test.ts kwin/tests/controller-fixture-scenarios.ts "$ATTEMPT/kwin/tests/" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))`
   Expected baseline: exit 0, 0 failures; only the named source/test files and
   accepted fixture input are copied.
 - `gate.tray-helper-static`:
@@ -293,7 +294,7 @@ evidence; neither folds in fixture delivery or unrelated work.
 | Fixture vectors enforce schema, generation, revision, enabled, owner, liveness, replay, restart, transport, malformed, and route-rejection rules. | `gate.tray-bridge-focused` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-focused-XXXXXXXX)" && (trap 'rm -rf "$ATTEMPT"' EXIT; export TRAY_BRIDGE_FIXTURE="$PWD/test-fixtures/tray-bridge-v1.json"; kwin/node_modules/.bin/esbuild kwin/tests/tray-bridge-protocol.test.ts --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/tray-bridge-protocol.test.js" && node --test "$ATTEMPT/tray-bridge-protocol.test.js")` | 0 failures, 0 skips; `TRAY_BRIDGE_FIXTURE` is the exact source-snapshot fixture; only generated bundle under fresh `ATTEMPT`. | Semantic-attempt-2 snapshot: HEAD `6466c99dd497779d8499e0fef41cc5618593bff2`; untracked fixture SHA-256 `33b1c33a29b5ab391773fbfad34c8fb8421932cd1c839b9314b6a7d5630689cc`; untracked test SHA-256 `5a5b568efd228e7e2e5e31f556d6dd878d0c13f15087d8a24fc280141b06f18c`; fresh nonce output: 2 passed, 0 failures, 0 skips. |
 | Fixture paths typecheck with repository-managed dependencies. | `gate.tray-bridge-typecheck` | `npm --prefix kwin run typecheck` | Exit 0. | Same semantic-attempt-2 source snapshot; fresh output exit 0. |
 | Broad KWin suite accepts the isolated allowed snapshot. | `gate.tray-bridge-broad` | `ATTEMPT="$(mktemp -d /tmp/opencode/tray-bridge-broad-XXXXXXXX)" && (trap 'git worktree remove --force "$ATTEMPT" >/dev/null 2>&1 || rm -rf "$ATTEMPT"' EXIT; git worktree add --detach "$ATTEMPT" 6466c99dd497779d8499e0fef41cc5618593bff2 && mkdir -p "$ATTEMPT/test-fixtures" "$ATTEMPT/kwin/tests" && cp test-fixtures/tray-bridge-v1.json "$ATTEMPT/test-fixtures/tray-bridge-v1.json" && cp kwin/tests/tray-bridge-protocol.test.ts "$ATTEMPT/kwin/tests/tray-bridge-protocol.test.ts" && ln -s "$PWD/kwin/node_modules" "$ATTEMPT/kwin/node_modules" && (cd "$ATTEMPT" && export TRAY_BRIDGE_FIXTURE="$ATTEMPT/test-fixtures/tray-bridge-v1.json"; npm --prefix kwin test))` | Exit 0, 0 failures; the fresh worktree contains only the two uncommitted tray fixture inputs and uses the source-snapshot `TRAY_BRIDGE_FIXTURE`; no pointer, COSMIC candidate, or other untracked input is copied. | Same semantic-attempt-2 source snapshot copied into a fresh detached worktree; fresh output: 996 passed, 0 failures. This formerly unmet canonical baseline advanced. |
-| KWin publisher has focused, typecheck, build, and isolated broad evidence. | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | See Production Gate Map. | All production gate baselines pass on the same scoped snapshot. | Pending `unit-02b-kwin-publisher`; blocked on `kwin/src/entry.ts` ownership reconciliation. |
+| KWin publisher has focused, typecheck, build, and isolated broad evidence. | `gate.tray-publisher-focused`, `gate.tray-publisher-typecheck`, `gate.tray-publisher-build`, `gate.tray-publisher-broad` | See Production Gate Map. | All production gate baselines pass on the same scoped snapshot. | Accepted on `2a626a9` plus the scoped publisher integration: focused 9 passed, typecheck passed, nonce build SHA-256 `d80744656b464153785bb92dae5c96bf4c1f639ee4c63f8fdd408a7119c0bccc`, and broad 1011 passed across 98 suites. |
 | Rust helper endpoint validates cache and owner-liveness behavior. | `gate.tray-helper-static` | See Production Gate Map. | Format, test, and check exit 0 with Rust target output only under `ATTEMPT/target`. | Attempt-1 scoped snapshot: HEAD `882fc0fe3264740012c69c22fcbcb75123d3e26f`, modified `Cargo.toml` and `src/main.rs`, new `Cargo.lock`, `src/lib.rs`, `src/tray_endpoint.rs`, and `tests/tray_endpoint.rs`. The superseded command's format, test (5 passed), and check commands exited 0, but reused artifacts were under `/home/beefsack/.cache/cargo/build`; baseline unmet. The first amended verification timed out during check. Host-unknown recovery reran the exact amended command with a 600000-ms execution boundary: format, test (5 passed, 0 failed), and check exit 0; emitted Cargo paths were contained in `/tmp/opencode/tray-helper-7f4KdPTo/target`; no live bus ran. The sole finding-fix added deterministic startup owner-loss proof; its fresh amended gate passed with 1 unit test and 5 integration tests, 0 failures, and output contained in `/tmp/opencode/tray-helper-WFxhPyqg/target`. SHA-256: `Cargo.toml` `3c1b288d17ccd5541b57405fcaae213dccebf429ad677663e650d98d488f9465`, `Cargo.lock` `b37e719f335012cf2ed4932a3d354825b347c5d413e6d29f9ee2b11289a26a1b`, `src/main.rs` `64be74af655e7850852db5cd0956cc2dd18a427dba81615b622ed481f99a8a4c`, `src/lib.rs` `e89c11a7806b9d191254aa0f134c056b46c548fa97588d4fe75e1d5a6290a4e8`, `src/tray_endpoint.rs` `3eeb7612d75f987ec584ad2e3c198fee3d2130c8bd2af61d8b11117ac16f8e36`, `tests/tray_endpoint.rs` `725a45a8e04a9330e5e60340598f290a5657c447fb9e83ed72165a4efd237c92`; fixture `33b1c33a29b5ab391773fbfad34c8fb8421932cd1c839b9314b6a7d5630689cc`. The frozen review finding is confirmed closed. |
 
 ## Residual Risks
@@ -307,16 +308,12 @@ evidence; neither folds in fixture delivery or unrelated work.
 - KWin `callDBus` has no delivery acknowledgement. Heartbeat re-invocation is a
   retry attempt, not proof of delivery; platform dispatch remains a production
   and live-validation risk.
-- The helper endpoint's semantic attempt is unaccepted because host Cargo target
-  configuration overrides the canonical gate's nonce-target expectation. The
-  approved mutable scope excludes a host or Cargo configuration correction.
-- `unit-02b-kwin-publisher` cannot start until concurrent ownership of
-  `kwin/src/entry.ts` is reconciled. `unit-02c-helper-endpoint` has no such
-  source-path blocker.
+- The isolated publisher gates must copy the scenario helper that supplies the
+  controller/pointer coexistence regression; this preserves a complete source
+  snapshot without changing production scope.
 
 ## Final Outcome
 
-- Governance, the fixture contract, and the pre-start production split are
-  reconciled. `unit-02c-helper-endpoint` is the next eligible implementation
-  unit; the KWin publisher, SNI work, distribution work, and live validation
-  remain open.
+- The fixture contract, KWin publisher, helper endpoint, and normal-path helper
+  lifecycle are statically accepted. SNI work, distribution work, and live
+  validation remain open.
