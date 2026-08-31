@@ -171,3 +171,20 @@ supported KWin version and relevant output-work-area arrangement separately.
   updates.
 - Whether the source-derived multi-ancestor sequence is acceptable after the
   bounded spike, given upstream internals may change.
+
+## Static Runner Handoff (2026-09-01)
+
+- `scripts/floor-ratio-feasibility.sh` is a static-only contract runner. Its
+  sole executable action is `static-self-test`; `live-proof` accepts one exact
+  vector and `--mutation-authorized=FLOOR-RATIO-NESTED-LIVE-PROOF-V1`, then
+  refuses without probing dependencies, KWin, D-Bus, the session, or host
+  configuration.
+- `test-fixtures/floor-ratio-evidence.json` and its schema are explicitly a
+  static contract fixture, not runtime or live evidence. They declare one
+  attempt, KWin 6.7.4, one child, private XDG/session-bus roots, an absolute
+  parent socket, bounded timeout, journal scope, persistence checks, and exact
+  cleanup requirements for a separately authorized implementation.
+- Hermetic fakes cover private-path containment, host-tool non-invocation, the
+  four required cases, fresh-decode traces, fallback/mismatch refusal, signal
+  cleanup, and retained evidence. This accepts only the static harness. It does
+  not establish feasibility, isolation, dependency suitability, or restoration.
