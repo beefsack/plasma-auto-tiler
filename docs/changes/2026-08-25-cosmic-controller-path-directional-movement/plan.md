@@ -132,12 +132,12 @@ Successor counters begin at zero. The prior parked change remains historical:
 
 ## Startup VCS Policy
 
-- Agent commits: no
-- Agent pushes: no
-- Staging owner: user at final completion only
-- User commit required: yes
-- Candidate audit/reference material: `docs/changes/2026-08-25-cosmic-controller-path-directional-movement/unit-01-candidate.patch` (SHA-256 `dbe28416517a1966ddf3d8a18e3a01700b83ab3c6bd6d183d4c8988d4c15a434`); non-authoritative and unaccepted, retained byte-for-byte, never read, applied, copied, altered, relabeled, or used as acceptance evidence.
-- Cleanup owner: Lead / processed-beef process; active-source cleanup completed. The reset never modifies or imports ownership from `kwin/tests/controller-fixtures.ts`.
+- Agent commits: records-only retirement commit authorized
+- Agent pushes: non-force push of that commit authorized
+- Staging owner: Lead, limited to the four retirement records
+- User commit required: no
+- Candidate audit/reference material: `docs/changes/2026-08-25-cosmic-controller-path-directional-movement/unit-01-candidate.patch` (recorded SHA-256 `dbe28416517a1966ddf3d8a18e3a01700b83ab3c6bd6d183d4c8988d4c15a434`) is explicitly user-authorized for retirement and deletion. Identity must match the record before deletion; the material is non-authoritative and unaccepted, and its deletion has no acceptance or evidence impact.
+- Cleanup owner: Lead / processed-beef process; candidate-only retirement has no source cleanup effect. The reset never modifies or imports ownership from `kwin/tests/controller-fixtures.ts`.
 
 ## Pending User Decisions
 

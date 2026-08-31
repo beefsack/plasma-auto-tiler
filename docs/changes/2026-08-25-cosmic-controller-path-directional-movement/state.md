@@ -3,9 +3,9 @@
 - Current major unit / attempt: `unit-01-cosmic-local-fixture` / promotion refresh parked after fresh G-01 at `/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830/worktree`. Unit 01 is historically accepted after one pre-review correction, one independent review, one finding-fix correction, and confirmation; its fixture files remain untracked and uncommitted, and current promotion is unaccepted.
 - Completed units: baseline reconciliation accepted; `unit-01-cosmic-local-fixture` accepted
 - Blockers: The one authorized promotion refresh stopped at G-01: `npm --prefix "$WORKTREE/kwin" run typecheck` exited 127 because `tsc` was not found in the fresh isolated worktree. G-02 through G-04 and mandatory independent review did not run. No G-04 package-relative-path or tray-environment correction was reached. No retry, correction, reset, promotion, review, or Unit 02 work is authorized. Unit 03 depends on Unit 02; Unit 04 and G-07 through G-09 remain separately blocked on their recorded dependencies and approvals.
-- Next dispatch: none. Preserve `/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830`, its two untracked fixture inputs, and all protected artifacts. Do not use candidate or old temporary source/evidence, alter fixture ownership or pointer paths, perform host/live work, stage, commit, push, or archive.
+- Next dispatch: none. Preserve `/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830`, its two untracked fixture inputs, and all protected artifacts. Do not use candidate or old temporary source/evidence, alter fixture ownership or pointer paths, perform host/live work, stage the candidate or protected artifacts, or archive. The separately authorized records-only retirement commit and non-force push remain allowed.
 - Process disposition: a prior planning Worker opened excluded pure-model material. Its pure-model content is discarded; no successor counter is consumed.
-- VCS policy: the user authorized a scoped commit and non-force push only after acceptance, but this failed refresh has no accepted fixture promotion; no staging, commit, or push occurred. Lead / processed-beef process retains the candidate audit/reference material and its completed source cleanup.
+- VCS policy: the user authorized a scoped records-only commit and non-force push for the candidate retirement after identity verification and independent record review. The candidate itself must not be staged or committed.
 
 ## Candidate Audit/Reference Material
 
@@ -15,8 +15,9 @@
 - Reason: retain unaccepted historical audit/reference material after its consumed finding-fix breaker and the approved changed-kind reset.
 - Omission incident: the original manifest treated the test as repository baseline, but scoped VCS status proved it was an untracked Unit 01-created path. Its absence from the container explained pointer-resize R-02's seven errors.
 - Owner: Lead / processed-beef process
-- Retention: byte-for-byte through this change; never read, applied, copied, altered, relabeled, or used as acceptance evidence.
-- Cleanup disposition: source cleanup completed after combined-container verification: `kwin/tests/controller-fixtures.ts` is at `HEAD`; the untracked test is deleted; the audit/reference material remains retained and recoverable.
+- Retirement: explicitly user-authorized on 2026-09-01. Before deletion, the exact recorded path was verified as a regular file and its SHA-256 exactly matched `dbe28416517a1966ddf3d8a18e3a01700b83ab3c6bd6d183d4c8988d4c15a434`; no content inspection occurred.
+- Disposition: retired and deleted after independent record review. It remains non-authoritative and unaccepted, with no acceptance or evidence impact; it was never read, applied, copied, staged, committed, altered, relabeled, or used as evidence.
+- Cleanup disposition: candidate-only deletion has no source cleanup, ownership, fixture, pointer, or other-path effect. The prior source cleanup remains unchanged.
 - Recovery verification: `git apply --numstat` reports exactly the two listed paths (361 additions/3 deletions and 266 additions/0 deletions). In a disposable `HEAD` worktree at `6466c99`, the fixture was clean, the test absent, and `git apply --check` accepted this container. Pointer R-02 may retry its preservation check.
 
 | Unit | Implementation attempts | Pre-review corrections | Finding-fix corrections | Independent reviews | Breaker |

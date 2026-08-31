@@ -162,6 +162,15 @@
 - Notes: Unit 03 remains blocked. Candidate, pointer, fixture ownership, host/live, staging, commit, push, archive, and unrelated paths remain protected.
 - Change-wide telemetry: unchanged - implementation dispatches 2; dispatch-invalids 1; pre-review corrections 2; finding-fix corrections 2; independent reviews 2; changed-kind resets 1; broad gates 4; Worker tool-call proxy 4 plus Unit 01 Workers unreported; Lead tool-call proxy 122; acceptance criteria moved 2; no-progress streak 0.
 
+## 2026-09-01
+
+- Role / unit: Lead / candidate audit-material retirement
+- Result: User explicitly authorized retirement and deletion of only `unit-01-candidate.patch`; no active COSMIC work depends on it.
+- Files / commit: `plan.md`, `log.md`, `state.md`, and `docs/backlog.md`; records-only commit and non-force push authorized after review. The candidate is excluded from staging and commit.
+- Verification: Before deletion, the exact recorded path was verified as a regular file and its SHA-256 exactly matched `dbe28416517a1966ddf3d8a18e3a01700b83ab3c6bd6d183d4c8988d4c15a434`, without content inspection.
+- Notes: Retirement is candidate-only. The material remains unaccepted and non-authoritative, has no acceptance or evidence impact, and causes no source cleanup, fixture, pointer, ownership, or other-path change.
+- Deletion: after the fresh independent review passed, only the exact identity-verified candidate file was removed and confirmed absent. No protected untracked path or other artifact was accessed or changed.
+
 ## 2026-08-27
 
 - Role / unit: Lead / documentation reconciliation
