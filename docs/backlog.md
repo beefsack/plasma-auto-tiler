@@ -12,7 +12,7 @@
   portable engine research, group/inactive-border/Steam work, and JS
   add/remove replacement research remain post-release or deferred scope.
 
-- P1 | next | dependencies: current isolated promotion snapshot | refresh the current COSMIC fixture promotion by correcting only G-04 package-relative paths and tray environment, run G-01 through G-04, then perform independent source/output correspondence review; park on failure | [change](changes/2026-08-25-cosmic-controller-path-directional-movement/)
+- P1 | parked | dependencies: new user authorization after failed G-01 | the current COSMIC fixture promotion refresh stopped before G-02 when the fresh isolated G-01 typecheck could not resolve `tsc`; preserve the isolated attempt and do not retry, correct, promote, review, or start Unit 02 | [change](changes/2026-08-25-cosmic-controller-path-directional-movement/)
 - P1 | completed static stabilization | dependencies: COSMIC promotion refresh remains separate | the one authorized pointer F-01 correction, R-09/R-02/R-01, and independent review are complete; current-main R-06 passed 1002/1002 and R-07 canonical output is 366448 bytes, `133e935329855c1c06511524ee9266f121d4441f90eba549bb1e4f7b6e1d9c44`; L-01 remains separate and blocked | [change](changes/2026-08-25-pointer-interactive-resize/)
 - P2 | not yet scoped | dependencies: COSMIC successor and interactive resize | research a portable cross-WM/OS layout engine; do not classify the proven KWin client-realization drag gap as an engine bug | (not yet scoped)
 

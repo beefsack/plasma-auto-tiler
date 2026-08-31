@@ -209,21 +209,20 @@ Git history and archived change records.
 
 - **Decision:** The COSMIC directional-movement path replaces legacy
   directional movement. There is no legacy fallback.
-- **Scope:** Unit 02 may expand only as necessary to carry
-  `directionalMovement` through production controller composition and its
-  focused tests. Existing legacy directional expectations migrate to COSMIC.
-  The old candidate remains historical and is not read or used.
+- **Scope:** Unit 02 is parked after the failed Unit 01 promotion refresh. No
+  controller composition, focused-test, legacy-expectation migration, or
+  capability work is currently authorized. The old candidate remains historical
+  and is not read or used.
 - **Reconsider when:** A separately approved replacement changes the COSMIC
   capability boundary.
 
 ## Current Static Promotions
 
-- **Decision:** Authorize one isolated refresh of the current COSMIC fixture
-  promotion, correcting only G-04 package-relative paths and tray environment.
-  Run G-01 through G-04, then perform an independent source/output
-  correspondence review. Park on any failure.
-- **Scope:** No second correction, reset, candidate promotion, old-candidate
-  use, or live operation is selected by this decision.
+- **Decision:** The one isolated refresh of the current COSMIC fixture promotion
+  was consumed and parked at G-01 when `tsc` was unavailable. G-02 through G-04
+  and independent source/output correspondence review did not run.
+- **Scope:** No retry, correction, reset, candidate promotion, old-candidate
+  use, Unit 02 work, or live operation is selected by this decision.
 
 - **Decision:** Authorize one pointer correction limited to frozen F-01. After
   that correction, run R-09, R-02, and R-01 in that order, perform independent

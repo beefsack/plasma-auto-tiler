@@ -40,10 +40,10 @@ pass/fail protocol receives separate approval.
 
 | Gate ID | Classification | Literal canonical command or observation | Expected baseline |
 |---|---|---|---|
- | G-01 | Static | `ATTEMPT=/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01 && WORKTREE="$ATTEMPT/worktree" && npm_config_cache="$ATTEMPT/npm-cache" npm_config_update_notifier=false npm --prefix "$WORKTREE/kwin" run typecheck` | Clean exit. |
- | G-02 | Static | `ATTEMPT=/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output/g02" && "$WORKTREE/kwin/node_modules/.bin/esbuild" "$WORKTREE/kwin/tests/cosmic-fixture-contract.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/output/g02/cosmic-fixture-contract.test.js" && (cd "$WORKTREE" && node --test "$ATTEMPT/output/g02/cosmic-fixture-contract.test.js")` | All COSMIC-local fixture-contract self-tests pass with zero failures/skips. |
- | G-03 | Static | `ATTEMPT=/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01 && WORKTREE="$ATTEMPT/worktree" && sha256sum "$WORKTREE/kwin/tests/controller-keyboard-move-and-swap.test.ts"` | `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`. |
- | G-04 | Static | `ATTEMPT=/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output/g04/tests" && "$WORKTREE/kwin/node_modules/.bin/esbuild" "$WORKTREE/kwin/tests/*.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outdir="$ATTEMPT/output/g04/tests" && (cd "$WORKTREE" && node --test "$ATTEMPT/output/g04/tests/**/*.test.js") && bash "$WORKTREE/scripts/start-test.test.sh"` | All bundled static tests, including the new fixture contract, pass with zero failures/skips; 1006 static tests pass; lifecycle shell gate remains 255 assertions, 0 failures. |
+ | G-01 | Static | `ATTEMPT=/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830 && WORKTREE="$ATTEMPT/worktree" && npm_config_cache="$ATTEMPT/npm-cache" npm_config_update_notifier=false npm --prefix "$WORKTREE/kwin" run typecheck` | Clean exit. |
+ | G-02 | Static | `ATTEMPT=/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output/g02" && "$WORKTREE/kwin/node_modules/.bin/esbuild" "$WORKTREE/kwin/tests/cosmic-fixture-contract.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/output/g02/cosmic-fixture-contract.test.js" && (cd "$WORKTREE" && node --test "$ATTEMPT/output/g02/cosmic-fixture-contract.test.js")` | All COSMIC-local fixture-contract self-tests pass with zero failures/skips. |
+ | G-03 | Static | `ATTEMPT=/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830 && WORKTREE="$ATTEMPT/worktree" && sha256sum "$WORKTREE/kwin/tests/controller-keyboard-move-and-swap.test.ts"` | `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`. |
+ | G-04 | Static | `ATTEMPT=/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output/g04/tests" && "$WORKTREE/kwin/node_modules/.bin/esbuild" "$WORKTREE/kwin/tests/*.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outdir="$ATTEMPT/output/g04/tests" && (cd "$WORKTREE" && node --test "$ATTEMPT/output/g04/tests/**/*.test.js") && bash "$WORKTREE/scripts/start-test.test.sh"` | All bundled static tests, including the new fixture contract, pass with zero failures/skips; 1006 static tests pass; lifecycle shell gate remains 255 assertions, 0 failures. |
 | G-02-01 | Static | `ATTEMPT=/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811 && WORKTREE="$ATTEMPT/worktree" && mkdir -p "$ATTEMPT/output/g02-01" && "$WORKTREE/kwin/node_modules/.bin/esbuild" "$WORKTREE/kwin/tests/controller-cosmic-directional-movement.test.ts" --bundle --platform=node --format=cjs --target=es2020 --outfile="$ATTEMPT/output/g02-01/controller-cosmic-directional-movement.test.js" && node --test "$ATTEMPT/output/g02-01/controller-cosmic-directional-movement.test.js"` | All controller-path conformance tests pass with zero failures/skips. |
 | G-02-02 | Static | `ATTEMPT=/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811 && WORKTREE="$ATTEMPT/worktree" && npm_config_cache="$ATTEMPT/npm-cache" npm_config_update_notifier=false npm --prefix "$WORKTREE/kwin" run typecheck` | Clean exit. |
 | G-02-03 | Static | `ATTEMPT=/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811 && WORKTREE="$ATTEMPT/worktree" && sha256sum "$WORKTREE/kwin/tests/controller-keyboard-move-and-swap.test.ts"` | `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7`. |
@@ -56,11 +56,11 @@ pass/fail protocol receives separate approval.
 
 ## Evidence Snapshots
 
-  - `S-01-pre`: detached clean worktree at `/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01/worktree`, `HEAD` revision `dd4449705b5366c0257ec4db1c4d180773c230c2`, and a symlink to the root repository's managed `kwin/node_modules` consumed read-only; scoped diff is empty for the two allowed COSMIC-local paths; relevant untracked inputs are none.
-   - `S-01-post`: the same detached worktree revision plus only the scoped diff and untracked inputs for `kwin/tests/cosmic-fixture.ts` and `kwin/tests/cosmic-fixture-contract.test.ts`.
+  - `S-01-pre`: detached worktree at `/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830/worktree`, `HEAD` revision `85a3403e37f47dd95e63e0a73654d2444d36b891`, and a symlink to the root repository's managed `kwin/node_modules` consumed read-only; scoped diff is empty for the two historically accepted COSMIC-local paths; relevant untracked inputs are none.
+    - `S-01-post`: the same detached worktree revision plus only the scoped diff and untracked inputs for `kwin/tests/cosmic-fixture.ts` and `kwin/tests/cosmic-fixture-contract.test.ts`.
   - `S-02-pre`: a fresh detached worktree at `/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811/worktree`, base revision `6466c99dd497779d8499e0fef41cc5618593bff2`, the accepted workspace-floor hunk in `kwin/src/controller.ts` byte-identical, and the accepted COSMIC-local fixture/oracle paths as the only relevant untracked inputs. `kwin/node_modules` is a read-only-use symlink to the verified repository-managed locked dependency tree.
   - `S-02-post`: `S-02-pre` plus only new `kwin/src/controller-directional-movement.ts`, new `kwin/tests/controller-cosmic-directional-movement.test.ts`, and the Unit 02-only hunk in `kwin/src/controller.ts`; source correspondence proves the workspace-floor hunk unchanged.
-    - G-01 through G-04 evidence must bind one of these snapshots, the literal command, exact output path under `/tmp/opencode/cosmic-fixture-promotion-dd4449705-20260827-retry-01`, result, and a post-latest-change freshness check. G-02-01 through G-02-04 must bind S-02-pre or S-02-post, their literal command, exact output path under `/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811`, result, and a post-latest-change freshness check. The gate commands must not install or update dependencies or write within `kwin/node_modules`. No generated output may be written outside its nonce-owned attempt directory.
+    - G-01 through G-04 evidence must bind one of these snapshots, the literal command, exact output path under `/tmp/opencode/cosmic-unit-01-promotion-85a3403-20260830`, result, and a post-latest-change freshness check. G-02-01 through G-02-04 must bind S-02-pre or S-02-post, their literal command, exact output path under `/tmp/opencode/cosmic-controller-adapter-6466c99-20260826T213005Z-68811`, result, and a post-latest-change freshness check. The gate commands must not install or update dependencies or write within `kwin/node_modules`. No generated output may be written outside its nonce-owned attempt directory.
 
 ## Verification-Only Gate Amendment
 
@@ -105,7 +105,8 @@ pass/fail protocol receives separate approval.
 
 - [x] Baseline reconciliation
 - [x] `unit-01-cosmic-local-fixture` - historically accepted after independent review, frozen finding-fix correction, and Lead confirmation; its fixture files remain untracked and uncommitted, and current promotion freshness is unmet
-- [ ] `unit-02-controller-adapter` - attempt-01 paused for an Orchestrator scope decision; no shared-source promotion or review
+- [ ] `unit-02-controller-adapter` - attempt-01 is unaccepted and parked; no
+  shared-source promotion, review, or follow-on work is authorized
 - [ ] `unit-03-static-integration`
 - [ ] `unit-04-host-protocol` - blocked pending later approval
 - [ ] `unit-05-host-checkpoint` - blocked pending Unit 04 approval
@@ -150,7 +151,7 @@ Successor counters begin at zero. The prior parked change remains historical:
 | Acceptance criterion | Gate | Expected baseline | Evidence |
 |---|---|---|---|
 | Static type correctness | G-01 | Clean exit | Accepted baseline and Unit 01 pre-review evidence: clean exit. |
-| COSMIC-local fixture support contract | G-01, G-02, G-03, G-04 | Typecheck clean; focused and broad fixture-contract tests pass with zero failures/skips; keyboard lock matches | Historically accepted: finding-fix evidence records amended isolated G-01 clean, G-02 9 tests, G-03 expected SHA-256, and G-04 1003 tests plus 255 lifecycle assertions. Current untracked/uncommitted promotion is not accepted: G-04 has no fresh passing evidence because its canonical output contract omitted package-relative paths and tray environment. |
+| COSMIC-local fixture support contract | G-01, G-02, G-03, G-04 | Typecheck clean; focused and broad fixture-contract tests pass with zero failures/skips; keyboard lock matches | Historically accepted: finding-fix evidence records amended isolated G-01 clean, G-02 9 tests, G-03 expected SHA-256, and G-04 1003 tests plus 255 lifecycle assertions. Current untracked/uncommitted promotion is not accepted: its latest authorized refresh stopped at G-01 because `tsc` was unavailable, so G-02 through G-04 did not run. |
 | Controller-path conformance and restoration | G-02-01, G-02-04 | Controller-path vectors pass with zero failures/skips; fresh decoded recovery exactly equals its pre-invocation snapshot | G-02-01 passed in S-02 attempt-01: 5 named tests, zero failures/skips. G-02-04 is unmet; no recovery claim is accepted. |
 | Locked keyboard coverage | G-02-03 | `2ec613d2c9ed7b8fc3c00981b6ee1e3e67ee88bf34ff6ac3169eb21ba99a2dc7` | G-02-03 passed in S-02 attempt-01. |
 | Unit 02 static compatibility | G-02-02, G-02-04 | Typecheck clean; bundled static tests zero failures/skips; only named Unit 02 tests increase the 1003-test pre-unit corpus | G-02-02 passed in S-02 attempt-01. G-02-04 bundle completed but the canonical directory invocation failed and an equivalent expanded-file run exposed frozen legacy directional-controller failures due the absent runtime capability. |
@@ -169,48 +170,54 @@ Successor counters begin at zero. The prior parked change remains historical:
 - The consumed changed-kind reset retires the blocked shared-fixture Unit 01.
   Its candidate remains non-authoritative audit/reference material and cannot be
   read, applied, copied, altered, relabeled, or used as acceptance evidence.
-- Unit 02 waits for the authorized Unit 01 promotion refresh and its independent
-  correspondence review to pass. Downstream units remain blocked by Unit 02;
-  pointer-owned paths and all host/live operations remain prohibited during this
-  static phase.
+- Unit 02 is parked because the one authorized Unit 01 promotion refresh failed
+  at G-01 before independent correspondence review. Downstream units remain
+  blocked by Unit 02; pointer-owned paths and all host/live operations remain
+  prohibited during this static phase.
 - Unit 02's prior preflight was `dispatch-invalid`, not a semantic attempt or
   correction, because its then-approved semantic row supplied neither exact
   allowed paths nor literal controller-path gate commands and baselines. The
   Orchestrator approved this amendment under autonomous authorization on
    2026-08-27. The accepted Unit 01 dependency does not authorize candidate use
    or inference.
-- Unit 02 attempt-01 remains unaccepted and ineligible evidence. The current
-  authorization resolves its former capability blocker: it may carry
-  `directionalMovement` through production controller composition and tests only
-  as necessary, migrate locked legacy expectations to COSMIC, and retain no
-  legacy fallback or dual route. The G-02-04 command correction remains part of
-  the authorized static path.
+- Unit 02 attempt-01 remains unaccepted and ineligible evidence. Its former
+  capability blocker remains unresolved: no controller capability, legacy
+  fallback, dual route, locked-test change, or product-semantic decision is
+  authorized. The G-02-04 command correction remains historical only.
 - Unit 01 is historically accepted after the one authorized correction,
   independent review, and finding-fix confirmation, but its two fixture files
   remain untracked and uncommitted. The current promotion cannot reuse that
-  acceptance: G-04 lacks fresh passing evidence because its canonical output
-  contract omitted package-relative paths and tray environment. The sole reset
-  is consumed; except for the current G-04-only refresh below, no second review,
-  correction, or reset is authorized.
+  acceptance: G-01 failed before the permitted G-04 correction or fresh G-04
+  evidence. The sole reset is consumed; no retry, review, correction, or reset
+  is authorized.
 
 ## Final Outcome
 
 - Baseline accepted. The prior Unit 01 remains unaccepted and retired after its
   consumed finding-fix breaker. The approved single changed-kind reset
   historically accepted `unit-01-cosmic-local-fixture`; its untracked,
-  uncommitted promotion lacks fresh G-04 evidence and remains unaccepted as a
-  promotion. Unit 02 may proceed only under the current COSMIC replacement
-  authorization; all later units and host work remain blocked by their recorded
-  dependencies and approvals.
+  uncommitted promotion remains unaccepted after its latest refresh stopped at
+  G-01. Unit 02 and all later units remain blocked by their recorded dependencies
+  and approvals.
 
 ## Current Authorization
 
-- One isolated refresh of the current Unit 01 promotion is authorized. It may
-  correct only G-04 package-relative paths and tray environment. Run G-01,
-  G-02, G-03, and G-04 from that isolated snapshot, then obtain independent
-  source/output correspondence review. Any failure parks the promotion.
-- Unit 02 is authorized to replace legacy directional expectations with COSMIC
-  and to expand only as necessary to carry `directionalMovement` through
-  production controller composition and tests. No legacy fallback is allowed.
+- The one authorized isolated refresh of the current Unit 01 promotion was
+  consumed and parked at G-01. No retry, correction, promotion, or review is
+  authorized.
+- Unit 02 remains parked. No controller capability, legacy fallback, dual route,
+  locked-test change, or product-semantic decision is authorized.
 - The old candidate remains prohibited: do not read, use, promote, relabel, or
   treat it as evidence. No live work or unrelated source scope is authorized.
+
+## 2026-08-30 Promotion Refresh Outcome
+
+- Parked. A fresh isolated worktree at `85a3403e37f47dd95e63e0a73654d2444d36b891`
+  contained only the historically accepted-source promotion paths
+  `kwin/tests/cosmic-fixture.ts` and
+  `kwin/tests/cosmic-fixture-contract.test.ts`, each directly corresponding to
+  the root promotion route. G-01 exited 127 before type checking because `tsc`
+  was not resolvable in that isolated environment. G-02 through G-04 and the
+  independent review did not run. No fixture bytes or source were changed or
+  promoted, and the permitted G-04 execution-environment correction was not
+  reached.
