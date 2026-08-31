@@ -12,6 +12,7 @@
     pkg-config
     zip
     kdePackages.extra-cmake-modules
+    kdePackages.kconfig
     pkgs.kdePackages.kwin
     pkgs.kdePackages.kwin.dev
     kdePackages.kpackage
