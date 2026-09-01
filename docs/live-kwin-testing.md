@@ -9,16 +9,13 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
 - Preserve real windows, desktops, outputs, Krohnkite state, and unrelated
   configuration. Touch only identified project resources. Never use broad
   cleanup.
-- The standing authorization covers only the reversible user-local dogfood
-  operations listed in `docs/decisions.md`: project script/native-effect/tray
-  lifecycle and read-only diagnostics. The user alone performs every session
-  boundary.
-- Window journeys, Custom Tile structural operations, desktop creation or
-  removal, shortcut writes, production tray acceptance, synthetic input, and
-  visual acceptance require fresh explicit user authorization. Stop on an
-  ownership, parser, diagnostic, or baseline surprise.
-- Do not use `sudo`, system plugin paths, Home Manager-managed files, unrelated
-  environment entries, unrelated state cleanup, or host KWin restart/logout.
+- Reversible, project-scoped live host tests may run under this guide and
+  `docs/decisions.md` when exact restoration is verifiable. The user performs
+  physical or manual observations and every session boundary.
+- Stop on an ownership, parser, diagnostic, baseline, or restoration surprise.
+- Do not use `sudo`, system plugin paths, Home Manager-managed files, external
+  dotfiles, unrelated environment entries, unrelated host mutation,
+  irreversible cleanup, or ambiguous-residue deletion.
 
 ## Nested KWin Isolation
 

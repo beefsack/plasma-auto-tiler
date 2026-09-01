@@ -8,8 +8,8 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 ## Scope And Non-Goals
 
 - Static implementation is delivered. Live claims require the procedures in
-  [the live testing guide](../live-kwin-testing.md) and separate bounded
-  authorization.
+  [the live testing guide](../live-kwin-testing.md) and the reviewed standing
+  live-test boundary/protocol in [the project decisions](../decisions.md).
 - Drag signal delivery, reflow, motion cleanup, cadence, and XWayland behavior
   remain unproven. The KWin client-realization drag gap is not an engine defect.
 - Deferred window eligibility now attaches the same interaction handlers as the
@@ -21,10 +21,12 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Acceptance
 
-- Custom Tile structure remains stable through window add/remove, drag/reflow,
-  floating, fullscreen, maximize, and workspace journeys.
-- Live acceptance is manual, disposable, and user-authorized; no unperformed
-  live result is claimed.
+- On disposable, project-owned topology with exact restoration, Custom Tile
+  structure remains stable through window add/remove, drag/reflow, floating,
+  fullscreen, maximize, and workspace journeys.
+- Live runtime acceptance requires user-performed physical or manual
+  observations; session boundaries require user action; no unperformed live
+  result is claimed.
 
 ## Approach And Dependencies
 
@@ -43,6 +45,16 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
   one-to-zero cases, detached-window close, physical shortcuts, or host live
   acceptance.
 
+## Read-Only Preflight
+
+- The installed enabled and loaded controller differs from the checkout
+  bundle.
+- One project shortcut had drifted.
+- Exact restoration of the existing Custom Tile topology cannot currently be
+  verified.
+- No live runtime acceptance occurred; these preflight findings are not
+  acceptance evidence.
+
 ## Verification
 
 - Static evidence is accepted. Live Custom Tile, drag/reflow, and related
@@ -58,4 +70,7 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-Obtain bounded user authorization for the relevant manual journey.
+User action is required for physical or manual observations and any logout,
+login, or new-session boundary. Further live tests must use disposable,
+project-owned topology with exact restoration; do not mutate the existing
+topology.

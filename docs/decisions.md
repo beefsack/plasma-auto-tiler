@@ -39,23 +39,23 @@ Historical implementation detail is recoverable in Git history.
 
 ## Live KWin/Plasma Boundary
 
-- Reversible, project-owned, user-local dogfood operations are standing
-  authorized. The user alone performs every logout, login, or new session
-  boundary.
+- Reversible, project-scoped live host tests may run under the reviewed
+  repository protocol. They must be namespaced, fail closed, and provide exact
+  restoration; if exact restoration cannot be verified, stop and leave the
+  residue for user action.
 - This covers project builds; native-effect staging/removal; the project's
   `plasma-workspace/env` script and same-name legacy migration; KWin `/Effects`
   load/unload and read-only queries; KWin script install, enable, disable, and
-  reconfigure; bounded `/Scripting` load/unload; project tray-helper lifecycle
-  and session-D-Bus operations; and journal/status reads. Operations must be
-  namespaced, fail closed, and have exact normal-path restoration.
-- All other live mutation, including window journeys, Custom Tile structure,
-  desktop creation/removal, shortcut reconciliation, production tray
-  acceptance, and visual acceptance needs fresh, explicit, bounded user
-  authorization. No broad cleanup, retry after failure, `sudo`, system path,
-  Home Manager file, unrelated state, or session-boundary action is authorized.
-- Deleting or restoring preserved candidates, containers, host artifacts, or
-  ambiguous residue needs explicit user authorization plus exact path and
-  identity or hash verification.
+  reconfigure; bounded `/Scripting` load/unload; project tray-helper lifecycle,
+  session-D-Bus operations, and journal/status reads; and disposable
+  project-owned Custom Tile tests when exact restoration is verified.
+- Physical or manual observations and every logout, login, or new-session
+  boundary require user action. No `sudo`, system-path mutation,
+  external-dotfiles mutation, unrelated host mutation, irreversible cleanup,
+  or ambiguous-residue deletion is authorized.
+- Deleting or restoring preserved candidates, containers, or host artifacts
+  needs explicit user authorization plus exact path and identity or hash
+  verification.
 
 ## Window And Workspace Behavior
 
