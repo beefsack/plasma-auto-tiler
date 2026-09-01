@@ -10,6 +10,7 @@
     clang-tools
     ninja
     pkg-config
+    python3
     zip
     kdePackages.extra-cmake-modules
     kdePackages.kconfig

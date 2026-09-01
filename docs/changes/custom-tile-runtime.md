@@ -47,41 +47,34 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Read-Only Preflight
 
-- The installed enabled and loaded controller differs from the checkout
-  bundle.
-- One project shortcut had drifted.
-- Exact restoration of the existing Custom Tile topology cannot currently be
-  verified.
-- The fresh-session report recorded KWin PID `1852` and load object
-  `/Scripting/Script0`, but did not establish authoritative membership of the
-  loaded script in the checkout. The persisted tiling record references a
-  desktop ID that is not live in the session, so exact restoration remains
-  unproven. The unaccepted files (`devenv.nix` and the two harness scripts)
-  were neither trusted nor used for this acceptance attempt; unresolved
-  ownership/reconstruction diagnostics, shortcut collision/drift, and the
-  unavailable `kglobalacceld` dependency blocked this acceptance attempt.
-- No live runtime acceptance occurred; these preflight findings are not
-  acceptance evidence.
+- The accepted static harness is a current-session read-only preflight. It
+  strictly diagnoses KWin and KGlobalAccel ownership, and fails closed on stale
+  state, shortcut collision or drift, service drift, and provenance ambiguity.
+- It establishes a prospective rollback and journal contract for a later
+  authorized run only. It performs no lifecycle or mutation and persists no raw
+  host evidence.
+- `authoritative_ready` remains false because no supported read-only binding
+  proves the checkout controller's provenance. This is the immediate blocker.
+- No live runtime acceptance occurred; preflight results are not acceptance
+  evidence.
 
 ## Current Evidence Assessment
 
-- Read-only preflight verified KWin 6.7.4, the current checkout bundle, and the
-  private KWin/DBus/kwinrc primitives, but the current session lacks the newly
-  declared `kglobalacceld` until devenv is restarted.
-- No KWin process or client was launched by this acceptance attempt, and no host
-  mutation occurred. Runtime behavior, host restoration, and every acceptance
-  journey remain unclaimed.
-- Live execution is rejected for this evidence set: documented
-  `--no-global-shortcuts` conflicts with controller readiness and global
-  shortcut semantics; private KWin/DBus/kwinrc provenance and interruption-safe
-  restoration remain unproven; and the harness lacks authoritative exact
-  readiness and native-client evidence.
+- `devenv.nix` intentionally adds `python3`. Restart the development session
+  before assuming that dependency or the preflight is available.
+- No live lifecycle or mutation occurred. Runtime behavior, host restoration,
+  and every acceptance journey remain unclaimed.
+- Live acceptance remains blocked until after restart and a read-only preflight
+  reports `authoritative_ready: true`.
 
 ## Verification
 
-- Static implementation evidence is accepted; the unaccepted files (`devenv.nix`
-  and the two harness scripts) are not acceptance evidence. No live Custom Tile,
-  drag/reflow, and related journeys were run.
+- Static/read-only harness verification passed: 73 passed, 0 failed. Bash
+  syntax, `--help`, Nix parse, and diff checks passed; `shellcheck` was
+  unavailable.
+- An independent adversarial safety review had no final findings.
+- This is harness/preflight verification only. No live Custom Tile, drag/reflow,
+  or related journeys were run.
 
 ## Material Decisions And Accepted Evidence
 
@@ -93,11 +86,9 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-- Live acceptance is blocked; no manual live scope is pending. If reopened, the
-  user must create and own the disposable host and session boundary and perform
-  the physical observations; avoid the existing topology, installed controller,
-  and existing shortcut.
-- Before any mutation, identify the owned desktop, windows, and tile state and
-  verify the exact restoration check. Stop on any ownership or restoration
-  ambiguity. No runtime or acceptance result may be recorded until that proof
-  completes.
+- Restart the development session, then run the read-only preflight. Do not run
+  live acceptance before the restart.
+- Request user physical or manual action only if that preflight reports
+  `authoritative_ready: true`; otherwise stop without a live attempt.
+- Prioritize a supported read-only checkout-controller provenance binding. Until
+  it exists, `authoritative_ready` remains false and no live gate opens.

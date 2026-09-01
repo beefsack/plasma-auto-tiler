@@ -56,6 +56,18 @@ Historical implementation detail is recoverable in Git history.
 - Deleting or restoring preserved candidates, containers, or host artifacts
   needs explicit user authorization plus exact path and identity or hash
   verification.
+- The Custom Tile acceptance harness is an accepted static, current-session
+  read-only preflight. It strictly diagnoses KWin and KGlobalAccel ownership and
+  fails closed on stale state, collisions, drift, or provenance ambiguity; it
+  performs no lifecycle or mutation. Its rollback and journal contract is for a
+  later authorized run only.
+- `python3` was added intentionally to `devenv.nix`; restart the development
+  session before assuming the preflight is available. No live acceptance may run
+  before that restart, and user physical or manual action is requested only if
+  the restarted-session preflight reports `authoritative_ready: true`.
+- The immediate Custom Tile blocker is the absence of a supported read-only
+  binding that proves the checkout controller's provenance. Until it is
+  established, `authoritative_ready` remains false.
 
 ## Window And Workspace Behavior
 

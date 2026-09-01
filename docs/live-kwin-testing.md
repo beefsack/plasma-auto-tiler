@@ -65,6 +65,15 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
 - KGlobalAccel collection must enumerate all components and exact action tuples.
   Persisted records after unload do not prove a callback. Never unregister or
   restore anything except exact verified project-owned action records.
+- `scripts/custom-tile-acceptance.sh preflight` is an accepted static,
+  current-session read-only diagnostic. It strictly diagnoses KWin and
+  KGlobalAccel ownership, and fails closed on stale state, collisions, drift,
+  or provenance ambiguity. It performs no lifecycle or mutation; its rollback
+  and journal contract applies only to a later authorized run.
+- After its `devenv.nix` dependency change, restart the development session
+  before assuming the preflight is available. Do not run live acceptance before
+  that restart; request user physical or manual action only when the restarted
+  session's preflight reports `authoritative_ready: true`.
 
 ## Custom Tile Safety Findings
 
