@@ -55,6 +55,19 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 - No live runtime acceptance occurred; these preflight findings are not
   acceptance evidence.
 
+## Current Evidence Assessment
+
+- Read-only preflight verified KWin 6.7.4, the current checkout bundle, and the
+  private KWin/DBus/kwinrc primitives, but the current session lacks the newly
+  declared `kglobalacceld` until devenv is restarted.
+- No live KWin or client was launched and no host mutation occurred. Runtime
+  behavior, host restoration, and every acceptance journey remain unclaimed.
+- Live execution is rejected for this evidence set: documented
+  `--no-global-shortcuts` conflicts with controller readiness and global
+  shortcut semantics; private KWin/DBus/kwinrc provenance and interruption-safe
+  restoration remain unproven; and the harness lacks authoritative exact
+  readiness and native-client evidence.
+
 ## Verification
 
 - Static evidence is accepted. Live Custom Tile, drag/reflow, and related
@@ -70,7 +83,11 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-User action is required for physical or manual observations and any logout,
-login, or new-session boundary. Further live tests must use disposable,
-project-owned topology with exact restoration; do not mutate the existing
-topology.
+- Pending manual scope is limited to a smallest disposable-host proof. The user
+  must create and own the disposable host and session boundary and perform the
+  physical observations; avoid the existing topology, installed controller,
+  and existing shortcut.
+- Before any mutation, identify the owned desktop, windows, and tile state and
+  verify the exact restoration check. Stop on any ownership or restoration
+  ambiguity. No runtime or acceptance result may be recorded until that proof
+  completes.
