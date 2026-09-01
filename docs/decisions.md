@@ -5,9 +5,13 @@ Historical implementation detail is recoverable in Git history.
 
 ## Native Active Border
 
-- Use an experimental, disabled-by-default, OpenGL-only native C++ KWin effect
+- The active-window border is an MVP requirement. Use an experimental,
+  disabled-by-default, OpenGL-only native C++ KWin effect
   for the active-window border. Colour, width, outline radius, and gap are
   configurable; theme colour is preferred with a configured fallback.
+- Nix delivery and exact host KWin ABI/session discovery are required for
+  runtime delivery; neither is an optional enhancement. Runtime acceptance
+  remains unproven.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
@@ -25,6 +29,13 @@ Historical implementation detail is recoverable in Git history.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
+- Nix-first current-host delivery is selected. Repository flake outputs will be
+  consumed externally; this project does not inspect or change the external
+  consumer repository. The current build baseline remains `devenv.nix`.
+- Development iteration uses the packaged baseline plus a namespaced,
+  reversible, user-local dogfood override as the smallest selected boundary.
+  It must preserve exact normal-path restoration and must not mutate system or
+  unrelated state.
 
 ## Live KWin/Plasma Boundary
 
@@ -72,12 +83,21 @@ Historical implementation detail is recoverable in Git history.
 
 ## COSMIC Movement And Groups
 
-- COSMIC directional movement replaces the legacy path; there is no legacy
-  fallback. Production promotion and live acceptance remain gated by the active
-  review findings.
+- COSMIC-style tiling and directional movement are MVP. The directional path
+  replaces the legacy path; there is no legacy fallback. Production promotion
+  and live acceptance remain gated by the active review findings.
+- Grouping here means nested split-tree structure and placement. `H[H[1 2] 3]`
+  is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
+  group behavior are excluded.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No group carrier,
   controls, bindings, or shared active-border behavior is selected.
+
+## Nested Placement Affordance
+
+- Replace the temporary outline interaction with a minimal COSMIC-like,
+  deterministic nested-placement affordance. It is a placement affordance, not
+  opacity or dimming behavior.
 
 ## Tray
 
@@ -89,6 +109,8 @@ Historical implementation detail is recoverable in Git history.
   rollback is exact and in-process; interrupted, crash, power-loss, malformed,
   replaced, or ambiguous state fails closed. Durable recovery and automatic
   post-crash retry are not selected.
+- The tray MVP provides basic status and Settings only. It has no direct tiling
+  controls and no expansion of the helper boundary.
 
 ## Deferred Scope
 

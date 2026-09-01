@@ -2,14 +2,27 @@
 
 ## Goal
 
-Replace legacy directional movement with the COSMIC model and no fallback.
+Deliver COSMIC-style tiling movement for the MVP, replacing legacy directional
+movement with no fallback.
 
-## Scope And Acceptance
+## Scope And Non-Goals
 
 - Implement the selected COSMIC capability boundary and preserve the conformance
   corpus as an uncoupled reference.
+- This record covers directional movement, not true compositor groups, tabs,
+  stacked/shared groups, or the nested-placement UI replacement.
+
+## Acceptance
+
+- Directional movement preserves the selected nested split-tree semantics and
+  passes the conformance corpus.
 - Production promotion requires accepted static correction evidence and
   separately authorized live acceptance.
+
+## Approach And Dependencies
+
+- The COSMIC path depends on a stable Custom Tile runtime and is accepted only
+  without a legacy fallback.
 
 ## Current Approach
 
@@ -29,3 +42,9 @@ Replace legacy directional movement with the COSMIC model and no fallback.
   contract passed. Independent review accepted the correction with no findings.
 - Next action: obtain separate authorization and run live KWin acceptance of
   COSMIC directional bindings. Live binding behavior remains unverified.
+
+## Material Decisions And Accepted Evidence
+
+- COSMIC-style tiling movement is MVP. Grouping means nested split-tree
+  structure and placement; `H[H[1 2] 3]` differs from `H[1 H[2 3]]`.
+- Static correction is accepted; no live result is claimed.

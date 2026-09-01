@@ -2,34 +2,46 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | pending live | Run separately authorized live KWin acceptance of COSMIC
-  directional bindings; static correction is accepted | [change](changes/cosmic-directional-movement.md)
-- P1 | pending live | Run the accepted pointer-resize static path on a
-  disposable layout under fresh user authorization | [change](changes/pointer-interactive-resize.md)
-- P1 | blocked | Tray static lifecycle work is accepted, but the passing 05a
-  static harness cannot route through the lifecycle launcher. Complete that
-  routing before KWin live acceptance, SNI delivery, packaging, panel checks,
-  and login-autostart validation | [change](changes/tray-carrier.md)
-- P1 | pending live | Validate Custom Tile, drag/reflow, float/sticky,
-  maximize/fullscreen, workspace modes, KCM/config, native border, and
-  multi-output behavior | [live contract](live-kwin-testing.md)
-- P1 | pending live | Run the accepted floor-ratio runner in a qualifying
-  isolated nested KWin invocation; retain the current fallback unless it proves
-  safe | [change](changes/floor-ratio-feasibility.md)
-- P1 | blocked | Implement the native effect-scoped KCM after restarting the
-  development session so the newly declared KConfig dependency is available |
-  [change](changes/native-effect-kcm.md)
-- P1 | parked | Establish a safe Integrated Plasma structural feasibility
+- P1 | static complete, pending live | Establish stable Custom Tile runtime
+  behavior, including drag/reflow and the existing float, fullscreen, maximize,
+  and workspace paths | [change](changes/custom-tile-runtime.md)
+- P1 | static complete, pending live | Accept COSMIC directional movement on
+  KWin with separately authorized live bindings | [change](changes/cosmic-directional-movement.md)
+- P1 | static complete, pending live | Accept pointer resize and neighbouring
+  reflow on a disposable layout with fresh authorization | [change](changes/pointer-interactive-resize.md)
+- P1 | pending implementation and live | Replace the temporary outline with
+  deterministic nested split placement and accept direction-axis flattening
+  and differing-axis nested insertion | [change](changes/nested-placement-affordance.md)
+- P1 | pending implementation | Implement the native effect-scoped KCM after
+  the development session has been restarted so its committed dependency is
+  available | [change](changes/native-effect-kcm.md)
+- P1 | implementation present, pending live | Accept the active-window border
+  using the required Nix-built native effect and exact host KWin ABI/session
+  discovery | [decision](decisions.md#native-active-border)
+- P1 | static partial, blocked integration | Route the tray lifecycle launcher
+  through the accepted static harness before live carrier validation | [change](changes/tray-carrier.md)
+- P1 | pending implementation and live | Complete tray MVP basic status and
+  Settings, then validate SNI delivery, packaging, panel, and login-autostart
+  behavior | [change](changes/tray-carrier.md)
+- P1 | pending implementation | Add Nix-first current-host package and
+  install/update outputs without changing the external consumer repository |
+  [change](changes/nix-current-host-delivery.md)
+- P1 | pending live | Validate clean install, update, rollback, and session
+  lifecycle behavior on the current host | [change](changes/nix-current-host-delivery.md)
+
+- P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated
+  nested KWin proof establishes a safe improvement | [change](changes/floor-ratio-feasibility.md)
+- P2 | parked | Establish a safe Integrated Plasma structural feasibility
   verdict; the unsafe nested path remains stopped | [change](changes/integrated-plasma-structural-feasibility.md)
 - P2 | parked | Complete sustained JavaScript workload evidence before choosing
   a native replacement for discrete window management | [change](changes/js-workload.md)
-- P2 | parked | Prove multi-window Custom Tile stability before choosing grouped
-  window behavior | [change](changes/grouped-windows.md)
+- P2 | parked | Prove multi-window Custom Tile stability before choosing true
+  grouped or tabbed window behavior | [change](changes/grouped-windows.md)
 - P2 | parked | Resolve complete keyboard-layout support after initial release |
   [change](changes/shortcuts.md)
-- P2 | pending live | Verify trailing-empty workspace anti-oscillation on a
-  multi-output machine | [runbook](live-oscillation-verification.md)
+- P2 | parked | Verify trailing-empty workspace anti-oscillation on a multi-output
+  machine | [runbook](live-oscillation-verification.md)
 - P3 | parked | Validate bspwm, Hyprland, and COSMIC behavior at their actual
   runtimes | [comparison](reference-wm-comparison.md)
-- P3 | pending | Publish the reproducible KPackage artifact to KDE Store and
-  GitHub Release | [delivered foundations](changes/archive/delivered-foundations.md)
+- P3 | parked | Publish the reproducible KPackage artifact to KDE Store and
+  GitHub Release after MVP delivery dependencies are complete | [delivered foundations](changes/archive/delivered-foundations.md)
