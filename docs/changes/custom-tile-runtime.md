@@ -52,6 +52,14 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 - One project shortcut had drifted.
 - Exact restoration of the existing Custom Tile topology cannot currently be
   verified.
+- The fresh-session report recorded KWin PID `1852` and load object
+  `/Scripting/Script0`, but did not establish authoritative membership of the
+  loaded script in the checkout. The persisted tiling record references a
+  desktop ID that is not live in the session, so exact restoration remains
+  unproven. The unaccepted files (`devenv.nix` and the two harness scripts)
+  were neither trusted nor used for this acceptance attempt; unresolved
+  ownership/reconstruction diagnostics, shortcut collision/drift, and the
+  unavailable `kglobalacceld` dependency blocked this acceptance attempt.
 - No live runtime acceptance occurred; these preflight findings are not
   acceptance evidence.
 
@@ -60,8 +68,9 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 - Read-only preflight verified KWin 6.7.4, the current checkout bundle, and the
   private KWin/DBus/kwinrc primitives, but the current session lacks the newly
   declared `kglobalacceld` until devenv is restarted.
-- No live KWin or client was launched and no host mutation occurred. Runtime
-  behavior, host restoration, and every acceptance journey remain unclaimed.
+- No KWin process or client was launched by this acceptance attempt, and no host
+  mutation occurred. Runtime behavior, host restoration, and every acceptance
+  journey remain unclaimed.
 - Live execution is rejected for this evidence set: documented
   `--no-global-shortcuts` conflicts with controller readiness and global
   shortcut semantics; private KWin/DBus/kwinrc provenance and interruption-safe
@@ -70,8 +79,9 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Verification
 
-- Static evidence is accepted. Live Custom Tile, drag/reflow, and related
-  journeys remain unrun.
+- Static implementation evidence is accepted; the unaccepted files (`devenv.nix`
+  and the two harness scripts) are not acceptance evidence. No live Custom Tile,
+  drag/reflow, and related journeys were run.
 
 ## Material Decisions And Accepted Evidence
 
@@ -83,9 +93,9 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-- Pending manual scope is limited to a smallest disposable-host proof. The user
-  must create and own the disposable host and session boundary and perform the
-  physical observations; avoid the existing topology, installed controller,
+- Live acceptance is blocked; no manual live scope is pending. If reopened, the
+  user must create and own the disposable host and session boundary and perform
+  the physical observations; avoid the existing topology, installed controller,
   and existing shortcut.
 - Before any mutation, identify the owned desktop, windows, and tile state and
   verify the exact restoration check. Stop on any ownership or restoration

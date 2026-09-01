@@ -2,7 +2,7 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | static complete, pending manual live | Establish stable Custom Tile runtime
+- P1 | static complete, blocked live | Establish stable Custom Tile runtime
   behavior, including drag/reflow and the existing float, fullscreen, maximize,
   and workspace paths | [change](changes/custom-tile-runtime.md)
 - P1 | static complete, pending live | Accept COSMIC directional movement on
