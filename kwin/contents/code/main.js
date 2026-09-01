@@ -9188,5 +9188,10 @@
     }
   });
   controller.start();
+  if (typeof CONTROLLER_NONCE === "string" && typeof CONTROLLER_BUILD_ID === "string" && typeof CONTROLLER_PLUGIN_ID === "string") {
+    console.log(
+      `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`
+    );
+  }
   trayPublisher.start();
 })();

@@ -32,14 +32,12 @@ KWin session.
 ### Live test
 
 The primary repeated live path is `scripts/live-test.sh run`: one nonce-owned
-interactive run that runs a concise preflight (typecheck, build, tests,
-static scan; one pass/fail line per step with each step's combined output
-retained in `typecheck.txt`/`build.txt`/`tests.txt`/`static-scan.txt`), then
-records and disables the installed plugin if enabled, loads and runs the
-controller through `start-test.sh`, prints status/diagnostics/desktops plus a
-checklist, and foreground-follows the same-KWin-PID `plasma-auto-tiler` and
-`kwin_scripting` logs into a nonce-owned evidence directory until you press
-Ctrl-C.
+run that performs a concise preflight (typecheck, build, tests, static scan;
+one pass/fail line per step with each step's combined output retained in
+`typecheck.txt`/`build.txt`/`tests.txt`/`static-scan.txt`), captures the exact
+baseline, then establishes and tears down only the inert checkout provenance
+carrier through `start-test.sh`. It does not load or run the controller or
+follow KWin logs.
 
 ```sh
 bash scripts/live-test.sh run                  # full preflight
@@ -48,23 +46,29 @@ bash scripts/live-test.sh run --verbose        # stream preflight step output
 bash scripts/live-test.sh run --quick --verbose
 ```
 
-Ctrl-C or SIGTERM stops only the script that run loaded, prints final
-status/diagnostics/desktops, and restores the installed-plugin enable state
-only when the run changed it and verified the restore. Evidence is retained
-under `${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. The exact
-combined stdout+stderr of `start-test.sh start` is retained at `start.txt`;
-an ordinary start failure prints the exit/signal status, the transcript
-path, and a bounded current-attempt diagnostics tail and never retries. An
-interruption during start writes an `interrupted-during-start:<signal>`
-marker and reports the startup outcome as unknown/interrupted rather than
-readiness failed, and cleanup still runs the exact stop once a start attempt
-began. A `manifest.txt` retains the nonce, KWin PID, journal cursor, mode,
-prior plugin state, start attempt/result/exit, and cleanup result even when
-stdout is redirected away. The run never mutates shortcut records (drift is
-reported, not auto-applied) and never rolls back Custom Tile topology changes
-or persisted shortcuts made during the session. Read
+Ctrl-C or SIGTERM stops only the exact carrier whose nonce-owned receipt was
+retained by the run, prints final status/diagnostics/desktops, and verifies
+exact project baseline restoration. The installed controller plugin state is
+observed and verified, never disabled, enabled, or reconfigured. The checkout
+carrier is bound operationally through its unguessable per-attempt plugin
+identity, exact `Script<ID>`, receipt, diagnostic, and unchanged KWin identity;
+this is not direct evaluated-memory source proof. Evidence is retained under
+`${XDG_RUNTIME_DIR:-/tmp}/plasma-auto-tiler-live/<nonce>`. The carrier setup
+output is retained at `provenance.txt`; if no exact script ID is returned,
+cleanup refuses stale handle use. A `manifest.txt` retains the nonce, KWin PID,
+journal cursor, mode, observed controller state, carrier identity and cleanup,
+and exact baseline restoration result even when stdout is redirected away. The
+run never mutates shortcut records (drift is reported, not auto-applied) and
+never rolls back Custom Tile topology changes or persisted shortcuts made
+during the session. No Custom Tile runtime acceptance or journey is performed
+or claimed. Read
 `docs/live-kwin-testing.md` before any live run; the low-level
 `scripts/start-test.sh` commands remain the manual reference.
+
+After static checks, the next gate is a successful bounded carrier
+lifecycle setup/restore smoke. It establishes only operational binding, not
+direct evaluated-memory source proof. A separately authorized Custom Tile
+journey is a later gate and has not occurred.
 
 ### Prerequisites
 

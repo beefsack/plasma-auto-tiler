@@ -2,9 +2,10 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | static complete, blocked live | Establish stable Custom Tile runtime
-  behavior, including drag/reflow and the existing float, fullscreen, maximize,
-  and workspace paths | [change](changes/custom-tile-runtime.md)
+- P1 | static complete, carrier smoke blocked on retained records | Establish
+  stable Custom Tile runtime behavior, including drag/reflow and the existing
+  float, fullscreen, maximize, and workspace paths |
+  [change](changes/custom-tile-runtime.md)
 - P1 | static complete, pending live | Accept COSMIC directional movement on
   KWin with separately authorized live bindings | [change](changes/cosmic-directional-movement.md)
 - P1 | static complete, pending live | Accept pointer resize and neighbouring
@@ -12,9 +13,9 @@ Only meaningful pending or active work is listed.
 - P1 | pending implementation and live | Replace the temporary outline with
   deterministic nested split placement and accept direction-axis flattening
   and differing-axis nested insertion | [change](changes/nested-placement-affordance.md)
-- P1 | pending implementation | Implement the native effect-scoped KCM after
-  the development session has been restarted so its committed dependency is
-  available | [change](changes/native-effect-kcm.md)
+- P1 | pending implementation | Implement the native effect-scoped KCM now
+  that the development session has been restarted and its committed dependency
+  is available | [change](changes/native-effect-kcm.md)
 - P1 | implementation present, pending live | Accept the active-window border
   using the required Nix-built native effect and exact host KWin ABI/session
   discovery | [decision](decisions.md#native-active-border)

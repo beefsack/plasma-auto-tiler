@@ -7,14 +7,20 @@ BUNDLE="$KWIN_DIR/contents/code/main.js"
 
 PLUGIN_ID="plasma-auto-tiler-kwin"
 
+BUS_SCOPE="--user"
+BUS_DEST="org.kde.KWin"
+
 # Sub-scripts and host tools are overridable for hermetic shell tests.
 DOGFOOD_SH="${DOGFOOD_SH:-$REPO_ROOT/scripts/dogfood-install.sh}"
 START_TEST_SH="${START_TEST_SH:-$REPO_ROOT/scripts/start-test.sh}"
 NPM_BIN="${NPM_BIN:-npm}"
-PGREP_BIN="${PGREP_BIN:-pgrep}"
+BUSCTL_BIN="${BUSCTL_BIN:-busctl}"
 JOURNALCTL_BIN="${JOURNALCTL_BIN:-journalctl}"
 JQ_BIN="${JQ_BIN:-jq}"
 SLEEP_BIN="${SLEEP_BIN:-sleep}"
+SHA256SUM_BIN="${SHA256SUM_BIN:-sha256sum}"
+STAT_BIN="${STAT_BIN:-stat}"
+PROC_ROOT="${PROC_ROOT:-/proc}"
 
 # Lock and nonce-owned evidence live under a base outside the repository
 # (never under the protected test-output path). Override for tests.
@@ -24,16 +30,32 @@ LIVE_BASE="${LIVE_TEST_ROOT:-${XDG_RUNTIME_DIR:-/tmp}}/plasma-auto-tiler-live"
 NONCE=""
 EVIDENCE_DIR=""
 LOCK_DIR=""
+LOCK_PLUGIN_FILE=""
+LOCK_ACQUIRED=0
 ENABLED_BEFORE=""
 INSTALLED_BEFORE=""
-DISABLED_BY_US=0
 RUNNING=0
-START_ATTEMPTED=0
 SIGNAL_RECEIVED=""
 VERBOSE=0
-START_BOUND_S=""
 KWIN_PID=""
 JOURNAL_CURSOR=""
+PROVENANCE_PLUGIN_ID=""
+PROVENANCE_SCRIPT_ID=""
+PROVENANCE_BUILD_ID=""
+PROVENANCE_CLEANUP_VERIFIED=0
+KWIN_START_IDENTITY=""
+BASELINE_DIR=""
+BASELINE_INSTALLED_PATH=""
+BASELINE_CONFIG_PATH=""
+BASELINE_CONFIG_STATE="absent"
+BASELINE_LOADED=""
+BASELINE_PROVENANCE_LOADED=""
+BASELINE_SHORTCUTS=""
+BASELINE_KGLOBALACCEL=""
+OPERATIONAL_BINDING_READY=0
+PROVENANCE_ATTEMPTED=0
+PROVENANCE_CLEANUP_LOADED=""
+PROVENANCE_SETUP_ACTIVE=0
 
 usage() {
   cat <<'EOF'
@@ -43,33 +65,29 @@ Interactive manual live-runner for the plasma-auto-tiler-kwin KWin script.
 
 Commands:
   run           concise full preflight (typecheck, build, tests, static
-                scan; one pass/fail line per step, logs retained), then
-                disable the installed plugin if it is enabled, load and run
-                the controller through start-test.sh (combined transcript
-                retained at start.txt), and foreground-follow the
-                same-KWin-PID project and kwin_scripting logs into a
-                nonce-owned evidence directory until Ctrl-C/TERM
+                 scan; one pass/fail line per step, logs retained), then
+                 establish and tear down only the inert checkout provenance
+                 carrier, proving exact baseline restoration
   run --quick   skip the full test suite but still typecheck, build the
                 current bundle, and run the critical static scan
   run --verbose stream each preflight step's output to the terminal while
-                still retaining it in evidence
-
+                 still retaining it in evidence
   --help        show this help and exit
 
-run mutates live KWin state and still requires explicit authorization under
-docs/live-kwin-testing.md. It never mutates shortcut records, never kills or
-restarts KWin, never creates desktops or windows, and never launches a
-nested compositor. It stops only the direct script it loaded and restores
-the installed-plugin enable state only when it changed it and verified the
-restore.
+  run mutates live KWin state and still requires explicit authorization under
+  docs/live-kwin-testing.md. It never mutates shortcut records, never kills or
+  restarts KWin, never creates desktops or windows, and never launches a
+  nested compositor. It stops only the exact carrier script it loaded.
+  Controller plugin state is observed and verified, never disabled, enabled, or
+  reconfigured.
 
-SIGKILL (-9) cannot be trapped: if this process is killed that way, the
-cleanup trap never runs, so the run lock, the loaded script, and any
-installed-plugin disable may remain as residual. Recover manually by
-unloading the script (scripts/start-test.sh stop), re-enabling the plugin
-(scripts/dogfood-install.sh enable), and removing the stale lock under
-$LIVE_BASE only after confirming no live run is active. Evidence under
-$LIVE_BASE is never deleted automatically.
+  SIGKILL (-9) cannot be trapped: if this process is killed that way, the
+  cleanup trap never runs. If retained evidence contains an exact provenance
+  ownership receipt, use scripts/start-test.sh provenance-stop with that
+  receipt and script ID. Otherwise carrier cleanup is unverified; do not use a
+  plugin-name fallback. Remove a stale lock under $LIVE_BASE only after
+  confirming no live run is active. Evidence under $LIVE_BASE is never deleted
+  automatically.
 EOF
 }
 
@@ -104,24 +122,16 @@ trap_signal() {
     *) return ;;
   esac
   SIGNAL_RECEIVED="$sig"
-  if [[ "$START_ATTEMPTED" -eq 1 && "$RUNNING" -eq 0 && -n "${EVIDENCE_DIR:-}" ]]; then
+  if [[ "$PROVENANCE_SETUP_ACTIVE" -eq 1 ]]; then
+    printf 'interrupted-during-start:%s\n' "$sig" >> "$EVIDENCE_DIR/interrupted-during-start.txt"
+    echo "interrupted-during-start:$sig" >&2
+    return 0
+  fi
+  if [[ "$PROVENANCE_ATTEMPTED" -eq 1 && "$RUNNING" -eq 0 && -n "${EVIDENCE_DIR:-}" ]]; then
     printf 'interrupted-during-start:%s\n' "$sig" >> "$EVIDENCE_DIR/interrupted-during-start.txt"
     echo "interrupted-during-start:$sig" >&2
   fi
   exit $((128 + num))
-}
-
-# Derives the bounded readiness-wait upper bound from the start-test.sh
-# contract (READINESS_ATTEMPTS x READINESS_DELAY); never guessed.
-derive_start_bound() {
-  local attempts delay
-  attempts="$(sed -n 's/^READINESS_ATTEMPTS=\([0-9][0-9]*\)$/\1/p' "$START_TEST_SH" | head -1)"
-  delay="$(sed -n 's/^READINESS_DELAY=\([0-9][0-9]*\(\.[0-9][0-9]*\)\?\)$/\1/p' "$START_TEST_SH" | head -1)"
-  if [[ -z "$attempts" || -z "$delay" ]]; then
-    return 1
-  fi
-  START_BOUND_S="$(awk -v a="$attempts" -v d="$delay" 'BEGIN { printf "%g", a * d }')"
-  [[ -n "$START_BOUND_S" ]]
 }
 
 # Runs one preflight step, retaining its combined output in
@@ -155,72 +165,80 @@ preflight_step() {
   fi
 }
 
-# Ordinary start failure: prints the exact exit/signal status, the retained
-# transcript path, and a bounded current-attempt diagnostics tail owned by
-# this run. Historical diagnostics are never presented as current.
-report_start_failure() {
-  local rc="$1"
-  if [[ "$rc" -gt 128 ]]; then
-    echo "error: start-test.sh start terminated by signal $((rc - 128)) (status $rc); not retrying" >&2
-  else
-    echo "error: start-test.sh start failed (exit status $rc); not retrying" >&2
-  fi
-  echo "start transcript retained at: $EVIDENCE_DIR/start.txt" >&2
-  if [[ -f "$EVIDENCE_DIR/start.txt" ]]; then
-    echo "no separate current-attempt diagnostic file from start-test.sh is discoverable or owned by this run; the bounded tail below is from the retained combined transcript:" >&2
-    tail -n 25 "$EVIDENCE_DIR/start.txt" 2>/dev/null | sed 's/^/  /' >&2 || true
-  else
-    echo "current-attempt start diagnostics: unavailable (no start transcript retained)" >&2
-  fi
-}
-
 # One run lock, keyed by a fresh nonce. The lock is a directory created
 # atomically with mkdir (so two concurrent runs cannot both acquire it). Any
 # existing path at the lock location - a stale file or a directory - is
 # refused without deletion; the lock is removed only when its owned nonce is
 # proven to match this run.
+check_safe_existing_path() {
+  local path="$1" current=/ component
+  [[ "$path" == /* && "$path" != *'//' && "$path" != *'/../'* && "$path" != */.. && "$path" != */./* && "$path" != */. ]] || return 1
+  IFS=/ read -r -a components <<<"${path#/}"
+  for component in "${components[@]}"; do
+    [[ -n "$component" ]] || continue
+    current="${current%/}/$component"
+    [[ -d "$current" && ! -L "$current" ]] || return 1
+  done
+}
+
 acquire_lock() {
-  local parent
+  local parent base_parent tmp_nonce
   parent="$(dirname -- "$LIVE_BASE")"
-  if [[ ! -d "$parent" ]]; then
+  if [[ "$LIVE_BASE" != /* || "$LIVE_BASE" == *'//' || "$LIVE_BASE" == *'/../'* || "$LIVE_BASE" == */.. || "$LIVE_BASE" == */./* || "$LIVE_BASE" == */. ]]; then
+    fail "live-test evidence path is unsafe"
+  fi
+  base_parent="${LIVE_BASE%/*}"
+  [[ -n "$base_parent" ]] || base_parent=/
+  if [[ "$parent" != "$base_parent" ]] || ! check_safe_existing_path "$parent"; then
     fail "live-test evidence parent '$parent' does not exist"
   fi
-  mkdir -p "$LIVE_BASE" || fail "could not create live-test base '$LIVE_BASE'"
+  [[ ! -L "$LIVE_BASE" ]] || fail "live-test evidence base is a symlink"
+  if [[ ! -e "$LIVE_BASE" ]]; then
+    mkdir "$LIVE_BASE" || fail "could not create live-test base '$LIVE_BASE'"
+  fi
+  [[ -d "$LIVE_BASE" && ! -L "$LIVE_BASE" ]] || fail "live-test evidence base is not a directory"
+  chmod 700 "$LIVE_BASE" || fail "could not secure live-test evidence base"
   LOCK_DIR="$LIVE_BASE/.lock"
-  NONCE="live-$(date +%Y%m%dT%H%M%S)-$$"
+  NONCE="live-$(date +%Y%m%dT%H%M%S)-$$-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+  [[ "$NONCE" =~ ^live-[A-Za-z0-9._-]+$ ]] || fail "could not generate a safe run nonce"
   if ! mkdir "$LOCK_DIR" 2>/dev/null; then
     echo "error: another live-test run appears to hold the lock at '$LOCK_DIR'" >&2
     echo "refusing to run concurrently; the lock is never deleted automatically." >&2
     echo "inspect it and remove it only after confirming no live run is active." >&2
     exit 1
   fi
-  printf '%s\n' "$NONCE" > "$LOCK_DIR/nonce" || {
-    rmdir "$LOCK_DIR" 2>/dev/null || true
+  LOCK_ACQUIRED=1
+  chmod 700 "$LOCK_DIR" || fail "could not secure live-test lock"
+  LOCK_PLUGIN_FILE="$LOCK_DIR/plugin-id"
+  tmp_nonce="$(mktemp "$LOCK_DIR/nonce.XXXXXX")" || {
+    check_no_symlink_path "$LOCK_DIR" && rmdir -- "$LOCK_DIR" 2>/dev/null || true
     fail "could not write the lock nonce"
   }
-  EVIDENCE_DIR="$LIVE_BASE/$NONCE"
-  mkdir -p "$EVIDENCE_DIR" || fail "could not create evidence dir '$EVIDENCE_DIR'"
+  printf '%s\n' "$NONCE" > "$tmp_nonce" && check_no_symlink_path "$LOCK_DIR" && mv -f -- "$tmp_nonce" "$LOCK_DIR/nonce" || {
+    remove_owned_lock_file "$tmp_nonce" 2>/dev/null || true
+    check_no_symlink_path "$LOCK_DIR" && rmdir -- "$LOCK_DIR" 2>/dev/null || true
+    fail "could not write the lock nonce"
+  }
+  EVIDENCE_DIR="$(mktemp -d "$LIVE_BASE/.run.XXXXXX")" || fail "could not create evidence dir"
+  chmod 700 "$EVIDENCE_DIR" || fail "could not secure evidence dir"
 }
 
 find_kwin_pid() {
-  local pid command candidate=""
-  while IFS=' ' read -r pid command; do
-    if [[ "$command" != *" --wayland-fd "* ]]; then
-      continue
-    fi
-    if [[ -n "$candidate" ]]; then
-      return 1
-    fi
-    candidate="$pid"
-  done < <("$PGREP_BIN" -a kwin_wayland)
-  if [[ -z "$candidate" ]]; then
-    return 1
-  fi
-  printf '%s\n' "$candidate"
+  local owner_out owner pid_out pid
+  owner_out="$("$BUSCTL_BIN" $BUS_SCOPE --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$BUS_DEST")" || return 1
+  "$JQ_BIN" -s -e 'length == 1 and (.[0] | ((keys | sort) == ["data","type"]) and (.type == "s") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "string") and ((.data[0] | length) > 0))' <<<"$owner_out" >/dev/null 2>&1 || return 1
+  owner="$("$JQ_BIN" -r '.data[0]' <<<"$owner_out")"
+  [[ "$owner" =~ ^:[0-9]+\.[0-9]+$ ]] || return 1
+  pid_out="$("$BUSCTL_BIN" $BUS_SCOPE --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner")" || return 1
+  "$JQ_BIN" -s -e 'length == 1 and (.[0] | ((keys | sort) == ["data","type"]) and (.type == "u") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and (.data[0] > 0))' <<<"$pid_out" >/dev/null 2>&1 || return 1
+  pid="$("$JQ_BIN" -r '.data[0]' <<<"$pid_out")"
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s\n' "$pid"
 }
 
 capture_pid_cursor() {
   KWIN_PID="$(find_kwin_pid)" || fail "could not identify one KWin process"
+  capture_kwin_start_identity || fail "could not capture KWin PID/start identity"
   local cursor_out
   cursor_out="$("$JOURNALCTL_BIN" --user --quiet --show-cursor -n 1)" || fail "could not capture the journal cursor"
   JOURNAL_CURSOR="${cursor_out##*-- cursor: }"
@@ -313,69 +331,491 @@ read_installed_value() {
   fi
 }
 
+read_installed_path() {
+  local text="$1" line value="" path
+  while IFS= read -r line; do
+    if [[ "$line" == "installed: "* ]]; then
+      [[ -z "$value" ]] || return 1
+      value="${line#installed: }"
+    fi
+  done <<<"$text"
+  [[ "$value" == no ]] && { printf '\n'; return 0; }
+  [[ "$value" =~ ^yes\ \((/.+)\)$ ]] || return 1
+  path="${BASH_REMATCH[1]}"
+  [[ "$path" != *$'\n'* && "$path" != *$'\r'* ]] || return 1
+  printf '%s\n' "$path"
+}
+
+read_loaded_value() {
+  local text="$1" line value=""
+  while IFS= read -r line; do
+    if [[ "$line" == "loaded: "* ]]; then
+      [[ -z "$value" ]] || return 1
+      value="${line#loaded: }"
+    fi
+  done <<<"$text"
+  [[ "$value" == loaded || "$value" == not-loaded ]] || return 1
+  printf '%s\n' "$value"
+}
+
+check_no_symlink_path() {
+  local path="$1" current=/ component
+  [[ "$path" == /* && "$path" != *'//'* ]] || return 1
+  IFS=/ read -r -a components <<<"${path#/}"
+  for component in "${components[@]}"; do
+    [[ -n "$component" && "$component" != . && "$component" != .. ]] || return 1
+    current="${current%/}/$component"
+    [[ ! -L "$current" ]] || return 1
+  done
+}
+
+lock_file_matches() {
+  local path="$1" expected="$2"
+  check_no_symlink_path "$path" || return 1
+  if [[ ! -e "$path" ]]; then
+    return 0
+  fi
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  [[ "$(<"$path")" == "$expected" ]]
+}
+
+remove_owned_lock_file() {
+  local path="$1" parent name identity inode
+  check_no_symlink_path "$LOCK_DIR" || return 1
+  [[ -d "$LOCK_DIR" && ! -L "$LOCK_DIR" ]] || return 1
+  check_no_symlink_path "$path" || return 1
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  identity="$($STAT_BIN -c '%d:%i' -- "$path")" || return 1
+  inode="${identity#*:}"
+  parent="${path%/*}"
+  name="${path##*/}"
+  check_no_symlink_path "$path" || return 1
+  [[ "$($STAT_BIN -c '%d:%i' -- "$path")" == "$identity" ]] || return 1
+  find -P -- "$parent" -xdev -maxdepth 1 -type f -name "$name" -inum "$inode" -delete || return 1
+  [[ ! -e "$path" && ! -L "$path" ]]
+}
+
+file_fingerprint() {
+  local path="$1"
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  local digest metadata
+  digest="$($SHA256SUM_BIN "$path" | awk '{print $1}')" || return 1
+  metadata="$($STAT_BIN -c '%a:%u:%g:%s:%Y:%y' -- "$path")" || return 1
+  [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  printf '%s\t%s\n' "$digest" "$metadata"
+}
+
+directory_fingerprint() {
+  local path="$1"
+  [[ -d "$path" && ! -L "$path" ]] || return 1
+  "$STAT_BIN" -c '%a:%u:%g:%Y:%y' -- "$path"
+}
+
+config_fingerprint() {
+  local path="$1" digest metadata
+  [[ -f "$path" && ! -L "$path" ]] || return 1
+  digest="$($SHA256SUM_BIN "$path" | awk '{print $1}')" || return 1
+  metadata="$($STAT_BIN -c '%a:%u:%g:%s:%Y:%y' -- "$path")" || return 1
+  [[ "$digest" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+  printf '%s\t%s\n' "$digest" "$metadata"
+}
+
+package_manifest() {
+  local root="$1" type member fingerprint rc=0
+  fingerprint="$(directory_fingerprint "$root")" || return 1
+  printf 'd\t.\t%s\n' "$fingerprint"
+  local -a pipeline_status
+  if find -P -- "$root" -mindepth 1 -printf '%y\t%P\0' | LC_ALL=C sort -z | (
+      while IFS=$'\t' read -r -d '' type member; do
+        if [[ "$member" == *$'\n'* || "$member" == *$'\r'* || "$member" == *$'\t'* ]]; then
+          rc=1
+          break
+        fi
+        case "$type" in
+          d)
+            check_no_symlink_path "$root/$member" || { rc=1; break; }
+            fingerprint="$(directory_fingerprint "$root/$member")" || { rc=1; break; }
+            printf 'd\t%s\t%s\n' "$member" "$fingerprint"
+            ;;
+          f)
+            fingerprint="$(file_fingerprint "$root/$member")" || { rc=1; break; }
+            printf 'f\t%s\t%s\n' "$member" "$fingerprint"
+            ;;
+          *)
+            rc=1
+            break
+            ;;
+        esac
+      done
+      exit "$rc"
+    ); then
+    pipeline_status=("${PIPESTATUS[@]}")
+  else
+    pipeline_status=("${PIPESTATUS[@]}")
+  fi
+  [[ "${pipeline_status[0]}" -eq 0 && "${pipeline_status[1]}" -eq 0 && "${pipeline_status[2]}" -eq 0 ]]
+}
+
+capture_package_baseline() {
+  local package_path="$1"
+  BASELINE_DIR="$EVIDENCE_DIR/baseline"
+  mkdir "$BASELINE_DIR" || fail "could not create baseline evidence directory"
+  if [[ -z "$package_path" ]]; then
+    printf 'absent\n' > "$BASELINE_DIR/package-state"
+    return 0
+  fi
+  check_no_symlink_path "$package_path" || fail "installed package path is missing, unsafe, or symlinked"
+  [[ -d "$package_path" && ! -L "$package_path" ]] || fail "installed package path is not a regular directory"
+  for member in metadata.json contents/code/main.js contents/config/main.xml contents/ui/config.ui; do
+    [[ -f "$package_path/$member" && ! -L "$package_path/$member" ]] || fail "installed package member is missing or symlinked: $member"
+  done
+  if [[ -n "$(find -P "$package_path" -type l -print -quit)" ]]; then
+    fail "installed package contains a symlink"
+  fi
+  printf 'present\n%s\n' "$package_path" > "$BASELINE_DIR/package-state"
+  package_manifest "$package_path" > "$BASELINE_DIR/package-manifest" || fail "could not capture the installed package tree"
+}
+
+capture_config_baseline() {
+  BASELINE_CONFIG_PATH="${XDG_CONFIG_HOME:-${HOME:?}/.config}/kwinrc"
+  check_no_symlink_path "${BASELINE_CONFIG_PATH%/*}" || fail "KWin config directory is unsafe or symlinked"
+  [[ ! -L "$BASELINE_CONFIG_PATH" ]] || fail "KWin config path is a symlink"
+  if [[ -e "$BASELINE_CONFIG_PATH" ]]; then
+    [[ -f "$BASELINE_CONFIG_PATH" ]] || fail "KWin config path is not a regular file"
+    BASELINE_CONFIG_STATE=present
+    cp -- "$BASELINE_CONFIG_PATH" "$BASELINE_DIR/kwinrc"
+    config_fingerprint "$BASELINE_CONFIG_PATH" > "$BASELINE_DIR/kwinrc-fingerprint" || fail "could not fingerprint KWin config"
+  else
+    BASELINE_CONFIG_STATE=absent
+    printf 'absent\n' > "$BASELINE_DIR/kwinrc-fingerprint"
+  fi
+  manifest_write config-path "$BASELINE_CONFIG_PATH"
+  manifest_write config-state "$BASELINE_CONFIG_STATE"
+  manifest_write config-fingerprint "$(<"$BASELINE_DIR/kwinrc-fingerprint")"
+}
+
+capture_kwin_start_identity() {
+  [[ "$KWIN_PID" =~ ^[1-9][0-9]*$ ]] || return 1
+  local stat_line stat_pid rest
+  stat_line="$(<"$PROC_ROOT/$KWIN_PID/stat")" || return 1
+  [[ "$stat_line" != *$'\n'* ]] || return 1
+  stat_pid="${stat_line%% *}"
+  [[ "$stat_pid" == "$KWIN_PID" ]] || return 1
+  rest="${stat_line##*) }"
+  [[ "$rest" != "$stat_line" ]] || return 1
+  local -a fields=()
+  read -r -a fields <<<"$rest"
+  [[ "${#fields[@]}" -ge 20 && "${fields[0]:-}" =~ ^[A-Za-z]$ ]] || return 1
+  [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  KWIN_START_IDENTITY="${fields[19]}"
+}
+
+capture_shortcut_baseline() {
+  local raw
+  BASELINE_SHORTCUTS="$BASELINE_DIR/shortcuts-before.json"
+  raw="$(bash "$START_TEST_SH" snapshot-shortcuts)" || fail "could not capture exact project shortcut tuples"
+  "$JQ_BIN" -e 'type == "array" and all(.[]; type == "array" and length == 8)' <<<"$raw" >/dev/null || fail "project shortcut snapshot is malformed"
+  "$JQ_BIN" -c 'sort_by(tojson)' <<<"$raw" > "$BASELINE_SHORTCUTS" || fail "could not retain exact project shortcut tuples"
+}
+
+capture_kglobalaccel_baseline() {
+  BASELINE_KGLOBALACCEL="$BASELINE_DIR/kglobalaccel-owner.json"
+  bash "$START_TEST_SH" snapshot-kglobalaccel > "$BASELINE_KGLOBALACCEL" || fail "could not capture KGlobalAccel service owner identity"
+  "$JQ_BIN" -e 'type == "object" and .service == "org.kde.kglobalaccel" and (.owner | type) == "string" and (.pid | type) == "number" and (.uid | type) == "number"' "$BASELINE_KGLOBALACCEL" >/dev/null || fail "KGlobalAccel service owner identity is malformed"
+}
+
+capture_baseline() {
+  local dogfood_status direct_status
+  dogfood_status="$(bash "$DOGFOOD_SH" status)" || fail "dogfood status failed during baseline capture"
+  INSTALLED_BEFORE="$(read_installed_value "$dogfood_status")" || fail "dogfood status did not report an exact installed state"
+  ENABLED_BEFORE="$(read_enabled_value "$dogfood_status")" || fail "dogfood status did not report an exact 'enabled: yes/no'"
+  BASELINE_INSTALLED_PATH="$(read_installed_path "$dogfood_status")" || fail "dogfood status did not report an exact installed path"
+  direct_status="$(bash "$START_TEST_SH" status)" || fail "start-test status failed during baseline capture"
+  BASELINE_LOADED="$(read_loaded_value "$direct_status")" || {
+    fail "direct status does not report an exact controller loaded state"
+  }
+  capture_package_baseline "$BASELINE_INSTALLED_PATH"
+  capture_config_baseline
+  capture_shortcut_baseline
+  capture_kglobalaccel_baseline
+  kwin_identity_unchanged || fail "KWin PID/start identity changed during baseline capture"
+  manifest_write installed-before "$INSTALLED_BEFORE"
+  manifest_write installed-path-before "${BASELINE_INSTALLED_PATH:-absent}"
+  manifest_write enabled-before "$ENABLED_BEFORE"
+  manifest_write loaded-before "$BASELINE_LOADED"
+  manifest_write kwin-start-identity "$KWIN_START_IDENTITY"
+  manifest_write kglobalaccel-owner "$(<"$BASELINE_KGLOBALACCEL")"
+}
+
+setup_provenance() {
+  PROVENANCE_ATTEMPTED=1
+  PROVENANCE_SETUP_ACTIVE=1
+  local output line parsed_line receipt_json expected_receipt nonce build pid script_id plugin cleanup_state state baseline_plugin baseline_loaded cleanup_after count=0 baseline_count=0 command_rc=0 expected_build receipt_present=0
+  expected_build="checkout-carrier-v1-$($SHA256SUM_BIN "$REPO_ROOT/kwin/src/provenance-entry.ts" | awk '{print $1}')"
+  if output="$(PROVENANCE_OWNERSHIP_FILE="$EVIDENCE_DIR/provenance-ownership" bash "$START_TEST_SH" provenance "$NONCE")"; then
+    command_rc=0
+  else
+    command_rc=$?
+  fi
+  printf '%s\n' "$output" > "$EVIDENCE_DIR/provenance.txt"
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    parsed_line="$line"
+    receipt_json=""
+    if [[ "$line" == *" receipt="* ]]; then
+      receipt_present=1
+      parsed_line="${line%% receipt=*}"
+      receipt_json="${line:${#parsed_line}+9}"
+    fi
+    if [[ "$parsed_line" =~ ^provenance:\ (ready|partial)\ nonce=([^[:space:]]+)\ build=(checkout-carrier-v1-[[:xdigit:]]{64})\ pid=([1-9][0-9]*)\ script-id=([0-9]+|unknown)(\ plugin=([A-Za-z0-9][A-Za-z0-9._-]{7,127}))?(\ cleanup=(verified|unverified))?(\ loaded-after=(loaded|not-loaded))?$ ]]; then
+      count=$((count + 1))
+      state="${BASH_REMATCH[1]}"
+      nonce="${BASH_REMATCH[2]}"
+      build="${BASH_REMATCH[3]}"
+      pid="${BASH_REMATCH[4]}"
+      script_id="${BASH_REMATCH[5]}"
+      plugin="${BASH_REMATCH[7]:-}"
+      cleanup_state="${BASH_REMATCH[9]:-}"
+      cleanup_after="${BASH_REMATCH[11]:-}"
+      PROVENANCE_SCRIPT_ID=""
+      [[ "$script_id" == unknown ]] || PROVENANCE_SCRIPT_ID="$script_id"
+      PROVENANCE_PLUGIN_ID="$plugin"
+      [[ "$state" != partial || "$receipt_present" -eq 0 ]] || fail "checkout provenance receipt was malformed, extra, or mismatched"
+    elif [[ "$line" =~ ^provenance-baseline:\ plugin=([A-Za-z0-9][A-Za-z0-9._-]{7,127})\ loaded=(loaded|not-loaded)$ ]]; then
+      [[ -z "$receipt_json" ]] || fail "checkout provenance setup returned an unexpected receipt"
+      baseline_count=$((baseline_count + 1))
+      baseline_plugin="${BASH_REMATCH[1]}"
+      baseline_loaded="${BASH_REMATCH[2]}"
+    elif [[ "$line" == "provenance receipt path: "* || "$line" == "provenance-stop command: "* || "$line" == "note: current public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof." ]]; then
+      continue
+    else
+      fail "checkout provenance setup returned an unexpected reply"
+    fi
+  done <<<"$output"
+  [[ "$count" -eq 1 && "$nonce" == "$NONCE" && "$pid" == "$KWIN_PID" ]] || fail "checkout provenance setup was not tied to the captured KWin identity"
+  [[ "$build" == "$expected_build" ]] || fail "checkout provenance build identity does not match the current source"
+  [[ "$plugin" =~ ^plasma-auto-tiler-checkout-provenance-[[:xdigit:]]{32}$ ]] || fail "checkout provenance did not return its unique plugin identity"
+  [[ "$baseline_count" -eq 1 && "$baseline_plugin" == "$plugin" && "$baseline_loaded" == not-loaded ]] || fail "checkout provenance baseline was not proven not-loaded"
+  if [[ "$script_id" != unknown ]]; then
+    [[ "$script_id" -le 2147483647 ]] || fail "checkout provenance returned an invalid script ID"
+  fi
+    if [[ "$receipt_present" -eq 1 ]]; then
+    [[ "$script_id" != unknown ]] || fail "checkout provenance receipt did not contain a returned script ID"
+    expected_receipt="$($JQ_BIN -cn --arg nonce "$nonce" --arg build "$build" --arg plugin "$plugin" --argjson script_id "$script_id" --argjson pid "$KWIN_PID" --arg start_identity "$KWIN_START_IDENTITY" '{kind:"provenance",nonce:$nonce,build:$build,plugin:$plugin,script_id:$script_id,pid:$pid,start_identity:$start_identity}')" || fail "checkout provenance receipt could not be constructed"
+    [[ "$receipt_json" == "$expected_receipt" ]] || fail "checkout provenance receipt was malformed, extra, or mismatched"
+  fi
+  [[ "$command_rc" -ne 0 || "$receipt_present" -eq 1 ]] || fail "checkout provenance ready result did not include its inline ownership receipt"
+  if [[ "$command_rc" -ne 0 ]]; then
+    [[ "$state" == partial && "$cleanup_state" =~ ^(verified|unverified)$ ]] || fail "checkout provenance setup failed without a strict ownership result"
+    if [[ "$cleanup_state" == verified ]]; then
+      [[ "$cleanup_after" == not-loaded && "$script_id" != unknown ]] || fail "checkout provenance partial cleanup result was not strictly verified"
+    fi
+  else
+    [[ "$state" == ready && -z "$cleanup_state" ]] || fail "checkout provenance setup returned an invalid success result"
+  fi
+  PROVENANCE_BUILD_ID="$build"
+  BASELINE_PROVENANCE_LOADED="$baseline_loaded"
+  PROVENANCE_CLEANUP_LOADED="$cleanup_after"
+  local plugin_tmp
+  plugin_tmp="$(mktemp "$LOCK_DIR/plugin-id.XXXXXX")" || fail "could not retain the provenance plugin identity in the run lock"
+  printf '%s\n' "$PROVENANCE_PLUGIN_ID" > "$plugin_tmp" && chmod 600 "$plugin_tmp" && mv -n -- "$plugin_tmp" "$LOCK_PLUGIN_FILE" || {
+    rm -f "$plugin_tmp"
+    fail "could not retain the provenance plugin identity in the run lock"
+  }
+  [[ ! -e "$plugin_tmp" && -f "$LOCK_PLUGIN_FILE" && ! -L "$LOCK_PLUGIN_FILE" && "$(<"$LOCK_PLUGIN_FILE")" == "$PROVENANCE_PLUGIN_ID" ]] || fail "provenance plugin identity lock verification failed"
+  manifest_write provenance-plugin-id "$PROVENANCE_PLUGIN_ID"
+  manifest_write provenance-script-id "$PROVENANCE_SCRIPT_ID"
+  manifest_write provenance-build-id "$PROVENANCE_BUILD_ID"
+  manifest_write provenance-loaded-before "$BASELINE_PROVENANCE_LOADED"
+  manifest_write provenance-cleanup "$cleanup_state"
+  [[ -z "$PROVENANCE_CLEANUP_LOADED" ]] || manifest_write provenance-loaded-after "$PROVENANCE_CLEANUP_LOADED"
+  kwin_identity_unchanged || fail "KWin PID/start identity changed during provenance setup"
+  if [[ "$command_rc" -ne 0 && "$cleanup_state" == verified ]]; then
+    PROVENANCE_CLEANUP_VERIFIED=1
+  fi
+  if [[ "$command_rc" -ne 0 ]]; then
+    manifest_write operational-binding not-proven
+    fail "checkout provenance setup failed; operational lifecycle binding is not proven"
+  fi
+  OPERATIONAL_BINDING_READY=1
+  PROVENANCE_SETUP_ACTIVE=0
+  if [[ -n "$SIGNAL_RECEIVED" ]]; then
+    fail "checkout provenance setup was interrupted by $SIGNAL_RECEIVED; readiness is unverified"
+  fi
+  manifest_write operational-binding proven
+  manifest_write future-journey gated-not-attempted
+  echo "operational checkout lifecycle binding confirmed: nonce=$NONCE build=$PROVENANCE_BUILD_ID pid=$KWIN_PID script-id=$PROVENANCE_SCRIPT_ID plugin=$PROVENANCE_PLUGIN_ID"
+  echo "note: current public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
+}
+
+kwin_identity_unchanged() {
+  local expected_pid="${KWIN_PID:-}" expected_start="${KWIN_START_IDENTITY:-}" current_pid current_start
+  [[ -n "$expected_pid" && -n "$expected_start" ]] || return 1
+  current_pid="$(find_kwin_pid 2>/dev/null || true)"
+  [[ "$current_pid" == "$expected_pid" ]] || return 1
+  KWIN_PID="$current_pid"
+  if ! capture_kwin_start_identity; then
+    KWIN_PID="$expected_pid"
+    KWIN_START_IDENTITY="$expected_start"
+    return 1
+  fi
+  current_start="$KWIN_START_IDENTITY"
+  KWIN_PID="$expected_pid"
+  KWIN_START_IDENTITY="$expected_start"
+  [[ "$current_start" == "$expected_start" ]]
+}
+
+verify_package_baseline() {
+  local state current_path
+  IFS= read -r state < "$BASELINE_DIR/package-state" || return 1
+  [[ "$state" == absent || "$state" == present ]] || return 1
+  current_path="$(read_installed_path "$(bash "$DOGFOOD_SH" status 2>/dev/null)")" || return 1
+  if [[ "$state" == absent ]]; then
+    [[ -z "$current_path" ]] || return 1
+    return 0
+  fi
+  [[ "$current_path" == "$BASELINE_INSTALLED_PATH" ]] || return 1
+  check_no_symlink_path "$current_path" || return 1
+  [[ -d "$current_path" && ! -L "$current_path" ]] || return 1
+  if ! package_manifest "$current_path" | cmp -s "$BASELINE_DIR/package-manifest" -; then
+    return 1
+  fi
+}
+
+verify_config_baseline() {
+  if [[ "$BASELINE_CONFIG_STATE" == absent ]]; then
+    [[ ! -e "$BASELINE_CONFIG_PATH" && ! -L "$BASELINE_CONFIG_PATH" ]]
+    return
+  fi
+  [[ -f "$BASELINE_CONFIG_PATH" && ! -L "$BASELINE_CONFIG_PATH" ]] || return 1
+  cmp -s "$BASELINE_DIR/kwinrc" "$BASELINE_CONFIG_PATH" || return 1
+  [[ "$(config_fingerprint "$BASELINE_CONFIG_PATH")" == "$(<"$BASELINE_DIR/kwinrc-fingerprint")" ]]
+}
+
+verify_shortcut_baseline() {
+  local raw current
+  raw="$(bash "$START_TEST_SH" snapshot-shortcuts 2>/dev/null)" || return 1
+  current="$(printf '%s\n' "$raw" | "$JQ_BIN" -c 'sort_by(tojson)' 2>/dev/null)" || return 1
+  cmp -s "$BASELINE_SHORTCUTS" <(printf '%s\n' "$current")
+}
+
+verify_kglobalaccel_baseline() {
+  local current
+  current="$(bash "$START_TEST_SH" snapshot-kglobalaccel 2>/dev/null)" || return 1
+  "$JQ_BIN" -e 'type == "object" and .service == "org.kde.kglobalaccel" and (.owner | type) == "string" and (.pid | type) == "number" and (.uid | type) == "number"' <<<"$current" >/dev/null || return 1
+  cmp -s "$BASELINE_KGLOBALACCEL" <(printf '%s\n' "$current")
+}
+
+verify_baseline() {
+  local status loaded enabled
+  status="$(bash "$DOGFOOD_SH" status 2>/dev/null)" || { echo "baseline verification failed: dogfood status" >&2; return 1; }
+  enabled="$(read_enabled_value "$status")" || { echo "baseline verification failed: enabled state" >&2; return 1; }
+  [[ "$enabled" == "$ENABLED_BEFORE" ]] || { echo "baseline verification failed: enabled state drift" >&2; return 1; }
+  loaded="$(read_loaded_value "$(bash "$START_TEST_SH" status 2>/dev/null)")" || { echo "baseline verification failed: loaded state" >&2; return 1; }
+  [[ "$loaded" == "$BASELINE_LOADED" ]] || { echo "baseline verification failed: loaded state drift" >&2; return 1; }
+  [[ "$BASELINE_PROVENANCE_LOADED" == not-loaded ]] || { echo "baseline verification failed: provenance carrier loaded state" >&2; return 1; }
+  [[ "$PROVENANCE_CLEANUP_LOADED" == not-loaded ]] || { echo "baseline verification failed: provenance carrier was not proven unloaded" >&2; return 1; }
+  verify_package_baseline || { echo "baseline verification failed: installed package" >&2; return 1; }
+  verify_config_baseline || { echo "baseline verification failed: KWin config" >&2; return 1; }
+  verify_shortcut_baseline || { echo "baseline verification failed: project shortcuts" >&2; return 1; }
+  verify_kglobalaccel_baseline || { echo "baseline verification failed: KGlobalAccel service owner identity" >&2; return 1; }
+}
+
 report_status() {
   local name="$1"
   shift
   "$@" 2>&1 | tee "$EVIDENCE_DIR/$name.txt" || true
 }
 
-follow_logs() {
-  "$JOURNALCTL_BIN" --user --quiet --no-pager --after-cursor="$JOURNAL_CURSOR" "_PID=$KWIN_PID" -f -o json \
-  | while IFS= read -r line; do
-      [[ -z "$line" ]] && continue
-      printf '%s\n' "$line" >> "$EVIDENCE_DIR/kwin-follow.jsonl"
-      msg="$("$JQ_BIN" -r '.MESSAGE // empty' <<<"$line" 2>/dev/null || true)"
-      category="$("$JQ_BIN" -r '(.QT_CATEGORY // .SYSLOG_IDENTIFIER // "")' <<<"$line" 2>/dev/null || true)"
-      if [[ "$msg" == plasma-auto-tiler:* ]]; then
-        printf '%s\n' "$msg" >> "$EVIDENCE_DIR/plasma-auto-tiler.log"
-        printf '%s\n' "$msg"
-      elif [[ "$category" == "kwin_scripting" ]]; then
-        printf '%s\n' "$line" >> "$EVIDENCE_DIR/kwin_scripting.log"
-        printf '%s\n' "$line"
-      fi
-    done
-}
-
 cleanup() {
-  local rc=$? restore_status
-  local stop_attempted=0 stop_rc=0
+  local rc=$? restore_status cleanup_failure=0 identity_ok=0 lock_cleanup_ok
   trap - EXIT INT TERM
-  if [[ "$START_ATTEMPTED" -eq 1 ]]; then
-    stop_attempted=1
-    echo "=== final: stopping the directly loaded script ==="
-    bash "$START_TEST_SH" stop >"${EVIDENCE_DIR:-}/final-stop.txt" 2>&1 || stop_rc=$?
-  fi
-  manifest_write cleanup-stop-attempted "$([[ "$stop_attempted" -eq 1 ]] && echo yes || echo no)"
-  manifest_write cleanup-stop-rc "$stop_rc"
-  if [[ "$DISABLED_BY_US" -eq 1 ]]; then
-    echo "=== final: restoring installed-plugin enable state ==="
-    bash "$DOGFOOD_SH" enable >"${EVIDENCE_DIR:-}/final-enable.txt" 2>&1 || true
-    if restore_status="$(bash "$DOGFOOD_SH" status 2>/dev/null)" && [[ "$(read_enabled_value "$restore_status")" == "yes" ]]; then
-      echo "restore verified: plugin enabled again"
-      manifest_write cleanup-restore verified
-    else
-      echo "error: restore not verified: plugin still not reported enabled" >&2
-      manifest_write cleanup-restore unverified
-    fi
+  if [[ -z "${KWIN_PID:-}" || -z "${KWIN_START_IDENTITY:-}" ]]; then
+    echo "error: KWin identity unavailable; refusing stale-handle cleanup" >&2
+    cleanup_failure=1
+  elif kwin_identity_unchanged; then
+    identity_ok=1
   else
-    manifest_write cleanup-restore not-needed
+    echo "error: KWin PID/start identity changed; refusing stale-handle cleanup" >&2
+    cleanup_failure=1
   fi
-  if [[ -n "${EVIDENCE_DIR:-}" ]]; then
+  if [[ -n "$PROVENANCE_SCRIPT_ID" && "$PROVENANCE_CLEANUP_VERIFIED" -eq 1 && "$identity_ok" -eq 1 ]]; then
+    manifest_write cleanup-provenance verified
+  elif [[ -n "$PROVENANCE_SCRIPT_ID" && "$identity_ok" -eq 1 ]]; then
+    echo "=== final: stopping the exact checkout provenance carrier ==="
+    if PROVENANCE_OWNERSHIP_FILE="$EVIDENCE_DIR/provenance-ownership" bash "$START_TEST_SH" provenance-stop "$PROVENANCE_SCRIPT_ID" >"${EVIDENCE_DIR:-}/final-provenance-stop.txt" 2>&1 && \
+      grep -Fqx "provenance-stop: script-id=$PROVENANCE_SCRIPT_ID plugin=$PROVENANCE_PLUGIN_ID unloaded and verified loaded-after=not-loaded" "$EVIDENCE_DIR/final-provenance-stop.txt"; then
+      PROVENANCE_CLEANUP_LOADED=not-loaded
+      manifest_write cleanup-provenance verified
+      manifest_write provenance-loaded-after "$PROVENANCE_CLEANUP_LOADED"
+    else
+      echo "error: provenance carrier teardown was not verified" >&2
+      manifest_write cleanup-provenance unverified
+      cleanup_failure=1
+    fi
+  elif [[ -n "$PROVENANCE_SCRIPT_ID" ]]; then
+    manifest_write cleanup-provenance unverified
+    cleanup_failure=1
+  elif [[ "$PROVENANCE_ATTEMPTED" -eq 1 ]]; then
+    manifest_write cleanup-provenance unverified
+    cleanup_failure=1
+  fi
+  manifest_write cleanup-restore not-needed
+  if [[ "$identity_ok" -eq 1 ]] && ! kwin_identity_unchanged; then
+    echo "error: KWin PID/start identity changed during cleanup" >&2
+    identity_ok=0
+    cleanup_failure=1
+  fi
+  if [[ -n "${EVIDENCE_DIR:-}" && "$identity_ok" -eq 1 ]]; then
     echo "=== final status/diagnostics/desktops ==="
     report_status final-status bash "$START_TEST_SH" status
     report_status final-diagnostics bash "$START_TEST_SH" diagnostics
     report_status final-desktops bash "$START_TEST_SH" desktops
     echo "evidence retained at: $EVIDENCE_DIR"
   fi
-  if [[ -n "$SIGNAL_RECEIVED" && "$START_ATTEMPTED" -eq 1 && "$RUNNING" -eq 0 ]]; then
-    echo "=== startup outcome: unknown/interrupted during start (${SIGNAL_RECEIVED}); not a readiness verdict ==="
+  if [[ "$identity_ok" -eq 1 ]] && ! verify_baseline; then
+    echo "error: exact baseline restoration was not verified" >&2
+    manifest_write baseline-restore unverified
+    cleanup_failure=1
+  elif [[ "$identity_ok" -eq 1 ]] && ! kwin_identity_unchanged; then
+    echo "error: KWin PID/start identity changed after baseline verification" >&2
+    manifest_write baseline-restore unverified
+    cleanup_failure=1
+  elif [[ "$identity_ok" -eq 1 ]]; then
+    echo "exact project baseline restoration verified"
+    manifest_write baseline-restore verified
+  else
+    echo "error: exact baseline restoration was not verified" >&2
+    manifest_write baseline-restore unverified
+    cleanup_failure=1
+  fi
+  if [[ -n "$SIGNAL_RECEIVED" && "$PROVENANCE_ATTEMPTED" -eq 1 && "$RUNNING" -eq 0 ]]; then
+    echo "=== setup outcome: unknown/interrupted during provenance setup (${SIGNAL_RECEIVED}); not a readiness verdict ==="
   fi
   manifest_write lock-removed no
-  if [[ -n "${LOCK_DIR:-}" && -d "$LOCK_DIR" && "$(cat "$LOCK_DIR/nonce" 2>/dev/null)" == "${NONCE:-}" ]]; then
-    rm -f "$LOCK_DIR/nonce"
-    rmdir "$LOCK_DIR" 2>/dev/null || true
-    manifest_write lock-removed yes
+  if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
+    if [[ -z "${LOCK_DIR:-}" || ! -d "$LOCK_DIR" || -L "$LOCK_DIR" ]]; then
+      echo "error: refusing lock cleanup because the owned lock path changed or is unsafe" >&2
+      cleanup_failure=1
+    elif ! lock_file_matches "$LOCK_DIR/nonce" "${NONCE:-}"; then
+      echo "error: refusing lock cleanup because the owned lock path changed or is unsafe" >&2
+      cleanup_failure=1
+    elif [[ -n "${LOCK_PLUGIN_FILE:-}" ]] && ! lock_file_matches "$LOCK_PLUGIN_FILE" "${PROVENANCE_PLUGIN_ID:-}"; then
+      echo "error: refusing lock cleanup because the owned lock path changed or is unsafe" >&2
+      cleanup_failure=1
+    else
+    lock_cleanup_ok=1
+    [[ -z "${LOCK_PLUGIN_FILE:-}" || ! -e "$LOCK_PLUGIN_FILE" ]] || remove_owned_lock_file "$LOCK_PLUGIN_FILE" || lock_cleanup_ok=0
+    [[ "$lock_cleanup_ok" -eq 0 || ! -e "$LOCK_DIR/nonce" ]] || remove_owned_lock_file "$LOCK_DIR/nonce" || lock_cleanup_ok=0
+    if [[ "$lock_cleanup_ok" -eq 1 ]] && check_no_symlink_path "$LOCK_DIR" && rmdir -- "$LOCK_DIR" 2>/dev/null; then
+      manifest_write lock-removed yes
+    else
+      echo "error: refusing lock cleanup because the owned lock path changed or is unsafe" >&2
+      cleanup_failure=1
+    fi
+    fi
   fi
+  [[ "$cleanup_failure" -eq 0 ]] || rc=1
   exit "$rc"
 }
 
@@ -390,111 +830,32 @@ cmd_run() {
 
   preflight "$mode"
 
-  # Read-only status: installed/enabled (dogfood) then direct KWin state.
-  local dogfood_status direct_status
+  # Capture the complete exact baseline before changing the installed-plugin
+  # enable state or loading the setup carrier.
+  capture_pid_cursor
+  capture_baseline
+  local dogfood_status
   dogfood_status="$(bash "$DOGFOOD_SH" status)" || fail "dogfood status failed"
   echo "=== installed-plugin state (read-only) ==="
   echo "$dogfood_status"
-  INSTALLED_BEFORE="$(read_installed_value "$dogfood_status")" || {
-    fail "dogfood status did not report an exact installed state"
-  }
-  ENABLED_BEFORE="$(read_enabled_value "$dogfood_status")" || {
-    fail "dogfood status did not report an exact 'enabled: yes/no'"
-  }
-  manifest_write installed-before "$INSTALLED_BEFORE"
-  manifest_write enabled-before "$ENABLED_BEFORE"
 
-  # Disable only the exact installed plugin if it is enabled, so KWin does not
-  # auto-load it while start-test.sh loads it directly. Fail closed if the
-  # plugin reports enabled but is not actually installed.
-  if [[ "$ENABLED_BEFORE" == "yes" ]]; then
-    if [[ "$INSTALLED_BEFORE" != "yes" ]]; then
-      fail "installed plugin reports enabled=yes but installed=no; refusing to disable an uninstalled plugin"
-    fi
-    bash "$DOGFOOD_SH" disable || fail "could not disable the installed plugin"
-    DISABLED_BY_US=1
-    manifest_write disabled-by-us yes
-    echo "disabled installed plugin (was enabled); will restore on exit"
-  fi
+  echo "=== pre-carrier controller load-state status (read-only) ==="
+  echo "$BASELINE_LOADED"
 
-  # Post-disable direct loaded-state ownership gate: after disabling the exact
-  # enabled plugin, poll bounded times until the controller reports exactly
-  # 'loaded: not-loaded', then this run may take ownership with a nonce-owned
-  # start. A residual loaded controller, malformed output, a status failure, or
-  # timeout fails closed without starting.
-  local poll_attempts=30 poll_delay=0.1 poll_count=0 poll_ok=0 poll_sample
-  : > "$EVIDENCE_DIR/post-disable-status.txt"
-  while [[ "$poll_count" -lt "$poll_attempts" ]]; do
-    poll_count=$((poll_count + 1))
-    poll_sample="$(bash "$START_TEST_SH" status)" || {
-      printf '%s\n' "$poll_sample" >> "$EVIDENCE_DIR/post-disable-status.txt"
-      manifest_write post-disable-poll-count "$poll_count"
-      manifest_write post-disable-result timeout
-      fail "start-test status failed during post-disable ownership poll"
-    }
-    printf '%s\n' "$poll_sample" >> "$EVIDENCE_DIR/post-disable-status.txt"
-    if grep -qFx 'loaded: not-loaded' <<<"$poll_sample"; then
-      poll_ok=1
-      break
-    fi
-    # Only an exact 'loaded: loaded' is retryable; anything else fails closed.
-    if ! grep -qFx 'loaded: loaded' <<<"$poll_sample"; then
-      manifest_write post-disable-poll-count "$poll_count"
-      manifest_write post-disable-result timeout
-      fail "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
-    fi
-    if [[ "$poll_count" -lt "$poll_attempts" ]]; then
-      "$SLEEP_BIN" "$poll_delay"
-    fi
-  done
-  manifest_write post-disable-poll-count "$poll_count"
-  if [[ "$poll_ok" -eq 1 ]]; then
-    manifest_write post-disable-result ready
-    echo "=== direct controller status (read-only) ==="
-    echo "post-disable ownership ready after $poll_count status call(s)"
-    echo "$poll_sample"
-  else
-    manifest_write post-disable-result timeout
-    fail "direct status does not report exactly 'loaded: not-loaded'; cannot safely own the controller"
-  fi
-
-  capture_pid_cursor
   echo "kwin pid: $KWIN_PID"
   manifest_write kwin-pid "$KWIN_PID"
   manifest_write journal-cursor "$JOURNAL_CURSOR"
 
-  if ! derive_start_bound; then
-    fail "could not derive the readiness-wait bound from the $START_TEST_SH contract (READINESS_ATTEMPTS/READINESS_DELAY)"
+  setup_provenance
+  if [[ "$OPERATIONAL_BINDING_READY" -ne 1 ]]; then
+    fail "operational checkout lifecycle binding was not established"
   fi
-  echo "loading controller; readiness wait may take up to $START_BOUND_S seconds"
-  START_ATTEMPTED=1
-  manifest_write start-attempted yes
-  local start_rc=0
-  if bash "$START_TEST_SH" start 2>&1 | tee "$EVIDENCE_DIR/start.txt"; then
-    RUNNING=1
-    manifest_write start-result ok
-    manifest_write start-exit 0
-  else
-    start_rc=${PIPESTATUS[0]}
-    manifest_write start-result failed
-    manifest_write start-exit "$start_rc"
-    report_start_failure "$start_rc"
-    exit 1
-  fi
-
-  echo "=== controller status/diagnostics/desktops ==="
-  report_status status bash "$START_TEST_SH" status
-  report_status diagnostics bash "$START_TEST_SH" diagnostics
-  report_status desktops bash "$START_TEST_SH" desktops
-
   echo "=== checklist ==="
-  echo "- controller loaded and running (see status above; callbacks proven only by an exact -invoked/-rejected/-failed diagnostic token)"
-  echo "- readiness confirmed: shortcut-registered then startup-handlers-ready, no disabled: diagnostic"
-  echo "- no same-KWin-PID kwin_scripting evaluation error observed"
+  echo "- inert checkout provenance carrier loaded and bound to the captured KWin identity"
+  echo "- future Custom Tile journey: explicitly gated and not attempted"
+  echo "- carrier teardown and exact baseline restoration are verified during cleanup"
   echo "- evidence directory: $EVIDENCE_DIR"
-  echo "=== following live same-KWin-PID project and kwin_scripting logs (Ctrl-C to stop) ==="
-  follow_logs || true
-  echo "=== live-test run $NONCE ended ==="
+  echo "=== live-test provenance setup complete; restore phase follows ==="
 }
 
 if [[ $# -eq 0 ]]; then

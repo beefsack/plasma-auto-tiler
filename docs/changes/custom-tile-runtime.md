@@ -53,28 +53,38 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 - It establishes a prospective rollback and journal contract for a later
   authorized run only. It performs no lifecycle or mutation and persists no raw
   host evidence.
-- `authoritative_ready` remains false because no supported read-only binding
-  proves the checkout controller's provenance. This is the immediate blocker.
+- `authoritative_ready` remains false because current public KWin APIs provide
+  no direct evaluated-memory source proof for the checkout controller. The inert
+  checkout carrier is a separate operational lifecycle binding and does not
+  change that verdict.
 - `setup_ready` means the read-only KWin, KGlobalAccel, shortcut, and
   persisted-state checks completed without drift. `journey_ready` remains false
-  with `authoritative_ready`; neither phase permits a live journey or user
-  manual action without provenance proof.
-- No live runtime acceptance occurred; preflight results are not acceptance
-  evidence.
+  with `authoritative_ready`; neither phase nor the carrier setup permits a
+  live journey or user manual action on its own.
+- No Custom Tile runtime acceptance or journey occurred; the carrier
+  setup/restore smoke is not claimed as passed and is not acceptance evidence.
 
 ## Current Evidence Assessment
 
-- `devenv.nix` intentionally adds `python3`. Restart the development session
-  before assuming that dependency or the preflight is available.
-- No live lifecycle or mutation occurred. Runtime behavior, host restoration,
-  and every acceptance journey remain unclaimed.
-- Live acceptance remains blocked until after restart and a read-only preflight
-  reports `authoritative_ready: true`.
+- `devenv.nix` intentionally adds `python3`. The development session has been
+  restarted, so the committed dependency and preflight are available. The
+  static carrier-only operational provenance harness is verified.
+- No successful carrier smoke occurred. Bounded carrier attempts either stopped
+  before effect or were receipt-bound restored; no Custom Tile runtime lifecycle
+  or mutation is claimed.
+- A new smoke is blocked by two retained protected project runtime evidence
+  records. Their handling requires explicit user authorization under a race-safe
+  recovery procedure; no recovery action is invented or authorized here.
+- After that handling, the next gate is one bounded carrier-only smoke with
+  exact host baseline equality. It proves only operational binding and exact
+  restoration, not direct evaluated-memory source proof or runtime acceptance.
+  Only then, with separate authorization and applicable readiness gates, may a
+  Custom Tile journey be considered; none has occurred.
 
 ## Verification
 
-- Static/read-only harness verification passed: 126 passed, 0 failed. Bash
-  syntax and diff checks passed; `shellcheck` was unavailable.
+- Static carrier-only/read-only harness verification passed: 126 passed, 0
+  failed. Bash syntax and diff checks passed; `shellcheck` was unavailable.
 - Independent adversarial review found a post-enumeration KGlobalAccel shortcut
   drift gap. The harness now takes and compares a second exact shortcut
   contract snapshot before `setup_ready`; targeted regression coverage passed.
@@ -91,9 +101,14 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-- Restart the development session, then run the read-only preflight. Do not run
-  live acceptance before the restart.
-- Request user physical or manual action only if that preflight reports
-  `authoritative_ready: true`; otherwise stop without a live attempt.
-- Prioritize a supported read-only checkout-controller provenance binding. Until
-  it exists, `authoritative_ready` remains false and no live gate opens.
+- Obtain explicit user authorization to handle the two retained protected
+  project runtime evidence records under a race-safe recovery procedure. Do not
+  invent recovery or remove ambiguous residue.
+- After that handling, run one bounded carrier-only setup/restore smoke and
+  require exact host baseline equality. Do not treat it as Custom Tile runtime
+  acceptance.
+- Only after that successful smoke and separate authorization may a Custom Tile
+  journey be considered, subject to the applicable preflight readiness gates;
+  no journey has occurred.
+- Continue to treat `authoritative_ready` as false unless a supported direct
+  evaluated-memory source proof is established.

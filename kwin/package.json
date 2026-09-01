@@ -6,6 +6,8 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "build": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js",
+    "build-start": "test -n \"$CONTROLLER_NONCE\" && test -n \"$CONTROLLER_BUILD_ID\" && test -n \"$CONTROLLER_PLUGIN_ID\" && esbuild src/entry.ts --bundle --format=iife --target=es2017 --define:CONTROLLER_NONCE=\\\"$CONTROLLER_NONCE\\\" --define:CONTROLLER_BUILD_ID=\\\"$CONTROLLER_BUILD_ID\\\" --define:CONTROLLER_PLUGIN_ID=\\\"$CONTROLLER_PLUGIN_ID\\\" --outfile=contents/code/main.js",
+    "build-provenance": "test -n \"$PROVENANCE_OUTFILE\" && test -n \"$PROVENANCE_PLUGIN_ID\" && esbuild src/provenance-entry.ts --bundle --format=iife --target=es2017 --define:PROVENANCE_NONCE=\\\"$PROVENANCE_NONCE\\\" --define:PROVENANCE_BUILD_ID=\\\"$PROVENANCE_BUILD_ID\\\" --define:PROVENANCE_PLUGIN_ID=\\\"$PROVENANCE_PLUGIN_ID\\\" --outfile=\"$PROVENANCE_OUTFILE.tmp\" && mv -n -- \"$PROVENANCE_OUTFILE.tmp\" \"$PROVENANCE_OUTFILE\"",
     "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\" && bash ../scripts/start-test.test.sh"
   },
   "engines": {

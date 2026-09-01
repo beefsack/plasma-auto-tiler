@@ -48,9 +48,14 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
   `diagnostics` are read-only; `stop` unloads only the exact project script.
   `reconcile-shortcuts --apply` is a shortcut mutation and always needs explicit
   authorization.
-- `scripts/live-test.sh run` is an interactive convenience path, not proof of a
-  product journey. It never writes shortcut records, creates desktops/windows,
-  or launches a nested compositor.
+- `scripts/live-test.sh run` is a bounded convenience path, not proof of a
+  product journey. After static checks it captures the exact baseline,
+  establishes and tears down only the inert checkout provenance carrier through
+  `start-test.sh`, and verifies restoration. It never disables, enables,
+  reconfigures, loads, runs, or follows the controller; it never writes
+  shortcut records, creates desktops/windows, or launches a nested compositor.
+  The carrier is an operational lifecycle binding only, not direct
+  evaluated-memory source proof.
 
 ## Diagnostics And Ownership
 
@@ -73,11 +78,14 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
 - `setup_ready` means only that the preflight's read-only setup checks
   completed without drift. It never authorizes a live journey or manual action;
   those remain blocked until both `journey_ready` and `authoritative_ready` are
-  true.
-- After its `devenv.nix` dependency change, restart the development session
-  before assuming the preflight is available. Do not run live acceptance before
-  that restart; request user physical or manual action only when the restarted
-  session's preflight reports `authoritative_ready: true`.
+  true. The carrier setup/restore smoke is a separate operational gate and does
+  not set either readiness value.
+- The development session has been restarted after the `devenv.nix` dependency
+  change, so the committed dependency and preflight are available. After static
+  checks, the next gate is a successful bounded carrier lifecycle setup/restore
+  smoke. It does not establish direct evaluated-memory source proof or Custom
+  Tile runtime acceptance. A Custom Tile journey requires separate
+  authorization and applicable readiness gates; none has occurred.
 
 ## Custom Tile Safety Findings
 

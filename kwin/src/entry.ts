@@ -2,6 +2,10 @@ import { TileController } from "./controller";
 import { prepareManagedRoot } from "./managed-root";
 import { TrayPublisher } from "./tray-publisher";
 
+declare const CONTROLLER_NONCE: string;
+declare const CONTROLLER_BUILD_ID: string;
+declare const CONTROLLER_PLUGIN_ID: string;
+
 function isKWinWindowSurface(value: unknown): value is Window {
     return (
         typeof value === "object" &&
@@ -378,4 +382,13 @@ trayPublisher = new TrayPublisher({
 });
 
 controller.start();
+if (
+    typeof CONTROLLER_NONCE === "string" &&
+    typeof CONTROLLER_BUILD_ID === "string" &&
+    typeof CONTROLLER_PLUGIN_ID === "string"
+) {
+    console.log(
+        `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`,
+    );
+}
 trayPublisher.start();

@@ -61,18 +61,27 @@ Historical implementation detail is recoverable in Git history.
   fails closed on stale state, collisions, drift, or provenance ambiguity; it
   performs no lifecycle or mutation. Its rollback and journal contract is for a
   later authorized run only.
-- `python3` was added intentionally to `devenv.nix`; restart the development
-  session before assuming the preflight is available. No live acceptance may run
-  before that restart, and user physical or manual action is requested only if
-  the restarted-session preflight reports `authoritative_ready: true`.
-- The immediate Custom Tile blocker is the absence of a supported read-only
-  binding that proves the checkout controller's provenance. Until it is
-  established, `authoritative_ready` remains false.
+- `python3` was added intentionally to `devenv.nix`; the development session
+  has been restarted and the committed dependency is available. The
+  static carrier-only operational provenance harness is verified, but no
+  successful carrier smoke occurred: bounded attempts either stopped before
+  effect or were receipt-bound restored. A new smoke is blocked by two retained
+  protected project runtime evidence records. Handling those records requires
+  explicit user authorization under a race-safe recovery procedure; after that,
+  one bounded carrier-only smoke must prove exact host baseline equality. A
+  separately authorized Custom Tile journey remains a later gate.
+- The inert checkout carrier establishes only operational lifecycle binding
+  through its exact plugin/script identity, receipt, diagnostic, and unchanged
+  KWin identity. Current public KWin APIs do not provide direct evaluated-memory
+  source proof for the checkout controller, so `authoritative_ready` remains
+  false; the carrier does not change that verdict.
 - The preflight reports phased readiness: `setup_ready` proves only its
   read-only KWin, KGlobalAccel, shortcut, and persisted-state checks completed
   without drift; `journey_ready` and `authoritative_ready` remain false until
-  checkout-controller provenance is established. No readiness phase authorizes
-  lifecycle work, live journeys, or user manual action on its own.
+  the applicable acceptance gates are established. No readiness phase
+  authorizes a Custom Tile lifecycle, live journey, or user physical or manual
+  action on its own; carrier setup is limited to its bounded operational
+  binding.
 
 ## Window And Workspace Behavior
 
