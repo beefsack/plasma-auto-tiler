@@ -236,6 +236,15 @@ export class Harness {
     readonly shortcuts: RegisteredShortcut[] = [];
     readonly configValues = new Map<string, unknown>();
     readonly scheduled: { delayMs: number; callback: () => void; cancelled: boolean }[] = [];
+    readonly interactiveWatches: Array<{
+        readonly window: unknown;
+        readonly started: () => void;
+        readonly finished: () => void;
+        readonly stepped: (geometry: RectCapability) => void;
+        readonly moveResizedChanged: () => void;
+        readonly invalidated: () => void;
+    }> = [];
+    scheduleOnceThrows: Error | undefined;
     readonly activeWrites: unknown[] = [];
     yieldResult = true;
     readonly yields: YieldEntry[] = [];
@@ -367,6 +376,7 @@ export class Harness {
                 this.desktopsChanged = handler;
             },
             watchInteractiveWindow: (target, started, finished, stepped, moveResizedChanged, invalidated) => {
+                this.interactiveWatches.push({ window: target, started, finished, stepped, moveResizedChanged, invalidated });
                 const surface = target as unknown as Pick<
                     TestWindow,
                     | "interactiveMoveResizeStarted"
@@ -544,6 +554,9 @@ export class Harness {
                 return true;
             },
             scheduleOnce: (delayMs, callback) => {
+                if (this.scheduleOnceThrows !== undefined) {
+                    throw this.scheduleOnceThrows;
+                }
                 const entry = { delayMs, callback, cancelled: false };
                 this.scheduled.push(entry);
                 return () => {

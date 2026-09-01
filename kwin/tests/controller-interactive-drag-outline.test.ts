@@ -189,6 +189,74 @@ describe("TileController interactive drag outline preview and minimum-split geom
         }
     });
 
+    it("clears the preview before a target resize observer can consume invalidation", () => {
+        const state = dragSetup(true);
+        state.harness.cursor = { x: 250, y: 50 };
+        startDrag(state.dragged);
+        state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.equal(state.harness.showOutlineCalls.length, 1);
+
+        state.targetWindow.resize = true;
+        state.targetWindow.interactiveMoveResizeStarted.emit();
+        assert.equal(state.harness.hideOutlineCalls, 1);
+        assert.equal(state.controller.hasActiveDrag, true);
+    });
+
+    it("clears the preview when its target window is removed", () => {
+        const state = dragSetup(true);
+        state.harness.cursor = { x: 250, y: 50 };
+        startDrag(state.dragged);
+        state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.equal(state.harness.showOutlineCalls.length, 1);
+
+        state.harness.emitRemoved(state.targetWindow);
+
+        assert.equal(state.harness.hideOutlineCalls, 1);
+    });
+
+    it("replans the release against a new target after previewing another target", () => {
+        const state = dragSetup(true);
+        const secondTarget = tile({ x: 400, y: 0, width: 100, height: 100 });
+        const secondWindow = window({ tile: secondTarget });
+        secondTarget.windows = [secondWindow];
+        const upper = tile({ x: 400, y: 0, width: 100, height: 50 });
+        const lower = tile({ x: 400, y: 50, width: 100, height: 50 });
+        upper.manage = (value) => {
+            (value as TestWindow).tile = upper;
+            upper.windows = [value as TestWindow];
+            return true;
+        };
+        lower.manage = (value) => {
+            (value as TestWindow).tile = lower;
+            lower.windows = [value as TestWindow];
+            return true;
+        };
+        secondTarget.split = (direction) => {
+            secondTarget.isLayout = true;
+            secondTarget.layoutDirection = direction;
+            secondTarget.windows = [];
+            secondTarget.tiles = [upper, lower];
+            return [];
+        };
+        state.root.tiles = [state.origin, state.target, secondTarget];
+        state.harness.windows = [state.dragged, state.targetWindow, secondWindow];
+
+        state.harness.cursor = { x: 250, y: 50 };
+        startDrag(state.dragged);
+        state.dragged.interactiveMoveResizeStepped.emit(movedGeometry());
+        assert.deepEqual(state.harness.showOutlineCalls, [{ x: 200, y: 0, w: 100, h: 100 }]);
+
+        state.harness.cursor = { x: 450, y: 50 };
+        state.dragged.tile = null;
+        state.dragged.frameGeometry = { x: 400, y: 0, width: 100, height: 100 };
+        state.dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(state.target.isLayout, false);
+        assert.equal(secondTarget.isLayout, true);
+        assert.equal(state.targetWindow.tile, state.target);
+        assert.equal(state.dragged.tile, lower);
+    });
+
     it("hides a shown outline when the target split would violate the minimum size", () => {
         const { harness, row0Win } = rowsDropSetup(true);
         startDrag(row0Win);

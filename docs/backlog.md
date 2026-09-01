@@ -2,17 +2,18 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | static complete, carrier smoke blocked on retained records | Establish
-  stable Custom Tile runtime behavior, including drag/reflow and the existing
-  float, fullscreen, maximize, and workspace paths |
+- P1 | static complete, residual manual/live acceptance; exhaustive harness
+  recovery deferred | Retain stable Custom Tile runtime behavior, including
+  drag/reflow and the existing float, fullscreen, maximize, and workspace paths |
   [change](changes/custom-tile-runtime.md)
 - P1 | static complete, pending live | Accept COSMIC directional movement on
   KWin with separately authorized live bindings | [change](changes/cosmic-directional-movement.md)
 - P1 | static complete, pending live | Accept pointer resize and neighbouring
   reflow on a disposable layout with fresh authorization | [change](changes/pointer-interactive-resize.md)
-- P1 | pending implementation and live | Replace the temporary outline with
-  deterministic nested split placement and accept direction-axis flattening
-  and differing-axis nested insertion | [change](changes/nested-placement-affordance.md)
+- P1 | static complete, pending manual visual smoke | Drag one tiled window over
+  an occupied target leaf, confirm the whole-leaf rectangle preview, release,
+  and visually confirm nested split placement; do not attempt stale-harness
+  recovery | [change](changes/archive/nested-placement-affordance.md)
 - P1 | pending implementation | Implement the native effect-scoped KCM now
   that the development session has been restarted and its committed dependency
   is available | [change](changes/native-effect-kcm.md)

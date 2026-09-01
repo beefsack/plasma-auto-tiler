@@ -3411,6 +3411,7 @@
   // src/controller-interactive-drag.ts
   var WORK_AREA_CLIENT_AREA_OPTION3 = 5;
   var MINIMUM_TILE_FRACTION2 = 0.15;
+  var DRAG_WATCHDOG_DURATION_MS = 5e3;
   var DIAGNOSTIC_UNAVAILABLE = "unavailable";
   function createInteractiveDragController(capabilities) {
     const dragState = { current: void 0 };
@@ -3418,6 +3419,10 @@
     const resizeObservations = /* @__PURE__ */ new Set();
     const owedInvariantScopes = /* @__PURE__ */ new Map();
     let shownDropOutline = null;
+    let shownDropTarget = null;
+    let nextDragGeneration = 1;
+    let nextWatchGeneration = 1;
+    let watchdogCancel = null;
     let nextDiagnosticTransactionId = 1;
     const diagnostic = capabilities.diagnostic;
     const { dragGeometryBail: dragGeometryBail2, positiveGeometry: positiveGeometry2, sameGeometry: sameGeometry2, splitDirection: splitDirection3 } = capabilities.geometryHelpers;
@@ -3425,27 +3430,78 @@
     const { equalAlongAxis: equalAlongAxis2, pickDropLeaf: pickDropLeaf2, planEqualSplit: planEqualSplit2, planGeometryDrop: planGeometryDrop2, rectCenter: rectCenter2 } = capabilities.planningHelpers;
     const { decodeChildren, setRelativeGeometry } = capabilities.tileHelpers;
     const { snapshotCaption: snapshotCaption2 } = capabilities;
-    const showDropOutline = (geometry) => {
+    const showDropOutline = (geometry, target = null) => {
       if (shownDropOutline !== null && sameGeometry2(shownDropOutline, geometry)) {
+        shownDropTarget = target;
         return;
       }
       capabilities.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
       shownDropOutline = { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
+      shownDropTarget = target;
     };
     const hideDropOutline = () => {
       if (shownDropOutline === null) {
         return;
       }
-      capabilities.hideOutline();
-      shownDropOutline = null;
+      try {
+        capabilities.hideOutline();
+      } catch (error) {
+        void error;
+        diagnostic("drag-outline-hide-failed");
+      } finally {
+        shownDropOutline = null;
+        shownDropTarget = null;
+      }
     };
     const trackedDragLive = () => {
       const drag = dragState.current;
       return drag !== void 0 && (drag.window.move || drag.window.resize);
     };
+    const cancelWatchdog = () => {
+      const cancel = watchdogCancel;
+      watchdogCancel = null;
+      if (cancel === null) {
+        return;
+      }
+      try {
+        cancel();
+      } catch (error) {
+        void error;
+        diagnostic("drag-watchdog-cancel-failed");
+      }
+    };
     const clear = () => {
+      cancelWatchdog();
       hideDropOutline();
       dragState.current = void 0;
+    };
+    const clearPreview = () => {
+      hideDropOutline();
+    };
+    const armWatchdog = (drag) => {
+      try {
+        watchdogCancel = capabilities.scheduleOnce(DRAG_WATCHDOG_DURATION_MS, () => {
+          if (dragState.current !== drag || drag.generation !== dragState.current.generation) {
+            return;
+          }
+          capabilities.runGuarded(() => {
+            diagnostic("drag-watchdog-timeout");
+            clear();
+            try {
+              settleOwedInvariants();
+            } finally {
+              capabilities.afterFinished();
+            }
+          });
+        });
+        return true;
+      } catch (error) {
+        void error;
+        diagnostic("drag-watchdog-arm-failed");
+        clear();
+        capabilities.disable("drag-watchdog-arm-failed");
+        return false;
+      }
     };
     const markOwedInvariant = (scope) => {
       let byDesktop = owedInvariantScopes.get(scope.output);
@@ -3944,15 +4000,21 @@
       }
       recoverGeometryDrop(drag, scope, topology, origin, center, pointSource);
     };
-    const handleInvalidated = (window) => {
+    const handleInvalidated = (window, watchGeneration) => {
       capabilities.runGuarded(() => {
-        var _a;
+        var _a, _b;
+        if (watchGeneration !== void 0 && ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.generation) !== watchGeneration) {
+          return;
+        }
+        if (shownDropTarget === window) {
+          clearPreview();
+        }
         if (resizeObservations.delete(window)) {
           diagnostic("resize-observer-invalidated");
           detach(window);
           return;
         }
-        if (((_a = dragState.current) == null ? void 0 : _a.window) === window) {
+        if (((_b = dragState.current) == null ? void 0 : _b.window) === window) {
           diagnostic("drag-bail:window-invalidated");
           clear();
         }
@@ -3964,9 +4026,13 @@
         settleOwedInvariants();
       });
     };
-    const handleStarted = (window) => {
+    const handleStarted = (window, watchGeneration) => {
       diagnostic("drag-started");
       capabilities.runGuarded(() => {
+        var _a;
+        if (watchGeneration !== void 0 && ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.generation) !== watchGeneration) {
+          return;
+        }
         if (window.fullScreen === true) {
           diagnostic("fullscreen:ignored lifecycle while fullscreen");
           return;
@@ -3976,6 +4042,9 @@
           return;
         }
         if (window.resize && window.tile !== null && isCustomTile(window.tile)) {
+          if (shownDropTarget === window) {
+            clearPreview();
+          }
           resizeObservations.add(window);
           diagnostic("resize-observer-started");
           return;
@@ -4041,25 +4110,37 @@
             width: window.frameGeometry.width,
             height: window.frameGeometry.height
           },
+          generation: nextDragGeneration,
           armedDeferredRemoval: false
         };
+        nextDragGeneration += 1;
+        const drag = dragState.current;
+        if (drag === void 0 || !armWatchdog(drag)) {
+          return;
+        }
         diagnostic("drag-origin-captured");
       });
     };
-    const handleFinished = (window) => {
+    const handleFinished = (window, watchGeneration) => {
       capabilities.runGuarded(() => {
+        var _a;
+        if (watchGeneration !== void 0 && ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.generation) !== watchGeneration) {
+          return;
+        }
         if (resizeObservations.delete(window)) {
           diagnostic("resize-observer-finished");
           return;
         }
         if (window.fullScreen === true) {
           diagnostic("fullscreen:ignored lifecycle while fullscreen");
-          hideDropOutline();
+          clearPreview();
+          cancelWatchdog();
           return;
         }
         if (capabilities.isMaximized(window)) {
           diagnostic("maximize:ignored lifecycle while maximized");
-          hideDropOutline();
+          clearPreview();
+          cancelWatchdog();
           return;
         }
         const watch = interactiveWindows.get(window);
@@ -4087,17 +4168,20 @@
         capabilities.afterFinished();
       });
     };
-    const handleStepped = (window, geometry) => {
+    const handleStepped = (window, geometry, watchGeneration) => {
       capabilities.runGuarded(() => {
-        var _a;
-        if (resizeObservations.has(window) || ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.kind) === "resize") {
+        var _a, _b, _c;
+        if (watchGeneration !== void 0 && ((_a = interactiveWindows.get(window)) == null ? void 0 : _a.generation) !== watchGeneration) {
+          return;
+        }
+        if (resizeObservations.has(window) || ((_b = interactiveWindows.get(window)) == null ? void 0 : _b.kind) === "resize") {
           return;
         }
         if (!capabilities.dropOutlinePreview()) {
           return;
         }
         const drag = dragState.current;
-        if (drag === void 0) {
+        if (drag === void 0 || drag.window !== window) {
           return;
         }
         const scope = capabilities.scopeForWindow(drag.window);
@@ -4146,7 +4230,8 @@
           hideDropOutline();
           return;
         }
-        showDropOutline(target.target.leaf.geometry);
+        const targetWindow = (_c = target.target.windows.find((candidate) => candidate !== drag.window)) != null ? _c : null;
+        showDropOutline(target.target.leaf.geometry, targetWindow);
       });
     };
     const attach = (window) => {
@@ -4171,21 +4256,26 @@
         diagnostic("drag-attach-skipped:out-of-scope");
         return null;
       }
+      const generation = nextWatchGeneration;
+      nextWatchGeneration += 1;
       const watched = capabilities.watchInteractiveWindow(
         window,
-        () => handleStarted(window),
-        () => handleFinished(window),
-        (geometry) => handleStepped(window, geometry),
+        () => handleStarted(window, generation),
+        () => handleFinished(window, generation),
+        (geometry) => handleStepped(window, geometry, generation),
         () => handleMoveResizedChanged(),
-        () => handleInvalidated(window)
+        () => handleInvalidated(window, generation)
       );
-      interactiveWindows.set(window, { disconnect: watched.disconnect, kind: "unknown" });
+      interactiveWindows.set(window, { disconnect: watched.disconnect, generation, kind: "unknown" });
       return { attempted: watched.ok + watched.failed, ok: watched.ok, failed: watched.failed };
     };
     const detach = (window) => {
       const watch = interactiveWindows.get(window);
       if (watch === void 0) {
         return;
+      }
+      if (shownDropTarget === window) {
+        clearPreview();
       }
       if (resizeObservations.delete(window)) {
         diagnostic("resize-observer-invalidated");
@@ -4742,6 +4832,7 @@
       // changes it (spec E) and hotplug/disconnect leaves it intact. Session-only,
       // never persisted; empty for every non-shared mode.
       this.sharedWorkspaces = [];
+      this.groupOutlineGeometry = null;
       this.markStructuralMutation = () => {
         this.structuralMutationPending = true;
       };
@@ -4819,7 +4910,8 @@
           invalidated
         ),
         showOutline: (x, y, width, height) => this.environment.showOutline(x, y, width, height),
-        hideOutline: () => this.environment.hideOutline(),
+        hideOutline: () => this.hideInteractiveOutline(),
+        scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
         scopeForWindow: (window) => this.scopeForWindow(window),
         topologyForScope: (scope, onRejected) => this.topologyForScope(scope, onRejected),
         windowInScope,
@@ -5010,6 +5102,7 @@
         diagnostics: { diagnostic: (event) => this.diagnostic(event) }
       });
       void this.showDropOutline;
+      void this.hideDropOutline;
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -5153,7 +5246,7 @@
     }
     disabled(reason) {
       var _a;
-      this.interactiveDrag.hideDropOutline();
+      this.interactiveDrag.clear();
       this.diagnostic(`disabled:${reason}`);
       const enabled = this.gate.isEnabled;
       if (enabled === this.notifiedEnabled) {
@@ -5549,7 +5642,6 @@
       }
     }
     clearDrag() {
-      this.hideDropOutline();
       this.interactiveDrag.clear();
     }
     showDropOutline(geometry) {
@@ -5557,6 +5649,14 @@
     }
     hideDropOutline() {
       this.interactiveDrag.hideDropOutline();
+    }
+    hideInteractiveOutline() {
+      const groupGeometry = this.groupOutlineGeometry;
+      if (groupGeometry !== null) {
+        this.environment.showOutline(groupGeometry.x, groupGeometry.y, groupGeometry.width, groupGeometry.height);
+        return;
+      }
+      this.environment.hideOutline();
     }
     // screensChanged -> rebuild the deterministic session output keys, then
     // re-anchor ownership and reconcile (spec F). A removed output's keys stay
@@ -5744,9 +5844,13 @@
     }
     handleFullscreenChanged(window) {
       this.gate.run(() => {
+        var _a;
         if (window.fullScreen === true) {
           this.enterFullscreen(window);
         } else {
+          if (((_a = this.interactiveDrag.current()) == null ? void 0 : _a.window) === window) {
+            this.interactiveDrag.clear();
+          }
           this.exitFullscreen(window);
         }
       }, (reason) => this.disabled(reason));
@@ -6035,9 +6139,13 @@
     // Returns whether the restore completed; a false return means the caller
     // must bail out of the operation that requested it.
     exitMaximize(window) {
+      var _a;
       const record = this.maximizedWindows.get(window);
       if (record === void 0) {
         return true;
+      }
+      if (((_a = this.interactiveDrag.current()) == null ? void 0 : _a.window) === window) {
+        this.interactiveDrag.clear();
       }
       if (record.kind === "startup") {
         if (record.preservedTile === null || record.scope === null) {
@@ -6188,14 +6296,29 @@
       const identity = {};
       this.groupOutlineIdentity = identity;
       const geometry = parent.absoluteGeometry;
+      this.groupOutlineGeometry = { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
       this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
-      this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
-        if (this.groupOutlineIdentity !== identity || this.interactiveDrag.isOutlineShown()) {
-          return;
-        }
-        this.environment.hideOutline();
+      try {
+        this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
+          if (this.groupOutlineIdentity !== identity) {
+            return;
+          }
+          if (this.interactiveDrag.isOutlineShown()) {
+            this.groupOutlineIdentity = null;
+            this.groupOutlineGeometry = null;
+            return;
+          }
+          this.environment.hideOutline();
+          this.groupOutlineIdentity = null;
+          this.groupOutlineGeometry = null;
+        });
+      } catch (error) {
+        void error;
         this.groupOutlineIdentity = null;
-      });
+        this.groupOutlineGeometry = null;
+        this.environment.hideOutline();
+        this.diagnostic("group-outline-schedule-failed");
+      }
     }
     scopeForWindow(window) {
       if (!isWindow(window) || !isOutput(window.output)) {

@@ -8,9 +8,11 @@ deterministic affordance for nested split placement.
 ## Scope And Non-Goals
 
 - Show a generic target-leaf placement affordance and infer the split direction
-  on release.
+  on release. The rectangle preview is deliberately bounded to the whole target
+  leaf; it does not preview a directional sub-rectangle.
 - Direction-axis insertion may flatten same-axis siblings; differing-axis
-  insertion may build a two-child nested split.
+  insertion may build a two-child nested split. Grouping here means nested split
+  placement, not tabs, stacked/shared groups, or compositor groups.
 - This is not opacity or dimming, and it does not add tabs, stacked/shared
   groups, or compositor group behavior.
 
@@ -40,12 +42,24 @@ deterministic affordance for nested split placement.
 
 ## Verification
 
-- Accepted audit evidence covers generic target-leaf preview, release direction
-  inference, same-axis flattening, and differing-axis nested insertion.
-- The current status is pending static implementation evidence; the required
-  teardown and independently active drag-outline preservation behavior is not
-  claimed complete.
-- Runtime interaction and live visual acceptance remain unrun.
+- Static MVP completion is accepted. Available source and focused fixture
+  evidence is:
+  - `kwin/src/controller-interactive-drag.ts` bounds preview to the target leaf,
+    infers release direction, reads post-split children, and preserves the
+    deferred origin-collapse boundary.
+  - `kwin/tests/controller-interactive-drag.test.ts` covers direction mapping,
+    live post-split child decoding, central-zone direction selection, empty-leaf
+    placement, and same-axis wrapping into a new direct sibling.
+  - `kwin/tests/controller-interactive-drag-outline.test.ts` covers whole-leaf
+  preview without mutation, preview invalidation and replanning, minimum-size
+    refusal, cleanup on release and invalidation/terminal paths, and differing-axis nested
+    placement with deferred origin collapse.
+  - `kwin/src/controller.ts` and `kwin/tests/controller-group-outline.test.ts`
+    cover replacement outline teardown and preservation of an independently
+    active group flash.
+- No live KWin interaction or manual visual acceptance is claimed. The residual
+  gate is one user-performed manual visual smoke of the bounded preview and
+  nested split placement; it is the next MVP action, not stale-harness recovery.
 
 ## Material Decisions And Accepted Evidence
 

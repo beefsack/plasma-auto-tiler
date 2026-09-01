@@ -16,6 +16,7 @@ import {
 } from "./controller-fixtures";
 import {
     countEvent,
+    currentScopeFor,
     dragSetup,
     movedGeometry,
     sameAxisRowDropSetup,
@@ -34,6 +35,83 @@ describe("TileController interactive drag", () => {
         targetWindow.move = true;
         targetWindow.interactiveMoveResizeStarted.emit();
         assert.equal(controller.hasActiveDrag, true);
+    });
+
+    it("arms a cancellable watchdog and clears a drag when finish never arrives", () => {
+        const { controller, harness, dragged } = dragSetup();
+        startDrag(dragged);
+
+        const watchdog = harness.scheduled.find((entry) => entry.delayMs === 5000);
+        assert.ok(watchdog);
+        harness.fireScheduled(harness.scheduled.indexOf(watchdog));
+
+        assert.equal(watchdog.cancelled, true);
+        assert.equal(countEvent(harness.logs, "drag-watchdog-timeout"), 1);
+        assert.equal(controller.hasActiveDrag, false);
+    });
+
+    it("contains an owed-invariant error during watchdog cleanup without leaking the drag", () => {
+        const state = dragSetup();
+        const internal = state.controller as unknown as {
+            interactiveDrag: { markOwedInvariant: (scope: ReturnType<typeof currentScopeFor>) => void };
+        };
+        startDrag(state.dragged);
+        internal.interactiveDrag.markOwedInvariant(currentScopeFor(state.dragged));
+        Object.defineProperty(state.harness, "root", {
+            configurable: true,
+            get: () => {
+                throw new Error("root read failed");
+            },
+        });
+
+        const watchdog = state.harness.scheduled.find((entry) => entry.delayMs === 5000);
+        assert.ok(watchdog);
+        assert.doesNotThrow(() => state.harness.fireScheduled(state.harness.scheduled.indexOf(watchdog)));
+        assert.equal(state.controller.hasActiveDrag, false);
+        assert.equal(state.controller.isEnabled, false);
+        assert.equal(countEvent(state.harness.logs, "disabled:exception"), 1);
+    });
+
+    it("fails closed when the drag watchdog cannot be armed", () => {
+        const state = dragSetup();
+        state.harness.scheduleOnceThrows = new Error("timer unavailable");
+
+        startDrag(state.dragged);
+
+        assert.equal(state.controller.hasActiveDrag, false);
+        assert.equal(state.controller.isEnabled, false);
+        assert.equal(countEvent(state.harness.logs, "drag-watchdog-arm-failed"), 1);
+        assert.equal(countEvent(state.harness.logs, "disabled:drag-watchdog-arm-failed"), 1);
+    });
+
+    it("rejects a foreign stepped callback while another window is being dragged", () => {
+        const state = dragSetup(true);
+        state.harness.cursor = { x: 250, y: 50 };
+        startDrag(state.dragged);
+
+        state.targetWindow.interactiveMoveResizeStepped.emit(movedGeometry());
+
+        assert.deepEqual(state.harness.showOutlineCalls, []);
+        assert.equal(state.controller.hasActiveDrag, true);
+    });
+
+    it("rejects a stale stepped callback after the same window is reattached", () => {
+        const state = dragSetup(true);
+        state.harness.cursor = { x: 250, y: 50 };
+        const stale = state.harness.interactiveWatches[0];
+        assert.ok(stale);
+
+        startDrag(state.dragged);
+        state.dragged.desktopsChanged.emit();
+        state.harness.emitCurrentDesktopChanged(null, null, null);
+        const current = state.harness.interactiveWatches[state.harness.interactiveWatches.length - 1];
+        assert.ok(current);
+        startDrag(state.dragged);
+        stale.stepped(movedGeometry());
+
+        assert.deepEqual(state.harness.showOutlineCalls, []);
+        current.stepped(movedGeometry());
+        assert.deepEqual(state.harness.showOutlineCalls, [{ x: 200, y: 0, w: 100, h: 100 }]);
     });
 
     it("does not overwrite a captured origin on a repeated start of the same window", () => {

@@ -551,6 +551,7 @@ export class TileController {
     // changes it (spec E) and hotplug/disconnect leaves it intact. Session-only,
     // never persisted; empty for every non-shared mode.
     private readonly sharedWorkspaces: string[] = [];
+    private groupOutlineGeometry: RectCapability | null = null;
 
     private readonly structuralMutation: StructuralMutationCapability;
     private readonly scopeResolution: ScopeResolutionCapability;
@@ -647,7 +648,8 @@ export class TileController {
                     invalidated,
                 ),
             showOutline: (x, y, width, height) => this.environment.showOutline(x, y, width, height),
-            hideOutline: () => this.environment.hideOutline(),
+            hideOutline: () => this.hideInteractiveOutline(),
+            scheduleOnce: (delayMs, callback) => this.environment.scheduleOnce(delayMs, callback),
             scopeForWindow: (window) => this.scopeForWindow(window),
             topologyForScope: (scope, onRejected) => this.topologyForScope(scope, onRejected),
             windowInScope,
@@ -837,6 +839,7 @@ export class TileController {
             diagnostics: { diagnostic: (event) => this.diagnostic(event) },
         });
         void this.showDropOutline;
+        void this.hideDropOutline;
     }
 
     get isEnabled(): boolean {
@@ -1000,7 +1003,7 @@ export class TileController {
     }
 
     private disabled(reason: string): void {
-        this.interactiveDrag.hideDropOutline();
+        this.interactiveDrag.clear();
         this.diagnostic(`disabled:${reason}`);
         const enabled = this.gate.isEnabled;
         if (enabled === this.notifiedEnabled) {
@@ -1501,7 +1504,6 @@ export class TileController {
     }
 
     private clearDrag(): void {
-        this.hideDropOutline();
         this.interactiveDrag.clear();
     }
 
@@ -1511,6 +1513,15 @@ export class TileController {
 
     private hideDropOutline(): void {
         this.interactiveDrag.hideDropOutline();
+    }
+
+    private hideInteractiveOutline(): void {
+        const groupGeometry = this.groupOutlineGeometry;
+        if (groupGeometry !== null) {
+            this.environment.showOutline(groupGeometry.x, groupGeometry.y, groupGeometry.width, groupGeometry.height);
+            return;
+        }
+        this.environment.hideOutline();
     }
 
     // screensChanged -> rebuild the deterministic session output keys, then
@@ -1743,6 +1754,9 @@ export class TileController {
             if (window.fullScreen === true) {
                 this.enterFullscreen(window);
             } else {
+                if (this.interactiveDrag.current()?.window === window) {
+                    this.interactiveDrag.clear();
+                }
                 this.exitFullscreen(window);
             }
         }, (reason) => this.disabled(reason));
@@ -2071,6 +2085,9 @@ export class TileController {
         if (record === undefined) {
             return true;
         }
+        if (this.interactiveDrag.current()?.window === window) {
+            this.interactiveDrag.clear();
+        }
         if (record.kind === "startup") {
             // A startup-native-maximized record is cleared only by a real
             // native unmaximize transition observed through `maximizedChanged`
@@ -2244,14 +2261,29 @@ export class TileController {
         const identity = {};
         this.groupOutlineIdentity = identity;
         const geometry = parent.absoluteGeometry;
+        this.groupOutlineGeometry = { x: geometry.x, y: geometry.y, width: geometry.width, height: geometry.height };
         this.environment.showOutline(geometry.x, geometry.y, geometry.width, geometry.height);
-        this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
-            if (this.groupOutlineIdentity !== identity || this.interactiveDrag.isOutlineShown()) {
-                return;
-            }
-            this.environment.hideOutline();
+        try {
+            this.environment.scheduleOnce(GROUP_OUTLINE_DURATION_MS, () => {
+                if (this.groupOutlineIdentity !== identity) {
+                    return;
+                }
+                if (this.interactiveDrag.isOutlineShown()) {
+                    this.groupOutlineIdentity = null;
+                    this.groupOutlineGeometry = null;
+                    return;
+                }
+                this.environment.hideOutline();
+                this.groupOutlineIdentity = null;
+                this.groupOutlineGeometry = null;
+            });
+        } catch (error) {
+            void error;
             this.groupOutlineIdentity = null;
-        });
+            this.groupOutlineGeometry = null;
+            this.environment.hideOutline();
+            this.diagnostic("group-outline-schedule-failed");
+        }
     }
 
     private scopeForWindow(window: unknown): CurrentScope | null {

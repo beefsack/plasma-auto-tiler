@@ -12,6 +12,10 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
   live-test boundary/protocol in [the project decisions](../decisions.md).
 - Drag signal delivery, reflow, motion cleanup, cadence, and XWayland behavior
   remain unproven. The KWin client-realization drag gap is not an engine defect.
+- Under the approved pragmatic risk/time tradeoff, exhaustive Custom Tile
+  live-harness recovery is outside the immediate MVP critical path. Residual
+  acceptance remains a separately authorized, user-performed manual/live check;
+  this deferral is not runtime proof.
 - Deferred window eligibility now attaches the same interaction handlers as the
   immediate path; its static evidence is accepted, while the generic Steam
   move/placement journey remains parked.
@@ -72,14 +76,14 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 - No successful carrier smoke occurred. Bounded carrier attempts either stopped
   before effect or were receipt-bound restored; no Custom Tile runtime lifecycle
   or mutation is claimed.
-- A new smoke is blocked by two retained protected project runtime evidence
-  records. Their handling requires explicit user authorization under a race-safe
-  recovery procedure; no recovery action is invented or authorized here.
-- After that handling, the next gate is one bounded carrier-only smoke with
-  exact host baseline equality. It proves only operational binding and exact
-  restoration, not direct evaluated-memory source proof or runtime acceptance.
-  Only then, with separate authorization and applicable readiness gates, may a
-  Custom Tile journey be considered; none has occurred.
+- An exhaustive harness smoke is blocked by two retained protected project
+  runtime evidence records. Their handling requires explicit user authorization
+  under a race-safe recovery procedure; that recovery is deferred outside the
+  immediate MVP critical path, and no recovery action or successful carrier
+  smoke is claimed.
+- The residual gate remains a separately authorized, user-performed manual/live
+  Custom Tile check with exact restoration. No Custom Tile runtime journey has
+  occurred.
 
 ## Verification
 
@@ -101,14 +105,9 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Next Action
 
-- Obtain explicit user authorization to handle the two retained protected
-  project runtime evidence records under a race-safe recovery procedure. Do not
-  invent recovery or remove ambiguous residue.
-- After that handling, run one bounded carrier-only setup/restore smoke and
-  require exact host baseline equality. Do not treat it as Custom Tile runtime
-  acceptance.
-- Only after that successful smoke and separate authorization may a Custom Tile
-  journey be considered, subject to the applicable preflight readiness gates;
-  no journey has occurred.
+- Keep exhaustive stale-harness recovery out of the immediate MVP critical path;
+  do not invent recovery, remove ambiguous residue, or claim a carrier smoke.
+- Retain the residual gate for a separately authorized, user-performed manual
+  Custom Tile live check with exact restoration; no journey has occurred.
 - Continue to treat `authoritative_ready` as false unless a supported direct
   evaluated-memory source proof is established.

@@ -6,7 +6,9 @@ import { Harness, RECT, tile, type TestTile, type TestWindow, window } from "./c
 import {
     attachTileWriter,
     configureThreeOccupantPreset,
+    countEvent,
     currentScopeFor,
+    dragSetup,
     invokeShortcut,
     moveSetup,
     nativeDropSetup,
@@ -154,6 +156,48 @@ describe("TileController group outline", () => {
         controller.showDropOutline({ x: 1, y: 2, width: 3, height: 4 });
         harness.fireScheduled(2);
         assert.equal(harness.hideOutlineCalls, 2);
+    });
+
+    it("restores an independently active group flash after interactive preview cleanup", () => {
+        const state = dragSetup(true);
+        state.origin.parent = state.root;
+        const inspectable = groupOutlineController(state.controller);
+        inspectable.flashFocusedGroup();
+        state.harness.cursor = { x: 250, y: 25 };
+        startDrag(state.dragged);
+        state.dragged.interactiveMoveResizeStepped.emit({ x: 0, y: 0, width: 100, height: 100 });
+
+        state.dragged.fullScreen = true;
+        state.dragged.interactiveMoveResizeFinished.emit();
+
+        assert.deepEqual(state.harness.showOutlineCalls, [
+            { x: 0, y: 0, w: 100, h: 100 },
+            { x: 200, y: 0, w: 100, h: 100 },
+            { x: 0, y: 0, w: 100, h: 100 },
+        ]);
+        assert.equal(state.harness.hideOutlineCalls, 0);
+        state.harness.fireScheduled(0);
+        assert.equal(state.harness.hideOutlineCalls, 1);
+    });
+
+    it("clears group ownership when its outline scheduler cannot arm", () => {
+        const state = dragSetup(true);
+        state.origin.parent = state.root;
+        state.harness.scheduleOnceThrows = new Error("timer unavailable");
+        groupOutlineController(state.controller).flashFocusedGroup();
+        state.harness.scheduleOnceThrows = undefined;
+
+        startDrag(state.dragged);
+        state.harness.cursor = { x: 250, y: 50 };
+        state.dragged.interactiveMoveResizeStepped.emit({ x: 0, y: 0, width: 100, height: 100 });
+        state.dragged.interactiveMoveResizeFinished.emit();
+
+        assert.equal(countEvent(state.harness.logs, "group-outline-schedule-failed"), 1);
+        assert.deepEqual(state.harness.showOutlineCalls, [
+            { x: 0, y: 0, w: 100, h: 100 },
+            { x: 200, y: 0, w: 100, h: 100 },
+        ]);
+        assert.equal(state.harness.hideOutlineCalls, 2);
     });
 
     it("flashes the focused leaf parent after a manual preset split", () => {
