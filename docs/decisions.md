@@ -68,6 +68,11 @@ Historical implementation detail is recoverable in Git history.
 - The immediate Custom Tile blocker is the absence of a supported read-only
   binding that proves the checkout controller's provenance. Until it is
   established, `authoritative_ready` remains false.
+- The preflight reports phased readiness: `setup_ready` proves only its
+  read-only KWin, KGlobalAccel, shortcut, and persisted-state checks completed
+  without drift; `journey_ready` and `authoritative_ready` remain false until
+  checkout-controller provenance is established. No readiness phase authorizes
+  lifecycle work, live journeys, or user manual action on its own.
 
 ## Window And Workspace Behavior
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-set -uo pipefail
+set -euo pipefail
 
 readonly REPO_ROOT="$(cd -- "${BASH_SOURCE[0]%/*}/.." && pwd -P)"
 readonly HARNESS="$REPO_ROOT/scripts/custom-tile-acceptance.sh"
@@ -8,8 +8,10 @@ readonly FAKE_BIN="$WORK/fake-bin"
 readonly PROC_FIXTURE_ROOT="$WORK/proc-fixture"
 readonly HOME_ROOT="$WORK/home"
 readonly OUTPUT="$WORK/output"
+readonly DIAGNOSTICS="$WORK/stderr"
 readonly CALLS="$WORK/calls"
 readonly FORBIDDEN="$WORK/forbidden"
+readonly FAKE_SHORTCUT_COUNT="$WORK/shortcut-count"
 readonly GREP_BIN="$(command -v grep)"
 readonly JQ_BIN="$(command -v jq)"
 readonly REAL_JQ_BIN="$JQ_BIN"
@@ -34,7 +36,7 @@ assert_absent() { if "$GREP_BIN" -Fq -- "$1" "$2"; then fail_test "$2 contains b
 
 make_proc_fixture() {
   mkdir -p "$PROC_FIXTURE_ROOT"
-  printf 'Uid:\t1000\t1000\t1000\t1000\n' > "$PROC_FIXTURE_ROOT/status"
+  printf 'Name:\tfixture\nState:\tS (sleeping)\nUid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t1000\nNStgid:\t12345\nNSpid:\t12345\nThreads:\t1\n' > "$PROC_FIXTURE_ROOT/status"
 }
 
 make_fake_bus() {
@@ -69,7 +71,11 @@ case "$7" in
   GetConnectionUnixProcessID) [[ "$#" -eq 9 && "$4" == org.freedesktop.DBus && "$5" == /org/freedesktop/DBus && "$6" == org.freedesktop.DBus && "$8" == s && "$9" =~ ^:[0-9]+\.[0-9]+$ ]] || bad_shape "$@"
     owner="$9"
     case "${FAKE_MODE:-}" in
-      *) case "$owner" in :1.10|:1.99) printf '{"type":"u","data":[%s]}\n' "${FAKE_KWIN_PID:?}" ;; *) printf '{"type":"u","data":[%s]}\n' "${FAKE_KG_PID:?}" ;; esac ;;
+      *) case "$owner" in
+           :1.10|:1.99) printf '{"type":"u","data":[%s]}\n' "${FAKE_KWIN_PID:?}" ;;
+           :1.11) printf '{"type":"u","data":[%s]}\n' "${FAKE_KG_PID:?}" ;;
+           *) bad_shape "$@" ;;
+         esac ;;
     esac ;;
   GetConnectionUnixUser) [[ "$#" -eq 9 && "$4" == org.freedesktop.DBus && "$5" == /org/freedesktop/DBus && "$6" == org.freedesktop.DBus && "$8" == s && "$9" =~ ^:[0-9]+\.[0-9]+$ ]] || bad_shape "$@"
     case "${FAKE_MODE:-}" in uid-mismatch) printf '{"type":"u","data":[1001]}\n' ;; *) printf '{"type":"u","data":[1000]}\n' ;; esac ;;
@@ -83,12 +89,17 @@ case "$7" in
       *) printf '{"type":"ao","data":[["/component/kwin"]]}\n' ;;
     esac ;;
   allShortcutInfos) [[ "$#" -eq 9 && "$4" == org.kde.kglobalaccel && "$5" =~ ^/component/[A-Za-z0-9_-]+$ && "$6" == org.kde.kglobalaccel.Component && "$8" == s && "$9" == default ]] || bad_shape "$@"
+    shortcut_count=0
+    [[ -f "$FAKE_SHORTCUT_COUNT" ]] && shortcut_count="$(<"$FAKE_SHORTCUT_COUNT")"
+    shortcut_count=$((shortcut_count + 1))
+    printf '%s\n' "$shortcut_count" > "$FAKE_SHORTCUT_COUNT"
     case "${FAKE_MODE:-success}" in
       malformed-shortcuts) printf '{"type":"a(ssssssaiai)","data":[[["bad"]]]}\n' ;;
       oversized-reply) printf '{"type":"a(ssssssaiai)","data":[[['; printf '%*s' 1100000 x; printf ']]]}\n' ;;
       duplicate-json) printf '{"type":"a(ssssssaiai)","type":"a(ssssssaiai)","data":[[]]}\n' ;;
       unknown-project) "$REAL_JQ_BIN" -c '.data[0] += [["plasma-auto-tiler-unknown", "unknown", "kwin", "KWin", "default", "Default", [99], []]]' "$FAKE_SHORTCUTS" ;;
       missing-project) "$REAL_JQ_BIN" -c '.data[0] |= map(select(.[0] != "plasma-auto-tiler-insert-right"))' "$FAKE_SHORTCUTS" ;;
+      post-enumeration-drift) if [[ "$shortcut_count" -gt 1 ]]; then "$REAL_JQ_BIN" -c '(.data[0] | map(if .[0] == "plasma-auto-tiler-insert-right" then .[6] = [1] else . end)) as $r | {type:.type,data:[$r]}' "$FAKE_SHORTCUTS"; else "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS"; fi ;;
       *) "$REAL_JQ_BIN" -c . "$FAKE_SHORTCUTS" ;;
     esac ;;
   *) bad_shape "$@" ;;
@@ -139,19 +150,17 @@ fi
 trace python3-read-proc "$3"
 case "$3" in
   */status)
-    uid=1000
-    [[ "${FAKE_MODE:-}" == proc-uid-mismatch ]] && uid=1001
-    printf 'Uid:\t%s\t%s\t%s\t%s\n' "$uid" "$uid" "$uid" "$uid" ;;
+    if [[ "${FAKE_MODE:-}" == proc-uid-mismatch ]]; then
+      printf 'Name:\tfixture\nUid:\t1001\t1001\t1001\t1001\nThreads:\t1\n'
+    else
+      while IFS= read -r line; do printf '%s\n' "$line"; done < "$PROC_FIXTURE_ROOT/status"
+    fi ;;
   */stat)
     printf '1 (fixture) S'
     for ((i = 0; i < 18; i += 1)); do printf ' 0'; done
     printf ' 10001 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n' ;;
   */cmdline)
-    if [[ "$3" == "/proc/${FAKE_KG_PID:?}/cmdline" ]]; then
-      printf '%s\0--session\0' "$FAKE_BIN/kglobalacceld"
-    else
-      printf '%s\0--session\0' "$FAKE_BIN/kwin_wayland"
-    fi ;;
+    printf '%s\0--session\0' "$FAKE_BIN/kwin_wayland" ;;
   */cgroup) printf '0::/user.slice/user-1000.slice/session-42.scope\n' ;;
 esac
 EOF
@@ -168,9 +177,7 @@ trace "$@"
 case "$3" in
   "/proc/${FAKE_KWIN_PID:?}/exe")
     [[ "${FAKE_MODE:-}" == wrong-executable ]] && printf '%s/other\n' "$FAKE_BIN" || printf '%s/kwin_wayland\n' "$FAKE_BIN" ;;
-  "/proc/${FAKE_KG_PID:?}/exe")
-    [[ "${FAKE_MODE:-}" == wrong-component-owner ]] && printf '%s/other\n' "$FAKE_BIN" || printf '%s/kglobalacceld\n' "$FAKE_BIN" ;;
-  "$FAKE_BIN/kwin_wayland"|"$FAKE_BIN/kglobalacceld") "$REAL_READLINK_BIN" -f -- "$3" ;;
+  "$FAKE_BIN/kwin_wayland") "$REAL_READLINK_BIN" -f -- "$3" ;;
   *) trace "$@"; exit 2 ;;
 esac
 EOF
@@ -219,6 +226,10 @@ while [[ "$i" -lt "$#" ]]; do
   esac
 done
 [[ "$i" -eq "$#" && -n "${!i}" ]] || bad_shape "$@"
+if [[ "${FAKE_MODE:-}" == dependency-failure || ( "${FAKE_MODE:-}" == json-emission-failure && "$*" == *'--arg schema '* ) ]]; then
+  trace "$@"
+  exit 2
+fi
 trace "$@"
 exec "$REAL_JQ_BIN" "$@"
 EOF
@@ -227,7 +238,7 @@ EOF
 
 make_forbidden() {
   local name
-  for name in kwin_wayland kglobalacceld weston-terminal dbus-run-session dbus-send qdbus kwriteconfig6 systemctl kill pkill rm mkdir mktemp; do
+  for name in kwin_wayland weston-terminal dbus-run-session dbus-send qdbus kwriteconfig6 systemctl kill pkill rm mkdir mktemp; do
     printf '#!/usr/bin/env bash\nprintf "forbidden:%%s\\n" "$0" >> "%s"\nprintf "%%s %%s\\n" "%s" "$*" >> "${CALLS:?}"\nexit 99\n' "$FORBIDDEN" "$name" > "$FAKE_BIN/$name"
     chmod +x "$FAKE_BIN/$name"
   done
@@ -236,12 +247,13 @@ make_forbidden() {
 run_case() {
   local mode="$1"
   : > "$FAKE_OWNER_COUNT"
+  : > "$FAKE_SHORTCUT_COUNT"
   set +e
     DBUS_SESSION_BUS_ADDRESS=unix:path=/private/wrong-bus \
     PLASMA_AUTO_TILER_PROC_ROOT="$PROC_FIXTURE_ROOT" \
     HOME="$HOME_ROOT" XDG_CONFIG_HOME="${TEST_XDG_CONFIG_HOME:-}" PATH="$FAKE_BIN:$PATH" FAKE_MODE="$mode" \
     FAKE_KWIN_PID="$$" FAKE_KG_PID="$PPID" \
-    bash "$HARNESS" preflight > "$OUTPUT" 2>&1
+    bash "$HARNESS" preflight > "$OUTPUT" 2> "$DIAGNOSTICS"
   EXIT_STATUS=$?
   set -e
 }
@@ -270,6 +282,7 @@ make_fixture() {
 }
 
 mkdir -p "$FAKE_BIN" "$PROC_FIXTURE_ROOT" "$HOME_ROOT/.config"
+make_proc_fixture
 printf 'no-tiling-state=true\n' > "$HOME_ROOT/.config/kwinrc"
 printf x > "$FAKE_BIN/other"
 make_fixture
@@ -281,7 +294,7 @@ make_fake_readlink
 make_fake_stat
 make_fake_tr
 make_fake_jq
-export FAKE_SHORTCUTS="$WORK/shortcuts.json" FAKE_OWNER_COUNT="$WORK/owner-count" JQ_BIN REAL_JQ_BIN CALLS HOME_ROOT REAL_PYTHON_BIN REAL_READLINK_BIN REAL_STAT_BIN REAL_TR_BIN FAKE_BIN
+export FAKE_SHORTCUTS="$WORK/shortcuts.json" FAKE_OWNER_COUNT="$WORK/owner-count" FAKE_SHORTCUT_COUNT JQ_BIN REAL_JQ_BIN CALLS HOME_ROOT PROC_FIXTURE_ROOT REAL_PYTHON_BIN REAL_READLINK_BIN REAL_STAT_BIN REAL_TR_BIN FAKE_BIN
 
 assert_true bash -n "$HARNESS"
 assert_true bash -n "$BASH_SOURCE"
@@ -291,6 +304,9 @@ assert_absent 'PLASMA_AUTO_TILER_PROC_ROOT' "$HARNESS"
 assert_contains 'loginctl' "$HARNESS"
 assert_contains 'session scope' "$HARNESS"
 assert_absent 'PLASMA_AUTO_TILER_BUSCTL' "$HARNESS"
+assert_absent 'kglobalaccel5' "$HARNESS"
+assert_absent 'kglobalaccel6' "$HARNESS"
+assert_absent 'resolve_optional_tool' "$HARNESS"
 assert_contains 'fresh-owned-scope' "$HARNESS"
 assert_contains 'exact_prestate' "$HARNESS"
 assert_contains 're_resolve_after_each' "$HARNESS"
@@ -305,27 +321,37 @@ done
 
 run_case success
 expect_status 0
-assert_true "$JQ_BIN" -e '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == "unix:path=/run/user/1000/bus" and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 27 and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.schema_version == "custom-tile-acceptance-preflight-v2" and .live_acceptance == false and .authoritative_ready == false and .setup_ready == true and .journey_ready == false and .readiness_blocker == "controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout" and .command_allowlist == ["busctl","jq","loginctl","python3","readlink","stat","tr"] and (.current_host_discovery.services | length) == 2 and .current_host_discovery.session.id == "42" and .current_host_discovery.session.bus_address == "unix:path=/run/user/1000/bus" and .current_host_discovery.kwin_service_identity.pre and .current_host_discovery.controller_checkout_identity.status == "blocked" and .current_host_discovery.controller_checkout_identity.authoritative == false and .current_host_discovery.controller_checkout_identity.blocker == "no-supported-authoritative-read-only-binding-to-this-checkout" and .current_host_discovery.kglobalaccel.status == "verified" and (.current_host_discovery.kglobalaccel.exact_tuples | length) == 27 and .current_host_discovery.kwin_service_identity.pre.pid != .current_host_discovery.kglobalaccel.pre.pid and .current_host_discovery.kglobalaccel.pre.pid == .current_host_discovery.kglobalaccel.post.pid and (.current_host_discovery.kglobalaccel.pre | has("executable") | not) and .gates.controller_identity == "not-established" and .gates.kwin_service_identity == "verified-session-scoped-service-owner" and .gates.controller_checkout_identity == "blocked" and .gates.readiness == "blocked-controller-checkout-identity" and .gates.shortcut_ownership_collision == "verified" and .prospective_future_plan.manual_input.currently_allowed == false' "$OUTPUT"
 assert_true "$JQ_BIN" -e '.prospective_future_plan.scope.reuse_persistent_scope == false and .prospective_future_plan.scope.resolved_private_root.mode == "0700 exactly" and .prospective_future_plan.prestate.config.exact_path == (env.HOME_ROOT + "/.config/kwinrc") and .prospective_future_plan.prestate.config.kwinrc.before.mtime_ns and .prospective_future_plan.journal.format == "atomic journal with sequence, operation, exact owned resource identity and expected pre/post state" and .prospective_future_plan.interruption.cleanup == "never remove resources not owned by this run" and (.prospective_future_plan.evidence.raw_host_policy | contains("persists no raw host evidence"))' "$OUTPUT"
 if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'successful preflight did not emit one document'; fi
 assert_absent '/private/wrong-bus' "$CALLS"
+if [[ ! -s "$DIAGNOSTICS" ]]; then pass; else fail_test 'successful preflight wrote diagnostics to stderr'; fi
 
 run_case absent-kg
 expect_status 0
-assert_contains 'diagnostic information, not a failure' "$OUTPUT"
-assert_true "$JQ_BIN" -e '.current_host_discovery.kglobalaccel.status == "absent" and .authoritative_ready == false' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.current_host_discovery.kglobalaccel.status == "absent" and .authoritative_ready == false and .setup_ready == true and .journey_ready == false' "$OUTPUT"
 
-for mode in malformed-list malformed-components malformed-shortcuts duplicate-components ambiguous-owner unknown-project missing-project duplicate-json invalid-name invalid-component oversized-reply wrong-session ambiguous-session uid-mismatch proc-uid-mismatch wrong-executable wrong-component-owner; do
+for mode in malformed-list malformed-components malformed-shortcuts duplicate-components ambiguous-owner unknown-project missing-project duplicate-json invalid-name invalid-component oversized-reply wrong-session ambiguous-session uid-mismatch proc-uid-mismatch wrong-executable dependency-failure json-emission-failure; do
   run_case "$mode"
   expect_status 1
-  assert_contains 'error:' "$OUTPUT"
+  assert_true "$JQ_BIN" -e '.status == "preflight-failed" and .authoritative_ready == false and .setup_ready == false and .journey_ready == false' "$OUTPUT"
+  if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'failure preflight did not emit one verdict'; fi
+  assert_contains 'error:' "$DIAGNOSTICS"
 done
 
 for mode in drift; do
   run_case "$mode"
   expect_status 1
-  assert_contains 'drift detected' "$OUTPUT"
+  assert_true "$JQ_BIN" -e '.status == "preflight-failed" and .authoritative_ready == false and .setup_ready == false and .journey_ready == false' "$OUTPUT"
+  if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'drift preflight did not emit one verdict'; fi
+  assert_contains 'drift detected' "$DIAGNOSTICS"
 done
+
+run_case post-enumeration-drift
+expect_status 1
+assert_true "$JQ_BIN" -e '.status == "preflight-failed" and .authoritative_ready == false and .setup_ready == false and .journey_ready == false' "$OUTPUT"
+if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'post-enumeration drift did not emit one verdict'; fi
+assert_contains 'KGlobalAccel shortcut contract drift detected' "$DIAGNOSTICS"
 
 ln -s "$WORK" "$HOME_ROOT/.config/kwinrc-link"
 rm -f -- "$HOME_ROOT/.config/kwinrc"
@@ -333,24 +359,28 @@ ln -s "$WORK/kwinrc-target" "$HOME_ROOT/.config/kwinrc"
 printf 'clean=true\n' > "$WORK/kwinrc-target"
 run_case success
 expect_status 1
-assert_contains 'KWin config path is a symlink' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.status == "preflight-failed"' "$OUTPUT"
+assert_contains 'KWin config path is a symlink' "$DIAGNOSTICS"
 rm -f -- "$HOME_ROOT/.config/kwinrc"
 printf '[Tiling][stale]\n' > "$HOME_ROOT/.config/kwinrc"
 run_case success
 expect_status 1
-assert_contains 'stale persisted tiling state' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.status == "preflight-failed"' "$OUTPUT"
+assert_contains 'stale persisted tiling state' "$DIAGNOSTICS"
 printf 'clean=true\n' > "$HOME_ROOT/.config/kwinrc"
 
 TEST_XDG_CONFIG_HOME="$HOME_ROOT/../escape"
 run_case success
 expect_status 1
-assert_contains 'traversal' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.status == "preflight-failed"' "$OUTPUT"
+assert_contains 'traversal' "$DIAGNOSTICS"
 unset TEST_XDG_CONFIG_HOME
 ln -s "$HOME_ROOT/.config" "$HOME_ROOT/config-link"
 TEST_XDG_CONFIG_HOME="$HOME_ROOT/config-link"
 run_case success
 expect_status 1
-assert_contains 'symlinked' "$OUTPUT"
+assert_true "$JQ_BIN" -e '.status == "preflight-failed"' "$OUTPUT"
+assert_contains 'symlinked' "$DIAGNOSTICS"
 unset TEST_XDG_CONFIG_HOME
 
 for mutation in collision ownership drift-shortcut duplicate-shortcut; do
@@ -363,7 +393,8 @@ for mutation in collision ownership drift-shortcut duplicate-shortcut; do
   export FAKE_SHORTCUTS="$WORK/changed.json"
   run_case success
   expect_status 1
-  assert_contains 'error:' "$OUTPUT"
+  assert_true "$JQ_BIN" -e '.status == "preflight-failed"' "$OUTPUT"
+  assert_contains 'error:' "$DIAGNOSTICS"
 done
 export FAKE_SHORTCUTS="$WORK/shortcuts.json"
 

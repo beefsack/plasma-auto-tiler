@@ -55,6 +55,10 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
   host evidence.
 - `authoritative_ready` remains false because no supported read-only binding
   proves the checkout controller's provenance. This is the immediate blocker.
+- `setup_ready` means the read-only KWin, KGlobalAccel, shortcut, and
+  persisted-state checks completed without drift. `journey_ready` remains false
+  with `authoritative_ready`; neither phase permits a live journey or user
+  manual action without provenance proof.
 - No live runtime acceptance occurred; preflight results are not acceptance
   evidence.
 
@@ -69,10 +73,11 @@ floating, fullscreen, maximize, and workspace behavior on KWin.
 
 ## Verification
 
-- Static/read-only harness verification passed: 73 passed, 0 failed. Bash
-  syntax, `--help`, Nix parse, and diff checks passed; `shellcheck` was
-  unavailable.
-- An independent adversarial safety review had no final findings.
+- Static/read-only harness verification passed: 126 passed, 0 failed. Bash
+  syntax and diff checks passed; `shellcheck` was unavailable.
+- Independent adversarial review found a post-enumeration KGlobalAccel shortcut
+  drift gap. The harness now takes and compares a second exact shortcut
+  contract snapshot before `setup_ready`; targeted regression coverage passed.
 - This is harness/preflight verification only. No live Custom Tile, drag/reflow,
   or related journeys were run.
 

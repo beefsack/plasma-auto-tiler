@@ -70,6 +70,10 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
   KGlobalAccel ownership, and fails closed on stale state, collisions, drift,
   or provenance ambiguity. It performs no lifecycle or mutation; its rollback
   and journal contract applies only to a later authorized run.
+- `setup_ready` means only that the preflight's read-only setup checks
+  completed without drift. It never authorizes a live journey or manual action;
+  those remain blocked until both `journey_ready` and `authoritative_ready` are
+  true.
 - After its `devenv.nix` dependency change, restart the development session
   before assuming the preflight is available. Do not run live acceptance before
   that restart; request user physical or manual action only when the restarted

@@ -64,7 +64,6 @@ READLINK_BIN=""
 STAT_BIN=""
 TR_BIN=""
 KWIN_BIN=""
-KG_BIN=""
 readonly PROC_ROOT="/proc"
 CURRENT_UID=""
 SESSION_ID=""
@@ -82,7 +81,12 @@ KG_STATUS="absent"
 KG_DIAGNOSTIC="well-known service is absent; this is diagnostic information, not a failure"
 COMPONENTS_JSON='[]'
 RECORDS_JSON='[]'
+KG_CONTRACT_PRE='[]'
 PERSISTED_STATE="clean"
+PREFLIGHT_VERDICT_EMITTED=0
+PREFLIGHT_ERROR=""
+SETUP_READY=false
+JOURNEY_READY=false
 
 usage() {
   printf '%s\n' \
@@ -94,6 +98,7 @@ usage() {
 }
 
 fail() {
+  PREFLIGHT_ERROR="$1"
   printf 'error: %s\n' "$1" >&2
   return 1
 }
@@ -101,24 +106,12 @@ fail() {
 resolve_tool() {
   local requested="$1" resolved
   case "$requested" in
-    busctl|jq|loginctl|python3|readlink|stat|tr|kwin_wayland|kglobalacceld) ;;
+    busctl|jq|loginctl|python3|readlink|stat|tr|kwin_wayland) ;;
     *) fail "unknown tool: $requested" ;;
   esac
   resolved="$(command -v -- "$requested" 2>/dev/null || true)"
   [[ "$resolved" == /* && -x "$resolved" && ! -d "$resolved" ]] || fail "tool is not executable: $requested"
   printf '%s\n' "$resolved"
-}
-
-resolve_optional_tool() {
-  local requested="$1" resolved
-  case "$requested" in
-    kglobalacceld|kglobalaccel5|kglobalaccel6|kglobalaccel) ;;
-    *) fail "unknown optional tool: $requested" ;;
-  esac
-  resolved="$(command -v -- "$requested" 2>/dev/null || true)"
-  if [[ -n "$resolved" && "$resolved" == /* && -x "$resolved" && ! -d "$resolved" ]]; then
-    printf '%s\n' "$resolved"
-  fi
 }
 
 canonical_json() {
@@ -240,7 +233,7 @@ strict_shortcut_reply() {
 }
 
 read_uid() {
-  local line key value real effective saved count=0 raw
+  local line key value real effective saved uid_value count=0 raw
   raw="$(read_proc_file "$PROC_ROOT/$1/status")" || return 1
   while IFS= read -r line; do
     read -r key value real effective saved _ <<<"$line"
@@ -248,10 +241,11 @@ read_uid() {
       [[ "$value" =~ ^[0-9]+$ && "$real" == "$value" && "$effective" == "$value" && "$saved" == "$value" ]] || return 1
       count=$((count + 1))
       [[ "$count" -eq 1 ]] || return 1
+      uid_value="$value"
     fi
   done <<<"$raw"
   [[ "$count" -eq 1 ]] || return 1
-  printf '%s\n' "$value"
+  printf '%s\n' "$uid_value"
 }
 
 read_start_time() {
@@ -297,7 +291,7 @@ read_process_identity() {
 }
 
 capture_service() {
-  local service="$1" expected="$2" owner pid uid process
+  local service="$1" expected="${2:-}" owner pid uid process
   owner="$(call_name_owner "$service")" || fail "could not resolve owner for $service"
   dbus_reply "$owner" || fail "malformed owner reply for $service"
   strict_string_reply "$REPLY" || fail "malformed owner reply for $service"
@@ -312,9 +306,13 @@ capture_service() {
   strict_uint_reply "$REPLY" || fail "malformed UID reply for $service"
   uid="$($JQ_BIN -r '.data[0]' <<<"$REPLY")"
   [[ "$uid" == "$CURRENT_UID" ]] || fail "$service owner UID differs from the current user"
-  read_process_identity "$pid" "$expected"
-  process="$REPLY"
-  REPLY="$("$JQ_BIN" -cn --arg service "$service" --arg owner "$owner" --argjson pid "$pid" --argjson uid "$uid" --argjson process "$process" '{service:$service,owner:$owner,pid:$pid,uid:$uid,start_time:$process.start_time,executable:$process.executable,cmdline:$process.cmdline}')"
+  if [[ -n "$expected" ]]; then
+    read_process_identity "$pid" "$expected"
+    process="$REPLY"
+    REPLY="$("$JQ_BIN" -cn --arg service "$service" --arg owner "$owner" --argjson pid "$pid" --argjson uid "$uid" --argjson process "$process" '{service:$service,owner:$owner,pid:$pid,uid:$uid,start_time:$process.start_time,executable:$process.executable,cmdline:$process.cmdline}')"
+  else
+    REPLY="$("$JQ_BIN" -cn --arg service "$service" --arg owner "$owner" --argjson pid "$pid" --argjson uid "$uid" '{service:$service,owner:$owner,pid:$pid,uid:$uid}')"
+  fi
 }
 
 check_path_metadata() {
@@ -468,7 +466,7 @@ emit_plan() {
 }
 
 emit_plan_v2() {
-  local kwin_json kg_json shortcut_gate evidence_gate ready session_json plan_json
+  local kwin_json kg_json shortcut_gate evidence_gate ready session_json plan_json verdict
   if [[ "$KG_STATUS" == verified ]]; then
     kg_json="$($JQ_BIN -cn --arg status "$KG_STATUS" --argjson pre "$KG_PRE" --argjson post "$KG_POST" --argjson components "$COMPONENTS_JSON" --argjson tuples "$RECORDS_JSON" '{status:$status,pre:$pre,post:$post,components:$components,exact_tuples:$tuples}')"
     shortcut_gate=verified
@@ -489,16 +487,37 @@ emit_plan_v2() {
     evidence:{raw_host_policy:"preflight persists no raw host evidence; an authorized run retains only bounded exact evidence required for rollback verification",retained:"atomic journal and exact before/after hashes, nanosecond mtimes and owned-resource identities",incomplete:"fail closed"},
     later_automatable_actions:["select and prove a fresh owned scope","capture exact prestate","perform homogeneous structural batches with re-resolution","verify exact rollback"],user_physical_actions:["physical drag input","physical observation of resulting layout"],manual_input:{allowed_only_after_authoritative_ready:true,currently_allowed:false},project_shortcut_defaults:$project_shortcuts
   }')"
-  "$JQ_BIN" -cn \
+  if ! verdict="$("$JQ_BIN" -cn \
     --arg schema "$SCHEMA_VERSION" --arg command_allowlist "$COMMAND_ALLOWLIST" \
     --argjson services "$NAMES_JSON" --argjson session "$session_json" --argjson kwin "$kwin_json" \
     --argjson kglobalaccel "$kg_json" --arg persisted "$PERSISTED_STATE" \
     --arg shortcut_gate "$shortcut_gate" --arg evidence_gate "$evidence_gate" \
-    --argjson ready "$ready" --argjson plan "$plan_json" \
-    '{schema_version:$schema,status:"preflight-complete",live_acceptance:false,authoritative_ready:$ready,readiness_blocker:"controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout",command_allowlist:($command_allowlist|split(",")),current_host_discovery:{session:$session,services:$services,kwin:$kwin,kwin_service_identity:$kwin,controller_checkout_identity:{status:"blocked",authoritative:false,blocker:"no-supported-authoritative-read-only-binding-to-this-checkout"},kglobalaccel:$kglobalaccel,persisted_tiling_state:$persisted},gates:{protected_window_identity:"not-assessed",persisted_scope:(if $persisted == "clean" then "clean" else "rejected" end),controller_identity:"not-established",kwin_service_identity:"verified-session-scoped-service-owner",controller_checkout_identity:"blocked",readiness:"blocked-controller-checkout-identity",shortcut_ownership_collision:$shortcut_gate,evidence:$evidence_gate},prospective_future_plan:$plan}'
+    --argjson ready "$ready" --argjson setup_ready "$SETUP_READY" --argjson journey_ready "$JOURNEY_READY" --argjson plan "$plan_json" \
+    '{schema_version:$schema,status:"preflight-complete",live_acceptance:false,authoritative_ready:$ready,setup_ready:$setup_ready,journey_ready:$journey_ready,readiness_blocker:"controller_checkout_identity unavailable: no supported authoritative read-only interface binds the loaded controller/script to this checkout",command_allowlist:($command_allowlist|split(",")),current_host_discovery:{session:$session,services:$services,kwin:$kwin,kwin_service_identity:$kwin,controller_checkout_identity:{status:"blocked",authoritative:false,blocker:"no-supported-authoritative-read-only-binding-to-this-checkout"},kglobalaccel:$kglobalaccel,persisted_tiling_state:$persisted},gates:{protected_window_identity:"not-assessed",persisted_scope:(if $persisted == "clean" then "clean" else "rejected" end),controller_identity:"not-established",kwin_service_identity:"verified-session-scoped-service-owner",controller_checkout_identity:"blocked",readiness:"blocked-controller-checkout-identity",shortcut_ownership_collision:$shortcut_gate,evidence:$evidence_gate},prospective_future_plan:$plan}')"
+  then
+    fail 'preflight verdict JSON emission failed'
+  fi
+  printf '%s\n' "$verdict"
+}
+
+emit_fallback_verdict() {
+  printf '{"schema_version":"%s","status":"preflight-failed","live_acceptance":false,"authoritative_ready":false,"setup_ready":false,"journey_ready":false,"readiness_blocker":"preflight-failed","gates":{"readiness":"blocked"}}\n' "$SCHEMA_VERSION"
+}
+
+preflight_exit() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 && PREFLIGHT_VERDICT_EMITTED == 0 )); then
+    if [[ -z "$PREFLIGHT_ERROR" ]]; then
+      printf 'error: preflight failed before a verdict could be emitted\n' >&2
+    fi
+    emit_fallback_verdict
+  fi
+  exit "$status"
 }
 
 preflight() {
+  trap preflight_exit EXIT
   [[ -d "$PROC_ROOT" && ! -L "$PROC_ROOT" ]] || fail 'process metadata root is unavailable'
   BUSCTL_BIN="$(resolve_tool busctl)"
   JQ_BIN="$(resolve_tool jq)"
@@ -518,16 +537,11 @@ preflight() {
   capture_service "$KWIN_SERVICE" "$KWIN_BIN"
   KWIN_PRE="$REPLY"
   if has_service "$KG_SERVICE"; then
-    KG_BIN="$(resolve_optional_tool kglobalacceld)"
-    [[ -n "$KG_BIN" ]] || KG_BIN="$(resolve_optional_tool kglobalaccel5)"
-    [[ -n "$KG_BIN" ]] || KG_BIN="$(resolve_optional_tool kglobalaccel6)"
-    [[ -n "$KG_BIN" ]] || KG_BIN="$(resolve_optional_tool kglobalaccel)"
-    [[ -n "$KG_BIN" ]] || fail 'KGlobalAccel is present but has no validated known executable'
-    KG_BIN="$("$READLINK_BIN" -f -- "$KG_BIN")" || fail 'validated KGlobalAccel executable could not be resolved'
-    capture_service "$KG_SERVICE" "$KG_BIN"
+    capture_service "$KG_SERVICE"
     KG_PRE="$REPLY"
     collect_shortcuts
     check_shortcut_contract
+    KG_CONTRACT_PRE="$COMPONENTS_JSON"
     KG_STATUS=verified
     KG_DIAGNOSTIC="complete all-components and exact allShortcutInfos enumeration"
   fi
@@ -538,13 +552,17 @@ preflight() {
   [[ "$KWIN_PRE" == "$KWIN_POST" ]] || fail 'KWin service/PID/UID/start-time/executable/cmdline drift detected'
   if [[ "$KG_STATUS" == verified ]]; then
     has_service "$KG_SERVICE" || fail 'KGlobalAccel service drifted during enumeration'
-    capture_service "$KG_SERVICE" "$KG_BIN"
+    capture_service "$KG_SERVICE"
     KG_POST="$REPLY"
-    [[ "$KG_PRE" == "$KG_POST" ]] || fail 'KGlobalAccel service/PID/UID/start-time/executable/cmdline drift detected'
+    [[ "$KG_PRE" == "$KG_POST" ]] || fail 'KGlobalAccel service/owner/PID/UID drift detected'
+    collect_shortcuts
+    [[ "$KG_CONTRACT_PRE" == "$COMPONENTS_JSON" ]] || fail 'KGlobalAccel shortcut contract drift detected'
   elif has_service "$KG_SERVICE"; then
     fail 'KGlobalAccel availability drifted during preflight'
   fi
+  SETUP_READY=true
   emit_plan_v2
+  PREFLIGHT_VERDICT_EMITTED=1
 }
 
 if [[ "$#" -ne 1 ]]; then usage >&2; exit 1; fi
