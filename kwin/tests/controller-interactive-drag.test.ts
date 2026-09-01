@@ -18,6 +18,7 @@ import {
     countEvent,
     currentScopeFor,
     dragSetup,
+    invokeShortcut,
     movedGeometry,
     sameAxisRowDropSetup,
     startDrag,
@@ -35,6 +36,31 @@ describe("TileController interactive drag", () => {
         targetWindow.move = true;
         targetWindow.interactiveMoveResizeStarted.emit();
         assert.equal(controller.hasActiveDrag, true);
+    });
+
+    it("preserves a finished fullscreen or maximized drag until its exit lifecycle, then permits a second drag", () => {
+        const fullscreen = dragSetup();
+        startDrag(fullscreen.dragged);
+        fullscreen.dragged.fullScreen = true;
+        fullscreen.dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(fullscreen.controller.hasActiveDrag, true);
+
+        fullscreen.dragged.fullScreen = false;
+        fullscreen.dragged.fullScreenChanged.emit();
+        assert.equal(fullscreen.controller.hasActiveDrag, false);
+        startDrag(fullscreen.dragged);
+        assert.equal(fullscreen.controller.hasActiveDrag, true);
+
+        const maximized = dragSetup();
+        startDrag(maximized.dragged);
+        invokeShortcut(maximized.harness, "plasma-auto-tiler-maximize");
+        maximized.dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(maximized.controller.hasActiveDrag, true);
+
+        invokeShortcut(maximized.harness, "plasma-auto-tiler-maximize");
+        assert.equal(maximized.controller.hasActiveDrag, false);
+        startDrag(maximized.dragged);
+        assert.equal(maximized.controller.hasActiveDrag, true);
     });
 
     it("arms a cancellable watchdog and clears a drag when finish never arrives", () => {
