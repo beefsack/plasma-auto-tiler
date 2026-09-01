@@ -2,10 +2,8 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | blocked | Resolve the COSMIC movement review findings before production
-  promotion: moved-window geometry is stale after split; malformed topology
-  throws; restore is not DFS-equivalent; tile IDs can be overwritten; and focus
-  links can be stale or nonreciprocal | [change](changes/cosmic-directional-movement.md)
+- P1 | pending live | Run separately authorized live KWin acceptance of COSMIC
+  directional bindings; static correction is accepted | [change](changes/cosmic-directional-movement.md)
 - P1 | pending live | Run the accepted pointer-resize static path on a
   disposable layout under fresh user authorization | [change](changes/pointer-interactive-resize.md)
 - P1 | blocked | Tray static lifecycle work is accepted, but the passing 05a
