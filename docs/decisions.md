@@ -24,17 +24,37 @@ Historical implementation detail is recoverable in Git history.
 
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,
   outline, and border settings through the Desktop Effects entry. Existing
-  script groups, keys, values, and defaults remain unchanged. Native border
-  settings hot-apply; script settings explain reload or session restart.
+  script groups, keys, values, and defaults remain unchanged. The KCM's
+  hot-apply and any script reload or session-restart result remain live gates.
 - The core distribution remains the script KPackage for KDE Store and an
   identical GitHub Release artifact. Platform-native packages for the native
   effect and KCM are permitted; their formats and publication are unselected.
-- Nix-first current-host delivery is selected. Repository flake outputs will be
-  consumed externally; this project does not inspect or change the external
-  consumer repository. The current build baseline remains `devenv.nix`.
+- Nix-first current-host delivery is selected. The repository flake statically
+  exports `packages.default`, `packages.kwin-script`,
+  `packages.native-effect`, and `packages.tray`, plus
+  `lib.mkKwinScript`, `lib.mkNativeEffect`, and `lib.mkTray`. It also exports
+  default NixOS and Home Manager modules. The convenience
+  `packages.native-effect` is built from this flake's pinned nixpkgs input, so
+  an external consumer that directly uses it must make this repository's
+  `nixpkgs` input follow the host nixpkgs. The `lib.mkNativeEffect` factory
+  instead uses the caller's `pkgs` and matching `kdePackages.kwin.dev`; the
+  NixOS module calls that factory with its caller `pkgs`, making factory/module
+  consumption host-pkgs safe. This project does not inspect or change the
+  external consumer repository. The current build baseline remains `devenv.nix`.
+- The native effect is not a portable prebuilt binary; every build targets the
+  Nix-managed Plasma/KWin package set used for that build.
+- The NixOS module owns the system KPackage/native-effect packages and writes
+  only `[Plugins] plasma-auto-tiler-kwinEnabled=true` in its immutable global
+  KWin profile. It does not enable the native border or mutate shortcuts. The
+  Home Manager module owns only the optional immutable tray XDG autostart file
+  and has no activation hook.
+- Flake source filesets are explicit for the KWin script, native effect/KCM,
+  and tray package; build trees, generated artifacts, and unrelated repository
+  files are excluded.
 - Development iteration uses the packaged baseline plus a namespaced,
   reversible, user-local dogfood override as the smallest selected boundary.
-  It must preserve exact normal-path restoration and must not mutate system or
+  It must not coexist with a Nix-managed copy of the same KWin plugin IDs, must
+  preserve exact normal-path restoration, and must not mutate system or
   unrelated state.
 
 ## Live KWin/Plasma Boundary
@@ -53,6 +73,11 @@ Historical implementation detail is recoverable in Git history.
   boundary require user action. No `sudo`, system-path mutation,
   external-dotfiles mutation, unrelated host mutation, irreversible cleanup,
   or ambiguous-residue deletion is authorized.
+- Current-host Nix integration, KWin/session load or reload, watcher ordering,
+  login/autostart behavior, and update/rollback activation across Nix
+  generations are pending live evidence, not passed by static evaluation or
+  shell tests. A session boundary is a required evidence boundary for claims
+  about session-delivered packages.
 - Deleting or restoring preserved candidates, containers, or host artifacts
   needs explicit user authorization plus exact path and identity or hash
   verification.
@@ -134,6 +159,9 @@ Historical implementation detail is recoverable in Git history.
 - Snapshot publication requires the current `org.kde.KWin` D-Bus owner and an
   exact canonical executable identity from the host current-system or
   `/usr/bin` KWin entrypoints; unlisted KWin launch paths fail closed.
+- The static bridge includes freshness and ordering/generation checks,
+  idempotent notifications, and bounded watcher retry. Watcher ordering,
+  login, and XDG autostart behavior remain pending live evidence.
 - The helper is not required for core tiler operation. Normal lifecycle
   rollback is exact and in-process; interrupted, crash, power-loss, malformed,
   replaced, or ambiguous state fails closed. Durable recovery and automatic

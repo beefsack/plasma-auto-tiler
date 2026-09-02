@@ -15,17 +15,18 @@ Only meaningful pending or active work is listed.
   an occupied target leaf, confirm the whole-leaf rectangle preview, release,
   and visually confirm nested split placement; do not attempt stale-harness
   recovery | [change](changes/archive/nested-placement-affordance.md)
-- P1 | static complete, pending manual/live | Accept the active-window border
-  and Desktop Effects KCM using the required Nix-built native effect and exact
-  host KWin ABI/session discovery | [decision](decisions.md#native-active-border)
-- P1 | static complete, pending residual live/release acceptance | Validate
-  KWin-origin SNI, the real panel, fixed KCM discovery/launch, native ABI
-  build/load, real install/packaging, and login/autostart | [change](changes/archive/tray-carrier.md)
-- P1 | pending implementation | Add Nix-first current-host package and
-  install/update outputs without changing the external consumer repository |
-  [change](changes/nix-current-host-delivery.md)
-- P1 | pending live | Validate clean install, update, rollback, and session
-  lifecycle behavior on the current host | [change](changes/nix-current-host-delivery.md)
+- P1 | static complete, pending live | Accept the active-window border and
+  Desktop Effects KCM using the required Nix-built native effect and exact
+  host KWin ABI/session discovery; KWin/session reload remains unverified |
+  [decision](decisions.md#native-active-border)
+- P1 | static complete, pending live/release | Validate KWin-origin SNI, real
+  panel, fixed KCM discovery/launch, watcher ordering, native ABI load, real
+  install/packaging, and login/autostart | [change](changes/archive/tray-carrier.md)
+- P1 | static complete, pending current-host live | Consume the Nix flake from
+  an external NixOS/Home Manager configuration, then validate clean install,
+  update, Nix generation rollback, and session lifecycle activation. Static
+  outputs, ownership, source filtering, and lockfile evidence are accepted |
+  [change](changes/archive/nix-current-host-delivery.md)
 
 - P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated
   nested KWin proof establishes a safe improvement | [change](changes/floor-ratio-feasibility.md)

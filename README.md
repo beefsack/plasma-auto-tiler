@@ -7,8 +7,10 @@ Guarded Custom Tile automation for KWin.
 Package and manage the `plasma-auto-tiler-kwin` KWin script from this
 repository with `scripts/dogfood-install.sh`. There is no build step other than
 what the script performs; `install` builds the bundle first. The same script
-also builds, stages, and reloads the experimental native active-border
-effect; see [Native effect (dogfood)](#native-effect-dogfood) below.
+also contains commands to build, stage, and request reload of the experimental
+native active-border effect; see [Native effect (dogfood)](#native-effect-dogfood)
+below. Current-host integration and successful KWin/session reload are pending
+live evidence and are not claimed here.
 
 ### Distribution archive
 
@@ -26,6 +28,63 @@ contains only `metadata.json`, `contents/code/main.js`,
 `--output-dir <dir>` to write elsewhere. The build validates only in disposable
 temporary roots; it does not install, enable, configure, or reconfigure a live
 KWin session.
+
+### Nix consumption
+
+The flake is the supported consumer interface for Nix-managed Plasma/KWin
+systems. It exports these packages for `aarch64-linux` and `x86_64-linux`:
+
+- `packages.default` and `packages.tray` - the optional Rust tray binary
+- `packages.kwin-script` - the KWin script KPackage
+- `packages.native-effect` - the native effect and effect-scoped KCM,
+  built from this flake's pinned nixpkgs input
+- `lib.mkKwinScript`, `lib.mkNativeEffect`, and `lib.mkTray` - package helpers;
+  `lib.mkNativeEffect` can receive an explicit matching `kwin` package
+
+It also exports `nixosModules.default` and `homeManagerModules.default`.
+
+There are two native-effect consumption paths. Direct use of the convenience
+`packages.native-effect` package uses this flake's pinned nixpkgs, so an
+external consumer must make this repository's nixpkgs input follow the host
+nixpkgs to align the native KWin ABI:
+
+```nix
+inputs.plasma-auto-tiler.inputs.nixpkgs.follows = "nixpkgs";
+```
+
+`lib.mkNativeEffect { pkgs = hostPkgs; }` instead builds with the consumer's
+caller package set and its matching `kwin.dev`. The NixOS module uses that
+factory with its caller `pkgs`, and the exported modules/factories are
+host-pkgs safe on that path.
+
+Add the NixOS module to the system `modules` list and enable
+`programs.plasma-auto-tiler.enable`. Add the Home Manager module to the Home
+Manager modules and enable `programs.plasma-auto-tiler.tray.enable` only when
+the tray is wanted. NixOS owns the script/native-effect packages and writes
+only `[Plugins] plasma-auto-tiler-kwinEnabled=true`; it does not enable the
+border or mutate shortcuts. Home Manager owns only the optional immutable
+XDG autostart entry, whose `Exec` and `TryExec` point to the Nix store.
+The tray provides basic status and the fixed Settings action
+`kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config`; it has
+no direct tiling controls or shortcut mutation. Its static bridge contract
+includes authenticated snapshots, freshness and ordering/generation checks,
+idempotent notifications, and bounded watcher retry/fail-closed behavior;
+watcher ordering and tray login/autostart remain pending live evidence.
+
+The source lists are explicit, so package evaluation excludes generated build
+output, unrelated repository files, and external consumer state. The factory
+and module native-effect paths rebuild against the consumer's matching
+`pkgs.kdePackages.kwin.dev` ABI; the direct convenience package must be aligned
+through the nixpkgs follow above. No native-effect output is a portable
+prebuilt binary.
+
+Static flake/module checks and dogfood rollback tests pass. Current-host Nix
+integration, KWin/session load or reload, watcher ordering, login/autostart,
+and install/update/rollback activation across Nix generations remain pending
+live evidence. `flake.lock` pins evaluation inputs; a Nix generation rollback
+and its effect on an already-running KWin session still require live evidence.
+Do not run the user-local dogfood path alongside a Nix-managed copy of the
+same plugin IDs; the paths are intentionally non-coexistent and reversible.
 
 ### Live test
 
@@ -90,7 +149,8 @@ Other runtime tool requirements:
 `kwriteconfig6`, `kreadconfig6`, and `qdbus` are host Plasma runtime tools, not
 devenv dependencies. The script detects each required tool at runtime per
 command and fails with an error naming a missing tool and its `*_BIN` override
-if it is missing or not executable.
+if it is missing or not executable. The commands below document intended
+mutations; no current-host KWin reconfigure, load, or reload result is claimed.
 
 ### One-command install
 
@@ -117,22 +177,16 @@ One thing always remains manual, regardless of how many times `setup` is
 run:
 
 - The first time `effect-install` creates its
-  `~/.config/plasma-workspace/env/` script, the native effect is staged but
-  not yet loadable: log out and back in once (or start a new session), then
-  run `setup` again (or just `effect-reload`) to load it for the first
-  time.
+  `~/.config/plasma-workspace/env/` script, a logout/login or new session is
+  the intended delivery boundary before KWin can discover the staged effect.
+  This boundary, discovery, load, and `effect-reload` remain pending live
+  checks; no current-host result is claimed.
 
-After that one-time boundary, `effect-install` also writes a persistent
-`[Plugins] plasma-auto-tiler-active-borderEnabled=true` key to `kwinrc` -
-the same mechanism KWin already uses to auto-enable the KWin script - so the
-effect should auto-load again at every later reboot or logout/login with no
-manual step. This has been confirmed by an actual reboot on this host: after
-a real session boundary, `effect-status` reported the effect discovered and
-loaded with no manual `effect-reload`. `effect-reload` (or `setup`) remains
-the manual step whenever you rebuild the effect from a code change within an
-already-running session - a live in-session rebuild is never picked up
-automatically. See [Native effect (dogfood)](#native-effect-dogfood) below
-for the full mechanism.
+`effect-install` also writes the persistent
+`[Plugins] plasma-auto-tiler-active-borderEnabled=true` key to `kwinrc`. The
+key write is statically covered; automatic loading after a session boundary
+and in-session reload remain pending live checks. See [Native effect
+(dogfood)](#native-effect-dogfood) below for the full mechanism.
 
 ### Install
 
@@ -328,38 +382,20 @@ bash scripts/dogfood-install.sh uninstall
 
 ### Native effect (dogfood)
 
-`scripts/dogfood-install.sh` also builds, stages, and reloads the
-experimental, disabled-by-default native `plasma-auto-tiler-active-border`
-effect and its effect-scoped QWidget KCM on your real Plasma session. The KWin
-script has no generic scripted KCM route or migration; this native effect KCM is
-the sole settings owner and is opened from Desktop Effects.
-The script commands above need no session boundary; the native effect needs exactly
-one logout/login (or new
-session), once, after the first `effect-install` creates its
-`~/.config/plasma-workspace/env/` script. After that one boundary, every
-later rebuild and `effect-reload` is live over D-Bus with no further
-boundary.
+`scripts/dogfood-install.sh` also builds and stages the experimental,
+disabled-by-default native `plasma-auto-tiler-active-border` effect and its
+effect-scoped QWidget KCM. The KWin script has no generic scripted KCM route or
+migration; this native effect KCM is the sole settings owner and is opened from
+Desktop Effects. These commands describe the intended user-local lifecycle;
+current-host integration, KWin/session load or reload, and session-boundary
+results remain pending live evidence.
 
 **Two related but separate things are involved: the env-script delivery
-mechanism above, and the effect's own enabled state.** The env-script
-mechanism only ever needed the one boundary described above. The effect's
-*enabled state* used to be fully manual: `kwin/native-effect/metadata.json`
-sets `"EnabledByDefault": false`, so KWin never loads it on its own. As of
-this repository, `effect-install` also writes `[Plugins]
-plasma-auto-tiler-active-borderEnabled=true` to `kwinrc` - the same
-`kwriteconfig6`-written `[Plugins]` mechanism the KWin script above already
-uses to re-enable itself every session, and KWin's effect loader reads this
-exact key the same way it reads the KWin script's. So once the effect has
-been discovered (the one-time boundary above), it should also auto-load
-again at every later reboot or logout/login with no manual `effect-reload`.
-This is verified against KWin's own plugin-loader source, a documented
-out-of-tree precedent, and an actual reboot on this host, which confirmed
-discovery and load with no manual `effect-reload`; see
-[Eyeball check](#eyeball-check) for the repeatable per-session check, and
-fall back to `effect-reload`/`effect-status` if it ever does not hold.
-`effect-reload` remains required, exactly as before, whenever you
-rebuild the effect from a code change within an already-running session:
-persistence only covers session starts, never a live in-session rebuild.
+mechanism above, and the effect's own enabled state.** The effect metadata sets
+`"EnabledByDefault": false`. The installer writes the separate `[Plugins]
+plasma-auto-tiler-active-borderEnabled=true` key, but discovery, auto-load
+after login, and live reload are pending current-host evidence. The key write
+does not itself prove a KWin load or a session boundary.
 `effect-remove` first reads whether KWin has the effect loaded. If it cannot
 prove the effect is unloaded, it fails closed and leaves the staged files, env
 script, and `kwinrc` unchanged; unload it through a documented KWin mechanism
@@ -384,20 +420,19 @@ bash scripts/dogfood-install.sh effect-remove
 to `$XDG_CONFIG_HOME/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh`
 (sourced by `startplasma-wayland` at session start) so the staged directory
 is discoverable, and finally writes `[Plugins]
-plasma-auto-tiler-active-borderEnabled=true` to `kwinrc` so the effect
-persists across future session starts once discovered; idempotent.
+plasma-auto-tiler-active-borderEnabled=true` to `kwinrc`; the write is
+idempotent. Whether this reaches and persists in the running KWin session is
+pending live evidence.
 `effect-status` is a staged diagnostic: it reports staging, the env script,
-session delivery (read directly from the running `kwin_wayland` process's
-own environment), D-Bus discovery, and D-Bus loaded state, each as a clear
-pass/fail with guidance, so one run after logging back in is conclusive;
-read-only. `effect-reload` mutates the running KWin session via D-Bus: it
-queries D-Bus for effect support and, when supported, unloads and reloads the
-effect live, then verifies that it is loaded. If `isEffectSupported=false`,
-that result is ambiguous: it does not establish a session boundary and may
-indicate a plugin load, factory, or ABI failure; run `effect-status`, inspect
-KWin plugin-loading diagnostics, resolve the reported error, and rerun
-`effect-reload` (or `setup`). Other query, unload, or load errors likewise
-exit non-zero. `effect-remove`
+session delivery, D-Bus discovery, and D-Bus loaded state, each as a clear
+pass/fail with guidance; it is read-only. Its output is not accepted
+current-host evidence until the corresponding live checks are run.
+`effect-reload` is intended to mutate the running KWin session via D-Bus by
+unloading and loading the effect, then verifying it is loaded; successful
+KWin/session reload remains pending. If `isEffectSupported=false`, that result
+is ambiguous: it does not establish a session boundary and may indicate a
+plugin load, factory, or ABI failure. Other query, unload, or load errors
+likewise exit non-zero. `effect-remove`
 unstages the plugin, deletes the env script, removes the `kwinrc` key above
 when present, and (migration cleanup) also deletes any legacy
 `environment.d` entry this project wrote previously; idempotent.
@@ -407,6 +442,10 @@ above. See `docs/live-kwin-testing.md` for the full
 session-boundary contract.
 
 ### Building without Nix/devenv
+
+This is an unsupported build fallback, not part of the supported Nix-managed
+Plasma/KWin consumer scope. No non-Nix host integration or ABI compatibility is
+claimed.
 
 `scripts/dogfood-install.sh effect-install` normally runs inside `devenv
 shell --impure` so `cmake` can find KWin's dev package via a pinned Nix
@@ -438,25 +477,16 @@ KWin versions; always rebuild against the KWin development headers actually
 installed on the target host, and expect to rebuild again after your next
 Plasma upgrade.
 
-### Eyeball check
+### Pending live check
 
-After dogfooding, confirm by eye:
+These observations remain pending and require the reviewed live-test protocol:
 
-- `bash scripts/dogfood-install.sh status` reports installed and enabled,
-  and windows on your session actually tile.
-- `bash scripts/dogfood-install.sh effect-status` reports the effect
-  supported and loaded (after the one-time logout/login). After any later
-  reboot or logout/login, the persisted `kwinrc` key makes `effect-status`
-  report loaded again automatically with no manual `effect-reload` -
-  confirmed on this host by a real reboot. If it ever reports `[e]` not
-  loaded after a fresh session start, run `effect-reload` (or `setup`) to
-  recover and treat it as worth investigating, not an expected steady
-  state.
-- The active window shows the border effect rendering.
-- After a code change, `effect-install` (rebuild) then `effect-reload`
-  completes and the border reflects it, with no session boundary.
-- After `effect-remove`, `effect-status` reports not staged and the border
-  is gone.
+- current-host Nix installation and exact host KWin ABI/session discovery;
+- script and native-effect load/reload in the running KWin session;
+- the required logout/login or new-session delivery boundary;
+- watcher ordering and tray login/autostart;
+- update, rollback, and Nix generation activation behavior;
+- visual border rendering and restoration after `effect-remove`.
 
 ## Scope of each command
 
@@ -477,6 +507,7 @@ After dogfooding, confirm by eye:
   the one `kwinrc [Plugins] plasma-auto-tiler-active-borderEnabled` key
   (`effect-remove` deletes it only when present). `effect-remove` performs a
   read-only loaded-state query and never loads, unloads, or reconfigures KWin.
-- `effect-reload` reconfigures the running KWin session live via D-Bus
-  `/Effects` `loadEffect`/`unloadEffect`.
+- `effect-reload` is intended to reconfigure the running KWin session via
+  D-Bus `/Effects` `loadEffect`/`unloadEffect`; successful KWin/session reload
+  remains pending live evidence.
 - `effect-status` is read-only.
