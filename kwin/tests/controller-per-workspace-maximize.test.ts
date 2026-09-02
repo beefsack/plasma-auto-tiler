@@ -78,6 +78,22 @@ describe("TileController per-workspace maximize", () => {
         assert.equal(countEvent(harness.logs, "automatic-placement-managed"), 0);
     });
 
+    it("preserves a maximized finish record until exit, then accepts a second drag", () => {
+        const state = maximizeSetup();
+        state.focused.move = true;
+        state.focused.interactiveMoveResizeStarted.emit();
+        invokeShortcut(state.harness, "plasma-auto-tiler-maximize");
+        state.focused.interactiveMoveResizeFinished.emit();
+        assert.equal(state.controller.hasActiveDrag, true);
+
+        invokeShortcut(state.harness, "plasma-auto-tiler-maximize");
+        state.focused.move = true;
+        state.focused.interactiveMoveResizeStarted.emit();
+
+        assert.equal(countEvent(state.harness.logs, "drag-origin-captured"), 2);
+        assert.equal(state.controller.hasActiveDrag, true);
+    });
+
     it("no-ops the maximize command while the active window is fullscreen with a specific reason", () => {
         const { harness, focused } = maximizeSetup();
         focused.fullScreen = true;

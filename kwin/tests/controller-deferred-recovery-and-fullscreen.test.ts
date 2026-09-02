@@ -582,6 +582,25 @@ describe("TileController deferred invariant recovery", () => {
         assert.equal(controller.hasActiveDrag, true);
     });
 
+    it("preserves a fullscreen finish record until exit, then accepts a second drag", () => {
+        const state = dragSetup(true);
+        state.harness.cursor = { x: 250, y: 50 };
+        startDrag(state.dragged);
+        state.dragged.interactiveMoveResizeStepped.emit({ x: 0, y: 0, width: 100, height: 100 });
+
+        state.dragged.fullScreen = true;
+        state.dragged.interactiveMoveResizeFinished.emit();
+        assert.equal(state.controller.hasActiveDrag, true);
+
+        state.dragged.fullScreen = false;
+        state.dragged.fullScreenChanged.emit();
+        state.targetWindow.move = true;
+        state.targetWindow.interactiveMoveResizeStarted.emit();
+
+        assert.equal(countEvent(state.harness.logs, "drag-origin-captured"), 2);
+        assert.equal(state.controller.hasActiveDrag, true);
+    });
+
     it("logs a drag-bail reason when finish has no tracked drag or a mismatched window", () => {
         const { harness, dragged, targetWindow } = dragSetup();
         // Finish with no tracked drag.

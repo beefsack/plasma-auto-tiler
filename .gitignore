@@ -14,6 +14,9 @@ devenv.local.yaml
 
 /target
 
+# CMake/CTest build artifacts
+/CMakeFiles/
+
 # Added by the kwin TypeScript package
 
 /dist
