@@ -15,9 +15,17 @@ Only meaningful pending or active work is listed.
   an occupied target leaf, confirm the whole-leaf rectangle preview, release,
   and visually confirm nested split placement; do not attempt stale-harness
   recovery | [change](changes/archive/nested-placement-affordance.md)
-- P1 | static complete, pending live | Accept the active-window border and
-  Desktop Effects KCM using the required Nix-built native effect and exact
-  host KWin ABI/session discovery; KWin/session reload remains unverified |
+- P1 | static complete; current-session user-local dogfood attempt made no
+  mutation and stopped fail-closed because authoritative current-session
+  discovery evidence was unavailable; no live identity/config/plugin/PID/proc
+  claim is accepted | Accept the active-window border and Desktop Effects KCM
+  using a consumer-host-pkgs Nix build that explicitly supplies and verifies
+  the `kwin` package matching the running KWin plus its `kwin.dev`; the verified
+  output handoff to the documented user-local dogfood root remains pending
+  with preimage/rollback checks; the separately user-owned physical visual
+  border/KCM usability check and required logout/login or new-session boundary,
+  plus runtime/config/reload/restoration gates, remain future manual/session
+  gates; external NixOS/Home Manager activation remains outside this change |
   [decision](decisions.md#native-active-border)
 - P1 | static complete, pending live/release | Validate KWin-origin SNI, real
   panel, fixed KCM discovery/launch, watcher ordering, native ABI load, real

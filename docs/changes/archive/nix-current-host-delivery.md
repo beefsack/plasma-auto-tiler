@@ -64,18 +64,62 @@ and optional tray without changing the external consumer repository.
   source-fileset, ownership, and dogfood rollback contracts. No live result is
   claimed.
 
+## Bounded Live Attempt
+
+- This was only an attempted current-session, user-local dogfood staging/root
+  check. It did not exercise NixOS/Home Manager delivery or activation, and
+  this record update does not add or schedule that activation.
+- The attempt made no mutations. Raw before/after evidence required by the
+  live-testing contract was not retained, so this attempt did not advance
+  acceptance of KWin identity, config, plugin staging/discovery/load, PID/proc
+  state, or restoration.
+- Static repository code and configuration define the persistent key as
+  `[Plugins] plasma-auto-tiler-active-borderEnabled` and the native settings
+  group as `[Effect-plasma-auto-tiler-active-border]`; no live `kwinrc` values
+  are claimed by this record.
+- Any future native-effect build must use consumer `hostPkgs` and explicitly
+  supply and verify the `kwin` package matching the running KWin, together
+  with that package's `kwin.dev`; `mkNativeEffect` accepts `kwin`, so
+  `hostPkgs` alone is insufficient ABI proof. The active devenv package
+  selection was not an acceptable ABI candidate.
+- The attempt stopped fail-closed because authoritative current-session
+  discovery evidence was unavailable. No ABI build result, native discovery,
+  KCM discovery/load, load/unload,
+  config/default preservation after change, hot reconfigure, or applied
+  restoration was accepted. The separately user-owned physical visual border
+  and KCM usability check remains a future manual gate. The required
+  logout/login or new-session boundary is also a user-owned future session
+  gate; neither was performed, authorized, or awaited here.
+
 ## Pending Live Gaps
 
-- Consume the flake from an external NixOS/Home Manager configuration and
-  validate the host KWin ABI and native effect discovery/load.
-- Validate KWin/session script and native-effect load/reload, including the
-  required logout/login or new-session boundary.
-- Validate watcher ordering, tray login/autostart, clean install/update, Nix
-  generation rollback activation, and session lifecycle behavior.
+- Obtain a separately permitted source of authoritative current-session
+  plugin-discovery evidence. For the future host-compatible user-local
+  dogfood action, invoke `lib.mkNativeEffect` with consumer `hostPkgs`,
+  explicitly supply and verify the matching running-KWin `kwin` package and
+  its `kwin.dev`, verify the output's two exact files
+  `$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so`
+  and
+  `$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so`,
+  and copy those files into the documented user-local dogfood root with
+  preimage and rollback checks. This Nix-output handoff is separate from
+  `scripts/dogfood-install.sh`, which does not perform it. Any later host
+  action uses only the general live-KWin safety protocol.
+- Validate native discovery/load, KCM discovery/load, load/unload,
+  config/default preservation after change, hot reconfigure, applied
+  restoration, and the remaining manual visual border/KCM usability gates.
+- Existing separate residual scope remains outside this attempt: external
+  NixOS/Home Manager consumption, clean install/update, Nix generation
+  rollback activation, and session lifecycle behavior remain in the existing
+  backlog item; watcher ordering and tray login/autostart remain separate live
+  gates.
 
 ## Next Action
 
-With separate authorization and the reviewed live-test protocol, consume the
-flake from an external host configuration and run the bounded current-host
-ABI/session, install/update/rollback, and tray lifecycle validation; until
-those gates pass, make no live-delivery claim.
+Obtain separately permitted authoritative current-session plugin-discovery
+evidence for the user-local dogfood root first. If it is available, perform the
+host-compatible Nix-output handoff above, then use only the general live-KWin
+safety protocol. No external NixOS/Home Manager activation, physical visual
+check, or logout/login or new-session boundary is performed, authorized, or
+awaited in this change, and no live-delivery, rendering, or usability claim is
+made until the listed gates pass.
