@@ -19,7 +19,10 @@ const DBUS_MENU_INTERFACE: &str = "com.canonical.dbusmenu";
 const NEW_STATUS_SIGNAL: &str = "NewStatus";
 const PROPERTIES_CHANGED_SIGNAL: &str = "PropertiesChanged";
 const LAYOUT_UPDATED_SIGNAL: &str = "LayoutUpdated";
-const SETTINGS_EXECUTABLE: &str = "/run/current-system/sw/bin/kcmshell6";
+const SETTINGS_EXECUTABLE: &str = match option_env!("PLASMA_AUTO_TILER_KCMSHELL6") {
+    Some(path) => path,
+    None => "kcmshell6",
+};
 const SETTINGS_MODULE: &str = "kwin/effects/configs/plasma-auto-tiler-active-border_config";
 
 #[derive(Debug)]
