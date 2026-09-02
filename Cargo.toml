@@ -4,7 +4,9 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+async-lock = "3"
 rustix = { version = "1", features = ["fs", "process", "runtime"] }
+serde = { version = "1", features = ["derive"] }
 zbus = { version = "5.19", default-features = false, features = ["async-io", "blocking-api"] }
 
 [dev-dependencies]

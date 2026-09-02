@@ -5,7 +5,7 @@ export const MAX_SIGNED_REVISION = 2147483647;
 export interface TrayPublisherEnvironment {
     readonly isEnabled: () => boolean;
     readonly publishSnapshot: (schema: number, generation: string, revision: number, enabled: boolean) => void;
-    readonly scheduleOnce: (delayMs: number, callback: () => void) => void;
+    readonly scheduleOnce: (delayMs: number, callback: () => void) => (() => void) | void;
     readonly createGeneration?: () => string;
 }
 
@@ -14,21 +14,21 @@ function processGeneration(): string {
 }
 
 export class TrayPublisher {
-    private generation: string;
+    private generation: string | undefined;
     private revision = 0;
     private enabled = false;
     private started = false;
     private disposed = false;
+    private cancelHeartbeat: (() => void) | undefined;
 
-    constructor(private readonly environment: TrayPublisherEnvironment) {
-        this.generation = environment.createGeneration?.() ?? processGeneration();
-    }
+    constructor(private readonly environment: TrayPublisherEnvironment) {}
 
     start(): void {
         if (this.started || this.disposed) {
             return;
         }
         this.started = true;
+        this.generation = this.environment.createGeneration?.() ?? processGeneration();
         this.enabled = this.environment.isEnabled();
         this.publish();
         this.scheduleHeartbeat();
@@ -38,13 +38,14 @@ export class TrayPublisher {
         if (this.disposed) {
             return;
         }
-        this.environment.scheduleOnce(TRAY_HEARTBEAT_MS, () => {
+        this.cancelHeartbeat = this.environment.scheduleOnce(TRAY_HEARTBEAT_MS, () => {
+            this.cancelHeartbeat = undefined;
             if (this.disposed) {
                 return;
             }
             this.heartbeat();
             this.scheduleHeartbeat();
-        });
+        }) ?? undefined;
     }
 
     notifyEnabledChanged(enabled: boolean): void {
@@ -71,9 +72,14 @@ export class TrayPublisher {
 
     dispose(): void {
         this.disposed = true;
+        this.cancelHeartbeat?.();
+        this.cancelHeartbeat = undefined;
     }
 
     private publish(): void {
+        if (this.generation === undefined) {
+            return;
+        }
         try {
             this.environment.publishSnapshot(TRAY_SCHEMA, this.generation, this.revision, this.enabled);
         } catch (error) {

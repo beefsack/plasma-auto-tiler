@@ -378,6 +378,10 @@ trayPublisher = new TrayPublisher({
             }
         });
         timer.start?.();
+        return () => {
+            timer.stop?.();
+            trayTimers.delete(timer);
+        };
     },
 });
 

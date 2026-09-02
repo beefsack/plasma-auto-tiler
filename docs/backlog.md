@@ -18,9 +18,9 @@ Only meaningful pending or active work is listed.
 - P1 | static complete, pending manual/live | Accept the active-window border
   and Desktop Effects KCM using the required Nix-built native effect and exact
   host KWin ABI/session discovery | [decision](decisions.md#native-active-border)
-- P1 | pending implementation and live | Complete tray MVP basic status and
-  Settings, then validate SNI delivery, packaging, panel, and login-autostart
-  behavior | [change](changes/tray-carrier.md)
+- P1 | static complete, pending residual live/release acceptance | Validate
+  KWin-origin SNI, the real panel, fixed KCM discovery/launch, native ABI
+  build/load, real install/packaging, and login/autostart | [change](changes/archive/tray-carrier.md)
 - P1 | pending implementation | Add Nix-first current-host package and
   install/update outputs without changing the external consumer repository |
   [change](changes/nix-current-host-delivery.md)

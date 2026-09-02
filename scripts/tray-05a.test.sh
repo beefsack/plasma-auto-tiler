@@ -6,6 +6,7 @@ ENDPOINT="$REPO_ROOT/src/tray_endpoint.rs"
 SOURCE_BINARY="${TRAY_05A_SOURCE_BINARY:-$REPO_ROOT/target/release/plasma-auto-tiler}"
 BASH_PATH="$(command -v bash)"
 DBUS_RUN_SESSION="$(command -v dbus-run-session || true)"
+DBUS_TEST_TOOL="$(command -v dbus-test-tool || true)"
 WORK="$(mktemp -d "$REPO_ROOT/.tray-05a.XXXXXX")"
 PASS=0
 
@@ -38,6 +39,7 @@ assert_static_absent() {
 [[ -f "$SOURCE_BINARY" && ! -L "$SOURCE_BINARY" && -x "$SOURCE_BINARY" ]] \
   || fail "release source binary is not a regular executable: $SOURCE_BINARY"
 [[ -n "$DBUS_RUN_SESSION" ]] || fail "dbus-run-session is unavailable"
+[[ -n "$DBUS_TEST_TOOL" ]] || fail "dbus-test-tool is unavailable"
 assert_static_contains 'pub const METHOD: &str = "PublishSnapshot";'
 assert_static_absent 'Command::new|qdbus|KGlobalAccel|xdotool|wtype|shell|input'
 
@@ -68,6 +70,18 @@ printf '%s\n' \
   'pass() { PASS=$((PASS + 1)); }' \
   'source_binary="$1"' \
   'installed_binary="$2"' \
+  'WATCHER_PID=""' \
+  'cleanup_watcher() { [[ -z "$WATCHER_PID" ]] || { kill "$WATCHER_PID" 2>/dev/null || true; wait "$WATCHER_PID" 2>/dev/null || true; }; }' \
+  'trap cleanup_watcher EXIT' \
+  '"$DBUS_TEST_TOOL" echo --session --name=org.kde.StatusNotifierWatcher > "$WORK/watcher.out" 2>&1 &' \
+  'WATCHER_PID=$!' \
+  'watcher_ready=0' \
+  'for ((attempt = 0; attempt < 100; attempt += 1)); do' \
+  '  if busctl --user status org.kde.StatusNotifierWatcher > /dev/null 2>&1; then watcher_ready=1; break; fi' \
+  '  sleep 0.01' \
+  'done' \
+  '[[ "$watcher_ready" == 1 ]] || { cat "$WORK/watcher.out" >&2; exit 1; }' \
+  'pass' \
   'unset PLASMA_AUTO_TILER_LAUNCH_DEV PLASMA_AUTO_TILER_LAUNCH_INO PLASMA_AUTO_TILER_LAUNCH_READY PLASMA_AUTO_TILER_LAUNCH_READY_DEV PLASMA_AUTO_TILER_LAUNCH_READY_INO' \
   '[[ -z "${PLASMA_AUTO_TILER_LAUNCH_DEV-}" && -z "${PLASMA_AUTO_TILER_LAUNCH_INO-}" && -z "${PLASMA_AUTO_TILER_LAUNCH_READY-}" && -z "${PLASMA_AUTO_TILER_LAUNCH_READY_DEV-}" && -z "${PLASMA_AUTO_TILER_LAUNCH_READY_INO-}" ]]' \
   'pass' \
@@ -112,6 +126,7 @@ export WORK DATA_ROOT CONFIG_ROOT RUNTIME_ROOT
   XDG_DATA_HOME="$DATA_ROOT" \
   XDG_CONFIG_HOME="$CONFIG_ROOT" \
   XDG_RUNTIME_DIR="$RUNTIME_ROOT" \
+  DBUS_TEST_TOOL="$DBUS_TEST_TOOL" \
   PLASMA_AUTO_TILER_LAUNCH_DEV=forged-dev \
   PLASMA_AUTO_TILER_LAUNCH_INO=forged-ino \
   PLASMA_AUTO_TILER_LAUNCH_READY=/forged/ready \
@@ -119,8 +134,8 @@ export WORK DATA_ROOT CONFIG_ROOT RUNTIME_ROOT
   PLASMA_AUTO_TILER_LAUNCH_READY_INO=forged-ready-ino \
   "$BASH_PATH" "$SEQUENCE" "$SOURCE_COPY" "$INSTALLED_BINARY" \
   | tee "$WORK/sequence.out"
-grep -Fq '05a direct lifecycle sequence: 18 passed' "$WORK/sequence.out" \
-  || fail "direct lifecycle sequence count was not 18"
+grep -Fq '05a direct lifecycle sequence: 19 passed' "$WORK/sequence.out" \
+  || fail "direct lifecycle sequence count was not 19"
 pass
 
 printf '05a self-test: %d passed\n' "$PASS"

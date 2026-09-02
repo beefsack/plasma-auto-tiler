@@ -131,6 +131,9 @@ Historical implementation detail is recoverable in Git history.
   fail closed without a watcher. The bridge is whitelisted, outbound
   state-snapshot based, reconnecting, idempotent, and has no shell, input, or
   helper-to-KWin action route. The KCM remains the settings owner.
+- Snapshot publication requires the current `org.kde.KWin` D-Bus owner and an
+  exact canonical executable identity from the host current-system or
+  `/usr/bin` KWin entrypoints; unlisted KWin launch paths fail closed.
 - The helper is not required for core tiler operation. Normal lifecycle
   rollback is exact and in-process; interrupted, crash, power-loss, malformed,
   replaced, or ambiguous state fails closed. Durable recovery and automatic

@@ -41,11 +41,13 @@ function setup(initialEnabled = true, generations = ["first", "second"]): {
     readonly snapshots: Snapshot[];
     readonly heartbeat: () => void;
     readonly scheduleCount: () => number;
+    readonly cancelCount: () => number;
     readonly setEnabled: (value: boolean) => void;
 } {
     let enabled = initialEnabled;
     let heartbeat: (() => void) | undefined;
     let schedules = 0;
+    let cancellations = 0;
     const snapshots: Snapshot[] = [];
     const publisher = new TrayPublisher({
         isEnabled: () => enabled,
@@ -55,6 +57,9 @@ function setup(initialEnabled = true, generations = ["first", "second"]): {
         scheduleOnce: (_delayMs, callback) => {
             schedules += 1;
             heartbeat = callback;
+            return () => {
+                cancellations += 1;
+            };
         },
         createGeneration: () => {
             const generation = generations.shift();
@@ -69,6 +74,7 @@ function setup(initialEnabled = true, generations = ["first", "second"]): {
         snapshots,
         heartbeat,
         scheduleCount: () => schedules,
+        cancelCount: () => cancellations,
         setEnabled: (value) => {
             enabled = value;
         },
@@ -229,6 +235,7 @@ test("does not publish or reschedule after disposal", () => {
 
     assert.equal(state.snapshots.length, 1);
     assert.equal(state.scheduleCount(), schedules);
+    assert.equal(state.cancelCount(), 1);
 });
 
 test("publishes controller disable immediately without affecting pointer drag handling", () => {

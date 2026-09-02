@@ -8898,29 +8898,31 @@
       this.enabled = false;
       this.started = false;
       this.disposed = false;
-      var _a, _b;
-      this.generation = (_b = (_a = environment.createGeneration) == null ? void 0 : _a.call(environment)) != null ? _b : processGeneration();
     }
     start() {
+      var _a, _b, _c;
       if (this.started || this.disposed) {
         return;
       }
       this.started = true;
+      this.generation = (_c = (_b = (_a = this.environment).createGeneration) == null ? void 0 : _b.call(_a)) != null ? _c : processGeneration();
       this.enabled = this.environment.isEnabled();
       this.publish();
       this.scheduleHeartbeat();
     }
     scheduleHeartbeat() {
+      var _a;
       if (this.disposed) {
         return;
       }
-      this.environment.scheduleOnce(TRAY_HEARTBEAT_MS, () => {
+      this.cancelHeartbeat = (_a = this.environment.scheduleOnce(TRAY_HEARTBEAT_MS, () => {
+        this.cancelHeartbeat = void 0;
         if (this.disposed) {
           return;
         }
         this.heartbeat();
         this.scheduleHeartbeat();
-      });
+      })) != null ? _a : void 0;
     }
     notifyEnabledChanged(enabled) {
       if (!this.started || this.disposed || enabled === this.enabled) {
@@ -8943,9 +8945,15 @@
       }
     }
     dispose() {
+      var _a;
       this.disposed = true;
+      (_a = this.cancelHeartbeat) == null ? void 0 : _a.call(this);
+      this.cancelHeartbeat = void 0;
     }
     publish() {
+      if (this.generation === void 0) {
+        return;
+      }
       try {
         this.environment.publishSnapshot(TRAY_SCHEMA, this.generation, this.revision, this.enabled);
       } catch (error) {
@@ -9308,6 +9316,11 @@
         }
       });
       (_b = timer.start) == null ? void 0 : _b.call(timer);
+      return () => {
+        var _a2;
+        (_a2 = timer.stop) == null ? void 0 : _a2.call(timer);
+        trayTimers.delete(timer);
+      };
     }
   });
   controller.start();

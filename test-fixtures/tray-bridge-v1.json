@@ -93,8 +93,8 @@
         },
         {
           "op": "publish",
-          "args": [1, "beta", 1, true],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "args": [1, "beta", 0, true],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 0, "enabled": true}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "publish",
@@ -113,32 +113,42 @@
         },
         {
           "op": "publish",
-          "args": [1, "beta", 1, true],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "args": [1, "beta", 2, true],
+          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 2, "enabled": true}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "gamma", 0, false],
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
+        },
+        {
+          "op": "publish",
+          "args": [1, "alpha", 0, false],
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "transport-failure",
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "publish",
           "args": [2, "beta", 2, false],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "publish",
           "args": [1, "BAD", 2, false],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "publish",
           "args": [1, "beta", 2147483648, false],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "publish",
           "args": [1, "beta", 2, "false"],
-          "expected": {"owner": true, "snapshot": {"generation": "beta", "revision": 1, "enabled": true}, "refreshedAt": 30001, "current": true}
+          "expected": {"owner": true, "snapshot": {"generation": "gamma", "revision": 0, "enabled": false}, "refreshedAt": 30001, "current": true}
         },
         {
           "op": "owner-lost",

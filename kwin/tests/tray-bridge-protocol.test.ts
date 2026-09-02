@@ -46,9 +46,16 @@ type Fixture = {
 
 type State = {
   owner: boolean;
+  generation: string | null;
+  revision: number | null;
+  orderingConflicted: boolean;
   snapshot: Snapshot | null;
   refreshedAt: number | null;
+  retiredGenerations: string[];
+  quarantinedGenerations: string[];
 };
+
+const MAX_GENERATION_HISTORY = 256;
 
 const fixturePath = process.env.TRAY_BRIDGE_FIXTURE;
 assert.ok(fixturePath, "TRAY_BRIDGE_FIXTURE must point to the tray bridge fixture");
@@ -87,7 +94,17 @@ function decodeCall(route: Route, args: unknown[], contract: Fixture["contract"]
 }
 
 function emptyState(): State {
-  return { owner: false, snapshot: null, refreshedAt: null };
+  return { owner: false, generation: null, revision: null, orderingConflicted: false, snapshot: null, refreshedAt: null, retiredGenerations: [], quarantinedGenerations: [] };
+}
+
+function rememberGeneration(history: string[], generation: string): void {
+  if (history.includes(generation)) {
+    return;
+  }
+  history.push(generation);
+  while (history.length > MAX_GENERATION_HISTORY) {
+    history.shift();
+  }
 }
 
 function isCurrent(state: State, now: number, freshnessMs: number): boolean {
@@ -101,15 +118,37 @@ function applyPublish(state: State, route: Route, args: unknown[], now: number, 
     return;
   }
 
-  if (state.snapshot === null || snapshot.generation !== state.snapshot.generation || snapshot.revision > state.snapshot.revision ||
-      (snapshot.revision === state.snapshot.revision && snapshot.enabled === state.snapshot.enabled)) {
+  const accepted = state.generation === null ||
+    snapshot.generation === state.generation && state.revision !== null &&
+      (state.orderingConflicted ? snapshot.revision > state.revision :
+        snapshot.revision > state.revision ||
+        snapshot.revision === state.revision && state.snapshot?.enabled === snapshot.enabled) ||
+    state.generation !== null && snapshot.generation !== state.generation && snapshot.revision === 0 &&
+      !state.retiredGenerations.includes(snapshot.generation) &&
+      !state.quarantinedGenerations.includes(snapshot.generation);
+  if (accepted) {
+    if (state.generation !== null && state.generation !== snapshot.generation) {
+      rememberGeneration(state.retiredGenerations, state.generation);
+    }
+    state.generation = snapshot.generation;
+    state.revision = snapshot.revision;
+    state.orderingConflicted = false;
     state.snapshot = snapshot;
     state.refreshedAt = now;
     return;
   }
 
-  state.snapshot = null;
-  state.refreshedAt = null;
+  if (!state.retiredGenerations.includes(snapshot.generation) &&
+      !state.quarantinedGenerations.includes(snapshot.generation)) {
+    state.snapshot = null;
+    state.refreshedAt = null;
+    if (state.generation === snapshot.generation) {
+      state.revision = state.revision === null ? snapshot.revision : Math.max(state.revision, snapshot.revision);
+    } else {
+      rememberGeneration(state.quarantinedGenerations, snapshot.generation);
+    }
+    state.orderingConflicted = true;
+  }
 }
 
 function assertState(state: State, now: number, expected: ExpectedState, freshnessMs: number): void {
@@ -153,12 +192,22 @@ test("tray bridge fixture proves the local codec and state machine", () => {
           applyPublish(state, fixture.routes.accepted, event.args ?? [], now, fixture.contract);
           break;
         case "owner-acquired":
+          state.generation = null;
+          state.revision = null;
+          state.orderingConflicted = false;
+          state.retiredGenerations = [];
+          state.quarantinedGenerations = [];
           state.owner = true;
           break;
         case "owner-lost":
           state.owner = false;
           state.snapshot = null;
           state.refreshedAt = null;
+          state.generation = null;
+          state.revision = null;
+          state.orderingConflicted = false;
+          state.retiredGenerations = [];
+          state.quarantinedGenerations = [];
           break;
         case "restart":
           state = emptyState();

@@ -138,6 +138,55 @@ fn semantic_invalid_input_surfaces_invalid_snapshot_and_clears_ordering_conflict
 }
 
 #[test]
+fn ordering_conflict_keeps_a_revision_floor_after_clearing_state() {
+    let mut state = TrayState::default();
+    state.owner_changed(Some(":kwin"));
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 4, true, 0)
+        .unwrap();
+
+    assert!(
+        state
+            .publish_snapshot(1, "alpha".to_owned(), 3, true, 1)
+            .is_err()
+    );
+    assert_eq!(state.view(1), empty_view(true));
+    assert!(
+        state
+            .publish_snapshot(1, "alpha".to_owned(), 4, true, 2)
+            .is_err()
+    );
+    assert_eq!(state.view(2), empty_view(true));
+
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 5, false, 3)
+        .unwrap();
+    assert_eq!(state.view(3).snapshot, Some(snapshot("alpha", 5, false)));
+}
+
+#[test]
+fn rejected_generation_transition_quarantines_the_incoming_generation() {
+    let mut state = TrayState::default();
+    state.owner_changed(Some(":kwin"));
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 4, true, 0)
+        .unwrap();
+
+    assert!(
+        state
+            .publish_snapshot(1, "beta".to_owned(), 1, false, 1)
+            .is_err()
+    );
+    assert_eq!(state.view(1), empty_view(true));
+    assert!(
+        state
+            .publish_snapshot(1, "beta".to_owned(), 0, false, 2)
+            .is_err()
+    );
+    assert_eq!(state.view(2), empty_view(true));
+}
+
+#[test]
 fn changing_the_kwin_owner_clears_the_accepted_state_before_reacquisition() {
     let mut state = TrayState::default();
     state.owner_changed(Some(":old"));
@@ -152,6 +201,47 @@ fn changing_the_kwin_owner_clears_the_accepted_state_before_reacquisition() {
         .publish_snapshot(1, "beta".to_owned(), 7, false, 1)
         .unwrap();
     assert_eq!(state.view(1).snapshot, Some(snapshot("beta", 7, false)));
+}
+
+#[test]
+fn retired_publisher_generation_cannot_overwrite_new_generation() {
+    let mut state = TrayState::default();
+    state.owner_changed(Some(":kwin"));
+    state
+        .publish_snapshot(1, "old".to_owned(), 1, true, 0)
+        .unwrap();
+    state
+        .publish_snapshot(1, "new".to_owned(), 0, false, 1)
+        .unwrap();
+
+    assert!(
+        state
+            .publish_snapshot(1, "old".to_owned(), 0, true, 2)
+            .is_err()
+    );
+    assert_eq!(state.view(2).snapshot, Some(snapshot("new", 0, false)));
+}
+
+#[test]
+fn every_retired_generation_stays_rejected_across_three_generations() {
+    let mut state = TrayState::default();
+    state.owner_changed(Some(":kwin"));
+    state
+        .publish_snapshot(1, "alpha".to_owned(), 1, true, 0)
+        .unwrap();
+    state
+        .publish_snapshot(1, "beta".to_owned(), 0, false, 1)
+        .unwrap();
+    state
+        .publish_snapshot(1, "gamma".to_owned(), 0, true, 2)
+        .unwrap();
+
+    assert!(
+        state
+            .publish_snapshot(1, "alpha".to_owned(), 0, false, 3)
+            .is_err()
+    );
+    assert_eq!(state.view(3).snapshot, Some(snapshot("gamma", 0, true)));
 }
 
 #[test]
