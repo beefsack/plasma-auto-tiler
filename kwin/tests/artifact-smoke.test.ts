@@ -5,8 +5,6 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const EXPECTED_SHORTCUT_COUNT = 62;
-const SHORTCUT_REGISTERED_DIAGNOSTIC = "plasma-auto-tiler:shortcut-registered";
 const STARTUP_HANDLERS_READY_DIAGNOSTIC = "plasma-auto-tiler:startup-handlers-ready";
 const DRAG_ATTACH_SUMMARY_DIAGNOSTIC = "plasma-auto-tiler:drag-attach-summary:7:7:0";
 
@@ -38,20 +36,16 @@ function collectSourceFiles(dir: string): string[] {
 
 interface KWinStubResult {
     readonly context: ReturnType<typeof createContext>;
-    readonly registeredShortcuts: ReadonlyArray<readonly [string, string, string]>;
     readonly diagnostics: readonly string[];
     readonly counts: { workspaceConnects: number; windowConnects: number };
 }
 
 // Minimal KWin ambient surface for the shipped IIFE: the top-level entry
 // constructs TileController and runs start(), which subscribes to four
-// workspace signals, registers every shortcut, and attaches drag handling to
-// every existing in-scope window. One window with the six per-window signals
-// is supplied so the real per-signal attach path emits its ok/summary
-// diagnostics. The stub records each call so the test can prove the top-level
-// entry point genuinely executed rather than silently no-oping.
+// workspace signals and attaches drag handling to every existing in-scope
+// window. One window with the six per-window signals is supplied so the real
+// per-signal attach path emits its ok/summary diagnostics.
 function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult {
-    const registeredShortcuts: Array<[string, string, string]> = [];
     const diagnostics: string[] = [];
     const counts = { workspaceConnects: 0, windowConnects: 0 };
 
@@ -128,22 +122,19 @@ function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult
             screensChanged: workspaceSignal(),
             currentDesktopChanged: workspaceSignal(),
         },
-        registerShortcut: (name: string, text: string, sequence: string) => {
-            registeredShortcuts.push([name, text, sequence]);
-            return true;
-        },
         readConfig: () => undefined,
         callDBus: () => {},
         QTimer: function QTimer() {},
         console: { ...console, log: (message: string) => diagnostics.push(message) },
     });
 
-    return { context, registeredShortcuts, diagnostics, counts };
+    return { context, diagnostics, counts };
 }
 
 describe("shipped artifact smoke execution", () => {
     it("executes the built contents/code/main.js top-level entry through a KWin stub", () => {
         const bundle = readFileSync(SHIPPED_BUNDLE, "utf8");
+        assert.doesNotMatch(bundle, /\bregisterShortcut\b/);
         const stub = makeKWinStub();
         try {
             runInContext(bundle, stub.context, { filename: SHIPPED_BUNDLE });
@@ -152,22 +143,6 @@ describe("shipped artifact smoke execution", () => {
         }
         assert.equal(stub.counts.workspaceConnects, 4);
         assert.equal(stub.counts.windowConnects, 7);
-        assert.equal(stub.registeredShortcuts.length, EXPECTED_SHORTCUT_COUNT);
-        const names = stub.registeredShortcuts.map(([name]) => name);
-        assert.ok(names.includes("plasma-auto-tiler-float-toggle"));
-        assert.ok(names.includes("plasma-auto-tiler-sticky-toggle"));
-        const cosmic = new Map(
-            stub.registeredShortcuts.map(([name, , sequence]) => [name, sequence] as const),
-        );
-        // Spec H.15/H.16: Meta+0 registers under the stable workspace-0 ID (the
-        // legacy append ID never registers), the Meta+Shift+0 move row stays
-        // registered, and the catalog-driven cosmic focus-right is Meta+L (never
-        // the old Meta+Alt+Ctrl+L blend).
-        assert.equal(cosmic.get("plasma-auto-tiler-workspace-0"), "Meta+0");
-        assert.ok(!names.includes("plasma-auto-tiler-workspace-append"));
-        assert.equal(cosmic.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
-        assert.equal(cosmic.get("plasma-auto-tiler-focus-right"), "Meta+L");
-        assert.ok(stub.diagnostics.includes(SHORTCUT_REGISTERED_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(STARTUP_HANDLERS_READY_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes(DRAG_ATTACH_SUMMARY_DIAGNOSTIC));
         assert.ok(stub.diagnostics.includes("plasma-auto-tiler:drag-attach-ok:interactiveMoveResizeStarted"));

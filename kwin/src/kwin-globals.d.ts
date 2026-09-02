@@ -12,16 +12,6 @@
 // identity survives restart or hotplug. Output.uuid is neither Q_PROPERTY nor
 // Q_INVOKABLE and is not declared.
 
-// src/scripting/scripting.h:
-//     bool registerShortcut(const QString &, const QString &, const QString &,
-//                           const QJSValue &)
-declare function registerShortcut(
-    name: string,
-    text: string,
-    sequence: string,
-    callback: () => void,
-): boolean;
-
 // KWin scripting API -> Global -> Functions:
 //     QVariant readConfig(QString key, QVariant defaultValue = QVariant())
 // Reads the script's config value for key; without a default and with no stored

@@ -409,11 +409,114 @@ export function currentScopeFor(active: TestWindow): CurrentScope {
 }
 
 export function invokeShortcut(harness: Harness, name: string): void {
-    const shortcut = harness.shortcuts.find((entry) => entry.name === name);
-    if (shortcut === undefined) {
-        throw new Error(`missing registered shortcut: ${name}`);
+    const controller = harness.controller;
+    if (controller === undefined) {
+        throw new Error(`missing test controller: ${name}`);
     }
-    shortcut.handler();
+    const actions = controller as unknown as {
+        focusOrResize: (direction: "left" | "down" | "up" | "right") => void;
+        moveActiveWindow: (direction: "left" | "down" | "up" | "right") => void;
+        enterOrExitResizeMode: (mode: "outwards" | "inwards") => void;
+        applyPreset: (kind: "columns" | "rows" | "balanced-grid" | "dwindle") => void;
+        workspaceZero: () => void;
+    };
+    const action = name.replace(/^plasma-auto-tiler-/, "");
+    const direction = /(?:focus|move|resize-(?:expand|contract))-(left|down|up|right)/.exec(action)?.[1] as
+        | "left"
+        | "down"
+        | "up"
+        | "right"
+        | undefined;
+    if (action.startsWith("focus-") && direction !== undefined) {
+        actions.focusOrResize(direction);
+        return;
+    }
+    if (action.startsWith("move-") && direction !== undefined) {
+        actions.moveActiveWindow(direction);
+        return;
+    }
+    if (action.startsWith("resize-expand-") && direction !== undefined) {
+        controller.resizeActiveWindow(direction, "outwards");
+        return;
+    }
+    if (action.startsWith("resize-contract-") && direction !== undefined) {
+        controller.resizeActiveWindow(direction, "inwards");
+        return;
+    }
+    if (action.startsWith("workspace-") && action !== "workspace-append") {
+        const index = Number(action.slice("workspace-".length));
+        if (Number.isInteger(index)) {
+            if (index === 0) {
+                actions.workspaceZero();
+            } else {
+                controller.navigateWorkspace(index);
+            }
+            return;
+        }
+    }
+    if (action.startsWith("move-workspace-") && action !== "move-workspace-append") {
+        const index = Number(action.slice("move-workspace-".length).replace(/-symbol$/, ""));
+        if (Number.isInteger(index)) {
+            controller.moveActiveToWorkspace(index);
+            return;
+        }
+    }
+    switch (action) {
+        case "insert-right":
+            controller.armKeyboardInsertion("right");
+            return;
+        case "insert-left":
+            controller.armKeyboardInsertion("left");
+            return;
+        case "insert-up":
+            controller.armKeyboardInsertion("up");
+            return;
+        case "insert-down":
+            controller.armKeyboardInsertion("down");
+            return;
+        case "detach":
+            controller.detachActiveWindow();
+            return;
+        case "attach":
+            controller.attachActiveWindow();
+            return;
+        case "float-toggle":
+            controller.floatActiveWindow();
+            return;
+        case "sticky-toggle":
+            controller.stickyActiveWindow();
+            return;
+        case "fill-scope":
+            controller.fillScope();
+            return;
+        case "maximize":
+            controller.maximizeActiveWindow();
+            return;
+        case "resize-mode-outwards":
+            actions.enterOrExitResizeMode("outwards");
+            return;
+        case "resize-mode-inwards":
+            actions.enterOrExitResizeMode("inwards");
+            return;
+        case "apply-columns":
+            actions.applyPreset("columns");
+            return;
+        case "apply-rows":
+            actions.applyPreset("rows");
+            return;
+        case "apply-balanced-grid":
+            actions.applyPreset("balanced-grid");
+            return;
+        case "apply-dwindle":
+            actions.applyPreset("dwindle");
+            return;
+        case "move-workspace-append":
+        case "move-workspace-append-symbol":
+            controller.moveActiveToWorkspace(0);
+            return;
+        default:
+            throw new Error(`unsupported test action: ${name}`);
+    }
 }
 
 // Simulates KWin's tile window-list maintenance on a guarded `window.tile`

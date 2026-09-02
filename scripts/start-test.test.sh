@@ -435,8 +435,7 @@ assert_only_project_setshortcut_calls() {
 }
 
 TEST_RECORDS='{"type":"a(ssssssaiai)","data":[[["plasma-auto-tiler-focus-left","Focus window left","kwin","KWin","default","Default Context",[402653256],[]],["plasma-auto-tiler-move-up","Move window up","kwin","KWin","default","Default Context",[436207691],[]],["plasma-auto-tiler-detach","Detach window from tile","kwin","KWin","default","Default Context",[301989920],[]],["plasma-auto-tiler-apply-columns","Apply columns in focused leaf","kwin","KWin","default","Default Context",[402653233],[]],["plasma-auto-tiler-insert-left","Insert next window left of focused leaf","kwin","KWin","default","Default Context",[419430418],[]],["plasma-auto-tiler-insert-up","Insert next window up of focused leaf","kwin","KWin","default","Default Context",[419430419],[]],["plasma-auto-tiler-insert-down","Insert next window down of focused leaf","kwin","KWin","default","Default Context",[419430421],[]],["KrohnkiteNextLayout","Krohnkite: Next Layout","kwin","KWin","default","Default Context",[268435548],[]]]]}'
-READY_JOURNAL='{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
+READY_JOURNAL='{"MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
 CONTROLLER_DIGEST="$(sha256sum "$REPO_ROOT"/kwin/src/*.ts | sha256sum | awk '{print $1}')"
 CONTROLLER_MESSAGE="plasma-auto-tiler:controller-ready:plugin=plasma-auto-tiler-kwin:nonce=start-attempt:build=controller-v1-$CONTROLLER_DIGEST"
 
@@ -524,6 +523,16 @@ else
   echo "FAIL: stat-success fixture unexpectedly exposed /proc/2517/exe" >&2
   FAIL=$((FAIL + 1))
 fi
+
+# start: a disabled diagnostic after readiness is reported as runtime failure
+# rather than as disabled startup
+setup_state '-- cursor: cursor-1' "" \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:runtime-failed"}'
+run_script start
+check_exit 1
+assert_contains "controller disabled after startup readiness"
+assert_not_contains "controller disabled itself during startup"
 
 # start: a same-PID start-time change immediately after load never creates a
 # replacement-identity receipt and never tears down against the replacement.
@@ -735,19 +744,18 @@ check_exit 1
 assert_contains "unexpected desktops reply"
 
 # start: disabled readiness fails closed
-setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}'
+setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:disabled:startup-failed"}'
 run_script start
 check_exit 1
 assert_contains "controller disabled itself during startup"
 assert_not_contains "started:"
 
-# start: current disabled failure reports the exact disabled reason, the exact
-# shortcut-register-failed reason, and separate kwin_scripting errors, all
+# start: current disabled failure reports the exact disabled reason and
+# separate kwin_scripting errors, all
 # scoped to the current attempt (after-cursor, same-KWin-PID)
 setup_state '-- cursor: cursor-1' \
   '{"MESSAGE":"plasma-auto-tiler:disabled:some-old-reason"}' \
-  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-focus-left"}
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:startup-failed"}
 {"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","MESSAGE":"script evaluation error: cannot read"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:some-other-project-diagnostic"}'
 run_script start
@@ -755,9 +763,7 @@ check_exit 1
 assert_contains "controller disabled itself during startup"
 assert_contains "controller diagnostics (current attempt, after-cursor, same-KWin-PID):"
 assert_contains "disabled reasons (current attempt):"
-assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
-assert_contains "shortcut-register-failed reasons (current attempt):"
-assert_contains "plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-focus-left"
+assert_contains "plasma-auto-tiler:disabled:startup-failed"
 assert_contains "kwin_scripting warnings/errors (current attempt):"
 assert_contains "script evaluation error: cannot read"
 assert_contains "plasma-auto-tiler:some-other-project-diagnostic"
@@ -766,7 +772,6 @@ assert_not_contains "started:"
 # the retained evidence is reported before cleanup and again after cleanup
 assert_occurrences 2 "controller diagnostics (current attempt, after-cursor, same-KWin-PID):"
 assert_occurrences 2 "disabled reasons (current attempt):"
-assert_occurrences 2 "shortcut-register-failed reasons (current attempt):"
 assert_occurrences 2 "kwin_scripting warnings/errors (current attempt):"
 assert_order "disabled reasons (current attempt):" "error: controller disabled itself during startup"
 NOTE_LINE="$(grep -Fn "note: exact controller teardown was verified; no plugin-name fallback was attempted" "$OUTPUT" | head -1 | cut -d: -f1)"
@@ -784,18 +789,18 @@ fi
 # when a current attempt exists; only after-cursor same-PID evidence is reported
 setup_state '-- cursor: cursor-1' \
   '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:historical-reason"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-historical"}' \
-  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-current"}'
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:historical-failed"}' \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:startup-failed"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-current-diagnostic"}'
 run_script start
 check_exit 1
-assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
-assert_contains "plasma-auto-tiler:shortcut-register-failed:plasma-auto-tiler-current"
+assert_contains "plasma-auto-tiler:disabled:startup-failed"
+assert_contains "plasma-auto-tiler:startup-current-diagnostic"
 assert_not_contains "historical-reason"
 assert_not_contains "plasma-auto-tiler-historical"
 
 # start: missing readiness fails closed
-setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:shortcut-registered"}'
+setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:not-startup-ready"}'
 run_script start
 check_exit 1
 assert_contains "was not confirmed"
@@ -1024,8 +1029,7 @@ if grep -Fq "outside-sentinel" "$WORK/replacement-target"; then PASS=$((PASS + 1
 [[ -L "$WORK/provenance-ownership" ]] || { echo "FAIL: replacement receipt symlink was not retained for safe recovery" >&2; FAIL=$((FAIL + 1)); }
 
 # diagnostics: loaded current epoch with invoked/rejected/success tokens
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-invoked:columns"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-rejected:source-occupancy-validity"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}'
@@ -1048,8 +1052,7 @@ assert_contains "do not prove callbacks"
 assert_contains "not a current-liveness proof"
 
 # diagnostics: unloaded evidence is labeled historical, never current
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}'
 run_script diagnostics
 check_exit 0
@@ -1059,10 +1062,9 @@ assert_contains "plasma-auto-tiler:preset-applied:columns"
 assert_not_contains "current (plugin loaded)"
 
 # diagnostics: multiple starts selects only the latest epoch
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:move-completed"}'
 printf 'true\n' > "$WORK/state/loaded"
@@ -1082,7 +1084,6 @@ assert_not_contains "plasma-auto-tiler:preset-applied:"
 
 # diagnostics: mixed-PID journal keeps only the current KWin pid evidence
 setup_state '-- cursor: cursor-1' '{"_PID":"9999","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:rows"}'
 printf 'true\n' > "$WORK/state/loaded"
@@ -1092,15 +1093,27 @@ assert_contains "plasma-auto-tiler:preset-applied:rows"
 assert_not_contains "plasma-auto-tiler:preset-applied:columns"
 
 # diagnostics: disabled startup is labeled disabled without a readiness claim
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:shortcut-registration-failed"}'
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:startup-failed"}'
 printf 'true\n' > "$WORK/state/loaded"
 run_script diagnostics
 check_exit 0
 assert_contains "epoch (latest KWin-PID/start-identity-bound controller startup): disabled"
 assert_contains "readiness: not-reached"
 assert_contains "controller disabled: yes"
-assert_contains "plasma-auto-tiler:disabled:shortcut-registration-failed"
+assert_contains "plasma-auto-tiler:disabled:startup-failed"
 assert_not_contains "readiness: reached"
+
+# diagnostics: a disabled diagnostic after readiness is runtime failure, not a
+# second disabled startup epoch
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:runtime-failed"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "epoch (latest KWin-PID/start-identity-bound controller startup): current (plugin loaded)"
+assert_contains "readiness: reached"
+assert_contains "controller disabled: yes"
+assert_not_contains "disabled (latest startup disabled)"
 
 # diagnostics: empty journal is labeled unknown, never presented as evidence
 setup_state '-- cursor: cursor-1' ""
@@ -1118,8 +1131,7 @@ check_exit 1
 assert_contains "could not parse the KWin diagnostics journal"
 
 # diagnostics: matches the fixed prefix regardless of journal category
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_wayland","PRIORITY":"7","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_wayland","PRIORITY":"7","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_wayland","PRIORITY":"7","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","PRIORITY":"4","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}
 {"_PID":"2517","SYSLOG_IDENTIFIER":"kwin_scripting","PRIORITY":"4","MESSAGE":"plasma-auto-tiler:keyboard-completed"}'
 printf 'true\n' > "$WORK/state/loaded"
@@ -1131,21 +1143,19 @@ assert_contains "readiness: reached"
 
 # diagnostics: unrelated journal messages are never reported
 setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"kwin_scripting: something unrelated"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
 {"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}
 {"_PID":"2517","MESSAGE":"Failed to load something"}
 {"_PID":"2517","MESSAGE":"Krohnkite: next layout"}'
 printf 'true\n' > "$WORK/state/loaded"
 run_script diagnostics
 check_exit 0
-assert_contains "plasma-auto-tiler:shortcut-registered"
+assert_contains "plasma-auto-tiler:startup-handlers-ready"
 assert_not_contains "something unrelated"
 assert_not_contains "Failed to load"
 assert_not_contains "Krohnkite"
 
 # diagnostics: a KWin PID change during the journal read invalidates the epoch
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
 printf 'true\n' > "$WORK/state/loaded"
 printf '9999\n' > "$WORK/state/dbus-next-pid"
 run_script diagnostics
@@ -1155,8 +1165,7 @@ assert_not_contains "startup-handlers-ready"
 
 # diagnostics: PID reuse with the same numeric PID is rejected when the full
 # start identity changes during the journal read.
-setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:shortcut-registered"}
-{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}'
 printf 'true\n' > "$WORK/state/loaded"
 FAKE_KWIN_IDENTITY_SEQUENCE='251700,251701' run_script diagnostics
 check_exit 0
@@ -1507,55 +1516,13 @@ else
   PASS=$((PASS + 1))
 fi
 
-# The lifecycle catalog must exactly cover the controller registrations/default
-# strings. Fixed project-only rows are literal registerShortcut calls; the
-# focus/move directional rows are catalog-driven under the default (cosmic)
-# profile, so their expected sequences are derived from the controller catalog
-# source and Qt-encoded exactly like KGlobalAccel exposes them. This replaces
-# the legacy hardcoded literal list (Unit 03): sequences come from the catalog,
-# never from a hand-maintained table.
-
-# Qt 6 key codes for the sequences the lifecycle catalog covers, in the pinned
-# integer encoding (modifier bits OR key code) the live collector verified.
-qt_key_code() {
-  case "$1" in
-    0|1|2|3|4|5|6|7|8|9) printf '%d' "$((48 + $1))";;
-    H) printf '72';; J) printf '74';; K) printf '75';; L) printf '76';;
-    G) printf '71';; M) printf '77';; R) printf '82';; S) printf '83';; V) printf '86';; F) printf '70';;
-    Space) printf '32';; Return) printf '16777220';; F11) printf '16777265';;
-    Left) printf '16777234';; Up) printf '16777235';; Right) printf '16777236';; Down) printf '16777237';;
-    *) return 1;;
-  esac
-}
-
-encode_sequence() {
-  local seq="$1" mods=0 part key code
-  local -a parts
-  IFS='+' read -r -a parts <<<"$seq"
-  for part in "${parts[@]}"; do
-    case "$part" in
-      Meta) mods=$((mods + 268435456));;
-      Shift) mods=$((mods + 33554432));;
-      Ctrl) mods=$((mods + 67108864));;
-      Alt) mods=$((mods + 134217728));;
-      *) key="$part";;
-    esac
-  done
-  code="$(qt_key_code "$key")" || return 1
-  printf '%d\n' "$((mods + code))"
-}
-
-# Key expansion tables matching HJKL_KEYS and ARROW_KEYS in controller.ts.
-HJKL_KEYS_LIST=("left H" "down J" "up K" "right L")
-ARROW_KEYS_LIST=("left Left" "down Down" "up Up" "right Right")
-
 # Fixed project-only rows: literal registerShortcut calls in the controller.
 while IFS=$'\t' read -r action sequence shortcut; do
   if ! grep -Fq "[$action]=\"$sequence\"" "$SCRIPT"; then
     echo "FAIL: lifecycle catalog lacks $action=$sequence" >&2
     FAIL=$((FAIL + 1))
-  elif ! grep -A3 -F "\"$action\"" "$CONTROLLER" | grep -Fq "\"$shortcut\""; then
-    echo "FAIL: controller registration lacks $action=$shortcut" >&2
+  elif grep -Fq "registerShortcut" "$CONTROLLER"; then
+    echo "FAIL: controller still exposes shortcut registration" >&2
     FAIL=$((FAIL + 1))
   else
     PASS=$((PASS + 1))

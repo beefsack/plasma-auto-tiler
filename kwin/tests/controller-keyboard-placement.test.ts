@@ -17,7 +17,7 @@ import {
 } from "./controller-fixtures";
 import { attachTileWriter, countEvent, currentScopeFor, focusSetup, invokeShortcut, setup } from "./controller-fixture-scenarios";
 import { MAX_SEQUENTIAL_LENGTH } from "../src/boundary";
-import { PROFILE_CATALOGS, REGISTERED_PROFILE_ACTION_IDS, TileController } from "../src/controller";
+import { TileController } from "../src/controller";
 import { DIRECTIONS, type Direction } from "../src/logic";
 describe("TileController keyboard insertion", () => {
     it("arms only a strict eligible occupied focused leaf without mutating topology", () => {
@@ -230,23 +230,6 @@ describe("TileController keyboard insertion", () => {
         assert.equal(controller.hasPendingKeyboard, false);
         assert.equal(occupant.outputChanged.subscriberCount, 0);
         assert.equal(controller.isEnabled, true);
-    });
-
-    it("registers the four directional insertion actions with exact metadata and per-direction arm callbacks", () => {
-        const { harness } = setup();
-        const expected: readonly [string, string, string][] = [
-            ["plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
-            ["plasma-auto-tiler-insert-left", "Insert next window left of focused leaf", "Meta+Alt+Left"],
-            ["plasma-auto-tiler-insert-up", "Insert next window up of focused leaf", "Meta+Alt+Up"],
-            ["plasma-auto-tiler-insert-down", "Insert next window down of focused leaf", "Meta+Alt+Down"],
-        ];
-        for (const [name, text, sequence] of expected) {
-            const registered = harness.shortcuts.find((entry) => entry.name === name);
-            assert.ok(registered !== undefined, `missing registration ${name}`);
-            assert.equal(registered.text, text);
-            assert.equal(registered.sequence, sequence);
-            assert.equal(typeof registered.handler, "function");
-        }
     });
 
     it("maps every direction to the correct split orientation and child assignment", () => {
@@ -679,12 +662,6 @@ describe("TileController ordinary placement and boundaries", () => {
 });
 
 describe("TileController keyboard focus", () => {
-    const insertActions: ReadonlyArray<readonly ["right" | "left" | "up" | "down", string, string, string]> = [
-        ["right", "plasma-auto-tiler-insert-right", "Insert next window right of focused leaf", "Meta+Alt+Right"],
-        ["left", "plasma-auto-tiler-insert-left", "Insert next window left of focused leaf", "Meta+Alt+Left"],
-        ["up", "plasma-auto-tiler-insert-up", "Insert next window up of focused leaf", "Meta+Alt+Up"],
-        ["down", "plasma-auto-tiler-insert-down", "Insert next window down of focused leaf", "Meta+Alt+Down"],
-    ];
     const focusActions: ReadonlyArray<readonly ["left" | "down" | "up" | "right", string, string, string]> = [
         ["left", "plasma-auto-tiler-focus-left", "Focus window left", "Meta+H"],
         ["down", "plasma-auto-tiler-focus-down", "Focus window down", "Meta+J"],
@@ -697,71 +674,6 @@ describe("TileController keyboard focus", () => {
         ["up", "plasma-auto-tiler-focus-up-arrow", "Focus window up (arrow)", "Meta+Up"],
         ["right", "plasma-auto-tiler-focus-right-arrow", "Focus window right (arrow)", "Meta+Right"],
     ];
-    const presetActions: ReadonlyArray<readonly [string, string, string]> = [
-        ["plasma-auto-tiler-apply-columns", "Apply columns in focused leaf", "Meta+Alt+1"],
-        ["plasma-auto-tiler-apply-rows", "Apply rows in focused leaf", "Meta+Alt+2"],
-        ["plasma-auto-tiler-apply-balanced-grid", "Apply balanced grid in focused leaf", "Meta+Alt+3"],
-        ["plasma-auto-tiler-apply-dwindle", "Apply dwindle in focused leaf", "Meta+Alt+4"],
-    ];
-    // The keyboard-focus suite uses only the focus families for its guard loop;
-    // move/workspace registrations are catalog-derived and asserted through the
-    // binding-profile-catalog suite and the actionCatalog set.
-    const projectActionCatalog: ReadonlyArray<readonly [string, string, string]> = [
-        ["plasma-auto-tiler-detach", "Detach window from tile", "Meta+Shift+Space"],
-        ["plasma-auto-tiler-attach", "Attach window to available tile", "Meta+Alt+Shift+Space"],
-        ["plasma-auto-tiler-sticky-toggle", "Toggle sticky floating on all desktops", "Meta+Shift+G"],
-        ["plasma-auto-tiler-fill-scope", "Fill available tiles with windows", "Meta+Alt+Return"],
-    ];
-    // Expected registration is catalog-driven: the selected profile's own
-    // non-deferred rows whose actionId has an implemented callback, in catalog
-    // order, plus the fixed project-only rows. Meta+0 (workspace-0) and
-    // Meta+Shift+0 (move-workspace-0) are both registered catalog rows.
-    const catalogActionCatalog: ReadonlyArray<readonly [string, string, string]> = PROFILE_CATALOGS.cosmic.rows
-        .filter((row) => row.classification !== "deferred" && REGISTERED_PROFILE_ACTION_IDS.has(row.actionId))
-        .map((row) => [row.shortcutId, row.text, row.sequence] as const);
-
-    const actionCatalog: ReadonlyArray<readonly [string, string, string]> = [
-        ...insertActions.map(([, name, text, sequence]) => [name, text, sequence] as const),
-        ...catalogActionCatalog,
-        ...projectActionCatalog,
-        ...presetActions,
-    ];
-
-    it("registers the exact current action catalog in order", () => {
-        const { harness } = setup();
-        assert.deepEqual(
-            harness.shortcuts.map(({ name, text, sequence }) => [name, text, sequence]),
-            actionCatalog,
-        );
-    });
-
-    it("disables for every aggregate registration failure and keeps every catalog callback inert", () => {
-        for (let failedIndex = 0; failedIndex < actionCatalog.length; failedIndex += 1) {
-            const harness = new Harness();
-            for (let index = 0; index < actionCatalog.length; index += 1) {
-                harness.shortcutResults.push(index !== failedIndex);
-            }
-            const controller = new TileController(harness.environment());
-            controller.start();
-            assert.equal(harness.shortcuts.length, actionCatalog.length);
-            assert.equal(controller.isEnabled, false);
-            assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
-            assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
-            assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
-            const baseline = harness.logs.length;
-            for (const [name] of actionCatalog) {
-                invokeShortcut(harness, name);
-            }
-            harness.emitAdded(window());
-            harness.emitRemoved(window());
-            harness.screensChanged?.();
-            harness.emitCurrentDesktopChanged(null, null, null);
-            assert.equal(harness.logs.length, baseline);
-            assert.deepEqual(harness.activeWrites, []);
-            assert.equal(controller.hasPendingKeyboard, false);
-        }
-    });
-
     it("maps every focus guard to its first fixed private reason", () => {
         const cases: ReadonlyArray<{
             readonly reason: string;

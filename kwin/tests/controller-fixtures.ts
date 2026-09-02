@@ -1,5 +1,5 @@
 import { type RectCapability } from "../src/boundary";
-import { type ControllerEnvironment } from "../src/controller";
+import { type ControllerEnvironment, type TileController } from "../src/controller";
 
 export const RECT = { x: 0, y: 0, width: 100, height: 100 };
 export const OUTPUT = {
@@ -63,13 +63,6 @@ export interface TestTile {
     unmanage: (window: unknown) => boolean;
     split: (direction: number) => unknown;
     remove?: () => boolean;
-}
-
-export interface RegisteredShortcut {
-    readonly name: string;
-    readonly text: string;
-    readonly sequence: string;
-    readonly handler: () => void;
 }
 
 // A queued one-shot event-loop yield, mirroring the callDBus async callback
@@ -231,11 +224,9 @@ export class Harness {
     cursor: unknown = null;
     cursorThrows = false;
     clientArea: unknown = { x: 0, y: 0, width: 100, height: 100 };
-    shortcutResult = true;
-    readonly shortcutResults: boolean[] = [];
-    readonly shortcuts: RegisteredShortcut[] = [];
     readonly configValues = new Map<string, unknown>();
     readonly scheduled: { delayMs: number; callback: () => void; cancelled: boolean }[] = [];
+    controller: TileController | undefined;
     readonly interactiveWatches: Array<{
         readonly window: unknown;
         readonly started: () => void;
@@ -563,10 +554,6 @@ export class Harness {
                     entry.cancelled = true;
                 };
             },
-            registerShortcut: (name, text, sequence, handler) => {
-                this.shortcuts.push({ name, text, sequence, handler });
-                return this.shortcutResults.shift() ?? this.shortcutResult;
-            },
             readConfig: (key, defaultValue) => {
                 const stored = this.configValues.get(key);
                 return stored === undefined ? defaultValue : stored;
@@ -582,6 +569,9 @@ export class Harness {
             },
             hideOutline: () => {
                 this.hideOutlineCalls += 1;
+            },
+            onControllerCreated: (controller) => {
+                this.controller = controller;
             },
         };
     }

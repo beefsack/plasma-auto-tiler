@@ -1,12 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 
-import { TileController } from "../src/controller";
 import {
     DESKTOP,
     OUTPUT,
     RECT,
-    Harness,
     type TestTile,
     type TestWindow,
     tile,
@@ -24,14 +22,12 @@ import {
 } from "./controller-fixture-scenarios";
 
 describe("TileController tile attach", () => {
-    it("invokes the registered callback and attaches the active window with one guarded write", () => {
+    it("invokes the controller action and attaches the active window with one guarded write", () => {
         const state = attachSetup();
-        const registered = state.harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-attach");
-        assert.notEqual(registered, undefined);
         const writes: Array<{ window: TestWindow; target: object | null }> = [];
         attachTileWriter(state.active, writes);
         const baseline = state.harness.logs.length;
-        registered?.handler();
+        invokeShortcut(state.harness, "plasma-auto-tiler-attach");
         assert.equal(state.controller.isEnabled, true);
         assert.equal(state.active.tile, state.empty);
         assert.deepEqual(state.empty.windows, [state.active]);
@@ -364,18 +360,14 @@ describe("TileController tile attach", () => {
 });
 
 describe("TileController scope fill", () => {
-    it("registers fill-scope metadata and fills through the registered callback with anchor-first guarded writes", () => {
+    it("fills through the controller action with anchor-first guarded writes", () => {
         const state = fillSetup();
-        const registered = state.harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-fill-scope");
-        assert.notEqual(registered, undefined);
-        assert.equal(registered?.text, "Fill available tiles with windows");
-        assert.equal(registered?.sequence, "Meta+Alt+Return");
         const writes: Array<{ window: TestWindow; target: object | null }> = [];
         attachTileWriter(state.active, writes);
         attachTileWriter(state.otherA, writes);
         attachTileWriter(state.otherB, writes);
         const baseline = state.harness.logs.length;
-        registered?.handler();
+        invokeShortcut(state.harness, "plasma-auto-tiler-fill-scope");
         assert.equal(state.controller.isEnabled, true);
         assert.deepEqual(writes, [
             { window: state.active, target: state.first },
@@ -778,14 +770,6 @@ describe("TileController scope fill", () => {
         ]);
         assert.equal(state.harness.logs.length, baseline + 2);
 
-        const disabled = new Harness();
-        disabled.shortcutResult = false;
-        const disabledController = new TileController(disabled.environment());
-        disabledController.start();
-        assert.equal(disabledController.isEnabled, false);
-        const disabledBaseline = disabled.logs.length;
-        invokeShortcut(disabled, "plasma-auto-tiler-fill-scope");
-        assert.equal(disabled.logs.length, disabledBaseline);
     });
 });
 

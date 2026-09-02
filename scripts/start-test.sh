@@ -87,10 +87,8 @@ PROJECT_ACTIONS_JSON=""
 # Expected source-default active sequence per project action, in the Qt
 # integer encoding KGlobalAccel exposes through the allShortcutInfos active
 # field and accepts through setShortcutKeys (modifier bits OR key code).
-# Provenance: TileController.start() registerShortcut defaults in
-# kwin/src/controller.ts, encoded with the pinned Qt 6 KeyboardModifier bits
-# (Shift 0x02000000, Control 0x04000000, Alt 0x08000000, Meta 0x10000000) and
-# verified against the live collector on 2026-08-12.
+# Provenance: controller action defaults, encoded with the pinned Qt 6
+# KeyboardModifier bits and verified against the live collector on 2026-08-12.
 declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-insert-right]="419430420"
   [plasma-auto-tiler-insert-left]="419430418"
@@ -140,8 +138,10 @@ dbus_pid_valid='((keys | sort) == ["data","type"]) and (.type == "u") and ((.dat
 desktops_valid='((keys | sort) == ["data","type"]) and (.type == "a(uss)") and ((.data | type) == "array") and (all(.data[]; ((. | type) == "array") and ((. | length) == 3) and ((.[0] | type) == "number") and ((.[0] | floor) == .[0]) and (.[0] >= 0) and ((.[1] | type) == "string") and ((.[1] | length) > 0) and ((.[2] | type) == "string") and ((.[2] | length) > 0))) and ((.data | map(.[0])) as $positions | ($positions | unique | length) == ($positions | length)) and ((.data | map(.[1])) as $ids | ($ids | unique | length) == ($ids | length))'
 # Slurp-mode predicates (jq -s) over journalctl JSON-lines output.
 journal_lines_valid='all(.[]; type == "object")'
-readiness_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | index("plasma-auto-tiler:shortcut-registered")) as $registered | ($messages | index("plasma-auto-tiler:startup-handlers-ready")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($registered != null and $ready != null and $registered < $ready and ($disabled | not))'
-readiness_evidence_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | (($messages | any(. == "plasma-auto-tiler:shortcut-registered")) and ($messages | any(. == "plasma-auto-tiler:startup-handlers-ready")))'
+readiness_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | index("plasma-auto-tiler:startup-handlers-ready")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($ready != null and ($disabled | not))'
+startup_disabled_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | indices("plasma-auto-tiler:startup-handlers-ready") | .[-1] // -1) as $ready | ($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key // -1) as $disabled | ($disabled >= 0 and ($ready < 0 or $disabled < $ready))'
+runtime_disabled_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | indices("plasma-auto-tiler:startup-handlers-ready") | .[-1] // -1) as $ready | ($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key // -1) as $disabled | ($ready >= 0 and $disabled > $ready)'
+readiness_evidence_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | any(. == "plasma-auto-tiler:startup-handlers-ready"))'
 provenance_ready_valid='any(.[]; ((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string") and .MESSAGE == $message)'
 controller_ready_valid="$provenance_ready_valid"
 disabled_seen_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] | any(startswith("plasma-auto-tiler:disabled:"))'
@@ -150,7 +150,7 @@ disabled_seen_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] |
 # extracts the ordered project messages, and locates the ordered
 # controller-startup tokens. Output is one JSON object with matching-record
 # presence, messages, and the final indexes of each startup/disabled token.
-diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string"))) | map(.MESSAGE) | map(select(startswith("plasma-auto-tiler:")))) as $messages | {kept: (map(select((._PID? // "") == $pid)) | length), messages: $messages, lastShortcut: (($messages | indices("plasma-auto-tiler:shortcut-registered")) | .[-1]?), lastReady: (($messages | indices("plasma-auto-tiler:startup-handlers-ready")) | .[-1]?), lastDisabledStart: (($messages | to_entries | map(select(.value == "plasma-auto-tiler:disabled:shortcut-registration-failed")) | .[-1]?.key)), lastDisabledAny: (($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key))}'
+diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string"))) | map(.MESSAGE) | map(select(startswith("plasma-auto-tiler:")))) as $messages | {kept: (map(select((._PID? // "") == $pid)) | length), messages: $messages, lastReady: (($messages | indices("plasma-auto-tiler:startup-handlers-ready")) | .[-1]?), lastDisabledAny: (($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key))}'
 # Classifies the ordered project messages of one epoch window (from $start)
 # into exact proof tokens: -invoked (callback delivery), -rejected:/-failed:
 # (callback reached a rejecting/failing guard), and success tokens (preset
@@ -158,12 +158,10 @@ diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type
 diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach|attach|fill)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|attach|reflow|fill)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
 
 # Current-attempt (after-cursor, same-KWin-PID) failure-report extraction
-# predicates over slurped journalctl JSON-lines. The disabled reasons and
-# shortcut-register-failed reasons are reported exactly; kwin_scripting
-# warnings/errors are reported separately from the project diagnostics.
+# predicates over slurped journalctl JSON-lines. Disabled reasons are reported
+# exactly; kwin_scripting warnings/errors are reported separately.
 start_attempt_project='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:"))]'
 start_attempt_disabled='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:disabled:"))]'
-start_attempt_register_failed='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:shortcut-register-failed:"))]'
 start_attempt_kwin_scripting='[.[] | select((._PID? // "") == $pid) | select((((.QT_CATEGORY? // "") == "kwin_scripting") or ((.SYSLOG_IDENTIFIER? // "") == "kwin_scripting"))) | select((.MESSAGE? | type) == "string") | .MESSAGE]'
 
 # Bounded deterministic readiness wait: fixed attempt count and fixed delay.
@@ -582,19 +580,16 @@ cleanup_after_load() {
 }
 
 # Reports the retained attempt-owned after-cursor same-KWin-PID evidence for a
-# failed start: the raw project messages, the exact disabled:* and
-# shortcut-register-failed:* reasons, and separate kwin_scripting
-# warnings/errors. Reads from the attempt-owned evidence file, scopes strictly
-# to the current attempt (never the historical pre-cursor epoch), and prints no
-# window caption or payload.
+# failed start: the raw project messages, exact disabled:* reasons, and
+# separate kwin_scripting warnings/errors. Reads from the attempt-owned
+# evidence file, scopes strictly to the current attempt (never the historical
+# pre-cursor epoch), and prints no window caption or payload.
 report_start_failure() {
   local pid="$1"
   echo "controller diagnostics (current attempt, after-cursor, same-KWin-PID):" >&2
   jq -s -r --arg pid "$pid" "$start_attempt_project | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
   echo "disabled reasons (current attempt):" >&2
   jq -s -r --arg pid "$pid" "$start_attempt_disabled | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
-  echo "shortcut-register-failed reasons (current attempt):" >&2
-  jq -s -r --arg pid "$pid" "$start_attempt_register_failed | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
   echo "kwin_scripting warnings/errors (current attempt):" >&2
   jq -s -r --arg pid "$pid" "$start_attempt_kwin_scripting | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
 }
@@ -1144,10 +1139,13 @@ cmd_start() {
       echo "note: stopping/unloading does not roll back Custom Tile changes the script already made."
       return 0
     fi
+    if jq -s -e "$runtime_disabled_valid" <<<"$journal_out" >/dev/null 2>&1; then
+      fail_start_readiness "controller disabled after startup readiness"
+    fi
     if jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null 2>&1; then
       fail_start_readiness "controller nonce/build diagnostic was not confirmed for the current KWin PID"
     fi
-    if jq -s -e "$disabled_seen_valid" <<<"$journal_out" >/dev/null 2>&1; then
+    if jq -s -e "$startup_disabled_valid" <<<"$journal_out" >/dev/null 2>&1; then
       fail_start_readiness "controller disabled itself during startup"
     fi
     sleep "$READINESS_DELAY" || cleanup_after_load "could not wait for KWin readiness diagnostics"
@@ -1273,23 +1271,17 @@ cmd_diagnostics() {
     exit 1
   }
 
-  local kept count last_shortcut last_ready last_disabled_start last_disabled_any
+  local kept count last_ready last_disabled_any
   kept="$(jq -r '.kept' <<<"$summary")"
   count="$(jq -r '.messages | length' <<<"$summary")"
-  last_shortcut="$(jq -r '.lastShortcut // -1' <<<"$summary")"
   last_ready="$(jq -r '.lastReady // -1' <<<"$summary")"
-  last_disabled_start="$(jq -r '.lastDisabledStart // -1' <<<"$summary")"
   last_disabled_any="$(jq -r '.lastDisabledAny // -1' <<<"$summary")"
 
-  # The latest startup token is the later of the last successful-start token
-  # (shortcut-registered) and the last disabled-start token
-  # (disabled:shortcut-registration-failed); the epoch window begins there.
-  local latest_start latest_start_msg start_index
-  latest_start="$last_shortcut"
-  latest_start_msg="shortcut-registered"
-  if [[ "$last_disabled_start" -gt "$latest_start" ]]; then
-    latest_start="$last_disabled_start"
-    latest_start_msg="disabled:shortcut-registration-failed"
+  # The epoch window begins at the latest readiness or disabled diagnostic.
+  local latest_start start_index
+  latest_start="$last_ready"
+  if [[ "$last_disabled_any" -gt "$latest_start" ]]; then
+    latest_start="$last_disabled_any"
   fi
   start_index=-1
 
@@ -1313,23 +1305,23 @@ cmd_diagnostics() {
     else
       epoch_label="unknown (no controller-startup epoch observed)"
     fi
-  elif [[ "$latest_start_msg" == "disabled:shortcut-registration-failed" ]]; then
-    epoch_label="disabled (latest startup disabled)"
-    readiness_label="not-reached"
-    disabled_label="yes"
-    start_index="$latest_start"
-  elif [[ "$last_ready" -gt "$latest_start" ]]; then
+  elif [[ "$last_ready" -ge 0 ]]; then
     if [[ "$loaded" == "not-loaded" ]]; then
       epoch_label="historical (plugin unloaded)"
     else
       epoch_label="current (plugin loaded)"
     fi
     readiness_label="reached"
-    if [[ "$last_disabled_any" -gt "$latest_start" ]]; then
+    if [[ "$last_disabled_any" -gt "$last_ready" ]]; then
       disabled_label="yes"
     else
       disabled_label="no"
     fi
+    start_index="$last_ready"
+  elif [[ "$last_disabled_any" -ge 0 ]]; then
+    epoch_label="disabled (latest startup disabled)"
+    readiness_label="not-reached"
+    disabled_label="yes"
     start_index="$latest_start"
   else
     epoch_label="incomplete (startup-handlers-ready not observed)"

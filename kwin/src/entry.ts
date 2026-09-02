@@ -345,7 +345,6 @@ const controller = new TileController({
             timer.stop();
         };
     },
-    registerShortcut,
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message),
 }, (enabled) => trayPublisher?.notifyEnabledChanged(enabled));

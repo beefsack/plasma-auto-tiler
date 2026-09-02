@@ -1,10 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { TileController } from "../src/controller";
-import {
-    DESKTOP,
-    Harness,
-} from "./controller-fixtures";
+import { DESKTOP } from "./controller-fixtures";
 import {
     countEvent,
     invokeShortcut,
@@ -34,23 +30,6 @@ describe("TileController dynamic virtual desktops navigation and cross-workspace
         assert.equal(harness.currentDesktopWrites.length, writes);
         assert.equal(harness.createDesktopCalls.length, 0);
         assert.equal(countEvent(harness.logs, "workspace-navigate-absent:9"), 1);
-    });
-
-    it("Meta+0 registers as the stable workspace-0 shortcut in every profile", () => {
-        // Spec C/H.4/H.15: the Meta+0 row registers as
-        // `plasma-auto-tiler-workspace-0` in every profile and drives the
-        // append/focus controller handler; Meta+Shift+0 stays separately
-        // registered as move-append.
-        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
-            const harness = new Harness();
-            harness.configValues.set("shortcutProfile", key);
-            new TileController(harness.environment()).start();
-            const names = harness.shortcuts.map((entry) => entry.name);
-            assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true, key);
-            assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
-            const meta0 = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-workspace-0");
-            assert.equal(meta0?.sequence, "Meta+0", key);
-        }
     });
 
     it("Meta+Shift+0 reuses the existing trailing empty rather than creating a new one, and cleanup replenishes it once it is occupied", () => {

@@ -78,18 +78,6 @@ describe("TileController shared workspaces (Unit 07)", () => {
         return [(e as { id: string }).id, (l as { id: string }).id];
     }
 
-    it("Meta+0 registers as the stable workspace-0 shortcut and Meta+Shift+0 remains registered (shared)", () => {
-        const { harness } = sharedSetup();
-        assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
-            true,
-        );
-        assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
-            true,
-        );
-    });
-
     it("holds one global ordered shared desktop-id set with one owned trailing empty, duplicate-free on repeat", () => {
         // Spec D3/F: the shared set is the ordered live global list plus the one
         // owned trailing empty created by startup reconciliation. A repeated

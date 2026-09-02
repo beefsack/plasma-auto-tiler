@@ -1410,8 +1410,6 @@
     "deferred",
     "component-requirement"
   ]);
-  var DEFAULT_PROFILE = "cosmic";
-  var SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
   var PROFILE_KEYS = Object.freeze(["cosmic", "hyprland", "bspwm"]);
   var DEFAULT_WORKSPACE_MODE = "per-output-local";
   var WORKSPACE_MODE_CONFIG_KEY = "workspaceMode";
@@ -1718,58 +1716,6 @@
   var REGISTERED_PROFILE_ACTION_IDS = Object.freeze(
     new Set(registeredProfileActionIdList())
   );
-  function selectProfile(value) {
-    if (typeof value === "string" && PROFILE_KEYS.includes(value)) {
-      return { profile: PROFILE_CATALOGS[value], diagnostics: Object.freeze([]) };
-    }
-    if (value === void 0 || value === null || value === "") {
-      return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze([]) };
-    }
-    return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze(["profile-invalid:fallback-cosmic"]) };
-  }
-  function validateProfile(catalog) {
-    const duplicateSequences = [];
-    const sequenceOwners = /* @__PURE__ */ new Map();
-    for (const row of catalog.rows) {
-      if (row.classification === "deferred" || row.classification === "component-requirement") {
-        continue;
-      }
-      const owner = sequenceOwners.get(row.sequence);
-      if (owner !== void 0) {
-        duplicateSequences.push({ sequence: row.sequence, actionIds: [owner, row.actionId] });
-      } else {
-        sequenceOwners.set(row.sequence, row.actionId);
-      }
-    }
-    const shortcutIdConflicts = [];
-    const idOwners = /* @__PURE__ */ new Map();
-    for (const row of catalog.rows) {
-      const owner = idOwners.get(row.shortcutId);
-      if (owner !== void 0) {
-        shortcutIdConflicts.push({ shortcutId: row.shortcutId, actionIds: [owner, row.actionId] });
-      } else {
-        idOwners.set(row.shortcutId, row.actionId);
-      }
-    }
-    return {
-      ok: duplicateSequences.length === 0 && shortcutIdConflicts.length === 0,
-      duplicateSequences: Object.freeze(duplicateSequences),
-      shortcutIdConflicts: Object.freeze(shortcutIdConflicts)
-    };
-  }
-  function catalogValidationDiagnostics(catalog) {
-    const validation = validateProfile(catalog);
-    const diagnostics = [];
-    for (const conflict of validation.duplicateSequences) {
-      diagnostics.push(
-        `shortcut-catalog-collision:${conflict.sequence}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`
-      );
-    }
-    for (const conflict of validation.shortcutIdConflicts) {
-      diagnostics.push(`shortcut-id-conflict:${conflict.shortcutId}:${conflict.actionIds[0]}:${conflict.actionIds[1]}`);
-    }
-    return Object.freeze(diagnostics);
-  }
 
   // src/topology-reset.ts
   function validSnapshot(snapshot, root) {
@@ -4836,6 +4782,7 @@
       this.markStructuralMutation = () => {
         this.structuralMutationPending = true;
       };
+      var _a, _b;
       this.structuralMutation = {
         report: this.markStructuralMutation,
         flush: () => this.flushStructuralMutation()
@@ -4989,8 +4936,8 @@
           setManaged: (scope) => this.setManaged(scope),
           markInert: (scope, reason) => this.markInert(scope, reason),
           pendingForScope: (scope) => {
-            var _a;
-            return (_a = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a.get(scope.desktop.id);
+            var _a2;
+            return (_a2 = this.pendingRebuilds.get(scope.output)) == null ? void 0 : _a2.get(scope.desktop.id);
           },
           setPendingRebuild: (scope, pending) => {
             let byDesktop = this.pendingRebuilds.get(scope.output);
@@ -5103,6 +5050,7 @@
       });
       void this.showDropOutline;
       void this.hideDropOutline;
+      (_b = (_a = this.environment).onControllerCreated) == null ? void 0 : _b.call(_a, this);
     }
     get isEnabled() {
       return this.gate.isEnabled;
@@ -5300,146 +5248,6 @@
         this.cleanupDesktops();
         this.adoptStartupFloatingWindows();
         this.interactiveDrag.attachExisting(true);
-        const insertionRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-insert-right",
-          "Insert next window right of focused leaf",
-          "Meta+Alt+Right",
-          () => this.armKeyboardInsertion("right")
-        );
-        const insertionLeftRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-insert-left",
-          "Insert next window left of focused leaf",
-          "Meta+Alt+Left",
-          () => this.armKeyboardInsertion("left")
-        );
-        const insertionUpRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-insert-up",
-          "Insert next window up of focused leaf",
-          "Meta+Alt+Up",
-          () => this.armKeyboardInsertion("up")
-        );
-        const insertionDownRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-insert-down",
-          "Insert next window down of focused leaf",
-          "Meta+Alt+Down",
-          () => this.armKeyboardInsertion("down")
-        );
-        const profileActions = {
-          "focus-left": () => this.focusOrResize("left"),
-          "focus-down": () => this.focusOrResize("down"),
-          "focus-up": () => this.focusOrResize("up"),
-          "focus-right": () => this.focusOrResize("right"),
-          "focus-left-arrow": () => this.focusOrResize("left"),
-          "focus-down-arrow": () => this.focusOrResize("down"),
-          "focus-up-arrow": () => this.focusOrResize("up"),
-          "focus-right-arrow": () => this.focusOrResize("right"),
-          "move-left": () => this.moveActiveWindow("left"),
-          "move-down": () => this.moveActiveWindow("down"),
-          "move-up": () => this.moveActiveWindow("up"),
-          "move-right": () => this.moveActiveWindow("right"),
-          "move-left-arrow": () => this.moveActiveWindow("left"),
-          "move-down-arrow": () => this.moveActiveWindow("down"),
-          "move-up-arrow": () => this.moveActiveWindow("up"),
-          "move-right-arrow": () => this.moveActiveWindow("right"),
-          "float-toggle": () => this.floatActiveWindow(),
-          "maximize": () => this.maximizeActiveWindow(),
-          "resize-mode-outwards": () => this.enterOrExitResizeMode("outwards"),
-          "resize-mode-inwards": () => this.enterOrExitResizeMode("inwards"),
-          "resize-expand-left": () => this.resizeActiveWindow("left", "outwards"),
-          "resize-expand-down": () => this.resizeActiveWindow("down", "outwards"),
-          "resize-expand-up": () => this.resizeActiveWindow("up", "outwards"),
-          "resize-expand-right": () => this.resizeActiveWindow("right", "outwards"),
-          "resize-contract-left": () => this.resizeActiveWindow("left", "inwards"),
-          "resize-contract-down": () => this.resizeActiveWindow("down", "inwards"),
-          "resize-contract-up": () => this.resizeActiveWindow("up", "inwards"),
-          "resize-contract-right": () => this.resizeActiveWindow("right", "inwards")
-        };
-        for (let index = 1; index <= 9; index += 1) {
-          profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
-          profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
-          profileActions[`move-workspace-${index}-symbol`] = () => this.moveActiveToWorkspace(index);
-        }
-        profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
-        profileActions["move-workspace-0-symbol"] = () => this.moveActiveToWorkspace(0);
-        profileActions["workspace-0"] = () => this.workspaceZero();
-        const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
-        for (const diagnostic of selected.diagnostics) {
-          this.diagnostic(diagnostic);
-        }
-        for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
-          this.diagnostic(diagnostic);
-        }
-        const registrationResults = [];
-        for (const row of selected.profile.rows) {
-          if (row.classification === "deferred" || row.classification === "component-requirement") {
-            continue;
-          }
-          if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
-            continue;
-          }
-          const callback = profileActions[row.actionId];
-          if (callback === void 0) {
-            continue;
-          }
-          const registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback);
-          registrationResults.push(registered);
-          if (!registered) {
-            this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
-          }
-        }
-        const detachRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-detach",
-          "Detach window from tile",
-          "Meta+Shift+Space",
-          () => this.detachActiveWindow()
-        );
-        const attachRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-attach",
-          "Attach window to available tile",
-          "Meta+Alt+Shift+Space",
-          () => this.attachActiveWindow()
-        );
-        const stickyRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-sticky-toggle",
-          "Toggle sticky floating on all desktops",
-          "Meta+Shift+G",
-          () => this.stickyActiveWindow()
-        );
-        const fillScopeRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-fill-scope",
-          "Fill available tiles with windows",
-          "Meta+Alt+Return",
-          () => this.fillScope()
-        );
-        const columnsRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-apply-columns",
-          "Apply columns in focused leaf",
-          "Meta+Alt+1",
-          () => this.applyPreset("columns")
-        );
-        const rowsRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-apply-rows",
-          "Apply rows in focused leaf",
-          "Meta+Alt+2",
-          () => this.applyPreset("rows")
-        );
-        const gridRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-apply-balanced-grid",
-          "Apply balanced grid in focused leaf",
-          "Meta+Alt+3",
-          () => this.applyPreset("balanced-grid")
-        );
-        const dwindleRegistered = this.environment.registerShortcut(
-          "plasma-auto-tiler-apply-dwindle",
-          "Apply dwindle in focused leaf",
-          "Meta+Alt+4",
-          () => this.applyPreset("dwindle")
-        );
-        if (!insertionRegistered || !insertionLeftRegistered || !insertionUpRegistered || !insertionDownRegistered || !registrationResults.every((registered) => registered) || !detachRegistered || !attachRegistered || !stickyRegistered || !fillScopeRegistered || !columnsRegistered || !rowsRegistered || !gridRegistered || !dwindleRegistered) {
-          this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
-          return;
-        }
-        this.diagnostic("shortcut-registered");
         this.diagnostic("startup-handlers-ready");
         this.engageCurrentScope();
       }, (reason) => this.disabled(reason));
@@ -9283,7 +9091,6 @@
         timer.stop();
       };
     },
-    registerShortcut,
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
     log: (message) => console.log(message)
   }, (enabled) => trayPublisher == null ? void 0 : trayPublisher.notifyEnabledChanged(enabled));

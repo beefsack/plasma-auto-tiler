@@ -230,11 +230,6 @@ describe("TileController per-output-local workspaces (Unit 05)", () => {
         const [eIds, lIds] = twoLocalLists(controller);
         assert.deepEqual([...eIds], ["desktop-1", "desktop-2", "desktop-3"]);
         assert.deepEqual([...lIds], ["desktop-4"]);
-        assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
-        assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
-            true,
-        );
     });
 
     it("refuses sticky, fullscreen, and maximized per-output moves before any mutation", () => {

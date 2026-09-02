@@ -793,12 +793,10 @@ describe("TileController occupied-target move swap", () => {
 });
 
 describe("TileController tile detach", () => {
-    it("invokes the registered callback and detaches the active window with one guarded write", () => {
+    it("invokes the controller action and detaches the active window with one guarded write", () => {
         const { harness, controller, target, focused } = setup();
-        const registered = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-detach");
-        assert.notEqual(registered, undefined);
         const baseline = harness.logs.length;
-        registered?.handler();
+        invokeShortcut(harness, "plasma-auto-tiler-detach");
         assert.equal(controller.isEnabled, true);
         assert.equal(focused.tile, null);
         assert.deepEqual(target.windows, [focused]);

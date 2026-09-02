@@ -6,7 +6,6 @@ import { Harness, window } from "./controller-fixtures";
 import { countEvent, setup } from "./controller-fixture-scenarios";
 import {
     PROFILE_CATALOGS,
-    REGISTERED_PROFILE_ACTION_IDS,
     ShortcutOverrides,
     TileController,
     catalogValidationDiagnostics,
@@ -293,7 +292,7 @@ describe("TileController binding profile catalog", () => {
         assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "no-such-action"), null);
     });
 
-    it("never registers or resolves unimplemented component-requirement rows, in any profile", () => {
+    it("never resolves unimplemented component-requirement rows, in any profile", () => {
         // Truthfulness regression: fullscreen, previous/next-workspace, and
         // group rows used to be catalogued as exact/canonical-example (implying
         // implemented and additive) while registration silently skipped them.
@@ -302,158 +301,21 @@ describe("TileController binding profile catalog", () => {
         for (const profile of Object.values(PROFILE_CATALOGS)) {
             const rows = profile.rows.filter((row) => row.classification === "component-requirement");
             assert.ok(rows.length > 0 || profile.key === "hyprland", profile.key);
-            const harness = new Harness();
-            harness.configValues.set("shortcutProfile", profile.key);
-            new TileController(harness.environment()).start();
             for (const row of rows) {
-                assert.equal(
-                    harness.shortcuts.some((entry) => entry.name === row.shortcutId),
-                    false,
-                    `${profile.key}:${row.shortcutId} must never register`,
-                );
-                assert.equal(
-                    harness.shortcuts.some((entry) => entry.sequence === row.sequence && entry.name !== row.shortcutId),
-                    false,
-                    `${profile.key}:${row.actionId} sequence must not be claimed by another row`,
-                );
                 // The model layer cannot resolve the action to any live
                 // sequence either: no baseline, no profile default.
                 assert.equal(resolveSequence(profile, row.actionId), null, `${profile.key}:${row.actionId}`);
             }
         }
-        // The registered-set derivation excludes every component-requirement
-        // row, so no registration diagnostic or catalog claim can name them.
-        for (const row of PROFILE_CATALOGS.cosmic.rows) {
-            if (row.classification === "component-requirement") {
-                assert.equal(REGISTERED_PROFILE_ACTION_IDS.has(row.actionId), false, row.actionId);
-            }
-        }
     });
 
-    it("registers the selected profile's catalog rows, including Meta+0 under its stable ID", () => {
-        const cosmic = new Harness();
-        new TileController(cosmic.environment()).start();
-        const cosmicSequences = new Map(cosmic.shortcuts.map((entry) => [entry.name, entry.sequence]));
-        assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-left"), "Meta+H");
-        assert.equal(cosmicSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
-        assert.equal(cosmicSequences.get("plasma-auto-tiler-move-left"), "Meta+Shift+H");
-        assert.equal(cosmicSequences.get("plasma-auto-tiler-workspace-0"), "Meta+0");
-        assert.equal(cosmicSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
-        assert.equal(countEvent(cosmic.logs, "profile-invalid:fallback-cosmic"), 0);
-
-        const hyprland = new Harness();
-        hyprland.configValues.set("shortcutProfile", "hyprland");
-        new TileController(hyprland.environment()).start();
-        const hyprlandSequences = new Map(hyprland.shortcuts.map((entry) => [entry.name, entry.sequence]));
-        assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right-arrow"), "Meta+Right");
-        assert.equal(hyprlandSequences.get("plasma-auto-tiler-focus-right"), "Meta+L");
-        assert.equal(hyprlandSequences.get("plasma-auto-tiler-float-toggle"), "Meta+V");
-        assert.equal(hyprlandSequences.get("plasma-auto-tiler-workspace-0"), "Meta+0");
-        assert.equal(hyprlandSequences.get("plasma-auto-tiler-move-workspace-append"), "Meta+Shift+0");
-
-        const invalid = new Harness();
-        invalid.configValues.set("shortcutProfile", "bogus");
-        new TileController(invalid.environment()).start();
-        const invalidSequences = new Map(invalid.shortcuts.map((entry) => [entry.name, entry.sequence]));
-        assert.equal(invalidSequences.get("plasma-auto-tiler-focus-left"), "Meta+H");
-        assert.equal(countEvent(invalid.logs, "profile-invalid:fallback-cosmic"), 1);
-    });
-
-    it("registers every alias under a distinct shortcut ID and Meta+0 under the stable ID in every profile", () => {
-        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
-            const harness = new Harness();
-            harness.configValues.set("shortcutProfile", key);
-            new TileController(harness.environment()).start();
-            const names = harness.shortcuts.map((entry) => entry.name);
-            assert.equal(new Set(names).size, names.length, key);
-            assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true, key);
-            assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true, key);
-        }
-    });
-
-    it("never registers profile actions without a controller implementation as false equivalents", () => {
-        const componentRequirements = [
-            "plasma-auto-tiler-fullscreen",
-            "plasma-auto-tiler-group-toggle",
-            "plasma-auto-tiler-previous-workspace-up",
-            "plasma-auto-tiler-previous-workspace-left",
-            "plasma-auto-tiler-previous-workspace-h",
-            "plasma-auto-tiler-previous-workspace-k",
-            "plasma-auto-tiler-next-workspace-down",
-            "plasma-auto-tiler-next-workspace-right",
-            "plasma-auto-tiler-next-workspace-j",
-            "plasma-auto-tiler-next-workspace-l",
-            "plasma-auto-tiler-previous-workspace",
-            "plasma-auto-tiler-next-workspace",
-        ];
-        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
-            const harness = new Harness();
-            harness.configValues.set("shortcutProfile", key);
-            new TileController(harness.environment()).start();
-            const names = harness.shortcuts.map((entry) => entry.name);
-            for (const shortcutId of componentRequirements) {
-                assert.equal(names.includes(shortcutId), false, `${key}:${shortcutId}`);
-            }
-        }
-    });
-
-    it("documents the script-local registration boundary without claiming Plasma-global takeover", () => {
-        // Spec H.16: script-local registration is evidence of attempted
-        // registration only; no v1 behavior displaces or reassigns a Plasma
-        // global shortcut. The controller emits no migration diagnostic and the
-        // aggregate gate only reflects registerShortcut results.
+    it("keeps startup free of shortcut registration and Plasma-global takeover", () => {
         const { harness } = setup();
         for (const entry of harness.logs) {
             assert.equal(entry.includes("displaced"), false);
             assert.equal(entry.includes("migrated"), false);
             assert.equal(entry.includes("kglobalshortcutsrc"), false);
         }
-        assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
-    });
-
-    it("registers identical stable shortcut IDs across reload/restart, keeping user overrides model-pure", () => {
-        // Plan Unit 03 acceptance 1: every catalog row re-registers under the
-        // same stable shortcut ID on reload/restart, so KGlobalAccel keeps the
-        // same row and a user-customized sequence is never silently
-        // overwritten. The override stays a pure model seam: reload does not
-        // read or mutate KGlobalAccel and never inspects a live session.
-        const first = new Harness();
-        new TileController(first.environment()).start();
-        const firstNames = first.shortcuts.map((entry) => entry.name);
-        const restart = new Harness();
-        new TileController(restart.environment()).start();
-        assert.deepEqual(restart.shortcuts.map((entry) => entry.name), firstNames);
-        assert.ok(firstNames.includes("plasma-auto-tiler-focus-left"));
-        assert.ok(firstNames.includes("plasma-auto-tiler-workspace-0"));
-        assert.ok(firstNames.includes("plasma-auto-tiler-move-workspace-append"));
-        // A user override set before a profile switch still wins, and the
-        // catalog-owned default is never mutated.
-        const overrides = new ShortcutOverrides();
-        overrides.set("focus-right", "Meta+Alt+L");
-        assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "focus-right", overrides), "Meta+Alt+L");
-        assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "focus-right", overrides), "Meta+Alt+L");
-        assert.equal(
-            PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "focus-right")?.sequence,
-            "Meta+L",
-        );
-        assert.equal(
-            PROFILE_CATALOGS.hyprland.rows.find((row) => row.actionId === "focus-right")?.sequence,
-            "Meta+L",
-        );
-    });
-
-    it("emits per-registration inability diagnostics naming the failing shortcut ID", () => {
-        const harness = new Harness();
-        for (let index = 0; index < 4; index += 1) {
-            harness.shortcutResults.push(true);
-        }
-        harness.shortcutResults.push(false);
-        const controller = new TileController(harness.environment());
-        controller.start();
-        assert.equal(controller.isEnabled, false);
-        assert.equal(countEvent(harness.logs, "shortcut-register-failed:plasma-auto-tiler-focus-left"), 1);
-        assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
-        assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
     });
 
     it("reports catalog collision and ID-conflict diagnostics naming both conflicting action IDs", () => {
@@ -504,22 +366,6 @@ describe("TileController binding profile catalog", () => {
         }
     });
 
-    it("registers Meta+0 under the stable ID in every profile and never registers a legacy append ID", () => {
-        for (const key of ["cosmic", "hyprland", "bspwm"] as const) {
-            const harness = new Harness();
-            harness.configValues.set("shortcutProfile", key);
-            new TileController(harness.environment()).start();
-            const meta0 = harness.shortcuts.find((entry) => entry.name === "plasma-auto-tiler-workspace-0");
-            assert.ok(meta0, `${key}: stable Meta+0 ID must register`);
-            assert.equal(meta0?.sequence, "Meta+0", key);
-            assert.equal(
-                harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-append"),
-                false,
-                key,
-            );
-        }
-    });
-
     it("preserves a user override under the stable Meta+0 ID across profile switches", () => {
         // A user-customized value for `workspace-0` survives a reload and a
         // profile switch and takes precedence over the catalog-owned default,
@@ -534,29 +380,6 @@ describe("TileController binding profile catalog", () => {
         assert.equal(resolveSequence(PROFILE_CATALOGS.cosmic, "workspace-0"), "Meta+0");
         assert.equal(resolveSequence(PROFILE_CATALOGS.hyprland, "workspace-0"), "Meta+0");
         assert.equal(PROFILE_CATALOGS.cosmic.rows.find((row) => row.actionId === "workspace-0")?.sequence, "Meta+0");
-    });
-
-    it("derives the registered action ID set in exact order and content", () => {
-        // Pins the ES2017-safe explicit-loop derivation of the registered set
-        // (Array.prototype.flatMap is ES2019 and this KWin QJSEngine rejects it).
-        // Content and insertion order must match the previous flatMap build.
-        const expected: string[] = [];
-        for (const family of ["focus", "move"]) {
-            for (const direction of ["left", "down", "up", "right"]) {
-                expected.push(`${family}-${direction}`, `${family}-${direction}-arrow`);
-            }
-        }
-        expected.push("float-toggle", "maximize", "resize-mode-outwards", "resize-mode-inwards");
-        for (const kind of ["expand", "contract"]) {
-            for (const direction of ["left", "down", "up", "right"]) {
-                expected.push(`resize-${kind}-${direction}`);
-            }
-        }
-        expected.push("move-workspace-0", "move-workspace-0-symbol", "workspace-0");
-        for (let index = 1; index <= 9; index += 1) {
-            expected.push(`workspace-${index}`, `move-workspace-${index}`, `move-workspace-${index}-symbol`);
-        }
-        assert.deepEqual([...REGISTERED_PROFILE_ACTION_IDS], expected);
     });
 
     it("declares every catalog reference source tag in the comparison document", () => {
@@ -596,77 +419,15 @@ describe("TileController binding profile catalog", () => {
     });
 });
 
-describe("TileController shortcut registration", () => {
-    it("captures the result and emits one fixed success diagnostic before readiness", () => {
+describe("TileController startup", () => {
+    it("emits readiness without shortcut registration", () => {
         const { harness } = setup();
-        assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
-        assert.ok(
-            harness.logs.indexOf("plasma-auto-tiler:shortcut-registered") <
-                harness.logs.indexOf("plasma-auto-tiler:startup-handlers-ready"),
-        );
-        for (const entry of harness.logs) {
-            assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
-            assert.equal(entry.includes("screen-1"), false);
-            assert.equal(entry.includes("desktop-1"), false);
-        }
-    });
-
-    it("disables once with a fixed reason and no readiness when registration fails", () => {
-        const harness = new Harness();
-        harness.shortcutResult = false;
-        const controller = new TileController(harness.environment());
-        controller.start();
-        controller.start();
-        assert.equal(controller.isEnabled, false);
         assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
-        assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
-        assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
+        assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 1);
         for (const entry of harness.logs) {
             assert.equal(entry.startsWith("plasma-auto-tiler:"), true);
             assert.equal(entry.includes("screen-1"), false);
             assert.equal(entry.includes("desktop-1"), false);
-        }
-    });
-
-    it("registers exactly the catalog-driven all-or-nothing action set, including Meta+0", () => {
-        const { harness } = setup();
-        const expected = new Set<string>([
-            ...PROFILE_CATALOGS.cosmic.rows
-                .filter((row) => row.classification !== "deferred" && REGISTERED_PROFILE_ACTION_IDS.has(row.actionId))
-                .map((row) => row.shortcutId),
-            "plasma-auto-tiler-insert-right",
-            "plasma-auto-tiler-insert-left",
-            "plasma-auto-tiler-insert-up",
-            "plasma-auto-tiler-insert-down",
-            "plasma-auto-tiler-detach",
-            "plasma-auto-tiler-attach",
-            "plasma-auto-tiler-sticky-toggle",
-            "plasma-auto-tiler-fill-scope",
-            "plasma-auto-tiler-apply-columns",
-            "plasma-auto-tiler-apply-rows",
-            "plasma-auto-tiler-apply-balanced-grid",
-            "plasma-auto-tiler-apply-dwindle",
-        ]);
-        const names = harness.shortcuts.map((entry) => entry.name).sort();
-        assert.deepEqual(names, [...expected].sort());
-        assert.equal(names.includes("plasma-auto-tiler-workspace-0"), true);
-        assert.equal(names.includes("plasma-auto-tiler-move-workspace-append"), true);
-    });
-
-    it("disables atomically when any single new directional insertion registration fails", () => {
-        // 1-based registration positions of the three added insert actions.
-        for (const failIndex of [2, 3, 4]) {
-            const harness = new Harness();
-            for (let index = 1; index < failIndex; index += 1) {
-                harness.shortcutResults.push(true);
-            }
-            harness.shortcutResults.push(false);
-            const controller = new TileController(harness.environment());
-            controller.start();
-            assert.equal(controller.isEnabled, false);
-            assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
-            assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 0);
-            assert.equal(countEvent(harness.logs, "disabled:shortcut-registration-failed"), 1);
         }
     });
 
@@ -678,13 +439,12 @@ describe("TileController shortcut registration", () => {
         assert.equal(controller.isEnabled, true);
     });
 
-    it("disables inertly when the diagnostic sink throws on failure", () => {
+    it("keeps the controller enabled when the diagnostic sink throws", () => {
         const harness = new Harness();
         harness.throwOnLog = true;
-        harness.shortcutResult = false;
         const controller = new TileController(harness.environment());
         controller.start();
-        assert.equal(controller.isEnabled, false);
+        assert.equal(controller.isEnabled, true);
     });
 });
 

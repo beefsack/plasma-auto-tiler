@@ -90,20 +90,15 @@ import {
     DEFAULT_AUTOMATIC_SPLIT_TARGET,
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     DEFAULT_DROP_OUTLINE_PREVIEW,
-    DEFAULT_PROFILE,
     DEFAULT_TILING_ALGORITHM,
     DEFAULT_WORKSPACE_MODE,
     DROP_OUTLINE_PREVIEW_CONFIG_KEY,
-    REGISTERED_PROFILE_ACTION_IDS,
-    SHORTCUT_PROFILE_CONFIG_KEY,
     TILING_ALGORITHM_CONFIG_KEY,
     WORKSPACE_MODE_CONFIG_KEY,
-    catalogValidationDiagnostics,
     parseAutomaticSplitTarget,
     parseDropOutlinePreview,
     parseTilingAlgorithm,
     parseWorkspaceMode,
-    selectProfile,
 } from "./controller-config";
 import {
     selectAutomaticSplitTarget,
@@ -255,9 +250,9 @@ export interface ControllerEnvironment {
     // synchronously, and holds no timer and relies on no signal.
     readonly yieldOnce: (callback: () => void) => boolean;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
-    readonly registerShortcut: (name: string, text: string, sequence: string, handler: () => void) => boolean;
     readonly readConfig: (key: string, defaultValue: unknown) => unknown;
     readonly log: (message: string) => void;
+    readonly onControllerCreated?: (controller: TileController) => void;
 }
 
 // These are private composition seams for the later source split. They expose
@@ -840,6 +835,7 @@ export class TileController {
         });
         void this.showDropOutline;
         void this.hideDropOutline;
+        this.environment.onControllerCreated?.(this);
     }
 
     get isEnabled(): boolean {
@@ -1077,188 +1073,6 @@ export class TileController {
             this.cleanupDesktops();
             this.adoptStartupFloatingWindows();
             this.interactiveDrag.attachExisting(true);
-            const insertionRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-insert-right",
-                "Insert next window right of focused leaf",
-                "Meta+Alt+Right",
-                () => this.armKeyboardInsertion("right"),
-            );
-            const insertionLeftRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-insert-left",
-                "Insert next window left of focused leaf",
-                "Meta+Alt+Left",
-                () => this.armKeyboardInsertion("left"),
-            );
-            const insertionUpRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-insert-up",
-                "Insert next window up of focused leaf",
-                "Meta+Alt+Up",
-                () => this.armKeyboardInsertion("up"),
-            );
-            const insertionDownRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-insert-down",
-                "Insert next window down of focused leaf",
-                "Meta+Alt+Down",
-                () => this.armKeyboardInsertion("down"),
-            );
-            const profileActions: Record<string, () => void> = {
-                "focus-left": () => this.focusOrResize("left"),
-                "focus-down": () => this.focusOrResize("down"),
-                "focus-up": () => this.focusOrResize("up"),
-                "focus-right": () => this.focusOrResize("right"),
-                "focus-left-arrow": () => this.focusOrResize("left"),
-                "focus-down-arrow": () => this.focusOrResize("down"),
-                "focus-up-arrow": () => this.focusOrResize("up"),
-                "focus-right-arrow": () => this.focusOrResize("right"),
-                "move-left": () => this.moveActiveWindow("left"),
-                "move-down": () => this.moveActiveWindow("down"),
-                "move-up": () => this.moveActiveWindow("up"),
-                "move-right": () => this.moveActiveWindow("right"),
-                "move-left-arrow": () => this.moveActiveWindow("left"),
-                "move-down-arrow": () => this.moveActiveWindow("down"),
-                "move-up-arrow": () => this.moveActiveWindow("up"),
-                "move-right-arrow": () => this.moveActiveWindow("right"),
-                "float-toggle": () => this.floatActiveWindow(),
-                "maximize": () => this.maximizeActiveWindow(),
-                "resize-mode-outwards": () => this.enterOrExitResizeMode("outwards"),
-                "resize-mode-inwards": () => this.enterOrExitResizeMode("inwards"),
-                "resize-expand-left": () => this.resizeActiveWindow("left", "outwards"),
-                "resize-expand-down": () => this.resizeActiveWindow("down", "outwards"),
-                "resize-expand-up": () => this.resizeActiveWindow("up", "outwards"),
-                "resize-expand-right": () => this.resizeActiveWindow("right", "outwards"),
-                "resize-contract-left": () => this.resizeActiveWindow("left", "inwards"),
-                "resize-contract-down": () => this.resizeActiveWindow("down", "inwards"),
-                "resize-contract-up": () => this.resizeActiveWindow("up", "inwards"),
-                "resize-contract-right": () => this.resizeActiveWindow("right", "inwards"),
-            };
-            for (let index = 1; index <= 9; index += 1) {
-                profileActions[`workspace-${index}`] = () => this.navigateWorkspace(index);
-                profileActions[`move-workspace-${index}`] = () => this.moveActiveToWorkspace(index);
-                profileActions[`move-workspace-${index}-symbol`] = () => this.moveActiveToWorkspace(index);
-            }
-            profileActions["move-workspace-0"] = () => this.moveActiveToWorkspace(0);
-            profileActions["move-workspace-0-symbol"] = () => this.moveActiveToWorkspace(0);
-            profileActions["workspace-0"] = () => this.workspaceZero();
-            const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
-            for (const diagnostic of selected.diagnostics) {
-                this.diagnostic(diagnostic);
-            }
-            // Deterministic catalog validation before any row registers: a
-            // duplicate effective sequence or duplicate shortcut ID is a
-            // catalog defect, reported with both conflicting action IDs. Every
-            // shipped profile validates clean; these diagnostics exist so an
-            // accidental collision is never silent.
-            for (const diagnostic of catalogValidationDiagnostics(selected.profile)) {
-                this.diagnostic(diagnostic);
-            }
-            // Catalog-driven registration of the selected profile's rows.
-            // Deferred rows, component-requirement rows (unimplemented
-            // fullscreen/previous-workspace/next-workspace/group), and rows
-            // without a controller callback are never registered; every
-            // registered alias keeps its distinct shortcut ID from the catalog,
-            // including the implemented `workspace-0` row under the stable
-            // `plasma-auto-tiler-workspace-0` ID. A false registerShortcut
-            // result is reported per row as evidence of attempted registration
-            // only - KWin-local registration never displaces or reassigns a
-            // Plasma-global sequence and reports no activation collision (spec
-            // H.15/H.16). Each row re-registers under the same stable shortcut
-            // ID on reload/restart, so KGlobalAccel keeps the same row and any
-            // user-customized sequence survives; this is a pure
-            // model/diagnostic boundary, not KGlobalAccel introspection.
-            // Rows that collide with Plasma-global bindings remain shadowed on
-            // stock Plasma. Full takeover, displaced-action reassignment,
-            // snapshot, collision detection, and rollback semantics are a
-            // separately gated installer/KCM migration (plan Unit 03), never
-            // claimed by this script-local layer. That migration must assign a
-            // displaced Plasma action only to the selected reference
-            // environment's documented equivalent and otherwise record it
-            // unassigned, require an atomic snapshot with rollback, and demand
-            // live evidence before claiming activation.
-            const registrationResults: boolean[] = [];
-            for (const row of selected.profile.rows) {
-                if (row.classification === "deferred" || row.classification === "component-requirement") {
-                    continue;
-                }
-                if (!REGISTERED_PROFILE_ACTION_IDS.has(row.actionId)) {
-                    continue;
-                }
-                const callback = profileActions[row.actionId];
-                if (callback === undefined) {
-                    continue;
-                }
-                const registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback);
-                registrationResults.push(registered);
-                if (!registered) {
-                    this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
-                }
-            }
-            const detachRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-detach",
-                "Detach window from tile",
-                "Meta+Shift+Space",
-                () => this.detachActiveWindow(),
-            );
-            const attachRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-attach",
-                "Attach window to available tile",
-                "Meta+Alt+Shift+Space",
-                () => this.attachActiveWindow(),
-            );
-            const stickyRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-sticky-toggle",
-                "Toggle sticky floating on all desktops",
-                "Meta+Shift+G",
-                () => this.stickyActiveWindow(),
-            );
-            const fillScopeRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-fill-scope",
-                "Fill available tiles with windows",
-                "Meta+Alt+Return",
-                () => this.fillScope(),
-            );
-            const columnsRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-apply-columns",
-                "Apply columns in focused leaf",
-                "Meta+Alt+1",
-                () => this.applyPreset("columns"),
-            );
-            const rowsRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-apply-rows",
-                "Apply rows in focused leaf",
-                "Meta+Alt+2",
-                () => this.applyPreset("rows"),
-            );
-            const gridRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-apply-balanced-grid",
-                "Apply balanced grid in focused leaf",
-                "Meta+Alt+3",
-                () => this.applyPreset("balanced-grid"),
-            );
-            const dwindleRegistered = this.environment.registerShortcut(
-                "plasma-auto-tiler-apply-dwindle",
-                "Apply dwindle in focused leaf",
-                "Meta+Alt+4",
-                () => this.applyPreset("dwindle"),
-            );
-            if (
-                !insertionRegistered ||
-                !insertionLeftRegistered ||
-                !insertionUpRegistered ||
-                !insertionDownRegistered ||
-                !registrationResults.every((registered) => registered) ||
-                !detachRegistered ||
-                !attachRegistered ||
-                !stickyRegistered ||
-                !fillScopeRegistered ||
-                !columnsRegistered ||
-                !rowsRegistered ||
-                !gridRegistered ||
-                !dwindleRegistered
-            ) {
-                this.gate.disable("shortcut-registration-failed", (reason) => this.disabled(reason));
-                return;
-            }
-            this.diagnostic("shortcut-registered");
             this.diagnostic("startup-handlers-ready");
             this.engageCurrentScope();
         }, (reason) => this.disabled(reason));
@@ -1273,16 +1087,16 @@ export class TileController {
         return;
     }
 
-    private moveActiveWindow(direction: Direction): void {
+    moveActiveWindow(direction: Direction): void {
         this.gate.run(() => this.directionalMovementStrategy.move(direction), (reason) => this.disabled(reason));
         return;
     }
 
-    private focusOrResize(direction: Direction): void {
+    focusOrResize(direction: Direction): void {
         this.gate.run(() => this.inputActions.focusOrResize(direction), (reason) => this.disabled(reason));
     }
 
-    private enterOrExitResizeMode(mode: "outwards" | "inwards"): void {
+    enterOrExitResizeMode(mode: "outwards" | "inwards"): void {
         this.gate.run(() => this.inputActions.enterOrExitResizeMode(mode), (reason) => this.disabled(reason));
     }
 
@@ -1338,7 +1152,7 @@ export class TileController {
         return;
     }
 
-    private applyPreset(kind: PresetKind): void {
+    applyPreset(kind: PresetKind): void {
         this.gate.run(() => {
             this.diagnostic(`preset-invoked:${kind}`);
             const active = this.environment.activeWindow();
@@ -3615,7 +3429,7 @@ export class TileController {
     // drag, reconstruction, or unsettled move is live the whole invocation is
     // queued through the existing settle queue and completed after the settle
     // seam (spec F bounded drain).
-    private workspaceZero(): void {
+    workspaceZero(): void {
         this.gate.run(() => {
             this.diagnostic("workspace-zero-invoked");
             const output = this.activeOutputForWorkspace();

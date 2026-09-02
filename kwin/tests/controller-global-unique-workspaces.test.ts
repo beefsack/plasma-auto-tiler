@@ -84,18 +84,6 @@ describe("TileController global-unique workspaces (Unit 06)", () => {
         return { harness, controller, keyE, keyL, wE, wL };
     }
 
-    it("Meta+0 registers as the stable workspace-0 shortcut alongside Meta+Shift+0", () => {
-        const { harness } = globalUniqueSetup();
-        assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-workspace-0"),
-            true,
-        );
-        assert.equal(
-            harness.shortcuts.some((entry) => entry.name === "plasma-auto-tiler-move-workspace-append"),
-            true,
-        );
-    });
-
     it("selects the nth member of the active output's assigned subset via per-output writes (E 3rd = 4, L 2nd = 5)", () => {
         // Spec H.12: E owns [1,2,4], L owns [3,5,6] (plus owned trailing
         // empties). Meta+3 on E selects global 4; Meta+2 on L selects global 5.
