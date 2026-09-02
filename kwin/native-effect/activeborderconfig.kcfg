@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<kcfg xmlns="http://www.kde.org/standards/kcfg/1.0"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.kde.org/standards/kcfg/1.0
+                          http://www.kde.org/standards/kcfg/1.0/kcfg.xsd">
+    <kcfgfile arg="true"/>
+    <group name="Effect-plasma-auto-tiler-active-border">
+        <entry name="BorderColor" type="Color">
+            <label>Fallback border color</label>
+            <default>#2a82da</default>
+        </entry>
+        <entry name="BorderWidth" type="Double">
+            <label>Border width</label>
+            <default>3.0</default>
+        </entry>
+        <entry name="BorderRadius" type="Double">
+            <label>Outline radius</label>
+            <default>0.0</default>
+        </entry>
+        <entry name="BorderGap" type="Double">
+            <label>Gap from the window</label>
+            <default>0.0</default>
+        </entry>
+    </group>
+</kcfg>

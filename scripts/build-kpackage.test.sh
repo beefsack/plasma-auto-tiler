@@ -9,6 +9,10 @@ MEMBERS=(
   contents/config/main.xml
   contents/ui/config.ui
 )
+NATIVE_MEMBERS=(
+  kwin/effects/plugins/plasma-auto-tiler-active-border.so
+  kwin/effects/configs/plasma-auto-tiler-active-border_config.so
+)
 PLUGIN_ID="plasma-auto-tiler-kwin"
 
 WORK="$(mktemp -d)"
@@ -92,6 +96,11 @@ assert_archive_audit() {
   for index in "${!MEMBERS[@]}"; do
     [[ "${got[$index]}" == "${MEMBERS[$index]}" ]] || fail "archive member order differs at index $index"
   done
+  for native_member in "${NATIVE_MEMBERS[@]}"; do
+    if printf '%s\n' "${got[@]}" | grep -Fxq -- "$native_member"; then
+      fail "archive contains native member: $native_member"
+    fi
+  done
 
   mapfile -t records < <("$ZIPINFO_BIN" -l "$archive" | awk '/^[-dl][rwxstST-]{9}/')
   if [[ "${#records[@]}" -ne "${#MEMBERS[@]}" ]]; then
@@ -110,6 +119,15 @@ assert_archive_audit() {
   if [[ "$("$ZIPINFO_BIN" -v "$archive" | awk '/file last modified on \(DOS date\/time\):/ { if ($0 !~ /1980 Jan 1 00:00:00/) exit 1; count++ } END { print count + 0 }')" != 4 ]]; then
     fail "archive member timestamps are not exactly 1980-01-01 00:00:00"
   fi
+}
+
+assert_archive_payload() {
+  local archive="$1" member
+  for member in "${MEMBERS[@]}"; do
+    if ! "$UNZIP_BIN" -p "$archive" "$member" | cmp -s - "$FIXTURE/kwin/$member"; then
+      fail "archive payload differs from the staged script member: $member"
+    fi
+  done
 }
 
 assert_sidecar() {
@@ -392,6 +410,7 @@ else
   if [[ -n "${ARCHIVE_ONE:-}" ]]; then
     assert_archive_audit "$ARCHIVE_ONE"
     assert_sidecar "$ARCHIVE_ONE"
+    assert_archive_payload "$ARCHIVE_ONE"
     "$UNZIP_BIN" -p "$ARCHIVE_ONE" contents/code/main.js | cmp -s - <(printf 'generated-by-fake-build\n') || fail "archived bundle was not regenerated before staging"
   fi
 fi

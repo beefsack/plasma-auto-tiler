@@ -1,0 +1,186 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<ui version="4.0">
+ <class>ActiveBorderConfig</class>
+ <widget class="QWidget" name="ActiveBorderConfig">
+  <layout class="QVBoxLayout" name="verticalLayout">
+   <item>
+    <widget class="QGroupBox" name="scriptSettings">
+     <property name="title">
+      <string>Plasma Auto Tiler</string>
+     </property>
+     <layout class="QFormLayout" name="scriptFormLayout">
+      <item row="0" column="0">
+        <widget class="QLabel" name="label_tilingAlgorithm">
+         <property name="buddy">
+          <cstring>tilingAlgorithmCombo</cstring>
+         </property>
+        <property name="text">
+         <string>The preset the automatic takeover applies when it adopts a scope</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="QComboBox" name="tilingAlgorithmCombo"/>
+      </item>
+      <item row="1" column="0">
+        <widget class="QLabel" name="label_automaticSplitTarget">
+         <property name="buddy">
+          <cstring>automaticSplitTargetCombo</cstring>
+         </property>
+        <property name="text">
+         <string>The occupied leaf a newly opened window is automatically tiled into</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QComboBox" name="automaticSplitTargetCombo"/>
+      </item>
+      <item row="2" column="0">
+        <widget class="QLabel" name="label_workspaceMode">
+         <property name="buddy">
+          <cstring>workspaceModeCombo</cstring>
+         </property>
+        <property name="text">
+         <string>The multi-output workspace model</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QComboBox" name="workspaceModeCombo"/>
+      </item>
+      <item row="3" column="0">
+        <widget class="QLabel" name="label_shortcutProfile">
+         <property name="buddy">
+          <cstring>shortcutProfileCombo</cstring>
+         </property>
+        <property name="text">
+         <string>The startup shortcut profile</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QComboBox" name="shortcutProfileCombo"/>
+      </item>
+      <item row="4" column="0" colspan="2">
+       <widget class="QCheckBox" name="dropOutlinePreviewCheckBox">
+        <property name="text">
+         <string>Show a destination outline while dragging a tiled window</string>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+   <item>
+    <widget class="QGroupBox" name="borderSettings">
+     <property name="title">
+      <string>Active Window Border</string>
+     </property>
+     <layout class="QFormLayout" name="borderFormLayout">
+      <item row="0" column="0">
+        <widget class="QLabel" name="label_BorderColor">
+         <property name="buddy">
+          <cstring>kcfg_BorderColor</cstring>
+         </property>
+        <property name="text">
+         <string>Fallback border color:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="0" column="1">
+       <widget class="KColorButton" name="kcfg_BorderColor"/>
+      </item>
+      <item row="1" column="0">
+        <widget class="QLabel" name="label_BorderWidth">
+         <property name="buddy">
+          <cstring>kcfg_BorderWidth</cstring>
+         </property>
+        <property name="text">
+         <string>Border width:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="1" column="1">
+       <widget class="QDoubleSpinBox" name="kcfg_BorderWidth">
+        <property name="suffix">
+         <string> px</string>
+        </property>
+        <property name="decimals">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <double>32.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="0">
+        <widget class="QLabel" name="label_BorderRadius">
+         <property name="buddy">
+          <cstring>kcfg_BorderRadius</cstring>
+         </property>
+        <property name="text">
+         <string>Outline radius:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="2" column="1">
+       <widget class="QDoubleSpinBox" name="kcfg_BorderRadius">
+        <property name="suffix">
+         <string> px</string>
+        </property>
+        <property name="decimals">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <double>64.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="0">
+        <widget class="QLabel" name="label_BorderGap">
+         <property name="buddy">
+          <cstring>kcfg_BorderGap</cstring>
+         </property>
+        <property name="text">
+         <string>Gap from the window:</string>
+        </property>
+       </widget>
+      </item>
+      <item row="3" column="1">
+       <widget class="QDoubleSpinBox" name="kcfg_BorderGap">
+        <property name="suffix">
+         <string> px</string>
+        </property>
+        <property name="decimals">
+         <number>1</number>
+        </property>
+        <property name="maximum">
+         <double>64.000000000000000</double>
+        </property>
+       </widget>
+      </item>
+      <item row="4" column="0" colspan="2">
+       <widget class="QLabel" name="borderDescription">
+        <property name="text">
+          <string>The border uses the current theme highlight color when available; the configured color is the fallback. Border changes apply immediately through the KWin effect reconfigure. Script settings do not hot-apply; reload the script or restart the session.</string>
+        </property>
+        <property name="wordWrap">
+         <bool>true</bool>
+        </property>
+       </widget>
+      </item>
+     </layout>
+    </widget>
+   </item>
+  </layout>
+ </widget>
+ <customwidgets>
+  <customwidget>
+   <class>KColorButton</class>
+   <extends>QPushButton</extends>
+   <header>kcolorbutton.h</header>
+  </customwidget>
+ </customwidgets>
+ <resources/>
+ <connections/>
+</ui>

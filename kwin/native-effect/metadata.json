@@ -2,9 +2,10 @@
     "KPlugin": {
         "Id": "plasma-auto-tiler-active-border",
         "Name": "Active Window Border",
-        "Description": "Draws a fixed border around the active window.",
+        "Description": "Draws a configurable border around the active window.",
         "EnabledByDefault": false,
         "Icon": "preferences-system-windows",
         "License": "GPL-2.0-or-later"
-    }
+    },
+    "X-KDE-ConfigModule": "plasma-auto-tiler-active-border_config"
 }

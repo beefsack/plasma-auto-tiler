@@ -45,9 +45,9 @@ INSTALL_DIR="$DATA_ROOT/kwin/scripts/$PLUGIN_ID"
 KWINRC="$CONFIG_ROOT/kwinrc"
 
 EFFECT_ROOT="$DATA_ROOT/plasma-auto-tiler-native-effect"
-EFFECT_BUILD_DIR="$EFFECT_ROOT/build"
 EFFECT_SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
 EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
+EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
 
 # plasma-workspace's own startplasma-wayland sources every *.sh file under
 # this directory into its own process environment before syncing it to the
@@ -66,6 +66,9 @@ usage() {
 usage: dogfood-install.sh <command> [--help]
 
 Package management interface for the plasma-auto-tiler-kwin KWin script.
+The generic scripted KCM is retired; the native effect-scoped KCM is the sole
+settings owner through Desktop Effects, with no compatibility or migration
+route.
 
 Commands:
   install    build the kwin bundle and copy the package into
@@ -84,11 +87,11 @@ Commands:
              destination install/enabled state; lists intended install
              actions; read-only, never mutates
 
-  effect-install  build the native "active border" effect plugin and stage
-                  it under
-                  $XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/plugins/
-                  (or the $HOME/.local/share equivalent when XDG_DATA_HOME is
-                  unset); writes a QT_PLUGIN_PATH env script under
+  effect-install  build the native "active border" effect and its QWidget KCM,
+                   staging them under
+                   $XDG_DATA_HOME/plasma-auto-tiler-native-effect/kwin/effects/
+                  (plugins/ and configs/, or the $HOME/.local/share equivalent
+                  when XDG_DATA_HOME is unset); writes a QT_PLUGIN_PATH env script under
                   $XDG_CONFIG_HOME/plasma-workspace/env/ so the staged plugin
                   dir is discovered on next login; also writes
                   [Plugins] plasma-auto-tiler-active-borderEnabled=true to
@@ -96,10 +99,9 @@ Commands:
                   once discovered (does not reconfigure KWin or use D-Bus);
                   idempotent
   effect-reload   query D-Bus for effect support; if supported, unload and
-                  reload the effect live; if not yet supported (the
-                  plasma-workspace env script requires a logout/login to take
-                  effect), reports this plainly and exits non-zero without
-                  attempting load/unload
+                   reload the effect live; if unsupported, reports the
+                   ambiguous unavailable state and exits non-zero without
+                   attempting load/unload
   effect-status   staged diagnostic: staging, env script, session delivery
                   (reads the running kwin_wayland process's own environment),
                   D-Bus discovery, and D-Bus loaded state, each reported
@@ -107,16 +109,17 @@ Commands:
   effect-remove   remove the staged effect tree, the plasma-workspace env
                   script, the kwinrc [Plugins]
                   plasma-auto-tiler-active-borderEnabled key when present, and
-                  (migration cleanup) any legacy environment.d entry this
-                  project wrote previously; idempotent
+                   (migration cleanup) any legacy environment.d entry this
+                   project wrote previously; refuses to remove a loaded effect
+                   and is otherwise transactional
 
   setup      one-command install: composes install, enable, effect-install,
              and effect-reload in that order. install/enable are the
              required half and abort setup on real failure. effect-install
-             and effect-reload are optional and degrade gracefully: a
-             missing build toolchain (e.g. not inside 'devenv shell
-             --impure') or the expected first-run "needs a logout/login"
-             effect-reload outcome are reported, not treated as failures.
+              and effect-reload are optional and degrade gracefully: a
+              missing build toolchain (e.g. not inside 'devenv shell
+              --impure') or an effect-reload failure are reported, not treated
+              as failures.
              setup exits 0 whenever install and enable both succeeded, and
              always prints a per-stage summary plus what remains manual.
 
@@ -135,8 +138,9 @@ install and uninstall never touch KWin configuration; enable, disable, and
 reload mutate kwinrc and reconfigure the running KWin session.
 effect-install and effect-remove touch kwinrc (only the one [Plugins]
 enablement key for the native effect) but never use D-Bus; effect-reload is
-the only effect command that mutates the running KWin session via D-Bus;
-effect-status is read-only.
+the only effect command that mutates the running KWin session via D-Bus.
+effect-remove performs one read-only D-Bus loaded-state query and fails closed
+if the effect is loaded; effect-status is read-only.
 EOF
 }
 
@@ -314,52 +318,205 @@ effect_env_file_contents() {
   printf 'export QT_PLUGIN_PATH="%s${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' "$EFFECT_ROOT"
 }
 
+effect_install_rollback() {
+  [[ "${install_cleanup_done:-0}" -eq 0 ]] || return 0
+  install_cleanup_done=1
+  local ok=0
+  if [[ "${install_new_env_moved:-0}" -eq 1 ]]; then
+    rm -f -- "$EFFECT_ENV_FILE" || ok=1
+  fi
+  if [[ "${install_old_env_moved:-0}" -eq 1 ]]; then
+    mv -- "$install_env_backup" "$EFFECT_ENV_FILE" || ok=1
+  fi
+  if [[ "${install_new_root_moved:-0}" -eq 1 ]]; then
+    rm -rf -- "$EFFECT_ROOT" || ok=1
+  fi
+  if [[ "${install_old_root_moved:-0}" -eq 1 ]]; then
+    mv -- "$install_root_backup" "$EFFECT_ROOT" || ok=1
+  fi
+  if [[ "${install_config_snapshot:-0}" -eq 1 ]]; then
+    if [[ "${install_config_had_file:-0}" -eq 1 ]]; then
+      cp -p -- "$install_config_backup" "$KWINRC" || ok=1
+    else
+      rm -f -- "$KWINRC" || ok=1
+    fi
+  fi
+  [[ -z "${install_transaction:-}" ]] || rm -rf -- "$install_transaction" || ok=1
+  return "$ok"
+}
+
+effect_install_signal() {
+  install_pending_signal="$1"
+}
+
+effect_install_check_signal() {
+  local signal="${install_pending_signal:-}"
+  [[ -z "$signal" ]] || {
+    install_pending_signal=""
+    case "$signal" in
+      INT) effect_install_abort "interrupted by SIGINT" 130 ;;
+      TERM) effect_install_abort "interrupted by SIGTERM" 143 ;;
+      HUP) effect_install_abort "interrupted by SIGHUP" 129 ;;
+    esac
+  }
+}
+
+effect_install_cleanup() {
+  local status=$?
+  trap - EXIT INT TERM HUP
+  if [[ -n "${install_transaction:-}" && "${install_cleanup_done:-0}" -eq 0 ]]; then
+    trap '' INT TERM HUP
+    local rollback_status=0
+    effect_install_rollback || rollback_status=$?
+    trap - INT TERM HUP
+    if [[ "$rollback_status" -ne 0 ]]; then
+      echo "error: interrupted or failed native-effect install; rollback failed - inspect $EFFECT_ROOT, $EFFECT_ENV_FILE, and $KWINRC" >&2
+    fi
+  fi
+  return "$status"
+}
+
+effect_install_abort() {
+  local message="$1"
+  local status="${2:-1}"
+  trap - EXIT INT TERM HUP
+  trap '' INT TERM HUP
+  local rollback_status=0
+  effect_install_rollback || rollback_status=$?
+  trap - INT TERM HUP
+  if [[ "$rollback_status" -ne 0 ]]; then
+    echo "error: $message; rollback failed - inspect $EFFECT_ROOT, $EFFECT_ENV_FILE, and $KWINRC" >&2
+  else
+    echo "error: $message" >&2
+  fi
+  exit "$status"
+}
+
 cmd_effect_install() {
   require_tool CMAKE_BIN cmake
   local cmake="$TOOL"
+  require_tool KWRITECONFIG6_BIN kwriteconfig6
+  local kwriteconfig="$TOOL"
+  local effect_install_needs_boundary=0
+  if [[ ! -e "$EFFECT_ENV_FILE" && ! -L "$EFFECT_ENV_FILE" ]]; then
+    effect_install_needs_boundary=1
+  fi
 
-  local cmake_args=(-S "$EFFECT_SOURCE_DIR" -B "$EFFECT_BUILD_DIR")
+  mkdir -p "$DATA_ROOT" || {
+    echo "error: could not create data root: $DATA_ROOT" >&2
+    exit 1
+  }
+  local install_transaction
+  install_transaction="$(mktemp -d "$DATA_ROOT/.plasma-auto-tiler-native-effect.XXXXXX")" || {
+    echo "error: could not create native-effect transaction directory under $DATA_ROOT" >&2
+    exit 1
+  }
+  local install_build_dir="$install_transaction/build"
+  local install_payload="$install_transaction/payload"
+  local install_root_backup="$install_transaction/previous-root"
+  local install_env_backup="$install_transaction/previous-env"
+  local install_config_backup="$install_transaction/previous-kwinrc"
+  local install_old_root_moved=0 install_new_root_moved=0
+  local install_old_env_moved=0 install_new_env_moved=0
+  local install_config_snapshot=0 install_config_had_file=0
+  local install_cleanup_done=0 install_pending_signal=""
+  trap 'effect_install_signal INT' INT
+  trap 'effect_install_signal TERM' TERM
+  trap 'effect_install_signal HUP' HUP
+  trap 'effect_install_cleanup' EXIT
+
+  local cmake_args=(-S "$EFFECT_SOURCE_DIR" -B "$install_build_dir")
   if [[ -d "$KWIN_DEV_CMAKE_DIR" ]]; then
     cmake_args+=(-DKWin_DIR="$KWIN_DEV_CMAKE_DIR")
   fi
   cmake_args+=(-DBUILD_TESTING=OFF)
   if ! "$cmake" "${cmake_args[@]}"; then
-    echo "error: cmake configure failed for $EFFECT_SOURCE_DIR" >&2
-    exit 1
+    effect_install_abort "cmake configure failed for $EFFECT_SOURCE_DIR"
   fi
-  if ! "$cmake" --build "$EFFECT_BUILD_DIR"; then
-    echo "error: cmake --build failed for $EFFECT_BUILD_DIR" >&2
-    exit 1
+  effect_install_check_signal
+  if ! "$cmake" --build "$install_build_dir"; then
+    effect_install_abort "cmake --build failed for $install_build_dir"
   fi
+  effect_install_check_signal
 
-  local built_so="$EFFECT_BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
+  local built_so="$install_build_dir/bin/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
+  local built_kcm="$install_build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
   if [[ ! -f "$built_so" ]]; then
-    echo "error: bundle not found after build: $built_so" >&2
-    exit 1
+    effect_install_abort "bundle not found after build: $built_so"
+  fi
+  if [[ ! -f "$built_kcm" ]]; then
+    effect_install_abort "config module not found after build: $built_kcm"
   fi
 
-  install -Dm0644 "$built_so" "$EFFECT_STAGED_SO"
-
+  local install_payload_root="$install_payload/root"
+  local payload_so="$install_payload_root/kwin/effects/plugins/$EFFECT_PLUGIN_ID.so"
+  local payload_kcm="$install_payload_root/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+  if ! install -Dm0644 "$built_so" "$payload_so" || ! install -Dm0644 "$built_kcm" "$payload_kcm"; then
+    effect_install_abort "could not prepare native-effect staging payload"
+  fi
+  effect_install_check_signal
   local desired
   desired="$(effect_env_file_contents)"
-  local current=""
-  [[ -f "$EFFECT_ENV_FILE" ]] && current="$(cat "$EFFECT_ENV_FILE")"
-  if [[ "$current" != "${desired%$'\n'}" ]]; then
-    mkdir -p "$(dirname "$EFFECT_ENV_FILE")"
-    printf '%s' "$desired" > "$EFFECT_ENV_FILE"
-  fi
+  printf '%s' "$desired" > "$install_transaction/env" || effect_install_abort "could not prepare native-effect environment script"
+  effect_install_check_signal
 
-  require_tool KWRITECONFIG6_BIN kwriteconfig6
-  local kwriteconfig="$TOOL"
+  if [[ -L "$KWINRC" || ( -e "$KWINRC" && ! -f "$KWINRC" ) ]]; then
+    effect_install_abort "kwinrc is not a regular file: $KWINRC"
+  fi
+  if [[ -f "$KWINRC" ]]; then
+    if ! cp -p -- "$KWINRC" "$install_config_backup"; then
+      effect_install_abort "could not snapshot kwinrc: $KWINRC"
+    fi
+    install_config_had_file=1
+  fi
+  install_config_snapshot=1
+  effect_install_check_signal
+
+  # Probe the actual kwinrc write before publishing any binary or environment state.
   if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" true; then
-    echo "error: kwriteconfig6 failed to set $EFFECT_CONFIG_KEY=true in $KWINRC" >&2
-    exit 1
+    effect_install_abort "kwriteconfig6 failed to set $EFFECT_CONFIG_KEY=true in $KWINRC"
   fi
+  effect_install_check_signal
 
+  if [[ -e "$EFFECT_ROOT" || -L "$EFFECT_ROOT" ]]; then
+    if [[ -L "$EFFECT_ROOT" || ! -d "$EFFECT_ROOT" ]] || ! mv -- "$EFFECT_ROOT" "$install_root_backup"; then
+      effect_install_abort "could not preserve existing native-effect staging root"
+    fi
+    install_old_root_moved=1
+  fi
+  effect_install_check_signal
+  mkdir -p "$(dirname "$EFFECT_ROOT")" || effect_install_abort "could not create native-effect staging directory"
+  effect_install_check_signal
+  if ! mv -- "$install_payload_root" "$EFFECT_ROOT"; then
+    effect_install_abort "could not publish native-effect staging root"
+  fi
+  install_new_root_moved=1
+  effect_install_check_signal
+
+  if [[ -e "$EFFECT_ENV_FILE" || -L "$EFFECT_ENV_FILE" ]]; then
+    if [[ -L "$EFFECT_ENV_FILE" || ! -f "$EFFECT_ENV_FILE" ]] || ! mv -- "$EFFECT_ENV_FILE" "$install_env_backup"; then
+      effect_install_abort "could not preserve existing native-effect environment script"
+    fi
+    install_old_env_moved=1
+  fi
+  effect_install_check_signal
+  mkdir -p "$(dirname "$EFFECT_ENV_FILE")" || effect_install_abort "could not create native-effect environment directory"
+  effect_install_check_signal
+  if ! mv -- "$install_transaction/env" "$EFFECT_ENV_FILE"; then
+    effect_install_abort "could not publish native-effect environment script"
+  fi
+  install_new_env_moved=1
+  effect_install_check_signal
+
+  trap - EXIT INT TERM HUP
+  rm -rf -- "$install_transaction"
+  install_transaction=""
   echo "staged: $EFFECT_STAGED_SO"
   echo "env script: $EFFECT_ENV_FILE"
   echo "kwinrc: $EFFECT_CONFIG_KEY set to true (persists across future session starts once the effect is discovered by KWin; this does not itself trigger a live D-Bus load - use 'effect-reload' for that)"
-  echo "note: a logout/login (or new session) is required before the effect is discovered by KWin."
+  if [[ "$effect_install_needs_boundary" -eq 1 ]]; then
+    echo "note: a logout/login (or new session) is required before the effect is discovered by KWin."
+  fi
 }
 
 cmd_effect_reload() {
@@ -369,27 +526,38 @@ cmd_effect_reload() {
   local supported
   supported="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectSupported "$EFFECT_PLUGIN_ID" )" || {
     echo "error: qdbus failed to query isEffectSupported for $EFFECT_PLUGIN_ID" >&2
-    exit 1
+    return 2
   }
+  if [[ "$supported" == "false" ]]; then
+    echo "error: $EFFECT_PLUGIN_ID is unavailable to KWin (isEffectSupported=false); this result does not establish a session boundary and may indicate a plugin load, factory, or ABI failure. Run 'effect-status' and inspect KWin plugin-loading diagnostics." >&2
+    return 2
+  fi
   if [[ "$supported" != "true" ]]; then
-    echo "effect-reload: $EFFECT_PLUGIN_ID is not yet discovered by KWin; the env script at $EFFECT_ENV_FILE requires one logout/login (or new session) to take effect before it can be reloaded live." >&2
-    exit 1
+    echo "error: qdbus returned an invalid isEffectSupported reply for $EFFECT_PLUGIN_ID: ${supported:-<empty>}" >&2
+    return 2
   fi
 
-  "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect "$EFFECT_PLUGIN_ID" >/dev/null || true
+  if ! "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.unloadEffect "$EFFECT_PLUGIN_ID" >/dev/null; then
+    echo "error: qdbus failed to unloadEffect $EFFECT_PLUGIN_ID" >&2
+    return 2
+  fi
   if ! "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.loadEffect "$EFFECT_PLUGIN_ID" >/dev/null; then
     echo "error: qdbus failed to loadEffect $EFFECT_PLUGIN_ID" >&2
-    exit 1
+    return 2
   fi
 
   local loaded
   loaded="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$EFFECT_PLUGIN_ID" )" || {
     echo "error: qdbus failed to query isEffectLoaded for $EFFECT_PLUGIN_ID" >&2
-    exit 1
+    return 2
   }
+  if [[ "$loaded" != "true" && "$loaded" != "false" ]]; then
+    echo "error: qdbus returned an invalid isEffectLoaded reply for $EFFECT_PLUGIN_ID: ${loaded:-<empty>}" >&2
+    return 2
+  fi
   if [[ "$loaded" != "true" ]]; then
     echo "error: loadEffect did not result in $EFFECT_PLUGIN_ID being loaded" >&2
-    exit 1
+    return 2
   fi
   echo "reloaded: $EFFECT_PLUGIN_ID is loaded"
 }
@@ -435,6 +603,13 @@ cmd_effect_status() {
     echo "[a] staging: yes - plugin .so present at $EFFECT_STAGED_SO"
   else
     echo "[a] staging: no - plugin .so not found at $EFFECT_STAGED_SO"
+    echo "    -> run 'effect-install' to build and stage it."
+  fi
+  if [[ -f "$EFFECT_STAGED_KCM" ]]; then
+    echo "[a] config module: yes - KCM .so present at $EFFECT_STAGED_KCM"
+  else
+    a_ok="false"
+    echo "[a] config module: no - KCM .so not found at $EFFECT_STAGED_KCM"
     echo "    -> run 'effect-install' to build and stage it."
   fi
 
@@ -496,77 +671,248 @@ cmd_effect_status() {
   fi
 
   # [d] discovery
-  local supported=""
-  supported="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectSupported "$EFFECT_PLUGIN_ID" 2>/dev/null )" || supported=""
-  if [[ "$supported" == "true" ]]; then
-    echo "[d] discovery: yes - isEffectSupported reports true for $EFFECT_PLUGIN_ID"
+  local supported="" discovery_state="error"
+  if supported="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectSupported "$EFFECT_PLUGIN_ID" 2>/dev/null )"; then
+    case "$supported" in
+      true)
+        discovery_state="true"
+        echo "[d] discovery: yes - isEffectSupported reports true for $EFFECT_PLUGIN_ID"
+        ;;
+      false)
+        discovery_state="false"
+        echo "[d] discovery: no - isEffectSupported reports false for $EFFECT_PLUGIN_ID"
+        if [[ "$c_state" == "true" ]]; then
+          echo "    -> QT_PLUGIN_PATH reached the running KWin session (stage c passed) but the plugin still was not loadable. This is not a session-boundary problem: check 'journalctl --user -b' (or the system journal) for KWin plugin-loading errors around $EFFECT_PLUGIN_ID, and re-run 'effect-install' to rule out a stale build."
+        elif [[ "$c_state" == "false" ]]; then
+          echo "    -> stage c (session delivery) already failed; fix that first (see above) before expecting this to change."
+        else
+          echo "    -> stage c could not be determined; investigate session delivery manually (see above) before assuming this is a plugin-loading problem."
+        fi
+        ;;
+      *)
+        discovery_state="invalid"
+        echo "[d] discovery: error - qdbus returned an invalid isEffectSupported reply for $EFFECT_PLUGIN_ID: ${supported:-<empty>}"
+        echo "    -> the discovery query is inconclusive; do not infer a session boundary or a plugin-loading failure from it."
+        ;;
+    esac
   else
-    echo "[d] discovery: no - isEffectSupported reports false for $EFFECT_PLUGIN_ID"
-    if [[ "$c_state" == "true" ]]; then
-      echo "    -> QT_PLUGIN_PATH reached the running KWin session (stage c passed) but the plugin still was not loadable. This is not a session-boundary problem: check 'journalctl --user -b' (or the system journal) for KWin plugin-loading errors around $EFFECT_PLUGIN_ID, and re-run 'effect-install' to rule out a stale build."
-    elif [[ "$c_state" == "false" ]]; then
-      echo "    -> stage c (session delivery) already failed; fix that first (see above) before expecting this to change."
-    else
-      echo "    -> stage c could not be determined; investigate session delivery manually (see above) before assuming this is a plugin-loading problem."
-    fi
+    echo "[d] discovery: error - qdbus failed to query isEffectSupported for $EFFECT_PLUGIN_ID"
+    echo "    -> the discovery query is inconclusive; do not infer a session boundary or a plugin-loading failure from it."
   fi
 
   # [e] loaded
   local loaded=""
-  loaded="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$EFFECT_PLUGIN_ID" 2>/dev/null )" || loaded=""
-  if [[ "$loaded" == "true" ]]; then
-    echo "[e] loaded: yes - isEffectLoaded reports true for $EFFECT_PLUGIN_ID"
+  if loaded="$( "$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$EFFECT_PLUGIN_ID" 2>/dev/null )"; then
+    case "$loaded" in
+      true)
+        echo "[e] loaded: yes - isEffectLoaded reports true for $EFFECT_PLUGIN_ID"
+        ;;
+      false)
+        echo "[e] loaded: no - isEffectLoaded reports false for $EFFECT_PLUGIN_ID"
+        if [[ "$discovery_state" == "true" ]]; then
+          echo "    -> effect is supported but not currently loaded; run 'effect-reload' to load it."
+        elif [[ "$discovery_state" == "false" ]]; then
+          echo "    -> stage d (discovery) already failed; loading cannot succeed until discovery passes."
+        else
+          echo "    -> stage d (discovery) did not produce a usable result; loading cannot be assessed."
+        fi
+        ;;
+      *)
+        echo "[e] loaded: error - qdbus returned an invalid isEffectLoaded reply for $EFFECT_PLUGIN_ID: ${loaded:-<empty>}"
+        echo "    -> the loaded-state query is inconclusive; do not infer that the effect is unloaded."
+        ;;
+    esac
   else
-    echo "[e] loaded: no - isEffectLoaded reports false for $EFFECT_PLUGIN_ID"
-    if [[ "$supported" == "true" ]]; then
-      echo "    -> effect is supported but not currently loaded; run 'effect-reload' to load it."
-    else
-      echo "    -> stage d (discovery) already failed; loading cannot succeed until discovery passes."
-    fi
+    echo "[e] loaded: error - qdbus failed to query isEffectLoaded for $EFFECT_PLUGIN_ID"
+    echo "    -> the loaded-state query is inconclusive; do not infer that the effect is unloaded."
   fi
   return 0
 }
 
 cmd_effect_remove() {
-  local removed=0
-  if [[ -e "$EFFECT_ROOT" ]]; then
-    rm -rf "$EFFECT_ROOT"
-    echo "removed: $EFFECT_ROOT"
-    removed=1
-  fi
-  if [[ -e "$EFFECT_ENV_FILE" ]]; then
-    rm -f "$EFFECT_ENV_FILE"
-    echo "removed: $EFFECT_ENV_FILE"
-    removed=1
-  fi
-  # Migration cleanup: remove only this project's own legacy environment.d
-  # entry (superseded by EFFECT_ENV_FILE above), never any other file under
-  # environment.d/ (in particular, never 10-home-manager.conf).
-  if [[ -e "$LEGACY_EFFECT_ENV_FILE" ]]; then
-    rm -f "$LEGACY_EFFECT_ENV_FILE"
-    echo "removed (legacy): $LEGACY_EFFECT_ENV_FILE"
-    removed=1
-  fi
   require_tool KREADCONFIG6_BIN kreadconfig6
   local kreadconfig="$TOOL"
+  local missing_key_marker="__plasma_auto_tiler_key_absent__"
   local current_key_value
-  current_key_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" )" || {
+  current_key_value="$( "$kreadconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" --default "$missing_key_marker" )" || {
     echo "error: kreadconfig6 failed to read $EFFECT_CONFIG_KEY from $KWINRC" >&2
     exit 1
   }
-  if [[ -n "$current_key_value" ]]; then
-    require_tool KWRITECONFIG6_BIN kwriteconfig6
-    local kwriteconfig="$TOOL"
-    if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" --delete; then
-      echo "error: kwriteconfig6 failed to delete $EFFECT_CONFIG_KEY from $KWINRC" >&2
+  local key_present=1
+  if [[ "$current_key_value" == "$missing_key_marker" ]]; then
+    key_present=0
+  fi
+  local has_root=0 has_env=0 has_legacy=0
+  [[ -e "$EFFECT_ROOT" || -L "$EFFECT_ROOT" ]] && has_root=1
+  [[ -e "$EFFECT_ENV_FILE" || -L "$EFFECT_ENV_FILE" ]] && has_env=1
+  [[ -e "$LEGACY_EFFECT_ENV_FILE" || -L "$LEGACY_EFFECT_ENV_FILE" ]] && has_legacy=1
+  if [[ "$has_root" -eq 0 && "$has_env" -eq 0 && "$has_legacy" -eq 0 && "$key_present" -eq 0 ]]; then
+    echo "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, and $LEGACY_EFFECT_ENV_FILE not present)"
+    return 0
+  fi
+
+  for path in "$EFFECT_ROOT" "$EFFECT_ENV_FILE" "$LEGACY_EFFECT_ENV_FILE"; do
+    if [[ -L "$path" ]]; then
+      echo "error: refusing to remove symlinked project state: $path" >&2
       exit 1
     fi
-    echo "removed (kwinrc key): $EFFECT_CONFIG_KEY"
-    removed=1
+  done
+  if [[ "$has_root" -eq 1 && ! -d "$EFFECT_ROOT" ]]; then
+    echo "error: refusing to remove non-directory native-effect root: $EFFECT_ROOT" >&2
+    exit 1
   fi
-  if [[ "$removed" -eq 0 ]]; then
-    echo "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, and $LEGACY_EFFECT_ENV_FILE not present)"
+  if [[ "$has_env" -eq 1 && ! -f "$EFFECT_ENV_FILE" ]]; then
+    echo "error: refusing to remove non-regular environment script: $EFFECT_ENV_FILE" >&2
+    exit 1
   fi
+  if [[ "$has_legacy" -eq 1 && ! -f "$LEGACY_EFFECT_ENV_FILE" ]]; then
+    echo "error: refusing to remove non-regular legacy environment entry: $LEGACY_EFFECT_ENV_FILE" >&2
+    exit 1
+  fi
+
+  require_tool QDBUS_BIN qdbus
+  local qdbus="$TOOL"
+  local loaded
+  loaded="$("$qdbus" org.kde.KWin /Effects org.kde.kwin.Effects.isEffectLoaded "$EFFECT_PLUGIN_ID")" || {
+    echo "error: qdbus failed to determine whether $EFFECT_PLUGIN_ID is loaded; refusing effect removal" >&2
+    exit 1
+  }
+  if [[ "$loaded" == "true" ]]; then
+    echo "error: $EFFECT_PLUGIN_ID is currently loaded; refusing to delete its files. Unload it through a documented KWin mechanism or end the session, then rerun effect-remove. Staged files, env script, and kwinrc are unchanged." >&2
+    exit 1
+  fi
+  if [[ "$loaded" != "false" ]]; then
+    echo "error: qdbus returned an invalid isEffectLoaded reply for $EFFECT_PLUGIN_ID: ${loaded:-<empty>}; refusing effect removal" >&2
+    exit 1
+  fi
+
+  mkdir -p "$DATA_ROOT" || {
+    echo "error: could not create data root: $DATA_ROOT" >&2
+    exit 1
+  }
+  local remove_transaction
+  remove_transaction="$(mktemp -d "$DATA_ROOT/.plasma-auto-tiler-native-effect-remove.XXXXXX")" || {
+    echo "error: could not create native-effect removal transaction directory" >&2
+    exit 1
+  }
+  local remove_config_backup="$remove_transaction/previous-kwinrc"
+  local remove_config_had_file=0 remove_config_snapshot=0
+  local remove_root_moved=0 remove_env_moved=0 remove_legacy_moved=0
+  local remove_cleanup_done=0 remove_pending_signal=""
+
+  effect_remove_signal() {
+    remove_pending_signal="$1"
+  }
+  effect_remove_check_signal() {
+    local signal="${remove_pending_signal:-}"
+    [[ -z "$signal" ]] || {
+      remove_pending_signal=""
+      case "$signal" in
+        INT) effect_remove_abort "interrupted by SIGINT" 130 ;;
+        TERM) effect_remove_abort "interrupted by SIGTERM" 143 ;;
+        HUP) effect_remove_abort "interrupted by SIGHUP" 129 ;;
+      esac
+    }
+  }
+  effect_remove_rollback() {
+    [[ "$remove_cleanup_done" -eq 0 ]] || return 0
+    remove_cleanup_done=1
+    local ok=0
+    [[ "$remove_root_moved" -eq 0 ]] || mv -- "$remove_transaction/root" "$EFFECT_ROOT" || ok=1
+    [[ "$remove_env_moved" -eq 0 ]] || mv -- "$remove_transaction/env" "$EFFECT_ENV_FILE" || ok=1
+    [[ "$remove_legacy_moved" -eq 0 ]] || mv -- "$remove_transaction/legacy" "$LEGACY_EFFECT_ENV_FILE" || ok=1
+    if [[ "$remove_config_snapshot" -eq 1 ]]; then
+      if [[ "$remove_config_had_file" -eq 1 ]]; then
+        cp -p -- "$remove_config_backup" "$KWINRC" || ok=1
+      else
+        rm -f -- "$KWINRC" || ok=1
+      fi
+    fi
+    rm -rf -- "$remove_transaction" || ok=1
+    return "$ok"
+  }
+  effect_remove_cleanup() {
+    local status=$?
+    trap - EXIT INT TERM HUP
+    if [[ "$remove_cleanup_done" -eq 0 ]]; then
+      trap '' INT TERM HUP
+      local rollback_status=0
+      effect_remove_rollback || rollback_status=$?
+      trap - INT TERM HUP
+      if [[ "$rollback_status" -ne 0 ]]; then
+        echo "error: interrupted or failed native-effect removal; rollback failed - inspect the native-effect staging and kwinrc state" >&2
+      fi
+    fi
+    return "$status"
+  }
+  effect_remove_abort() {
+    local message="$1"
+    local status="${2:-1}"
+    trap - EXIT INT TERM HUP
+    trap '' INT TERM HUP
+    local rollback_status=0
+    effect_remove_rollback || rollback_status=$?
+    trap - INT TERM HUP
+    if [[ "$rollback_status" -ne 0 ]]; then
+      echo "error: $message; rollback failed - inspect the native-effect staging and kwinrc state" >&2
+    else
+      echo "error: $message" >&2
+    fi
+    exit "$status"
+  }
+
+  trap 'effect_remove_signal INT' INT
+  trap 'effect_remove_signal TERM' TERM
+  trap 'effect_remove_signal HUP' HUP
+  trap 'effect_remove_cleanup' EXIT
+
+  if [[ "$key_present" -eq 1 ]]; then
+    require_tool KWRITECONFIG6_BIN kwriteconfig6
+    local kwriteconfig="$TOOL"
+    if [[ -L "$KWINRC" || ( -e "$KWINRC" && ! -f "$KWINRC" ) ]]; then
+      effect_remove_abort "kwinrc is not a regular file: $KWINRC"
+    fi
+    if [[ -f "$KWINRC" ]]; then
+      if ! cp -p -- "$KWINRC" "$remove_config_backup"; then
+        effect_remove_abort "could not snapshot kwinrc: $KWINRC"
+      fi
+      remove_config_had_file=1
+    fi
+    remove_config_snapshot=1
+    effect_remove_check_signal
+  fi
+
+  if [[ "$has_root" -eq 1 ]]; then
+    mv -- "$EFFECT_ROOT" "$remove_transaction/root" || effect_remove_abort "could not stage native-effect root for removal"
+    remove_root_moved=1
+    effect_remove_check_signal
+  fi
+  if [[ "$has_env" -eq 1 ]]; then
+    mv -- "$EFFECT_ENV_FILE" "$remove_transaction/env" || effect_remove_abort "could not stage native-effect environment script for removal"
+    remove_env_moved=1
+    effect_remove_check_signal
+  fi
+  if [[ "$has_legacy" -eq 1 ]]; then
+    mv -- "$LEGACY_EFFECT_ENV_FILE" "$remove_transaction/legacy" || effect_remove_abort "could not stage legacy environment entry for removal"
+    remove_legacy_moved=1
+    effect_remove_check_signal
+  fi
+
+  if [[ "$key_present" -eq 1 ]]; then
+    if ! "$kwriteconfig" --file "$KWINRC" --group Plugins --key "$EFFECT_CONFIG_KEY" --delete; then
+      effect_remove_abort "kwriteconfig6 failed to delete $EFFECT_CONFIG_KEY from $KWINRC"
+    fi
+    effect_remove_check_signal
+  fi
+
+  effect_remove_check_signal
+  [[ "$has_root" -eq 0 ]] || echo "removed: $EFFECT_ROOT"
+  [[ "$has_env" -eq 0 ]] || echo "removed: $EFFECT_ENV_FILE"
+  [[ "$has_legacy" -eq 0 ]] || echo "removed (legacy): $LEGACY_EFFECT_ENV_FILE"
+  [[ "$key_present" -eq 0 ]] || echo "removed (kwinrc key): $EFFECT_CONFIG_KEY"
+  trap - EXIT INT TERM HUP
+  rm -rf -- "$remove_transaction"
+  remove_transaction=""
 }
 
 cmd_setup() {
@@ -609,7 +955,7 @@ cmd_setup() {
   if [[ "$effect_install_ok" == true && "$effect_reload_ok" == true ]]; then
     echo "effect-reload: ok"
   elif [[ "$effect_install_ok" == true ]]; then
-    echo "effect-reload: pending-boundary"
+    echo "effect-reload: failed"
   else
     echo "effect-reload: skipped"
   fi
@@ -618,7 +964,7 @@ cmd_setup() {
   if [[ "$effect_install_ok" != true ]]; then
     echo "  - the native-effect build did not run; once inside 'devenv shell --impure', rerun 'effect-install' (or 'setup') manually"
   elif [[ "$effect_reload_ok" != true ]]; then
-    echo "  - effect-reload is pending the expected first-run logout/login boundary; log out and back in once, then run 'effect-reload' (or 'setup') again"
+    echo "  - effect-reload failed for a non-boundary reason; resolve the reported error, then run 'effect-reload' (or 'setup') again"
   else
     echo "  - none: $EFFECT_CONFIG_KEY is set to true in $KWINRC, so the effect stays enabled and auto-loads on future reboots and logins without re-running 'effect-reload'"
   fi

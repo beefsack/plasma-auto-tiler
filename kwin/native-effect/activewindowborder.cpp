@@ -1,18 +1,26 @@
 #include "activewindowborder.h"
+#include "activeborderconfig.h"
 #include "activeborderlogic.h"
+
+#include <KColorScheme>
+#include <KSharedConfig>
 
 #include <effect/effecthandler.h>
 #include <scene/workspacescene.h>
 
 #include <QColor>
+#include <QPalette>
 
 namespace KWin
 {
 
 ActiveWindowBorderEffect::ActiveWindowBorderEffect()
     : m_isOpenGL(effects->isOpenGLCompositing())
-    , m_borderItem(RectF(), BorderOutline(ACTIVE_BORDER_THICKNESS, QColor(0x2a, 0x82, 0xda), BorderRadius()))
+    , m_borderItem(RectF(), BorderOutline())
 {
+    ActiveBorderConfig::instance(QStringLiteral("kwinrc"));
+    updateOutline();
+
     if (!m_isOpenGL) {
         return;
     }
@@ -32,6 +40,26 @@ ActiveWindowBorderEffect::ActiveWindowBorderEffect()
 
     setTrackedWindow(effects->activeWindow());
     updateBorder();
+}
+
+void ActiveWindowBorderEffect::reconfigure(ReconfigureFlags)
+{
+    ActiveBorderConfig::self()->read();
+    updateOutline();
+    updateBorder();
+}
+
+void ActiveWindowBorderEffect::updateOutline()
+{
+    const QColor fallback = ActiveBorderConfig::borderColor();
+    const KSharedConfigPtr colorConfig = KSharedConfig::openConfig(QStringLiteral("kdeglobals"));
+    const QColor themeColor = KColorScheme::isColorSetSupported(colorConfig, KColorScheme::Selection)
+        ? KColorScheme(QPalette::Active, KColorScheme::Selection, colorConfig).background().color()
+        : QColor();
+    m_borderItem.setOutline(BorderOutline(
+        ActiveBorderConfig::borderWidth(),
+        activeBorderColor(themeColor, fallback),
+        BorderRadius(ActiveBorderConfig::borderRadius())));
 }
 
 void ActiveWindowBorderEffect::setTrackedWindow(EffectWindow *window)
@@ -63,7 +91,8 @@ void ActiveWindowBorderEffect::updateBorder()
         window ? window->isDeleted() : false,
         window ? window->isMinimized() : false,
         window ? window->isFullScreen() : false);
-    m_borderItem.setInnerRect(state.innerRect);
+    const qreal gap = ActiveBorderConfig::borderGap();
+    m_borderItem.setInnerRect(state.innerRect.adjusted(-gap, -gap, gap, gap));
     m_borderItem.setVisible(state.visible);
     effects->addRepaintFull();
 }

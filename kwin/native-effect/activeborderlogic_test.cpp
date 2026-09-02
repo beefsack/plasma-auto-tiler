@@ -1,5 +1,6 @@
 #include "activeborderlogic.h"
 
+#include <QColor>
 #include <QRectF>
 
 #include <cstdio>
@@ -26,11 +27,6 @@ void eligibleWindowUsesFrameGeometryAsInnerRect()
     const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false);
     CHECK(state.visible);
     CHECK(state.innerRect == frame);
-}
-
-void activeBorderUsesThreeLogicalPixels()
-{
-    CHECK(KWin::ACTIVE_BORDER_THICKNESS == 3.0);
 }
 
 void missingWindowIsNotVisible()
@@ -62,16 +58,36 @@ void fullScreenWindowIsNotVisible()
     CHECK(!state.visible);
 }
 
+void invalidThemeColorUsesConfiguredFallback()
+{
+    const QColor fallback(0x2a, 0x82, 0xda);
+    CHECK(KWin::activeBorderColor(QColor(), fallback) == fallback);
+}
+
+void transparentThemeColorUsesConfiguredFallback()
+{
+    const QColor fallback(0x2a, 0x82, 0xda);
+    CHECK(KWin::activeBorderColor(QColor(0, 0, 0, 0), fallback) == fallback);
+}
+
+void usableThemeColorWinsOverConfiguredFallback()
+{
+    const QColor theme(0x10, 0x20, 0x30);
+    CHECK(KWin::activeBorderColor(theme, QColor(0x2a, 0x82, 0xda)) == theme);
+}
+
 } // namespace
 
 int main()
 {
     eligibleWindowUsesFrameGeometryAsInnerRect();
-    activeBorderUsesThreeLogicalPixels();
     missingWindowIsNotVisible();
     deletedWindowIsNotVisible();
     minimizedWindowIsNotVisible();
     fullScreenWindowIsNotVisible();
+    invalidThemeColorUsesConfiguredFallback();
+    transparentThemeColorUsesConfiguredFallback();
+    usableThemeColorWinsOverConfiguredFallback();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

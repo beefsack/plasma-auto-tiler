@@ -24,8 +24,13 @@ cleanup() {
 trap cleanup EXIT
 
 REAL_NPM="$(command -v npm || true)"
+REAL_MV="$(command -v mv || true)"
 if [[ -z "$REAL_NPM" ]]; then
   echo "FAIL: npm not found in PATH; the install build tests delegate to it" >&2
+  exit 1
+fi
+if [[ -z "$REAL_MV" ]]; then
+  echo "FAIL: mv not found in PATH; interruption fixtures require it" >&2
   exit 1
 fi
 BASH_PATH="$(command -v bash)"
@@ -112,17 +117,19 @@ fi
 file=""
 group=""
 key=""
+default=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --file) file="${2:?}"; shift 2 ;;
     --group) group="${2:?}"; shift 2 ;;
     --key) key="${2:?}"; shift 2 ;;
+    --default) default="${2:?}"; shift 2 ;;
     --type) shift 2 ;;
     *) exit 2 ;;
   esac
 done
 [[ -n "$file" && -n "$group" && -n "$key" ]] || exit 2
-[[ -f "$file" ]] || { printf '\n'; exit 0; }
+[[ -f "$file" ]] || { printf '%s\n' "$default"; exit 0; }
 current=""
 while IFS= read -r line || [[ -n "$line" ]]; do
   if [[ "$line" == "["* ]]; then
@@ -135,7 +142,7 @@ while IFS= read -r line || [[ -n "$line" ]]; do
     exit 0
   fi
 done < "$file"
-printf '\n'
+printf '%s\n' "$default"
 EOF
 
   cat > "$FAKE_BIN/bin/qdbus" <<'EOF'
@@ -147,17 +154,40 @@ if [[ -f "${FAKE_STATE_DIR:?}/qdbus-fail" ]]; then
 fi
 case "$*" in
   *isEffectSupported*)
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-supported-fail" ]]; then
+      exit 1
+    fi
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-malformed-supported" ]]; then
+      printf 'not-a-boolean\n'
+      exit 0
+    fi
     printf '%s\n' "${FAKE_QDBUS_SUPPORTED:-false}"
     exit 0
     ;;
   *isEffectLoaded*)
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-empty-loaded" ]]; then
+      exit 0
+    fi
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-loaded-fail" ]]; then
+      exit 1
+    fi
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-malformed-loaded" ]]; then
+      printf 'not-a-boolean\n'
+      exit 0
+    fi
     printf '%s\n' "${FAKE_QDBUS_LOADED:-false}"
     exit 0
     ;;
-  *loadEffect*)
+  *unloadEffect*)
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-unload-fail" ]]; then
+      exit 1
+    fi
     exit 0
     ;;
-  *unloadEffect*)
+  *loadEffect*)
+    if [[ -f "${FAKE_STATE_DIR:?}/qdbus-load-fail" ]]; then
+      exit 1
+    fi
     exit 0
     ;;
 esac
@@ -179,11 +209,37 @@ for ((i=0; i<${#args[@]}; i++)); do
     build_dir="${args[$((i+1))]:?}"
   elif [[ "${args[$i]}" == "--build" ]]; then
     build_dir="${args[$((i+1))]:?}"
-    mkdir -p "$build_dir/bin/kwin/effects/plugins"
+    mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
     printf 'fake-so\n' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+    if [[ ! -f "${FAKE_STATE_DIR:?}/cmake-missing-kcm" ]]; then
+      printf 'fake-kcm\n' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+    fi
   fi
 done
 exit 0
+EOF
+
+  cat > "$FAKE_BIN/bin/mv" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+args=("$@")
+source="${args[$(( ${#args[@]} - 2 ))]}"
+destination="${args[$(( ${#args[@]} - 1 ))]}"
+if [[ -n "${FAKE_MOVE_FAIL_SOURCE_SUFFIX:-}" && "$source" == *"${FAKE_MOVE_FAIL_SOURCE_SUFFIX}" ]]; then
+  exit 1
+fi
+"${FAKE_REAL_MV:?}" "$@"
+if [[ -f "${FAKE_STATE_DIR:?}/signal-on-move" && -n "${FAKE_MOVE_SIGNAL_MATCH:-}" ]]; then
+  match=0
+  case "${FAKE_MOVE_SIGNAL_WHAT:-destination}" in
+    destination) [[ "$destination" == "$FAKE_MOVE_SIGNAL_MATCH" ]] && match=1 ;;
+    source) [[ "$source" == "$FAKE_MOVE_SIGNAL_MATCH" ]] && match=1 ;;
+  esac
+  if [[ "$match" -eq 1 ]]; then
+    rm -f "${FAKE_STATE_DIR:?}/signal-on-move"
+    kill -"${FAKE_MOVE_SIGNAL:-TERM}" "$PPID"
+  fi
+fi
 EOF
 
   cat > "$FAKE_BIN/bin/jq" <<'EOF'
@@ -216,7 +272,7 @@ done < "$file"
 printf '%s\n' "$id"
 EOF
 
-  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus" "$FAKE_BIN/bin/jq" "$FAKE_BIN/bin/cmake"
+  chmod +x "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/kwriteconfig6" "$FAKE_BIN/bin/kreadconfig6" "$FAKE_BIN/bin/qdbus" "$FAKE_BIN/bin/jq" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/mv"
 
   for tool in dirname pwd rm mkdir cp cat mktemp mv; do
     ln -sf "$(command -v "$tool")" "$FAKE_BIN/core/$tool"
@@ -230,7 +286,7 @@ EOF
 # a temporary tree, so dry-run source-data probes never touch the real package.
 reset_state() {
   rm -rf "$WORK/state" "$WORK/data" "$WORK/config" "$WORK/home"
-  mkdir -p "$WORK/state" "$WORK/home"
+  mkdir -p "$WORK/state" "$WORK/data" "$WORK/home"
   : > "$WORK/npm.log"
   : > "$WORK/tools.log"
   : > "$WORK/cmake.log"
@@ -247,6 +303,7 @@ reset_state() {
   unset FAKE_QDBUS_LOADED
   unset TEST_KWIN_ENVIRON_FILE
   unset TEST_KWIN_DEV_CMAKE_DIR
+  unset FAKE_MOVE_SIGNAL_MATCH FAKE_MOVE_SIGNAL FAKE_MOVE_SIGNAL_WHAT FAKE_MOVE_FAIL_SOURCE_SUFFIX
   # Default to "not running" so effect-status tests never fall through to
   # scanning the real host /proc; individual tests override
   # TEST_KWIN_ENVIRON_FILE to exercise the found/readable/unreadable branches.
@@ -271,7 +328,11 @@ run_script() {
   [[ -z "${TEST_KWIN_ENVIRON_FILE:-}" ]] || cmd+=("DOGFOOD_KWIN_ENVIRON_FILE=$TEST_KWIN_ENVIRON_FILE")
   [[ -z "${TEST_KWIN_NOT_RUNNING:-}" ]] || cmd+=("DOGFOOD_KWIN_NOT_RUNNING=$TEST_KWIN_NOT_RUNNING")
   [[ -z "${TEST_KWIN_DEV_CMAKE_DIR:-}" ]] || cmd+=("DOGFOOD_KWIN_DEV_CMAKE_DIR=$TEST_KWIN_DEV_CMAKE_DIR")
-  cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" "FAKE_CMAKE_LOG=$WORK/cmake.log" )
+  [[ -z "${FAKE_MOVE_SIGNAL_MATCH:-}" ]] || cmd+=("FAKE_MOVE_SIGNAL_MATCH=$FAKE_MOVE_SIGNAL_MATCH")
+  [[ -z "${FAKE_MOVE_SIGNAL:-}" ]] || cmd+=("FAKE_MOVE_SIGNAL=$FAKE_MOVE_SIGNAL")
+  [[ -z "${FAKE_MOVE_SIGNAL_WHAT:-}" ]] || cmd+=("FAKE_MOVE_SIGNAL_WHAT=$FAKE_MOVE_SIGNAL_WHAT")
+  [[ -z "${FAKE_MOVE_FAIL_SOURCE_SUFFIX:-}" ]] || cmd+=("FAKE_MOVE_FAIL_SOURCE_SUFFIX=$FAKE_MOVE_FAIL_SOURCE_SUFFIX")
+  cmd+=( "FAKE_NPM_LOG=$WORK/npm.log" "FAKE_TOOL_LOG=$WORK/tools.log" "FAKE_STATE_DIR=$WORK/state" "FAKE_REAL_NPM=$REAL_NPM" "FAKE_REAL_MV=$REAL_MV" "FAKE_CMAKE_LOG=$WORK/cmake.log" )
   cmd+=( "$BASH_PATH" "$script" "$@" )
   "${cmd[@]}" >"$OUTPUT" 2>&1
   EXIT=$?
@@ -373,6 +434,23 @@ assert_count() {
   fi
 }
 
+assert_find_count() {
+  local expected="$1" root="$2" label="$3"
+  shift 3
+  if [[ ! -d "$root" ]]; then
+    echo "FAIL: $label: find root does not exist: $root" >&2
+    FAIL=$((FAIL + 1))
+    return
+  fi
+  local actual
+  if ! actual="$(find "$root" "$@" -print | wc -l)"; then
+    echo "FAIL: $label: find failed under $root" >&2
+    FAIL=$((FAIL + 1))
+    return
+  fi
+  assert_count "$expected" "$actual" "$label"
+}
+
 assert_qdbus_calls() {
   local expected="$1" line n=0 ok=1
   while IFS= read -r line; do
@@ -419,6 +497,7 @@ assert_contains "error: unknown command 'bogus'"
 run_script --help
 check_exit 0
 assert_contains "usage: dogfood-install.sh <command> [--help]"
+assert_contains "generic scripted KCM is retired"
 assert_contains "reload"
 assert_contains "Runtime tool-path overrides"
 
@@ -485,6 +564,14 @@ assert_contains "required tool 'cmake' not found in PATH"
 assert_contains "set CMAKE_BIN to its absolute path"
 
 reset_state
+TEST_KWRITECONFIG6_BIN=""
+TEST_PATH="$FAKE_BIN/core"
+run_script effect-install
+check_exit 1
+assert_contains "required tool 'kwriteconfig6' not found in PATH"
+assert_contains "set KWRITECONFIG6_BIN to its absolute path"
+
+reset_state
 TEST_QDBUS_BIN=""
 TEST_PATH="$FAKE_BIN/core"
 run_script effect-reload
@@ -523,8 +610,8 @@ assert_cmp "$META" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
 assert_cmp "$BUNDLE" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/code/main.js"
 assert_cmp "$KWIN_DIR/contents/config/main.xml" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/config/main.xml"
 assert_cmp "$KWIN_DIR/contents/ui/config.ui" "$DATA/kwin/scripts/plasma-auto-tiler-kwin/contents/ui/config.ui"
-assert_count 1 "$(find "$DATA/kwin/scripts" -mindepth 1 -maxdepth 1 | wc -l)" "entries under data root kwin/scripts"
-assert_count 4 "$(find "$DATA/kwin/scripts/plasma-auto-tiler-kwin" -type f | wc -l)" "files in installed package"
+assert_find_count 1 "$DATA/kwin/scripts" "entries under data root kwin/scripts" -mindepth 1 -maxdepth 1
+assert_find_count 4 "$DATA/kwin/scripts/plasma-auto-tiler-kwin" "files in installed package" -type f
 assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
 assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_qdbus_calls 0
@@ -554,7 +641,7 @@ run_script uninstall
 check_exit 0
 assert_contains "uninstalled: removed $DATA/kwin/scripts/plasma-auto-tiler-kwin"
 assert_not_exists "$DATA/kwin/scripts/plasma-auto-tiler-kwin"
-assert_count 0 "$(find "$DATA" -type f | wc -l)" "files left under the data root after uninstall"
+assert_find_count 0 "$DATA" "files left under the data root after uninstall" -type f
 
 # uninstall: idempotent when nothing is installed
 reset_state
@@ -692,7 +779,7 @@ assert_not_grep_file "qdbus" "$WORK/tools.log"
 assert_not_grep_file "npm" "$WORK/tools.log"
 assert_qdbus_calls 0
 assert_not_exists "$CONFIG/kwinrc"
-assert_count 0 "$(find "$DATA" -type f | wc -l)" "files under data root after dry-run"
+assert_find_count 0 "$DATA" "files under data root after dry-run" -type f
 
 # dry-run: installed and enabled state is reported through the kreadconfig6 convention
 reset_state
@@ -767,8 +854,8 @@ assert_contains "error: kreadconfig6 failed to read plasma-auto-tiler-kwinEnable
 # effect-install: fresh run builds via cmake and stages the fake .so
 reset_state
 EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
-EFFECT_BUILD_DIR="$EFFECT_ROOT/build"
 EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_STAGED_KCM="$EFFECT_ROOT/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
 EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
 LEGACY_EFFECT_ENV_FILE="$CONFIG/environment.d/60-plasma-auto-tiler-native-effect.conf"
 run_script effect-install
@@ -776,10 +863,15 @@ check_exit 0
 assert_contains "staged: $EFFECT_STAGED_SO"
 assert_contains "env script: $EFFECT_ENV_FILE"
 assert_contains "a logout/login (or new session) is required"
-assert_grep_file "-B $EFFECT_BUILD_DIR" "$WORK/cmake.log"
-assert_grep_file "--build $EFFECT_BUILD_DIR" "$WORK/cmake.log"
+assert_grep_file "-B $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
+assert_grep_file "--build $DATA/.plasma-auto-tiler-native-effect." "$WORK/cmake.log"
 assert_file "$EFFECT_STAGED_SO"
 assert_grep_file "fake-so" "$EFFECT_STAGED_SO"
+assert_file "$EFFECT_STAGED_KCM"
+assert_grep_file "fake-kcm" "$EFFECT_STAGED_KCM"
+assert_find_count 1 "$EFFECT_ROOT/kwin/effects/plugins" "files in the staged native plugin namespace" -mindepth 1 -maxdepth 1 -type f
+assert_find_count 1 "$EFFECT_ROOT/kwin/effects/configs" "files in the staged native KCM namespace" -mindepth 1 -maxdepth 1 -type f
+assert_find_count 2 "$EFFECT_ROOT/kwin/effects" "files in the complete staged native namespace" -type f
 assert_file "$EFFECT_ENV_FILE"
 assert_grep_file 'export QT_PLUGIN_PATH="'"$EFFECT_ROOT"'${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"' "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in fresh env script"
@@ -801,6 +893,32 @@ assert_contains "error: cmake configure failed for"
 assert_not_exists "$EFFECT_STAGED_SO"
 assert_not_exists "$EFFECT_ENV_FILE"
 
+# effect-install: a missing KCM output fails closed before either native output
+# is staged or any environment/configuration state is written
+reset_state
+touch "$WORK/state/cmake-missing-kcm"
+run_script effect-install
+check_exit 1
+assert_contains "error: config module not found after build:"
+assert_not_exists "$EFFECT_ROOT/kwin"
+assert_not_exists "$EFFECT_STAGED_SO"
+assert_not_exists "$EFFECT_STAGED_KCM"
+assert_not_exists "$EFFECT_ENV_FILE"
+assert_not_exists "$CONFIG/kwinrc"
+assert_not_grep_file "kwriteconfig6" "$WORK/tools.log"
+
+# effect-install: kwinrc write failure is checked before publishing any new
+# binary or environment state
+reset_state
+touch "$WORK/state/kwrite-fail"
+run_script effect-install
+check_exit 1
+assert_contains "error: kwriteconfig6 failed to set plasma-auto-tiler-active-borderEnabled=true"
+assert_not_exists "$EFFECT_ROOT"
+assert_not_exists "$EFFECT_ENV_FILE"
+assert_not_exists "$CONFIG/kwinrc"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled true" "$WORK/tools.log"
+
 # effect-install: idempotent re-run does not duplicate or corrupt the env script
 reset_state
 run_script effect-install
@@ -811,6 +929,140 @@ check_exit 0
 assert_cmp "$WORK/env-first.sh" "$EFFECT_ENV_FILE"
 assert_count 1 "$(grep -c QT_PLUGIN_PATH "$EFFECT_ENV_FILE")" "QT_PLUGIN_PATH lines in env script after re-run"
 assert_count 1 "$(grep -c '^plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "plasma-auto-tiler-active-borderEnabled lines in kwinrc after re-run"
+assert_not_contains "logout/login"
+
+# effect-install: SIGTERM during replacement publication restores the exact
+# pre-existing root, environment script, and kwinrc state
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
+printf 'previous-so\n' > "$EFFECT_STAGED_SO"
+printf 'previous-extra\n' > "$EFFECT_ROOT/previous-extra"
+printf 'previous-env\n' > "$EFFECT_ENV_FILE"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\nunrelated=true\n' > "$CONFIG/kwinrc"
+cp -R "$EFFECT_ROOT" "$WORK/install-old-root"
+cp "$EFFECT_ENV_FILE" "$WORK/install-old-env"
+cp "$CONFIG/kwinrc" "$WORK/install-old-kwinrc"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
+FAKE_MOVE_SIGNAL=TERM
+FAKE_MOVE_SIGNAL_WHAT=destination
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-install
+check_exit 143
+assert_contains "error: interrupted by SIGTERM"
+assert_not_contains "rollback failed"
+assert_cmp "$WORK/install-old-root/kwin/effects/plugins/plasma-auto-tiler-active-border.so" "$EFFECT_STAGED_SO"
+assert_cmp "$WORK/install-old-root/previous-extra" "$EFFECT_ROOT/previous-extra"
+assert_cmp "$WORK/install-old-env" "$EFFECT_ENV_FILE"
+assert_cmp "$WORK/install-old-kwinrc" "$CONFIG/kwinrc"
+assert_not_exists "$DATA/.plasma-auto-tiler-native-effect"
+
+# effect-install: catchable-signal rollback preserves an exact pre-existing
+# empty native enablement key rather than treating it as absent
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
+printf 'previous-so\n' > "$EFFECT_STAGED_SO"
+printf 'previous-env\n' > "$EFFECT_ENV_FILE"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
+cp "$CONFIG/kwinrc" "$WORK/install-empty-key-old-kwinrc"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
+FAKE_MOVE_SIGNAL=TERM
+FAKE_MOVE_SIGNAL_WHAT=destination
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-install
+check_exit 143
+assert_contains "error: interrupted by SIGTERM"
+assert_not_contains "rollback failed"
+assert_cmp "$WORK/install-empty-key-old-kwinrc" "$CONFIG/kwinrc"
+assert_count 1 "$(grep -Fx -c 'plasma-auto-tiler-active-borderEnabled=' "$CONFIG/kwinrc")" "empty native enablement key after rollback"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+assert_find_count 0 "$DATA" "native-effect transaction directories after empty-key rollback" -mindepth 1 -maxdepth 1 -type d -name '.plasma-auto-tiler-native-effect.*'
+
+# effect-install: SIGHUP during first publication rolls back a fresh install
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
+FAKE_MOVE_SIGNAL=HUP
+FAKE_MOVE_SIGNAL_WHAT=destination
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-install
+check_exit 129
+assert_contains "error: interrupted by SIGHUP"
+assert_not_contains "rollback failed"
+assert_not_exists "$EFFECT_ROOT"
+assert_not_exists "$EFFECT_ENV_FILE"
+assert_not_exists "$CONFIG/kwinrc"
+
+# effect-remove: SIGINT after staging the environment entry restores the exact
+# pre-existing native state rather than leaving a partial removal
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+run_script effect-install
+check_exit 0
+cp -R "$EFFECT_ROOT" "$WORK/remove-old-root"
+cp "$EFFECT_ENV_FILE" "$WORK/remove-old-env"
+cp "$CONFIG/kwinrc" "$WORK/remove-old-kwinrc"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ENV_FILE"
+FAKE_MOVE_SIGNAL=INT
+FAKE_MOVE_SIGNAL_WHAT=source
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-remove
+check_exit 130
+assert_contains "error: interrupted by SIGINT"
+assert_not_contains "rollback failed"
+assert_cmp "$WORK/remove-old-root/kwin/effects/plugins/plasma-auto-tiler-active-border.so" "$EFFECT_STAGED_SO"
+assert_cmp "$WORK/remove-old-env" "$EFFECT_ENV_FILE"
+assert_cmp "$WORK/remove-old-kwinrc" "$CONFIG/kwinrc"
+assert_file "$EFFECT_STAGED_KCM"
+
+# effect-install: a failed rollback operation is reported as rollback failure
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+mkdir -p "$(dirname "$EFFECT_STAGED_SO")" "$(dirname "$EFFECT_ENV_FILE")"
+printf 'previous-so\n' > "$EFFECT_STAGED_SO"
+printf 'previous-env\n' > "$EFFECT_ENV_FILE"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=false\n' > "$CONFIG/kwinrc"
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ROOT"
+FAKE_MOVE_SIGNAL=TERM
+FAKE_MOVE_SIGNAL_WHAT=destination
+FAKE_MOVE_FAIL_SOURCE_SUFFIX=previous-root
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-install
+check_exit 143
+assert_contains "error: interrupted by SIGTERM; rollback failed"
+
+# effect-remove: a failed rollback operation is reported as rollback failure
+reset_state
+EFFECT_ROOT="$DATA/plasma-auto-tiler-native-effect"
+EFFECT_STAGED_SO="$EFFECT_ROOT/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+EFFECT_ENV_FILE="$CONFIG/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+run_script effect-install
+check_exit 0
+touch "$WORK/state/signal-on-move"
+FAKE_MOVE_SIGNAL_MATCH="$EFFECT_ENV_FILE"
+FAKE_MOVE_SIGNAL=INT
+FAKE_MOVE_SIGNAL_WHAT=source
+FAKE_MOVE_FAIL_SOURCE_SUFFIX=root
+TEST_PATH="$FAKE_BIN/bin:$PATH"
+run_script effect-remove
+check_exit 130
+assert_contains "error: interrupted by SIGINT; rollback failed"
 
 # effect-install: pinned KWin_DIR path exists -> passed to cmake
 reset_state
@@ -855,6 +1107,7 @@ check_exit 0
 run_script effect-status
 check_exit 0
 assert_contains "[a] staging: yes - plugin .so present at $EFFECT_STAGED_SO"
+assert_contains "[a] config module: yes - KCM .so present at $EFFECT_STAGED_KCM"
 assert_contains "[b] env script: yes - $EFFECT_ENV_FILE exists and its content is current"
 assert_contains "[c] session delivery: could not determine - the running kwin_wayland process could not be found"
 assert_count 0 "$(wc -l < "$WORK/cmake.log")" "cmake invocations during effect-status"
@@ -926,6 +1179,28 @@ assert_contains "-> QT_PLUGIN_PATH reached the running KWin session (stage c pas
 assert_contains "journalctl --user -b"
 assert_not_contains "logout/login"
 
+# effect-status: a D-Bus discovery query failure is reported as an error, not
+# as unsupported and not as a session-boundary diagnosis
+reset_state
+touch "$WORK/state/qdbus-supported-fail"
+run_script effect-status
+check_exit 0
+assert_contains "[d] discovery: error - qdbus failed to query isEffectSupported"
+assert_not_contains "[d] discovery: no - isEffectSupported reports false"
+assert_not_contains "logout/login"
+
+# effect-status: a D-Bus loaded-state query failure is reported as an error,
+# preserving fail-closed uncertainty about whether the effect is loaded
+reset_state
+FAKE_QDBUS_SUPPORTED=true
+touch "$WORK/state/qdbus-loaded-fail"
+run_script effect-status
+check_exit 0
+assert_contains "[d] discovery: yes - isEffectSupported reports true"
+assert_contains "[e] loaded: error - qdbus failed to query isEffectLoaded"
+assert_not_contains "[e] loaded: no - isEffectLoaded reports false"
+assert_not_contains "effect is supported but not currently loaded"
+
 # effect-status: discovery PASS but loaded FAIL -> points at effect-reload
 reset_state
 run_script effect-install
@@ -956,14 +1231,56 @@ assert_contains "[d] discovery: yes"
 assert_contains "[e] loaded: yes"
 assert_not_contains "->"
 
-# effect-reload: unsupported exits non-zero and never calls load/unloadEffect
+# effect-reload: isEffectSupported=false is ambiguous and never calls
+# load/unloadEffect or invents a session-boundary diagnosis
 reset_state
+run_script effect-install
+check_exit 0
 FAKE_QDBUS_SUPPORTED=false
 run_script effect-reload
-check_exit 1
-assert_contains "requires one logout/login (or new session) to take effect"
+check_exit 2
+assert_contains "error: plasma-auto-tiler-active-border is unavailable to KWin (isEffectSupported=false)"
+assert_contains "plugin load, factory, or ABI failure"
+assert_contains "Run 'effect-status'"
+assert_not_contains "logout/login"
 assert_not_grep_file "loadEffect" "$WORK/tools.log"
 assert_not_grep_file "unloadEffect" "$WORK/tools.log"
+
+# effect-reload: D-Bus discovery failure is a non-boundary failure
+reset_state
+touch "$WORK/state/qdbus-supported-fail"
+run_script effect-reload
+check_exit 2
+assert_contains "error: qdbus failed to query isEffectSupported"
+assert_not_contains "logout/login"
+assert_not_grep_file "loadEffect" "$WORK/tools.log"
+
+# effect-reload: malformed discovery reply is a non-boundary failure
+reset_state
+touch "$WORK/state/qdbus-malformed-supported"
+run_script effect-reload
+check_exit 2
+assert_contains "error: qdbus returned an invalid isEffectSupported reply"
+assert_not_contains "logout/login"
+assert_not_grep_file "loadEffect" "$WORK/tools.log"
+
+# effect-reload: load failure is a non-boundary failure
+reset_state
+FAKE_QDBUS_SUPPORTED=true
+touch "$WORK/state/qdbus-load-fail"
+run_script effect-reload
+check_exit 2
+assert_contains "error: qdbus failed to loadEffect"
+assert_not_contains "logout/login"
+
+# effect-reload: unload failure is a non-boundary failure
+reset_state
+FAKE_QDBUS_SUPPORTED=true
+touch "$WORK/state/qdbus-unload-fail"
+run_script effect-reload
+check_exit 2
+assert_contains "error: qdbus failed to unloadEffect"
+assert_not_contains "logout/login"
 
 # effect-reload: supported and loaded succeeds via unload then load then check
 reset_state
@@ -988,6 +1305,29 @@ else
   FAIL=$((FAIL + 1))
 fi
 
+# effect-remove: malformed and empty loaded-state replies fail closed
+reset_state
+run_script effect-install
+check_exit 0
+touch "$WORK/state/qdbus-malformed-loaded"
+run_script effect-remove
+check_exit 1
+assert_contains "error: qdbus returned an invalid isEffectLoaded reply"
+assert_file "$EFFECT_STAGED_SO"
+assert_file "$EFFECT_ENV_FILE"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+
+reset_state
+run_script effect-install
+check_exit 0
+touch "$WORK/state/qdbus-empty-loaded"
+run_script effect-remove
+check_exit 1
+assert_contains "error: qdbus returned an invalid isEffectLoaded reply"
+assert_file "$EFFECT_STAGED_SO"
+assert_file "$EFFECT_ENV_FILE"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+
 # effect-remove: after effect-install, removes both the staged tree and the env script
 reset_state
 run_script effect-install
@@ -1000,6 +1340,51 @@ assert_not_exists "$EFFECT_ROOT"
 assert_not_exists "$EFFECT_ENV_FILE"
 assert_contains "removed (kwinrc key): plasma-auto-tiler-active-borderEnabled"
 assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+
+# effect-remove: clears the complete namespaced native root and only removes
+# this project's native enablement key from shared KWin configuration
+reset_state
+run_script effect-install
+check_exit 0
+mkdir -p "$EFFECT_ROOT/extra/deep"
+printf 'stale native namespace content\n' > "$EFFECT_ROOT/extra/deep/stale.so"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=true\nplasma-auto-tiler-kwinEnabled=true\nunrelatedPluginEnabled=true\n' > "$CONFIG/kwinrc"
+run_script effect-remove
+check_exit 0
+assert_not_exists "$EFFECT_ROOT"
+assert_not_exists "$EFFECT_ROOT/extra/deep/stale.so"
+assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
+assert_grep_file "unrelatedPluginEnabled=true" "$CONFIG/kwinrc"
+
+# effect-remove: a loaded effect is left completely intact rather than
+# deleting a library that KWin still has mapped
+reset_state
+run_script effect-install
+check_exit 0
+FAKE_QDBUS_LOADED=true
+run_script effect-remove
+check_exit 1
+assert_contains "is currently loaded; refusing to delete its files"
+assert_file "$EFFECT_STAGED_SO"
+assert_file "$EFFECT_STAGED_KCM"
+assert_file "$EFFECT_ENV_FILE"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
+assert_not_grep_file "loadEffect" "$WORK/tools.log"
+assert_not_grep_file "unloadEffect" "$WORK/tools.log"
+
+# effect-remove: kwinrc deletion failure rolls back staged file moves
+reset_state
+run_script effect-install
+check_exit 0
+touch "$WORK/state/kwrite-fail"
+run_script effect-remove
+check_exit 1
+assert_contains "error: kwriteconfig6 failed to delete plasma-auto-tiler-active-borderEnabled"
+assert_file "$EFFECT_STAGED_SO"
+assert_file "$EFFECT_STAGED_KCM"
+assert_file "$EFFECT_ENV_FILE"
+assert_grep_file "plasma-auto-tiler-active-borderEnabled=true" "$CONFIG/kwinrc"
 
 # effect-remove: migration - also removes the legacy environment.d entry this
 # project used to write, without touching any other file under environment.d/
@@ -1035,6 +1420,17 @@ assert_contains "effect-remove: nothing to do ($EFFECT_ROOT, $EFFECT_ENV_FILE, a
 assert_grep_file "kreadconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled" "$WORK/tools.log"
 assert_not_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete" "$WORK/tools.log"
 
+# effect-remove: a present empty project key is distinguished from an absent key
+reset_state
+mkdir -p "$CONFIG"
+printf '[Plugins]\nplasma-auto-tiler-active-borderEnabled=\nunrelated=true\n' > "$CONFIG/kwinrc"
+run_script effect-remove
+check_exit 0
+assert_contains "removed (kwinrc key): plasma-auto-tiler-active-borderEnabled"
+assert_not_grep_file "^plasma-auto-tiler-active-borderEnabled=" "$CONFIG/kwinrc"
+assert_grep_file "unrelated=true" "$CONFIG/kwinrc"
+assert_grep_file "kwriteconfig6 --file $CONFIG/kwinrc --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete" "$WORK/tools.log"
+
 # setup: full success path (all four stages succeed)
 reset_state
 FAKE_QDBUS_SUPPORTED=true
@@ -1068,8 +1464,8 @@ assert_file "$DATA/kwin/scripts/plasma-auto-tiler-kwin/metadata.json"
 assert_grep_file "plasma-auto-tiler-kwinEnabled=true" "$CONFIG/kwinrc"
 assert_not_exists "$EFFECT_STAGED_SO"
 
-# setup: effect-install succeeds but effect-reload hits the expected
-# first-run pending-boundary outcome; whole command still succeeds
+# setup: effect-install succeeds but an unsupported effect is reported as a
+# failed reload, not as a pending session boundary; whole command still succeeds
 reset_state
 FAKE_QDBUS_SUPPORTED=false
 run_script setup
@@ -1077,11 +1473,25 @@ check_exit 0
 assert_contains "install: ok"
 assert_contains "enable: ok"
 assert_contains "effect-install: ok"
-assert_contains "effect-reload: pending-boundary"
-assert_contains "log out and back in once"
+assert_contains "error: plasma-auto-tiler-active-border is unavailable to KWin (isEffectSupported=false)"
+assert_contains "effect-reload: failed"
+assert_contains "effect-reload failed for a non-boundary reason"
+assert_not_contains "effect-reload: pending-boundary"
+assert_not_contains "pending the expected first-run logout/login boundary"
 assert_file "$EFFECT_STAGED_SO"
 assert_not_grep_file "loadEffect" "$WORK/tools.log"
 assert_not_grep_file "unloadEffect" "$WORK/tools.log"
+
+# setup: effect-reload D-Bus failure is reported as failed, not pending-boundary
+reset_state
+touch "$WORK/state/qdbus-supported-fail"
+run_script setup
+check_exit 0
+assert_contains "effect-install: ok"
+assert_contains "effect-reload: failed"
+assert_contains "effect-reload failed for a non-boundary reason"
+assert_not_contains "effect-reload: pending-boundary"
+assert_not_contains "pending the expected first-run logout/login boundary"
 
 # setup: a real failure in the required install/enable half still fails the
 # whole command

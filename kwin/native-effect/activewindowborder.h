@@ -17,8 +17,10 @@ public:
     ActiveWindowBorderEffect();
 
 private:
+    void reconfigure(ReconfigureFlags flags) override;
     void setTrackedWindow(EffectWindow *window);
     void updateBorder();
+    void updateOutline();
     void paintScreen(const RenderTarget &renderTarget, const RenderViewport &viewport, int mask, const Region &deviceRegion, LogicalOutput *screen) override;
 
     const bool m_isOpenGL;

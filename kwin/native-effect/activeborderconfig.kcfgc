@@ -1,0 +1,5 @@
+File=activeborderconfig.kcfg
+ClassName=ActiveBorderConfig
+NameSpace=KWin
+Singleton=true
+Mutators=true

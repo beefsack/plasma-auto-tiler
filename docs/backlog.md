@@ -14,12 +14,9 @@ Only meaningful pending or active work is listed.
   an occupied target leaf, confirm the whole-leaf rectangle preview, release,
   and visually confirm nested split placement; do not attempt stale-harness
   recovery | [change](changes/archive/nested-placement-affordance.md)
-- P1 | pending implementation | Implement the native effect-scoped KCM now
-  that the development session has been restarted and its committed dependency
-  is available | [change](changes/native-effect-kcm.md)
-- P1 | implementation present, pending live | Accept the active-window border
-  using the required Nix-built native effect and exact host KWin ABI/session
-  discovery | [decision](decisions.md#native-active-border)
+- P1 | static complete, pending manual/live | Accept the active-window border
+  and Desktop Effects KCM using the required Nix-built native effect and exact
+  host KWin ABI/session discovery | [decision](decisions.md#native-active-border)
 - P1 | static partial, blocked integration | Route the tray lifecycle launcher
   through the accepted static harness before live carrier validation | [change](changes/tray-carrier.md)
 - P1 | pending implementation and live | Complete tray MVP basic status and

@@ -28,10 +28,10 @@ describe("production bundle compatibility", () => {
         assert.doesNotMatch(bundle, /\.(?:trimStart|trimEnd|matchAll|replaceAll)\(/);
     });
 
-    it("links the generic scripted-KCM metadata to the KConfigXT schema", () => {
+    it("keeps the script metadata free of the retired generic KCM link", () => {
         const metadata = readFileSync("metadata.json", "utf8");
         const schema = readFileSync("contents/config/main.xml", "utf8");
-        assert.match(metadata, /"X-KDE-ConfigModule"\s*:\s*"kwin\/effects\/configs\/kcm_kwin4_genericscripted"/);
+        assert.doesNotMatch(metadata, /"X-KDE-ConfigModule"/);
         assert.match(schema, /<entry name="tilingAlgorithm" type="Enum">/);
         assert.match(schema, /<entry name="automaticSplitTarget" type="Enum">/);
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);

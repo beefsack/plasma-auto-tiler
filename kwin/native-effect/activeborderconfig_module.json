@@ -1,0 +1,9 @@
+{
+    "KPlugin": {
+        "Id": "plasma-auto-tiler-active-border_config",
+        "Name": "Plasma Auto Tiler",
+        "Description": "Configure the Plasma Auto Tiler active window border.",
+        "Icon": "preferences-system-windows",
+        "License": "GPL-2.0-or-later"
+    }
+}
