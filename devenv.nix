@@ -13,7 +13,10 @@
     python3
     zip
     kdePackages.extra-cmake-modules
+    kdePackages.kcolorscheme
     kdePackages.kconfig
+    kdePackages.kcmutils
+    kdePackages.kwidgetsaddons
     pkgs.kdePackages.kwin
     pkgs.kdePackages.kwin.dev
     kdePackages.kpackage
