@@ -16,42 +16,50 @@ bridge.
 
 ## Acceptance
 
-- Static publisher and normal lifecycle behavior are accepted in the available
-  harness; lifecycle launcher routing must be completed before live validation.
-- Live acceptance covers KWin-origin state, SNI delivery, packaging, panel, and
-  login-autostart behavior without claiming unrun results.
+- Fresh current-main 05a static evidence accepts the direct lifecycle launcher
+  route under a hermetic fixture.
+- Tray MVP basic status and Settings implementation, plus live validation,
+  remain pending. Live validation includes KWin-origin state, SNI delivery,
+  packaging, panel, and login-autostart behavior.
 
 ## Approach And Dependencies
 
-- Route the lifecycle launcher through the accepted static harness before live
-  carrier validation.
+- Use direct current Rust binary commands under a hermetic fixture for the
+  lifecycle launcher route before live carrier validation.
 - Packaging and user-local binary lifecycle are dependencies of the tray MVP;
   the helper is not required for core tiling.
 
 ## Current Approach And Evidence
 
-- The immediate publisher on main and normal lifecycle work are accepted. The canonical
-  bundle is `b399ba6`, 369823 bytes, SHA-256
-  `d80744656b464153785bb92dae5c96bf4c1f639ee4c63f8fdd408a7119c0bccc`.
-- The reconstructed 05a static harness passed, but lifecycle launcher routing
-  blocks that accepted evidence from its normal route. 05b KWin-origin live
-  acceptance, SNI delivery, packaging, and the manual panel and login-autostart
-  release gates are unrun.
+- The fresh current-main 05a static harness accepts direct current Rust binary
+  commands under a hermetic fixture.
+- Process identity correction and fail-closed lifecycle coverage are accepted;
+  the harness accepted 18 lifecycle checks and 4 self-checks.
+- All-target Rust: 45 passed.
+- The installer fixture ran only from an isolated archived HEAD and is not tray
+  evidence.
+- Tray MVP basic status and Settings implementation remain pending. KWin-origin
+  05b, live SNI, panel, packaging, and login-autostart acceptance remain
+  pending.
 
 ## Next Action
 
-Route the lifecycle launcher into the accepted static harness before any live
-carrier validation.
+Complete the tray MVP basic status and Settings implementation, then perform
+the separately pending live validation.
 
 ## Verification
 
-- The immediate publisher on main and normal lifecycle work are accepted. The
-  reconstructed 05a static harness passed, but its normal launcher route is
-  blocked; 05b live acceptance and release gates remain unrun.
+- Fresh current-main 05a direct lifecycle launcher commands ran under a
+  hermetic fixture, with accepted process identity correction and fail-closed
+  lifecycle coverage.
+- The static harness accepted 18 lifecycle checks and 4 self-checks; all-target
+  Rust had 45 passed.
+- The installer fixture ran only from an isolated archived HEAD and is not tray
+  evidence. Tray MVP implementation and live acceptance remain pending.
 
 ## Material Decisions And Accepted Evidence
 
 - The helper remains optional to core tiling, and the MVP boundary is basic
   status plus Settings with no direct tiling controls.
-- The 05a harness evidence is accepted; launcher routing, live carrier checks,
-  and release gates are not performed.
+- The fresh current-main 05a direct lifecycle launcher route is accepted under
+  a hermetic fixture; live carrier checks and release gates remain pending.

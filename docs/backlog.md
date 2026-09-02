@@ -4,7 +4,8 @@ Only meaningful pending or active work is listed.
 
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
-  drag/reflow and the existing float, fullscreen, maximize, and workspace paths |
+  drag/reflow and the existing float, fullscreen, maximize, and workspace
+  paths |
   [change](changes/custom-tile-runtime.md)
 - P1 | static complete, pending live | Accept COSMIC directional movement on
   KWin with separately authorized live bindings | [change](changes/cosmic-directional-movement.md)
@@ -17,8 +18,6 @@ Only meaningful pending or active work is listed.
 - P1 | static complete, pending manual/live | Accept the active-window border
   and Desktop Effects KCM using the required Nix-built native effect and exact
   host KWin ABI/session discovery | [decision](decisions.md#native-active-border)
-- P1 | static partial, blocked integration | Route the tray lifecycle launcher
-  through the accepted static harness before live carrier validation | [change](changes/tray-carrier.md)
 - P1 | pending implementation and live | Complete tray MVP basic status and
   Settings, then validate SNI delivery, packaging, panel, and login-autostart
   behavior | [change](changes/tray-carrier.md)

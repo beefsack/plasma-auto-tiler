@@ -23,19 +23,23 @@ pub const PID_OWNER_MARKER: &str = "plasma-auto-tiler-pid-owner-v1";
 pub const DESKTOP_OWNER_MARKER: &str = "X-Plasma-Auto-Tiler-Owner=plasma-auto-tiler-v1";
 pub const DATA_OWNER_FILE: &str = ".plasma-auto-tiler-owner";
 const LOCK_FILE: &str = ".plasma-auto-tiler.lock";
-const MAX_RECORD_BYTES: usize = 1024 * 1024;
+const MAX_RECORD_BYTES: usize = 16 * 1024 * 1024;
+const MAX_ARTIFACT_FILE_BYTES: usize = 64 * 1024 * 1024;
+const MAX_TREE_NODES: usize = 1024;
 const LAUNCH_DEV: &str = "PLASMA_AUTO_TILER_LAUNCH_DEV";
 const LAUNCH_INO: &str = "PLASMA_AUTO_TILER_LAUNCH_INO";
 const LAUNCH_READY: &str = "PLASMA_AUTO_TILER_LAUNCH_READY";
 const LAUNCH_READY_DEV: &str = "PLASMA_AUTO_TILER_LAUNCH_READY_DEV";
 const LAUNCH_READY_INO: &str = "PLASMA_AUTO_TILER_LAUNCH_READY_INO";
+const PROC_COMM_MAX_BYTES: usize = 15;
 const LAUNCH_READY_MARKER: &[u8] = b"plasma-auto-tiler-ready-v1\n";
 static NEXT_NAME: AtomicU64 = AtomicU64::new(0);
 #[cfg(test)]
-static FAIL_NEXT_BACKUP_SYNC: AtomicU64 = AtomicU64::new(0);
-#[cfg(test)]
 thread_local! {
+    static FAIL_NEXT_BACKUP_SYNC: Cell<bool> = const { Cell::new(false) };
     static FAIL_REMOVE_AFTER: Cell<u64> = const { Cell::new(0) };
+    static DENY_PROC_EXE_ACCESS: Cell<bool> = const { Cell::new(false) };
+    static FAIL_NEXT_INSTALL_BACKUP_CLEANUP: Cell<bool> = const { Cell::new(false) };
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -318,20 +322,35 @@ fn write_record_with_identity(
     record: &LifecycleRecord,
     binary: &FileIdentity,
 ) -> io::Result<()> {
+    let temporary = unique_name(".tray-pid");
+    let mut text = record.encode()?;
+    let binary_prefix = format!(
+        "binary_dev={}\nbinary_ino={}\nbinary_content=",
+        binary.dev, binary.ino
+    );
+    let encoded_binary_bytes = binary
+        .content
+        .len()
+        .checked_mul(2)
+        .ok_or_else(|| invalid("PID record exceeds lifecycle record limit"))?;
+    let record_bytes = text
+        .len()
+        .checked_add(binary_prefix.len())
+        .and_then(|bytes| bytes.checked_add(encoded_binary_bytes))
+        .and_then(|bytes| bytes.checked_add(1))
+        .ok_or_else(|| invalid("PID record exceeds lifecycle record limit"))?;
+    if record_bytes > MAX_RECORD_BYTES {
+        return Err(invalid("PID record exceeds lifecycle record limit"));
+    }
+    text.push_str(&binary_prefix);
+    text.push_str(&encode_hex(&binary.content));
+    text.push('\n');
     let parent = open_directory(
         path.parent()
             .ok_or_else(|| invalid("record has no parent"))?,
         true,
     )?;
     let name = leaf_name(path)?;
-    let temporary = unique_name(".tray-pid");
-    let mut text = record.encode()?;
-    text.push_str(&format!(
-        "binary_dev={}\nbinary_ino={}\nbinary_content={}\n",
-        binary.dev,
-        binary.ino,
-        encode_hex(&binary.content)
-    ));
     let result = (|| {
         let mut file = create_file_at(&parent, &temporary, 0o600)?;
         file.write_all(text.as_bytes())?;
@@ -366,41 +385,111 @@ pub trait ProcessControl {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProcessExecutableIdentity {
+    pub dev: u64,
+    pub ino: u64,
+    pub content: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProcessPathIdentity {
+    start_tick: u64,
+    resolved_executable_path: PathBuf,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ProcessIdentity {
     pub start_tick: u64,
     pub resolved_executable_path: PathBuf,
+    pub executable: ProcessExecutableIdentity,
 }
 
 pub struct ProcProcessControl {
     pub proc_root: PathBuf,
 }
 
-impl ProcessControl for ProcProcessControl {
-    fn identity(&self, pid: u32) -> io::Result<Option<ProcessIdentity>> {
-        let dir = match open_special_directory(&self.proc_root.join(pid.to_string())) {
-            Ok(dir) => dir,
-            Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(None),
-            Err(e) => return Err(e),
+impl ProcProcessControl {
+    fn process_directory(&self, pid: u32) -> io::Result<Option<File>> {
+        match open_special_directory(&self.proc_root.join(pid.to_string())) {
+            Ok(dir) => Ok(Some(dir)),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn identity_at(dir: &File, expected_uid: u32) -> io::Result<Option<ProcessIdentity>> {
+        if dir.metadata()?.uid() != expected_uid {
+            return Ok(None);
+        }
+        let Some(path) = process_path_identity_at(dir)? else {
+            return Ok(None);
         };
-        let stat = read_special_file(&dir, "stat")?;
-        let close = stat
-            .rfind(')')
-            .ok_or_else(|| invalid("process stat has no command terminator"))?;
-        let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
-        let start_tick = fields
-            .get(19)
-            .ok_or_else(|| invalid("process stat is truncated"))?
-            .parse()
-            .map_err(|_| invalid("invalid process start tick"))?;
-        let executable = PathBuf::from(OsString::from_vec(
-            rfs::readlinkat(&dir, "exe", Vec::new())
-                .map_err(io::Error::from)?
-                .into_bytes(),
-        ));
+        let Some(binary) = process_binary_identity_at(dir)? else {
+            return Ok(None);
+        };
+        Ok(Some(ProcessIdentity {
+            start_tick: path.start_tick,
+            resolved_executable_path: path.resolved_executable_path,
+            executable: ProcessExecutableIdentity {
+                dev: binary.dev,
+                ino: binary.ino,
+                content: binary.content,
+            },
+        }))
+    }
+
+    fn identity_if_path(
+        &self,
+        pid: u32,
+        expected_paths: &[&Path],
+    ) -> io::Result<Option<ProcessIdentity>> {
+        let Some(dir) = self.process_directory(pid)? else {
+            return Ok(None);
+        };
+        if dir.metadata()?.uid() != current_uid() {
+            return Ok(None);
+        }
+        let Some((start_tick, command)) = process_path_metadata_at(&dir)? else {
+            return Ok(None);
+        };
+        let resolved_executable_path = match process_executable_path_at(&dir) {
+            Ok(Some(path)) => path,
+            Ok(None) => return Ok(None),
+            Err(error)
+                if error.kind() == io::ErrorKind::PermissionDenied
+                    && !process_command_matches_paths(&command, expected_paths) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(error),
+        };
+        if !expected_paths
+            .iter()
+            .any(|expected| resolved_executable_path == *expected)
+        {
+            return Ok(None);
+        }
+        let Some(binary) = process_binary_identity_at(&dir)? else {
+            return Ok(None);
+        };
         Ok(Some(ProcessIdentity {
             start_tick,
-            resolved_executable_path: executable,
+            resolved_executable_path,
+            executable: ProcessExecutableIdentity {
+                dev: binary.dev,
+                ino: binary.ino,
+                content: binary.content,
+            },
         }))
+    }
+}
+
+impl ProcessControl for ProcProcessControl {
+    fn identity(&self, pid: u32) -> io::Result<Option<ProcessIdentity>> {
+        let Some(dir) = self.process_directory(pid)? else {
+            return Ok(None);
+        };
+        Self::identity_at(&dir, current_uid())
     }
 
     fn terminate(&self, pid: u32, expected: &ProcessIdentity) -> io::Result<()> {
@@ -423,8 +512,86 @@ fn process_binary_identity(proc_root: &Path, pid: u32) -> io::Result<Option<File
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
+    process_binary_identity_at(&dir)
+}
+
+fn process_path_metadata_at(dir: &File) -> io::Result<Option<(u64, String)>> {
+    let stat = match read_special_file(dir, "stat") {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let close = stat
+        .rfind(')')
+        .ok_or_else(|| invalid("process stat has no command terminator"))?;
+    let open = stat
+        .find('(')
+        .ok_or_else(|| invalid("process stat has no command opener"))?;
+    let command = stat[open + 1..close].to_owned();
+    let fields: Vec<_> = stat[close + 1..].split_whitespace().collect();
+    let start_tick = fields
+        .get(19)
+        .ok_or_else(|| invalid("process stat is truncated"))?
+        .parse()
+        .map_err(|_| invalid("invalid process start tick"))?;
+    Ok(Some((start_tick, command)))
+}
+
+fn process_executable_path_at(dir: &File) -> io::Result<Option<PathBuf>> {
+    #[cfg(test)]
+    if DENY_PROC_EXE_ACCESS.with(Cell::get) {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "Permission denied reading proc executable",
+        ));
+    }
+    let resolved_executable_path = PathBuf::from(OsString::from_vec(
+        match rfs::readlinkat(dir, "exe", Vec::new()) {
+            Ok(executable) => executable,
+            Err(error) if io::Error::from(error).kind() == io::ErrorKind::NotFound => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
+        .into_bytes(),
+    ));
+    Ok(Some(resolved_executable_path))
+}
+
+fn process_path_identity_at(dir: &File) -> io::Result<Option<ProcessPathIdentity>> {
+    let Some((start_tick, _)) = process_path_metadata_at(dir)? else {
+        return Ok(None);
+    };
+    let Some(resolved_executable_path) = process_executable_path_at(dir)? else {
+        return Ok(None);
+    };
+    Ok(Some(ProcessPathIdentity {
+        start_tick,
+        resolved_executable_path,
+    }))
+}
+
+fn process_command_matches_paths(command: &str, expected_paths: &[&Path]) -> bool {
+    expected_paths.iter().any(|expected| {
+        let Some(name) = expected.file_name().and_then(OsStr::to_str) else {
+            return false;
+        };
+        name == command
+            || (command.len() == PROC_COMM_MAX_BYTES
+                && name.len() > PROC_COMM_MAX_BYTES
+                && name.starts_with(command))
+    })
+}
+
+fn process_binary_identity_at(dir: &File) -> io::Result<Option<FileIdentity>> {
     let name = CString::new("exe").unwrap();
-    let file = open_at(&dir, &name, OFlags::RDONLY | OFlags::CLOEXEC)?;
+    // /proc/<pid>/exe is a kernel-owned symlink; opening it must resolve the
+    // target, unlike ordinary lifecycle artifacts which use NOFOLLOW.
+    let file = match open_at(&dir, &name, OFlags::RDONLY | OFlags::CLOEXEC) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
     let metadata = file.metadata()?;
     if !safe_file(&metadata) {
         return Err(invalid("process executable is not a safe regular file"));
@@ -480,7 +647,7 @@ fn stop_locked<P: ProcessControl>(
         }
         Err(_) => return Ok(StopOutcome::Retained(RecordError::Unreadable)),
     };
-    if !process_matches(&snapshot.record, &identity) {
+    if !process_matches(&snapshot, &identity) {
         return Ok(StopOutcome::Retained(RecordError::Mismatched));
     }
     process
@@ -616,7 +783,7 @@ fn signal_launch_ready(paths: &LifecyclePaths) -> io::Result<()> {
     file.set_len(0)?;
     (&file).write_all(LAUNCH_READY_MARKER)?;
     file.sync_all()?;
-    let ready = identity_of(&file, Some(read_content(&file)?))?;
+    let ready = snapshot_file_at(&parent, &name)?.identity;
     if ready.dev != expected_dev
         || ready.ino != expected_ino
         || ready.mode != 0o600
@@ -671,7 +838,7 @@ fn create_current_record_locked(paths: &LifecyclePaths) -> io::Result<()> {
         };
         match process.identity(existing.record.pid)? {
             None => remove_file_snapshot_io(&existing.file)?,
-            Some(identity) if process_matches(&existing.record, &identity) => {
+            Some(identity) if process_matches(&existing, &identity) => {
                 if existing.record.pid == std::process::id() {
                     return Ok(());
                 }
@@ -748,7 +915,7 @@ fn cleanup_current_record_locked(paths: &LifecyclePaths) -> Result<(), String> {
         if process
             .identity(snapshot.record.pid)
             .map_err(|e| e.to_string())?
-            .is_some_and(|i| process_matches(&snapshot.record, &i))
+            .is_some_and(|i| process_matches(&snapshot, &i))
         {
             remove_file_snapshot(&snapshot.file)?;
         }
@@ -808,7 +975,7 @@ pub fn status_command() -> Result<(), String> {
         };
         match process.identity(snapshot.record.pid) {
             Ok(None) => println!("status: stopped (stale record retained)"),
-            Ok(Some(identity)) if process_matches(&snapshot.record, &identity) => {
+            Ok(Some(identity)) if process_matches(&snapshot, &identity) => {
                 println!("status: running (pid {})", snapshot.record.pid)
             }
             Ok(Some(_)) => println!("status: unknown (mismatched process; record retained)"),
@@ -857,7 +1024,7 @@ fn start_locked(paths: &LifecyclePaths) -> Result<(), String> {
             .identity(snapshot.record.pid)
             .map_err(|e| e.to_string())?
         {
-            Some(identity) if process_matches(&snapshot.record, &identity) => {
+            Some(identity) if process_matches(&snapshot, &identity) => {
                 return Err("start: helper is already active".to_owned());
             }
             Some(_) => return Err("start: retained mismatched PID record".to_owned()),
@@ -994,7 +1161,7 @@ fn start_locked(paths: &LifecyclePaths) -> Result<(), String> {
                     && record.record.pid == child_pid
                     && observed_identity
                         .as_ref()
-                        .is_some_and(|identity| process_matches(&record.record, identity))
+                        .is_some_and(|identity| process_matches(&record, identity))
                     && record.binary == binary.identity
                     && record_binds(&record, paths) =>
             {
@@ -1022,10 +1189,18 @@ fn start_locked(paths: &LifecyclePaths) -> Result<(), String> {
                 println!("start: launched helper PID {child_pid}");
                 return Ok(());
             }
-            Ok(Some(_)) => {
+            Ok(Some(record))
+                if record.record.pid != child_pid
+                    || !observed_identity
+                        .as_ref()
+                        .is_some_and(|identity| process_matches(&record, identity))
+                    || record.binary != binary.identity
+                    || !record_binds(&record, paths) =>
+            {
                 failure = Some("start: child PID record identity mismatch".to_owned());
                 break;
             }
+            Ok(Some(_)) => {}
             Ok(None) => {}
             Err(error) => {
                 failure = Some(format!(
@@ -1120,10 +1295,12 @@ fn rollback_start(
         }
     }
     match read_record_snapshot(paths.pid_record()) {
+        Ok(Some(_)) if observed_identity.is_none() => {
+            return Err("start: child identity unavailable during rollback".to_owned());
+        }
         Ok(Some(record))
             if record.record.pid == child_pid
-                && observed_identity
-                    .is_none_or(|identity| process_matches(&record.record, identity))
+                && observed_identity.is_none_or(|identity| process_matches(&record, identity))
                 && record.binary == *binary
                 && record_binds(&record, paths) =>
         {
@@ -1389,11 +1566,19 @@ fn install_locked(paths: &LifecyclePaths, source: &Path) -> Result<(), String> {
             |recovery| format!("sync config parent: {error}; recovery-required: {recovery}"),
         ));
     }
-    if let (Some(old), true) = (old_data.as_ref(), data_backed) {
-        remove_tree_named(old, &data_backup)?;
+    if let (Some(old), true) = (old_data.as_ref(), data_backed)
+        && let Err(error) = remove_install_backup_tree(old, &data_backup)
+    {
+        return Err(format!(
+            "install: clean data backup: {error}; recovery-required: install backup residue retained"
+        ));
     }
-    if let (Some(old), true) = (old_desktop.as_ref(), desktop_backed) {
-        remove_file_named(old, &desktop_backup)?;
+    if let (Some(old), true) = (old_desktop.as_ref(), desktop_backed)
+        && let Err(error) = remove_file_named(old, &desktop_backup)
+    {
+        return Err(format!(
+            "install: clean desktop backup: {error}; recovery-required: install backup residue retained"
+        ));
     }
     println!(
         "tray-installed: {}\ntray-autostart: {}",
@@ -2483,15 +2668,19 @@ fn record_binds(record: &RecordSnapshot, paths: &LifecyclePaths) -> bool {
         .is_ok_and(|identity| identity.is_some_and(|i| i == record.binary))
         && record.record.resolved_executable_path == paths.binary()
 }
-fn process_matches(record: &LifecycleRecord, identity: &ProcessIdentity) -> bool {
-    record.start_tick == identity.start_tick
-        && record.resolved_executable_path == identity.resolved_executable_path
+fn process_matches(record: &RecordSnapshot, identity: &ProcessIdentity) -> bool {
+    record.record.start_tick == identity.start_tick
+        && record.record.resolved_executable_path == identity.resolved_executable_path
+        && record.binary.dev == identity.executable.dev
+        && record.binary.ino == identity.executable.ino
+        && record.binary.content == identity.executable.content
 }
 
 fn active_installed_helper(paths: &LifecyclePaths) -> io::Result<bool> {
     let binary = match installed_identity(paths.binary()) {
         Ok(Some(binary)) => binary,
-        Ok(None) | Err(_) => return Ok(false),
+        Ok(None) => return Ok(false),
+        Err(error) => return Err(error),
     };
     let root = match open_special_directory(paths.proc_root()) {
         Ok(root) => root,
@@ -2512,14 +2701,15 @@ fn active_installed_helper(paths: &LifecyclePaths) -> io::Result<bool> {
         if pid == std::process::id() {
             continue;
         }
-        if let Some(identity) = process.identity(pid)? {
-            let same_path = identity.resolved_executable_path == paths.binary()
-                || identity.resolved_executable_path.to_str() == Some(deleted.as_str());
-            if same_path
-                && process_binary_identity(paths.proc_root(), pid)?.is_some_and(|i| i == binary)
-            {
-                return Ok(true);
-            }
+        if process
+            .identity_if_path(pid, &[paths.binary(), Path::new(&deleted)])?
+            .is_some_and(|identity| {
+                identity.executable.dev == binary.dev
+                    && identity.executable.ino == binary.ino
+                    && identity.executable.content == binary.content
+            })
+        {
+            return Ok(true);
         }
     }
     Ok(false)
@@ -2548,7 +2738,7 @@ fn reconcile_helper_for_install(paths: &LifecyclePaths) -> Result<(), String> {
                     remove_file_snapshot(&snapshot.file)?;
                     refuse_unrecorded_helper(paths, "install")
                 }
-                Ok(Some(identity)) if process_matches(&snapshot.record, &identity) => {
+                Ok(Some(identity)) if process_matches(&snapshot, &identity) => {
                     Err("install: helper is already active".to_owned())
                 }
                 Ok(Some(_)) => Err("install: retained mismatched PID record".to_owned()),
@@ -2662,6 +2852,13 @@ fn same_tree_identity(expected: &TreeSnapshot, actual: &TreeSnapshot) -> bool {
 }
 fn remove_tree_named(snapshot: &TreeSnapshot, name: &CStr) -> Result<(), String> {
     remove_tree_named_inner(snapshot, name, false)
+}
+fn remove_install_backup_tree(snapshot: &TreeSnapshot, name: &CStr) -> Result<(), String> {
+    #[cfg(test)]
+    if FAIL_NEXT_INSTALL_BACKUP_CLEANUP.with(|fail| fail.replace(false)) {
+        return Err("injected install backup cleanup failure".to_owned());
+    }
+    remove_tree_named(snapshot, name)
 }
 fn remove_tree_named_for_remove(snapshot: &TreeSnapshot, name: &CStr) -> Result<(), String> {
     remove_tree_named_inner(snapshot, name, true)
@@ -2837,7 +3034,10 @@ fn snapshot_tree_dir(
     relative: &Path,
     nodes: &mut Vec<TreeNode>,
 ) -> io::Result<()> {
-    for entry in directory_names(directory)? {
+    for entry in directory_names_limited(directory, MAX_TREE_NODES.saturating_sub(nodes.len()))? {
+        if nodes.len() >= MAX_TREE_NODES {
+            return Err(invalid("tree contains too many nodes"));
+        }
         let child = open_at(
             directory,
             &entry,
@@ -2951,15 +3151,31 @@ fn identity_of(file: &File, content: Option<Vec<u8>>) -> io::Result<FileIdentity
     })
 }
 fn read_content(file: &File) -> io::Result<Vec<u8>> {
-    let mut content = Vec::new();
-    (&*file).read_to_end(&mut content)?;
-    Ok(content)
+    read_content_limited_with_message(
+        file,
+        MAX_ARTIFACT_FILE_BYTES,
+        "file content exceeds lifecycle artifact limit",
+    )
 }
 fn read_content_limited(file: &File, limit: usize) -> io::Result<Vec<u8>> {
+    read_content_limited_with_message(file, limit, "file content exceeds lifecycle record limit")
+}
+fn read_content_limited_with_message(
+    file: &File,
+    limit: usize,
+    exceeded_message: &str,
+) -> io::Result<Vec<u8>> {
+    let limit = u64::try_from(limit)
+        .ok()
+        .and_then(|limit| limit.checked_add(1))
+        .ok_or_else(|| invalid("file content limit is invalid"))?;
+    if file.metadata()?.len() >= limit {
+        return Err(invalid(exceeded_message));
+    }
     let mut content = Vec::new();
-    file.take(limit as u64 + 1).read_to_end(&mut content)?;
-    if content.len() > limit {
-        return Err(invalid("file content exceeds lifecycle record limit"));
+    (&*file).take(limit).read_to_end(&mut content)?;
+    if content.len() as u64 >= limit {
+        return Err(invalid(exceeded_message));
     }
     Ok(content)
 }
@@ -3132,6 +3348,9 @@ fn read_special_file(parent: &File, name: &str) -> io::Result<String> {
     Ok(text)
 }
 fn directory_names(directory: &File) -> io::Result<Vec<CString>> {
+    directory_names_limited(directory, usize::MAX)
+}
+fn directory_names_limited(directory: &File, limit: usize) -> io::Result<Vec<CString>> {
     let mut buffer = [MaybeUninit::<u8>::uninit(); 8192];
     let mut iterator = RawDir::new(directory, &mut buffer);
     let mut names = Vec::new();
@@ -3139,6 +3358,9 @@ fn directory_names(directory: &File) -> io::Result<Vec<CString>> {
         let entry = entry.map_err(io::Error::from)?;
         let name = entry.file_name();
         if name.to_bytes() != b"." && name.to_bytes() != b".." {
+            if names.len() >= limit {
+                return Err(invalid("tree contains too many nodes"));
+            }
             names.push(name.to_owned());
         }
     }
@@ -3429,7 +3651,7 @@ fn write_sync(mut file: File, content: &[u8]) -> io::Result<()> {
 }
 fn sync_backup_parent(parent: &File) -> io::Result<()> {
     #[cfg(test)]
-    if FAIL_NEXT_BACKUP_SYNC.swap(0, Ordering::Relaxed) != 0 {
+    if FAIL_NEXT_BACKUP_SYNC.with(|fail| fail.replace(false)) {
         return Err(io::Error::other("injected backup fsync failure"));
     }
     rfs::fsync(parent).map_err(io::Error::from)
@@ -3538,6 +3760,51 @@ mod tests {
         assert_eq!(decode_hex("6162"), Some(b"ab".to_vec()));
     }
 
+    #[test]
+    fn recorded_process_identity_rejects_foreign_proc_owner() {
+        let root = unit_root("foreign-proc-owner");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let process_dir = root.join("proc/777");
+        fs::create_dir_all(&process_dir).unwrap();
+        let dir = open_special_directory(&process_dir).unwrap();
+        let foreign_uid = if current_uid() == 0 { 1 } else { 0 };
+
+        assert_eq!(
+            ProcProcessControl::identity_at(&dir, foreign_uid).unwrap(),
+            None
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn oversized_encoded_binary_record_is_rejected_before_atomic_write() {
+        let root = unit_root("oversized-record");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let record_path = root.join("tray.pid");
+        let record = LifecycleRecord {
+            pid: 77,
+            start_tick: 10,
+            resolved_executable_path: root.join("plasma-auto-tiler"),
+            generation_token: "generation".to_owned(),
+        };
+        let binary = FileIdentity {
+            dev: 1,
+            ino: 1,
+            mode: 0o755,
+            uid: current_uid(),
+            directory: false,
+            content: vec![0; MAX_RECORD_BYTES / 2],
+        };
+
+        let error = write_record_with_identity(&record_path, &record, &binary).unwrap_err();
+        assert!(error.to_string().contains("exceeds lifecycle record limit"));
+        assert!(!record_path.exists());
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
     fn remove_fixture(name: &str) -> (PathBuf, LifecyclePaths, TreeSnapshot, FileSnapshot) {
         let root = unit_root(name);
         fs::create_dir(&root).unwrap();
@@ -3613,7 +3880,7 @@ mod tests {
         fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
         install_locked(&paths, &source).unwrap();
         fs::write(&source, b"v2").unwrap();
-        FAIL_NEXT_BACKUP_SYNC.store(1, Ordering::Relaxed);
+        FAIL_NEXT_BACKUP_SYNC.with(|fail| fail.set(true));
         assert!(install_locked(&paths, &source).is_err());
         assert_eq!(fs::read(paths.binary()).unwrap(), b"v1");
         let data_parent = paths.data_root().parent().unwrap();
@@ -3625,6 +3892,80 @@ mod tests {
                 .count(),
             0
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn install_backup_cleanup_failure_is_recovery_required_and_blocks_retry() {
+        let root = unit_root("install-cleanup-failure");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = LifecyclePaths::new(
+            root.join("data/plasma-auto-tiler"),
+            root.join("config/autostart/plasma-auto-tiler.desktop"),
+            root.join("runtime/plasma-auto-tiler/tray.pid"),
+            root.join("proc"),
+        );
+        let source = root.join("source");
+        fs::write(&source, b"v1").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        install_locked(&paths, &source).unwrap();
+        fs::write(&source, b"v2").unwrap();
+
+        FAIL_NEXT_INSTALL_BACKUP_CLEANUP.with(|fail| fail.set(true));
+        let error = install_locked(&paths, &source).unwrap_err();
+        assert!(error.contains("recovery-required"), "{error}");
+        assert!(error.contains("install backup residue retained"), "{error}");
+        assert!(
+            directory_names(&open_directory(paths.data_root().parent().unwrap(), false).unwrap())
+                .unwrap()
+                .iter()
+                .any(|name| name
+                    .to_bytes()
+                    .starts_with(b".plasma-auto-tiler-data-backup"))
+        );
+
+        let retry = install_locked(&paths, &source).unwrap_err();
+        assert!(
+            retry.contains("interrupted lifecycle residue retained"),
+            "{retry}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn artifact_tree_snapshot_limits_file_content_and_node_count() {
+        let root = unit_root("tree-input-limits");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+
+        let content_tree = root.join("content-tree");
+        fs::create_dir(&content_tree).unwrap();
+        fs::set_permissions(&content_tree, fs::Permissions::from_mode(0o700)).unwrap();
+        let oversized = content_tree.join("oversized");
+        let file = fs::File::create(&oversized).unwrap();
+        file.set_len(MAX_ARTIFACT_FILE_BYTES as u64 + 1).unwrap();
+        fs::set_permissions(&oversized, fs::Permissions::from_mode(0o600)).unwrap();
+        let error = match snapshot_tree(&content_tree) {
+            Ok(_) => panic!("oversized tree file was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("lifecycle artifact limit"));
+
+        let node_tree = root.join("node-tree");
+        fs::create_dir(&node_tree).unwrap();
+        fs::set_permissions(&node_tree, fs::Permissions::from_mode(0o700)).unwrap();
+        for index in 0..=MAX_TREE_NODES {
+            let path = node_tree.join(format!("node-{index}"));
+            fs::write(&path, []).unwrap();
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        }
+        let error = match snapshot_tree(&node_tree) {
+            Ok(_) => panic!("oversized tree was accepted"),
+            Err(error) => error,
+        };
+        assert!(error.to_string().contains("too many nodes"));
+
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -3998,6 +4339,148 @@ mod tests {
         .unwrap();
 
         assert!(snapshot_file_at(&parent, &name).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn start_rollback_retains_pid_record_without_child_identity() {
+        let root = unit_root("start-rollback-record");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = LifecyclePaths::new(
+            root.join("data/plasma-auto-tiler"),
+            root.join("config/autostart/plasma-auto-tiler.desktop"),
+            root.join("runtime/plasma-auto-tiler/tray.pid"),
+            root.join("proc"),
+        );
+        let source = root.join("source");
+        fs::write(&source, b"v1").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        install_locked(&paths, &source).unwrap();
+        let parent = open_directory(paths.pid_record().parent().unwrap(), true).unwrap();
+        let name = unique_name(".plasma-auto-tiler-start-test");
+        let file = create_file_at(&parent, &name, 0o600).unwrap();
+        file.sync_all().unwrap();
+        let reservation = snapshot_file_at(&parent, &name).unwrap();
+        let mut child = Command::new(env::current_exe().unwrap())
+            .args(["--exact", "__does_not_exist__"])
+            .spawn()
+            .unwrap();
+        let child_pid = child.id();
+        child.wait().unwrap();
+        write_record(
+            paths.pid_record(),
+            &LifecycleRecord {
+                pid: child_pid,
+                start_tick: 10,
+                resolved_executable_path: paths.binary().to_path_buf(),
+                generation_token: "generation".to_owned(),
+            },
+        )
+        .unwrap();
+
+        let error = rollback_start(
+            &paths,
+            &reservation,
+            &mut child,
+            child_pid,
+            None,
+            &installed_binary(&paths).unwrap().identity,
+        )
+        .unwrap_err();
+
+        assert!(error.contains("child identity unavailable"), "{error}");
+        assert!(paths.pid_record().exists());
+        assert!(snapshot_file_at(&parent, &name).is_ok());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn denied_proc_executable_access_blocks_remove_for_truncated_comm() {
+        let root = unit_root("denied-proc-exe");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = LifecyclePaths::new(
+            root.join("data/plasma-auto-tiler"),
+            root.join("config/autostart/plasma-auto-tiler.desktop"),
+            root.join("runtime/plasma-auto-tiler/tray.pid"),
+            root.join("proc"),
+        );
+        let source = env::current_exe().unwrap();
+        install_locked(&paths, &source).unwrap();
+        let process_dir = paths.proc_root().join("777");
+        fs::create_dir_all(&process_dir).unwrap();
+        let fields = (0..20)
+            .map(|index| {
+                if index == 0 {
+                    "S"
+                } else if index == 19 {
+                    "10"
+                } else {
+                    "0"
+                }
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            process_dir.join("stat"),
+            format!("777 (plasma-auto-til) {}", fields.join(" ")),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(paths.binary(), process_dir.join("exe")).unwrap();
+
+        DENY_PROC_EXE_ACCESS.with(|denied| denied.set(true));
+        let result = remove_with_paths(&paths);
+        DENY_PROC_EXE_ACCESS.with(|denied| denied.set(false));
+        let error = result.unwrap_err();
+        assert!(error.contains("Permission denied"), "{error}");
+        assert!(paths.data_root().exists());
+        assert!(paths.binary().exists());
+        assert!(paths.desktop().exists());
+        assert!(!paths.pid_record().exists());
+
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn denied_proc_executable_access_ignores_unrelated_command() {
+        let root = unit_root("denied-proc-exe-unrelated");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = LifecyclePaths::new(
+            root.join("data/plasma-auto-tiler"),
+            root.join("config/autostart/plasma-auto-tiler.desktop"),
+            root.join("runtime/plasma-auto-tiler/tray.pid"),
+            root.join("proc"),
+        );
+        let source = env::current_exe().unwrap();
+        install_locked(&paths, &source).unwrap();
+        let process_dir = paths.proc_root().join("777");
+        fs::create_dir_all(&process_dir).unwrap();
+        let fields = (0..20)
+            .map(|index| {
+                if index == 0 {
+                    "S"
+                } else if index == 19 {
+                    "10"
+                } else {
+                    "0"
+                }
+            })
+            .collect::<Vec<_>>();
+        fs::write(
+            process_dir.join("stat"),
+            format!("777 (unrelated-comman) {}", fields.join(" ")),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(paths.binary(), process_dir.join("exe")).unwrap();
+
+        DENY_PROC_EXE_ACCESS.with(|denied| denied.set(true));
+        let result = remove_with_paths(&paths);
+        DENY_PROC_EXE_ACCESS.with(|denied| denied.set(false));
+        result.unwrap();
+        assert!(!paths.data_root().exists());
+        assert!(!paths.desktop().exists());
+
         fs::remove_dir_all(root).unwrap();
     }
 }

@@ -8,8 +8,8 @@ use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use plasma_auto_tiler::tray_lifecycle::{
-    LifecyclePaths, LifecycleRecord, PID_OWNER_MARKER, ProcessControl, ProcessIdentity,
-    RecordError, RecordObservation, StopOutcome, install_with_source, read_record,
+    LifecyclePaths, LifecycleRecord, PID_OWNER_MARKER, ProcessControl, ProcessExecutableIdentity,
+    ProcessIdentity, RecordError, RecordObservation, StopOutcome, install_with_source, read_record,
     remove_with_paths, stop_with, write_record,
 };
 use rustix::fs::{self as rfs, Mode};
@@ -43,6 +43,19 @@ fn source(root: &Path, contents: &[u8]) -> PathBuf {
 
 fn clean(root: PathBuf) {
     fs::remove_dir_all(root).unwrap();
+}
+
+fn process_identity(paths: &LifecyclePaths, start_tick: u64) -> ProcessIdentity {
+    let metadata = fs::metadata(paths.binary()).unwrap();
+    ProcessIdentity {
+        start_tick,
+        resolved_executable_path: paths.binary().to_path_buf(),
+        executable: ProcessExecutableIdentity {
+            dev: metadata.dev(),
+            ino: metadata.ino(),
+            content: fs::read(paths.binary()).unwrap(),
+        },
+    }
 }
 
 #[test]
@@ -150,7 +163,7 @@ fn special_and_oversized_pid_records_are_rejected_without_reading_unbounded_data
     );
     fs::remove_file(paths.pid_record()).unwrap();
 
-    fs::write(paths.pid_record(), vec![b'x'; 1024 * 1024 + 1]).unwrap();
+    fs::write(paths.pid_record(), vec![b'x'; 16 * 1024 * 1024 + 1]).unwrap();
     fs::set_permissions(paths.pid_record(), fs::Permissions::from_mode(0o600)).unwrap();
     assert_eq!(
         read_record(paths.pid_record()),
@@ -170,10 +183,7 @@ fn pid_reuse_and_installed_replacement_do_not_signal() {
         generation_token: "generation".to_owned(),
     };
     write_record(paths.pid_record(), &record).unwrap();
-    let process = FakeProcess::new(Some(ProcessIdentity {
-        start_tick: 11,
-        resolved_executable_path: paths.binary().to_path_buf(),
-    }));
+    let process = FakeProcess::new(Some(process_identity(&paths, 11)));
     assert_eq!(
         stop_with(&paths, &process).unwrap(),
         StopOutcome::Retained(RecordError::Mismatched)
@@ -185,14 +195,38 @@ fn pid_reuse_and_installed_replacement_do_not_signal() {
     assert_eq!(
         stop_with(
             &paths,
-            &FakeProcess::new(Some(ProcessIdentity {
-                start_tick: 10,
-                resolved_executable_path: paths.binary().to_path_buf()
-            }))
+            &FakeProcess::new(Some(process_identity(&paths, 10)))
         )
         .unwrap(),
         StopOutcome::Retained(RecordError::Mismatched)
     );
+    assert!(paths.pid_record().exists());
+    clean(root);
+}
+
+#[test]
+fn stop_rechecks_executable_content_identity() {
+    let (root, paths) = fixture("process-binary-binding");
+    install_with_source(&paths, &source(&root, b"helper")).unwrap();
+    write_record(
+        paths.pid_record(),
+        &LifecycleRecord {
+            pid: 77,
+            start_tick: 10,
+            resolved_executable_path: paths.binary().to_path_buf(),
+            generation_token: "generation".to_owned(),
+        },
+    )
+    .unwrap();
+    let mut identity = process_identity(&paths, 10);
+    identity.executable.content = b"replacement".to_vec();
+    let process = FakeProcess::new(Some(identity));
+
+    assert_eq!(
+        stop_with(&paths, &process).unwrap(),
+        StopOutcome::Retained(RecordError::Mismatched)
+    );
+    assert_eq!(process.terminated(), 0);
     assert!(paths.pid_record().exists());
     clean(root);
 }
@@ -243,10 +277,7 @@ fn waiter_error_retains_record_after_signal() {
     };
     write_record(paths.pid_record(), &record).unwrap();
     let process = FakeProcess::with_results([
-        Ok(Some(ProcessIdentity {
-            start_tick: 10,
-            resolved_executable_path: paths.binary().to_path_buf(),
-        })),
+        Ok(Some(process_identity(&paths, 10))),
         Err(std::io::Error::other("waiter failed")),
     ]);
     assert_eq!(
@@ -357,7 +388,9 @@ fn replacement_is_preserved_when_owned_tree_becomes_unsafe() {
     install_with_source(&paths, &source(&root, b"helper")).unwrap();
     fs::set_permissions(paths.binary(), fs::Permissions::from_mode(0o644)).unwrap();
     let error = remove_with_paths(&paths).unwrap_err();
-    assert!(error.contains("unexpected") || error.contains("invalid"));
+    assert!(
+        error.contains("unexpected") || error.contains("invalid") || error.contains("executable")
+    );
     assert!(paths.binary().exists());
     clean(root);
 }
@@ -389,6 +422,83 @@ fn unrecorded_active_helper_is_refused() {
     std::os::unix::fs::symlink(paths.binary(), process_dir.join("exe")).unwrap();
     let error = remove_with_paths(&paths).unwrap_err();
     assert!(error.contains("unrecorded active helper"));
+    clean(root);
+}
+
+#[test]
+fn ambiguous_proc_entry_blocks_remove() {
+    let (root, paths) = fixture("ambiguous-proc");
+    install_with_source(&paths, &source(&root, b"helper")).unwrap();
+    let process_dir = paths.proc_root().join("777");
+    fs::create_dir_all(&process_dir).unwrap();
+    fs::write(process_dir.join("stat"), b"malformed").unwrap();
+
+    let error = remove_with_paths(&paths).unwrap_err();
+    assert!(error.contains("command terminator"), "{error}");
+    assert!(paths.data_root().exists());
+    assert!(paths.binary().exists());
+    clean(root);
+}
+
+#[test]
+fn unrelated_proc_executable_is_not_opened_during_scan() {
+    let (root, paths) = fixture("unrelated-proc");
+    install_with_source(&paths, &source(&root, b"helper")).unwrap();
+    let process_dir = paths.proc_root().join("777");
+    fs::create_dir_all(&process_dir).unwrap();
+    let unrelated = root.join("unrelated-pipe");
+    rfs::mkfifoat(rfs::CWD, &unrelated, Mode::from_raw_mode(0o600)).unwrap();
+    let fields = (0..20)
+        .map(|index| if index == 19 { "10" } else { "0" })
+        .collect::<Vec<_>>();
+    fs::write(
+        process_dir.join("stat"),
+        format!("777 (unrelated) S {}", fields[1..].join(" ")),
+    )
+    .unwrap();
+    std::os::unix::fs::symlink(&unrelated, process_dir.join("exe")).unwrap();
+
+    remove_with_paths(&paths).unwrap();
+    assert!(!paths.data_root().exists());
+    assert!(!paths.desktop().exists());
+    clean(root);
+}
+
+#[test]
+fn source_symlink_is_rejected() {
+    let (root, paths) = fixture("source-symlink");
+    let real = source(&root, b"helper");
+    let link = root.join("source-link");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    let error = install_with_source(&paths, &link).unwrap_err();
+    assert!(
+        error.contains("source") || error.contains("symbolic"),
+        "{error}"
+    );
+    assert!(!paths.data_root().exists());
+    clean(root);
+}
+
+#[test]
+fn lifecycle_commands_reject_extra_arguments() {
+    let (root, paths) = fixture("extra-arguments");
+    let executable = std::env::var_os("CARGO_BIN_EXE_plasma-auto-tiler").unwrap();
+    let output = Command::new(executable)
+        .args(["tray-status", "extra"])
+        .env("HOME", &root)
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "error: tray-status takes no arguments\n"
+    );
+    assert!(!paths.pid_record().exists());
     clean(root);
 }
 
