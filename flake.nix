@@ -99,42 +99,135 @@
             runHook postInstallCheck
           '';
         };
+
+      mkKwinScript =
+        { pkgs }:
+        pkgs.buildNpmPackage {
+          pname = "plasma-auto-tiler-kwin";
+          version = "0.1.0";
+          src = kwinScriptSource pkgs;
+          sourceRoot = "source/kwin";
+          npmDepsHash = "sha256-IWhNnM3IfAVLFQBOC+l9XssLOcIUcGCEa4RHv6BZ3cM=";
+          npmBuildScript = "build";
+
+          installPhase = ''
+            runHook preInstall
+            installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
+            mkdir -p "$installRoot"
+            cp -a metadata.json contents "$installRoot/"
+            runHook postInstall
+          '';
+        };
+
+      mkTray =
+        { pkgs }:
+        pkgs.rustPlatform.buildRustPackage {
+          pname = "plasma-auto-tiler";
+          version = "0.1.0";
+          src = traySource pkgs;
+          cargoLock.lockFile = ./Cargo.lock;
+          buildInputs = [ pkgs.kdePackages.kcmutils ];
+          dontWrapQtApps = true;
+          env.PLASMA_AUTO_TILER_KCMSHELL6 =
+            "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
+          preCheck = ''
+            export HOME="$NIX_BUILD_TOP"
+          '';
+        };
     in
     {
-      lib.mkNativeEffect = mkNativeEffect;
+      lib = {
+        inherit mkKwinScript mkNativeEffect mkTray;
+      };
+
+      nixosModules.default = { config, lib, pkgs, ... }:
+        import ./nixos-module.nix {
+          inherit config lib pkgs;
+          kwinScript = self.lib.mkKwinScript { inherit pkgs; };
+          nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
+        };
+
+      homeManagerModules.default = { config, lib, pkgs, ... }:
+        import ./home-manager-module.nix {
+          inherit config lib pkgs;
+          trayPackage = self.lib.mkTray { inherit pkgs; };
+        };
+
+      checks = forAllSystems (system:
+        let
+          pkgs = import nixpkgs { inherit system; };
+          kwinScript = self.lib.mkKwinScript { inherit pkgs; };
+          nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
+          tray = self.lib.mkTray { inherit pkgs; };
+          enabledNixos = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [
+              self.nixosModules.default
+              { programs.plasma-auto-tiler.enable = true; }
+            ];
+          };
+          disabledNixos = nixpkgs.lib.nixosSystem {
+            inherit system;
+            modules = [ self.nixosModules.default ];
+          };
+          homeModuleOptions = { lib, ... }: {
+            config._module.args.pkgs = pkgs;
+            options.home.file = lib.mkOption {
+              type = lib.types.attrsOf (lib.types.submodule ({ ... }: {
+                options.text = lib.mkOption {
+                  type = lib.types.lines;
+                  default = "";
+                };
+              }));
+              default = { };
+            };
+          };
+          enabledHome = nixpkgs.lib.evalModules {
+            modules = [
+              homeModuleOptions
+              self.homeManagerModules.default
+              { programs.plasma-auto-tiler.tray.enable = true; }
+            ];
+          };
+          disabledHome = nixpkgs.lib.evalModules {
+            modules = [ homeModuleOptions self.homeManagerModules.default ];
+          };
+          activation = enabledNixos.config.environment.etc."xdg/kwinrc".text;
+          autostart = enabledHome.config.home.file.".config/autostart/plasma-auto-tiler.desktop".text;
+          desktopFile = ".config/autostart/plasma-auto-tiler.desktop";
+        in
+        assert activation == "[Plugins]\nplasma-auto-tiler-kwinEnabled=true\n";
+        assert !(nixpkgs.lib.hasInfix "plasma-auto-tiler-active-borderEnabled" activation);
+        assert builtins.elem kwinScript enabledNixos.config.environment.systemPackages;
+        assert builtins.elem nativeEffect enabledNixos.config.environment.systemPackages;
+        assert !(builtins.hasAttr "xdg/kwinrc" disabledNixos.config.environment.etc);
+        assert nixpkgs.lib.hasInfix "Exec=/nix/store/" autostart;
+        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler\n" autostart;
+        assert !(nixpkgs.lib.hasInfix (toString ./. ) autostart);
+        assert builtins.hasAttr desktopFile enabledHome.config.home.file;
+        assert !(builtins.hasAttr desktopFile disabledHome.config.home.file);
+        assert !(builtins.hasAttr "activation" enabledHome.config.home);
+        assert autostart == ''
+          [Desktop Entry]
+          Type=Application
+          Name=Plasma Auto Tiler Tray
+          Comment=Shows Plasma Auto Tiler status in the system tray
+          Exec=${tray}/bin/plasma-auto-tiler
+          TryExec=${tray}/bin/plasma-auto-tiler
+          X-KDE-autostart-phase=1
+          X-GNOME-Autostart-enabled=true
+        '';
+        {
+          module-boundary = pkgs.runCommand "plasma-auto-tiler-module-boundary" { } ''
+            touch "$out"
+          '';
+        });
 
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          kwinScript = pkgs.buildNpmPackage {
-            pname = "plasma-auto-tiler-kwin";
-            version = "0.1.0";
-            src = kwinScriptSource pkgs;
-            sourceRoot = "source/kwin";
-            npmDepsHash = "sha256-IWhNnM3IfAVLFQBOC+l9XssLOcIUcGCEa4RHv6BZ3cM=";
-            npmBuildScript = "build";
-
-            installPhase = ''
-              runHook preInstall
-              installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
-              mkdir -p "$installRoot"
-              cp -a metadata.json contents "$installRoot/"
-              runHook postInstall
-            '';
-          };
-          tray = pkgs.rustPlatform.buildRustPackage {
-            pname = "plasma-auto-tiler";
-            version = "0.1.0";
-            src = traySource pkgs;
-            cargoLock.lockFile = ./Cargo.lock;
-            buildInputs = [ pkgs.kdePackages.kcmutils ];
-            dontWrapQtApps = true;
-            env.PLASMA_AUTO_TILER_KCMSHELL6 =
-              "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
-            preCheck = ''
-              export HOME="$NIX_BUILD_TOP"
-            '';
-          };
+          kwinScript = mkKwinScript { inherit pkgs; };
+          tray = mkTray { inherit pkgs; };
         in
         {
           default = tray;
