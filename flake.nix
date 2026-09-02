@@ -232,6 +232,7 @@
         {
           default = tray;
           kwin-script = kwinScript;
+          native-effect = mkNativeEffect { inherit pkgs; };
           tray = tray;
         });
     };
