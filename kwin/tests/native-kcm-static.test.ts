@@ -129,17 +129,23 @@ describe("native KCM static contract", () => {
     it("keeps border settings in the native group and hot-applies through the native effect", () => {
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
         assert.match(module, /ActiveBorderConfig::instance\(QStringLiteral\("kwinrc"\)\)/);
-        assert.match(module, /QDBusInterface interface\(QStringLiteral\("org\.kde\.KWin"\)/);
-        assert.match(
-            module,
-            /interface\.call\(QStringLiteral\("reconfigureEffect"\), QStringLiteral\("plasma-auto-tiler-active-border"\)\)/,
-        );
+        assert.match(module, /QString ActiveBorderConfigModule::effectService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::effectPath\(\)[\s\S]*?QStringLiteral\("\/Effects"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::effectInterface\(\)[\s\S]*?QStringLiteral\("org\.kde\.kwin\.Effects"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::effectMethod\(\)[\s\S]*?QStringLiteral\("reconfigureEffect"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::effectName\(\)[\s\S]*?QStringLiteral\("plasma-auto-tiler-active-border"\)/);
+        assert.match(module, /QDBusInterface interface\(effectService\(\), effectPath\(\), effectInterface\(\)/);
+        assert.match(module, /interface\.call\(effectMethod\(\), effectName\(\)\)/);
+        assert.match(module, /requestEffectReconfigure\(\)/);
         assert.match(effect, /void ActiveWindowBorderEffect::reconfigure\(ReconfigureFlags\)/);
         assert.match(effect, /ActiveBorderConfig::self\(\)->read\(\);[\s\S]*updateOutline\(\);/);
         assert.match(effect, /activeBorderColor\(themeColor, fallback\)/);
         assert.match(effect, /KColorScheme::isColorSetSupported\(colorConfig, KColorScheme::Selection\)/);
         assert.match(logic, /themeColor\.isValid\(\) && themeColor\.alpha\(\) > 0/);
-        assert.match(effect, /state\.innerRect\.adjusted\(-gap, -gap, gap, gap\)/);
+        assert.match(logic, /QRectF activeBorderInnerRect\(/);
+        assert.match(effect, /setInnerRect\(activeBorderInnerRect\(state\.innerRect, gap\)\)/);
+        assert.match(effect, /setVisible\(state\.visible\)/);
+        assert.match(effect, /addRepaintFull\(\)/);
     });
 
     it("tracks manually managed script controls without rewriting untouched keys", () => {

@@ -76,6 +76,31 @@ void usableThemeColorWinsOverConfiguredFallback()
     CHECK(KWin::activeBorderColor(theme, QColor(0x2a, 0x82, 0xda)) == theme);
 }
 
+void zeroGapKeepsFrameAsInnerRect()
+{
+    const QRectF frame(10.0, 20.0, 320.0, 200.0);
+    CHECK(KWin::activeBorderInnerRect(frame, 0.0) == frame);
+}
+
+void positiveGapExpandsInnerRect()
+{
+    const QRectF frame(10.0, 20.0, 320.0, 200.0);
+    const QRectF expanded = KWin::activeBorderInnerRect(frame, 5.0);
+    CHECK(expanded == frame.adjusted(-5.0, -5.0, 5.0, 5.0));
+    CHECK(expanded.x() == 5.0);
+    CHECK(expanded.y() == 15.0);
+    CHECK(expanded.width() == 330.0);
+    CHECK(expanded.height() == 210.0);
+}
+
+void gapAppliesToVisibleBorderState()
+{
+    const QRectF frame(0.0, 0.0, 100.0, 100.0);
+    const KWin::ActiveBorderState state = KWin::activeBorderState(true, frame, false, false, false);
+    CHECK(state.visible);
+    CHECK(KWin::activeBorderInnerRect(state.innerRect, 2.0) == QRectF(-2.0, -2.0, 104.0, 104.0));
+}
+
 } // namespace
 
 int main()
@@ -88,6 +113,9 @@ int main()
     invalidThemeColorUsesConfiguredFallback();
     transparentThemeColorUsesConfiguredFallback();
     usableThemeColorWinsOverConfiguredFallback();
+    zeroGapKeepsFrameAsInnerRect();
+    positiveGapExpandsInnerRect();
+    gapAppliesToVisibleBorderState();
 
     if (failures != 0) {
         std::fprintf(stderr, "%d check(s) failed\n", failures);

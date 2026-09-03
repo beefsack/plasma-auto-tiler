@@ -92,7 +92,7 @@ void ActiveWindowBorderEffect::updateBorder()
         window ? window->isMinimized() : false,
         window ? window->isFullScreen() : false);
     const qreal gap = ActiveBorderConfig::borderGap();
-    m_borderItem.setInnerRect(state.innerRect.adjusted(-gap, -gap, gap, gap));
+    m_borderItem.setInnerRect(activeBorderInnerRect(state.innerRect, gap));
     m_borderItem.setVisible(state.visible);
     effects->addRepaintFull();
 }

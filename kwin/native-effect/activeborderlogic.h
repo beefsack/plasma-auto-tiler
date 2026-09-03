@@ -17,6 +17,11 @@ inline QColor activeBorderColor(const QColor &themeColor, const QColor &fallback
     return fallbackColor;
 }
 
+inline QRectF activeBorderInnerRect(const QRectF &frameGeometry, double gap)
+{
+    return frameGeometry.adjusted(-gap, -gap, gap, gap);
+}
+
 struct ActiveBorderState
 {
     bool visible;

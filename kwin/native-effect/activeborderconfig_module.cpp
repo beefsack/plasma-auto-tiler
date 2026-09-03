@@ -8,7 +8,9 @@
 
 #include <QCheckBox>
 #include <QComboBox>
+#include <QDBusConnection>
 #include <QDBusInterface>
+#include <QDBusMessage>
 
 K_PLUGIN_CLASS_WITH_JSON(KWin::ActiveBorderConfigModule, "activeborderconfig_module.json")
 
@@ -44,6 +46,43 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.shortcutProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.dropOutlinePreviewCheckBox, &QCheckBox::toggled, this, &ActiveBorderConfigModule::updateScriptState);
+}
+
+QString ActiveBorderConfigModule::effectService()
+{
+    return QStringLiteral("org.kde.KWin");
+}
+
+QString ActiveBorderConfigModule::effectPath()
+{
+    return QStringLiteral("/Effects");
+}
+
+QString ActiveBorderConfigModule::effectInterface()
+{
+    return QStringLiteral("org.kde.kwin.Effects");
+}
+
+QString ActiveBorderConfigModule::effectMethod()
+{
+    return QStringLiteral("reconfigureEffect");
+}
+
+QString ActiveBorderConfigModule::effectName()
+{
+    return QStringLiteral("plasma-auto-tiler-active-border");
+}
+
+bool ActiveBorderConfigModule::isEffectReconfigureFailed(const QDBusMessage &reply)
+{
+    return reply.type() != QDBusMessage::ReplyMessage;
+}
+
+bool ActiveBorderConfigModule::requestEffectReconfigure()
+{
+    QDBusInterface interface(effectService(), effectPath(), effectInterface(), QDBusConnection::sessionBus());
+    const QDBusMessage reply = interface.call(effectMethod(), effectName());
+    return !isEffectReconfigureFailed(reply);
 }
 
 QVariantMap ActiveBorderConfigModule::currentScriptValues() const
@@ -134,11 +173,14 @@ void ActiveBorderConfigModule::save()
     updateScriptState();
 
     if (borderChanged) {
-        QDBusInterface interface(QStringLiteral("org.kde.KWin"),
-                                 QStringLiteral("/Effects"),
-                                 QStringLiteral("org.kde.KWin.Effects"),
-                                 QDBusConnection::sessionBus());
-        interface.call(QStringLiteral("reconfigureEffect"), QStringLiteral("plasma-auto-tiler-active-border"));
+        m_effectReconfigurePending = true;
+    }
+    if (m_effectReconfigurePending) {
+        if (requestEffectReconfigure()) {
+            m_effectReconfigurePending = false;
+        } else {
+            markAsChanged();
+        }
     }
 }
 
