@@ -357,8 +357,8 @@ resolve_config_path() {
 }
 
 establish_current_session() {
-  local line session uid rest raw props_raw candidate_count=0
-  local -a props=()
+  local line property value session uid rest raw props_raw candidate_count=0
+  local -A props=()
   local -A seen=()
   raw="$("$LOGINCTL_BIN" list-sessions --no-legend --no-pager)" || fail 'current login sessions could not be enumerated'
   [[ -n "$raw" && "${#raw}" -le 65536 ]] || fail 'current login sessions are unavailable or oversized'
@@ -369,13 +369,25 @@ establish_current_session() {
     [[ -z "${seen[$session]+set}" ]] || fail 'login session listing contains duplicate sessions'
     seen[$session]=1
     [[ "$uid" == "$CURRENT_UID" ]] || continue
-    props_raw="$("$LOGINCTL_BIN" show-session "$session" -p User -p Type -p Class -p State -p Desktop -p Leader --value --no-pager)" || fail "session properties could not be read: $session"
-    mapfile -t props <<<"$props_raw"
+    props=()
+    props_raw="$("$LOGINCTL_BIN" show-session "$session" -p User -p Type -p Class -p State -p Desktop -p Leader --no-pager)" || fail "session properties could not be read: $session"
+    while IFS= read -r line; do
+      [[ "$line" == *=* ]] || fail "session properties are malformed: $session"
+      property="${line%%=*}"
+      value="${line#*=}"
+      case "$property" in
+        User|Type|Class|State|Desktop|Leader)
+          [[ -z "${props[$property]+set}" ]] || fail "session properties are malformed: $session"
+          props[$property]="$value"
+          ;;
+        *) fail "session properties are malformed: $session" ;;
+      esac
+    done <<<"$props_raw"
     [[ "${#props[@]}" -eq 6 ]] || fail "session properties are malformed: $session"
-    [[ "${props[0]}" == "$CURRENT_UID" && "${props[1]}" =~ ^(wayland|x11)$ && "${props[2]}" == user && "${props[3]}" == active && "${props[4]}" =~ ^(KDE|Plasma)$ && "${props[5]}" =~ ^[1-9][0-9]*$ ]] || continue
+    [[ "${props[User]}" == "$CURRENT_UID" && "${props[Type]}" =~ ^(wayland|x11)$ && "${props[Class]}" == user && "${props[State]}" == active && "${props[Desktop]}" =~ ^(KDE|Plasma)$ && "${props[Leader]}" =~ ^[1-9][0-9]*$ ]] || continue
     candidate_count=$((candidate_count + 1))
     SESSION_ID="$session"
-    SESSION_LEADER="${props[5]}"
+    SESSION_LEADER="${props[Leader]}"
   done <<<"$raw"
   [[ "$candidate_count" -eq 1 ]] || fail 'current graphical Plasma session is absent or ambiguous'
   SESSION_BUS_ADDRESS="unix:path=/run/user/$CURRENT_UID/bus"

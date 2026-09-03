@@ -43,7 +43,7 @@ make_fake_bus() {
   cat > "$FAKE_BIN/busctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'busctl'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'busctl%s\n' "$args" >> "${CALLS:?}"; }
 bad_shape() { trace "$@"; exit 2; }
 [[ "$#" -ge 7 && "$1" == '--address=unix:path=/run/user/1000/bus' && "$2" == '--json=short' && "$3" == call ]] || bad_shape "$@"
 trace "$@"
@@ -112,22 +112,30 @@ make_fake_loginctl() {
   cat > "$FAKE_BIN/loginctl" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'loginctl'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'loginctl%s\n' "$args" >> "${CALLS:?}"; }
 case "$1" in
   list-sessions)
     [[ "$#" -eq 3 && "$2" == --no-legend && "$3" == --no-pager ]] || { trace "$@"; exit 2; }
     trace "$@"
     case "${FAKE_MODE:-success}" in
+      real-order) printf '2 1000 user seat0\n3 1000 user seat1\n' ;;
       wrong-session) printf '42 1000 user seat0\n' ;;
       ambiguous-session) printf '42 1000 user seat0\n43 1000 user seat1\n' ;;
       *) printf '42 1000 user seat0\n' ;;
     esac ;;
   show-session)
-    [[ "$#" -eq 16 && "$2" =~ ^(42|43)$ && "$3" == -p && "$4" == User && "$5" == -p && "$6" == Type && "$7" == -p && "$8" == Class && "$9" == -p && "${10}" == State && "${11}" == -p && "${12}" == Desktop && "${13}" == -p && "${14}" == Leader && "${15}" == --value && "${16}" == --no-pager ]] || { trace "$@"; exit 2; }
+    [[ "$#" -eq 15 && "$2" =~ ^(2|3|42|43)$ && "$3" == -p && "$4" == User && "$5" == -p && "$6" == Type && "$7" == -p && "$8" == Class && "$9" == -p && "${10}" == State && "${11}" == -p && "${12}" == Desktop && "${13}" == -p && "${14}" == Leader && "${15}" == --no-pager ]] || { trace "$@"; exit 2; }
     trace "$@"
     case "${FAKE_MODE:-success}" in
-      wrong-session) printf '1000\ntty\nuser\nactive\nKDE\n9000\n' ;;
-      *) printf '1000\nwayland\nuser\nactive\nKDE\n9000\n' ;;
+      malformed-session) printf 'User=1000\nType=wayland\nClass=user\nState=active\nDesktop=KDE\n' ;;
+      real-order)
+        if [[ "$2" == 3 ]]; then
+          printf 'User=1000\nDesktop=\nLeader=1819\nType=unspecified\nClass=manager\nState=active\n'
+        else
+          printf 'User=1000\nDesktop=KDE\nLeader=1792\nType=wayland\nClass=user\nState=active\n'
+        fi ;;
+      wrong-session) printf 'User=1000\nType=tty\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' ;;
+      *) printf 'User=1000\nType=wayland\nClass=user\nState=active\nDesktop=KDE\nLeader=9000\n' ;;
     esac ;;
   *) trace "$@"; exit 2 ;;
 esac
@@ -139,7 +147,7 @@ make_fake_python() {
   cat > "$FAKE_BIN/python3" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'python3'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'python3%s\n' "$args" >> "${CALLS:?}"; }
 [[ "$#" -ge 2 && "$1" == -c ]] || { trace "$@"; exit 2; }
 if [[ "$#" -eq 2 ]]; then
   [[ "$2" == *json.loads* && "$2" == *object_pairs_hook* && "$2" == *ensure_ascii=True* ]] || { trace "$@"; exit 2; }
@@ -161,7 +169,8 @@ case "$3" in
     printf ' 10001 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0\n' ;;
   */cmdline)
     printf '%s\0--session\0' "$FAKE_BIN/kwin_wayland" ;;
-  */cgroup) printf '0::/user.slice/user-1000.slice/session-42.scope\n' ;;
+  */cgroup)
+    if [[ "${FAKE_MODE:-}" == real-order ]]; then printf '0::/user.slice/user-1000.slice/session-2.scope\n'; else printf '0::/user.slice/user-1000.slice/session-42.scope\n'; fi ;;
 esac
 EOF
   chmod +x "$FAKE_BIN/python3"
@@ -171,7 +180,7 @@ make_fake_readlink() {
   cat > "$FAKE_BIN/readlink" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'readlink'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'readlink%s\n' "$args" >> "${CALLS:?}"; }
 [[ "$#" -eq 3 && "$1" == -f && "$2" == -- ]] || { trace "$@"; exit 2; }
 trace "$@"
 case "$3" in
@@ -188,7 +197,7 @@ make_fake_stat() {
   cat > "$FAKE_BIN/stat" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'stat'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'stat%s\n' "$args" >> "${CALLS:?}"; }
 [[ "$#" -eq 4 && "$1" == -c && ( "$2" == '%u %a' || "$2" == '%u' ) && "$3" == -- && ( "$4" == / || "$HOME_ROOT" == "$4" || "$HOME_ROOT" == "$4"/* || "$4" == "$HOME_ROOT"/* ) ]] || { trace "$@"; exit 2; }
 trace "$@"
 exec "$REAL_STAT_BIN" "$@"
@@ -200,7 +209,7 @@ make_fake_tr() {
   cat > "$FAKE_BIN/tr" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'tr'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'tr%s\n' "$args" >> "${CALLS:?}"; }
 [[ "$#" -eq 2 && "$1" == '\0' && "$2" == '\n' ]] || { trace "$@"; exit 2; }
 trace "$@"
 exec "$REAL_TR_BIN" "$@"
@@ -212,7 +221,7 @@ make_fake_jq() {
   cat > "$FAKE_BIN/jq" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
-trace() { { printf 'jq'; printf ' %q' "$@"; printf '\n'; } >> "${CALLS:?}"; }
+trace() { local args; printf -v args ' %q' "$@"; printf 'jq%s\n' "$args" >> "${CALLS:?}"; }
 bad_shape() { trace "$@"; exit 2; }
 [[ "$#" -ge 2 && ( "$1" == -e || "$1" == -r || "$1" == -c || "$1" == -cn ) ]] || bad_shape "$@"
 i=2
@@ -327,11 +336,16 @@ if [[ "$(wc -l < "$OUTPUT")" -eq 1 ]]; then pass; else fail_test 'successful pre
 assert_absent '/private/wrong-bus' "$CALLS"
 if [[ ! -s "$DIAGNOSTICS" ]]; then pass; else fail_test 'successful preflight wrote diagnostics to stderr'; fi
 
+run_case real-order
+expect_status 0
+assert_true "$JQ_BIN" -e '.current_host_discovery.session.id == "2" and .current_host_discovery.session.leader == 1792' "$OUTPUT"
+assert_contains 'loginctl show-session 3' "$CALLS"
+
 run_case absent-kg
 expect_status 0
 assert_true "$JQ_BIN" -e '.current_host_discovery.kglobalaccel.status == "absent" and .authoritative_ready == false and .setup_ready == true and .journey_ready == false' "$OUTPUT"
 
-for mode in malformed-list malformed-components malformed-shortcuts duplicate-components ambiguous-owner unknown-project missing-project duplicate-json invalid-name invalid-component oversized-reply wrong-session ambiguous-session uid-mismatch proc-uid-mismatch wrong-executable dependency-failure json-emission-failure; do
+for mode in malformed-list malformed-components malformed-shortcuts duplicate-components ambiguous-owner unknown-project missing-project duplicate-json invalid-name invalid-component oversized-reply malformed-session wrong-session ambiguous-session uid-mismatch proc-uid-mismatch wrong-executable dependency-failure json-emission-failure; do
   run_case "$mode"
   expect_status 1
   assert_true "$JQ_BIN" -e '.status == "preflight-failed" and .authoritative_ready == false and .setup_ready == false and .journey_ready == false' "$OUTPUT"
