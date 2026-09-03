@@ -7,8 +7,8 @@ Only meaningful pending or active work is listed.
   drag/reflow and the existing float, fullscreen, maximize, and workspace
   paths |
   [change](changes/custom-tile-runtime.md)
-- P1 | static complete, pending live | Accept COSMIC directional movement on
-  KWin with separately authorized live bindings | [change](changes/cosmic-directional-movement.md)
+- P1 | next action, separately authorized live | Accept COSMIC directional
+  movement on KWin with live bindings | [change](changes/cosmic-directional-movement.md)
 - P1 | static complete, pending live | Accept pointer resize and neighbouring
   reflow on a disposable layout with fresh authorization | [change](changes/pointer-interactive-resize.md)
 - P1 | static complete, pending manual visual smoke | Drag one tiled window over
@@ -36,11 +36,14 @@ Only meaningful pending or active work is listed.
   authority, watcher ordering, native ABI load, real install/packaging,
   login/autostart, and update/rollback generation |
   [change](changes/archive/tray-carrier.md)
-- P1 | static complete, pending current-host live | Consume the Nix flake from
-  an external NixOS/Home Manager configuration, then validate clean install,
-  update, Nix generation rollback, and session lifecycle activation. Static
-  outputs, immutable managed tray startup, ownership, source filtering, and
-  lockfile evidence are accepted |
+- P1 | Nix-only script resolution/session activation accepted; pending external
+  current-host live | Consume the Nix flake from an external NixOS/Home Manager
+  configuration, then validate clean install, update, and Nix generation
+  rollback. The user-owned restart resolved only the active-generation store
+  script with the local shadow absent; it does not accept Custom Tile behavior,
+  physical behavior, tray/effect behavior, or loaded-memory byte identity.
+  Static outputs, immutable managed tray startup, ownership, source filtering,
+  and lockfile evidence are accepted |
   [change](changes/archive/nix-current-host-delivery.md)
 
 - P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated

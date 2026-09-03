@@ -91,6 +91,27 @@ and optional tray without changing the external consumer repository.
   logout/login or new-session boundary is also a user-owned future session
   gate; neither was performed, authorized, or awaited here.
 
+## Accepted Nix-Only Resolution And Session Activation
+
+- After the user-owned restart, the local shadow path
+  `~/.local/share/kwin/scripts/plasma-auto-tiler-kwin` was absent and default
+  KPackage resolution uniquely selected the active-generation package
+  `/nix/store/5z7pcqklpk9x037k9b933snc3a4zq6rw-plasma-auto-tiler-kwin-0.1.0/share/kwin/scripts/plasma-auto-tiler-kwin`.
+  Its `metadata.json` SHA-256 was
+  `ceb49666a22cd18afa8ab5381eb997df1608dbcfc1bd8049d45823757474903f` and
+  `contents/code/main.js` SHA-256 was
+  `37688bc5df45ab82f0407fa788322aca364dd13f4c6fc10788f3eda09bbf5f58`,
+  matching the active generation-linked producer artifact.
+- KWin PID/start and D-Bus ownership remained stable during read-only checks;
+  the plugin key was true, `isScriptLoaded` was true, and post-start journal
+  evidence referenced the active-generation script. `/Scripting` contained
+  `Script0` only, with no `Script1`; project shortcut and config records remained
+  present without mutation.
+- This accepts Nix-only package resolution and session activation. It does not
+  prove evaluated-memory byte identity, Custom Tile or physical behavior,
+  tray/effect behavior, external NixOS/Home Manager activation, or Nix
+  generation update/rollback behavior.
+
 ## Pending Live Gaps
 
 - Obtain a separately permitted source of authoritative current-session
@@ -116,10 +137,6 @@ and optional tray without changing the external consumer repository.
 
 ## Next Action
 
-Obtain separately permitted authoritative current-session plugin-discovery
-evidence for the user-local dogfood root first. If it is available, perform the
-host-compatible Nix-output handoff above, then use only the general live-KWin
-safety protocol. No external NixOS/Home Manager activation, physical visual
-check, or logout/login or new-session boundary is performed, authorized, or
-awaited in this change, and no live-delivery, rendering, or usability claim is
-made until the listed gates pass.
+Obtain separate authorization for live KWin acceptance of COSMIC directional
+bindings. No Custom Tile, physical, tray/effect, external NixOS/Home Manager,
+or Nix update/rollback behavior is accepted by this resolution evidence.
