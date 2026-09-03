@@ -52,6 +52,37 @@ pub struct LifecyclePaths {
     test_root: Option<PathBuf>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ManagedPaths {
+    runtime_root: PathBuf,
+    pid_record: PathBuf,
+    proc_root: PathBuf,
+}
+
+impl ManagedPaths {
+    pub fn from_env() -> io::Result<Self> {
+        let runtime = env_path("XDG_RUNTIME_DIR")?;
+        let runtime_root = runtime.join("plasma-auto-tiler-managed");
+        Ok(Self {
+            pid_record: runtime_root.join("tray.pid"),
+            runtime_root,
+            proc_root: PathBuf::from("/proc"),
+        })
+    }
+
+    pub fn runtime_root(&self) -> &Path {
+        &self.runtime_root
+    }
+
+    pub fn pid_record(&self) -> &Path {
+        &self.pid_record
+    }
+
+    pub fn proc_root(&self) -> &Path {
+        &self.proc_root
+    }
+}
+
 impl LifecyclePaths {
     pub fn from_env() -> io::Result<Self> {
         let home = env_path("HOME")?;
@@ -587,14 +618,57 @@ fn process_binary_identity_at(dir: &File) -> io::Result<Option<FileIdentity>> {
     let name = CString::new("exe").unwrap();
     // /proc/<pid>/exe is a kernel-owned symlink; opening it must resolve the
     // target, unlike ordinary lifecycle artifacts which use NOFOLLOW.
-    let file = match open_at(&dir, &name, OFlags::RDONLY | OFlags::CLOEXEC) {
+    let file = match open_at(dir, &name, OFlags::RDONLY | OFlags::CLOEXEC) {
         Ok(file) => file,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(error),
     };
     let metadata = file.metadata()?;
-    if !safe_file(&metadata) {
+    if !safe_file(&metadata) && !safe_store_executable(&metadata) {
         return Err(invalid("process executable is not a safe regular file"));
+    }
+    Ok(Some(identity_of(&file, Some(read_content(&file)?))?))
+}
+
+fn safe_store_path(path: &Path) -> bool {
+    let mut components = path.as_os_str().as_bytes().split(|byte| *byte == b'/');
+    components.next() == Some(b"")
+        && components.next() == Some(b"nix")
+        && components.next() == Some(b"store")
+        && components.next().is_some_and(|component| {
+            !component.is_empty() && component != b"." && component != b".."
+        })
+        && components
+            .all(|component| !component.is_empty() && component != b"." && component != b"..")
+}
+
+fn safe_store_executable(metadata: &fs::Metadata) -> bool {
+    metadata.is_file()
+        && metadata.uid() == 0
+        && metadata.mode() & 0o022 == 0
+        && metadata.mode() & 0o111 != 0
+}
+
+fn store_executable_identity(path: &Path) -> io::Result<Option<FileIdentity>> {
+    if !safe_store_path(path) || fs::canonicalize(path)? != path {
+        return Ok(None);
+    }
+    let parent = open_special_directory(
+        path.parent()
+            .ok_or_else(|| invalid("store executable has no parent"))?,
+    )?;
+    let file = match open_at(
+        &parent,
+        &leaf_name(path)?,
+        OFlags::RDONLY | OFlags::NOFOLLOW | OFlags::CLOEXEC,
+    ) {
+        Ok(file) => file,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    let metadata = file.metadata()?;
+    if !safe_store_executable(&metadata) {
+        return Err(invalid("store executable is not a safe regular executable"));
     }
     Ok(Some(identity_of(&file, Some(read_content(&file)?))?))
 }
@@ -684,6 +758,228 @@ pub fn create_current_record() -> io::Result<()> {
     with_lock_io(&paths, |_| create_current_record_locked(&paths))
 }
 
+pub fn validate_managed_environment() -> io::Result<()> {
+    reject_dogfood_launch_environment()
+}
+
+pub fn create_managed_record() -> io::Result<()> {
+    validate_managed_environment()?;
+    let paths = ManagedPaths::from_env()?;
+    with_managed_lock_io(&paths, |_| create_managed_record_locked(&paths))
+}
+
+fn create_managed_record_locked(paths: &ManagedPaths) -> io::Result<()> {
+    let current = managed_current_identity(paths)?;
+    if let Some(existing) = read_managed_record(paths)? {
+        if !managed_record_binds(&existing) {
+            return Err(invalid("retained managed PID record is mismatched"));
+        }
+        match managed_process_identity(paths, existing.record.pid) {
+            Ok(identity) if process_matches(&existing, &identity) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    "managed tray endpoint is already active",
+                ));
+            }
+            Ok(_) => return Err(invalid("retained managed PID record is mismatched")),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                remove_file_snapshot_io(&existing.file)?;
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    if active_managed_helper(paths, &current)? {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            "managed tray endpoint is already active",
+        ));
+    }
+    let raw = i32::try_from(std::process::id()).map_err(|_| invalid("PID is out of range"))?;
+    let _pidfd = pidfd_open(
+        Pid::from_raw(raw).ok_or_else(|| invalid("PID is zero"))?,
+        PidfdFlags::empty(),
+    )
+    .map_err(io::Error::from)?;
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let final_running = current_process_identity(paths)?;
+    let binary = store_executable_identity(&final_running.resolved_executable_path)?
+        .ok_or_else(|| invalid("current store executable disappeared"))?;
+    write_managed_record_after_identity_check(
+        paths.pid_record(),
+        &current,
+        &final_running,
+        &binary,
+        format!("{:x}-{:x}", std::process::id(), nanos),
+    )
+}
+
+fn reject_dogfood_launch_environment() -> io::Result<()> {
+    if [
+        LAUNCH_DEV,
+        LAUNCH_INO,
+        LAUNCH_READY,
+        LAUNCH_READY_DEV,
+        LAUNCH_READY_INO,
+    ]
+    .iter()
+    .any(|name| env::var_os(name).is_some())
+    {
+        Err(invalid(
+            "managed tray endpoint rejects dogfood launch environment",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
+fn read_managed_record(paths: &ManagedPaths) -> io::Result<Option<RecordSnapshot>> {
+    match read_record_snapshot(paths.pid_record()) {
+        Ok(record) => Ok(record),
+        Err(ObservedError::Unowned) => Err(invalid("unowned managed PID record")),
+        Err(ObservedError::Malformed) => Err(invalid("malformed managed PID record")),
+        Err(ObservedError::Io(error)) => Err(error),
+    }
+}
+
+fn managed_current_identity(paths: &ManagedPaths) -> io::Result<ProcessIdentity> {
+    let identity = current_process_identity(paths)?;
+    let binary = store_executable_identity(&identity.resolved_executable_path)?
+        .ok_or_else(|| invalid("current executable is not a safe Nix store executable"))?;
+    if !managed_binary_identity_matches(&identity, &identity.resolved_executable_path, &binary) {
+        return Err(invalid(
+            "current executable identity changed during startup",
+        ));
+    }
+    Ok(identity)
+}
+
+fn current_process_identity(paths: &ManagedPaths) -> io::Result<ProcessIdentity> {
+    let process = ProcProcessControl {
+        proc_root: paths.proc_root.clone(),
+    };
+    process
+        .identity(std::process::id())?
+        .ok_or_else(|| invalid("current managed process identity is unavailable"))
+}
+
+fn managed_binary_identity_matches(
+    current: &ProcessIdentity,
+    final_path: &Path,
+    final_binary: &FileIdentity,
+) -> bool {
+    current.resolved_executable_path == final_path
+        && final_binary.dev == current.executable.dev
+        && final_binary.ino == current.executable.ino
+        && final_binary.content == current.executable.content
+}
+
+fn write_managed_record_after_identity_check(
+    path: &Path,
+    captured: &ProcessIdentity,
+    final_running: &ProcessIdentity,
+    final_binary: &FileIdentity,
+    generation_token: String,
+) -> io::Result<()> {
+    if captured != final_running
+        || !managed_binary_identity_matches(
+            captured,
+            &final_running.resolved_executable_path,
+            final_binary,
+        )
+    {
+        return Err(invalid(
+            "managed executable identity changed before record write",
+        ));
+    }
+    write_record_with_identity(
+        path,
+        &LifecycleRecord {
+            pid: std::process::id(),
+            start_tick: captured.start_tick,
+            resolved_executable_path: captured.resolved_executable_path.clone(),
+            generation_token,
+        },
+        final_binary,
+    )
+}
+
+fn managed_process_identity(paths: &ManagedPaths, pid: u32) -> io::Result<ProcessIdentity> {
+    let process = ProcProcessControl {
+        proc_root: paths.proc_root.clone(),
+    };
+    let Some(identity) = process.identity(pid)? else {
+        if process.process_directory(pid)?.is_some() {
+            return Err(invalid(
+                "managed process identity is unreadable or ambiguous",
+            ));
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "managed process is absent",
+        ));
+    };
+    if !safe_store_path(&identity.resolved_executable_path) {
+        return Err(invalid(
+            "managed process executable is outside the Nix store",
+        ));
+    }
+    Ok(identity)
+}
+
+fn managed_record_binds(snapshot: &RecordSnapshot) -> bool {
+    if !safe_store_path(&snapshot.record.resolved_executable_path)
+        || snapshot.binary.content.is_empty()
+    {
+        return false;
+    }
+    store_executable_identity(&snapshot.record.resolved_executable_path).is_ok_and(|identity| {
+        identity.is_some_and(|identity| {
+            identity.dev == snapshot.binary.dev
+                && identity.ino == snapshot.binary.ino
+                && identity.content == snapshot.binary.content
+        })
+    })
+}
+
+fn active_managed_helper(paths: &ManagedPaths, current: &ProcessIdentity) -> io::Result<bool> {
+    let root = match open_special_directory(&paths.proc_root) {
+        Ok(root) => root,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(error),
+    };
+    let process = ProcProcessControl {
+        proc_root: paths.proc_root.clone(),
+    };
+    for name in directory_names(&root)? {
+        let Ok(text) = std::str::from_utf8(name.to_bytes()) else {
+            continue;
+        };
+        let Ok(pid) = text.parse::<u32>() else {
+            continue;
+        };
+        if pid == std::process::id() {
+            continue;
+        }
+        if process
+            .identity_if_path(pid, &[&current.resolved_executable_path])?
+            .is_some_and(|identity| managed_active_identity_matches(current, &identity))
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+fn managed_active_identity_matches(current: &ProcessIdentity, candidate: &ProcessIdentity) -> bool {
+    candidate.resolved_executable_path == current.resolved_executable_path
+        && candidate.executable.dev == current.executable.dev
+        && candidate.executable.ino == current.executable.ino
+        && candidate.executable.content == current.executable.content
+}
+
 fn create_launch_record(paths: &LifecyclePaths) -> io::Result<()> {
     let expected_dev = env::var(LAUNCH_DEV)
         .map_err(|_| invalid("incomplete launch identity"))?
@@ -741,6 +1037,28 @@ pub fn signal_current_record_ready() -> io::Result<()> {
     }
     let paths = LifecyclePaths::from_env()?;
     signal_launch_ready(&paths)
+}
+
+pub fn signal_managed_record_ready() -> io::Result<()> {
+    validate_managed_environment()?;
+    let paths = ManagedPaths::from_env()?;
+    with_managed_lock_io(&paths, |_| {
+        let Some(record) = read_managed_record(&paths)? else {
+            return Err(invalid(
+                "cannot signal managed readiness without a PID record",
+            ));
+        };
+        let identity = managed_current_identity(&paths)?;
+        if record.record.pid != std::process::id()
+            || !managed_record_binds(&record)
+            || !process_matches(&record, &identity)
+        {
+            return Err(invalid(
+                "managed PID record identity changed before readiness",
+            ));
+        }
+        Ok(())
+    })
 }
 
 fn signal_launch_ready(paths: &LifecyclePaths) -> io::Result<()> {
@@ -898,6 +1216,26 @@ pub fn cleanup_current_record() -> Result<(), String> {
         return cleanup_current_record_locked(&paths);
     }
     with_lock(&paths, |_| cleanup_current_record_locked(&paths))
+}
+
+pub fn cleanup_managed_record() -> Result<(), String> {
+    validate_managed_environment().map_err(|e| e.to_string())?;
+    let paths = ManagedPaths::from_env().map_err(|e| e.to_string())?;
+    with_managed_lock(&paths, |_| cleanup_managed_record_locked(&paths))
+}
+
+fn cleanup_managed_record_locked(paths: &ManagedPaths) -> Result<(), String> {
+    let Some(record) = read_managed_record(paths).map_err(|e| e.to_string())? else {
+        return Ok(());
+    };
+    if !managed_record_binds(&record) || record.record.pid != std::process::id() {
+        return Ok(());
+    }
+    let identity = managed_current_identity(paths).map_err(|e| e.to_string())?;
+    if process_matches(&record, &identity) {
+        remove_file_snapshot(&record.file)?;
+    }
+    Ok(())
 }
 
 fn cleanup_current_record_locked(paths: &LifecyclePaths) -> Result<(), String> {
@@ -3173,7 +3511,7 @@ fn read_content_limited_with_message(
         return Err(invalid(exceeded_message));
     }
     let mut content = Vec::new();
-    (&*file).take(limit).read_to_end(&mut content)?;
+    file.take(limit).read_to_end(&mut content)?;
     if content.len() as u64 >= limit {
         return Err(invalid(exceeded_message));
     }
@@ -3389,6 +3727,46 @@ fn with_lock<T>(
         (Err(error), Err(cleanup)) => Err(format!("{error}; remove project lock: {cleanup}")),
     }
 }
+
+fn with_managed_lock<T>(
+    paths: &ManagedPaths,
+    action: impl FnOnce(&ProjectLock) -> Result<T, String>,
+) -> Result<T, String> {
+    let root = open_directory(paths.runtime_root(), true)
+        .map_err(|e| format!("acquire managed project lock: {e}"))?;
+    let lock = acquire_lock_at(root).map_err(|e| format!("acquire managed project lock: {e}"))?;
+    let result = validate_managed_paths(paths)
+        .map_err(|e| format!("validate managed lifecycle paths: {e}"))
+        .and_then(|_| action(&lock));
+    let cleanup = release_lock(&lock);
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(_), Err(error)) => Err(format!("remove managed project lock: {error}")),
+        (Err(error), Err(cleanup)) => {
+            Err(format!("{error}; remove managed project lock: {cleanup}"))
+        }
+    }
+}
+
+fn with_managed_lock_io<T>(
+    paths: &ManagedPaths,
+    action: impl FnOnce(&ProjectLock) -> io::Result<T>,
+) -> io::Result<T> {
+    let root = open_directory(paths.runtime_root(), true)?;
+    let lock = acquire_lock_at(root)?;
+    let result = validate_managed_paths(paths).and_then(|_| action(&lock));
+    let cleanup = release_lock(&lock);
+    match (result, cleanup) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Err(error), Ok(())) | (Ok(_), Err(error)) => Err(error),
+        (Err(error), Err(cleanup)) => Err(io::Error::new(
+            error.kind(),
+            format!("{error}; remove managed project lock: {cleanup}"),
+        )),
+    }
+}
+
 fn with_lock_io<T>(
     paths: &LifecyclePaths,
     action: impl FnOnce(&ProjectLock) -> io::Result<T>,
@@ -3414,6 +3792,10 @@ fn acquire_lock(paths: &LifecyclePaths) -> io::Result<ProjectLock> {
             .ok_or_else(|| invalid("record has no parent"))?,
         true,
     )?;
+    acquire_lock_at(parent)
+}
+
+fn acquire_lock_at(parent: File) -> io::Result<ProjectLock> {
     let name = CString::new(LOCK_FILE).unwrap();
     let mut retried_unheld = false;
     loop {
@@ -3538,6 +3920,31 @@ fn validate_lifecycle_paths(paths: &LifecyclePaths) -> io::Result<()> {
     }
     Ok(())
 }
+
+fn validate_managed_paths(paths: &ManagedPaths) -> io::Result<()> {
+    validate_path(paths.runtime_root())?;
+    validate_path(paths.pid_record())?;
+    let expected = ManagedPaths::from_env()?;
+    if paths != &expected || paths.proc_root() != Path::new("/proc") {
+        return Err(invalid(
+            "managed lifecycle paths are outside the confined runtime layout",
+        ));
+    }
+    let root = open_directory(paths.runtime_root(), false)?;
+    let metadata = root.metadata()?;
+    if metadata.uid() != current_uid() || metadata.mode() & 0o7777 != 0o700 {
+        return Err(invalid(
+            "managed runtime directory has unsafe ownership or mode",
+        ));
+    }
+    for name in directory_names(&root)? {
+        if name.to_bytes() != b"tray.pid" && name.to_bytes() != LOCK_FILE.as_bytes() {
+            return Err(invalid("unexpected managed runtime residue retained"));
+        }
+    }
+    Ok(())
+}
+
 fn ensure_no_debris(paths: &LifecyclePaths) -> io::Result<()> {
     for parent_path in [
         paths
@@ -3758,6 +4165,235 @@ mod tests {
     fn malformed_hex_is_byte_safe() {
         assert_eq!(decode_hex("é"), None);
         assert_eq!(decode_hex("6162"), Some(b"ab".to_vec()));
+    }
+
+    #[test]
+    fn managed_final_identity_mismatch_leaves_no_record_or_temporary_file() {
+        let root = unit_root("managed-final-identity");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let captured = ProcessIdentity {
+            start_tick: 10,
+            resolved_executable_path: PathBuf::from(
+                "/nix/store/example-plasma-auto-tiler/bin/plasma-auto-tiler",
+            ),
+            executable: ProcessExecutableIdentity {
+                dev: 1,
+                ino: 2,
+                content: b"running-image".to_vec(),
+            },
+        };
+        let matching_binary = FileIdentity {
+            dev: 1,
+            ino: 2,
+            mode: 0o755,
+            uid: 0,
+            directory: false,
+            content: b"running-image".to_vec(),
+        };
+
+        for (name, final_running, final_binary) in [
+            (
+                "path",
+                ProcessIdentity {
+                    resolved_executable_path: PathBuf::from(
+                        "/nix/store/other-plasma-auto-tiler/bin/plasma-auto-tiler",
+                    ),
+                    ..captured.clone()
+                },
+                matching_binary.clone(),
+            ),
+            (
+                "start",
+                ProcessIdentity {
+                    start_tick: 11,
+                    ..captured.clone()
+                },
+                matching_binary.clone(),
+            ),
+            (
+                "device",
+                captured.clone(),
+                FileIdentity {
+                    dev: 3,
+                    ..matching_binary.clone()
+                },
+            ),
+            (
+                "inode",
+                captured.clone(),
+                FileIdentity {
+                    ino: 4,
+                    ..matching_binary.clone()
+                },
+            ),
+            (
+                "content",
+                captured.clone(),
+                FileIdentity {
+                    content: b"replacement-image".to_vec(),
+                    ..matching_binary.clone()
+                },
+            ),
+        ] {
+            let record_path = root.join(format!("{name}.pid"));
+            assert!(
+                write_managed_record_after_identity_check(
+                    &record_path,
+                    &captured,
+                    &final_running,
+                    &final_binary,
+                    "generation".to_owned(),
+                )
+                .is_err()
+            );
+            assert!(!record_path.exists());
+        }
+        assert_eq!(fs::read_dir(&root).unwrap().count(), 0);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_store_path_validation_rejects_lexical_prefix_escapes() {
+        for path in [
+            "/nix/storehouse/example",
+            "/nix/store/../tmp/example",
+            "/nix/store/name/../../tmp/example",
+        ] {
+            assert!(!safe_store_path(Path::new(path)), "accepted {path}");
+        }
+        assert!(safe_store_path(Path::new(
+            "/nix/store/example/bin/plasma-auto-tiler"
+        )));
+    }
+
+    #[test]
+    fn managed_state_anomalies_are_retained_and_fail_closed() {
+        for (name, content, mode, symlink) in [
+            (
+                "malformed",
+                b"plasma-auto-tiler-pid-owner-v1\npid=7\n".to_vec(),
+                0o600,
+                false,
+            ),
+            ("wrong-mode", b"not-owned".to_vec(), 0o644, false),
+            ("unowned", b"other-owner\n".to_vec(), 0o600, false),
+            ("symlink", b"target".to_vec(), 0o600, true),
+        ] {
+            let root = unit_root(&format!("managed-state-{name}"));
+            let runtime_root = root.join("runtime");
+            fs::create_dir_all(&runtime_root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            fs::set_permissions(&runtime_root, fs::Permissions::from_mode(0o700)).unwrap();
+            let pid_record = runtime_root.join("tray.pid");
+            if symlink {
+                fs::write(runtime_root.join("target"), content).unwrap();
+                fs::set_permissions(
+                    runtime_root.join("target"),
+                    fs::Permissions::from_mode(mode),
+                )
+                .unwrap();
+                std::os::unix::fs::symlink("target", &pid_record).unwrap();
+            } else {
+                fs::write(&pid_record, content).unwrap();
+                fs::set_permissions(&pid_record, fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let paths = ManagedPaths {
+                runtime_root,
+                pid_record,
+                proc_root: root.join("proc"),
+            };
+
+            assert!(read_managed_record(&paths).is_err(), "accepted {name}");
+            assert!(paths.pid_record().exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+    }
+
+    #[test]
+    fn managed_stale_start_tick_does_not_match_reused_pid() {
+        let root = unit_root("managed-stale-pid");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let binary_path =
+            PathBuf::from("/nix/store/example-plasma-auto-tiler/bin/plasma-auto-tiler");
+        let binary = FileIdentity {
+            dev: 1,
+            ino: 2,
+            mode: 0o755,
+            uid: 0,
+            directory: false,
+            content: b"running-image".to_vec(),
+        };
+        let record_path = root.join("tray.pid");
+        let record = LifecycleRecord {
+            pid: 777,
+            start_tick: 10,
+            resolved_executable_path: binary_path.clone(),
+            generation_token: "generation".to_owned(),
+        };
+        write_record_with_identity(&record_path, &record, &binary).unwrap();
+        let snapshot = read_record_snapshot(&record_path).unwrap().unwrap();
+        let reused = ProcessIdentity {
+            start_tick: 11,
+            resolved_executable_path: binary_path,
+            executable: ProcessExecutableIdentity {
+                dev: binary.dev,
+                ino: binary.ino,
+                content: binary.content,
+            },
+        };
+
+        assert!(!process_matches(&snapshot, &reused));
+        assert!(record_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn managed_duplicate_active_process_requires_exact_identity() {
+        let current = ProcessIdentity {
+            start_tick: 10,
+            resolved_executable_path: PathBuf::from(
+                "/nix/store/example-plasma-auto-tiler/bin/plasma-auto-tiler",
+            ),
+            executable: ProcessExecutableIdentity {
+                dev: 1,
+                ino: 2,
+                content: b"running-image".to_vec(),
+            },
+        };
+        assert!(managed_active_identity_matches(&current, &current));
+        for candidate in [
+            ProcessIdentity {
+                resolved_executable_path: PathBuf::from(
+                    "/nix/store/other-plasma-auto-tiler/bin/plasma-auto-tiler",
+                ),
+                ..current.clone()
+            },
+            ProcessIdentity {
+                executable: ProcessExecutableIdentity {
+                    dev: 3,
+                    ..current.executable.clone()
+                },
+                ..current.clone()
+            },
+            ProcessIdentity {
+                executable: ProcessExecutableIdentity {
+                    ino: 4,
+                    ..current.executable.clone()
+                },
+                ..current.clone()
+            },
+            ProcessIdentity {
+                executable: ProcessExecutableIdentity {
+                    content: b"replacement-image".to_vec(),
+                    ..current.executable.clone()
+                },
+                ..current.clone()
+            },
+        ] {
+            assert!(!managed_active_identity_matches(&current, &candidate));
+        }
     }
 
     #[test]

@@ -499,6 +499,55 @@ fn lifecycle_commands_reject_extra_arguments() {
         "error: tray-status takes no arguments\n"
     );
     assert!(!paths.pid_record().exists());
+
+    let output = Command::new(std::env::var_os("CARGO_BIN_EXE_plasma-auto-tiler").unwrap())
+        .args(["tray-managed", "extra"])
+        .env("HOME", &root)
+        .env("XDG_DATA_HOME", root.join("data"))
+        .env("XDG_CONFIG_HOME", root.join("config"))
+        .env("XDG_RUNTIME_DIR", root.join("runtime"))
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "error: tray-managed takes no arguments\n"
+    );
+    assert!(!root.join("runtime/plasma-auto-tiler-managed").exists());
+    clean(root);
+}
+
+#[test]
+fn managed_mode_rejects_inherited_dogfood_launch_state_without_touching_namespaces() {
+    let (root, paths) = fixture("managed-environment");
+    let executable = std::env::var_os("CARGO_BIN_EXE_plasma-auto-tiler").unwrap();
+    for variable in [
+        "PLASMA_AUTO_TILER_LAUNCH_DEV",
+        "PLASMA_AUTO_TILER_LAUNCH_INO",
+        "PLASMA_AUTO_TILER_LAUNCH_READY",
+        "PLASMA_AUTO_TILER_LAUNCH_READY_DEV",
+        "PLASMA_AUTO_TILER_LAUNCH_READY_INO",
+    ] {
+        let output = Command::new(&executable)
+            .arg("tray-managed")
+            .env_clear()
+            .env("HOME", &root)
+            .env("XDG_DATA_HOME", root.join("data"))
+            .env("XDG_CONFIG_HOME", root.join("config"))
+            .env("XDG_RUNTIME_DIR", root.join("runtime"))
+            .env(variable, "forged")
+            .output()
+            .unwrap();
+
+        assert!(!output.status.success(), "{variable} unexpectedly accepted");
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("rejects dogfood launch environment"),
+            "{variable}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(!root.join("runtime/plasma-auto-tiler-managed").exists());
+        assert!(!paths.pid_record().exists());
+    }
     clean(root);
 }
 

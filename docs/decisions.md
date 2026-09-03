@@ -162,6 +162,16 @@ Historical implementation detail is recoverable in Git history.
 - The static bridge includes freshness and ordering/generation checks,
   idempotent notifications, and bounded watcher retry. Watcher ordering,
   login, and XDG autostart behavior remain pending live evidence.
+- Home Manager autostart uses the immutable store tray binary with the fixed
+  `tray-managed` mode; `TryExec` remains the immutable store binary alone.
+  Managed mode uses only `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed` for its
+  lock and PID state and never installs or mutates the dogfood helper state.
+- Managed startup accepts only the current safe regular executable resolved
+  under `/nix/store`, with exact PID, start-tick, path, device, inode, and
+  content binding. Malformed, unowned, replaced, symlinked, wrong-mode,
+  unreadable, or ambiguous state fails closed; cleanup removes only exact
+  managed state. The no-argument endpoint and lifecycle commands retain the
+  existing dogfood namespace and semantics.
 - The helper is not required for core tiler operation. Normal lifecycle
   rollback is exact and in-process; interrupted, crash, power-loss, malformed,
   replaced, or ambiguous state fails closed. Durable recovery and automatic

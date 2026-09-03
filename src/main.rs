@@ -4,6 +4,9 @@ fn main() {
         [] => Err("missing executable argument".to_owned()),
         [_] => plasma_auto_tiler::tray_endpoint::run().map_err(|error| error.to_string()),
         [_, command] => match command.as_str() {
+            "tray-managed" => {
+                plasma_auto_tiler::tray_endpoint::run_managed().map_err(|error| error.to_string())
+            }
             "tray-install" => plasma_auto_tiler::tray_lifecycle::install_command(),
             "tray-start" => plasma_auto_tiler::tray_lifecycle::start_command(),
             "tray-status" => plasma_auto_tiler::tray_lifecycle::status_command(),

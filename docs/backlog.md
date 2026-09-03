@@ -33,7 +33,8 @@ Only meaningful pending or active work is listed.
 - P1 | static complete, pending current-host live | Consume the Nix flake from
   an external NixOS/Home Manager configuration, then validate clean install,
   update, Nix generation rollback, and session lifecycle activation. Static
-  outputs, ownership, source filtering, and lockfile evidence are accepted |
+  outputs, immutable managed tray startup, ownership, source filtering, and
+  lockfile evidence are accepted |
   [change](changes/archive/nix-current-host-delivery.md)
 
 - P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated

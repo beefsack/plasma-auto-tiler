@@ -20,7 +20,7 @@ in
       Type=Application
       Name=Plasma Auto Tiler Tray
       Comment=Shows Plasma Auto Tiler status in the system tray
-      Exec=${cfg.package}/bin/plasma-auto-tiler
+      Exec=${cfg.package}/bin/plasma-auto-tiler tray-managed
       TryExec=${cfg.package}/bin/plasma-auto-tiler
       X-KDE-autostart-phase=1
       X-GNOME-Autostart-enabled=true

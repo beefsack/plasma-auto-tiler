@@ -411,6 +411,15 @@ impl TrayEndpoint {
 }
 
 pub fn run() -> zbus::Result<()> {
+    run_with_mode(false)
+}
+
+pub fn run_managed() -> zbus::Result<()> {
+    crate::tray_lifecycle::validate_managed_environment()?;
+    run_with_mode(true)
+}
+
+fn run_with_mode(managed: bool) -> zbus::Result<()> {
     let connection = Connection::session()?;
     let dbus = DBusProxy::new(&connection)?;
     let owner_changes_rule = MatchRule::builder()
@@ -447,8 +456,17 @@ pub fn run() -> zbus::Result<()> {
         .at(DbusMenu::OBJECT, projection.menu())?;
     request_service_name(&connection)?;
 
-    if let Err(error) = crate::tray_lifecycle::create_current_record() {
-        let cleanup = crate::tray_lifecycle::cleanup_current_record();
+    let create_record = if managed {
+        crate::tray_lifecycle::create_managed_record()
+    } else {
+        crate::tray_lifecycle::create_current_record()
+    };
+    if let Err(error) = create_record {
+        let cleanup = if managed {
+            crate::tray_lifecycle::cleanup_managed_record()
+        } else {
+            crate::tray_lifecycle::cleanup_current_record()
+        };
         return Err(lifecycle_error(
             format!("create tray PID record: {error}"),
             cleanup,
@@ -457,18 +475,35 @@ pub fn run() -> zbus::Result<()> {
     let watcher_owner = watcher_owner.ok_or_else(|| {
         lifecycle_error(
             "status notifier watcher has no owner".to_owned(),
-            crate::tray_lifecycle::cleanup_current_record(),
+            if managed {
+                crate::tray_lifecycle::cleanup_managed_record()
+            } else {
+                crate::tray_lifecycle::cleanup_current_record()
+            },
         )
     })?;
     if let Err(error) = register_status_notifier_item_with_retry(&connection, &watcher_owner) {
-        let cleanup = crate::tray_lifecycle::cleanup_current_record();
+        let cleanup = if managed {
+            crate::tray_lifecycle::cleanup_managed_record()
+        } else {
+            crate::tray_lifecycle::cleanup_current_record()
+        };
         return Err(lifecycle_error(
             format!("register status notifier item: {error}"),
             cleanup,
         ));
     }
-    if let Err(error) = crate::tray_lifecycle::signal_current_record_ready() {
-        let cleanup = crate::tray_lifecycle::cleanup_current_record();
+    let signal_ready = if managed {
+        crate::tray_lifecycle::signal_managed_record_ready()
+    } else {
+        crate::tray_lifecycle::signal_current_record_ready()
+    };
+    if let Err(error) = signal_ready {
+        let cleanup = if managed {
+            crate::tray_lifecycle::cleanup_managed_record()
+        } else {
+            crate::tray_lifecycle::cleanup_current_record()
+        };
         return Err(lifecycle_error(
             format!("signal tray endpoint readiness: {error}"),
             cleanup,
@@ -514,7 +549,11 @@ pub fn run() -> zbus::Result<()> {
     })();
     stop_watchdog.store(true, Ordering::Relaxed);
     let _ = watchdog.join();
-    let cleanup = crate::tray_lifecycle::cleanup_current_record();
+    let cleanup = if managed {
+        crate::tray_lifecycle::cleanup_managed_record()
+    } else {
+        crate::tray_lifecycle::cleanup_current_record()
+    };
     finish_watcher(result, cleanup)
 }
 
