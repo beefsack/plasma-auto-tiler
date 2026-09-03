@@ -186,6 +186,15 @@ Historical implementation detail is recoverable in Git history.
 - That run claims no visual panel behavior, no watcher-ordering/login/autostart
   delivery, no native ABI/plugin load, no baseline-restoration proof, and no
   KWin Script1 identity or cleanup.
+- The pre-repair current immutable process held
+  `org.plasmaautotiler.Tray/StatusNotifierItem` but timed out on every SNI
+  object request, including `Peer.Ping`; Plasma could not obtain its icon,
+  tooltip, menu, or activation from that process.
+- One bounded disposable repaired candidate answered SNI `Peer.Ping`,
+  introspection, and properties; returned valid icon-pixmap, tooltip, menu, and
+  method contracts; completed one fixed Settings launch with exact resulting
+  process cleanup; and terminated with exact original autostart restoration.
+  It claims no panel visual behavior or session boundary.
 
 ## Deferred Scope
 

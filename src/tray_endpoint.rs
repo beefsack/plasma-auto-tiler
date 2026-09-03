@@ -419,16 +419,22 @@ pub fn run_managed() -> zbus::Result<()> {
     run_with_mode(true)
 }
 
-fn run_with_mode(managed: bool) -> zbus::Result<()> {
-    let connection = Connection::session()?;
-    let dbus = DBusProxy::new(&connection)?;
-    let owner_changes_rule = MatchRule::builder()
+fn owner_changes_match_rule() -> zbus::Result<MatchRule<'static>> {
+    Ok(MatchRule::builder()
         .msg_type(Type::Signal)
         .sender("org.freedesktop.DBus")?
         .interface("org.freedesktop.DBus")?
         .member("NameOwnerChanged")?
-        .build();
-    let owner_changes = MessageIterator::for_match_rule(owner_changes_rule, &connection, Some(16))?;
+        .build())
+}
+
+fn monitor_owner_changes(monitor: &Connection) -> zbus::Result<MessageIterator> {
+    MessageIterator::for_match_rule(owner_changes_match_rule()?, monitor, Some(16))
+}
+
+fn run_with_mode(managed: bool) -> zbus::Result<()> {
+    let connection = Connection::session()?;
+    let dbus = DBusProxy::new(&connection)?;
     let watcher_owner = reconcile_initial_owner(
         || dbus.name_has_owner(STATUS_NOTIFIER_WATCHER_SERVICE.try_into().unwrap()),
         || {
@@ -509,6 +515,31 @@ fn run_with_mode(managed: bool) -> zbus::Result<()> {
             cleanup,
         ));
     }
+    // Owner-change signals are observed on a dedicated monitor connection so a
+    // lagging NameOwnerChanged queue can never apply backpressure to the
+    // serving connection's socket reader and stall ObjectServer dispatch
+    // (SNI properties, Peer.Ping, PublishSnapshot). The serving connection
+    // remains dedicated to dispatch, registration, and signal emission.
+    let monitor = Connection::session().map_err(|error| {
+        lifecycle_error(
+            format!("open tray owner monitor: {error}"),
+            if managed {
+                crate::tray_lifecycle::cleanup_managed_record()
+            } else {
+                crate::tray_lifecycle::cleanup_current_record()
+            },
+        )
+    })?;
+    let owner_changes = monitor_owner_changes(&monitor).map_err(|error| {
+        lifecycle_error(
+            format!("watch tray owner changes: {error}"),
+            if managed {
+                crate::tray_lifecycle::cleanup_managed_record()
+            } else {
+                crate::tray_lifecycle::cleanup_current_record()
+            },
+        )
+    })?;
     let stop_watchdog = Arc::new(AtomicBool::new(false));
     let watchdog_stop = Arc::clone(&stop_watchdog);
     let watchdog_projection = projection.clone();
@@ -745,7 +776,7 @@ mod tests {
         APPROVED_KWIN_ENTRYPOINTS, KWIN_SERVICE, REGISTER_STATUS_NOTIFIER_ITEM, SERVICE,
         STATUS_NOTIFIER_WATCHER_INTERFACE, STATUS_NOTIFIER_WATCHER_OBJECT,
         STATUS_NOTIFIER_WATCHER_SERVICE, authorized_publisher, handle_watcher_owner_change,
-        reconcile_initial_owner, retry_registration,
+        owner_changes_match_rule, reconcile_initial_owner, retry_registration,
     };
 
     fn approved_identity() -> super::ApprovedKwinIdentity {
@@ -1163,5 +1194,14 @@ mod tests {
 
         assert!(result.contains("watcher failed"));
         assert!(result.contains("record cleanup failed"));
+    }
+
+    #[test]
+    fn owner_monitor_rule_uses_the_fixed_dbus_owner_contract() {
+        let rule = owner_changes_match_rule().unwrap().to_string();
+        assert!(rule.contains("type='signal'"), "{rule}");
+        assert!(rule.contains("sender='org.freedesktop.DBus'"), "{rule}");
+        assert!(rule.contains("interface='org.freedesktop.DBus'"), "{rule}");
+        assert!(rule.contains("member='NameOwnerChanged'"), "{rule}");
     }
 }

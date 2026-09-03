@@ -31,6 +31,7 @@
           ./src
           ./tests
           ./test-fixtures
+          ./assets/icons/plasma-auto-tiler.svg
         ];
       };
 
@@ -133,6 +134,16 @@
           preCheck = ''
             export HOME="$NIX_BUILD_TOP"
           '';
+          postInstall = ''
+            mkdir -p "$out/share/icons/hicolor/scalable/apps"
+            cp ${./assets/icons/plasma-auto-tiler.svg} "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+          '';
+          doInstallCheck = true;
+          installCheckPhase = ''
+            runHook preInstallCheck
+            test -s "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+            runHook postInstallCheck
+          '';
         };
     in
     {
@@ -214,6 +225,7 @@
           Comment=Shows Plasma Auto Tiler status in the system tray
           Exec=${tray}/bin/plasma-auto-tiler tray-managed
           TryExec=${tray}/bin/plasma-auto-tiler
+          Icon=${tray}/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg
           X-KDE-autostart-phase=1
           X-GNOME-Autostart-enabled=true
         '';

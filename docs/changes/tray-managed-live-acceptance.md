@@ -1,43 +1,46 @@
-# Managed Tray Live Acceptance
+# Managed Tray SNI Repair
 
 ## Goal
 
-Validate the current-generation immutable `tray-managed` runtime in the current
-Plasma session without changing KWin state or testing a session boundary.
+Repair the current-generation immutable `tray-managed` SNI so Plasma can render
+the item, show its status, and open its fixed Settings target.
 
 ## Scope
 
-- Capture current generation, autostart, D-Bus, KWin, runtime, and SNI baselines.
-- Start the exact immutable store binary once only if identity and restoration
-  checks pass, then validate managed runtime, SNI registration, KWin snapshot,
-  and the fixed Settings action where exact cleanup is safe.
-- Stop only the process started by this run and prove restoration.
-- Reconcile accepted facts in producer governance.
+- Diagnose the exact immutable current-session process and its SNI wire contract.
+- Restore D-Bus dispatch and implement only compatible icon, tooltip, fixed
+  Settings activation, and required state-change signals.
+- Validate focused Rust, package, module, and bounded current-session behavior.
+- Reconcile producer facts, publish the producer, and update only the consumer
+  producer lock.
 
 ## Non-Goals
 
-- Login/autostart, active-border/plugin identity, visual panel behavior, and
-  physical Settings behavior require a user-performed new session or observation.
-- No Nix rebuild, Home Manager switch, consumer change, KWin mutation, commit,
-  or push.
+- No KWin control path, tiler-state mutation, arbitrary launching, menu actions
+  beyond the fixed Settings target, NixOS rebuild, or session boundary.
+- Panel appearance and physical click remain user-observed evidence.
 
 ## Acceptance
 
-- The process, managed runtime state, D-Bus/SNI identity, and KWin snapshot are
-  tied to the current immutable store binary.
-- The Settings action is invoked at most once only with exact resulting-process
-  cleanup.
-- Exact baseline restoration is verified; surprises fail closed.
+- The current immutable process answers SNI introspection, properties, and
+  activation requests after watcher registration.
+- The SNI supplies a package-contained visible icon or valid pixmap fallback,
+  non-empty useful tooltip, exact status, and only its fixed Settings action.
+- Relevant SNI state changes emit compatible, idempotent signals.
+- Producer and consumer static integration is verified and only intended files
+  are committed and pushed.
 
 ## Plan
 
-1. Independently review the preflight facts and live mutation/cleanup boundary.
-2. Run one bounded lifecycle execution only after the review passes.
-3. Independently assess the resulting evidence and restoration.
-4. Correct only a proven bounded defect, otherwise update governance to accepted
-   facts and stage intended changes without committing.
+1. Capture the live managed process, watcher registration, object protocol, and
+   narrowly relevant logs without mutation.
+2. Independently review the dispatch, SNI, icon, and fixed-KCM design boundary.
+3. Implement and verify the smallest compatible repair.
+4. Run one bounded live smoke only if the managed lifecycle can replace and
+   restore the exact process without retained-state ambiguity.
+5. Reconcile accepted facts, publish producer, then pin and publish consumer.
 
-## Outcome
+## Prior Evidence
 
 - Current generation 113 updated the Home Manager autostart target to the
   immutable store binary, while the booted generation remains 109. A manual run
@@ -50,3 +53,32 @@ Plasma session without changing KWin state or testing a session boundary.
   it remains untouched pending user-authorized exact recovery.
 - An unauthorized review call also left an unidentifiable KWin Script1. Its
   identity and exact cleanup cannot be proved, so this note remains active.
+
+## Current Evidence
+
+- Read-only current-session inspection found the exact current immutable
+  `tray-managed` process owns and is registered as
+  `org.plasmaautotiler.Tray/StatusNotifierItem`, but every SNI object request,
+  including `org.freedesktop.DBus.Peer.Ping`, times out. The process is alive.
+  Plasma therefore cannot obtain its icon, tooltip, menu, or activation method.
+- The leading source hypothesis is that the endpoint blocks its object-server
+  dispatch after registration. Icon fallback and unavailable status remain
+  secondary until the service responds.
+
+## Outcome
+
+- The repair isolates owner-change monitoring from serving SNI dispatch, ships
+  a project icon with a valid protocol pixmap fallback, supplies a status
+  tooltip, emits idempotent status/icon/tooltip updates, and routes primary
+  activation to the one fixed Nix-baked KCM command. Missing launcher metadata
+  fails closed.
+- Static evidence passed: formatting; 81 Rust all-target tests; 05a lifecycle
+  fixture (19 sequence, 4 self); 05b managed fixture (9 lifecycle, 1 self); and
+  the x86_64 tray build, icon install check, and module-boundary evaluation.
+- A bounded candidate-store smoke answered SNI requests, reported valid icon,
+  tooltip, menu, and fixed Settings activation contracts, launched and cleaned
+  up one exact Settings process, and restored the original autostart process
+  exactly. No panel visual or session-boundary claim is made.
+- This note remains active: the current session still runs the prior immutable
+  generation until the user rebuilds and restarts it; retained prior runtime
+  records also remain outside this repair.
