@@ -58,6 +58,11 @@ KColorButton *borderColorButton(KWin::ActiveBorderConfigModule &module)
     return module.widget()->findChild<KColorButton *>(QStringLiteral("kcfg_BorderColor"));
 }
 
+QCheckBox *useThemeColorCheckBox(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QCheckBox *>(QStringLiteral("kcfg_UseThemeColor"));
+}
+
 QColor defaultBorderColor()
 {
     return QColor(0x2a, 0x82, 0xda);
@@ -313,6 +318,106 @@ void effectConfigReloadReflectsStoredValues()
     CHECK(KWin::ActiveBorderConfig::borderWidth() == 3.0);
 }
 
+void useThemeColorMissingKeyDefaultsToChecked()
+{
+    {
+        KConfigGroup group = borderGroup();
+        group.deleteEntry(QStringLiteral("UseThemeColor"));
+        group.sync();
+    }
+    KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    QCheckBox *checkBox = useThemeColorCheckBox(module);
+    CHECK(checkBox != nullptr);
+    module.load();
+    if (checkBox) {
+        CHECK(checkBox->isChecked());
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::useThemeColor());
+}
+
+void useThemeColorSerializationRoundtrip()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QCheckBox *checkBox = useThemeColorCheckBox(module);
+    CHECK(checkBox != nullptr);
+    if (!checkBox) {
+        return;
+    }
+    checkBox->setChecked(false);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("UseThemeColor"), true) == false);
+
+    KWin::ActiveBorderConfigModule reloaded(nullptr, KPluginMetaData());
+    reloaded.load();
+    QCheckBox *reloadedCheckBox = useThemeColorCheckBox(reloaded);
+    CHECK(reloadedCheckBox != nullptr);
+    if (reloadedCheckBox) {
+        CHECK(!reloadedCheckBox->isChecked());
+    }
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(!KWin::ActiveBorderConfig::useThemeColor());
+}
+
+void useThemeColorDefaultsReset()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QCheckBox *checkBox = useThemeColorCheckBox(module);
+    CHECK(checkBox != nullptr);
+    if (!checkBox) {
+        return;
+    }
+    checkBox->setChecked(false);
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("UseThemeColor"), true) == false);
+    module.defaults();
+    CHECK(checkBox->isChecked());
+    module.save();
+    CHECK(borderGroup().readEntry(QStringLiteral("UseThemeColor"), true) == true);
+    KWin::ActiveBorderConfig::self()->read();
+    CHECK(KWin::ActiveBorderConfig::useThemeColor());
+}
+
+void useThemeColorToggleMarksDirty()
+{
+    SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QCheckBox *checkBox = useThemeColorCheckBox(module);
+    CHECK(checkBox != nullptr);
+    if (!checkBox) {
+        return;
+    }
+    CHECK(!module.needsSave());
+    checkBox->setChecked(!checkBox->isChecked());
+    CHECK(module.needsSave());
+}
+
+void useThemeColorOnlyHotApplyRetry()
+{
+    CountingReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QCheckBox *checkBox = useThemeColorCheckBox(module);
+    CHECK(checkBox != nullptr);
+    if (!checkBox) {
+        return;
+    }
+    checkBox->setChecked(false);
+    CHECK(module.needsSave());
+    module.save();
+    CHECK(module.calls == 1);
+    CHECK(borderGroup().readEntry(QStringLiteral("UseThemeColor"), true) == false);
+    CHECK(module.needsSave());
+    module.save();
+    CHECK(module.calls == 2);
+    CHECK(module.needsSave());
+    module.succeed = true;
+    module.save();
+    CHECK(module.calls == 3);
+    CHECK(!module.needsSave());
+}
+
 void malformedValueBecomesEstablishedFalse()
 {
     {
@@ -439,10 +544,15 @@ int main(int argc, char **argv)
         successfulHotApplyClearsNeedsSave();
         failedHotApplyRetriesOnSecondSaveWithoutEdit();
     } else if (scenario == QStringLiteral("border")) {
+        useThemeColorMissingKeyDefaultsToChecked();
         borderSerializationRoundtrip();
         borderDefaultsReset();
         borderColorSerializationRoundtrip();
         borderColorDefaultsReset();
+        useThemeColorSerializationRoundtrip();
+        useThemeColorDefaultsReset();
+        useThemeColorToggleMarksDirty();
+        useThemeColorOnlyHotApplyRetry();
     } else if (scenario == QStringLiteral("config")) {
         effectConfigReloadReflectsStoredValues();
     } else {

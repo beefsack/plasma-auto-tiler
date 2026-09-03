@@ -61,19 +61,28 @@ void fullScreenWindowIsNotVisible()
 void invalidThemeColorUsesConfiguredFallback()
 {
     const QColor fallback(0x2a, 0x82, 0xda);
-    CHECK(KWin::activeBorderColor(QColor(), fallback) == fallback);
+    CHECK(KWin::activeBorderColor(QColor(), fallback, true) == fallback);
 }
 
 void transparentThemeColorUsesConfiguredFallback()
 {
     const QColor fallback(0x2a, 0x82, 0xda);
-    CHECK(KWin::activeBorderColor(QColor(0, 0, 0, 0), fallback) == fallback);
+    CHECK(KWin::activeBorderColor(QColor(0, 0, 0, 0), fallback, true) == fallback);
 }
 
 void usableThemeColorWinsOverConfiguredFallback()
 {
     const QColor theme(0x10, 0x20, 0x30);
-    CHECK(KWin::activeBorderColor(theme, QColor(0x2a, 0x82, 0xda)) == theme);
+    CHECK(KWin::activeBorderColor(theme, QColor(0x2a, 0x82, 0xda), true) == theme);
+}
+
+void disabledThemeOverrideAlwaysUsesConfiguredFallback()
+{
+    const QColor fallback(0x2a, 0x82, 0xda);
+    const QColor theme(0x10, 0x20, 0x30);
+    CHECK(KWin::activeBorderColor(theme, fallback, false) == fallback);
+    CHECK(KWin::activeBorderColor(QColor(), fallback, false) == fallback);
+    CHECK(KWin::activeBorderColor(QColor(0, 0, 0, 0), fallback, false) == fallback);
 }
 
 void zeroGapKeepsFrameAsInnerRect()
@@ -113,6 +122,7 @@ int main()
     invalidThemeColorUsesConfiguredFallback();
     transparentThemeColorUsesConfiguredFallback();
     usableThemeColorWinsOverConfiguredFallback();
+    disabledThemeOverrideAlwaysUsesConfiguredFallback();
     zeroGapKeepsFrameAsInnerRect();
     positiveGapExpandsInnerRect();
     gapAppliesToVisibleBorderState();

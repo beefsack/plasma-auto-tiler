@@ -21,5 +21,9 @@
             <label>Gap from the window</label>
             <default>0.0</default>
         </entry>
+        <entry name="UseThemeColor" type="Bool">
+            <label>Use theme highlight color when available</label>
+            <default>true</default>
+        </entry>
     </group>
 </kcfg>

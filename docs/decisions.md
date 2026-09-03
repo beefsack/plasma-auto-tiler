@@ -8,7 +8,11 @@ Historical implementation detail is recoverable in Git history.
 - The active-window border is an MVP requirement. Use an experimental,
   disabled-by-default, OpenGL-only native C++ KWin effect
   for the active-window border. Colour, width, outline radius, and gap are
-  configurable; theme colour is preferred with a configured fallback.
+  configurable; `UseThemeColor` in `Effect-plasma-auto-tiler-active-border`
+  defaults true, migration-free: enabled retains theme highlight with
+  configured fallback, disabled selects configured colour unconditionally.
+  The native QWidget KCM controls it through the existing hot-apply/repaint
+  path.
 - Nix delivery and exact host KWin ABI/session discovery are required for
   runtime delivery; neither is an optional enhancement. Runtime acceptance
   remains unproven.

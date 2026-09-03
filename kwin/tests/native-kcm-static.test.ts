@@ -128,6 +128,7 @@ describe("native KCM static contract", () => {
 
     it("keeps border settings in the native group and hot-applies through the native effect", () => {
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
+        assert.match(kcfg, /<entry name="UseThemeColor" type="Bool">[\s\S]*?<default>true<\/default>/);
         assert.match(module, /ActiveBorderConfig::instance\(QStringLiteral\("kwinrc"\)\)/);
         assert.match(module, /QString ActiveBorderConfigModule::effectService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
         assert.match(module, /QString ActiveBorderConfigModule::effectPath\(\)[\s\S]*?QStringLiteral\("\/Effects"\)/);
@@ -139,9 +140,14 @@ describe("native KCM static contract", () => {
         assert.match(module, /requestEffectReconfigure\(\)/);
         assert.match(effect, /void ActiveWindowBorderEffect::reconfigure\(ReconfigureFlags\)/);
         assert.match(effect, /ActiveBorderConfig::self\(\)->read\(\);[\s\S]*updateOutline\(\);/);
-        assert.match(effect, /activeBorderColor\(themeColor, fallback\)/);
+        assert.match(effect, /ActiveBorderConfig::useThemeColor\(\)/);
+        assert.match(effect, /if \(useThemeColor\)[\s\S]*?KColorScheme::isColorSetSupported/);
+        assert.match(effect, /activeBorderColor\(themeColor, fallback, useThemeColor\)/);
+        assert.doesNotMatch(module, /UseThemeColor/);
         assert.match(effect, /KColorScheme::isColorSetSupported\(colorConfig, KColorScheme::Selection\)/);
         assert.match(logic, /themeColor\.isValid\(\) && themeColor\.alpha\(\) > 0/);
+        assert.match(logic, /activeBorderColor\(const QColor &themeColor, const QColor &fallbackColor, bool useThemeColor\)/);
+        assert.match(logic, /useThemeColor && themeColor\.isValid/);
         assert.match(logic, /QRectF activeBorderInnerRect\(/);
         assert.match(effect, /setInnerRect\(activeBorderInnerRect\(state\.innerRect, gap\)\)/);
         assert.match(effect, /setVisible\(state\.visible\)/);
@@ -173,6 +179,13 @@ describe("native KCM static contract", () => {
         ]) {
             assert.match(ui, new RegExp(`name="${label}"[\\s\\S]*?<property name="buddy">[\\s\\S]*?<cstring>${control}</cstring>`));
         }
+    });
+
+    it("manages the theme override through KConfigXT without disabling the fallback color", () => {
+        assert.match(ui, /name="kcfg_UseThemeColor"/);
+        assert.match(ui, /Use theme highlight color when available/);
+        assert.match(ui, /When disabled, the configured color is always used/);
+        assert.doesNotMatch(ui, /kcfg_BorderColor[\s\S]{0,400}?enabled[\s\S]{0,20}?false/);
     });
 
     it("explains script reload or session restart and retires the generic metadata KCM only after native discovery exists", () => {

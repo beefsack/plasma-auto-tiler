@@ -20,13 +20,17 @@ Only meaningful pending or active work is listed.
   discovery evidence was unavailable; no live identity/config/plugin/PID/proc
   claim is accepted | Accept the active-window border and Desktop Effects KCM
   using a consumer-host-pkgs Nix build that explicitly supplies and verifies
-  the `kwin` package matching the running KWin plus its `kwin.dev`; the verified
+  the `kwin` package matching the running KWin plus its `kwin.dev`;
+  `UseThemeColor` (default true, migration-free) is implemented with native
+  KCM control and existing hot-apply/repaint coverage, static/native/Nix
+  package evidence passed with no live Plasma action; the verified
   output handoff to the documented user-local dogfood root remains pending
   with preimage/rollback checks; the separately user-owned physical visual
   border/KCM usability check and required logout/login or new-session boundary,
   plus runtime/config/reload/restoration gates, remain future manual/session
   gates; external NixOS/Home Manager activation remains outside this change |
   [decision](decisions.md#native-active-border)
+  [change](changes/archive/active-border-colour-override.md)
 - P1 | static complete, pending live/release | Validate KWin-origin SNI, real
   panel, fixed KCM discovery/launch, watcher ordering, native ABI load, real
   install/packaging, and login/autostart | [change](changes/archive/tray-carrier.md)

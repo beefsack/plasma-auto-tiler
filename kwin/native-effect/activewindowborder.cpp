@@ -52,13 +52,17 @@ void ActiveWindowBorderEffect::reconfigure(ReconfigureFlags)
 void ActiveWindowBorderEffect::updateOutline()
 {
     const QColor fallback = ActiveBorderConfig::borderColor();
-    const KSharedConfigPtr colorConfig = KSharedConfig::openConfig(QStringLiteral("kdeglobals"));
-    const QColor themeColor = KColorScheme::isColorSetSupported(colorConfig, KColorScheme::Selection)
-        ? KColorScheme(QPalette::Active, KColorScheme::Selection, colorConfig).background().color()
-        : QColor();
+    const bool useThemeColor = ActiveBorderConfig::useThemeColor();
+    QColor themeColor;
+    if (useThemeColor) {
+        const KSharedConfigPtr colorConfig = KSharedConfig::openConfig(QStringLiteral("kdeglobals"));
+        themeColor = KColorScheme::isColorSetSupported(colorConfig, KColorScheme::Selection)
+            ? KColorScheme(QPalette::Active, KColorScheme::Selection, colorConfig).background().color()
+            : QColor();
+    }
     m_borderItem.setOutline(BorderOutline(
         ActiveBorderConfig::borderWidth(),
-        activeBorderColor(themeColor, fallback),
+        activeBorderColor(themeColor, fallback, useThemeColor),
         BorderRadius(ActiveBorderConfig::borderRadius())));
 }
 

@@ -159,10 +159,17 @@
         </property>
        </widget>
       </item>
-      <item row="4" column="0" colspan="2">
-       <widget class="QLabel" name="borderDescription">
-        <property name="text">
-          <string>The border uses the current theme highlight color when available; the configured color is the fallback. Border changes apply immediately through the KWin effect reconfigure. Script settings do not hot-apply; reload the script or restart the session.</string>
+       <item row="4" column="0" colspan="2">
+        <widget class="QCheckBox" name="kcfg_UseThemeColor">
+         <property name="text">
+          <string>Use theme highlight color when available</string>
+         </property>
+        </widget>
+       </item>
+       <item row="5" column="0" colspan="2">
+        <widget class="QLabel" name="borderDescription">
+         <property name="text">
+           <string>When enabled, the border uses the current theme highlight color when available and the configured color is the fallback. When disabled, the configured color is always used. Border changes apply immediately through the KWin effect reconfigure. Script settings do not hot-apply; reload the script or restart the session.</string>
         </property>
         <property name="wordWrap">
          <bool>true</bool>
