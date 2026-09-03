@@ -25,15 +25,17 @@ Only meaningful pending or active work is listed.
   KCM control and existing hot-apply/repaint coverage, static/native/Nix
   package evidence passed with no live Plasma action; the verified
   output handoff to the documented user-local dogfood root remains pending
-  with preimage/rollback checks; the separately user-owned physical visual
-  border/KCM usability check and required logout/login or new-session boundary,
-  plus runtime/config/reload/restoration gates, remain future manual/session
-  gates; external NixOS/Home Manager activation remains outside this change |
+   with preimage/rollback checks; the user-owned manual visual border/KCM check,
+   including width hot-apply and theme-override behavior, is accepted after a
+   rebuild/new session; runtime/config/reload/restoration gates remain future
+   gates; external NixOS/Home Manager activation remains outside this change |
   [decision](decisions.md#native-active-border)
   [change](changes/archive/active-border-colour-override.md)
-- P1 | static complete, pending live/release | Validate KWin-origin SNI, real
-  panel, fixed KCM discovery/launch, watcher ordering, native ABI load, real
-  install/packaging, and login/autostart | [change](changes/archive/tray-carrier.md)
+- P1 | static complete, pending live/release | Manual tray visual/Settings-click
+  is accepted after rebuild/new session; residual gates are KWin-origin SNI
+  authority, watcher ordering, native ABI load, real install/packaging,
+  login/autostart, and update/rollback generation |
+  [change](changes/archive/tray-carrier.md)
 - P1 | static complete, pending current-host live | Consume the Nix flake from
   an external NixOS/Home Manager configuration, then validate clean install,
   update, Nix generation rollback, and session lifecycle activation. Static

@@ -16,6 +16,11 @@ Historical implementation detail is recoverable in Git history.
 - Nix delivery and exact host KWin ABI/session discovery are required for
   runtime delivery; neither is an optional enhancement. Runtime acceptance
   remains unproven.
+- After rebuild/new session, the user manually observed only: the active-window
+  border was enabled, visible, and followed the active window; width hot-applied;
+  and `Use theme highlight color when available` override/theme behavior worked
+  and is manually accepted. This is user visual/manual evidence, not
+  automated/protocol/KWin-source evidence.
 - The outline never clips, reshapes, or changes window textures. Plasma 6.5+
   decoration-driven rounded corners remain the selected corner solution.
 - C++ is limited to platform-required public-API adapters and effects. Manual
@@ -199,6 +204,11 @@ Historical implementation detail is recoverable in Git history.
   method contracts; completed one fixed Settings launch with exact resulting
   process cleanup; and terminated with exact original autostart restoration.
   It claims no panel visual behavior or session boundary.
+- After rebuild/new session, the user manually observed only: the tray icon was
+  visible and usable, and clicking it opened the native settings dialog. This
+  is user visual/manual evidence, not automated/protocol evidence. No
+  KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
+  update/rollback generation claim is made.
 
 ## Deferred Scope
 

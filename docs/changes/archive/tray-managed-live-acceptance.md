@@ -52,7 +52,8 @@ the item, show its status, and open its fixed Settings target.
   documented fail-closed interrupted-process behavior, not a product defect;
   it remains untouched pending user-authorized exact recovery.
 - An unauthorized review call also left an unidentifiable KWin Script1. Its
-  identity and exact cleanup cannot be proved, so this note remains active.
+  identity and exact cleanup could not be proved at that time; this archived
+  record makes no cleanup claim.
 
 ## Current Evidence
 
@@ -79,6 +80,8 @@ the item, show its status, and open its fixed Settings target.
   tooltip, menu, and fixed Settings activation contracts, launched and cleaned
   up one exact Settings process, and restored the original autostart process
   exactly. No panel visual or session-boundary claim is made.
-- This note remains active: the current session still runs the prior immutable
-  generation until the user rebuilds and restarts it; retained prior runtime
-  records also remain outside this repair.
+- After rebuild/new session, the user manually observed only: the tray icon was
+  visible and usable, and clicking it opened the native settings dialog. This
+  is user visual/manual evidence, not automated/protocol evidence. No
+  KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
+  update/rollback generation claim is made.
