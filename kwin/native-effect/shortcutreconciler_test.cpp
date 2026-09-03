@@ -2,10 +2,13 @@
 
 #include <QDBusArgument>
 #include <QDBusMessage>
+#include <QDBusMetaType>
 #include <QDBusObjectPath>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeySequence>
+#include <QSet>
 #include <QStandardPaths>
 #include <QTemporaryDir>
 #include <QVariant>
@@ -57,13 +60,20 @@ public:
     QString contractXml = QStringLiteral(
         "<node><interface name=\"org.kde.KGlobalAccel\">"
         "<method name=\"setShortcutKeys\">"
-        "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+        "<arg type=\"as\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"in\"/>"
+        "<arg type=\"u\" direction=\"in\"/>"
         "<arg type=\"a(ai)\" direction=\"out\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
         "</method></interface></node>");
     bool malformedRead = false;
     bool driftAfterNextWrite = false;
     bool failNextWrite = false;
     bool badReplyNextWrite = false;
+    // Mirrors KGlobalAccelStore::tryPinOwner: first verified owner pins,
+    // the same owner confirms, a different owner fails closed.
+    QString pinned;
     struct WriteRecord
     {
         QString component;
@@ -76,13 +86,13 @@ public:
     {
         if (!contractPresent) {
             if (error) {
-                *error = QStringLiteral("KGlobalAccel setShortcutKeys is absent or does not expose exactly asa(ai)u -> a(ai)");
+                *error = QStringLiteral("KGlobalAccel setShortcutKeys is absent or does not expose exactly as,a(ai),u -> a(ai) with QSet<QKeySequence>");
             }
             return false;
         }
         if (!ShortcutReconciler::introspectionContractValid(contractXml)) {
             if (error) {
-                *error = QStringLiteral("KGlobalAccel setShortcutKeys is absent or does not expose exactly asa(ai)u -> a(ai)");
+                *error = QStringLiteral("KGlobalAccel setShortcutKeys is absent or does not expose exactly as,a(ai),u -> a(ai) with QSet<QKeySequence>");
             }
             return false;
         }
@@ -94,6 +104,14 @@ public:
         if (!ShortcutReconciler::uniqueNameValid(owner)) {
             if (error) {
                 *error = QStringLiteral("malformed KGlobalAccel service owner reply");
+            }
+            return false;
+        }
+        if (pinned.isEmpty()) {
+            pinned = owner;
+        } else if (pinned != owner) {
+            if (error) {
+                *error = QStringLiteral("KGlobalAccel service owner drifted");
             }
             return false;
         }
@@ -621,10 +639,21 @@ void strictOwnerAndIntrospection()
     const QString good = QStringLiteral(
         "<node><interface name=\"org.kde.KGlobalAccel\">"
         "<method name=\"setShortcutKeys\">"
-        "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+        "<arg type=\"as\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"in\"/>"
+        "<arg type=\"u\" direction=\"in\"/>"
         "<arg type=\"a(ai)\" direction=\"out\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
         "</method></interface></node>");
     CHECK(ShortcutReconciler::introspectionContractValid(good));
+    // Legacy single-arg combined form is rejected by the strict parser.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "</method></interface></node>")));
     CHECK(!ShortcutReconciler::introspectionContractValid(QString()));
     CHECK(!ShortcutReconciler::introspectionContractValid(QStringLiteral("<node/>")));
     CHECK(!ShortcutReconciler::introspectionContractValid(
@@ -880,40 +909,216 @@ void allComponentsStrictTransport()
 
 void introspectionStrictParsing()
 {
-    const QString good = QStringLiteral(
+    const QString liveGood = QStringLiteral(
+        "<node><interface name=\"org.kde.KGlobalAccel\">"
+        "<method name=\"setShortcutKeys\">"
+        "<arg type=\"as\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"in\"/>"
+        "<arg type=\"u\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"out\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "</method></interface></node>");
+    CHECK(ShortcutReconciler::introspectionContractValid(liveGood));
+    // Omitted input direction defaults to "in" and is accepted; the reply
+    // must stay explicit "out".
+    CHECK(ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\"/>"
+                       "<arg type=\"a(ai)\"/>"
+                       "<arg type=\"u\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    // Legacy single-arg combined form is rejected.
+    const QString legacyCombined = QStringLiteral(
         "<node><interface name=\"org.kde.KGlobalAccel\">"
         "<method name=\"setShortcutKeys\">"
         "<arg type=\"asa(ai)u\" direction=\"in\"/>"
         "<arg type=\"a(ai)\" direction=\"out\"/>"
         "</method></interface></node>");
-    CHECK(ShortcutReconciler::introspectionContractValid(good));
+    CHECK(!ShortcutReconciler::introspectionContractValid(legacyCombined));
+    // Wrong arg counts are rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    // Wrong types are rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"s\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"aai\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"s\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"as\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    // Wrong directions are rejected: inputs must be "in" (or omitted) and
+    // the reply must be explicit "out".
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"out\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    // Absent key-set annotations are rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "</method></interface></node>")));
+    // Wrong key-set annotations are rejected: missing reply, missing keys,
+    // and wrong value types.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QList<int>\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In2\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
+    // Extra overloads are ambiguity and fail.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method>"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</method></interface></node>")));
     // Substring fallback removed: signatures visible only as text, with no
     // parsed args on the exact method, must fail.
     CHECK(!ShortcutReconciler::introspectionContractValid(
-        QStringLiteral("<node><!-- asa(ai)u a(ai) org.kde.KGlobalAccel setShortcutKeys -->"
+        QStringLiteral("<node><!-- as a(ai) u a(ai) QSet<QKeySequence> org.kde.KGlobalAccel setShortcutKeys -->"
                        "<interface name=\"org.kde.KGlobalAccel\"><method name=\"setShortcutKeys\"/>"
                        "</interface></node>")));
-    // Missing direction on the in-arg must fail (no empty-direction allowance).
-    CHECK(!ShortcutReconciler::introspectionContractValid(
-        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
-                       "<method name=\"setShortcutKeys\">"
-                       "<arg type=\"asa(ai)u\"/>"
-                       "<arg type=\"a(ai)\" direction=\"out\"/>"
-                       "</method></interface></node>")));
-    // Out-arg with the wrong direction must fail.
-    CHECK(!ShortcutReconciler::introspectionContractValid(
-        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
-                       "<method name=\"setShortcutKeys\">"
-                       "<arg type=\"asa(ai)u\" direction=\"in\"/>"
-                       "<arg type=\"a(ai)\" direction=\"in\"/>"
-                       "</method></interface></node>")));
     // Exact method on the wrong interface must fail even though the
     // signature strings are present.
     CHECK(!ShortcutReconciler::introspectionContractValid(
         QStringLiteral("<node><interface name=\"org.kde.Other\">"
                        "<method name=\"setShortcutKeys\">"
-                       "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
                        "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
                        "</method></interface></node>")));
     // Malformed XML must fail.
     CHECK(!ShortcutReconciler::introspectionContractValid(QStringLiteral("<node><interface>")));
@@ -932,6 +1137,24 @@ void introspectionStrictParsing()
     const ShortcutApplyResult result = reconciler.apply();
     CHECK(!result.ok);
     CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.present);
+    // Legacy combined form fails the apply with zero writes and the error
+    // reports the split contract, never the erroneous combined signature.
+    FakeShortcutStore legacyStore;
+    legacyStore.tuples = {
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
+        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
+    };
+    legacyStore.contractXml = legacyCombined;
+    FakeJournal legacyJournal;
+    ShortcutReconciler legacyReconciler(&legacyStore, &legacyJournal);
+    const ShortcutApplyResult legacyResult = legacyReconciler.apply();
+    CHECK(!legacyResult.ok);
+    CHECK(legacyStore.writeLog.isEmpty());
+    CHECK(!legacyJournal.present);
+    CHECK(legacyResult.error.contains(QStringLiteral("as,a(ai),u -> a(ai)")));
+    CHECK(legacyResult.error.contains(QStringLiteral("QSet<QKeySequence>")));
+    CHECK(!legacyResult.error.contains(QStringLiteral("asa(ai)u")));
     CHECK(!journal.present);
 }
 
@@ -1085,6 +1308,208 @@ void fakeJournalMirrorsRealValidation()
     CHECK(loaded.focus.post == (QList<int>{META_L}));
 }
 
+QString contractXmlWith(const QString &annotations)
+{
+    return QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                          "<method name=\"setShortcutKeys\">"
+                          "<arg type=\"as\" direction=\"in\"/>"
+                          "<arg type=\"a(ai)\" direction=\"in\"/>"
+                          "<arg type=\"u\" direction=\"in\"/>"
+                          "<arg type=\"a(ai)\" direction=\"out\"/>")
+        + annotations
+        + QStringLiteral("</method></interface></node>");
+}
+
+void introspectionAnnotationNamesStrict()
+{
+    // Substring trap: In10 contains "In1" but is not the proven In1 slot.
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.In10\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    // Substring trap on the reply slot: Out00 contains "Out0" but is wrong.
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out00\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    // Misnamed slots are rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out1\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    // Wrong value type on the exact name is rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QList&lt;int&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    // Bare "In1"/"Out0" names without the exact QtDBus prefix are rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"))));
+    // Arg-nested annotations are unproven and ignored: even correctly named
+    // nested annotations must not satisfy the contract.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\">"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</arg>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\">"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "</arg>"
+                       "</method></interface></node>")));
+    // Exact method annotations still pass when an unrelated extra is present;
+    // extras are ignored, only the two proven keys count as proof.
+    CHECK(ShortcutReconciler::introspectionContractValid(contractXmlWith(
+        QStringLiteral("<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In2\" value=\"QList&lt;int&gt;\"/>"))));
+}
+
+void pinImmutableFailsClosed()
+{
+    // Direct seam on the real backend logic: no D-Bus needed.
+    QString pinned;
+    QString error;
+    CHECK(KGlobalAccelStore::tryPinOwner(pinned, QStringLiteral(":1.20"), &error));
+    CHECK(pinned == QStringLiteral(":1.20"));
+    CHECK(KGlobalAccelStore::tryPinOwner(pinned, QStringLiteral(":1.20"), &error));
+    CHECK(pinned == QStringLiteral(":1.20"));
+    CHECK(!KGlobalAccelStore::tryPinOwner(pinned, QStringLiteral(":1.21"), &error));
+    CHECK(pinned == QStringLiteral(":1.20"));
+    CHECK(error.contains(QStringLiteral("drifted")));
+    // Malformed candidate never pins.
+    QString empty;
+    CHECK(!KGlobalAccelStore::tryPinOwner(empty, QStringLiteral("not-unique"), &error));
+    CHECK(empty.isEmpty());
+    // Fake mirrors the same immutability through the store boundary, so
+    // normal apply/revert flows (repeated same-owner confirmations) stay
+    // correct while a drifted second owner fails closed.
+    FakeShortcutStore store;
+    store.tuples = {
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
+        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
+    };
+    QString ownerError;
+    CHECK(store.currentOwner(nullptr, nullptr, &ownerError));
+    CHECK(store.pinned == QStringLiteral(":1.20"));
+    CHECK(store.currentOwner(nullptr, nullptr, &ownerError));
+    store.owner = QStringLiteral(":1.21");
+    CHECK(!store.currentOwner(nullptr, nullptr, &ownerError));
+    CHECK(store.pinned == QStringLiteral(":1.20"));
+    CHECK(ownerError.contains(QStringLiteral("drifted")));
+}
+
+void ensureKeySequenceTestMetaTypes()
+{
+    static bool registered = false;
+    if (registered) {
+        return;
+    }
+    qDBusRegisterMetaType<QKeySequence>();
+    qDBusRegisterMetaType<QSet<QKeySequence>>();
+    registered = true;
+}
+
+void keySequenceDbusRoundtripAndBounds()
+{
+    ensureKeySequenceTestMetaTypes();
+    // Narrow roundtrip/framing via the existing QVariant message pattern:
+    // the live exact four-slot QKeySequence semantics survive the typed
+    // encode without fallback formats.
+    {
+        const QKeySequence original(META_L);
+        QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/test"), QStringLiteral("i.I"),
+                                                          QStringLiteral("keys"));
+        message << QVariant::fromValue(original);
+        CHECK(message.arguments().size() == 1);
+        const QKeySequence decoded = message.arguments().at(0).value<QKeySequence>();
+        CHECK(decoded == original);
+        CHECK(decoded.count() == 1);
+        CHECK(decoded[0].toCombined() == META_L);
+    }
+    {
+        const QKeySequence original(META_L, 42, 0, 0);
+        QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/test"), QStringLiteral("i.I"),
+                                                          QStringLiteral("keys"));
+        message << QVariant::fromValue(original);
+        CHECK(message.arguments().at(0).value<QKeySequence>() == original);
+    }
+    {
+        QSet<QKeySequence> original;
+        original.insert(QKeySequence(META_L));
+        original.insert(QKeySequence(META_ESC));
+        QDBusMessage message = QDBusMessage::createSignal(QStringLiteral("/test"), QStringLiteral("i.I"),
+                                                          QStringLiteral("keys"));
+        message << QVariant::fromValue(original);
+        const QSet<QKeySequence> decoded = message.arguments().at(0).value<QSet<QKeySequence>>();
+        CHECK(decoded == original);
+        CHECK(decoded.contains(QKeySequence(META_L)));
+        CHECK(decoded.contains(QKeySequence(META_ESC)));
+    }
+    // Strict shared slot validator: exactly four bounded ints pass; short,
+    // long, or out-of-range sequences fail closed. Both reply-decode
+    // variants share this validator, so malformed/long (ai) never
+    // truncates into a false confirm.
+    {
+        QKeySequence out;
+        CHECK(ShortcutReconciler::decodeKeySequenceSlots(QList<int>{META_L, 0, 0, 0}, &out));
+        CHECK(out == QKeySequence(META_L));
+        CHECK(ShortcutReconciler::decodeKeySequenceSlots(QList<int>{0, 0, 0, 0}, &out));
+        CHECK(ShortcutReconciler::decodeKeySequenceSlots(QList<int>{1, 2, 3, 4}, &out));
+        CHECK(out == QKeySequence(1, 2, 3, 4));
+        CHECK(!ShortcutReconciler::decodeKeySequenceSlots(QList<int>{1, 2, 3}, &out));
+        CHECK(!ShortcutReconciler::decodeKeySequenceSlots(QList<int>{1, 2, 3, 4, 5}, &out));
+        CHECK(!ShortcutReconciler::decodeKeySequenceSlots(QList<int>{}, &out));
+        CHECK(!ShortcutReconciler::decodeKeySequenceSlots(QList<int>{-1, 0, 0, 0}, &out));
+        CHECK(!ShortcutReconciler::decodeKeySequenceSlots(QList<int>{SHORTCUT_MAX_KEY_VALUE + 1, 0, 0, 0}, &out));
+        CHECK(ShortcutReconciler::decodeKeySequenceSlots(QList<int>{META_L, 0, 0, 0}, nullptr));
+    }
+    // Bounds are consistent for both variants: an oversized decoded set
+    // exceeds SHORTCUT_MAX_KEYS_PER_TUPLE and the write path rejects it.
+    {
+        QSet<QKeySequence> oversized;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            oversized.insert(QKeySequence(1000 + i));
+        }
+        CHECK(oversized.size() > SHORTCUT_MAX_KEYS_PER_TUPLE);
+    }
+}
+
+void writeFailureControlsFailClosed()
+{
+    // Previously unused fake controls: transport failure fails the apply
+    // with zero completed writes reported and the journal retained.
+    {
+        FakeShortcutStore store;
+        store.tuples = {
+            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
+            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
+        };
+        store.failNextWrite = true;
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("setShortcutKeys")));
+    }
+    // Reply-mismatch control fails closed with the confirm error.
+    {
+        FakeShortcutStore store;
+        store.tuples = {
+            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
+            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
+        };
+        store.badReplyNextWrite = true;
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error.contains(QStringLiteral("confirm")));
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1105,10 +1530,14 @@ int main(int argc, char **argv)
         friendlyLabelsValidated();
         allComponentsStrictTransport();
         introspectionStrictParsing();
+        introspectionAnnotationNamesStrict();
+        keySequenceDbusRoundtripAndBounds();
+        writeFailureControlsFailClosed();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("owner")) {
         ownerDriftFailsClosed();
         persistRejectsInvalidPhaseOwnerUid();
+        pinImmutableFailsClosed();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("recovery")) {
         partialWriteRecovery();

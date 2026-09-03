@@ -8,16 +8,96 @@
 #include <QDBusConnectionInterface>
 #include <QDBusInterface>
 #include <QDBusMessage>
+#include <QDBusMetaType>
+#include <QDBusObjectPath>
 #include <QDBusReply>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QKeySequence>
 #include <QRegularExpression>
+#include <QSet>
 #include <QStandardPaths>
 #include <QXmlStreamReader>
 
 #include <sys/stat.h>
 #include <unistd.h>
+
+// QKeySequence D-Bus encoding is (ai): a struct holding an int array of up
+// to four combined key values. QSet<QKeySequence> therefore encodes as
+// a(ai). QList<QList<int>> would encode as aai and is wrong here. These
+// operators match the KF6 KGlobalAccel encoding; the sets additionally need
+// qDBusRegisterMetaType<QSet<QKeySequence>>() before use.
+QDBusArgument &operator<<(QDBusArgument &argument, const QKeySequence &sequence)
+{
+    argument.beginStructure();
+    argument.beginArray(qMetaTypeId<int>());
+    for (int i = 0; i < 4; ++i) {
+        const int value = (i < sequence.count()) ? sequence[static_cast<uint>(i)].toCombined() : 0;
+        argument << value;
+    }
+    argument.endArray();
+    argument.endStructure();
+    return argument;
+}
+
+const QDBusArgument &operator>>(const QDBusArgument &argument, QKeySequence &sequence)
+{
+    // Strict exact four-slot decode via the shared pure validator: the live
+    // encoding always carries exactly four ints. Malformed (short) or long
+    // (>4) sequences fail closed to an empty sequence instead of silently
+    // truncating, so the caller's set comparison rejects the reply.
+    QList<int> values;
+    int innerCount = 0;
+    argument.beginStructure();
+    argument.beginArray();
+    while (!argument.atEnd()) {
+        int value = 0;
+        argument >> value;
+        if (innerCount < 4) {
+            values.append(value);
+        }
+        ++innerCount;
+    }
+    argument.endArray();
+    argument.endStructure();
+    if (innerCount != 4 || !KWin::ShortcutReconciler::decodeKeySequenceSlots(values, &sequence)) {
+        sequence = QKeySequence();
+        return argument;
+    }
+    return argument;
+}
+
+// Qt generic container extraction requires push_back, which QSet lacks
+// (it has insert). This exact overload provides a(ai) framing for
+// qDBusRegisterMetaType<QSet<QKeySequence>> and any direct extraction.
+// Bounded: more than SHORTCUT_MAX_KEYS_PER_TUPLE sequences leave an
+// oversized set so the caller fails closed; remaining elements are drained
+// to keep the framing consistent.
+const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence> &set)
+{
+    argument.beginArray();
+    set.clear();
+    int count = 0;
+    while (!argument.atEnd()) {
+        QKeySequence sequence;
+        argument >> sequence;
+        if (count <= KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
+            set.insert(sequence);
+        }
+        ++count;
+        if (count > KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
+            while (!argument.atEnd()) {
+                QKeySequence extra;
+                argument >> extra;
+                ++count;
+            }
+            break;
+        }
+    }
+    argument.endArray();
+    return argument;
+}
 
 namespace KWin
 {
@@ -154,6 +234,39 @@ bool ensurePrivateFile(const QString &filePath, QString *error)
     return true;
 }
 
+void ensureKeySequenceMetaTypes()
+{
+    static bool registered = false;
+    if (registered) {
+        return;
+    }
+    qDBusRegisterMetaType<QKeySequence>();
+    qDBusRegisterMetaType<QSet<QKeySequence>>();
+    registered = true;
+}
+
+QSet<QKeySequence> keySetFromInts(const QList<int> &keys)
+{
+    // Intentional order is retained by the caller in QList form; the QSet
+    // itself is unordered by definition.
+    QSet<QKeySequence> out;
+    for (int key : keys) {
+        out.insert(QKeySequence(key, 0, 0, 0));
+    }
+    return out;
+}
+
+QSet<int> intSetFromKeySet(const QSet<QKeySequence> &keys)
+{
+    QSet<int> out;
+    for (const QKeySequence &sequence : keys) {
+        for (int i = 0; i < sequence.count(); ++i) {
+            out.insert(sequence[static_cast<uint>(i)].toCombined());
+        }
+    }
+    return out;
+}
+
 } // namespace
 
 bool ShortcutReconciler::isAllowlisted(const QString &component, const QString &action)
@@ -207,6 +320,22 @@ bool ShortcutReconciler::stringValid(const QString &value)
     return !value.isEmpty() && value.size() <= SHORTCUT_MAX_STRING_LEN;
 }
 
+bool ShortcutReconciler::decodeKeySequenceSlots(const QList<int> &slotValues, QKeySequence *out)
+{
+    if (slotValues.size() != 4) {
+        return false;
+    }
+    for (int slot : slotValues) {
+        if (slot < 0 || slot > SHORTCUT_MAX_KEY_VALUE) {
+            return false;
+        }
+    }
+    if (out) {
+        *out = QKeySequence(slotValues.at(0), slotValues.at(1), slotValues.at(2), slotValues.at(3));
+    }
+    return true;
+}
+
 bool ShortcutReconciler::uniqueNameValid(const QString &owner)
 {
     // Strict D-Bus unique name: colon followed by dot-separated integers.
@@ -222,42 +351,68 @@ bool ShortcutReconciler::introspectionContractValid(const QString &xml)
     if (xml.isEmpty() || xml.size() > 1048576) {
         return false;
     }
-    // Strict: succeed only when the XML parser finds the exact
-    // org.kde.KGlobalAccel/setShortcutKeys method carrying a parsed in
-    // arg of type asa(ai)u and a parsed out arg of type a(ai).
+    // Live Plasma 6.7.4 contract: exactly one
+    // org.kde.KGlobalAccel/setShortcutKeys method with four args:
+    //   as actionId (in), a(ai) keys (in, QSet<QKeySequence>),
+    //   u flags (in), a(ai) reply (out, QSet<QKeySequence>).
+    // Omitted input direction is accepted only because the D-Bus
+    // introspection default is "in"; the reply must be explicit "out".
+    // Proven only as exact method-level annotations
+    // org.qtproject.QtDBus.QtTypeName.In1 and ...Out0 with
+    // QSet<QKeySequence>: arg-nested annotations are unproven and ignored,
+    // and substring key matches (e.g. In10) never count.
     // No substring fallback: the structured parse is authoritative.
+    // Extra overloads are ambiguity and fail.
+    struct ParsedArg
+    {
+        QString type;
+        QString direction;
+    };
     QXmlStreamReader reader(xml);
     bool inTargetInterface = false;
     bool inTargetMethod = false;
-    bool methodHasIn = false;
-    bool methodHasOut = false;
-    bool contractFound = false;
+    bool inMethodArg = false;
+    int methodCount = 0;
+    QList<ParsedArg> firstArgs;
+    QMap<QString, QString> firstMethodAnnotations;
+    QList<ParsedArg> curArgs;
+    QMap<QString, QString> curMethodAnnotations;
+    ParsedArg curArg;
     while (!reader.atEnd()) {
         reader.readNext();
         if (reader.isStartElement()) {
-            if (reader.name() == QStringLiteral("interface") && reader.attributes().value(QStringLiteral("name")) == shortcutInterface()) {
+            if (reader.name() == QStringLiteral("interface")
+                && reader.attributes().value(QStringLiteral("name")) == shortcutInterface()) {
                 inTargetInterface = true;
             } else if (inTargetInterface && reader.name() == QStringLiteral("method")
                        && reader.attributes().value(QStringLiteral("name")) == shortcutSetMethod()) {
                 inTargetMethod = true;
-                methodHasIn = false;
-                methodHasOut = false;
+                inMethodArg = false;
+                curArgs.clear();
+                curMethodAnnotations.clear();
+                curArg = ParsedArg{};
             } else if (inTargetMethod && reader.name() == QStringLiteral("arg")) {
-                const QString type = reader.attributes().value(QStringLiteral("type")).toString();
-                const QString direction = reader.attributes().value(QStringLiteral("direction")).toString();
-                if (type == QStringLiteral("asa(ai)u") && direction == QStringLiteral("in")) {
-                    methodHasIn = true;
-                }
-                if (type == QStringLiteral("a(ai)") && direction == QStringLiteral("out")) {
-                    methodHasOut = true;
-                }
+                curArg.type = reader.attributes().value(QStringLiteral("type")).toString();
+                curArg.direction = reader.attributes().value(QStringLiteral("direction")).toString();
+                inMethodArg = true;
+            } else if (inTargetMethod && !inMethodArg && reader.name() == QStringLiteral("annotation")) {
+                const QString name = reader.attributes().value(QStringLiteral("name")).toString();
+                const QString value = reader.attributes().value(QStringLiteral("value")).toString();
+                curMethodAnnotations.insert(name, value);
             }
         } else if (reader.isEndElement()) {
-            if (reader.name() == QStringLiteral("method") && inTargetMethod) {
-                if (methodHasIn && methodHasOut) {
-                    contractFound = true;
+            if (reader.name() == QStringLiteral("arg") && inTargetMethod && inMethodArg) {
+                curArgs.append(curArg);
+                curArg = ParsedArg{};
+                inMethodArg = false;
+            } else if (reader.name() == QStringLiteral("method") && inTargetMethod) {
+                ++methodCount;
+                if (methodCount == 1) {
+                    firstArgs = curArgs;
+                    firstMethodAnnotations = curMethodAnnotations;
                 }
                 inTargetMethod = false;
+                inMethodArg = false;
             } else if (reader.name() == QStringLiteral("interface") && inTargetInterface) {
                 inTargetInterface = false;
             }
@@ -266,7 +421,44 @@ bool ShortcutReconciler::introspectionContractValid(const QString &xml)
     if (reader.hasError()) {
         return false;
     }
-    return contractFound;
+    if (methodCount != 1) {
+        return false;
+    }
+    if (firstArgs.size() != 4) {
+        return false;
+    }
+    if (firstArgs.at(0).type != QStringLiteral("as")) {
+        return false;
+    }
+    if (firstArgs.at(1).type != QStringLiteral("a(ai)")) {
+        return false;
+    }
+    if (firstArgs.at(2).type != QStringLiteral("u")) {
+        return false;
+    }
+    if (firstArgs.at(3).type != QStringLiteral("a(ai)")) {
+        return false;
+    }
+    // D-Bus default direction is "in", so an omitted input direction is
+    // that default; anything else on an input is malformed.
+    for (int i = 0; i < 3; ++i) {
+        const QString direction = firstArgs.at(i).direction;
+        if (direction != QStringLiteral("in") && !direction.isEmpty()) {
+            return false;
+        }
+    }
+    if (firstArgs.at(3).direction != QStringLiteral("out")) {
+        return false;
+    }
+    auto hasExactKeySet = [&](const QString &name) {
+        const auto it = firstMethodAnnotations.constFind(name);
+        return it != firstMethodAnnotations.constEnd() && *it == QStringLiteral("QSet<QKeySequence>");
+    };
+    if (!hasExactKeySet(QStringLiteral("org.qtproject.QtDBus.QtTypeName.In1"))
+        || !hasExactKeySet(QStringLiteral("org.qtproject.QtDBus.QtTypeName.Out0"))) {
+        return false;
+    }
+    return true;
 }
 
 bool ShortcutReconciler::parseAllComponentsReply(QDBusMessage::MessageType replyType, const QString &replySignature,
@@ -404,9 +596,9 @@ bool ShortcutReconciler::journalRolesValid(const ShortcutJournal &journal)
 
 bool KGlobalAccelStore::checkSetterContract(QString *error)
 {
-    // Introspection-proven exact setter contract observed via
-    // `busctl introspect org.kde.kglobalaccel /kglobalaccel`:
-    // method setShortcutKeys with signature asa(ai)u returning a(ai).
+    // Introspection-proven exact setter contract on live Plasma 6.7.4:
+    // method setShortcutKeys with split args as,a(ai),u -> a(ai) where the
+    // keys input and the reply carry QSet<QKeySequence> annotations.
     QDBusMessage call = QDBusMessage::createMethodCall(
         shortcutService(), shortcutPath(), QStringLiteral("org.freedesktop.DBus.Introspectable"), QStringLiteral("Introspect"));
     const QDBusMessage reply = QDBusConnection::sessionBus().call(call);
@@ -419,7 +611,29 @@ bool KGlobalAccelStore::checkSetterContract(QString *error)
     const QString xml = reply.arguments().at(0).toString();
     if (!ShortcutReconciler::introspectionContractValid(xml)) {
         if (error) {
-            *error = QStringLiteral("KGlobalAccel setShortcutKeys is absent or does not expose exactly asa(ai)u -> a(ai)");
+            *error = QStringLiteral(
+                "KGlobalAccel setShortcutKeys is absent or does not expose exactly as,a(ai),u -> a(ai) with QSet<QKeySequence>");
+        }
+        return false;
+    }
+    return true;
+}
+
+bool KGlobalAccelStore::tryPinOwner(QString &pinned, const QString &candidate, QString *error)
+{
+    if (!ShortcutReconciler::uniqueNameValid(candidate)) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel owner is not a unique name");
+        }
+        return false;
+    }
+    if (pinned.isEmpty()) {
+        pinned = candidate;
+        return true;
+    }
+    if (pinned != candidate) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel service owner drifted");
         }
         return false;
     }
@@ -455,6 +669,13 @@ bool KGlobalAccelStore::currentOwner(QString *owner, uint *uid, QString *error)
         if (error) {
             *error = QStringLiteral("malformed KGlobalAccel owner UID reply");
         }
+        return false;
+    }
+    // Verified pin is immutable for the store instance: the first verified
+    // unique owner sets it, the same owner confirms it, and a subsequent
+    // different owner fails closed without clobbering the pin. Normal
+    // apply/revert flows re-confirm the same owner on every call.
+    if (!tryPinOwner(m_pinnedOwner, ownerName, error)) {
         return false;
     }
     if (owner) {
@@ -576,49 +797,126 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
         }
         return false;
     }
-    // QSet<QKeySequence> D-Bus value: each active int becomes one
-    // four-slot sequence [key,0,0,0], preserving order.
-    QList<QList<int>> sequences;
-    sequences.reserve(keys.size());
-    for (int key : keys) {
-        sequences.append({key, 0, 0, 0});
+    if (m_pinnedOwner.isEmpty() || !ShortcutReconciler::uniqueNameValid(m_pinnedOwner)) {
+        if (error) {
+            *error = QStringLiteral("refusing write without a pinned KGlobalAccel owner");
+        }
+        return false;
     }
-    QStringList actionId{component, action, componentFriendly, friendly};
-    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
+    // Re-resolve without clobbering the pin: the write must target the
+    // verified captured unique owner, never a re-resolved well-known name.
+    {
+        QDBusInterface bus(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
+                           QStringLiteral("org.freedesktop.DBus"), QDBusConnection::sessionBus());
+        if (!bus.isValid()) {
+            if (error) {
+                *error = QStringLiteral("D-Bus daemon interface is invalid");
+            }
+            return false;
+        }
+        const QDBusReply<QString> liveOwner = bus.call(QStringLiteral("GetNameOwner"), shortcutService());
+        if (!liveOwner.isValid() || liveOwner.value() != m_pinnedOwner) {
+            if (error) {
+                *error = QStringLiteral("KGlobalAccel service owner drifted");
+            }
+            return false;
+        }
+    }
+    ensureKeySequenceMetaTypes();
+    // Typed QSet<QKeySequence> value: each active int becomes one sequence.
+    // The QList target order is intentional (lock-key preservation); the
+    // QSet itself is unordered and replies compare as sets.
+    const QSet<QKeySequence> keySet = keySetFromInts(keys);
+    const QSet<int> expectedSet(keys.begin(), keys.end());
+    // Action ID is exactly [ComponentUnique, ActionUnique,
+    // ComponentFriendly, ActionFriendly] from the live read tuples.
+    const QStringList actionId{component, action, componentFriendly, friendly};
+    QDBusInterface global(m_pinnedOwner, shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
     if (!global.isValid()) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel interface is invalid");
         }
         return false;
     }
-    QVariantList args{actionId, QVariant::fromValue(sequences), SHORTCUT_SET_FLAGS};
+    const QVariantList args{actionId, QVariant::fromValue(keySet), QVariant::fromValue(SHORTCUT_SET_FLAGS)};
     const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutSetMethod(), args);
-    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() != 1) {
+    if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() != 1
+        || reply.signature() != QStringLiteral("a(ai)")) {
         if (error) {
             *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
         }
         return false;
     }
-    const QDBusArgument arg = reply.arguments().at(0).value<QDBusArgument>();
-    if (arg.currentType() != QDBusArgument::ArrayType) {
-        if (error) {
-            *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+    QSet<QKeySequence> replySet;
+    const QVariant replyVariant = reply.arguments().at(0);
+    if (replyVariant.userType() == qMetaTypeId<QSet<QKeySequence>>()) {
+        replySet = replyVariant.value<QSet<QKeySequence>>();
+        // Same bound as the QDBusArgument framing below.
+        if (replySet.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+            if (error) {
+                *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+            }
+            return false;
         }
-        return false;
-    }
-    QList<int> flattened;
-    arg.beginArray();
-    while (!arg.atEnd()) {
-        QList<int> sequence;
-        arg >> sequence;
-        for (int key : sequence) {
-            if (key != 0) {
-                flattened.append(key);
+    } else if (replyVariant.canConvert<QDBusArgument>()) {
+        const QDBusArgument arg = replyVariant.value<QDBusArgument>();
+        if (arg.currentType() != QDBusArgument::ArrayType) {
+            if (error) {
+                *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+            }
+            return false;
+        }
+        QDBusArgument mutableArg = arg;
+        mutableArg.beginArray();
+        int replyCount = 0;
+        while (!mutableArg.atEnd()) {
+            // Strict exact four-slot (ai) decode: consume the full inner
+            // array and require exactly four ints. Long or short sequences
+            // fail closed; no truncation fallback.
+            mutableArg.beginStructure();
+            mutableArg.beginArray();
+            QList<int> values;
+            int innerCount = 0;
+            while (!mutableArg.atEnd()) {
+                int value = 0;
+                mutableArg >> value;
+                if (innerCount < 4) {
+                    values.append(value);
+                }
+                ++innerCount;
+            }
+            mutableArg.endArray();
+            mutableArg.endStructure();
+            if (innerCount != 4) {
+                if (error) {
+                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+                }
+                return false;
+            }
+            QKeySequence sequence;
+            if (!ShortcutReconciler::decodeKeySequenceSlots(values, &sequence)) {
+                if (error) {
+                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+                }
+                return false;
+            }
+            replySet.insert(sequence);
+            if (++replyCount > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+                if (error) {
+                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+                }
+                return false;
             }
         }
+        mutableArg.endArray();
+    } else {
+        if (error) {
+            *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+        }
+        return false;
     }
-    arg.endArray();
-    if (flattened != keys) {
+    // A QSet reply has no meaningful order: compare as sets.
+    if (intSetFromKeySet(replySet) != expectedSet) {
         if (error) {
             *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
         }
@@ -626,7 +924,7 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
     }
     ++m_writes;
     if (confirmed) {
-        *confirmed = flattened;
+        *confirmed = keys;
     }
     return true;
 }

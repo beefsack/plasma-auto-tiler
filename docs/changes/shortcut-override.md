@@ -56,6 +56,13 @@ takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
   [decisions](../decisions.md#shortcuts); this record duplicates no decision.
 - Static KCM override/recovery implementation with the focused coverage above
   is accepted as static-only; no live evidence is accepted under this record yet.
+- Resolved Plasma 6 KGlobalAccel compatibility defect: host Plasma/KWin 6.7.4
+  exposes `setShortcutKeys(as actionId, a(ai) keys, u flags) -> a(ai)` with
+  `QSet<QKeySequence>` annotations; old strict `asa(ai)u` validator failed
+  Apply/Revert before writes; backend now validates exact split shape and typed
+  `QSet`/`QKeySequence` marshalling/reply set semantics with pinned unique
+  owner; native/full static/Nix checks passed; read-only probe confirmed exact
+  affected current tuples unchanged; no live setter/Apply/Revert was run.
 
 ## Next Action
 

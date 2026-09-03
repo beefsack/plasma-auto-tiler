@@ -57,8 +57,12 @@ public:
     QString contractXml = QStringLiteral(
         "<node><interface name=\"org.kde.KGlobalAccel\">"
         "<method name=\"setShortcutKeys\">"
-        "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+        "<arg type=\"as\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"in\"/>"
+        "<arg type=\"u\" direction=\"in\"/>"
         "<arg type=\"a(ai)\" direction=\"out\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
         "</method></interface></node>");
     bool malformedRead = false;
     struct WriteRecord
@@ -73,13 +77,15 @@ public:
     {
         if (!contractPresent) {
             if (error) {
-                *error = QStringLiteral("setter contract is absent");
+                *error = QStringLiteral(
+                    "KGlobalAccel setShortcutKeys is absent or does not expose exactly as,a(ai),u -> a(ai) with QSet<QKeySequence>");
             }
             return false;
         }
         if (!ShortcutReconciler::introspectionContractValid(contractXml)) {
             if (error) {
-                *error = QStringLiteral("setter contract is absent");
+                *error = QStringLiteral(
+                    "KGlobalAccel setShortcutKeys is absent or does not expose exactly as,a(ai),u -> a(ai) with QSet<QKeySequence>");
             }
             return false;
         }
@@ -363,6 +369,10 @@ void ordinarySettingsApplyNeverMutatesShortcuts()
     const int writesAfterLoad = store.writeLog.size();
     const int persistsAfterLoad = journal.persists;
     CHECK(writesAfterLoad == 0);
+    module.refreshShortcutState();
+    CHECK(store.writeLog.size() == 0);
+    CHECK(journal.persists == persistsAfterLoad);
+    CHECK(confirms == 0);
     module.save();
     CHECK(store.writeLog.size() == 0);
     CHECK(journal.persists == persistsAfterLoad);
@@ -375,7 +385,65 @@ void ordinarySettingsApplyNeverMutatesShortcuts()
     CHECK(store.writeLog.size() == 0);
     CHECK(journal.persists == persistsAfterLoad);
     CHECK(confirms == 0);
+    module.refreshShortcutState();
+    CHECK(store.writeLog.size() == 0);
+    CHECK(journal.persists == persistsAfterLoad);
+    CHECK(confirms == 0);
     CHECK(!journal.hasJournal());
+}
+
+void contractRejectionSurfacesSplitSignatureWithoutStaleCombinedForm()
+{
+    // Legacy combined signature is rejected and surfaced with the split
+    // live contract, never the erroneous combined form.
+    {
+        FakeShortcutStore store;
+        seedReady(store);
+        store.contractXml = QStringLiteral(
+            "<node><interface name=\"org.kde.KGlobalAccel\">"
+            "<method name=\"setShortcutKeys\">"
+            "<arg type=\"asa(ai)u\" direction=\"in\"/>"
+            "<arg type=\"a(ai)\" direction=\"out\"/>"
+            "</method></interface></node>");
+        FakeJournal journal;
+        ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+        module.setShortcutStores(&store, &journal);
+        module.load();
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("as,a(ai),u -> a(ai)")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("QSet<QKeySequence>")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("asa(ai)u")));
+        const int writesBefore = store.writeLog.size();
+        module.refreshShortcutState();
+        CHECK(store.writeLog.size() == writesBefore);
+        CHECK(store.writeLog.isEmpty());
+        module.requestShortcutApply();
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(module.shortcutErrorText().contains(QStringLiteral("as,a(ai),u -> a(ai)")));
+        CHECK(module.shortcutErrorText().contains(QStringLiteral("QSet<QKeySequence>")));
+        CHECK(!module.shortcutErrorText().contains(QStringLiteral("asa(ai)u")));
+    }
+    // Absent contract likewise fails closed without the stale form.
+    {
+        FakeShortcutStore store;
+        seedReady(store);
+        store.contractPresent = false;
+        FakeJournal journal;
+        ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+        module.setShortcutStores(&store, &journal);
+        module.load();
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("as,a(ai),u -> a(ai)")));
+        CHECK(!module.shortcutStatusText().contains(QStringLiteral("asa(ai)u")));
+        module.refreshShortcutState();
+        CHECK(store.writeLog.isEmpty());
+        module.requestShortcutApply();
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(module.shortcutErrorText().contains(QStringLiteral("as,a(ai),u -> a(ai)")));
+        CHECK(!module.shortcutErrorText().contains(QStringLiteral("asa(ai)u")));
+    }
 }
 
 void recoveryVisibilityAndRouting()
@@ -639,6 +707,7 @@ int main(int argc, char **argv)
     } else if (scenario == QStringLiteral("state")) {
         stateAndErrorPresentation();
         completeJournalStatusComparesExactPostimages();
+        contractRejectionSurfacesSplitSignatureWithoutStaleCombinedForm();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;

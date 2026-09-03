@@ -1,10 +1,20 @@
 #pragma once
 
+#include <QDBusArgument>
 #include <QDBusMessage>
+#include <QKeySequence>
 #include <QList>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 #include <QVariant>
+
+// Exact (ai)/a(ai) framing for QKeySequence/QSet<QKeySequence>> matching the
+// KF6 KGlobalAccel encoding: each sequence is a struct holding exactly four
+// combined key ints. Declared here so tests exercise the same operators.
+QDBusArgument &operator<<(QDBusArgument &argument, const QKeySequence &sequence);
+const QDBusArgument &operator>>(const QDBusArgument &argument, QKeySequence &sequence);
+const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence> &set);
 
 // Bounded KCM shortcut-override backend/state machine.
 //
@@ -12,10 +22,12 @@
 //   kwin / plasma-auto-tiler-focus-right  -> Meta+L post
 //   ksmserver / Lock Session              -> Meta+L replaced by Meta+Esc post
 //
-// Uses only the KGlobalAccel D-Bus APIs observed in scripts/start-test.sh:
+// Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
 //   org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel
 //     allComponents -> ao
-//     setShortcutKeys asa(ai)u -> a(ai) (introspection-proven)
+//     setShortcutKeys as,a(ai),u -> a(ai) with QSet<QKeySequence>
+//       annotations on the keys input and the reply; actionId is
+//       [ComponentUnique, ActionUnique, ComponentFriendly, ActionFriendly]
 //   org.kde.kglobalaccel.Component allShortcutInfos s default -> a(ssssssaiai)
 //   org.freedesktop.DBus GetNameOwner / GetConnectionUnixUser for owner/UID.
 // No shell, no guessed identities. All backends are injectable; tests use
@@ -192,9 +204,13 @@ public:
     {
         return m_writes;
     }
+    // Pure pin transition tested without D-Bus: first verified owner sets
+    // the pin, the same owner confirms it, a different owner fails closed.
+    static bool tryPinOwner(QString &pinned, const QString &candidate, QString *error);
 
 private:
     int m_writes = 0;
+    QString m_pinnedOwner;
 };
 
 // Real KConfig journal backend rooted at an explicit project-owned file.
@@ -228,6 +244,10 @@ public:
     static bool introspectionContractValid(const QString &xml);
     static bool parseAllComponentsReply(QDBusMessage::MessageType replyType, const QString &replySignature,
                                         const QList<QVariant> &replyArgs, QStringList *components, QString *error);
+    // Pure strict (ai) slot validation tested without D-Bus: exactly four
+    // ints in [0, SHORTCUT_MAX_KEY_VALUE]; the live encoding always writes
+    // four slots with zero padding. Both reply-decode variants share it.
+    static bool decodeKeySequenceSlots(const QList<int> &slotValues, QKeySequence *out);
     static bool journalPathSafe(const QString &path, QString *error);
     static bool journalRolesValid(const ShortcutJournal &journal);
 

@@ -193,6 +193,7 @@ if(BUILD_TESTING)
         KF6::ConfigCore
         Qt6::Core
         Qt6::DBus
+        Qt6::Gui
     )
     target_compile_options(plasma-auto-tiler-shortcut-reconciler-test PRIVATE -Wall -Wextra -Werror)
 
