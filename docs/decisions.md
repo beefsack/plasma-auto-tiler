@@ -178,6 +178,14 @@ Historical implementation detail is recoverable in Git history.
   post-crash retry are not selected.
 - The tray MVP provides basic status and Settings only. It has no direct tiling
   controls and no expansion of the helper boundary.
+- One current-session manual start of the current-generation immutable store
+  `tray-managed` binary proved only exact managed process/runtime binding under
+  `$XDG_RUNTIME_DIR/plasma-auto-tiler-managed`, SNI registration with
+  `unavailable` status, and one fixed Settings action with exact
+  Settings-process cleanup. No KWin snapshot authority is claimed from that run.
+- That run claims no visual panel behavior, no watcher-ordering/login/autostart
+  delivery, no native ABI/plugin load, no baseline-restoration proof, and no
+  KWin Script1 identity or cleanup.
 
 ## Deferred Scope
 
