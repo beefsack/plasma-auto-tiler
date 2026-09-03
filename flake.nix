@@ -50,6 +50,8 @@
           ./kwin/native-effect/activeborderconfig.ui
           ./kwin/native-effect/activeborderconfig.kcfg
           ./kwin/native-effect/activeborderconfig.kcfgc
+          ./kwin/native-effect/shortcutreconciler.h
+          ./kwin/native-effect/shortcutreconciler.cpp
         ];
       };
 

@@ -54,6 +54,8 @@ target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -We
 set(kcm_SOURCES
     activeborderconfig_module.cpp
     activeborderconfig_module.h
+    shortcutreconciler.cpp
+    shortcutreconciler.h
     ${config_SOURCES}
 )
 ki18n_wrap_ui(kcm_SOURCES activeborderconfig.ui)
@@ -91,6 +93,7 @@ if(BUILD_TESTING)
     set(kcm_config_test_SOURCES
         activeborderconfig_module_test.cpp
         activeborderconfig_module.cpp
+        shortcutreconciler.cpp
         ${config_SOURCES}
     )
     ki18n_wrap_ui(kcm_config_test_SOURCES activeborderconfig.ui)
@@ -136,6 +139,85 @@ if(BUILD_TESTING)
         native-effect-kcm-hotapply
         native-effect-kcm-border
         native-effect-kcm-config-reload
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    set(kcm_shortcut_test_SOURCES
+        activeborderconfig_shortcut_test.cpp
+        activeborderconfig_module.cpp
+        shortcutreconciler.cpp
+        ${config_SOURCES}
+    )
+    ki18n_wrap_ui(kcm_shortcut_test_SOURCES activeborderconfig.ui)
+    add_executable(plasma-auto-tiler-active-border-kcm-shortcut-test
+        ${kcm_shortcut_test_SOURCES}
+    )
+    target_link_libraries(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE
+        KF6::CoreAddons
+        KF6::ConfigCore
+        KF6::ConfigGui
+        KF6::I18n
+        KF6::KCMUtils
+        KF6::WidgetsAddons
+        Qt6::Core
+        Qt6::DBus
+        Qt6::Widgets
+    )
+    target_compile_definitions(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE
+        -DTRANSLATION_DOMAIN="kwin"
+        -DKPLUGINFACTORY_PLUGIN_CLASS_INTERNAL_NAME=ActiveBorderConfigModuleFactory
+    )
+    target_compile_options(plasma-auto-tiler-active-border-kcm-shortcut-test PRIVATE -Wall -Wextra -Werror)
+
+    add_test(NAME native-effect-kcm-shortcut-ordinary
+        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test ordinary)
+    add_test(NAME native-effect-kcm-shortcut-recovery
+        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test recovery)
+    add_test(NAME native-effect-kcm-shortcut-confirm
+        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test confirm)
+    add_test(NAME native-effect-kcm-shortcut-state
+        COMMAND plasma-auto-tiler-active-border-kcm-shortcut-test state)
+    set_tests_properties(
+        native-effect-kcm-shortcut-ordinary
+        native-effect-kcm-shortcut-recovery
+        native-effect-kcm-shortcut-confirm
+        native-effect-kcm-shortcut-state
+        PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
+    )
+
+    add_executable(plasma-auto-tiler-shortcut-reconciler-test
+        shortcutreconciler_test.cpp
+        shortcutreconciler.cpp
+    )
+    target_link_libraries(plasma-auto-tiler-shortcut-reconciler-test PRIVATE
+        KF6::ConfigCore
+        Qt6::Core
+        Qt6::DBus
+    )
+    target_compile_options(plasma-auto-tiler-shortcut-reconciler-test PRIVATE -Wall -Wextra -Werror)
+
+    add_test(NAME native-effect-shortcut-success
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test success)
+    add_test(NAME native-effect-shortcut-conflict
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test conflict)
+    add_test(NAME native-effect-shortcut-malformed
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test malformed)
+    add_test(NAME native-effect-shortcut-owner
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test owner)
+    add_test(NAME native-effect-shortcut-recovery
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test recovery)
+    add_test(NAME native-effect-shortcut-external
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test external)
+    add_test(NAME native-effect-shortcut-journal
+        COMMAND plasma-auto-tiler-shortcut-reconciler-test journal)
+    set_tests_properties(
+        native-effect-shortcut-success
+        native-effect-shortcut-conflict
+        native-effect-shortcut-malformed
+        native-effect-shortcut-owner
+        native-effect-shortcut-recovery
+        native-effect-shortcut-external
+        native-effect-shortcut-journal
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

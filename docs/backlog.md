@@ -46,6 +46,9 @@ Only meaningful pending or active work is listed.
   and lockfile evidence are accepted |
   [change](changes/archive/nix-current-host-delivery.md)
 
+- P1 | static complete, pending user-run live Apply/Revert/interrupted-recovery
+  | Explicit KCM shortcut override with recovery (`Meta+L`/`Meta+Esc`) |
+  [change](changes/shortcut-override.md)
 - P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated
   nested KWin proof establishes a safe improvement | [change](changes/floor-ratio-feasibility.md)
 - P2 | parked | Establish a safe Integrated Plasma structural feasibility

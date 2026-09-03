@@ -140,6 +140,12 @@ Historical implementation detail is recoverable in Git history.
   Recovery is explicit in the KCM, Revert restores only bindings still owned by
   that override, and unexpected conflicts are refused. Installation and startup
   never mutate global shortcuts.
+- KCM override/recovery is static-only complete: confirmed Apply/Revert plus
+  Finish Apply/Restore for interrupted applies; ordinary Settings Apply never
+  mutates shortcuts. Exact allowlist is `kwin/plasma-auto-tiler-focus-right`
+  and `ksmserver/Lock Session` only; non-`Meta+L` lock keys keep order, and the
+  journal is private project-owned. Focused reconciler/KCM static coverage
+  exists; no live Apply/Revert/interrupted-recovery result is claimed.
 
 ## COSMIC Movement And Groups
 

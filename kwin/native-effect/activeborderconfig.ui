@@ -176,11 +176,82 @@
         </property>
        </widget>
       </item>
-     </layout>
-    </widget>
-   </item>
-  </layout>
- </widget>
+   </layout>
+     </widget>
+    </item>
+    <item>
+     <widget class="QGroupBox" name="shortcutGroup">
+      <property name="title">
+       <string>Shortcuts</string>
+      </property>
+      <layout class="QVBoxLayout" name="shortcutLayout">
+       <item>
+        <widget class="QLabel" name="shortcutStatusLabel">
+         <property name="text">
+          <string>Shortcut state unknown.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <widget class="QLabel" name="shortcutErrorLabel">
+         <property name="text">
+          <string></string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+       <item>
+        <layout class="QHBoxLayout" name="shortcutButtonLayout">
+         <item>
+          <widget class="QPushButton" name="shortcutApplyButton">
+           <property name="text">
+            <string>Apply Shortcuts</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="shortcutRevertButton">
+           <property name="text">
+            <string>Revert Shortcuts</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="shortcutFinishApplyButton">
+           <property name="text">
+            <string>Finish Apply</string>
+           </property>
+          </widget>
+         </item>
+         <item>
+          <widget class="QPushButton" name="shortcutRestoreButton">
+           <property name="text">
+            <string>Restore</string>
+           </property>
+          </widget>
+         </item>
+        </layout>
+       </item>
+       <item>
+        <widget class="QLabel" name="shortcutDescription">
+         <property name="text">
+          <string>Focus-right takes Meta+L; Apply moves Lock Session to Meta+Esc. Settings Apply never changes shortcuts; use these buttons with confirmation. Finish Apply and Restore appear only for an interrupted apply.</string>
+         </property>
+         <property name="wordWrap">
+          <bool>true</bool>
+         </property>
+        </widget>
+       </item>
+      </layout>
+     </widget>
+    </item>
+   </layout>
+  </widget>
  <customwidgets>
   <customwidget>
    <class>KColorButton</class>
