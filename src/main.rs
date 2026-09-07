@@ -4,6 +4,12 @@ fn main() {
         [] => Err("missing executable argument".to_owned()),
         [_] => plasma_auto_tiler::tray_endpoint::run().map_err(|error| error.to_string()),
         [_, command] => match command.as_str() {
+            "planner-service" => {
+                plasma_auto_tiler::planner_service::run().map_err(|error| error.to_string())
+            }
+            "planner-service-nested" => {
+                Err("planner-service-nested requires an explicit manifest path".to_owned())
+            }
             "tray-managed" => {
                 plasma_auto_tiler::tray_endpoint::run_managed().map_err(|error| error.to_string())
             }
@@ -14,6 +20,10 @@ fn main() {
             "tray-remove" => plasma_auto_tiler::tray_lifecycle::remove_command(),
             command => Err(format!("unknown command: {command}")),
         },
+        [_, command, manifest] if command == "planner-service-nested" => {
+            plasma_auto_tiler::planner_service::run_nested(std::path::Path::new(manifest))
+                .map_err(|error| error.to_string())
+        }
         [_, command, ..] if command.starts_with("tray-") => {
             Err(format!("{command} takes no arguments"))
         }

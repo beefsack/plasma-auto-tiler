@@ -1,3 +1,15 @@
+pub mod contract;
+pub mod directional;
+pub mod planner_contract;
+pub mod planner_service;
+pub mod poc3;
+pub mod poc3_contract;
+pub mod poc3_diag;
+pub mod poc3_diag_supervisor;
+pub mod poc3_host_pilot;
+pub mod poc3_host_trio;
+pub mod reconcile;
+pub mod trace;
 pub mod tray;
 pub mod tray_endpoint;
 pub mod tray_lifecycle;
