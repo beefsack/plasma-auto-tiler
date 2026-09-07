@@ -12,8 +12,9 @@ use serde::{Deserialize, Serialize};
 use crate::directional::{
     Axis, Capabilities, Capability, CrossOutputTarget, Direction, EscapeContinuation, FocusedSide,
     Insertion, MoveIntent, MoveOperation, Node, NodeId, Output, OutputId, Precondition,
-    RejectionKind, Rule, Snapshot, WindowId, WindowLink, WorkspaceId, plan_move_with_capabilities,
+    RejectionKind, Rule, Snapshot, WindowId, WindowLink, WorkspaceId,
 };
+use crate::ids::{CorrelationId, GenerationId};
 
 pub const CONTRACT_VERSION: u32 = 1;
 pub const MAX_REQUEST_BYTES: usize = 64 * 1024;
@@ -51,19 +52,11 @@ fn is_opaque_id(value: &str) -> bool {
 }
 
 fn is_correlation_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_CORRELATION_LEN
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
+    CorrelationId::parse(value).is_some()
 }
 
 fn is_generation(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_GENERATION_LEN
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    GenerationId::parse(value).is_some()
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Deserialize)]
@@ -321,10 +314,14 @@ fn convert_node(dto: &NodeDto, depth: usize, total: &mut usize) -> Result<Node, 
             for child in children {
                 converted.push(convert_node(child, depth + 1, total)?);
             }
+            // Wire schema carries no shares in this unit: absent DTO shares
+            // normalize deterministically to equal u64 weights.
+            let shares = vec![1u64; converted.len()];
             Ok(Node::Group {
                 id: NodeId(id.clone()),
                 axis: convert_axis(*axis),
                 children: converted,
+                shares,
             })
         }
     }
@@ -667,7 +664,7 @@ pub fn evaluate_json(request_json: &str) -> String {
         }
     };
     let capabilities = convert_capabilities(&request.capabilities);
-    match plan_move_with_capabilities(&snapshot, &intent, &capabilities) {
+    match crate::cosmic_v1::plan_move_with_capabilities(&snapshot, &intent, &capabilities) {
         crate::directional::MoveOutcome::Planned(plan) => serialize_reply(&EvaluateReply {
             v: CONTRACT_VERSION,
             correlation_id,

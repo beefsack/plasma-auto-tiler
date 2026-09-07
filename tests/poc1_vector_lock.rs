@@ -28,6 +28,7 @@ fn r2a_snapshot() -> (Snapshot, MoveIntent) {
                 id: NodeId::from("B"),
             },
         ],
+        shares: vec![1, 1],
     };
     let output = Output {
         id: OutputId::from("source"),
@@ -137,4 +138,40 @@ fn poc1_r2a_policy_output_is_deterministic() {
         }
         other => panic!("expected R2a plan, got {other:?}"),
     }
+}
+
+#[test]
+fn cosmic_v1_policy_version_and_r2a_conformance_plan() {
+    // Exact current policy version, shared without duplication.
+    assert_eq!(plasma_auto_tiler::cosmic_v1::POLICY_VERSION, 1);
+    assert_eq!(
+        plasma_auto_tiler::cosmic_v1::POLICY_VERSION,
+        plasma_auto_tiler::contract::POLICY_VERSION
+    );
+    assert_eq!(plasma_auto_tiler::cosmic_v1::COSMIC_V1_VERSION, 1);
+    // The R2a conformance plan executes through the explicit cosmic_v1 API.
+    let (snapshot, intent) = r2a_snapshot();
+    match plasma_auto_tiler::cosmic_v1::plan_move(&snapshot, &intent) {
+        MoveOutcome::Planned(plan) => {
+            assert_eq!(plan.rule, Rule::R2a);
+            assert_eq!(plan.required_capability, Capability::SwapNeighbor);
+            assert_eq!(
+                plan.operation,
+                MoveOperation::SwapNeighbor {
+                    rule: Rule::R2a,
+                    container: NodeId::from("root"),
+                    neighbor: NodeId::from("B"),
+                }
+            );
+        }
+        other => panic!("expected R2a plan through cosmic_v1, got {other:?}"),
+    }
+    // Conformance evidence (planner contract) executes through the same API:
+    // the golden reply still reports the identical R2a plan.
+    let fixture: serde_json::Value = serde_json::from_str(FIXTURE).expect("golden fixture is JSON");
+    let request_text = fixture["request"].to_string();
+    let reply: serde_json::Value =
+        serde_json::from_str(&evaluate_json(&request_text)).expect("reply is JSON");
+    assert_eq!(reply["rule"], "R2a");
+    assert_eq!(reply["capability"], "swap-neighbor");
 }

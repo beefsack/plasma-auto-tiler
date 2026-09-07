@@ -7,9 +7,10 @@ Only meaningful pending or active work is listed.
   reconciliation; thin adapters own native boundaries. KWin direct geometry is
   the actuator and Custom Tiles are legacy-only, never dual structural
   authority. Preserve production behavior through small opt-in/shadow slices.
-   Checkpoint gate complete. Current slice: stabilize the Rust core boundaries
-   and portable model; the subsequent gate is an authenticated read-only
-   Rust/KWin round trip after the prior `EvaluatePoc3` EIO. The completed POC is archived: manual/visual evidence
+    Checkpoint and Rust-core stabilization slices complete. Current slice: prove
+    one minimal authenticated read-only Rust/KWin request/reply with strict
+    identity, schema, correlation, timeout, and fail-closed behavior after the
+    prior `EvaluatePoc3` EIO. The completed POC is archived: manual/visual evidence
   supports bounded three-window projection, focus, structural movement, resize,
   and drag gesture separation only - not production, parity, lifecycle,
   atomicity, or measured latency |

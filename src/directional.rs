@@ -15,9 +15,11 @@
 //! and its [`Capability`], and [`plan_move_with_capabilities`] refuses an
 //! unsupported operation before any plan is emitted.
 //!
-//! Intentional omissions (per bounded brief): no pixel placement or geometry
-//! type (fraction sizing helpers need none), no actuation/mutation layer, no
-//! persistence/IPC/FFI. Cyclic graphs are impossible by construction: [`Node`]
+//! Intentional omissions (per bounded brief): no actuation/mutation layer, no
+//! persistence/IPC/FFI. Pixel placement lives in [`crate::geometry`], a
+//! deterministic portable projector over the [`Node`] topology defined here
+//! (fraction sizing helpers need none). Cyclic graphs are impossible by
+//! construction: [`Node`]
 //! is an owned tree, so a cycle cannot be represented. The TypeScript
 //! object-identity cycle/share rejection therefore maps to the strictly
 //! stronger global duplicate-[`NodeId`] rejection documented on
@@ -103,6 +105,10 @@ impl From<&str> for WindowId {
 }
 
 /// Ordered N-ary tree node. Analogue of `CosmicNode` / `CosmicLeaf` / `CosmicGroup`.
+/// A group splits its extent along `axis` across `children` proportionally to
+/// `shares`: exactly one positive integer weight per child, in child order.
+/// See [`crate::geometry`] for the deterministic portable projector over this
+/// topology; the movement planner itself never interprets shares.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Node {
     Leaf {
@@ -112,6 +118,7 @@ pub enum Node {
         id: NodeId,
         axis: Axis,
         children: Vec<Node>,
+        shares: Vec<u64>,
     },
 }
 
@@ -153,6 +160,8 @@ pub struct WindowLink {
 /// Validation (fail-closed [`Rejection`], never partial) detects:
 /// - empty output set; empty/duplicate output, workspace, node, or window ids;
 /// - groups with fewer than two children;
+/// - groups whose `shares` are not exactly one positive integer per child, or
+///   whose share total overflows `u64`;
 /// - duplicate [`NodeId`]s anywhere in the snapshot. This global uniqueness is
 ///   an intentional engine snapshot invariant, not a mechanical validation
 ///   translation: opaque global ids plus [`WindowLink`] require an unambiguous
@@ -521,7 +530,9 @@ struct PathLevel<'a> {
 fn find_path<'a>(node: &'a Node, focused: &NodeId, path: &mut Vec<PathLevel<'a>>) -> bool {
     match node {
         Node::Leaf { id } => id == focused,
-        Node::Group { id, axis, children } => {
+        Node::Group {
+            id, axis, children, ..
+        } => {
             for (index, child) in children.iter().enumerate() {
                 if find_path(child, focused, path) {
                     path.push(PathLevel {
@@ -570,10 +581,27 @@ fn validate_node(
             leaf_is_leaf.insert(id.clone(), true);
             Ok(())
         }
-        Node::Group { children, .. } => {
+        Node::Group {
+            children, shares, ..
+        } => {
             leaf_is_leaf.insert(node.id().clone(), false);
             if children.len() < 2 {
                 return Err("groups must have at least two children".to_string());
+            }
+            if shares.len() != children.len() {
+                return Err("group shares must align exactly with children".to_string());
+            }
+            if shares.contains(&0) {
+                return Err("group shares must be positive".to_string());
+            }
+            let mut total: u64 = 0;
+            for share in shares {
+                total = total
+                    .checked_add(*share)
+                    .ok_or_else(|| "group shares total overflows".to_string())?;
+            }
+            if total == 0 {
+                return Err("group shares must be positive".to_string());
             }
             for child in children {
                 validate_node(child, ids, leaf_outputs, output_index, leaf_is_leaf)?;
@@ -797,7 +825,9 @@ fn plan_local(intent: &MoveIntent, source: &Output, path: &[PathLevel<'_>]) -> M
                         },
                     ));
                 }
-                Node::Group { id, axis, children } => {
+                Node::Group {
+                    id, axis, children, ..
+                } => {
                     if *axis == ancestor.axis {
                         let insertion_index = if ancestor.child_index < neighbor_index as usize {
                             0
@@ -1001,8 +1031,23 @@ fn check_focus_node(node: &Node, seen: &mut HashSet<NodeId>) -> bool {
     }
     match node {
         Node::Leaf { .. } => true,
-        Node::Group { children, .. } => {
-            if children.len() < 2 {
+        Node::Group {
+            children, shares, ..
+        } => {
+            if children.len() < 2 || shares.len() != children.len() {
+                return false;
+            }
+            if shares.contains(&0) {
+                return false;
+            }
+            let mut total: u64 = 0;
+            for share in shares {
+                match total.checked_add(*share) {
+                    Some(next) => total = next,
+                    None => return false,
+                }
+            }
+            if total == 0 {
                 return false;
             }
             children.iter().all(|child| check_focus_node(child, seen))

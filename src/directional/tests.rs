@@ -19,11 +19,24 @@ fn leaf(id: &str) -> Node {
     }
 }
 
+/// Old-vector helper: equal shares of one per child. New share-specific
+/// cases construct [`Node::Group`] literals with explicit unequal shares.
 fn group(id: &str, axis: Axis, children: Vec<Node>) -> Node {
+    let shares = vec![1u64; children.len()];
     Node::Group {
         id: NodeId::from(id),
         axis,
         children,
+        shares,
+    }
+}
+
+fn group_with_shares(id: &str, axis: Axis, children: Vec<Node>, shares: Vec<u64>) -> Node {
+    Node::Group {
+        id: NodeId::from(id),
+        axis,
+        children,
+        shares,
     }
 }
 
@@ -408,6 +421,7 @@ fn rejects_duplicate_identities_one_child_groups_missing_leaves() {
         id: NodeId::from("root"),
         axis: Axis::Horizontal,
         children: vec![leaf("A")],
+        shares: vec![1],
     };
     let snap = single_output(one_child);
     assert!(matches!(
@@ -868,6 +882,7 @@ fn focus_fails_closed_on_duplicate_single_child_and_missing() {
         id: NodeId::from("root"),
         axis: Axis::Horizontal,
         children: vec![leaf("A")],
+        shares: vec![1],
     };
     assert_eq!(
         plan_focus(&single, &NodeId::from("A"), Direction::Right),
@@ -946,6 +961,116 @@ fn rejects_cross_output_duplicate_node_ids() {
             },
         }
     ));
+}
+
+#[test]
+fn ordered_n_ary_unequal_shares_keep_child_order_planning() {
+    // Unequal shares never steer the movement planner: neighbor selection
+    // stays purely child-order driven (R2c), matching equal-share behavior.
+    let unequal = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("W"), leaf("S"), leaf("D")],
+        vec![5, 1, 2, 1],
+    );
+    let snap = single_output(unequal);
+    let outcome = plan_move(&snap, &intent("source", "W", Direction::Right));
+    let plan = planned(&outcome);
+    assert_eq!(
+        plan.operation,
+        MoveOperation::WrapNeighbor {
+            rule: Rule::R2c,
+            container: NodeId::from("root"),
+            neighbor: NodeId::from("S"),
+            focused_before_neighbor: true,
+            axis: Axis::Horizontal,
+        }
+    );
+}
+
+#[test]
+fn rejects_misaligned_zero_and_overflowing_shares() {
+    // Share count must match child count exactly.
+    let short = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1],
+    );
+    assert!(matches!(
+        plan_move(
+            &single_output(short),
+            &intent("source", "A", Direction::Right)
+        ),
+        MoveOutcome::Rejected {
+            reason: Rejection {
+                kind: RejectionKind::MalformedTopology,
+                ..
+            },
+        }
+    ));
+
+    // Zero shares are malformed.
+    let zero = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1, 0],
+    );
+    assert!(matches!(
+        plan_move(
+            &single_output(zero),
+            &intent("source", "A", Direction::Right)
+        ),
+        MoveOutcome::Rejected {
+            reason: Rejection {
+                kind: RejectionKind::MalformedTopology,
+                ..
+            },
+        }
+    ));
+
+    // Overflowing u64 totals fail closed.
+    let overflow = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![u64::MAX, 1],
+    );
+    assert!(matches!(
+        plan_move(
+            &single_output(overflow),
+            &intent("source", "A", Direction::Right)
+        ),
+        MoveOutcome::Rejected {
+            reason: Rejection {
+                kind: RejectionKind::MalformedTopology,
+                ..
+            },
+        }
+    ));
+
+    // Focus is equally fail-closed on malformed shares.
+    let bad_focus = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1, 0],
+    );
+    assert_eq!(
+        plan_focus(&bad_focus, &NodeId::from("A"), Direction::Right),
+        None
+    );
+    let misaligned = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1, 1, 1],
+    );
+    assert_eq!(
+        plan_focus(&misaligned, &NodeId::from("A"), Direction::Right),
+        None
+    );
 }
 
 #[test]

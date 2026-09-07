@@ -49,11 +49,13 @@ use std::collections::BTreeMap;
 use serde::Deserialize;
 
 use crate::contract::{AckOutcome, DivergenceKind, Observation, POLICY_VERSION};
+use crate::cosmic_v1::plan_move_with_capabilities;
 use crate::directional::{
     Axis, Capabilities, Capability, CrossOutputTarget, Direction, EscapeContinuation, FocusedSide,
     Insertion, MoveIntent, MoveOperation, MoveOutcome, Node, NodeId, Output, OutputId,
-    Precondition, Rule, Snapshot, WindowId, WindowLink, WorkspaceId, plan_move_with_capabilities,
+    Precondition, Rule, Snapshot, WindowId, WindowLink, WorkspaceId,
 };
+use crate::ids::{CorrelationId, GenerationId, OwnerId};
 use crate::planner_contract::{
     MAX_CHILDREN, MAX_DEPTH, MAX_ID_LEN, MAX_NODES_TOTAL, MAX_OUTPUTS, MAX_WINDOWS,
 };
@@ -176,7 +178,7 @@ impl DiagnosticClass {
 /// Emitted plan assertion carried by a `plan` event (compared, never executed).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PlanAssertion {
-    pub correlation_id: String,
+    pub correlation_id: CorrelationId,
     pub rule: Rule,
     pub capability: Capability,
     pub base_revision: u64,
@@ -188,7 +190,7 @@ pub struct PlanAssertion {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TraceEvent {
     Request {
-        correlation_id: String,
+        correlation_id: CorrelationId,
         observation: Observation,
         snapshot: Snapshot,
         intent: MoveIntent,
@@ -196,12 +198,12 @@ pub enum TraceEvent {
     },
     Plan(PlanAssertion),
     Ack {
-        correlation_id: String,
+        correlation_id: CorrelationId,
         base_revision: u64,
         outcome: AckOutcome,
     },
     Verify {
-        correlation_id: String,
+        correlation_id: CorrelationId,
         observation: Observation,
         verified: bool,
         verified_preconditions: Vec<Precondition>,
@@ -220,8 +222,8 @@ pub struct ExpectedOutcome {
 /// Validated portable trace (V1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trace {
-    pub owner: String,
-    pub generation: String,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
     pub initial_observation: Observation,
     pub events: Vec<TraceEvent>,
     pub expected: ExpectedOutcome,
@@ -755,10 +757,14 @@ fn convert_node(dto: &NodeDto, depth: usize, total: &mut usize) -> Result<Node, 
             for child in children {
                 converted.push(convert_node(child, depth + 1, total)?);
             }
+            // Trace schema carries no shares in this unit: absent DTO shares
+            // normalize deterministically to equal u64 weights.
+            let shares = vec![1u64; converted.len()];
             Ok(Node::Group {
                 id: NodeId(id.clone()),
                 axis: convert_axis(*axis),
                 children: converted,
+                shares,
             })
         }
     }
@@ -845,11 +851,10 @@ fn convert_capabilities(dto: &CapabilitiesDto) -> Capabilities {
 }
 
 fn convert_observation(dto: &ObservationDto) -> Result<Observation, TraceParseError> {
-    let observation = Observation {
-        owner: dto.owner.clone(),
-        generation: dto.generation.clone(),
-        revision: dto.revision,
-        fingerprint: dto.fingerprint,
+    let Some(observation) =
+        Observation::from_strings(&dto.owner, &dto.generation, dto.revision, dto.fingerprint)
+    else {
+        return Err(TraceParseError::InvalidId);
     };
     if !observation.validate() {
         return Err(TraceParseError::InvalidId);
@@ -871,11 +876,8 @@ fn check_id(value: &str) -> Result<NodeId, TraceParseError> {
     Ok(NodeId(value.to_owned()))
 }
 
-fn check_correlation(value: &str) -> Result<String, TraceParseError> {
-    if !crate::contract::is_correlation_id(value) {
-        return Err(TraceParseError::InvalidId);
-    }
-    Ok(value.to_owned())
+fn check_correlation(value: &str) -> Result<CorrelationId, TraceParseError> {
+    CorrelationId::parse(value).ok_or(TraceParseError::InvalidId)
 }
 
 fn check_revision(value: u64) -> Result<u64, TraceParseError> {
@@ -1128,11 +1130,12 @@ pub fn parse_trace_json(input: &str) -> Result<Trace, TraceParseError> {
     if dto.meta.policy_version != POLICY_VERSION {
         return Err(TraceParseError::UnsupportedPolicy);
     }
-    if !crate::contract::is_owner_id(&dto.owner)
-        || !crate::contract::is_generation_id(&dto.generation)
-    {
+    let Some(owner) = OwnerId::parse(&dto.owner) else {
         return Err(TraceParseError::InvalidId);
-    }
+    };
+    let Some(generation) = GenerationId::parse(&dto.generation) else {
+        return Err(TraceParseError::InvalidId);
+    };
     if dto.events.is_empty() || dto.events.len() > MAX_TRACE_EVENTS {
         return Err(if dto.events.is_empty() {
             TraceParseError::Malformed
@@ -1145,12 +1148,12 @@ pub fn parse_trace_json(input: &str) -> Result<Trace, TraceParseError> {
         events.push(convert_event(event)?);
     }
     let initial_observation = convert_observation(&dto.initial_observation)?;
-    if initial_observation.owner != dto.owner || initial_observation.generation != dto.generation {
+    if initial_observation.owner != owner || initial_observation.generation != generation {
         return Err(TraceParseError::EnvelopeMismatch);
     }
     Ok(Trace {
-        owner: dto.owner.clone(),
-        generation: dto.generation.clone(),
+        owner,
+        generation,
         initial_observation,
         events,
         expected: convert_expected(&dto.expected),
@@ -1158,7 +1161,7 @@ pub fn parse_trace_json(input: &str) -> Result<Trace, TraceParseError> {
 }
 
 struct StagedRequest {
-    correlation_id: String,
+    correlation_id: CorrelationId,
     observation: Observation,
     plan: crate::directional::MovePlan,
     capabilities: Capabilities,
@@ -1176,8 +1179,8 @@ struct StagedRequest {
 /// never read here (compare with [`ReplayOutcome::matches_expected`] after).
 pub fn replay_trace(trace: &Trace) -> Result<ReplayOutcome, ReplayError> {
     let mut reconciler = Reconciler::new(
-        &trace.owner,
-        &trace.generation,
+        trace.owner.clone(),
+        trace.generation.clone(),
         trace.initial_observation.revision,
         trace.initial_observation.fingerprint,
     )
@@ -1260,13 +1263,13 @@ pub fn replay_trace(trace: &Trace) -> Result<ReplayOutcome, ReplayError> {
                 if pending.is_none() {
                     return Err(ReplayError::OutOfOrder);
                 }
-                let ack = crate::contract::AdapterAck {
-                    correlation_id: correlation_id.clone(),
-                    owner: trace.owner.clone(),
-                    generation: trace.generation.clone(),
-                    base_revision: *base_revision,
-                    outcome: *outcome,
-                };
+                let ack = crate::contract::AdapterAck::new(
+                    correlation_id.clone(),
+                    trace.owner.clone(),
+                    trace.generation.clone(),
+                    *base_revision,
+                    *outcome,
+                );
                 match reconciler.acknowledge(&ack) {
                     Ok(_) => acked = true,
                     Err(crate::reconcile::AckError::NoPending) => {
@@ -1290,24 +1293,24 @@ pub fn replay_trace(trace: &Trace) -> Result<ReplayOutcome, ReplayError> {
                 if !acked {
                     return Err(ReplayError::OutOfOrder);
                 }
-                let post = crate::contract::PostObservation {
-                    observation: observation.clone(),
-                    correlation_id: correlation_id.clone(),
-                    verified: *verified,
-                    verified_preconditions: verified_preconditions.clone(),
-                    verified_operation: verified_operation.clone(),
-                };
+                let post = crate::contract::PostObservation::new(
+                    observation.clone(),
+                    correlation_id.clone(),
+                    *verified,
+                    verified_preconditions.clone(),
+                    verified_operation.clone(),
+                );
                 match reconciler.verify(&post) {
                     Ok(receipt) => {
                         commit = Some(receipt);
                         pending = None;
                         acked = false;
-                        current = Observation {
-                            owner: trace.owner.clone(),
-                            generation: trace.generation.clone(),
-                            revision: receipt.revision,
-                            fingerprint: receipt.fingerprint,
-                        };
+                        current = Observation::new(
+                            trace.owner.clone(),
+                            trace.generation.clone(),
+                            receipt.revision,
+                            receipt.fingerprint,
+                        );
                     }
                     Err(crate::reconcile::VerifyError::NoPending)
                     | Err(crate::reconcile::VerifyError::NotAcknowledged) => {

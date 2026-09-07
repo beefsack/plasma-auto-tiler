@@ -944,6 +944,9 @@ fn to_planner_node(tree: &Tree, groups: &mut usize) -> Node {
         } => {
             let id = NodeId(format!("g{}", *groups));
             *groups += 1;
+            // The directional planner never interprets shares; bridge with
+            // deterministic equal u64 weights to preserve existing behavior.
+            let shares = vec![1u64; children.len()];
             Node::Group {
                 id,
                 axis: *axis,
@@ -951,6 +954,7 @@ fn to_planner_node(tree: &Tree, groups: &mut usize) -> Node {
                     .iter()
                     .map(|c| to_planner_node(c, groups))
                     .collect(),
+                shares,
             }
         }
     }

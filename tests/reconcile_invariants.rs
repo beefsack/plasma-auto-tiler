@@ -16,6 +16,7 @@ use plasma_auto_tiler::directional::{
     Capabilities, Capability, Direction, MoveIntent, MoveOperation, NodeId, OutputId, Precondition,
     Rule,
 };
+use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
 use plasma_auto_tiler::reconcile::{
     AckApplied, AckError, ProposeError, Reconciler, StateKind, VerifyError,
 };
@@ -47,42 +48,44 @@ fn test_plan() -> plasma_auto_tiler::directional::MovePlan {
     }
 }
 
+fn owner() -> OwnerId {
+    OwnerId::parse("owner-1").expect("valid owner")
+}
+
+fn generation() -> GenerationId {
+    GenerationId::parse("gen-1").expect("valid generation")
+}
+
+fn correlation(value: &str) -> CorrelationId {
+    CorrelationId::parse(value).unwrap_or_else(|| panic!("valid correlation {value}"))
+}
+
 fn seed() -> Reconciler {
-    Reconciler::new("owner-1", "gen-1", 0, 11).expect("valid seed")
+    Reconciler::new(owner(), generation(), 0, 11).expect("valid seed")
 }
 
 fn observation(revision: u64) -> Observation {
-    Observation {
-        owner: "owner-1".to_owned(),
-        generation: "gen-1".to_owned(),
-        revision,
-        fingerprint: 11,
-    }
+    Observation::new(owner(), generation(), revision, 11)
 }
 
 fn ack(correlation: &str, base: u64, outcome: AckOutcome) -> AdapterAck {
-    AdapterAck {
-        correlation_id: correlation.to_owned(),
-        owner: "owner-1".to_owned(),
-        generation: "gen-1".to_owned(),
-        base_revision: base,
+    AdapterAck::new(
+        self::correlation(correlation),
+        owner(),
+        generation(),
+        base,
         outcome,
-    }
+    )
 }
 
 fn post(correlation: &str, revision: u64, verified: bool) -> PostObservation {
-    PostObservation {
-        observation: Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision,
-            fingerprint: 22,
-        },
-        correlation_id: correlation.to_owned(),
+    PostObservation::new(
+        Observation::new(owner(), generation(), revision, 22),
+        self::correlation(correlation),
         verified,
-        verified_preconditions: test_plan().preconditions.clone(),
-        verified_operation: test_plan().operation.clone(),
-    }
+        test_plan().preconditions.clone(),
+        test_plan().operation.clone(),
+    )
 }
 
 fn post_with_operation(
@@ -91,18 +94,13 @@ fn post_with_operation(
     verified: bool,
     operation: MoveOperation,
 ) -> PostObservation {
-    PostObservation {
-        observation: Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision,
-            fingerprint: 22,
-        },
-        correlation_id: correlation.to_owned(),
+    PostObservation::new(
+        Observation::new(owner(), generation(), revision, 22),
+        self::correlation(correlation),
         verified,
-        verified_preconditions: test_plan().preconditions.clone(),
-        verified_operation: operation,
-    }
+        test_plan().preconditions.clone(),
+        operation,
+    )
 }
 
 fn full_cycle() -> (
@@ -113,7 +111,12 @@ fn full_cycle() -> (
     let mut r = seed();
     let plan = test_plan();
     let dispatch = r
-        .propose(&plan, &observation(0), "corr-1", &Capabilities::full())
+        .propose(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
         .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
@@ -142,16 +145,21 @@ fn dispatch_binds_complete_semantic_payload() {
     let mut r = seed();
     let plan = test_plan();
     let dispatch = r
-        .propose(&plan, &observation(0), "corr-1", &Capabilities::full())
+        .propose(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
         .expect("propose");
     assert_eq!(dispatch.intent, plan.intent);
     assert_eq!(dispatch.operation, plan.operation);
     assert_eq!(dispatch.required_capability, plan.required_capability);
     assert_eq!(dispatch.preconditions, plan.preconditions);
     assert_eq!(dispatch.base_revision, 0);
-    assert_eq!(dispatch.correlation_id, "corr-1");
-    assert_eq!(dispatch.owner, "owner-1");
-    assert_eq!(dispatch.generation, "gen-1");
+    assert_eq!(dispatch.correlation_id.as_str(), "corr-1");
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert_eq!(dispatch.generation.as_str(), "gen-1");
     assert!(
         dispatch
             .preconditions
@@ -164,8 +172,13 @@ fn dispatch_binds_complete_semantic_payload() {
 fn at_most_one_pending_without_divergence_or_loss() {
     let mut r = seed();
     let plan = test_plan();
-    r.propose(&plan, &observation(0), "corr-1", &Capabilities::full())
-        .expect("first");
+    r.propose(
+        &plan,
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("first");
     let before = r.status();
     assert_eq!(before.state, StateKind::PendingUnacked);
     assert!(before.pending);
@@ -173,7 +186,12 @@ fn at_most_one_pending_without_divergence_or_loss() {
     // Second proposal, even with otherwise-valid input, is rejected without
     // divergence and without replacing the pending plan.
     assert_eq!(
-        r.propose(&plan, &observation(0), "corr-2", &Capabilities::full()),
+        r.propose(
+            &plan,
+            &observation(0),
+            &correlation("corr-2"),
+            &Capabilities::full()
+        ),
         Err(ProposeError::PendingExists)
     );
     assert_eq!(r.status(), before);
@@ -203,7 +221,7 @@ fn nondivergent_error_paths_never_advance_state() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("usable after NoPending");
@@ -213,7 +231,7 @@ fn nondivergent_error_paths_never_advance_state() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -230,7 +248,7 @@ fn nondivergent_error_paths_never_advance_state() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -246,12 +264,12 @@ fn nondivergent_error_paths_never_advance_state() {
     assert_eq!(r.verified_revision(), 0);
 
     // Second propose while pending is PendingExists, not divergence, even
-    // with garbage follow-up input.
+    // with otherwise-divergent follow-up input (stale revision, no caps).
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -260,7 +278,7 @@ fn nondivergent_error_paths_never_advance_state() {
         r.propose(
             &test_plan(),
             &observation(7),
-            "bad corr id",
+            &correlation("corr-2"),
             &Capabilities::none()
         ),
         Err(ProposeError::PendingExists)
@@ -276,12 +294,12 @@ fn mismatched_bound_identifiers_while_pending_diverge_without_commit() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     let mut bad = ack("corr-1", 0, AckOutcome::Accepted);
-    bad.owner = "owner-2".to_owned();
+    bad.owner = OwnerId::parse("owner-2").expect("valid");
     assert_eq!(
         r.acknowledge(&bad),
         Err(AckError::Diverged(DivergenceKind::OwnerMismatch))
@@ -294,12 +312,12 @@ fn mismatched_bound_identifiers_while_pending_diverge_without_commit() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     let mut bad = ack("corr-1", 0, AckOutcome::Accepted);
-    bad.generation = "gen-2".to_owned();
+    bad.generation = GenerationId::parse("gen-2").expect("valid");
     assert_eq!(
         r.acknowledge(&bad),
         Err(AckError::Diverged(DivergenceKind::GenerationMismatch))
@@ -311,7 +329,7 @@ fn mismatched_bound_identifiers_while_pending_diverge_without_commit() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -326,7 +344,7 @@ fn mismatched_bound_identifiers_while_pending_diverge_without_commit() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -341,7 +359,7 @@ fn mismatched_bound_identifiers_while_pending_diverge_without_commit() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -370,7 +388,7 @@ fn no_commit_before_accepted_ack_plus_matching_post() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -386,7 +404,7 @@ fn no_commit_before_accepted_ack_plus_matching_post() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -409,24 +427,24 @@ fn postcondition_binding_is_exact_and_bounded() {
     // Truncated verified vector diverges without commit.
     let mut r = seed();
     let plan = test_plan();
-    r.propose(&plan, &observation(0), "corr-1", &Capabilities::full())
-        .expect("propose");
+    r.propose(
+        &plan,
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     let mut truncated = plan.preconditions.clone();
     truncated.pop();
-    let bad = PostObservation {
-        observation: Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision: 0,
-            fingerprint: 22,
-        },
-        correlation_id: "corr-1".to_owned(),
-        verified: true,
-        verified_preconditions: truncated,
-        verified_operation: plan.operation.clone(),
-    };
+    let bad = PostObservation::new(
+        Observation::new(owner(), generation(), 0, 22),
+        correlation("corr-1"),
+        true,
+        truncated,
+        plan.operation.clone(),
+    );
     assert_eq!(
         r.verify(&bad),
         Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
@@ -435,23 +453,23 @@ fn postcondition_binding_is_exact_and_bounded() {
 
     // Overlong verified vector diverges without commit.
     let mut r = seed();
-    r.propose(&plan, &observation(0), "corr-1", &Capabilities::full())
-        .expect("propose");
+    r.propose(
+        &plan,
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     let overlong = vec![Precondition::AdapterMustVerifyPostconditions; MAX_PRECONDITIONS + 1];
-    let bad = PostObservation {
-        observation: Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision: 0,
-            fingerprint: 22,
-        },
-        correlation_id: "corr-1".to_owned(),
-        verified: true,
-        verified_preconditions: overlong,
-        verified_operation: plan.operation.clone(),
-    };
+    let bad = PostObservation::new(
+        Observation::new(owner(), generation(), 0, 22),
+        correlation("corr-1"),
+        true,
+        overlong,
+        plan.operation.clone(),
+    );
     assert_eq!(
         r.verify(&bad),
         Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
@@ -460,8 +478,13 @@ fn postcondition_binding_is_exact_and_bounded() {
 
     // Unverified flag diverges without commit even with exact vector.
     let mut r = seed();
-    r.propose(&plan, &observation(0), "corr-1", &Capabilities::full())
-        .expect("propose");
+    r.propose(
+        &plan,
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     assert_eq!(
@@ -480,7 +503,7 @@ fn divergent_state_is_terminal_and_immutable() {
         r.propose(
             &test_plan(),
             &observation(7),
-            "corr-1",
+            &correlation("corr-1"),
             &Capabilities::full()
         ),
         Err(ProposeError::Diverged(DivergenceKind::StaleRevision))
@@ -497,7 +520,7 @@ fn divergent_state_is_terminal_and_immutable() {
         r.propose(
             &test_plan(),
             &observation(0),
-            "corr-2",
+            &correlation("corr-2"),
             &Capabilities::full()
         ),
         Err(ProposeError::Diverged(DivergenceKind::StaleRevision))
@@ -524,72 +547,86 @@ fn oversized_and_malformed_inputs_are_bounded_and_redacted() {
     let oversized_generation = "g".repeat(MAX_GENERATION_LEN + 1);
     let oversized_correlation = "c".repeat(MAX_CORRELATION_LEN + 1);
 
-    // Oversized correlation at propose diverges typed without echo.
+    // Oversized correlation cannot construct a typed id, redacted.
+    assert!(CorrelationId::parse(&format!("{oversized_correlation}-{secret}")).is_none());
     let mut r = seed();
+    r.propose(
+        &test_plan(),
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("valid propose seeds pending");
     let err = r
-        .propose(
-            &test_plan(),
-            &observation(0),
-            &format!("{oversized_correlation}-{secret}"),
-            &Capabilities::full(),
-        )
-        .expect_err("oversized correlation must diverge");
-    assert_eq!(
-        err,
-        ProposeError::Diverged(DivergenceKind::CorrelationMismatch)
-    );
+        .acknowledge(&ack("corr-2", 0, AckOutcome::Accepted))
+        .expect_err("mismatched correlation must diverge");
+    assert_eq!(err, AckError::Diverged(DivergenceKind::CorrelationMismatch));
     assert_eq!(err.kind(), "correlation-mismatch");
     assert!(!err.kind().contains(secret));
     assert!(!err.message().contains(secret));
     assert!(!format!("{err:?}").contains(secret));
 
-    // Oversized owner in observation diverges as owner mismatch, redacted.
+    // Oversized owner cannot construct a typed id; valid mismatch still
+    // diverges as owner mismatch, redacted.
     let mut r = seed();
+    assert!(OwnerId::parse(&format!("{oversized_owner}-{secret}")).is_none());
     let mut bad_obs = observation(0);
-    bad_obs.owner = format!("{oversized_owner}-{secret}");
+    bad_obs.owner = OwnerId::parse("owner-2").expect("valid");
     let err = r
-        .propose(&test_plan(), &bad_obs, "corr-1", &Capabilities::full())
-        .expect_err("oversized owner must diverge");
+        .propose(
+            &test_plan(),
+            &bad_obs,
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect_err("mismatched owner must diverge");
     assert_eq!(err, ProposeError::Diverged(DivergenceKind::OwnerMismatch));
     assert!(!err.message().contains(secret));
     assert!(!format!("{err:?}").contains(secret));
 
-    // Oversized generation in observation diverges as generation mismatch.
+    // Oversized generation cannot construct a typed id; valid mismatch still
+    // diverges as generation mismatch.
     let mut r = seed();
+    assert!(GenerationId::parse(&format!("{oversized_generation}-{secret}")).is_none());
     let mut bad_obs = observation(0);
-    bad_obs.generation = format!("{oversized_generation}-{secret}");
+    bad_obs.generation = GenerationId::parse("gen-2").expect("valid");
     let err = r
-        .propose(&test_plan(), &bad_obs, "corr-1", &Capabilities::full())
-        .expect_err("oversized generation must diverge");
+        .propose(
+            &test_plan(),
+            &bad_obs,
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect_err("mismatched generation must diverge");
     assert_eq!(
         err,
         ProposeError::Diverged(DivergenceKind::GenerationMismatch)
     );
     assert!(!err.message().contains(secret));
 
-    // Malformed ack shape while pending diverges as correlation mismatch.
+    // Malformed correlation strings cannot construct typed ids; a valid
+    // mismatched ack while pending diverges as correlation mismatch.
+    assert!(CorrelationId::parse(&format!("bad corr {secret}")).is_none());
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
-    let mut bad_ack = ack("corr-1", 0, AckOutcome::Accepted);
-    bad_ack.correlation_id = format!("bad corr {secret}");
+    let bad_ack = ack("corr-2", 0, AckOutcome::Accepted);
     let err = r
         .acknowledge(&bad_ack)
-        .expect_err("malformed ack must diverge");
+        .expect_err("mismatched ack must diverge");
     assert_eq!(err, AckError::Diverged(DivergenceKind::CorrelationMismatch));
     assert_eq!(err.kind(), "correlation-mismatch");
     assert!(!err.message().contains(secret));
 
-    // Malformed correlation with no pending is discarded (NoPending), not
+    // Valid correlation with no pending is discarded (NoPending), not
     // divergence, and never echoes.
     let mut r = seed();
-    let mut bad_ack = ack("corr-9", 0, AckOutcome::Accepted);
-    bad_ack.correlation_id = format!("bad corr {secret}");
+    let bad_ack = ack("corr-9", 0, AckOutcome::Accepted);
     let err = r.acknowledge(&bad_ack).expect_err("no pending");
     assert_eq!(err, AckError::NoPending);
     assert_eq!(err.kind(), "no-pending");
@@ -598,12 +635,14 @@ fn oversized_and_malformed_inputs_are_bounded_and_redacted() {
 
     // Out-of-bounds revision at construction is a fixed pre-state error.
     let err =
-        Reconciler::new("owner-1", "gen-1", MAX_REVISION + 1, 11).expect_err("revision bound");
+        Reconciler::new(owner(), generation(), MAX_REVISION + 1, 11).expect_err("revision bound");
     assert_eq!(err.kind(), "revision-out-of-bounds");
 
-    // Status views carry no opaque ids.
+    // Status views carry no opaque ids; typed ids redact debug output.
     let r = seed();
     assert!(!format!("{:?}", r.status()).contains("owner-1"));
+    assert!(!format!("{:?}", owner()).contains("owner-1"));
+    assert!(!format!("{:?}", correlation("corr-1")).contains("corr-1"));
 }
 
 #[test]
@@ -667,7 +706,12 @@ fn inconsistent_hand_built_plans_diverge_without_dispatch() {
     let mut bad = test_plan();
     bad.rule = Rule::R1;
     assert_eq!(
-        r.propose(&bad, &observation(0), "corr-1", &Capabilities::full()),
+        r.propose(
+            &bad,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full()
+        ),
         Err(ProposeError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
@@ -681,7 +725,12 @@ fn inconsistent_hand_built_plans_diverge_without_dispatch() {
     let mut bad = test_plan();
     bad.required_capability = Capability::WrapPerpendicular;
     assert_eq!(
-        r.propose(&bad, &observation(0), "corr-1", &Capabilities::full()),
+        r.propose(
+            &bad,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full()
+        ),
         Err(ProposeError::Diverged(DivergenceKind::CapabilityRefused))
     );
     assert_eq!(r.verified_revision(), 0);
@@ -691,7 +740,12 @@ fn inconsistent_hand_built_plans_diverge_without_dispatch() {
     let mut bad = test_plan();
     bad.preconditions.pop();
     assert_eq!(
-        r.propose(&bad, &observation(0), "corr-1", &Capabilities::full()),
+        r.propose(
+            &bad,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full()
+        ),
         Err(ProposeError::Diverged(
             DivergenceKind::PostconditionMismatch
         ))
@@ -704,11 +758,16 @@ fn dispatch_carries_owner_generation_identity_binding() {
     let mut r = seed();
     let plan = test_plan();
     let dispatch = r
-        .propose(&plan, &observation(0), "corr-1", &Capabilities::full())
+        .propose(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
         .expect("propose");
-    assert_eq!(dispatch.correlation_id, "corr-1");
-    assert_eq!(dispatch.owner, "owner-1");
-    assert_eq!(dispatch.generation, "gen-1");
+    assert_eq!(dispatch.correlation_id.as_str(), "corr-1");
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert_eq!(dispatch.generation.as_str(), "gen-1");
     assert_eq!(dispatch.base_revision, 0);
 }
 
@@ -716,8 +775,13 @@ fn dispatch_carries_owner_generation_identity_binding() {
 fn verified_operation_mismatch_diverges_without_commit() {
     let mut r = seed();
     let plan = test_plan();
-    r.propose(&plan, &observation(0), "corr-1", &Capabilities::full())
-        .expect("propose");
+    r.propose(
+        &plan,
+        &observation(0),
+        &correlation("corr-1"),
+        &Capabilities::full(),
+    )
+    .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     let other = MoveOperation::WrapPerpendicular {
@@ -735,33 +799,37 @@ fn verified_operation_mismatch_diverges_without_commit() {
 
 #[test]
 fn malformed_identifier_shapes_classify_typed() {
-    // Malformed ack owner shape diverges as owner mismatch.
+    // Malformed session strings cannot construct typed ids.
+    assert!(OwnerId::parse("bad owner").is_none());
+    assert!(GenerationId::parse("GEN-1").is_none());
+    assert!(CorrelationId::parse("bad corr").is_none());
+    // Valid-but-mismatched ack owner diverges as owner mismatch.
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     let mut bad = ack("corr-1", 0, AckOutcome::Accepted);
-    bad.owner = "bad owner".to_owned();
+    bad.owner = OwnerId::parse("owner-2").expect("valid");
     assert_eq!(
         r.acknowledge(&bad),
         Err(AckError::Diverged(DivergenceKind::OwnerMismatch))
     );
 
-    // Malformed ack generation shape diverges as generation mismatch.
+    // Valid-but-mismatched ack generation diverges as generation mismatch.
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     let mut bad = ack("corr-1", 0, AckOutcome::Accepted);
-    bad.generation = "GEN-1".to_owned();
+    bad.generation = GenerationId::parse("gen-2").expect("valid");
     assert_eq!(
         r.acknowledge(&bad),
         Err(AckError::Diverged(DivergenceKind::GenerationMismatch))
@@ -772,7 +840,7 @@ fn malformed_identifier_shapes_classify_typed() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -781,37 +849,37 @@ fn malformed_identifier_shapes_classify_typed() {
         Err(AckError::Diverged(DivergenceKind::StaleRevision))
     );
 
-    // Malformed verify owner shape diverges as owner mismatch.
+    // Valid-but-mismatched verify owner diverges as owner mismatch.
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     let mut bad = post("corr-1", 0, true);
-    bad.observation.owner = "bad owner".to_owned();
+    bad.observation.owner = OwnerId::parse("owner-2").expect("valid");
     assert_eq!(
         r.verify(&bad),
         Err(VerifyError::Diverged(DivergenceKind::OwnerMismatch))
     );
 
-    // Malformed verify generation shape diverges as generation mismatch.
+    // Valid-but-mismatched verify generation diverges as generation mismatch.
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     let mut bad = post("corr-1", 0, true);
-    bad.observation.generation = "GEN-1".to_owned();
+    bad.observation.generation = GenerationId::parse("gen-2").expect("valid");
     assert_eq!(
         r.verify(&bad),
         Err(VerifyError::Diverged(DivergenceKind::GenerationMismatch))
@@ -822,7 +890,7 @@ fn malformed_identifier_shapes_classify_typed() {
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
@@ -833,21 +901,65 @@ fn malformed_identifier_shapes_classify_typed() {
         Err(VerifyError::Diverged(DivergenceKind::StaleRevision))
     );
 
-    // Malformed verify correlation shape diverges as correlation mismatch.
+    // Mismatched verify correlation diverges as correlation mismatch.
     let mut r = seed();
     r.propose(
         &test_plan(),
         &observation(0),
-        "corr-1",
+        &correlation("corr-1"),
         &Capabilities::full(),
     )
     .expect("propose");
     r.acknowledge(&ack("corr-1", 0, AckOutcome::Accepted))
         .expect("ack");
     assert_eq!(
-        r.verify(&post("bad corr", 0, true)),
+        r.verify(&post("corr-2", 0, true)),
         Err(VerifyError::Diverged(DivergenceKind::CorrelationMismatch))
     );
+}
+
+#[test]
+fn session_ids_are_opaque_bounded_and_redacted() {
+    // Malformed session ids cannot construct typed ids (shared bounds).
+    assert!(OwnerId::parse("").is_none());
+    assert!(OwnerId::parse("bad id").is_none());
+    assert!(OwnerId::parse(&"x".repeat(MAX_OWNER_LEN + 1)).is_none());
+    assert!(GenerationId::parse("").is_none());
+    assert!(GenerationId::parse("GEN-1").is_none());
+    assert!(GenerationId::parse(&"g".repeat(MAX_GENERATION_LEN + 1)).is_none());
+    assert!(CorrelationId::parse("").is_none());
+    assert!(CorrelationId::parse("bad corr").is_none());
+    assert!(CorrelationId::parse(&"c".repeat(MAX_CORRELATION_LEN + 1)).is_none());
+    // Valid ids expose bytes only via as_str, never via Debug/Display.
+    let owner = OwnerId::parse("owner-1").expect("valid");
+    let generation = GenerationId::parse("gen-1").expect("valid");
+    let correlation = CorrelationId::parse("corr-1").expect("valid");
+    assert_eq!(owner.as_str(), "owner-1");
+    assert_eq!(generation.as_str(), "gen-1");
+    assert_eq!(correlation.as_str(), "corr-1");
+    assert!(!format!("{owner:?}").contains("owner-1"));
+    assert!(!format!("{generation:?}").contains("gen-1"));
+    assert!(!format!("{correlation:?}").contains("corr-1"));
+    // Typed ids stay redacted inside dispatch/status/error renders.
+    let mut r = seed();
+    let dispatch = r
+        .propose(
+            &test_plan(),
+            &observation(0),
+            &correlation,
+            &Capabilities::full(),
+        )
+        .expect("propose");
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert!(!format!("{dispatch:?}").contains("owner-1"));
+    assert!(!format!("{dispatch:?}").contains("corr-1"));
+    assert!(!format!("{:?}", r.status()).contains("owner-1"));
+    assert!(!format!("{:?}", r.status()).contains("corr-1"));
+    let err = r
+        .acknowledge(&ack("corr-2", 0, AckOutcome::Accepted))
+        .expect_err("mismatch diverges");
+    assert!(!err.message().contains("owner-1"));
+    assert!(!format!("{err:?}").contains("corr-2"));
 }
 
 #[test]

@@ -98,6 +98,21 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Slice 2 Rust-core stabilization completed 2026-09-08: session
+  owner/generation/correlation IDs are bounded opaque types; observations and
+  plans use the immutable typed contract; ordered N-ary directional groups
+  require explicit positive integer shares; `cosmic_v1` is the versioned R1-R4
+  policy entry point; and the portable integer geometry projector is
+  deterministic, gap-aware, and fail-closed on malformed or unrepresentable
+  topologies. Reconciliation retains one pending plan and commits only after
+  exact acknowledgement plus verified post-observation. Bounded redacted trace
+  replay and all accepted planner/trace fixtures remain byte-stable and pass
+  through `cosmic_v1`. Deterministic unit and property-style matrix coverage,
+  `cargo fmt`, `cargo check --all-targets`, and full `cargo test` pass.
+  Full-target Clippy has only the pre-existing accepted `src/tray.rs` test
+  lints (`assertions_on_constants` and `type_complexity`). The next minimal
+  gate is slice 3: one authenticated read-only Rust/KWin request/reply with
+  strict identity, schema, correlation, timeout, and fail-closed behavior.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

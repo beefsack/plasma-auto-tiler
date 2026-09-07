@@ -17,51 +17,23 @@
 //! input (all id lengths are bounded; precondition vectors are capped).
 
 use crate::directional::{Capability, MoveIntent, MoveOperation, Precondition, Rule};
+use crate::ids::{CorrelationId, GenerationId, OwnerId};
 
 /// Adapter envelope version.
 pub const CONTRACT_VERSION: u32 = 1;
 /// Sealed POC1 planning policy version carried by plans.
 pub const POLICY_VERSION: u32 = 1;
-/// Opaque owner token bound.
-pub const MAX_OWNER_LEN: usize = 128;
-/// Opaque generation bound.
-pub const MAX_GENERATION_LEN: usize = 64;
-/// Opaque correlation bound.
-pub const MAX_CORRELATION_LEN: usize = 128;
+/// Opaque correlation token bound (shared with [`crate::ids`]).
+pub use crate::ids::MAX_CORRELATION_LEN;
+/// Opaque generation bound (shared with [`crate::ids`]).
+pub use crate::ids::MAX_GENERATION_LEN;
+/// Opaque owner token bound (shared with [`crate::ids`]).
+pub use crate::ids::MAX_OWNER_LEN;
+pub use crate::ids::{is_correlation_id, is_generation_id, is_owner_id};
 /// Revision bound (inclusive), shared with planner/POC3 bounds.
 pub const MAX_REVISION: u64 = 1_000_000;
 /// Precondition vector cap (directional plans carry at most a handful).
 pub const MAX_PRECONDITIONS: usize = 8;
-
-fn is_opaque_token(value: &str, max: usize) -> bool {
-    !value.is_empty()
-        && value.len() <= max
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_' || b == b'.')
-}
-
-/// Owner token validity: non-empty bounded opaque token.
-#[must_use]
-pub fn is_owner_id(value: &str) -> bool {
-    is_opaque_token(value, MAX_OWNER_LEN)
-}
-
-/// Correlation validity: non-empty bounded opaque token.
-#[must_use]
-pub fn is_correlation_id(value: &str) -> bool {
-    is_opaque_token(value, MAX_CORRELATION_LEN)
-}
-
-/// Generation validity: lowercase/digit/dash, bounded.
-#[must_use]
-pub fn is_generation_id(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= MAX_GENERATION_LEN
-        && value
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
-}
 
 /// Revision validity.
 #[must_use]
@@ -77,17 +49,49 @@ pub const fn is_revision(value: u64) -> bool {
 /// re-observation at the same base revision after acknowledgement.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Observation {
-    pub owner: String,
-    pub generation: String,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
     pub revision: u64,
     pub fingerprint: u64,
 }
 
 impl Observation {
+    /// Typed construction (ids already validated by [`OwnerId::parse`]).
+    #[must_use]
+    pub fn new(owner: OwnerId, generation: GenerationId, revision: u64, fingerprint: u64) -> Self {
+        Self {
+            owner,
+            generation,
+            revision,
+            fingerprint,
+        }
+    }
+
+    /// Narrow string boundary: parses session ids, checks the revision bound.
+    #[must_use]
+    pub fn from_strings(
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        fingerprint: u64,
+    ) -> Option<Self> {
+        if !is_revision(revision) {
+            return None;
+        }
+        Some(Self {
+            owner: OwnerId::parse(owner)?,
+            generation: GenerationId::parse(generation)?,
+            revision,
+            fingerprint,
+        })
+    }
+
     /// Validity without echoing input.
     #[must_use]
     pub fn validate(&self) -> bool {
-        is_owner_id(&self.owner) && is_generation_id(&self.generation) && is_revision(self.revision)
+        is_owner_id(self.owner.as_str())
+            && is_generation_id(self.generation.as_str())
+            && is_revision(self.revision)
     }
 }
 
@@ -102,9 +106,9 @@ impl Observation {
 /// self-describing identity binding for the dispatched plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Dispatch {
-    pub correlation_id: String,
-    pub owner: String,
-    pub generation: String,
+    pub correlation_id: CorrelationId,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
     pub base_revision: u64,
     pub required_capability: Capability,
     pub preconditions: Vec<Precondition>,
@@ -126,20 +130,59 @@ pub enum AckOutcome {
 /// Explicit adapter acknowledgement of a dispatched plan.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AdapterAck {
-    pub correlation_id: String,
-    pub owner: String,
-    pub generation: String,
+    pub correlation_id: CorrelationId,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
     pub base_revision: u64,
     pub outcome: AckOutcome,
 }
 
 impl AdapterAck {
+    /// Typed construction (ids already validated by `ids` parsers).
+    #[must_use]
+    pub fn new(
+        correlation_id: CorrelationId,
+        owner: OwnerId,
+        generation: GenerationId,
+        base_revision: u64,
+        outcome: AckOutcome,
+    ) -> Self {
+        Self {
+            correlation_id,
+            owner,
+            generation,
+            base_revision,
+            outcome,
+        }
+    }
+
+    /// Narrow string boundary: parses session ids without echo.
+    #[must_use]
+    pub fn from_strings(
+        correlation_id: &str,
+        owner: &str,
+        generation: &str,
+        base_revision: u64,
+        outcome: AckOutcome,
+    ) -> Option<Self> {
+        if !is_revision(base_revision) {
+            return None;
+        }
+        Some(Self {
+            correlation_id: CorrelationId::parse(correlation_id)?,
+            owner: OwnerId::parse(owner)?,
+            generation: GenerationId::parse(generation)?,
+            base_revision,
+            outcome,
+        })
+    }
+
     /// Validity without echoing input.
     #[must_use]
     pub fn validate(&self) -> bool {
-        is_correlation_id(&self.correlation_id)
-            && is_owner_id(&self.owner)
-            && is_generation_id(&self.generation)
+        is_correlation_id(self.correlation_id.as_str())
+            && is_owner_id(self.owner.as_str())
+            && is_generation_id(self.generation.as_str())
             && is_revision(self.base_revision)
     }
 }
@@ -155,19 +198,37 @@ impl AdapterAck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PostObservation {
     pub observation: Observation,
-    pub correlation_id: String,
+    pub correlation_id: CorrelationId,
     pub verified: bool,
     pub verified_preconditions: Vec<Precondition>,
     pub verified_operation: MoveOperation,
 }
 
 impl PostObservation {
+    /// Typed construction (ids already validated by `ids` parsers).
+    #[must_use]
+    pub fn new(
+        observation: Observation,
+        correlation_id: CorrelationId,
+        verified: bool,
+        verified_preconditions: Vec<Precondition>,
+        verified_operation: MoveOperation,
+    ) -> Self {
+        Self {
+            observation,
+            correlation_id,
+            verified,
+            verified_preconditions,
+            verified_operation,
+        }
+    }
+
     /// Validity without echoing input (observation plus correlation shape and
     /// bounded precondition vector).
     #[must_use]
     pub fn validate(&self) -> bool {
         self.observation.validate()
-            && is_correlation_id(&self.correlation_id)
+            && is_correlation_id(self.correlation_id.as_str())
             && self.verified_preconditions.len() <= MAX_PRECONDITIONS
     }
 }
@@ -244,20 +305,21 @@ mod tests {
 
     #[test]
     fn observation_validation_is_typed() {
-        let good = Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision: 0,
-            fingerprint: 7,
-        };
+        let good = Observation::from_strings("owner-1", "gen-1", 0, 7).expect("valid");
         assert!(good.validate());
-        let bad = Observation {
-            owner: "bad owner".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision: 0,
-            fingerprint: 7,
-        };
-        assert!(!bad.validate());
+        assert!(Observation::from_strings("bad owner", "gen-1", 0, 7).is_none());
+        assert!(Observation::from_strings("owner-1", "gen-1", MAX_REVISION + 1, 7).is_none());
+        assert!(
+            AdapterAck::from_strings(
+                "corr-1",
+                "owner-1",
+                "gen-1",
+                MAX_REVISION + 1,
+                AckOutcome::Accepted,
+            )
+            .is_none()
+        );
+        assert!(OwnerId::parse("bad owner").is_none());
     }
 
     #[test]

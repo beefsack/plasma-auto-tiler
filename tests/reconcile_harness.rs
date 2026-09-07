@@ -12,9 +12,22 @@ use plasma_auto_tiler::directional::{
     Axis, Capabilities, Direction, MoveIntent, MoveOperation, MoveOutcome, MovePlan, Node, NodeId,
     Output, OutputId, Precondition, Rule, Snapshot, WindowId, WindowLink, WorkspaceId, plan_move,
 };
+use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
 use plasma_auto_tiler::reconcile::{
     AckApplied, AckError, ProposeError, Reconciler, StateKind, VerifyError,
 };
+
+fn owner() -> OwnerId {
+    OwnerId::parse("owner-1").expect("valid owner")
+}
+
+fn generation() -> GenerationId {
+    GenerationId::parse("gen-1").expect("valid generation")
+}
+
+fn correlation_id(value: &str) -> CorrelationId {
+    CorrelationId::parse(value).unwrap_or_else(|| panic!("valid correlation {value}"))
+}
 
 /// Fake headless compositor: owns the snapshot the real POC1 planner runs
 /// against, plus the adapter-contract view (owner/generation/revision,
@@ -37,7 +50,7 @@ impl FakeCompositor {
             direction: Direction::Right,
         };
         Self {
-            reconciler: Reconciler::new("owner-1", "gen-1", 0, 11).expect("valid seed"),
+            reconciler: Reconciler::new(owner(), generation(), 0, 11).expect("valid seed"),
             capabilities: Capabilities::full(),
             snapshot,
             intent,
@@ -53,12 +66,7 @@ impl FakeCompositor {
     }
 
     fn observation(&self, revision: u64) -> Observation {
-        Observation {
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            revision,
-            fingerprint: 11,
-        }
+        Observation::new(owner(), generation(), revision, 11)
     }
 
     /// Real POC1 planner plan against the owned fake snapshot.
@@ -69,47 +77,40 @@ impl FakeCompositor {
         }
     }
 
-    fn correlation(&mut self) -> String {
+    fn correlation(&mut self) -> CorrelationId {
         let id = format!("corr-{}", self.next_correlation);
         self.next_correlation += 1;
-        id
+        correlation_id(&id)
     }
 
-    fn ack(&self, correlation: &str, base: u64, outcome: AckOutcome) -> AdapterAck {
-        AdapterAck {
-            correlation_id: correlation.to_owned(),
-            owner: "owner-1".to_owned(),
-            generation: "gen-1".to_owned(),
-            base_revision: base,
-            outcome,
-        }
+    fn ack(&self, correlation: &CorrelationId, base: u64, outcome: AckOutcome) -> AdapterAck {
+        AdapterAck::new(correlation.clone(), owner(), generation(), base, outcome)
+    }
+
+    fn ack_str(&self, correlation: &str, base: u64, outcome: AckOutcome) -> AdapterAck {
+        self.ack(&correlation_id(correlation), base, outcome)
     }
 
     fn post(
         &self,
-        correlation: &str,
+        correlation: &CorrelationId,
         revision: u64,
         verified: bool,
         verified_preconditions: Vec<Precondition>,
         verified_operation: MoveOperation,
     ) -> PostObservation {
-        PostObservation {
-            observation: Observation {
-                owner: "owner-1".to_owned(),
-                generation: "gen-1".to_owned(),
-                revision,
-                fingerprint: 22,
-            },
-            correlation_id: correlation.to_owned(),
+        PostObservation::new(
+            Observation::new(owner(), generation(), revision, 22),
+            correlation.clone(),
             verified,
             verified_preconditions,
             verified_operation,
-        }
+        )
     }
 
     fn post_for_plan(
         &self,
-        correlation: &str,
+        correlation: &CorrelationId,
         revision: u64,
         verified: bool,
         plan: &MovePlan,
@@ -138,6 +139,7 @@ fn r2a_snapshot() -> Snapshot {
                 id: NodeId::from("B"),
             },
         ],
+        shares: vec![1, 1],
     };
     let output = Output {
         id: OutputId::from("source"),
@@ -183,9 +185,9 @@ fn converges_with_real_planner_plan() {
         )
         .expect("propose real plan");
     assert_eq!(dispatch.base_revision, base);
-    assert_eq!(dispatch.correlation_id, correlation);
-    assert_eq!(dispatch.owner, "owner-1");
-    assert_eq!(dispatch.generation, "gen-1");
+    assert_eq!(dispatch.correlation_id.as_str(), correlation.as_str());
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert_eq!(dispatch.generation.as_str(), "gen-1");
     assert_eq!(dispatch.operation, plan.operation);
     assert_eq!(dispatch.intent, plan.intent);
     assert_eq!(dispatch.preconditions, plan.preconditions);
@@ -229,9 +231,9 @@ fn dispatch_carries_executable_semantic_operation() {
     // plus its bound rule/capability/preconditions, with no geometry or native
     // handles anywhere in the envelope.
     assert_eq!(dispatch.base_revision, 0);
-    assert_eq!(dispatch.correlation_id, correlation);
-    assert_eq!(dispatch.owner, "owner-1");
-    assert_eq!(dispatch.generation, "gen-1");
+    assert_eq!(dispatch.correlation_id.as_str(), correlation.as_str());
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert_eq!(dispatch.generation.as_str(), "gen-1");
     assert_eq!(dispatch.operation, plan.operation);
     assert_eq!(
         dispatch.operation,
@@ -276,13 +278,17 @@ fn stale_snapshot_revision_diverges_terminal() {
     assert_eq!(fake.reconciler.status().state, StateKind::Divergent);
     // Terminal: no further dispatch or mutation is possible.
     assert_eq!(
-        fake.reconciler
-            .propose(&plan, &fake.observation(0), "corr-2", &fake.capabilities),
+        fake.reconciler.propose(
+            &plan,
+            &fake.observation(0),
+            &correlation_id("corr-2"),
+            &fake.capabilities
+        ),
         Err(ProposeError::Diverged(DivergenceKind::StaleRevision))
     );
     assert_eq!(
         fake.reconciler
-            .acknowledge(&fake.ack("corr-2", 0, AckOutcome::Accepted)),
+            .acknowledge(&fake.ack_str("corr-2", 0, AckOutcome::Accepted)),
         Err(AckError::Diverged(DivergenceKind::StaleRevision))
     );
     assert_eq!(fake.reconciler.verified_revision(), 0);
@@ -479,7 +485,7 @@ fn out_of_order_ack_and_early_verify_are_rejected() {
         .expect("propose");
     assert_eq!(
         fake.reconciler
-            .acknowledge(&fake.ack("corr-999", 0, AckOutcome::Accepted)),
+            .acknowledge(&fake.ack_str("corr-999", 0, AckOutcome::Accepted)),
         Err(AckError::Diverged(DivergenceKind::CorrelationMismatch))
     );
     assert_eq!(fake.reconciler.status().state, StateKind::Divergent);
@@ -507,7 +513,7 @@ fn out_of_order_ack_and_early_verify_are_rejected() {
     let mut fake = FakeCompositor::new();
     assert_eq!(
         fake.reconciler
-            .acknowledge(&fake.ack("corr-9", 0, AckOutcome::Accepted)),
+            .acknowledge(&fake.ack_str("corr-9", 0, AckOutcome::Accepted)),
         Err(AckError::NoPending)
     );
     assert_eq!(fake.reconciler.status().state, StateKind::Verified);
@@ -603,9 +609,9 @@ fn dispatch_binds_owner_generation_identity() {
             &fake.capabilities,
         )
         .expect("propose");
-    assert_eq!(dispatch.correlation_id, correlation);
-    assert_eq!(dispatch.owner, "owner-1");
-    assert_eq!(dispatch.generation, "gen-1");
+    assert_eq!(dispatch.correlation_id.as_str(), correlation.as_str());
+    assert_eq!(dispatch.owner.as_str(), "owner-1");
+    assert_eq!(dispatch.generation.as_str(), "gen-1");
     assert_eq!(dispatch.base_revision, 0);
 }
 
@@ -704,7 +710,11 @@ fn mismatched_verified_operation_diverges_without_commit() {
 
 #[test]
 fn malformed_ack_and_verify_shapes_classify_typed() {
-    // Malformed ack owner shape diverges as owner mismatch.
+    // Malformed session strings cannot construct typed ids at the boundary.
+    assert!(OwnerId::parse("bad owner").is_none());
+    assert!(GenerationId::parse("GEN-1").is_none());
+    assert!(CorrelationId::parse("bad corr").is_none());
+    // Valid-but-mismatched ack owner diverges as owner mismatch.
     let mut fake = FakeCompositor::new();
     let plan = fake.real_plan();
     let correlation = fake.correlation();
@@ -717,13 +727,13 @@ fn malformed_ack_and_verify_shapes_classify_typed() {
         )
         .expect("propose");
     let mut bad_ack = fake.ack(&correlation, 0, AckOutcome::Accepted);
-    bad_ack.owner = "bad owner".to_owned();
+    bad_ack.owner = OwnerId::parse("owner-2").expect("valid");
     assert_eq!(
         fake.reconciler.acknowledge(&bad_ack),
         Err(AckError::Diverged(DivergenceKind::OwnerMismatch))
     );
 
-    // Malformed ack generation shape diverges as generation mismatch.
+    // Valid-but-mismatched ack generation diverges as generation mismatch.
     let mut fake = FakeCompositor::new();
     let plan = fake.real_plan();
     let correlation = fake.correlation();
@@ -736,7 +746,7 @@ fn malformed_ack_and_verify_shapes_classify_typed() {
         )
         .expect("propose");
     let mut bad_ack = fake.ack(&correlation, 0, AckOutcome::Accepted);
-    bad_ack.generation = "GEN-1".to_owned();
+    bad_ack.generation = GenerationId::parse("gen-2").expect("valid");
     assert_eq!(
         fake.reconciler.acknowledge(&bad_ack),
         Err(AckError::Diverged(DivergenceKind::GenerationMismatch))
@@ -764,7 +774,7 @@ fn malformed_ack_and_verify_shapes_classify_typed() {
         Err(AckError::Diverged(DivergenceKind::StaleRevision))
     );
 
-    // Malformed verify owner shape diverges as owner mismatch.
+    // Mismatched verify owner diverges as owner mismatch.
     let mut fake = FakeCompositor::new();
     let plan = fake.real_plan();
     let correlation = fake.correlation();
@@ -780,7 +790,7 @@ fn malformed_ack_and_verify_shapes_classify_typed() {
         .acknowledge(&fake.ack(&correlation, 0, AckOutcome::Accepted))
         .expect("ack");
     let mut bad_post = fake.post_for_plan(&correlation, 0, true, &plan);
-    bad_post.observation.owner = "bad owner".to_owned();
+    bad_post.observation.owner = OwnerId::parse("owner-2").expect("valid");
     assert_eq!(
         fake.reconciler.verify(&bad_post),
         Err(VerifyError::Diverged(DivergenceKind::OwnerMismatch))
