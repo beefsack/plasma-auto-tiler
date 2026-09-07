@@ -150,11 +150,25 @@ Historical implementation detail is recoverable in Git history.
 ## COSMIC Movement And Groups
 
 - COSMIC-style tiling and directional movement are MVP. The directional path
-  replaces the legacy path; there is no legacy fallback. Production promotion
-  and live acceptance remain gated by the active review findings.
+  replaces the legacy path; there is no legacy fallback after a path is
+  promoted.
+- Durable direction, authorized 2026-09-07: Rust is the structural authority
+  for portable deterministic topology, ordered N-ary groups and shares,
+  logical workspaces and outputs, focus/navigation, movement, and
+  reconciliation. Thin platform adapters own native observation, actuation,
+  lifecycle, permissions, and effects. On KWin, direct geometry is the
+  structural actuator; Custom Tiles are not a second topology authority.
+- The existing Custom Tile runtime remains a bounded legacy behavior while
+  migration slices are opt-in. A promoted replacement has no legacy fallback,
+  but the whole runtime is not switched at once. Tabs, stacks, shared tiles,
+  and compositor group behavior remain unselected.
 - Grouping here means nested split-tree structure and placement. `H[H[1 2] 3]`
   is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
   group behavior are excluded.
+- A KWin fork or patch is rejected. The project must operate within existing
+  KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
+  selected replacement architecture; the bounded adapter remains active only
+  until its individual replacement paths are promoted.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No group carrier,
   controls, bindings, or shared active-border behavior is selected.
@@ -218,7 +232,80 @@ Historical implementation detail is recoverable in Git history.
 
 ## Deferred Scope
 
-- Retain JavaScript for discrete window add/remove management. Portable
-  cross-WM/OS engine research follows settlement of the COSMIC and pointer
-  paths. Group behavior, inactive borders, Steam-specific handling, and
-  complete keyboard-layout support remain deferred.
+- Rust is the selected engine language and owns the durable portable model.
+  The migration starts incrementally through opt-in, shadow, and diagnostic
+  modes; it does not claim stock-KWin parity, atomic geometry, or Windows/macOS
+  delivery details.
+- The durable direction is a platform-neutral Rust deterministic core for
+  logical tiling, ordered split-tree grouping, navigation, movement policy,
+  capability-gated plans, and reconciliation. Platform adapters retain native
+  window/output/workspace observation, identity, permissions, geometry/focus
+  actuation, event ordering, acknowledgement, recovery, effects, UI, and
+  delivery authority. This selects neither an IPC/service/FFI topology nor a
+  Windows/macOS runtime or packaging model. The core does not promise uniform
+  workspace, group, atomicity, or geometry semantics where public platform APIs
+   cannot provide them; unsupported capability paths fail closed.
+- KWin direct geometry remains sequential and non-atomic. The adapter must be
+  signal-driven, not poll pointer resize, minimize visible intermediate frames,
+  and record applied-versus-acknowledged divergence without claiming atomicity.
+  A KWin fork or patch remains rejected.
+- The authorized Stage 2 transport-free contract is complete: it has one
+  pending plan at most, binds owner/generation/correlation/base revision plus
+  complete semantic intent/operation/capability/preconditions, and commits only
+  after an exact accepted acknowledgement and matching verified
+  post-observation. Stale, partial, mismatched, refused, or lost adapter
+  results are terminal divergence. This selects no platform adapter, runtime,
+  IPC/FFI, packaging, rollback, or atomicity emulation.
+- The authorized Stage 3 offline trace contract is complete: bounded redacted
+  JSON v1 fixtures replay ordered request, emitted-plan, acknowledgement,
+  verification, and adapter-loss events through that same planner and
+  reconciler. It permits only opaque session identifiers and structural policy
+  data, rejects sensitive/platform fields by schema, and locks checked-in
+  fixture bytes plus independently asserted replay results. The byte lock is
+  repository-fixture stability only, not a serializer-ordering or cross-platform
+  byte-portability claim. It selects no recorder, adapter, runtime, live trace
+  collection, IPC/FFI, packaging, or native operation.
+- POC2 extends that POC only with a manually started session-D-Bus planner
+  service (`org.plasmaautotiler.Planner`, `/org/plasmaautotiler/Planner`,
+  `org.plasmaautotiler.Planner1`) and a separately built/manual KWin one-shot
+  shadow probe. Its bounded JSON v1 contract is advisory-only. The probe reads
+  one active horizontal two-leaf scope, declares only `swap-neighbor`, freshly
+  revalidates native identity and preconditions, and logs only. It has no
+  actuation, tray, autostart, package, KCM, persistence, shortcut, or ordinary
+  KWin-startup route. Same-session planner-name spoofing remains out of scope;
+  no captions, geometry, handles, or execution commands cross the boundary.
+- POC2 is static-only until an exact authorized protected-runtime recovery,
+  baseline, and restoration procedure permits a current-session read-only
+  proof. It proves neither native actuation nor stock-KWin parity.
+- POC3 was a separate, disposable, manually invoked actuation experiment. Rust
+  owns a non-persistent single-output/single-workspace logical three-window
+  model and emits non-atomic complete geometry/focus intents; the KWin adapter
+  owns exact identity observation, eligibility, scope revalidation, sequential
+  application, observed completion, divergence, and cleanup. It is disabled by
+  default and refuses to coexist with the production plugin. It enrolls only
+  three user-supplied public `String(Window.internalId)` values for newly
+  opened disposable normal untiled windows. Its only live cleanup model is an
+  explicitly selected `close-disposable` directive for those exact windows.
+  It has no Custom Tile, shortcut, autostart, persistence, tray, KCM, workspace,
+  output, package, or normal-startup route. Its final host evidence and limits
+  are retained in [the archived record](changes/archive/poc3-disposable-rust-actuation.md).
+  It establishes no KWin parity, production replacement, atomicity, configure
+  acknowledgement, or hostile same-uid service-authentication claim.
+- Its bounded host-only pilot used temporary production suspend/resume authority
+  that was pragmatic only:
+  `isScriptLoaded("plasma-auto-tiler-kwin")`, exact plugin-ID unload/reload,
+  one accepted active Nix-store package/source resolution, exact KWin
+  owner/PID/start-tick/canonical-executable pinning, and observable behavior.
+  KWin 6.7.4 still cannot prove Script-object-to-plugin/source mapping,
+  duplicate count, handler absence, or exact running-state restoration. The
+  pilot remained disabled by default and had no session boundary, config,
+  dotfile, rebuild, shortcut, Custom Tile, or production-delivery change.
+- A host-only systemd fallback accepts only a D-Bus KWin owner whose PPid is
+  exactly `plasma-kwin_wayland.service` MainPID, with matching owner/PID,
+  `/proc` tick, boot ID, and Nix-store `ExecStart` identity. A readable
+  `/proc/exe` must agree; cgroup `/` is insufficient by itself and no deeper
+  descendant is accepted. Historical attempt detail is retained in the archived
+  POC record.
+- Retain JavaScript for discrete window add/remove management. Group behavior,
+  inactive borders, Steam-specific handling, and complete keyboard-layout
+  support remain deferred.

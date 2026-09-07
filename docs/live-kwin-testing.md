@@ -30,19 +30,31 @@ grant authorization beyond [Current Decisions](decisions.md#live-kwinplasma-boun
   path passed through `--wayland-display`. Never use the host runtime directory
   or remove host sockets.
 - Before and after a bounded nested run, record the host `~/.config/kwinrc`
-  SHA-256 and nanosecond mtime. The hash must not change. Confirm that the
-  nested run created and used its own private `kwinrc`; an unexpected hash
-  change is a hard stop.
+  SHA-256 and nanosecond mtime as a read-only diagnostic. Drift is a warning,
+  never a veto and never restored or mutated: exact manifest-bound cleanup
+  proceeds only after independent checkpoint isolation proof (exact private
+  `HOME`/`XDG_*`/`KDEHOME`/bus/socket plus canonical wrapper identity,
+  PID/start-tick, and workdir, with no host config path retained in the
+  checkpoint environ/cmdline/known FDs/maps). Checkpoint-only: the proof
+  validates retained state at that instant and does not prove against host
+  config opened then closed (or mapped then unmapped) before the checkpoint.
+  Confirm that the nested run created and used its own private `kwinrc`.
 
 ## KWin Script Lifecycle
 
 - KWin executes the generated non-module ES2017 IIFE only. Do not ship ESM,
   Node imports, source maps, optional catch bindings, or manually edited output.
 - `/Scripting` returns a signed `i` script ID from `loadScript(s)` or
-  `loadScript(ss)`. Retain and strictly parse the raw result, accept only a
-  non-negative 32-bit ID, introspect that exact script object, and run only it.
-  Never guess `Script0`, call global `Scripting.start`, or use a KPackage as a
-  test path.
+  `loadScript(ss)`. `-1` is the failure sentinel; retain and strictly parse the
+  raw result, accept only a non-negative 32-bit ID, introspect that exact script
+  object, and run only it. `0` is a valid first ID and maps to
+  `/Scripting/Script0` only when returned. Never guess `Script0`, call global
+  `Scripting.start`, or use a KPackage as a test path.
+- The current public host `/Scripting` API has no loaded-script enumeration,
+  Script-object plugin/source identity, duplicate count, running-state property,
+  or handler-absence proof. Do not unload a pre-existing production script for a
+  host pilot unless an authoritative exact in-memory source/object restore route
+  exists. A boolean `isScriptLoaded` reply and checkout hash do not provide one.
 - `scripts/start-test.sh` is the manual lifecycle interface. `start` builds,
   loads, runs, and waits for current-PID readiness diagnostics; `status` and
   `diagnostics` are read-only; `stop` unloads only the exact project script.
