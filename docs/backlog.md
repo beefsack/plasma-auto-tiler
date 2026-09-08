@@ -187,9 +187,17 @@ Only meaningful pending or active work is listed.
              grow-before-shrink order, then acknowledges and fresh-observes
              before Rust commits. Rust/KWin authority, refusal, drift, loss,
              ordering, focus, and source-isolation contracts pass with no live
-             work and no Custom Tile/shortcut/configuration route. Next:
-             signal-driven pointer split-share resizing through this authority;
-             parked shadow transport/live cleanup remains unchanged |
+             work and no Custom Tile/shortcut/configuration route. Static
+             signal-driven pointer split-share resizing is now complete through
+             the same disabled-by-default exclusive authority: public per-Window
+             interactive start/step/finish signals distinguish move from resize,
+             Rust derives exact projectable boundary shares from proposed
+             geometry, and KWin coalesces one latest step, writes changed
+             neighbours only, and commits through fresh observation. Static
+             Rust/KWin contracts pass with no live work. Next: KWin drag-end
+             snap-back and drop adapter integration, separate from pointer
+             resize topology; parked shadow transport/live cleanup remains
+             unchanged |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

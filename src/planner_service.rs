@@ -13,7 +13,11 @@
 //! `DescribeResize` (bounded v1 keyboard resize transaction over the owned
 //! resize service, delegating to one `Session`'s `propose_resize` split-share
 //! planning with complete adjacent/share/projected geometry and retained
-//! focus), and
+//! focus), `DescribePointerResize` (bounded v1 pointer split-share resize
+//! transaction over the same owned resize service, delegating to one
+//! `Session`'s `propose_pointer_resize` with a Rust-derived boundary/shares
+//! from a normalized boundary coordinate; same ack/verify boundary, keyboard
+//! wire behavior unchanged), and
 //! `DescribeShadowProjection` (read-only v1 shadow projection
 //! request -> desired rectangles for exactly three opaque windows, delegated
 //! through `AdoptedTrio` + `geometry::project`; no native
@@ -68,6 +72,9 @@ pub const MOVEMENT_MAX_REPLY: usize = MOVEMENT_MAX_REPLY_BYTES;
 pub const RESIZE_METHOD: &str = "DescribeResize";
 /// Bounded resize reply cap, mirroring the portable resize service bound.
 pub const RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
+pub const POINTER_RESIZE_METHOD: &str = "DescribePointerResize";
+/// Bounded pointer-resize reply cap (same portable resize service bound).
+pub const POINTER_RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -261,13 +268,32 @@ impl PlannerEndpoint {
     /// guard and have passed caller verification; this only locks the
     /// service briefly with no awaits while held. A poisoned service is
     /// terminal fail-closed. Separate pending from focus and movement; same
-    /// authentication and one-flight rules.
+    /// authentication and one-flight rules. Action-fenced: keyboard
+    /// `request` plus shared ack/verify/loss only; `request-pointer` is
+    /// rejected without mutation and pointer-owned pending is never touched.
     fn evaluate_resize_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
             .resize_service
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
-        Ok(service.evaluate_json(request))
+        Ok(service.evaluate_keyboard_json(request))
+    }
+
+    /// Synchronous pointer-resize transaction route over the same shared
+    /// owned resize service (distinct D-Bus method so keyboard wire behavior
+    /// is unchanged). Same single-flight/poison rules as
+    /// [`Self::evaluate_resize_request`]; the JSON `action` must be
+    /// `request-pointer` with a normalized `proposed_boundary`, while
+    /// `acknowledge`/`verify`/`note-loss` bind only to the same pointer
+    /// request cycle. Keyboard `request` and keyboard-owned pending cycles
+    /// are rejected without mutation, preserving sequential pointer
+    /// ack/verify and keyboard behavior.
+    fn evaluate_pointer_resize_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut service = self
+            .resize_service
+            .lock()
+            .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
+        Ok(service.evaluate_pointer_json(request))
     }
 }
 
@@ -1522,7 +1548,8 @@ impl PlannerEndpoint {
         // transaction over the endpoint-owned in-memory resize service
         // (single portable session, single pending, `Session::propose_resize`
         // split-share with complete adjacent/share/projected geometry and
-        // retained focus).
+        // retained focus). Action-fenced to keyboard `request` plus shared
+        // ack/verify/loss only; pointer actions never mutate this route.
         let Some(_guard) = self.operation_lock.try_lock() else {
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
@@ -1540,6 +1567,47 @@ impl PlannerEndpoint {
         };
         let reply = self.evaluate_resize_request(&request)?;
         if reply.len() > RESIZE_MAX_REPLY {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
+    }
+
+    async fn describe_pointer_resize(
+        &self,
+        request: String,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> Result<String, PlannerError> {
+        // Pointer split-share resize route alongside the frozen keyboard
+        // `DescribeResize` contract: the exact same bounded non-queuing
+        // single-flight, current-KWin-owner/same-uid/executable pinning with
+        // pre/post owner revalidation, connection-loss, and reply-size
+        // checks over the same endpoint-owned in-memory resize service
+        // (single portable session, single pending). The JSON `action` must
+        // be `request-pointer` with a Rust-derived boundary/shares from a
+        // normalized `proposed_boundary`; `acknowledge`/`verify`/`note-loss`
+        // bind only to the same pointer cycle. Keyboard actions and
+        // keyboard-owned pending cycles never mutate through this route.
+        // Keyboard wire behavior is unchanged.
+        let Some(_guard) = self.operation_lock.try_lock() else {
+            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+        };
+        if emitter.connection().is_closed() {
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
+        let caller = header.sender().map(ToString::to_string);
+        let Some(caller) = caller.as_deref() else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let reply = self.evaluate_pointer_resize_request(&request)?;
+        if reply.len() > POINTER_RESIZE_MAX_REPLY {
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));

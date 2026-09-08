@@ -91,6 +91,13 @@ use crate::reconcile::{AckApplied, AckError, Commit, Reconciler, StatusView, Ver
 pub const MAX_OBSERVED_WINDOWS: usize = 64;
 /// Logical domain bound.
 pub const MAX_DOMAINS: usize = 16;
+/// Portable pointer split-share minimum adjacent segment along the resize
+/// axis (device units). Pair regions narrower than twice this minimum have
+/// no feasible pointer boundary.
+pub const POINTER_RESIZE_MIN_SEGMENT: i32 = 32;
+/// Portable pointer boundary coordinate bound (device units, absolute
+/// domain-space coordinate along the matching axis).
+pub const POINTER_RESIZE_COORD_BOUND: i32 = 16384;
 
 /// Logical output domain: separate output/workspace scope with explicit
 /// portable bounds and gap for the deterministic projector, plus configured
@@ -2103,6 +2110,302 @@ impl Session {
             }
             Err(other) => Err(other),
         }
+    }
+
+    /// Propose portable pointer split-share resize for the selected exact
+    /// opaque `(domain, window)` pair.
+    ///
+    /// Rust derives the target matching-axis split boundary and the two
+    /// adjacent shares itself; the caller never supplies shares. Inputs are
+    /// the captured focused tiled source/domain, the intentional `direction`
+    /// selecting which adjacent boundary of the focused leaf moves, and the
+    /// normalized absolute `proposed_boundary` coordinate in domain work-area
+    /// space along the matching axis (`x` for horizontal, `y` for vertical).
+    /// Structural preconditions are the complete session observation plus
+    /// the accepted topology/membership/focus/capability binding, exactly
+    /// like [`Session::propose_resize`].
+    ///
+    /// Derivation: nearest matching-axis ancestor with a direct neighbor in
+    /// `direction` (keyboard ancestor rule, outward on exhausted pairs);
+    /// the proposed coordinate is mapped to desired adjacent pixel extents
+    /// inside that pair region, clamped to
+    /// [`POINTER_RESIZE_MIN_SEGMENT`], then converted to exact
+    /// pixel-projectable integer shares (only the two adjacent shares change
+    /// ratios, plus an exact ratio-preserving normalization of the rest of
+    /// the selected group when precision requires it; topology/order/
+    /// descendants unchanged, focus retained). KWin/JS share math is never
+    /// trusted: computed shares pass through the shared
+    /// [`crate::directional::apply_resize_shares`] primitive and the full
+    /// projector before any pending is staged.
+    ///
+    /// Fail-closed: stale/revision/membership/domain/capability/pending
+    /// inputs refuse or diverge like keyboard; proposed coordinates outside
+    /// the domain work-area extent refuse as [`RefusalKind::MalformedInput`];
+    /// unprojectable results refuse as [`RefusalKind::MalformedTopology`];
+    /// missing or minimum-exhausted boundaries refuse as
+    /// [`RefusalKind::Unchanged`] with no plan and no pending. Commits only
+    /// via acknowledge-then-[`Session::verify_resize`], sharing the keyboard
+    /// reconciliation boundary and operation shape.
+    #[allow(clippy::too_many_arguments)]
+    pub fn propose_pointer_resize(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        proposed_boundary: i32,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<SessionResizePlan, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        let Some(own_domain) = self.domains.iter().find(|d| &d.key() == domain).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if window.0.is_empty() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if !(-POINTER_RESIZE_COORD_BOUND..=POINTER_RESIZE_COORD_BOUND).contains(&proposed_boundary)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let (Some(focused_domain), Some(focused_leaf)) =
+            (self.focused_domain.clone(), self.focused_leaf.clone())
+        else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        if &focused_domain != domain {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if self.exceptions.contains_key(&focused_window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if window != &focused_window {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        if let Some(entry) = session_observation
+            .windows
+            .iter()
+            .find(|w| w.window == focused_window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if !capabilities.supports(crate::contract::ResizeCapability::KeyboardResize) {
+            return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+        }
+        // Normalized coordinate must land inside the domain work-area extent
+        // along the matching axis; outside is malformed, never clamped.
+        let wanted = Axis::for_direction(direction);
+        let inside_work_area = match wanted {
+            Axis::Horizontal => {
+                proposed_boundary >= own_domain.bounds.x
+                    && proposed_boundary <= own_domain.bounds.x + own_domain.bounds.w
+            }
+            Axis::Vertical => {
+                proposed_boundary >= own_domain.bounds.y
+                    && proposed_boundary <= own_domain.bounds.y + own_domain.bounds.h
+            }
+        };
+        if !inside_work_area {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        // Project the accepted topology once: source of truth for group
+        // extents and adjacent pixel sizes.
+        let accepted_geometry =
+            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
+                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &accepted_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let Some(pointer) = derive_pointer_shares(
+            &tree,
+            &focused_leaf,
+            direction,
+            proposed_boundary,
+            &own_domain,
+            &accepted_geometry,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let (target, new_shares, effective_boundary) = match pointer {
+            PointerDerived::Unchanged => {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            PointerDerived::Planned {
+                target,
+                new_shares,
+                effective_boundary,
+            } => (target, new_shares, effective_boundary),
+        };
+        let Some(updated_tree) =
+            crate::directional::apply_resize_shares(&tree, &target.group_id, &new_shares)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(domain.clone(), Some(updated_tree));
+        if desired_trees == self.trees {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        if !validate_topology(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            &self.exceptions,
+            &Some(domain.clone()),
+            &Some(focused_leaf.clone()),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            std::slice::from_ref(domain),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &desired_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        // Minimum-size projectability: every desired leaf in the affected
+        // domain keeps a positive extent along the resize axis with at least
+        // the portable minimum on the two resized adjacent children.
+        if !pointer_minimum_holds(&desired_geometry, &target, domain, wanted) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        // Exact projectability: the complete projected geometry must place
+        // the effective (clamped) boundary exactly after integer projection
+        // (including nested/N-ary/gaps). Unclamped proposals have
+        // `effective == proposed`; clamped in-work-area proposals bind the
+        // clamped edge. A mismatch means the clamped result cannot represent
+        // the proposal; refuse as unchanged with no plan and no pending, so
+        // the adapter never faces a post-observation mismatch for a
+        // native-owned source showing the effective edge. Never snap to a
+        // nearby boundary.
+        let Some(projected_boundary) = pointer_projected_boundary(
+            &desired_geometry,
+            desired_trees
+                .get(domain)
+                .cloned()
+                .flatten()
+                .as_ref()
+                .expect("desired tree present"),
+            &target,
+            wanted,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if projected_boundary != effective_boundary {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let intent = ResizeIntent {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction,
+        };
+        let operation = ResizeOperation {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction,
+            target_group: target.group_id.clone(),
+            focused_child: target.focused_child.clone(),
+            neighbor_child: target.neighbor_child.clone(),
+            focused_index: target.focused_index,
+            neighbor_index: target.neighbor_index,
+            old_shares: target.old_shares.clone(),
+            new_shares: new_shares.clone(),
+        };
+        let plan = ResizePlan::for_operation(intent, operation);
+        let dispatch = match self.reconciler.propose_pointer_resize(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
+        let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
+        self.pending_desired = Some(PendingDesired {
+            trees: desired_trees.clone(),
+            windows: self.windows.clone(),
+            focused_domain: Some(domain.clone()),
+            focused_leaf: Some(focused_leaf.clone()),
+            exceptions: self.exceptions.clone(),
+        });
+        Ok(SessionResizePlan {
+            dispatch,
+            resize_plan: plan,
+            desired_snapshot,
+            desired_focus_domain: domain.clone(),
+            desired_focus_leaf: focused_leaf,
+            desired_geometry,
+        })
     }
 
     /// Commit a pending drag plan after acknowledgement. On commit the pending
@@ -4304,6 +4607,513 @@ fn generate_group_id(
             return candidate;
         }
         n += 1;
+    }
+}
+
+/// Portable pointer target: the Rust-derived matching-axis split boundary
+/// plus the selected adjacent pair and its current shares.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct PointerTarget {
+    group_id: NodeId,
+    focused_index: usize,
+    neighbor_index: usize,
+    focused_child: NodeId,
+    neighbor_child: NodeId,
+    old_shares: Vec<u64>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PointerDerived {
+    Unchanged,
+    Planned {
+        target: PointerTarget,
+        new_shares: Vec<u64>,
+        effective_boundary: i32,
+    },
+}
+
+struct PointerLevel {
+    group_id: NodeId,
+    axis: Axis,
+    children: Vec<NodeId>,
+    shares: Vec<u64>,
+    child_index: usize,
+}
+
+fn pointer_path(node: &Node, focused: &NodeId, out: &mut Vec<PointerLevel>) -> bool {
+    match node {
+        Node::Leaf { .. } => false,
+        Node::Group {
+            id,
+            axis,
+            children,
+            shares,
+        } => {
+            for (index, child) in children.iter().enumerate() {
+                if child.id() == focused {
+                    out.push(PointerLevel {
+                        group_id: id.clone(),
+                        axis: *axis,
+                        children: children.iter().map(|c| c.id().clone()).collect(),
+                        shares: shares.clone(),
+                        child_index: index,
+                    });
+                    return true;
+                }
+                if subtree_contains(child, focused) {
+                    let found = pointer_path(child, focused, out);
+                    if found {
+                        out.push(PointerLevel {
+                            group_id: id.clone(),
+                            axis: *axis,
+                            children: children.iter().map(|c| c.id().clone()).collect(),
+                            shares: shares.clone(),
+                            child_index: index,
+                        });
+                        return true;
+                    }
+                    return false;
+                }
+            }
+            false
+        }
+    }
+}
+
+/// Direct-child projected extent along `axis` for one child of the target
+/// group: bounding box of its descendant accepted leaves.
+fn pointer_child_extent(
+    tree: &Node,
+    child: &NodeId,
+    axis: Axis,
+    geometry: &[DesiredGeometry],
+) -> Option<i64> {
+    let mut leaves = Vec::new();
+    collect_pointer_leaves(tree, child, &mut leaves);
+    if leaves.is_empty() {
+        return None;
+    }
+    let mut positions: Vec<(i32, i32)> = Vec::new();
+    for leaf in &leaves {
+        let entry = geometry.iter().find(|g| &g.leaf == leaf)?;
+        positions.push(match axis {
+            Axis::Horizontal => (entry.rect.x, entry.rect.w),
+            Axis::Vertical => (entry.rect.y, entry.rect.h),
+        });
+        if entry.rect.w <= 0 || entry.rect.h <= 0 {
+            return None;
+        }
+    }
+    let min = positions.iter().map(|(o, _)| i64::from(*o)).min()?;
+    let max = positions
+        .iter()
+        .map(|(o, e)| i64::from(*o) + i64::from(*e))
+        .max()?;
+    Some(max - min)
+}
+
+fn collect_pointer_leaves(node: &Node, target: &NodeId, out: &mut Vec<NodeId>) {
+    if node.id() == target {
+        collect_leaves(node).into_iter().for_each(|id| out.push(id));
+        return;
+    }
+    if let Node::Group { children, .. } = node {
+        for child in children {
+            if subtree_contains(child, target) || child.id() == target {
+                collect_pointer_leaves(child, target, out);
+            }
+        }
+    }
+}
+
+/// Group origin along `axis` from accepted descendant leaf bounds.
+fn pointer_group_origin(
+    tree: &Node,
+    group: &NodeId,
+    axis: Axis,
+    geometry: &[DesiredGeometry],
+) -> Option<i64> {
+    let mut leaves = Vec::new();
+    collect_pointer_group_leaves(tree, group, &mut leaves);
+    if leaves.is_empty() {
+        return None;
+    }
+    let mut min: Option<i64> = None;
+    for leaf in &leaves {
+        let entry = geometry.iter().find(|g| &g.leaf == leaf)?;
+        let origin = match axis {
+            Axis::Horizontal => i64::from(entry.rect.x),
+            Axis::Vertical => i64::from(entry.rect.y),
+        };
+        min = Some(min.map_or(origin, |m: i64| m.min(origin)));
+    }
+    min
+}
+
+fn collect_pointer_group_leaves(node: &Node, group: &NodeId, out: &mut Vec<NodeId>) {
+    if node.id() == group {
+        for leaf in collect_leaves(node) {
+            out.push(leaf);
+        }
+        return;
+    }
+    if let Node::Group { children, .. } = node {
+        for child in children {
+            if subtree_contains(child, group) || child.id() == group {
+                collect_pointer_group_leaves(child, group, out);
+            }
+        }
+    }
+}
+
+/// Derive pointer shares from the normalized boundary coordinate.
+///
+/// Walks matching-axis ancestors nearest outward; the first ancestor whose
+/// pair region admits two minimum segments wins. For every valid/clamped
+/// boundary inside that pair region, positive shares are derived such that
+/// the existing projector returns exactly the proposed shared boundary.
+/// Only the selected adjacent share ratio changes, plus an exact
+/// ratio-preserving normalization (`new = K * old` for non-pair shares and
+/// `new_pair_total = K * old_pair_total`) when representation precision
+/// requires it. `None` means malformed/unrepresentable (caller maps to
+/// `MalformedTopology`); `Unchanged` means no feasible boundary or a
+/// no-op proposing the current boundary.
+fn derive_pointer_shares(
+    tree: &Node,
+    focused_leaf: &NodeId,
+    direction: Direction,
+    proposed_boundary: i32,
+    domain: &OutputDomain,
+    geometry: &[DesiredGeometry],
+) -> Option<PointerDerived> {
+    if focused_leaf.0.is_empty() {
+        return None;
+    }
+    let wanted = Axis::for_direction(direction);
+    let step: i32 = match direction {
+        Direction::Right | Direction::Down => 1,
+        Direction::Left | Direction::Up => -1,
+    };
+    let mut levels = Vec::new();
+    if !pointer_path(tree, focused_leaf, &mut levels) {
+        return Some(PointerDerived::Unchanged);
+    }
+    // `pointer_path` pushes nearest first (post-order unwind is not used;
+    // levels are pushed innermost first by construction above).
+    let mut feasible_exhausted = false;
+    for level in &levels {
+        if level.axis != wanted {
+            continue;
+        }
+        let neighbor = level.child_index as i32 + step;
+        if neighbor < 0 || (neighbor as usize) >= level.children.len() {
+            continue;
+        }
+        let neighbor_index = neighbor as usize;
+        let focused_index = level.child_index;
+        if level.shares.len() != level.children.len()
+            || focused_index >= level.shares.len()
+            || neighbor_index >= level.shares.len()
+            || level.shares.contains(&0)
+        {
+            return None;
+        }
+        let lo = focused_index.min(neighbor_index);
+        // Adjacent by construction (direct neighbor).
+        if focused_index.abs_diff(neighbor_index) != 1 {
+            return None;
+        }
+        // Current adjacent pixel sizes from accepted projection.
+        let mut sizes: Vec<i64> = Vec::with_capacity(level.children.len());
+        for child in &level.children {
+            sizes.push(pointer_child_extent(tree, child, wanted, geometry)?);
+            if sizes.last() == Some(&0) || sizes.last().is_some_and(|s| *s <= 0) {
+                return None;
+            }
+        }
+        let pair_avail = sizes[focused_index].checked_add(sizes[neighbor_index])?;
+        if pair_avail < i64::from(POINTER_RESIZE_MIN_SEGMENT) * 2 {
+            feasible_exhausted = true;
+            continue;
+        }
+        let group_origin = pointer_group_origin(tree, &level.group_id, wanted, geometry)?;
+        let gap = i64::from(domain.gap);
+        let mut prefix: i64 = 0;
+        for size in sizes.iter().take(lo) {
+            prefix = prefix.checked_add(*size)?.checked_add(gap)?;
+        }
+        let pair_start = group_origin.checked_add(prefix)?;
+        // Desired left-child size from the proposed boundary treated as the
+        // left child's end edge; the right child takes the remainder.
+        let left_desired = i64::from(proposed_boundary).checked_sub(pair_start)?;
+        let min = i64::from(POINTER_RESIZE_MIN_SEGMENT);
+        let clamped_left = left_desired.clamp(min, pair_avail - min);
+        if clamped_left < min || pair_avail - clamped_left < min {
+            feasible_exhausted = true;
+            continue;
+        }
+        if clamped_left == sizes[lo] {
+            // Proposing the current boundary at this level: noop here, try
+            // outward before refusing.
+            feasible_exhausted = true;
+            continue;
+        }
+        // Exact pixel-projectable normalization: the projector allocates
+        // `floor(D * share / total) + 1` to every non-last child with
+        // `D = avail - n` and `avail = sum sizes`. For the left child at `lo`
+        // (always non-last) the desired size `L` needs
+        // `floor(D * a / total') = L - 1` with `total' = K * old_total` and
+        // `a + b = K * old_pair_total`. Non-pair shares scale by the same `K`
+        // (exact ratio preservation); only the adjacent pair is redistributed.
+        // `total' >= D` guarantees an integer `a`, so
+        // `K = ceil(D / old_total)` always works. Try no scaling, then the
+        // keyboard-consistent x16, then the guaranteed factor, smallest first.
+        let mut avail_total: i64 = 0;
+        for size in &sizes {
+            avail_total = avail_total.checked_add(*size)?;
+        }
+        let n_i64 = sizes.len() as i64;
+        let distributable = avail_total.checked_sub(n_i64)?;
+        if distributable <= 0 {
+            return None;
+        }
+        let mut old_total: u64 = 0;
+        for share in &level.shares {
+            old_total = old_total.checked_add(*share)?;
+        }
+        if old_total == 0 {
+            return None;
+        }
+        let old_pair = level.shares[focused_index].checked_add(level.shares[neighbor_index])?;
+        if old_pair == 0 {
+            return None;
+        }
+        let distributable_u = u128::from(distributable as u64);
+        let old_total_u = u128::from(old_total);
+        let required_k = distributable_u
+            .div_ceil(old_total_u)
+            .min(u128::from(u64::MAX));
+        let required_k = required_k as u64;
+        let mut candidates = vec![
+            1u64,
+            crate::directional::RESIZE_STEP_DENOMINATOR,
+            required_k,
+        ];
+        candidates.sort_unstable();
+        candidates.dedup();
+        candidates.retain(|k| *k >= 1);
+        let left_u = u128::from(clamped_left as u64);
+        let q = left_u - 1;
+        let mut planned: Option<Vec<u64>> = None;
+        for scale in candidates {
+            if scale == 0 {
+                continue;
+            }
+            let scaled_total = match old_total.checked_mul(scale) {
+                Some(v) => v,
+                None => continue,
+            };
+            let scaled_pair = match old_pair.checked_mul(scale) {
+                Some(v) => v,
+                None => continue,
+            };
+            if scaled_total == 0 || scaled_pair == 0 {
+                continue;
+            }
+            let mut scaled_ok = true;
+            for (index, share) in level.shares.iter().enumerate() {
+                if index == lo || index == lo + 1 {
+                    continue;
+                }
+                if share.checked_mul(scale).is_none() {
+                    scaled_ok = false;
+                    break;
+                }
+            }
+            if !scaled_ok {
+                continue;
+            }
+            let total_prime = u128::from(scaled_total);
+            let pair_prime = u128::from(scaled_pair);
+            // `floor(D * a / total') = q` <=> `q <= D*a/total' < q+1`
+            // <=> `a in [q*total'/D, ((q+1)*total' - 1)/D]`.
+            let lower = (q * total_prime).div_ceil(distributable_u);
+            let upper = ((q + 1) * total_prime - 1) / distributable_u;
+            if lower > upper {
+                continue;
+            }
+            let lower = lower.max(1);
+            let upper = upper.min(pair_prime - 1);
+            if lower > upper {
+                continue;
+            }
+            let left_new = lower;
+            if left_new == 0 || left_new >= pair_prime {
+                continue;
+            }
+            let left_new_u64: u64 = match left_new.try_into() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            let right_new_u64 = match scaled_pair.checked_sub(left_new_u64) {
+                Some(v) if v >= 1 => v,
+                _ => continue,
+            };
+            let scaled_lo = match level.shares[lo].checked_mul(scale) {
+                Some(v) => v,
+                None => continue,
+            };
+            if left_new_u64 == scaled_lo {
+                // Same representation: proposing current boundary for this
+                // scale; try a larger scale before going outward.
+                continue;
+            }
+            let mut new_shares = Vec::with_capacity(level.shares.len());
+            let mut ok = true;
+            for (index, share) in level.shares.iter().enumerate() {
+                let value = if index == lo {
+                    left_new_u64
+                } else if index == lo + 1 {
+                    right_new_u64
+                } else {
+                    match share.checked_mul(scale) {
+                        Some(v) => v,
+                        None => {
+                            ok = false;
+                            break;
+                        }
+                    }
+                };
+                if value == 0 {
+                    ok = false;
+                    break;
+                }
+                new_shares.push(value);
+            }
+            if !ok {
+                continue;
+            }
+            if new_shares.contains(&0) {
+                return None;
+            }
+            planned = Some(new_shares);
+            break;
+        }
+        let Some(new_shares) = planned else {
+            feasible_exhausted = true;
+            continue;
+        };
+        let effective_boundary = i32::try_from(pair_start.checked_add(clamped_left)?).ok()?;
+        let target = PointerTarget {
+            group_id: level.group_id.clone(),
+            focused_index,
+            neighbor_index,
+            focused_child: level.children[focused_index].clone(),
+            neighbor_child: level.children[neighbor_index].clone(),
+            old_shares: level.shares.clone(),
+        };
+        return Some(PointerDerived::Planned {
+            target,
+            new_shares,
+            effective_boundary,
+        });
+    }
+    if feasible_exhausted {
+        return Some(PointerDerived::Unchanged);
+    }
+    Some(PointerDerived::Unchanged)
+}
+
+/// Minimum-size projectability on the desired geometry: the two resized
+/// adjacent children each keep at least the portable minimum along the
+/// target axis when they are direct leaves, and every desired leaf stays
+/// positive. Subgroup children were already clamped pre-share, so only
+/// direct-leaf spans are rechecked here.
+fn pointer_minimum_holds(
+    geometry: &[DesiredGeometry],
+    target: &PointerTarget,
+    domain: &DomainKey,
+    axis: Axis,
+) -> bool {
+    use std::collections::BTreeMap;
+    let mut by_leaf: BTreeMap<&NodeId, &DesiredGeometry> = BTreeMap::new();
+    for entry in geometry {
+        if entry.output != domain.output || entry.workspace != domain.workspace {
+            continue;
+        }
+        if entry.rect.w <= 0 || entry.rect.h <= 0 {
+            return false;
+        }
+        by_leaf.insert(&entry.leaf, entry);
+    }
+    for child in [&target.focused_child, &target.neighbor_child] {
+        if let Some(entry) = by_leaf.get(child) {
+            let span = match axis {
+                Axis::Horizontal => i64::from(entry.rect.w),
+                Axis::Vertical => i64::from(entry.rect.h),
+            };
+            if span < i64::from(POINTER_RESIZE_MIN_SEGMENT) {
+                return false;
+            }
+        }
+    }
+    true
+}
+
+/// Exact projected boundary of the target pair's left child after integer
+/// projection: the maximum end edge over descendant desired leaves of the
+/// left child (`x + w` horizontal, `y + h` vertical). This is the absolute
+/// domain-space coordinate the native-driven source edge and the adjacent
+/// neighbour edge must show for post-observation to bind. `None` when the
+/// left child or any descendant leaf is missing from the geometry.
+fn pointer_projected_boundary(
+    geometry: &[DesiredGeometry],
+    tree: &Node,
+    target: &PointerTarget,
+    axis: Axis,
+) -> Option<i32> {
+    use std::collections::BTreeMap;
+    let left_child = if target.focused_index < target.neighbor_index {
+        &target.focused_child
+    } else {
+        &target.neighbor_child
+    };
+    let left_node = find_node_by_id(tree, left_child)?;
+    let leaves = collect_leaves(left_node);
+    if leaves.is_empty() {
+        return None;
+    }
+    let mut by_leaf: BTreeMap<&NodeId, &DesiredGeometry> = BTreeMap::new();
+    for entry in geometry {
+        by_leaf.insert(&entry.leaf, entry);
+    }
+    let mut end: Option<i64> = None;
+    for leaf in &leaves {
+        let entry = by_leaf.get(leaf)?;
+        let leaf_end = match axis {
+            Axis::Horizontal => i64::from(entry.rect.x) + i64::from(entry.rect.w),
+            Axis::Vertical => i64::from(entry.rect.y) + i64::from(entry.rect.h),
+        };
+        end = Some(end.map_or(leaf_end, |m: i64| m.max(leaf_end)));
+    }
+    let value = end?;
+    i32::try_from(value).ok()
+}
+
+fn find_node_by_id<'a>(node: &'a Node, id: &NodeId) -> Option<&'a Node> {
+    if node.id() == id {
+        return Some(node);
+    }
+    match node {
+        Node::Leaf { .. } => None,
+        Node::Group { children, .. } => {
+            for child in children {
+                if let Some(found) = find_node_by_id(child, id) {
+                    return Some(found);
+                }
+            }
+            None
+        }
     }
 }
 

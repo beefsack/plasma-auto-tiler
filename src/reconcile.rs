@@ -11,7 +11,7 @@
 //! - Movement (`propose`/`verify`), lifecycle
 //!   (`propose_lifecycle`/`verify_lifecycle`), focus
 //!   (`propose_focus`/`verify_focus`), resize
-//!   (`propose_resize`/`verify_resize`), and drag
+//!   (`propose_resize`/`propose_pointer_resize`/`verify_resize`), and drag
 //!   (`propose_drag`/`verify_drag`) share at most one pending plan:
 //!   a second proposal of any kind while pending is `PendingExists` without
 //!   divergence; acknowledgement binds any kind by owner/generation/base
@@ -704,6 +704,112 @@ impl Reconciler {
             return Err(ProposeError::Diverged(reason));
         }
         if !valid_resize_operation(&plan.operation) {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(plan.preconditions.len());
+        preconditions.extend_from_slice(&plan.preconditions);
+        let dispatch = ResizeDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: plan.required_capability,
+            preconditions: preconditions.clone(),
+            intent: plan.intent.clone(),
+            operation: plan.operation.clone(),
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Resize {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
+        });
+        Ok(dispatch)
+    }
+
+    /// Propose an already-computed pointer split-share resize plan.
+    ///
+    /// Shares the single pending slot with every other kind; acknowledgement
+    /// binds identically and verification reuses [`Reconciler::verify_resize`].
+    /// Binds exactly to owner/generation/base revision/correlation plus the
+    /// resize plan's preconditions and declared resize capabilities. Unlike
+    /// [`Reconciler::propose_resize`], the share transfer is not required to
+    /// equal the keyboard 1/16 step: [`valid_pointer_resize_operation`]
+    /// accepts any adjacent-only redistribution preserving positivity with
+    /// an optional exact whole-group x16 ratio-preserving normalization.
+    pub fn propose_pointer_resize(
+        &mut self,
+        plan: &ResizePlan,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<ResizeDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.required_capability != plan.operation.required_capability() {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions != plan.operation.preconditions() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(plan.operation.required_capability()) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions.len() > MAX_PRECONDITIONS
+            || !plan
+                .preconditions
+                .contains(&ResizePrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.intent.domain_output != plan.operation.domain_output
+            || plan.intent.domain_workspace != plan.operation.domain_workspace
+            || plan.intent.focused_leaf != plan.operation.focused_leaf
+            || plan.intent.focused_window != plan.operation.focused_window
+            || plan.intent.direction != plan.operation.direction
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !valid_pointer_resize_operation(&plan.operation) {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
@@ -1469,6 +1575,159 @@ fn valid_resize_operation(operation: &ResizeOperation) -> bool {
         Some(expected) => expected == operation.new_shares,
         None => false,
     }
+}
+
+/// Pointer split-share operation validity: same identity/shape/direction
+/// binding as [`valid_resize_operation`], but the share transfer is any
+/// adjacent-only redistribution preserving positivity, with an optional
+/// exact whole-group ratio-preserving normalization (`new = K * old` for
+/// non-pair shares and `new_pair_total = K * old_pair_total`, mirroring the
+/// keyboard x16 principle at any exact integer factor for pixel precision).
+/// Non-adjacent shares must match exactly after the same integer scaling;
+/// the adjacent pair total must be conserved after scaling and the pair must
+/// actually move.
+fn valid_pointer_resize_operation(operation: &ResizeOperation) -> bool {
+    if operation.domain_output.0.is_empty()
+        || operation.domain_workspace.0.is_empty()
+        || operation.focused_leaf.0.is_empty()
+        || operation.focused_window.0.is_empty()
+        || operation.target_group.0.is_empty()
+        || operation.focused_child.0.is_empty()
+        || operation.neighbor_child.0.is_empty()
+    {
+        return false;
+    }
+    if operation.focused_child == operation.neighbor_child {
+        return false;
+    }
+    if operation.old_shares.len() < 2
+        || operation.old_shares.len() > 64
+        || operation.new_shares.len() != operation.old_shares.len()
+    {
+        return false;
+    }
+    if operation.focused_index >= operation.old_shares.len()
+        || operation.neighbor_index >= operation.old_shares.len()
+        || operation.focused_index == operation.neighbor_index
+    {
+        return false;
+    }
+    if (operation.focused_index as i32 - operation.neighbor_index as i32).abs() != 1 {
+        return false;
+    }
+    if operation.neighbor_index as i32 - operation.focused_index as i32
+        != resize_step_for(operation.direction)
+    {
+        return false;
+    }
+    if operation.old_shares.contains(&0) || operation.new_shares.contains(&0) {
+        return false;
+    }
+    if operation.old_shares == operation.new_shares {
+        return false;
+    }
+    let n = operation.old_shares.len();
+    let fi = operation.focused_index;
+    let ni = operation.neighbor_index;
+    // Totals must not overflow.
+    let mut old_total: u64 = 0;
+    for share in &operation.old_shares {
+        match old_total.checked_add(*share) {
+            Some(next) => old_total = next,
+            None => return false,
+        }
+    }
+    let mut new_total: u64 = 0;
+    for share in &operation.new_shares {
+        match new_total.checked_add(*share) {
+            Some(next) => new_total = next,
+            None => return false,
+        }
+    }
+    if old_total == 0 || new_total == 0 {
+        return false;
+    }
+    // Exact integer scaling factor `K >= 1` shared by the whole group:
+    // `new[i] = K * old[i]` off-pair and `new_pair = K * old_pair`, with the
+    // pair actually moving. `K = 1` is the unscaled case; `K = 16` is the
+    // keyboard-consistent normalization; larger `K` supplies pixel precision.
+    let old_pair = match operation.old_shares[fi].checked_add(operation.old_shares[ni]) {
+        Some(pair) if pair != 0 => pair,
+        _ => return false,
+    };
+    let new_pair = match operation.new_shares[fi].checked_add(operation.new_shares[ni]) {
+        Some(pair) if pair != 0 => pair,
+        _ => return false,
+    };
+    let has_non_pair = (0..n).any(|i| i != fi && i != ni);
+    if has_non_pair {
+        let first = (0..n)
+            .find(|i| *i != fi && *i != ni)
+            .expect("non-pair present");
+        let old_base = operation.old_shares[first];
+        let new_base = operation.new_shares[first];
+        if old_base == 0 || !new_base.is_multiple_of(old_base) {
+            return false;
+        }
+        let scale = new_base / old_base;
+        if scale == 0 {
+            return false;
+        }
+        for i in 0..n {
+            if i == fi || i == ni {
+                continue;
+            }
+            match operation.old_shares[i].checked_mul(scale) {
+                Some(expected) if expected == operation.new_shares[i] => {}
+                _ => return false,
+            }
+        }
+        match old_pair.checked_mul(scale) {
+            Some(expected) if expected == new_pair => {}
+            _ => return false,
+        }
+        match old_total.checked_mul(scale) {
+            Some(expected) if expected == new_total => {}
+            _ => return false,
+        }
+        let scaled_fi = match operation.old_shares[fi].checked_mul(scale) {
+            Some(v) => v,
+            None => return false,
+        };
+        let scaled_ni = match operation.old_shares[ni].checked_mul(scale) {
+            Some(v) => v,
+            None => return false,
+        };
+        if operation.new_shares[fi] == scaled_fi || operation.new_shares[ni] == scaled_ni {
+            return false;
+        }
+        return true;
+    }
+    // Two-child group: no non-pair witness, so the scale comes from the pair
+    // total alone and must divide exactly.
+    if new_pair % old_pair != 0 {
+        return false;
+    }
+    let scale = new_pair / old_pair;
+    if scale == 0 {
+        return false;
+    }
+    match old_total.checked_mul(scale) {
+        Some(expected) if expected == new_total => {}
+        _ => return false,
+    }
+    let scaled_fi = match operation.old_shares[fi].checked_mul(scale) {
+        Some(v) => v,
+        None => return false,
+    };
+    let scaled_ni = match operation.old_shares[ni].checked_mul(scale) {
+        Some(v) => v,
+        None => return false,
+    };
+    if operation.new_shares[fi] == scaled_fi || operation.new_shares[ni] == scaled_ni {
+        return false;
+    }
+    true
 }
 
 #[cfg(test)]

@@ -15,6 +15,12 @@
 //!   observation. Replies `planned` with the bound dispatch/operation,
 //!   complete adjacent/share/projected geometry plus retained focus, `noop`
 //!   for missing boundaries, or `rejected`/`diverged` fail-closed.
+//! - `request-pointer`: propose pointer split-share resize for one exact
+//!   opaque `(domain, focused window, direction, proposed_boundary)` where
+//!   Rust derives the target matching-axis boundary and adjacent shares
+//!   itself (callers never supply shares). Same `planned`/`noop`/
+//!   `rejected`/`diverged` shape and shared acknowledge/verify boundary as
+//!   keyboard; keyboard wire behavior is unchanged.
 //! - `acknowledge`: record an explicit adapter acknowledgement for the pending
 //!   plan. Only `accepted` proceeds; refused/partial/lost diverge.
 //!   Replies `acknowledged` or fail-closed divergence.
@@ -333,6 +339,24 @@ struct RequestDto {
 
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
+struct PointerRequestDto {
+    v: u32,
+    action: String,
+    correlation_id: String,
+    owner: String,
+    generation: String,
+    revision: u64,
+    fingerprint: u64,
+    domain: DomainDto,
+    focused_window: String,
+    direction: String,
+    proposed_boundary: i32,
+    windows: Vec<ObservedDto>,
+    capabilities: CapabilitiesDto,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct AckDto {
     v: u32,
     action: String,
@@ -514,6 +538,18 @@ struct PendingResize {
     desired_focus_leaf: NodeId,
 }
 
+/// Which D-Bus route created the active pending plan. Used only for
+/// method-level action fencing: `DescribeResize` owns keyboard
+/// `request` cycles, `DescribePointerResize` owns `request-pointer` cycles.
+/// Shared `acknowledge`/`verify`/`note-loss` bind only to the pending cycle
+/// created through the same route; cross-route calls are rejected without
+/// mutating the session or clearing the foreign pending.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PendingOrigin {
+    Keyboard,
+    Pointer,
+}
+
 struct MismatchedVerify {
     correlation: CorrelationId,
     owner: OwnerId,
@@ -540,6 +576,7 @@ pub struct ResizeService {
     seeded_members: Vec<String>,
     seen: HashSet<String>,
     pending: Option<PendingResize>,
+    pending_origin: Option<PendingOrigin>,
 }
 
 impl Default for ResizeService {
@@ -559,6 +596,7 @@ impl ResizeService {
             seeded_members: Vec::new(),
             seen: HashSet::new(),
             pending: None,
+            pending_origin: None,
         }
     }
 
@@ -590,6 +628,7 @@ impl ResizeService {
             seeded_members: members,
             seen: HashSet::new(),
             pending: None,
+            pending_origin: None,
         }
     }
 
@@ -629,6 +668,10 @@ impl ResizeService {
     }
 
     /// Strict JSON-only resize transaction. Always returns a bounded reply.
+    /// Shared entry used by portable tests; production D-Bus routes must use
+    /// the fenced [`Self::evaluate_keyboard_json`] (`DescribeResize`) or
+    /// [`Self::evaluate_pointer_json`] (`DescribePointerResize`) so
+    /// `request` and `request-pointer` cycles never mutate each other.
     pub fn evaluate_json(&mut self, request_json: &str) -> String {
         if request_json.len() > RESIZE_MAX_REQUEST_BYTES {
             return rejected(String::new(), "oversized", MSG_OVERSIZED);
@@ -646,9 +689,148 @@ impl ResizeService {
             .unwrap_or_default();
         match action {
             "request" => self.evaluate_request(&raw),
+            "request-pointer" => self.evaluate_pointer_request(&raw),
             "acknowledge" => self.evaluate_ack(&raw),
             "verify" => self.evaluate_verify(&raw),
             "note-loss" => self.evaluate_loss(&raw),
+            _ => {
+                let (kind, message) = if action.is_empty() {
+                    ("request-malformed", MSG_MALFORMED)
+                } else {
+                    ("unknown-value", MSG_UNKNOWN_VALUE)
+                };
+                rejected(valid_correlation_echo(&raw), kind, message)
+            }
+        }
+    }
+
+    /// Fenced keyboard D-Bus route (`DescribeResize`): accepts keyboard
+    /// `request` plus shared `acknowledge`/`verify`/`note-loss` only.
+    /// `request-pointer` is rejected without mutation. Shared actions bind
+    /// only when no pointer-owned pending exists; a pointer-owned pending
+    /// is rejected without mutating the session or clearing the foreign
+    /// pending, preserving sequential pointer cycles. Idle (no pending) or
+    /// keyboard-owned pending behaves exactly like [`Self::evaluate_json`].
+    pub fn evaluate_keyboard_json(&mut self, request_json: &str) -> String {
+        if request_json.len() > RESIZE_MAX_REQUEST_BYTES {
+            return rejected(String::new(), "oversized", MSG_OVERSIZED);
+        }
+        let raw: serde_json::Value = match serde_json::from_str(request_json) {
+            Ok(raw) => raw,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(String::new(), kind, message);
+            }
+        };
+        let action = raw
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        match action {
+            "request" => self.evaluate_request(&raw),
+            "request-pointer" => rejected(
+                valid_correlation_echo(&raw),
+                "unknown-value",
+                MSG_UNKNOWN_VALUE,
+            ),
+            "acknowledge" | "verify" | "note-loss" => {
+                if self.pending.is_some() && self.pending_origin == Some(PendingOrigin::Pointer) {
+                    // Cross-route shared action: reject without mutation so
+                    // the pointer cycle survives intact.
+                    if action == "note-loss" {
+                        return rejected(
+                            String::new(),
+                            "no-pending",
+                            "no pending plan awaits loss",
+                        );
+                    }
+                    if action == "acknowledge" {
+                        return rejected(
+                            valid_correlation_echo(&raw),
+                            "no-pending",
+                            "no pending plan awaits acknowledgement",
+                        );
+                    }
+                    return rejected(
+                        valid_correlation_echo(&raw),
+                        "no-pending",
+                        "no pending plan awaits verification",
+                    );
+                }
+                match action {
+                    "acknowledge" => self.evaluate_ack(&raw),
+                    "verify" => self.evaluate_verify(&raw),
+                    _ => self.evaluate_loss(&raw),
+                }
+            }
+            _ => {
+                let (kind, message) = if action.is_empty() {
+                    ("request-malformed", MSG_MALFORMED)
+                } else {
+                    ("unknown-value", MSG_UNKNOWN_VALUE)
+                };
+                rejected(valid_correlation_echo(&raw), kind, message)
+            }
+        }
+    }
+
+    /// Fenced pointer D-Bus route (`DescribePointerResize`): accepts
+    /// `request-pointer` plus only the same-cycle shared
+    /// `acknowledge`/`verify`/`note-loss` for the pointer request.
+    /// Keyboard `request` is rejected without mutation. Shared actions bind
+    /// only when no keyboard-owned pending exists; a keyboard-owned pending
+    /// is rejected without mutation, preserving keyboard behavior and
+    /// sequential pointer ack/verify.
+    pub fn evaluate_pointer_json(&mut self, request_json: &str) -> String {
+        if request_json.len() > RESIZE_MAX_REQUEST_BYTES {
+            return rejected(String::new(), "oversized", MSG_OVERSIZED);
+        }
+        let raw: serde_json::Value = match serde_json::from_str(request_json) {
+            Ok(raw) => raw,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(String::new(), kind, message);
+            }
+        };
+        let action = raw
+            .get("action")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or_default();
+        match action {
+            "request-pointer" => self.evaluate_pointer_request(&raw),
+            "request" => rejected(
+                valid_correlation_echo(&raw),
+                "unknown-value",
+                MSG_UNKNOWN_VALUE,
+            ),
+            "acknowledge" | "verify" | "note-loss" => {
+                if self.pending.is_some() && self.pending_origin == Some(PendingOrigin::Keyboard) {
+                    if action == "note-loss" {
+                        return rejected(
+                            String::new(),
+                            "no-pending",
+                            "no pending plan awaits loss",
+                        );
+                    }
+                    if action == "acknowledge" {
+                        return rejected(
+                            valid_correlation_echo(&raw),
+                            "no-pending",
+                            "no pending plan awaits acknowledgement",
+                        );
+                    }
+                    return rejected(
+                        valid_correlation_echo(&raw),
+                        "no-pending",
+                        "no pending plan awaits verification",
+                    );
+                }
+                match action {
+                    "acknowledge" => self.evaluate_ack(&raw),
+                    "verify" => self.evaluate_verify(&raw),
+                    _ => self.evaluate_loss(&raw),
+                }
+            }
             _ => {
                 let (kind, message) = if action.is_empty() {
                     ("request-malformed", MSG_MALFORMED)
@@ -679,6 +861,7 @@ impl ResizeService {
             let _ = session.note_adapter_loss();
         }
         self.pending = None;
+        self.pending_origin = None;
         diverged(correlation_id, "session-full", MSG_SESSION_FULL)
     }
 
@@ -1224,6 +1407,7 @@ impl ResizeService {
                     desired_focus_domain: plan.desired_focus_domain.clone(),
                     desired_focus_leaf: plan.desired_focus_leaf.clone(),
                 });
+                self.pending_origin = Some(PendingOrigin::Keyboard);
                 serialize_bounded(&ResizeReply {
                     v: RESIZE_CONTRACT_VERSION,
                     correlation_id: request.correlation_id.clone(),
@@ -1246,6 +1430,384 @@ impl ResizeService {
             ),
             Err(ProposeError::Diverged(reason)) => {
                 self.pending = None;
+                self.pending_origin = None;
+                diverged(
+                    request.correlation_id.clone(),
+                    reason.as_str(),
+                    reason.message(),
+                )
+            }
+            Err(ProposeError::Refused(kind)) => {
+                if kind.as_str() == "unchanged" {
+                    let revision = self.accepted_revision();
+                    serialize_bounded(&ResizeReply {
+                        v: RESIZE_CONTRACT_VERSION,
+                        correlation_id: request.correlation_id.clone(),
+                        outcome: "noop",
+                        kind: Some(kind.as_str()),
+                        message: Some(kind.message()),
+                        base_revision: None,
+                        revision: Some(revision),
+                        capability: None,
+                        preconditions: None,
+                        operation: None,
+                        desired_geometry: None,
+                        desired_focus: None,
+                    })
+                } else {
+                    rejected(
+                        request.correlation_id.clone(),
+                        kind.as_str(),
+                        kind.message(),
+                    )
+                }
+            }
+        }
+    }
+
+    fn evaluate_pointer_request(&mut self, raw: &serde_json::Value) -> String {
+        let request: PointerRequestDto = match serde_json::from_value(raw.clone()) {
+            Ok(request) => request,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(raw), kind, message);
+            }
+        };
+        if request.v != RESIZE_CONTRACT_VERSION || request.action != "request-pointer" {
+            let (kind, message) = if request.v != RESIZE_CONTRACT_VERSION {
+                ("unsupported-version", MSG_VERSION)
+            } else {
+                ("unknown-value", MSG_UNKNOWN_VALUE)
+            };
+            return rejected(request.correlation_id.clone(), kind, message);
+        }
+        if CorrelationId::parse(&request.correlation_id).is_none() {
+            return rejected(String::new(), "correlation-invalid", MSG_CORRELATION);
+        }
+        if OwnerId::parse(&request.owner).is_none() {
+            return rejected(request.correlation_id.clone(), "owner-invalid", MSG_OWNER);
+        }
+        if GenerationId::parse(&request.generation).is_none() {
+            return rejected(
+                request.correlation_id.clone(),
+                "generation-invalid",
+                MSG_GENERATION,
+            );
+        }
+        if request.revision > RESIZE_MAX_REVISION {
+            return rejected(
+                request.correlation_id.clone(),
+                "revision-invalid",
+                MSG_REVISION,
+            );
+        }
+        if !is_opaque_id(&request.domain.output)
+            || !is_opaque_id(&request.domain.workspace)
+            || !is_opaque_id(&request.focused_window)
+        {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OPAQUE_ID,
+            );
+        }
+        let Some(direction) = parse_direction(&request.direction) else {
+            return rejected(
+                request.correlation_id.clone(),
+                "direction-invalid",
+                MSG_DIRECTION,
+            );
+        };
+        if request.proposed_boundary < -crate::session::POINTER_RESIZE_COORD_BOUND
+            || request.proposed_boundary > crate::session::POINTER_RESIZE_COORD_BOUND
+        {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        }
+        if request.windows.is_empty() || request.windows.len() > RESIZE_MAX_WINDOWS {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        }
+        {
+            let mut seen = HashSet::new();
+            for entry in &request.windows {
+                if !is_opaque_id(&entry.window)
+                    || !is_opaque_id(&entry.output)
+                    || !is_opaque_id(&entry.workspace)
+                {
+                    return rejected(
+                        request.correlation_id.clone(),
+                        "snapshot-invalid",
+                        MSG_OPAQUE_ID,
+                    );
+                }
+                if !seen.insert(entry.window.clone()) {
+                    return rejected(
+                        request.correlation_id.clone(),
+                        "snapshot-invalid",
+                        MSG_OPAQUE_ID,
+                    );
+                }
+            }
+        }
+        if !request.capabilities.keyboard_resize {
+            return rejected(
+                request.correlation_id.clone(),
+                "unsupported-capability",
+                MSG_CAPABILITY,
+            );
+        }
+        let carried_bounds = Rect {
+            x: request.domain.bounds.x,
+            y: request.domain.bounds.y,
+            w: request.domain.bounds.w,
+            h: request.domain.bounds.h,
+        };
+        if !valid_carried_rect(
+            carried_bounds.x,
+            carried_bounds.y,
+            carried_bounds.w,
+            carried_bounds.h,
+        ) || request.domain.gap < 0
+            || request.domain.gap > GEOMETRY_MAX_GAP
+        {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        }
+        for entry in &request.windows {
+            if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
+                return rejected(
+                    request.correlation_id.clone(),
+                    "snapshot-invalid",
+                    MSG_OBSERVATION,
+                );
+            }
+            if !rect_contained(
+                Rect {
+                    x: entry.rect.x,
+                    y: entry.rect.y,
+                    w: entry.rect.w,
+                    h: entry.rect.h,
+                },
+                carried_bounds,
+            ) {
+                return rejected(
+                    request.correlation_id.clone(),
+                    "snapshot-invalid",
+                    MSG_OBSERVATION,
+                );
+            }
+        }
+        let expected_fingerprint = Self::expected_request_fingerprint(
+            &request.domain.output,
+            &request.domain.workspace,
+            &request.focused_window,
+            &request.windows,
+        );
+        if request.fingerprint != expected_fingerprint {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        }
+        for entry in &request.windows {
+            if entry.output != request.domain.output || entry.workspace != request.domain.workspace
+            {
+                return rejected(
+                    request.correlation_id.clone(),
+                    "cross-domain-mismatch",
+                    MSG_OBSERVATION,
+                );
+            }
+        }
+        if !request
+            .windows
+            .iter()
+            .any(|w| w.window == request.focused_window)
+        {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        }
+        if !self.claim_correlation(&request.correlation_id) {
+            if self.seen.contains(&request.correlation_id) {
+                return diverged(
+                    request.correlation_id.clone(),
+                    "correlation-mismatch",
+                    "correlation does not match the pending plan",
+                );
+            }
+            return self.diverged_exhausted(request.correlation_id.clone());
+        }
+        let owner = OwnerId::parse(&request.owner).expect("validated");
+        let generation = GenerationId::parse(&request.generation).expect("validated");
+        let correlation = CorrelationId::parse(&request.correlation_id).expect("validated");
+        let was_unseeded = self.session.is_none();
+        if was_unseeded {
+            let seed = RequestDto {
+                v: request.v,
+                action: "request".to_owned(),
+                correlation_id: request.correlation_id.clone(),
+                owner: request.owner.clone(),
+                generation: request.generation.clone(),
+                revision: request.revision,
+                fingerprint: request.fingerprint,
+                domain: request.domain.clone(),
+                focused_window: request.focused_window.clone(),
+                direction: request.direction.clone(),
+                windows: request.windows.clone(),
+                capabilities: request.capabilities.clone(),
+            };
+            if let Err(reason) = self.ensure_seeded(&owner, &generation, &seed) {
+                let _ = reason;
+                return rejected(
+                    request.correlation_id.clone(),
+                    "snapshot-invalid",
+                    MSG_OBSERVATION,
+                );
+            }
+        }
+        if let Some(seeded) = self.seeded_domain.clone()
+            && (seeded.output.0 != request.domain.output
+                || seeded.workspace.0 != request.domain.workspace)
+        {
+            return rejected(
+                request.correlation_id.clone(),
+                "cross-domain-mismatch",
+                MSG_OBSERVATION,
+            );
+        }
+        if let Some(session) = self.session.as_ref() {
+            let key = DomainKey {
+                output: OutputId(request.domain.output.clone()),
+                workspace: WorkspaceId(request.domain.workspace.clone()),
+            };
+            let bounds_ok = session
+                .domains()
+                .iter()
+                .find(|d| d.key() == key)
+                .is_some_and(|d| d.bounds == carried_bounds && d.gap == request.domain.gap);
+            if !bounds_ok {
+                return rejected(
+                    request.correlation_id.clone(),
+                    "snapshot-invalid",
+                    MSG_OBSERVATION,
+                );
+            }
+        }
+        {
+            let mut current = Self::sorted_ids(&request.windows);
+            current.sort();
+            let mut seeded = self.seeded_members.clone();
+            seeded.sort();
+            if current != seeded {
+                return rejected(
+                    request.correlation_id.clone(),
+                    "snapshot-invalid",
+                    MSG_OBSERVATION,
+                );
+            }
+        }
+        let domain = DomainKey {
+            output: OutputId(request.domain.output.clone()),
+            workspace: WorkspaceId(request.domain.workspace.clone()),
+        };
+        let window = WindowId(request.focused_window.clone());
+        let observed: Vec<ObservedWindow> = request
+            .windows
+            .iter()
+            .map(|entry| ObservedWindow {
+                window: WindowId(entry.window.clone()),
+                output: OutputId(entry.output.clone()),
+                workspace: WorkspaceId(entry.workspace.clone()),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+            })
+            .collect();
+        let session = self.session.as_mut().expect("seeded");
+        let observation = SessionObservation {
+            observation: Observation::new(
+                owner.clone(),
+                generation.clone(),
+                request.revision,
+                request.fingerprint,
+            ),
+            windows: observed,
+        };
+        let caps = ResizeCapabilities {
+            keyboard_resize: request.capabilities.keyboard_resize,
+        };
+        match session.propose_pointer_resize(
+            &domain,
+            &window,
+            direction,
+            request.proposed_boundary,
+            &observation,
+            &correlation,
+            &caps,
+        ) {
+            Ok(plan) => {
+                let preconditions: Vec<&'static str> = plan
+                    .dispatch
+                    .preconditions
+                    .iter()
+                    .map(precondition_str)
+                    .collect();
+                let operation = operation_to_value(&plan.dispatch.operation);
+                let desired_geometry: Vec<GeometryReply> =
+                    plan.desired_geometry.iter().map(geometry_reply).collect();
+                let desired_focus = FocusReplyBody {
+                    domain_output: plan.desired_focus_domain.output.0.clone(),
+                    domain_workspace: plan.desired_focus_domain.workspace.0.clone(),
+                    leaf: plan.desired_focus_leaf.0.clone(),
+                };
+                self.pending = Some(PendingResize {
+                    correlation: request.correlation_id.clone(),
+                    focused_window: request.focused_window.clone(),
+                    operation: plan.dispatch.operation.clone(),
+                    preconditions: plan.dispatch.preconditions.clone(),
+                    desired_geometry: plan.desired_geometry.clone(),
+                    desired_focus_domain: plan.desired_focus_domain.clone(),
+                    desired_focus_leaf: plan.desired_focus_leaf.clone(),
+                });
+                self.pending_origin = Some(PendingOrigin::Pointer);
+                serialize_bounded(&ResizeReply {
+                    v: RESIZE_CONTRACT_VERSION,
+                    correlation_id: request.correlation_id.clone(),
+                    outcome: "planned",
+                    kind: None,
+                    message: None,
+                    base_revision: Some(plan.dispatch.base_revision),
+                    revision: None,
+                    capability: Some("keyboard-resize"),
+                    preconditions: Some(preconditions),
+                    operation: Some(operation),
+                    desired_geometry: Some(desired_geometry),
+                    desired_focus: Some(desired_focus),
+                })
+            }
+            Err(ProposeError::PendingExists) => diverged(
+                request.correlation_id.clone(),
+                "pending-exists",
+                "complete the pending plan before proposing",
+            ),
+            Err(ProposeError::Diverged(reason)) => {
+                self.pending = None;
+                self.pending_origin = None;
                 diverged(
                     request.correlation_id.clone(),
                     reason.as_str(),
@@ -1377,6 +1939,7 @@ impl ResizeService {
             ),
             Err(crate::reconcile::AckError::Diverged(reason)) => {
                 self.pending = None;
+                self.pending_origin = None;
                 diverged(
                     request.correlation_id.clone(),
                     reason.as_str(),
@@ -1410,6 +1973,7 @@ impl ResizeService {
             }
         }
         self.pending = None;
+        self.pending_origin = None;
     }
 
     /// Terminal divergence for structurally invalid verify reports (empty /
@@ -1419,6 +1983,7 @@ impl ResizeService {
     /// `diverged` verify reply.
     fn terminal_verify_diverge(&mut self, correlation_id: String) -> String {
         self.pending = None;
+        self.pending_origin = None;
         if let Some(session) = self.session.as_mut() {
             let _ = session.note_adapter_loss();
         }
@@ -1538,6 +2103,7 @@ impl ResizeService {
             // loosely-bound verify (caller-supplied operation/preconditions)
             // to the session; force terminal divergence instead.
             self.pending = None;
+            self.pending_origin = None;
             if let Some(session) = self.session.as_mut() {
                 let _ = session.note_adapter_loss();
             }
@@ -1782,6 +2348,7 @@ impl ResizeService {
         match session.verify_resize(&post) {
             Ok(commit) => {
                 self.pending = None;
+                self.pending_origin = None;
                 serialize_bounded(&ResizeReply {
                     v: RESIZE_CONTRACT_VERSION,
                     correlation_id: request.correlation_id.clone(),
@@ -1809,6 +2376,7 @@ impl ResizeService {
             ),
             Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                 self.pending = None;
+                self.pending_origin = None;
                 diverged(
                     request.correlation_id.clone(),
                     reason.as_str(),
@@ -1837,6 +2405,7 @@ impl ResizeService {
             return diverged("".to_owned(), "adapter-lost", "adapter reported loss");
         };
         self.pending = None;
+        self.pending_origin = None;
         let reason = session.note_adapter_loss();
         diverged(String::new(), reason.as_str(), reason.message())
     }

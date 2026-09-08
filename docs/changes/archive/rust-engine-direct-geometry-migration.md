@@ -98,6 +98,27 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Static Rust-owned KWin signal-driven pointer split-share resize/direct
+  geometry is complete behind the same disabled-by-default exclusive authority:
+  public per-Window `interactiveMoveResizeStarted`,
+  `interactiveMoveResizeStepped(nextGeometry)`, and
+  `interactiveMoveResizeFinished` signals capture and drive one exact gesture
+  without polling. Rust alone derives exact pixel-projectable boundary shares,
+  topology, complete geometry/focus plans, revision, and reconciliation from a
+  normalized proposed boundary. KWin distinguishes public move from resize
+  state and proposed-edge changes rather than lagging frame geometry; moves
+  retain tile assignment and perform no Rust request or neighbour reflow.
+  Resize steps retain only the latest normalized boundary behind one in-flight
+  request, apply changed neighbours only in shared deterministic sequential
+  order, guard adapter-owned geometry notifications, then fresh-observe source
+  and neighbours before acknowledge/verify commit. Identity, authority,
+  membership, output/workspace, capability, partial/refused native write,
+  service, or post-observation mismatch disables authority and diverges fail
+  closed. Rust boundary/share, clamp, nesting/N-ary, reconciliation, service
+  fencing, and KWin gesture/coalescing/drift/no-poll contracts pass; no live
+  KWin work ran and POC/runtime residue remains untouched. Next product slice:
+  KWin drag-end snap-back and drop adapter integration, separately from pointer
+  resize topology.
 - Static Rust-owned KWin keyboard split-share resize/direct-geometry adapter
   slice completed 2026-09-09: the authenticated KWin-only `DescribeResize`
   route owns one bounded portable `Session` and uses
