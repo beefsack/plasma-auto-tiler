@@ -63,8 +63,10 @@
 # verdict is required after the correlated result from a byte boundary
 # captured after the result marker (an earlier/replayed after marker cannot
 # satisfy start) with the fixed v1 prefix at column zero and verdict exactly
-# true or false. Receipt creation requires the successful could-execute
-# detail paired with after true; after false with the exact stale reject
+# true or false. Receipt creation requires the successful
+# could-execute:<rule>:<capability> detail (strict allowlisted rule plus
+# kebab capability, e.g. could-execute:R2a:swap-neighbor) paired with after
+# true; after false with the exact stale reject
 # reject:advisory-stale-snapshot is an observed terminal refusal that
 # exact-cleans with no receipt (diagnostic preserved, nonzero exit); no other
 # detail receives a receipt. Mid-line prefixes,
@@ -95,6 +97,10 @@ RECEIPT_SCHEMA="advisory-describe-receipt-v1"
 RESULT_SCHEMA="v1"
 AFTER_SCHEMA="v1"
 STALE_DETAIL="reject:advisory-stale-snapshot"
+SUCCESS_DETAIL_PREFIX="could-execute:"
+SUCCESS_RULES="R1 R2a R2b R2c R3 R4"
+SUCCESS_CAPS="swap-neighbor wrap-perpendicular wrap-siblings insert-child split-group-child reparent-leaf cross-output-transfer"
+DIAG_MAX_BYTES=1024
 RESULT_DETAIL_RE='^[A-Za-z0-9._:-]{1,512}$'
 : "${BUSCTL_BIN:=busctl}"
 : "${SHA256SUM_BIN:=sha256sum}"
@@ -120,6 +126,7 @@ SCRIPT_ID=""
 SCRIPT_OBJ=""
 RECEIPT_CREATED="0"
 RECEIPT_PATH=""
+ACTIVE_CORR="none"
 
 # Fixed static advisory-only shape. Allow tokens must each occur in the
 # exact bundle bytes; deny tokens must each be absent. This gate runs before
@@ -268,6 +275,57 @@ valid_canonical_uint() { [[ "$1" =~ ^(0|[1-9][0-9]*)$ ]]; }
 valid_revision() { valid_canonical_uint "$1" && [[ "$1" -le 1000000 ]]; }
 valid_script_id() { valid_canonical_uint "$1" && [[ "$1" -le 2147483647 ]]; }
 valid_detail() { [[ "$1" =~ $RESULT_DETAIL_RE ]]; }
+
+# Strict success-detail predicate for the final adapter/service boundary.
+# Retains the already emitted bounded advisory detail
+# could-execute:<rule>:<capability> (from kwin/src/advisory-plan-query.ts)
+# and accepts only allowlisted rule/capability pairs. Bare could-execute,
+# extra segments, unknown rules/caps, or prefix-broadened details fail.
+is_success_detail() {
+  local detail="${1:-}" rest="" rule="" cap=""
+  case "$detail" in
+    "$SUCCESS_DETAIL_PREFIX"*:*) ;;
+    *) return 1 ;;
+  esac
+  rest="${detail#"$SUCCESS_DETAIL_PREFIX"}"
+  [[ -n "$rest" ]] || return 1
+  rule="${rest%%:*}"
+  cap="${rest#*:}"
+  [[ -n "$rule" && -n "$cap" ]] || return 1
+  [[ "$cap" != *:* && "$rule" != *:* ]] || return 1
+  case " $SUCCESS_RULES " in
+    *" $rule "*) ;;
+    *) return 1 ;;
+  esac
+  case " $SUCCESS_CAPS " in
+    *" $cap "*) ;;
+    *) return 1 ;;
+  esac
+  valid_detail "$detail" || return 1
+  return 0
+}
+
+# Smallest reusable adapter observability: bound, redact, and emit causal
+# invocation-tied stderr/exit classification to stderr before exact cleanup.
+# In-memory only (no temp files) so resource-free preflight stays intact.
+# Redacts unique bus owners, numeric native PIDs, hex identities, and
+# absolute paths, and encodes newlines so every diagnostic stays one bounded
+# log record; the caller supplies the correlation so the diagnostic stays
+# invocation-tied without leaking native IDs.
+redact_diag_text() {
+  local _in="${1:-}" _out=""
+  _out="$(printf '%s' "$_in" | head -c "$DIAG_MAX_BYTES" | sed -E -e 's/:[0-9]+\.[0-9]+/:REDACTED/g' -e 's/[0-9a-f]{32,128}/REDACTED_HEX/g' -e 's|/[^[:space:]"]+|REDACTED_PATH|g' -e 's/\b(pid|PID)([[:space:]]+)[0-9][0-9]*/\1\2REDACTED_PID/g' -e 's/\b[0-9]{4,}\b/REDACTED_NUM/g')"
+  _out="${_out//$'\n'/\\n}"
+  _out="${_out//$'\r'/\\r}"
+  printf '%s' "$_out" | head -c "$DIAG_MAX_BYTES"
+}
+
+emit_invocation_diag() {
+  local invocation="${1:-unknown}" exit_code="${2:-1}" correlation="${3:-none}" raw="${4:-}"
+  local redacted=""
+  redacted="$(redact_diag_text "$raw")"
+  printf 'diag: invocation=%s exit=%s correlation=%s stderr=%s\n' "$invocation" "$exit_code" "$correlation" "$redacted" >&2
+}
 
 sha256_file() {
   "$SHA256SUM_BIN" -- "$1" 2>/dev/null | sed -n 's/^\([0-9a-f]\{64\}\) .*/\1/p' || true
@@ -433,28 +491,48 @@ parse_bool() {
 }
 
 exact_cleanup() {
+  local _corr="${1:-${ACTIVE_CORR:-none}}"
   [[ -n "$SCRIPT_ID" ]] || return 1
   valid_script_id "$SCRIPT_ID" || return 1
-  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
-  local out=""
-  out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$PLUGIN" 2>/dev/null)" || return 1
-  [[ "$(parse_bool "$out")" == "true" ]] || return 1
-  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || return 1
+  local _stop_raw="" _stop_rc=0
+  _stop_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop 2>&1)" || _stop_rc=$?
+  if [[ "$_stop_rc" -ne 0 ]]; then
+    emit_invocation_diag "stop" "$_stop_rc" "$_corr" "$_stop_raw"
+  fi
+  local out="" _uc_rc=0 _uc_raw=""
+  _uc_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$PLUGIN" 2>&1)" || _uc_rc=$?
+  if [[ "$_uc_rc" -ne 0 ]]; then
+    emit_invocation_diag "unloadScript" "$_uc_rc" "$_corr" "$_uc_raw"
+    return 1
+  fi
+  out="$_uc_raw"
+  [[ "$(parse_bool "$out")" == "true" ]] || {
+    emit_invocation_diag "unloadScript" "1" "$_corr" "$out"
+    return 1
+  }
+  [[ "$(loaded_word "$PLUGIN" "$_corr")" == "not-loaded" ]] || {
+    emit_invocation_diag "state" "1" "$_corr" "plugin still loaded after exact unload"
+    return 1
+  }
 }
 
 partial_cleanup() {
+  local _corr="${1:-${ACTIVE_CORR:-none}}"
   local state="unverified"
-  if [[ -n "$SCRIPT_ID" ]] && exact_cleanup >/dev/null 2>&1; then state="verified"; fi
+  if [[ -n "$SCRIPT_ID" ]] && exact_cleanup "$_corr" >/dev/null; then state="verified"; fi
   if [[ "$RECEIPT_CREATED" == "1" && -n "$RECEIPT_PATH" ]]; then rm -f -- "$RECEIPT_PATH" 2>/dev/null || true; fi
   printf 'plasma-auto-tiler-advisory-describe: partial script-id=%s cleanup=%s\n' "${SCRIPT_ID:-unknown}" "$state" >&2
 }
 
 loaded_word() {
-  local plugin="$1" out=""
-  out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" isScriptLoaded s "$plugin" 2>/dev/null)" || {
+  local plugin="$1" _corr="${2:-${ACTIVE_CORR:-none}}" out="" _lw_rc=0 _lw_raw=""
+  _lw_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" isScriptLoaded s "$plugin" 2>&1)" || _lw_rc=$?
+  if [[ "$_lw_rc" -ne 0 ]]; then
+    emit_invocation_diag "isScriptLoaded" "$_lw_rc" "$_corr" "$_lw_raw"
     echo "error: isScriptLoaded call failed for '$plugin'" >&2
     return 1
-  }
+  fi
+  out="$_lw_raw"
   local word=""
   word="$(parse_bool "$out")" || { echo "error: unexpected isScriptLoaded reply for '$plugin': $out" >&2; return 1; }
   if [[ "$word" == "true" ]]; then printf 'loaded\n'; else printf 'not-loaded\n'; fi
@@ -844,7 +922,7 @@ parse_start_args() {
     [[ "$seen_refusal_detail" -eq 1 && "$seen_refusal_after" -eq 1 ]] || fail "start refusal requires paired --expected-refusal-detail and --expected-refusal-after"
     valid_detail "$START_EXPECTED_REFUSAL_DETAIL" || fail "invalid --expected-refusal-detail (must match [A-Za-z0-9._:-]{1,512})"
     [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" || "$START_EXPECTED_REFUSAL_AFTER" == "false" ]] || fail "invalid --expected-refusal-after (must be true|false)"
-    if [[ "$START_EXPECTED_REFUSAL_DETAIL" == "could-execute" && "$START_EXPECTED_REFUSAL_AFTER" == "true" ]]; then
+    if [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" && "$START_EXPECTED_REFUSAL_DETAIL" == "${SUCCESS_DETAIL_PREFIX%:}"* ]]; then
       fail "refusal conflicts with receipt semantics; could-execute with after true requires a receipt"
     fi
   fi
@@ -876,6 +954,7 @@ cmd_start() {
   manifest_eval="$(parse_manifest "$START_MANIFEST")" || exit 1
   local MANIFEST_BUNDLE_SHA="" MANIFEST_ENTRY_SHA="" MANIFEST_QUERY_SHA="" MANIFEST_SNAPSHOT_SHA="" MANIFEST_INPUT_SHA="" MANIFEST_NONCE="" MANIFEST_CORRELATION="" MANIFEST_OWNER="" MANIFEST_GENERATION="" MANIFEST_REVISION=""
   eval "$manifest_eval"
+  ACTIVE_CORR="$MANIFEST_CORRELATION"
   local actual_input_sha
   actual_input_sha="$(sha256_file "$START_INPUT")"
   [[ -n "$actual_input_sha" ]] || fail "could not hash the input"
@@ -965,20 +1044,27 @@ cmd_start() {
   # Deterministic rebuild verification before any bus transport: rejects a
   # manually altered bundle even when its manifest bundle sha was recomputed.
   # The verify path rebuilds to a temp directory and never writes dist outputs.
-  "$NODE_BIN" -- "$BUILDER" --verify --input "$START_INPUT" --bundle "$START_BUNDLE" --manifest "$START_MANIFEST" >/dev/null 2>&1 || {
+  # Causal stderr/exit is preserved bounded/redacted before any cleanup.
+  local _verify_raw="" _verify_rc=0
+  _verify_raw="$("$NODE_BIN" -- "$BUILDER" --verify --input "$START_INPUT" --bundle "$START_BUNDLE" --manifest "$START_MANIFEST" 2>&1)" || _verify_rc=$?
+  if [[ "$_verify_rc" -ne 0 ]]; then
+    emit_invocation_diag "builder-verify" "$_verify_rc" "$MANIFEST_CORRELATION" "$_verify_raw"
     echo "error: deterministic rebuild verification failed" >&2
     return 1
-  }
+  fi
   # The following node invocation is the builder verify above (node + builder
   # only); bus transport below uses only the pinned BUSCTL_BIN tool.
   local diag_start=""
   diag_start="$(wc -c < "$START_DIAG" 2>/dev/null | tr -d ' ')" || fail "could not snapshot the diag boundary"
   [[ "$diag_start" =~ ^(0|[1-9][0-9]*)$ ]] || fail "diag boundary is not a byte size; refusing stale-prone scan"
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
-  local load_out=""
-  load_out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" loadScript ss "$START_BUNDLE" "$PLUGIN" 2>/dev/null)" || {
+  local load_out="" _load_raw="" _load_rc=0
+  _load_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" loadScript ss "$START_BUNDLE" "$PLUGIN" 2>&1)" || _load_rc=$?
+  if [[ "$_load_rc" -ne 0 ]]; then
+    emit_invocation_diag "loadScript" "$_load_rc" "$MANIFEST_CORRELATION" "$_load_raw"
     fail "loadScript call failed for '$PLUGIN'"
-  }
+  fi
+  load_out="$_load_raw"
   SCRIPT_ID="$(parse_script_id "$load_out")" || {
     SCRIPT_ID=""
     SCRIPT_OBJ=""
@@ -986,11 +1072,14 @@ cmd_start() {
     exit 1
   }
   SCRIPT_OBJ="/Scripting/Script$SCRIPT_ID"
-  local introspect_out=""
-  introspect_out="$("$BUSCTL_BIN" "$BUS_SCOPE" introspect "$BUS_DEST" "$SCRIPT_OBJ" 2>/dev/null)" || {
+  local introspect_out="" _introspect_raw="" _introspect_rc=0
+  _introspect_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" introspect "$BUS_DEST" "$SCRIPT_OBJ" 2>&1)" || _introspect_rc=$?
+  if [[ "$_introspect_rc" -ne 0 ]]; then
+    emit_invocation_diag "introspect" "$_introspect_rc" "$MANIFEST_CORRELATION" "$_introspect_raw"
     partial_cleanup
     fail "introspect failed for $SCRIPT_OBJ"
-  }
+  fi
+  introspect_out="$_introspect_raw"
   printf '%s' "$introspect_out" | grep -Fq "org.kde.kwin.Script" || {
     partial_cleanup
     fail "$SCRIPT_OBJ does not expose the Script interface"
@@ -999,10 +1088,13 @@ cmd_start() {
     partial_cleanup
     fail "plugin '$PLUGIN' was not reported loaded after exact object introspection"
   }
-  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" run >/dev/null 2>&1 || {
+  local _run_raw="" _run_rc=0
+  _run_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" run 2>&1)" || _run_rc=$?
+  if [[ "$_run_rc" -ne 0 ]]; then
+    emit_invocation_diag "run" "$_run_rc" "$MANIFEST_CORRELATION" "$_run_raw"
     partial_cleanup
     fail "run() failed on $SCRIPT_OBJ"
-  }
+  fi
   local ready_line result_prefix result_line detail source_line after_prefix after_line verdict result_offset after_start
   source_line="$(source_line_for "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA")"
   wait_diag_line "$START_DIAG" "$diag_start" "$source_line" "line" "$START_ATTEMPTS" "$START_DELAY" >/dev/null || {
@@ -1099,7 +1191,7 @@ cmd_start() {
     fi
     return 0
   fi
-  if [[ "$verdict" == "true" && "$detail" == "could-execute" ]]; then
+  if [[ "$verdict" == "true" ]] && is_success_detail "$detail"; then
     :
   elif [[ "$verdict" == "false" && "$detail" == "$STALE_DETAIL" ]]; then
     partial_cleanup
@@ -1348,6 +1440,9 @@ cmd_diagnostics() {
     found_detail="$(check_result_line "$found_result" "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")" || fail "result marker detail failed validation"
     found_verdict="$(check_after_line "$found_after" "$RECEIPT_CORRELATION")" || fail "after marker failed validation"
     [[ "$after_pos" -gt "$result_pos" ]] || fail "after marker must follow the correlated result marker"
+    if [[ "$found_verdict" == "true" ]] && ! is_success_detail "$found_detail"; then
+      fail "diagnostics refuses non-success detail with after true"
+    fi
     if [[ "$found_verdict" == "false" && "$found_detail" != "$STALE_DETAIL" ]]; then
       fail "after drift without explicit stale rejection"
     fi
@@ -1371,6 +1466,7 @@ cmd_stop() {
   local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA="" RECEIPT_SNAPSHOT_SHA=""
   local RECEIPT_OWNER="" RECEIPT_GENERATION="" RECEIPT_REVISION="" RECEIPT_CORRELATION="" RECEIPT_NONCE=""
   eval "$receipt_eval"
+  ACTIVE_CORR="$RECEIPT_CORRELATION"
   SCRIPT_ID="$RECEIPT_SCRIPT_ID"
   SCRIPT_OBJ="$RECEIPT_SCRIPT_OBJ"
   if [[ "$(loaded_word "$RECEIPT_PLUGIN")" == "not-loaded" ]]; then
@@ -1378,13 +1474,26 @@ cmd_stop() {
     printf 'stopped: plugin=%s script=%s already-absent cleanup=verified\n' "$RECEIPT_PLUGIN" "$RECEIPT_SCRIPT_ID"
     return 0
   fi
-  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
-  local unload_out=""
-  unload_out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$RECEIPT_PLUGIN" 2>/dev/null)" || {
+  local _stop_raw="" _stop_rc=0
+  _stop_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop 2>&1)" || _stop_rc=$?
+  if [[ "$_stop_rc" -ne 0 ]]; then
+    emit_invocation_diag "stop" "$_stop_rc" "$ACTIVE_CORR" "$_stop_raw"
+  fi
+  local unload_out="" _su_rc=0 _su_raw=""
+  _su_raw="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$RECEIPT_PLUGIN" 2>&1)" || _su_rc=$?
+  if [[ "$_su_rc" -ne 0 ]]; then
+    emit_invocation_diag "unloadScript" "$_su_rc" "$ACTIVE_CORR" "$_su_raw"
     fail "unloadScript failed for '$RECEIPT_PLUGIN'"
+  fi
+  unload_out="$_su_raw"
+  [[ "$(parse_bool "$unload_out")" == "true" ]] || {
+    emit_invocation_diag "unloadScript" "1" "$ACTIVE_CORR" "$unload_out"
+    fail "unloadScript refused '$RECEIPT_PLUGIN'"
   }
-  [[ "$(parse_bool "$unload_out")" == "true" ]] || fail "unloadScript refused '$RECEIPT_PLUGIN'"
-  [[ "$(loaded_word "$RECEIPT_PLUGIN")" == "not-loaded" ]] || fail "recorded plugin still loaded after exact unload"
+  [[ "$(loaded_word "$RECEIPT_PLUGIN")" == "not-loaded" ]] || {
+    emit_invocation_diag "state" "1" "$ACTIVE_CORR" "plugin still loaded after exact unload"
+    fail "recorded plugin still loaded after exact unload"
+  }
   rm -f -- "$receipt" || fail "could not remove the receipt"
   printf 'stopped: plugin=%s script=%s object=%s cleanup=verified\n' "$RECEIPT_PLUGIN" "$RECEIPT_SCRIPT_ID" "$SCRIPT_OBJ"
 }

@@ -86,11 +86,25 @@ Only meaningful pending or active work is listed.
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved
     same-UID service binary.
-    The completed POC is archived: manual/visual evidence
-  supports bounded three-window projection, focus, structural movement, resize,
-  and drag gesture separation only - not production, parity, lifecycle,
-  atomicity, or measured latency |
-  [change](changes/rust-engine-direct-geometry-migration.md)
+     The completed POC is archived: manual/visual evidence
+   supports bounded three-window projection, focus, structural movement, resize,
+   and drag gesture separation only - not production, parity, lifecycle,
+   atomicity, or measured latency. Static advisory transport correction: the
+   initial failed sequencer journey discarded builder/`busctl`/loader stderr and
+   lost the planner early-exit status before exact cleanup; it also could not
+   receipt the final adapter's `could-execute:<rule>:<capability>` success
+   detail because the host expected bare `could-execute`. The final KWin adapter
+   boundary now accepts only the current strict rule/capability allowlist, while
+   reusable host/sequencer diagnostics preserve bounded redacted invocation,
+   exit-status, and opaque-correlation evidence before cleanup. Focused static
+   tests pass; no lifecycle ran. The user manually observed the OpenCode
+   Ghostty, Firefox, and other Ghostty windows visibly unchanged after the
+   failed journey. That is manual/visual unchanged-window evidence only, not
+   protocol, geometry, or restoration proof. Because full fresh-runtime cleanup
+   remains unproven, live mutation authorization on this path is paused. The
+   next gate is one user-assisted authorized read-only journey with retained
+   bounded transport evidence and existing exact restoration checks |
+   [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace

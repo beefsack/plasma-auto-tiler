@@ -307,14 +307,33 @@ production behavior through incremental opt-in promotion.
   Planner caller authentication requires
   a readable `/proc/<KWin PID>/exe`, but that read is unavailable on this host;
   the loader's approved direct-parent fallback is not available to the Rust
-  service. KWin identity, production plugin continuity, advisory/Planner
-  absence, generated-output absence, and the `kwinrc` hash/mtime matched the
-  exact preimage after both attempts. No native window, focus, geometry,
-  workspace, output, configuration, or production lifecycle state changed; no
-  residue was searched or changed. A retry is blocked pending an explicit
-  durable security-boundary decision on whether and how Rust may authenticate
-  the unreadable-executable direct-parent KWin identity. Success, stale,
-  service-loss, and complete transport-gate evidence remain unclaimed.
+   service. KWin identity, production plugin continuity, advisory/Planner
+   absence, generated-output absence, and the `kwinrc` hash/mtime matched the
+   exact preimage after both attempts. No native window, focus, geometry,
+   workspace, output, configuration, or production lifecycle state changed; no
+   residue was searched or changed. A retry is blocked pending an explicit
+   durable security-boundary decision on whether and how Rust may authenticate
+   the unreadable-executable direct-parent KWin identity. Success, stale,
+   service-loss, and complete transport-gate evidence remain unclaimed.
+- Static advisory transport correction, 2026-09-08: the failed initial
+  sequencer journey lost causal process evidence because builder, `busctl`, and
+  loader stderr was discarded and planner early exit was not waited for, so its
+  exact status was unavailable before cleanup removed the fresh run directory.
+  The loader also required bare `could-execute` for a receipt although the final
+  KWin adapter emits the bounded `could-execute:<rule>:<capability>` detail.
+  The checked host boundary now retains that detail through a strict current
+  rule/capability allowlist, and its reusable adapter/sequencer diagnostics emit
+  one bounded redacted invocation, exit status, and opaque correlation record
+  before exact cleanup. Focused fake transport and KWin adapter tests cover
+  success/failure status preservation, redaction, correlation, cleanup order,
+  and the receipt predicate. No live lifecycle ran. The user manually observed
+  the OpenCode Ghostty, Firefox, and other Ghostty windows still visible and
+  unchanged after the failed journey. This is manual/visual unchanged-window
+  evidence only, not protocol, geometry, or restoration proof. The prior run's
+  full fresh-runtime cleanup is not protocol-proven; live mutation authorization
+  for this path is paused pending a safe next boundary. The remaining gate is a
+  user-assisted authorized read-only advisory journey with preserved bounded
+  transport evidence, followed by its existing exact restoration checks.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

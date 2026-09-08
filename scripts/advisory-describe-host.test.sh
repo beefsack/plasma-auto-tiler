@@ -215,7 +215,7 @@ fi
 # Resource-free static detection: pre-verify section (comments excluded) must
 # contain no mktemp/mkdtemp/mkdir/touch and no file-creating redirection.
 PREVERIFY_SECT="$TMP_DIR/preverify-sect.txt"
-sed -n '/^cmd_start() {/,/^  "\$NODE_BIN" -- "\$BUILDER" --verify/p' "$LOADER" \
+sed -n '/^cmd_start() {/,/"\$NODE_BIN" -- "\$BUILDER" --verify/p' "$LOADER" \
   | grep -v '^[[:space:]]*#' > "$PREVERIFY_SECT"
 for _tok in mktemp mkdtemp mkdir touch; do
   if grep -wq -- "$_tok" "$PREVERIFY_SECT"; then fail "pre-verify has no $_tok"; else pass "pre-verify has no $_tok"; fi
@@ -531,7 +531,7 @@ GENERATION="adv-host-gen"
 REVISION="9"
 NONCE2="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 READY="plasma-auto-tiler:advisory-describe-ready:$NONCE"
-RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
+RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 AFTER="plasma-auto-tiler:advisory-describe-after:v1:$NONCE:true"
 STALE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:reject:advisory-stale-snapshot"
 AFTER_FALSE="plasma-auto-tiler:advisory-describe-after:v1:$NONCE:false"
@@ -726,7 +726,7 @@ fi
 
 # 7/8: wrong correlation and wrong owner in the result fail closed.
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE2:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE2:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-corr.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject wrong correlation"
@@ -736,7 +736,7 @@ fi
 if [[ -e "$TMP_DIR/r-corr.json" ]]; then fail "no receipt on correlation mismatch"; else pass "no receipt on correlation mismatch"; fi
 if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "correlation mismatch cleans the exact id"; else fail "correlation mismatch cleans the exact id"; fi
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:lost-owner:$GENERATION:$REVISION:$NONCE:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:lost-owner:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-owner.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject owner loss"
@@ -747,7 +747,7 @@ if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/call
 
 # 7b/7c: wrong generation/revision/nonce fail closed; unversioned prefix rejected.
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-gen.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject wrong generation"
@@ -755,7 +755,7 @@ else
   pass "start rejects wrong generation"
 fi
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:999:$NONCE:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:999:$NONCE:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-rev.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject wrong revision"
@@ -763,7 +763,7 @@ else
   pass "start rejects wrong revision"
 fi
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-nonce.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject wrong nonce"
@@ -771,7 +771,7 @@ else
   pass "start rejects wrong nonce"
 fi
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-unver.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject an unversioned result"
@@ -781,7 +781,7 @@ fi
 
 # 7d: mid-line prefix, empty detail, and oversize detail rejected.
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
-FAKE_RESULT="xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
+FAKE_RESULT="xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 export FAKE_RESULT
 # Fake appends source/ready/result lines; prepend junk on the result line to force a mid-line match.
 FAKE_APPEND=1; export FAKE_APPEND
@@ -1040,7 +1040,7 @@ else
 fi
 cp -- "$TMP_DIR/request-denied.json" "$TMP_DIR/request-denied-saved.json"
 READY_D="plasma-auto-tiler:advisory-describe-ready:$NONCE"
-RESULT_D="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:workspace.x:$GENERATION:$REVISION:$NONCE:could-execute"
+RESULT_D="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:workspace.x:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor"
 AFTER_D="plasma-auto-tiler:advisory-describe-after:v1:$NONCE:true"
 ENTRY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | cut -d' ' -f1)"
 QUERY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
@@ -1456,7 +1456,7 @@ ENTRY_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | c
 QUERY_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
 SNAPSHOT_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-snapshot.ts" | cut -d' ' -f1)"
 SOURCE_T="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T:$SNAPSHOT_SHA_T"
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute" "$AFTER" > "$TMP_DIR/diag-bad-nonce.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute:R2a:swap-neighbor" "$AFTER" > "$TMP_DIR/diag-bad-nonce.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-bad-nonce.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a wrong-nonce result"
 else
@@ -1464,7 +1464,7 @@ else
 fi
 # Diagnostics applies the same versioned anchored rules: mid-line, empty,
 # oversize, wrong generation/revision, and missing source all fail.
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER" > "$TMP_DIR/diag-mid.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER" > "$TMP_DIR/diag-mid.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-mid.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a mid-line prefix"
 else
@@ -1483,50 +1483,50 @@ if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/
 else
   pass "diagnostics rejects oversize detail"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute" "$AFTER" > "$TMP_DIR/diag-gen.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER" > "$TMP_DIR/diag-gen.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-gen.log" >/dev/null 2>&1; then
   fail "diagnostics must reject wrong generation"
 else
   pass "diagnostics rejects wrong generation"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER" > "$TMP_DIR/diag-unver.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER" > "$TMP_DIR/diag-unver.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-unver.log" >/dev/null 2>&1; then
   fail "diagnostics must reject an unversioned result"
 else
   pass "diagnostics rejects an unversioned result"
 fi
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER" > "$TMP_DIR/diag-nosrc.log"
+printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER" > "$TMP_DIR/diag-nosrc.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-nosrc.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a missing source marker"
 else
   pass "diagnostics rejects a missing source marker"
 fi
 # 15-after: diagnostics requires a bounded opaque correlated after verdict.
-printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-noafter.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" > "$TMP_DIR/diag-noafter.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-noafter.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a missing after marker"
 else
   pass "diagnostics rejects a missing after marker"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "plasma-auto-tiler:advisory-describe-after:v1:$NONCE2:true" > "$TMP_DIR/diag-after-mismatch.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "plasma-auto-tiler:advisory-describe-after:v1:$NONCE2:true" > "$TMP_DIR/diag-after-mismatch.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-after-mismatch.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a mismatched after marker"
 else
   pass "diagnostics rejects a mismatched after marker"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "plasma-auto-tiler:advisory-describe-after:v1:$NONCE:maybe" > "$TMP_DIR/diag-after-invalid.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "plasma-auto-tiler:advisory-describe-after:v1:$NONCE:maybe" > "$TMP_DIR/diag-after-invalid.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-after-invalid.log" >/dev/null 2>&1; then
   fail "diagnostics must reject an invalid after verdict"
 else
   pass "diagnostics rejects an invalid after verdict"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "xx plasma-auto-tiler:advisory-describe-after:v1:$NONCE:true" > "$TMP_DIR/diag-after-mid.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "xx plasma-auto-tiler:advisory-describe-after:v1:$NONCE:true" > "$TMP_DIR/diag-after-mid.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-after-mid.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a mid-line after prefix"
 else
   pass "diagnostics rejects a mid-line after prefix"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER_FALSE" > "$TMP_DIR/diag-after-false-success.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER_FALSE" > "$TMP_DIR/diag-after-false-success.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-after-false-success.log" >/dev/null 2>&1; then
   fail "diagnostics must reject after false with success detail"
 else
@@ -1538,7 +1538,7 @@ if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/
 else
   fail "diagnostics accepts after false with stale rejection"
 fi
-printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "$AFTER" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-after-first.log"
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "$AFTER" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" > "$TMP_DIR/diag-after-first.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-after-first.log" >/dev/null 2>&1; then
   fail "diagnostics must reject an after marker before the result"
 else
@@ -1546,7 +1546,7 @@ else
 fi
 # 15a: diagnostics validates only the bounded 64KiB tail.
 {
-  printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER"
+  printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER"
   head -c 70000 /dev/zero | tr '\0' 'p'; printf '\n'
 } > "$TMP_DIR/diag-old-tail.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-old-tail.log" >/dev/null 2>&1; then
@@ -1556,7 +1556,7 @@ else
 fi
 {
   head -c 70000 /dev/zero | tr '\0' 'p'; printf '\n'
-  printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER"
+  printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor" "$AFTER"
 } > "$TMP_DIR/diag-current-tail.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-current-tail.log" >/dev/null 2>&1; then
   pass "diagnostics accepts a correlated current marker tail"
@@ -1964,11 +1964,24 @@ if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on malformed refusa
 
 # 19f: conflicting semantics refused.
 reset_fake; seed_diag
-if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-conf1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail could-execute --expected-refusal-after true >/dev/null 2>&1; then
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-conf1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail could-execute:R2a:swap-neighbor --expected-refusal-after true >/dev/null 2>&1; then
   fail "refusal must refuse receipt-conflicting pair"
 else
   pass "refusal refuses receipt-conflicting pair"
 fi
+# 19f-prefix: refusal mode rejects any could-execute-prefixed detail with
+# after true, including bare, unknown, or extra-segment forms.
+for _pref_detail in "could-execute" "could-execute:R99:swap-neighbor" "could-execute:R2a:fly-away" "could-execute:R2a:swap-neighbor:extra"; do
+  reset_fake; seed_diag
+  if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-pref.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$_pref_detail" --expected-refusal-after true >/dev/null 2>&1; then
+    fail "refusal must refuse prefixed detail with after true: $_pref_detail"
+  else
+    pass "refusal refuses prefixed detail with after true: $_pref_detail"
+  fi
+  if [[ -e "$TMP_DIR/r-ref-pref.json" ]]; then fail "no receipt on prefixed refusal: $_pref_detail"; else pass "no receipt on prefixed refusal: $_pref_detail"; fi
+  if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on prefixed refusal: $_pref_detail"; else pass "no bus traffic on prefixed refusal: $_pref_detail"; fi
+  rm -f -- "$TMP_DIR/r-ref-pref.json"
+done
 # 19f2: service-loss with pinned owner fails before Script lifecycle on
 # initial absent/mismatch/drift, proving the full initial exact-present
 # owner/PID/tick checks still run.
@@ -2062,6 +2075,146 @@ fi
 if [[ -e "$TMP_DIR/r-ref-drift.json" ]]; then fail "no receipt on refusal drift"; else pass "no receipt on refusal drift"; fi
 if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "refusal drift cleans the exact id"; else fail "refusal drift cleans the exact id"; fi
 rm -f -- "$TMP_DIR/r-ref-drift.json"
+
+# 20: strict success-detail predicate retains bounded advisory detail.
+assert_contains "$LOADER" 'is_success_detail'
+assert_contains "$LOADER" 'SUCCESS_RULES'
+assert_contains "$LOADER" 'SUCCESS_CAPS'
+assert_contains "$LOADER" 'SUCCESS_DETAIL_PREFIX'
+assert_contains "$LOADER" 'emit_invocation_diag'
+assert_contains "$LOADER" 'redact_diag_text'
+assert_contains "$LOADER" 'DIAG_MAX_BYTES'
+assert_contains "$LOADER" 'diag: invocation='
+
+# 20a: bare could-execute with after true receives no receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-bare.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must reject bare could-execute"
+else
+  pass "start rejects bare could-execute"
+fi
+if [[ -e "$TMP_DIR/r-bare.json" ]]; then fail "no receipt on bare detail"; else pass "no receipt on bare detail"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "bare detail cleans the exact id"; else fail "bare detail cleans the exact id"; fi
+rm -f -- "$TMP_DIR/r-bare.json"
+
+# 20b: unknown rule/capability and extra segments fail closed.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R99:swap-neighbor"; export FAKE_RESULT
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-rule.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must reject unknown rule"
+else
+  pass "start rejects unknown rule"
+fi
+rm -f -- "$TMP_DIR/r-rule.json"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:fly-away"; export FAKE_RESULT
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-cap.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must reject unknown capability"
+else
+  pass "start rejects unknown capability"
+fi
+rm -f -- "$TMP_DIR/r-cap.json"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute:R2a:swap-neighbor:extra"; export FAKE_RESULT
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-extra.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must reject extra detail segments"
+else
+  pass "start rejects extra detail segments"
+fi
+rm -f -- "$TMP_DIR/r-extra.json"
+
+# 20c: diagnostics with bare success detail and after true is refused.
+printf '%s\n%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" "$AFTER" > "$TMP_DIR/diag-bare-true.log"
+if "$LOADER" diagnostics --receipt "$TMP_DIR/r0.json" --diag-file "$TMP_DIR/diag-bare-true.log" >/dev/null 2>&1; then
+  fail "diagnostics must reject bare detail with after true"
+else
+  pass "diagnostics rejects bare detail with after true"
+fi
+
+# 20d: bus failure preserves causal bounded redacted invocation-tied diag
+# before exact cleanup, with no native IDs and no guessed unload.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+REAL_FAKE_BUSCTL="$FAKE_BIN/busctl"
+cat > "$FAKE_BIN/busctl-diag-wrap" <<WRAP
+#!/usr/bin/env bash
+if printf '%s' "\$*" | grep -Fq 'loadScript'; then
+  printf 'transport failure owner :1.99 pid 4343 hex aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa path /tmp/secret-bus-failure\n' >&2
+  printf 'x%.0s' \$(seq 1 3000) >&2
+  printf '\n' >&2
+  exit 3
+fi
+exec "$REAL_FAKE_BUSCTL" "\$@"
+WRAP
+chmod +x -- "$FAKE_BIN/busctl-diag-wrap"
+if BUSCTL_BIN="$FAKE_BIN/busctl-diag-wrap" "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-busdiag.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >"$TMP_DIR/o-busdiag.log" 2>"$TMP_DIR/e-busdiag.log"; then
+  fail "start must fail on bus transport failure"
+else
+  pass "start fails on bus transport failure"
+fi
+if grep -qF 'diag: invocation=loadScript exit=3' "$TMP_DIR/e-busdiag.log" && grep -qF "correlation=$NONCE" "$TMP_DIR/e-busdiag.log"; then
+  pass "bus diag is invocation-tied with exit and correlation"
+else
+  fail "bus diag is invocation-tied with exit and correlation"
+fi
+if grep -qF ':REDACTED' "$TMP_DIR/e-busdiag.log" && grep -qF 'REDACTED_HEX' "$TMP_DIR/e-busdiag.log" && grep -qF 'REDACTED_PATH' "$TMP_DIR/e-busdiag.log"; then
+  pass "bus diag redacts native IDs and paths"
+else
+  fail "bus diag redacts native IDs and paths"
+fi
+if grep -qF ':1.99' "$TMP_DIR/e-busdiag.log" || grep -qF '/tmp/secret-bus-failure' "$TMP_DIR/e-busdiag.log"; then
+  fail "bus diag leaks no native IDs"
+else
+  pass "bus diag leaks no native IDs"
+fi
+if grep -qF 'pid 4343' "$TMP_DIR/e-busdiag.log" || grep -qE '(^|[^0-9A-Z_])4343([^0-9]|$)' "$TMP_DIR/e-busdiag.log"; then
+  fail "bus diag leaks no numeric native PIDs"
+else
+  pass "bus diag leaks no numeric native PIDs"
+fi
+if grep -qF 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$TMP_DIR/e-busdiag.log"; then
+  fail "bus diag leaks no raw hex identities"
+else
+  pass "bus diag leaks no raw hex identities"
+fi
+_DIAG_STDERR="$(sed -n 's/.*stderr=//p' "$TMP_DIR/e-busdiag.log" | head -n 1)"
+if [[ "${#_DIAG_STDERR}" -le 1024 ]]; then pass "bus diag stderr is bounded"; else fail "bus diag stderr is bounded"; fi
+if [[ "$(grep -cF 'diag: invocation=' "$TMP_DIR/e-busdiag.log")" -eq 1 ]]; then pass "bus diag remains one bounded log record"; else fail "bus diag remains one bounded log record"; fi
+if grep -qF 'diag: invocation=loadScript exit=3' "$TMP_DIR/e-busdiag.log" && grep -qF "correlation=$NONCE" "$TMP_DIR/e-busdiag.log"; then
+  pass "bus diag preserves invocation/exit/correlation"
+else
+  fail "bus diag preserves invocation/exit/correlation"
+fi
+if [[ -e "$TMP_DIR/r-busdiag.json" ]]; then fail "no receipt on bus failure"; else pass "no receipt on bus failure"; fi
+if grep -qF 'unloadScript' "$FAKE_DIR/calls.log"; then fail "no guessed unload on unknown object"; else pass "no guessed unload on unknown object"; fi
+rm -f -- "$TMP_DIR/r-busdiag.json" "$TMP_DIR/o-busdiag.log" "$TMP_DIR/e-busdiag.log"
+
+# 20e: exact cleanup preserves causal stop/unload/state diags with the
+# start correlation (no "none") before cleanup.
+assert_contains "$LOADER" 'ACTIVE_CORR'
+assert_contains "$LOADER" 'emit_invocation_diag "stop"'
+assert_contains "$LOADER" 'emit_invocation_diag "unloadScript"'
+assert_contains "$LOADER" 'emit_invocation_diag "state"'
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_UNLOAD_EXIT=1; export FAKE_UNLOAD_EXIT
+FAKE_RESULT="$STALE_RESULT"; FAKE_AFTER="$AFTER_FALSE"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-uccorr.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 --expected-refusal-detail "reject:advisory-stale-snapshot" --expected-refusal-after false >"$TMP_DIR/o-uccorr.log" 2>"$TMP_DIR/e-uccorr.log"; then
+  fail "refusal cleanup must fail on unload failure"
+else
+  pass "refusal cleanup fails on unload failure"
+fi
+if grep -qF 'diag: invocation=unloadScript' "$TMP_DIR/e-uccorr.log" && grep -qF "correlation=$NONCE" "$TMP_DIR/e-uccorr.log"; then
+  pass "unload diag carries the start correlation"
+else
+  fail "unload diag carries the start correlation"
+fi
+if grep -qF 'correlation=none' "$TMP_DIR/e-uccorr.log"; then
+  fail "cleanup diags use known correlation, not none"
+else
+  pass "cleanup diags use known correlation, not none"
+fi
+FAKE_UNLOAD_EXIT=0; export FAKE_UNLOAD_EXIT
+rm -f -- "$TMP_DIR/r-uccorr.json" "$TMP_DIR/o-uccorr.log" "$TMP_DIR/e-uccorr.log"
 
 # Cleanup proof: built and temp artifacts removed, ignored/untracked.
 rm -f -- "$BUNDLE" "$MANIFEST"

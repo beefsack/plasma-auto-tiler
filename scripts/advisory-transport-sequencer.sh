@@ -79,6 +79,36 @@ PLANNER_OWNER=""
 FOLLOWER_PID=""
 PRESERVE_RESIDUE="0"
 PHASE_DONE=""
+SEQ_DIAG_MAX_BYTES=2048
+
+# Smallest reusable sequencer observability: bound, redact, and emit causal
+# invocation-tied stderr/exit classification to stderr before exact cleanup
+# erases RUNDIR. Redacts unique bus owners, numeric native PIDs, hex
+# correlations, and absolute paths, and encodes newlines so every diagnostic
+# stays one bounded log record; the caller supplies invocation plus
+# correlation so diagnostics stay tied without leaking native IDs. Cleanup
+# ordering and exact behavior below are unchanged; emitters run before
+# cleanup_all.
+seq_redact_text() {
+  local _in="${1:-}" _out=""
+  _out="$(printf '%s' "$_in" | head -c "$SEQ_DIAG_MAX_BYTES" | sed -E -e 's/:[0-9]+\.[0-9]+/:REDACTED/g' -e 's/[0-9a-f]{32,128}/REDACTED_HEX/g' -e 's|/[^[:space:]"]+|REDACTED_PATH|g' -e 's/\b(pid|PID)([[:space:]]+)[0-9][0-9]*/\1\2REDACTED_PID/g' -e 's/\b[0-9]{4,}\b/REDACTED_NUM/g')"
+  _out="${_out//$'\n'/\\n}"
+  _out="${_out//$'\r'/\\r}"
+  printf '%s' "$_out" | head -c "$SEQ_DIAG_MAX_BYTES"
+}
+
+seq_emit_diag() {
+  local invocation="${1:-unknown}" exit_code="${2:-1}" correlation="${3:-none}" raw="${4:-}"
+  local redacted=""
+  redacted="$(seq_redact_text "$raw")"
+  printf 'diag: invocation=%s exit=%s correlation=%s stderr=%s\n' "$invocation" "$exit_code" "$correlation" "$redacted" >&2
+}
+
+# Smallest reusable bounded in-memory file tail for causal diagnostics.
+# Reads at most SEQ_DIAG_MAX_BYTES without creating temp files.
+seq_file_tail() {
+  tail -c "$SEQ_DIAG_MAX_BYTES" -- "${1:-}" 2>/dev/null || true
+}
 
 fail() {
   printf 'error: %s\n' "$1" >&2
@@ -277,11 +307,13 @@ if (names.includes(process.env.BUS_OWNER)) process.exit(1);
 }
 
 planner_absent_check() {
-  local out="" has=""
-  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_SERVICE" 2>/dev/null)" || {
+  local out="" has="" _rc=0
+  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_SERVICE" 2>&1)" || _rc=$?
+  if [[ "$_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:NameHasOwner" "$_rc" "none" "$out"
     printf 'error: planner absence check failed (transport failure)\n' >&2
     return 1
-  }
+  fi
   has="$(bus_bool "$out")" || {
     printf 'error: malformed NameHasOwner reply for %s\n' "$PLANNER_SERVICE" >&2
     return 1
@@ -294,19 +326,24 @@ planner_absent_check() {
 
 resolve_service_owner_pid() {
   local service="$1" owner="" pid=""
-  local out=""
-  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$service" 2>/dev/null)" || {
+  local out="" _rc=0
+  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$service" 2>&1)" || _rc=$?
+  if [[ "$_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:GetNameOwner" "$_rc" "none" "$out"
     printf 'error: GetNameOwner failed for %s\n' "$service" >&2
     return 1
-  }
+  fi
   owner="$(bus_unique_name "$out")" || {
     printf 'error: malformed GetNameOwner reply for %s\n' "$service" >&2
     return 1
   }
-  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner" 2>/dev/null)" || {
+  out=""; _rc=0
+  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner" 2>&1)" || _rc=$?
+  if [[ "$_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:GetConnectionUnixProcessID" "$_rc" "none" "$out"
     printf 'error: could not resolve the Unix PID for %s owner %s\n' "$service" "$owner" >&2
     return 1
-  }
+  fi
   pid="$(bus_unix_pid "$out")" || {
     printf 'error: malformed GetConnectionUnixProcessID reply for %s\n' "$service" >&2
     return 1
@@ -363,10 +400,16 @@ build_one() {
     return 1
   }
   write_request_json "$input" "$nonce" || return 1
-  "$NODE_BIN" -- "$builder" --input "$input" --out "$dist/advisory-describe.js" >/dev/null 2>&1 || {
+  local _build_raw="" _build_rc=0
+  _build_raw="$("$NODE_BIN" -- "$builder" --input "$input" --out "$dist/advisory-describe.js" 2>&1)" || _build_rc=$?
+  if [[ "$_build_rc" -ne 0 ]]; then
+    seq_emit_diag "build:$name" "$_build_rc" "$nonce" "$_build_raw"
     printf 'error: builder failed for phase %s\n' "$name" >&2
     return 1
-  }
+  fi
+  if [[ -n "$_build_raw" ]]; then
+    seq_emit_diag "build:$name" "0" "$nonce" "$_build_raw"
+  fi
   BUILT_DIST="1"
   cp -p -- "$dist/advisory-describe.js" "$bundle" || {
     printf 'error: could not stage the bundle for phase %s\n' "$name" >&2
@@ -453,11 +496,13 @@ exact_planner_stop() {
 }
 
 prove_planner_owner_loss() {
-  local out="" has=""
-  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_SERVICE" 2>/dev/null)" || {
+  local out="" has="" _rc=0
+  out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_SERVICE" 2>&1)" || _rc=$?
+  if [[ "$_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:NameHasOwner-loss" "$_rc" "none" "$out"
     printf 'error: planner owner-loss check failed (transport failure)\n' >&2
     return 1
-  }
+  fi
   has="$(bus_bool "$out")" || {
     printf 'error: malformed NameHasOwner reply for %s\n' "$PLANNER_SERVICE" >&2
     return 1
@@ -469,11 +514,13 @@ prove_planner_owner_loss() {
   # NameHasOwner proves well-known-name loss. ListNames is the authoritative
   # structured bus reply for the pinned unique-owner absence, avoiding an
   # ambiguous failed GetConnectionUnixProcessID transport call.
-  local names_out=""
-  names_out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ListNames 2>/dev/null)" || {
+  local names_out="" _ln_rc=0
+  names_out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ListNames 2>&1)" || _ln_rc=$?
+  if [[ "$_ln_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:ListNames-loss" "$_ln_rc" "none" "$names_out"
     printf 'error: planner unique-owner loss check failed (transport failure)\n' >&2
     return 1
-  }
+  fi
   bus_unique_name_absent "$names_out" "$PLANNER_OWNER" || {
     printf 'error: pinned planner owner %s is still present or ListNames is malformed\n' "$PLANNER_OWNER" >&2
     return 1
@@ -704,18 +751,27 @@ cmd_run() {
     rm -f -- "$BOOTSTRAP_INPUT"
     exit 1
   }
-  "$NODE_BIN" -- "$builder" --input "$BOOTSTRAP_INPUT" --out "$dist/advisory-describe.js" >/dev/null 2>&1 || {
+  local _bootstrap_raw="" _bootstrap_rc=0
+  _bootstrap_raw="$("$NODE_BIN" -- "$builder" --input "$BOOTSTRAP_INPUT" --out "$dist/advisory-describe.js" 2>&1)" || _bootstrap_rc=$?
+  if [[ "$_bootstrap_rc" -ne 0 ]]; then
+    seq_emit_diag "build:bootstrap" "$_bootstrap_rc" "$NONCE_SUCCESS" "$_bootstrap_raw"
     rm -f -- "$BOOTSTRAP_INPUT"
     cleanup_generated
     fail "bootstrap builder failed"
-  }
+  fi
+  if [[ -n "$_bootstrap_raw" ]]; then
+    seq_emit_diag "build:bootstrap" "0" "$NONCE_SUCCESS" "$_bootstrap_raw"
+  fi
   BUILT_DIST="1"
-  local PREFLIGHT_BEFORE=""
-  PREFLIGHT_BEFORE="$(loader_preflight "$loader" "$dist/advisory-describe.js" "$dist/advisory-describe.manifest.json" "$BOOTSTRAP_INPUT")" || {
+  local PREFLIGHT_BEFORE="" _preflight_raw="" _preflight_rc=0
+  _preflight_raw="$(loader_preflight "$loader" "$dist/advisory-describe.js" "$dist/advisory-describe.manifest.json" "$BOOTSTRAP_INPUT" 2>&1)" || _preflight_rc=$?
+  if [[ "$_preflight_rc" -ne 0 ]]; then
+    seq_emit_diag "preflight:bootstrap" "$_preflight_rc" "$NONCE_SUCCESS" "$_preflight_raw"
     rm -f -- "$BOOTSTRAP_INPUT"
     cleanup_generated
     fail "bootstrap loader preflight failed"
-  }
+  fi
+  PREFLIGHT_BEFORE="$_preflight_raw"
   [[ -n "$PREFLIGHT_BEFORE" ]] || {
     cleanup_generated
     fail "bootstrap loader preflight emitted no identity"
@@ -818,6 +874,12 @@ cmd_run() {
   PLANNER_PID="$!"
   "$SLEEP_BIN" "$SEQUENCER_DELAY" >/dev/null 2>&1 || true
   "$KILL_BIN" -0 -- "$PLANNER_PID" 2>/dev/null || {
+    local _planner_rc=0 _planner_err=""
+    wait "$PLANNER_PID" 2>/dev/null || _planner_rc=$?
+    if [[ -f "$RUNDIR/planner.stderr" ]]; then
+      _planner_err="$(tail -c "$SEQ_DIAG_MAX_BYTES" -- "$RUNDIR/planner.stderr" 2>/dev/null)" || _planner_err=""
+    fi
+    seq_emit_diag "planner-launch" "${_planner_rc:-1}" "$NONCE_LOSS" "$_planner_err"
     PLANNER_PID=""
     cleanup_all "$loader" || true
     fail "planner child exited immediately; no restart"
@@ -915,6 +977,7 @@ cmd_run() {
   local S_OUT=""
   S_OUT="$(loader_start "$loader" --bundle "$S_BUNDLE" --manifest "$S_MANIFEST" --receipt "$SUCCESS_RECEIPT" --diag-file "$S_DIAG" --input "$S_INPUT" --attempts "$SEQUENCER_ATTEMPTS" --delay "$SEQUENCER_DELAY" --expected-planner-owner "$PLANNER_OWNER" 2>&1)" || {
     local S_RC=$?
+    seq_emit_diag "loader-start:success" "$S_RC" "$NONCE_SUCCESS" "$S_OUT"
     if [[ "$S_OUT" == *"ambiguous"* && "$S_OUT" == *"preserving residue"* ]]; then
       printf 'error: loader reported ambiguous identity; preserving exact residue %s\n' "$RUNDIR" >&2
       PRESERVE_RESIDUE="1"
@@ -923,6 +986,7 @@ cmd_run() {
     cleanup_all "$loader" || true
     fail "success transport failed"
   }
+  seq_emit_diag "loader-start:success" "0" "$NONCE_SUCCESS" "$S_OUT"
   wait_kwin_ready_marker "$S_DIAG" "$NONCE_SUCCESS" || {
     stop_follower
     cleanup_all "$loader" || true
@@ -937,14 +1001,20 @@ cmd_run() {
     cleanup_all "$loader" || true
     fail "success receipt is absent after the success transport"
   }
-  "$loader" diagnostics --receipt "$SUCCESS_RECEIPT" --diag-file "$S_DIAG" >/dev/null 2>&1 || {
+  local _s_diag_raw="" _s_diag_rc=0
+  _s_diag_raw="$("$loader" diagnostics --receipt "$SUCCESS_RECEIPT" --diag-file "$S_DIAG" 2>&1)" || _s_diag_rc=$?
+  seq_emit_diag "loader-diagnostics:success" "$_s_diag_rc" "$NONCE_SUCCESS" "$_s_diag_raw"
+  if [[ "$_s_diag_rc" -ne 0 ]]; then
     cleanup_all "$loader" || true
     fail "success diagnostics failed"
-  }
-  "$loader" stop --receipt "$SUCCESS_RECEIPT" >/dev/null 2>&1 || {
+  fi
+  local _s_stop_raw="" _s_stop_rc=0
+  _s_stop_raw="$("$loader" stop --receipt "$SUCCESS_RECEIPT" 2>&1)" || _s_stop_rc=$?
+  seq_emit_diag "loader-stop:success" "$_s_stop_rc" "$NONCE_SUCCESS" "$_s_stop_raw"
+  if [[ "$_s_stop_rc" -ne 0 ]]; then
     cleanup_all "$loader" || true
     fail "success exact cleanup failed"
-  }
+  fi
   [[ ! -e "$SUCCESS_RECEIPT" && ! -L "$SUCCESS_RECEIPT" ]] || {
     cleanup_all "$loader" || true
     fail "success receipt survived exact cleanup"
@@ -968,6 +1038,8 @@ cmd_run() {
   }
   local T_OUT=""
   T_OUT="$(loader_start "$loader" --bundle "$T_BUNDLE" --manifest "$T_MANIFEST" --receipt "$T_RECEIPT" --diag-file "$T_DIAG" --input "$T_INPUT" --attempts "$SEQUENCER_ATTEMPTS" --delay "$SEQUENCER_DELAY" --expected-planner-owner "$PLANNER_OWNER" --expected-refusal-detail "$STALE_DETAIL" --expected-refusal-after true 2>&1)" || {
+    local T_RC=$?
+    seq_emit_diag "loader-start:stale" "$T_RC" "$NONCE_STALE" "$T_OUT"
     if [[ "$T_OUT" == *"ambiguous"* && "$T_OUT" == *"preserving residue"* ]]; then
       printf 'error: loader reported ambiguous identity; preserving exact residue %s\n' "$RUNDIR" >&2
       PRESERVE_RESIDUE="1"
@@ -976,6 +1048,7 @@ cmd_run() {
     cleanup_all "$loader" || true
     fail "stale refusal transport failed"
   }
+  seq_emit_diag "loader-start:stale" "0" "$NONCE_STALE" "$T_OUT"
   wait_kwin_ready_marker "$T_DIAG" "$NONCE_STALE" || {
     stop_follower
     cleanup_all "$loader" || true
@@ -1014,6 +1087,7 @@ cmd_run() {
   local LOSS_JOB="$!"
   local LOSS_TICK=""
   LOSS_TICK="$(real_proc_start_tick "$LOSS_JOB" 2>/dev/null)" || {
+    seq_emit_diag "loss-start" "1" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
     kill -- "$LOSS_JOB" 2>/dev/null || true
     wait "$LOSS_JOB" 2>/dev/null || true
     stop_follower
@@ -1021,6 +1095,7 @@ cmd_run() {
     fail "loss loader job failed to start with a pinned start-tick"
   }
   wait_kwin_ready_marker "$L_DIAG" "$NONCE_LOSS" || {
+    seq_emit_diag "loss-ready" "1" "$NONCE_LOSS" "$(seq_file_tail "$RUNDIR/kwin-ready-err.log")"
     if grep -qF 'ambiguous' "$L_OUT_FILE" 2>/dev/null && grep -qF 'preserving residue' "$L_OUT_FILE" 2>/dev/null; then
       printf 'error: loader reported ambiguous identity; preserving exact residue %s\n' "$RUNDIR" >&2
       PRESERVE_RESIDUE="1"
@@ -1032,6 +1107,7 @@ cmd_run() {
     fail "loss KWin ready marker wait failed"
   }
   wait_loss_marker "$RUNDIR/planner.stderr" "$NONCE_LOSS" || {
+    seq_emit_diag "loss-marker" "1" "$NONCE_LOSS" "$(seq_file_tail "$RUNDIR/marker-err.log")"
     if grep -qF 'ambiguous' "$L_OUT_FILE" 2>/dev/null && grep -qF 'preserving residue' "$L_OUT_FILE" 2>/dev/null; then
       printf 'error: loader reported ambiguous identity; preserving exact residue %s\n' "$RUNDIR" >&2
       PRESERVE_RESIDUE="1"
@@ -1047,6 +1123,7 @@ cmd_run() {
   # the exact Planner stop. An early exit preserves the residue and fails.
   local LOSS_TICK_NOW=""
   LOSS_TICK_NOW="$(real_proc_start_tick "$LOSS_JOB" 2>/dev/null)" || {
+    seq_emit_diag "loss-loader" "1" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
     printf 'error: loss loader job exited before owner loss; preserving exact residue %s\n' "$RUNDIR" >&2
     PRESERVE_RESIDUE="1"
     kill -- "$LOSS_JOB" 2>/dev/null || true
@@ -1056,6 +1133,7 @@ cmd_run() {
     fail "loss loader exited before exact planner stop"
   }
   [[ "$LOSS_TICK_NOW" == "$LOSS_TICK" ]] || {
+    seq_emit_diag "loss-loader" "1" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
     printf 'error: loss loader PID/start-tick drift before owner loss; preserving exact residue %s\n' "$RUNDIR" >&2
     PRESERVE_RESIDUE="1"
     kill -- "$LOSS_JOB" 2>/dev/null || true
@@ -1065,6 +1143,7 @@ cmd_run() {
     fail "loss loader identity drift before exact planner stop"
   }
   exact_planner_stop || {
+    seq_emit_diag "planner-stop:loss" "1" "$NONCE_LOSS" "$(seq_file_tail "$RUNDIR/planner.stderr")"
     kill -- "$LOSS_JOB" 2>/dev/null || true
     wait "$LOSS_JOB" 2>/dev/null || true
     stop_follower
@@ -1072,6 +1151,7 @@ cmd_run() {
     exit 1
   }
   prove_planner_owner_loss || {
+    seq_emit_diag "owner-loss" "1" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
     kill -- "$LOSS_JOB" 2>/dev/null || true
     wait "$LOSS_JOB" 2>/dev/null || true
     stop_follower
@@ -1086,15 +1166,19 @@ cmd_run() {
     PRESERVE_RESIDUE="1"
   fi
   [[ "$LOSS_RC" -eq 0 ]] || {
+    seq_emit_diag "loader-start:loss" "$LOSS_RC" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
     cleanup_all "$loader" || true
     fail "loss refusal transport failed"
   }
+  seq_emit_diag "loader-start:loss" "0" "$NONCE_LOSS" "$(seq_file_tail "$L_OUT_FILE")"
   local L_OUT=""
   L_OUT="$(cat -- "$L_OUT_FILE")" || {
+    seq_emit_diag "loader-start:loss" "1" "$NONCE_LOSS" "loss refusal output is unreadable"
     cleanup_all "$loader" || true
     fail "loss refusal output is unreadable"
   }
   [[ "$L_OUT" == *"detail=$TIMEOUT_DETAIL"* && "$L_OUT" == *"after=true"* ]] || {
+    seq_emit_diag "loader-start:loss" "1" "$NONCE_LOSS" "$L_OUT"
     cleanup_all "$loader" || true
     fail "loss refusal bound the wrong detail/after pair"
   }

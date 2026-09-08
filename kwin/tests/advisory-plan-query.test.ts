@@ -226,6 +226,20 @@ describe("advisory plan query", () => {
         assert.equal(query.isInFlight, false);
     });
 
+    it("emits bounded redacted correlation-tied success detail for the host receipt boundary", () => {
+        const { mocks } = started(validInput());
+        driveSuccess(mocks);
+        const success = mocks.logs.filter((line) => line.includes("could-execute:"));
+        assert.equal(success.length, 1);
+        const line = success[0] ?? "";
+        assert.ok(line.startsWith("plasma-auto-tiler:advisory-plan:could-execute:"));
+        const detail = line.slice("plasma-auto-tiler:advisory-plan:".length);
+        assert.match(detail, /^could-execute:(R1|R2a|R2b|R2c|R3|R4):[a-z-]+$/);
+        assert.ok(detail.includes("R2a") && detail.includes("swap-neighbor"));
+        assert.ok(!detail.includes(":1.") && !detail.includes("/tmp/") && !detail.includes("/proc/"));
+        assert.ok(line.length <= 1024);
+    });
+
     it("routes via resolved unique owner and never the well-known fallback", () => {
         const { mocks } = started(validInput());
         assert.equal(mocks.dbusCalls.length, 1);

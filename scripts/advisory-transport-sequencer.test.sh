@@ -833,5 +833,172 @@ done
 export FAKE_READY=normal
 export PLANNER_FAKE_MODE=normal
 
+# R: static observability contract.
+assert_contains "$SEQ" 'seq_emit_diag'
+assert_contains "$SEQ" 'seq_redact_text'
+assert_contains "$SEQ" 'seq_file_tail'
+assert_contains "$SEQ" 'SEQ_DIAG_MAX_BYTES'
+assert_contains "$SEQ" 'diag: invocation='
+assert_contains "$SEQ" 'build:bootstrap'
+assert_contains "$SEQ" 'preflight:bootstrap'
+assert_contains "$SEQ" 'planner-launch'
+assert_contains "$SEQ" 'loader-start:success'
+assert_contains "$SEQ" 'loader-diagnostics:success'
+assert_contains "$SEQ" 'loader-stop:success'
+assert_contains "$SEQ" 'loss-ready'
+assert_contains "$SEQ" 'loss-marker'
+assert_contains "$SEQ" 'planner-stop:loss'
+assert_contains "$SEQ" 'owner-loss'
+assert_contains "$SEQ" 'loader-start:loss'
+assert_contains "$SEQ" 'loss-start'
+
+# S: success run preserves causal invocation-tied bounded redacted diags
+# with exit status and correlation before exact cleanup erases RUNDIR.
+reset_fake
+if "$SEQ" run > "$TMP_DIR/out-s.txt" 2> "$TMP_DIR/err-s.txt"; then
+  pass "observability success run completes"
+else
+  fail "observability success run completes"
+fi
+for _inv in "build:bootstrap" "build:success" "loader-start:success" "loader-diagnostics:success" "loader-stop:success"; do
+  if grep -qF "diag: invocation=$_inv exit=0" "$TMP_DIR/err-s.txt"; then
+    pass "success diag present: $_inv exit=0"
+  else
+    fail "success diag present: $_inv exit=0"
+  fi
+done
+if grep -qF 'correlation=' "$TMP_DIR/err-s.txt"; then
+  pass "success diags are correlation-tied"
+else
+  fail "success diags are correlation-tied"
+fi
+if grep -qF ':1.77' "$TMP_DIR/err-s.txt" || grep -qF ':1.10' "$TMP_DIR/err-s.txt"; then
+  fail "success diags leak no native bus IDs"
+else
+  pass "success diags leak no native bus IDs"
+fi
+if grep -qE '/tmp/[^ ]+advisory-transport' "$TMP_DIR/err-s.txt"; then
+  fail "success diags leak no RUNDIR paths"
+else
+  pass "success diags leak no RUNDIR paths"
+fi
+_diag_long=0
+while IFS= read -r _line || [[ -n "$_line" ]]; do
+  _stderr="${_line##*stderr=}"
+  if [[ "${#_stderr}" -gt 2048 ]]; then _diag_long=1; fi
+done < <(grep -F 'diag: invocation=' "$TMP_DIR/err-s.txt" 2>/dev/null || true)
+if [[ "$_diag_long" -eq 0 ]]; then pass "success diags are bounded"; else fail "success diags are bounded"; fi
+if [[ -z "$(ls -A -- "$FAKE_TMP" 2>/dev/null)" && -z "$(ls -A -- "$FAKE_DIST" 2>/dev/null)" ]]; then
+  pass "success cleanup ordering preserved after diags"
+else
+  fail "success cleanup ordering preserved after diags"
+fi
+
+# T: build failure preserves exit/correlated bounded diag before cleanup.
+reset_fake
+cat > "$FAKE_BIN/fake-builder-fail" <<'FAIL_BUILDER'
+#!/usr/bin/env node
+process.stderr.write('builder failure owner :1.77 pid 4343 path /tmp/secret-build-failure hex aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n');
+process.stderr.write('x'.repeat(3000) + '\n');
+process.exit(4);
+FAIL_BUILDER
+chmod +x -- "$FAKE_BIN/fake-builder-fail"
+export SEQUENCER_BUILDER="$FAKE_BIN/fake-builder-fail"
+if "$SEQ" run > "$TMP_DIR/out-t.txt" 2> "$TMP_DIR/err-t.txt"; then
+  fail "build failure must fail"
+else
+  pass "build failure fails closed"
+fi
+if grep -qF 'diag: invocation=build:bootstrap exit=4' "$TMP_DIR/err-t.txt" && grep -qF 'correlation=' "$TMP_DIR/err-t.txt"; then
+  pass "build diag preserves exit and correlation"
+else
+  fail "build diag preserves exit and correlation"
+fi
+if grep -qF ':REDACTED' "$TMP_DIR/err-t.txt" && grep -qF 'REDACTED_HEX' "$TMP_DIR/err-t.txt" && grep -qF 'REDACTED_PATH' "$TMP_DIR/err-t.txt"; then
+  pass "build diag redacts native IDs and paths"
+else
+  fail "build diag redacts native IDs and paths"
+fi
+if grep -qF ':1.77' "$TMP_DIR/err-t.txt" || grep -qF '/tmp/secret-build-failure' "$TMP_DIR/err-t.txt"; then
+  fail "build diag leaks no native IDs"
+else
+  pass "build diag leaks no native IDs"
+fi
+if grep -qF 'pid 4343' "$TMP_DIR/err-t.txt" || grep -qE '(^|[^0-9A-Z_])4343([^0-9]|$)' "$TMP_DIR/err-t.txt"; then
+  fail "build diag leaks no numeric native PIDs"
+else
+  pass "build diag leaks no numeric native PIDs"
+fi
+if grep -qF 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$TMP_DIR/err-t.txt"; then
+  fail "build diag leaks no raw hex identities"
+else
+  pass "build diag leaks no raw hex identities"
+fi
+if [[ "$(grep -cF 'diag: invocation=build:bootstrap' "$TMP_DIR/err-t.txt")" -eq 1 ]]; then
+  pass "build diag remains one bounded log record"
+else
+  fail "build diag remains one bounded log record"
+fi
+_diag_t_stderr="$(sed -n 's/.*stderr=//p' "$TMP_DIR/err-t.txt" | head -n 1)"
+if [[ "${#_diag_t_stderr}" -le 2048 ]]; then pass "build diag stderr is bounded"; else fail "build diag stderr is bounded"; fi
+if [[ -z "$(ls -A -- "$FAKE_TMP" 2>/dev/null)" ]]; then
+  pass "build failure cleans before erase"
+else
+  fail "build failure cleans before erase"
+fi
+seq_env
+
+# U: planner immediate-exit waits, preserves status, and emits loss-correlated diag.
+reset_fake
+export PLANNER_FAKE_MODE=exit-fast
+if "$SEQ" run > "$TMP_DIR/out-u.txt" 2> "$TMP_DIR/err-u.txt"; then
+  fail "planner immediate exit must fail"
+else
+  pass "planner immediate exit fails closed"
+fi
+if grep -qF 'diag: invocation=planner-launch' "$TMP_DIR/err-u.txt" && grep -qF 'correlation=' "$TMP_DIR/err-u.txt"; then
+  pass "planner diag is invocation-tied with correlation"
+else
+  fail "planner diag is invocation-tied with correlation"
+fi
+if grep -qF 'exited immediately' "$TMP_DIR/err-u.txt"; then
+  pass "planner immediate exit preserves causal status"
+else
+  fail "planner immediate exit preserves causal status"
+fi
+if [[ -z "$(ls -A -- "$FAKE_TMP" 2>/dev/null)" ]]; then
+  pass "planner failure cleans the fresh dir"
+else
+  fail "planner failure cleans the fresh dir"
+fi
+export PLANNER_FAKE_MODE=normal
+
+# V: loss ready failure preserves loss-correlated causal diag before cleanup.
+reset_fake
+export FAKE_READY="malformed"
+export PLANNER_FAKE_MODE=normal
+if "$SEQ" run > "$TMP_DIR/out-v.txt" 2> "$TMP_DIR/err-v.txt"; then
+  fail "loss ready malformed must fail"
+else
+  pass "loss ready malformed fails closed"
+fi
+if grep -qF 'diag: invocation=loss-ready exit=1' "$TMP_DIR/err-v.txt" && grep -qF 'correlation=' "$TMP_DIR/err-v.txt"; then
+  pass "loss ready diag preserves exit and correlation"
+else
+  fail "loss ready diag preserves exit and correlation"
+fi
+if grep -qF ':1.77' "$TMP_DIR/err-v.txt" || grep -qF ':1.10' "$TMP_DIR/err-v.txt"; then
+  fail "loss ready diag leaks no native bus IDs"
+else
+  pass "loss ready diag leaks no native bus IDs"
+fi
+if [[ ! -f "$FAKE_DIR/planner-alive" && -z "$(ls -A -- "$FAKE_TMP" 2>/dev/null)" ]]; then
+  pass "loss ready failure cleans planner and dir"
+else
+  fail "loss ready failure cleans planner and dir"
+fi
+export FAKE_READY=normal
+export PLANNER_FAKE_MODE=normal
+
 printf 'transport-sequencer focused: pass=%s fail=%s\n' "$PASS" "$FAIL"
 [[ "$FAIL" -eq 0 ]]
