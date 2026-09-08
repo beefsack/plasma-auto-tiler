@@ -109,7 +109,14 @@ Only meaningful pending or active work is listed.
    overwriting them, avoids historical runtime scans and global D-Bus
    enumeration, parses exact pinned-owner loss, and exact-cleans setup
    failures; its hermetic suite passes 213 checks, with no host lifecycle
-   for this correction |
+   for this correction. One subsequent fresh authorized attempt passed its
+   resource-free identity/production/advisory/Planner absence gates and
+   reached the exact returned advisory Script in the success phase, but its
+   terminal result was not receipt-eligible and exact plugin unload returned
+   `false`. No receipt or exact Script/plugin absence exists, so restoration
+   is ambiguous. No host query, cleanup, retry, success/stale/service-loss,
+   after-equality, or production-continuity claim follows; this live route is
+   halted and prior unidentified residue remains untouched |
    [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

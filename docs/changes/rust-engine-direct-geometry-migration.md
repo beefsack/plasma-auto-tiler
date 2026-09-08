@@ -344,6 +344,18 @@ production behavior through incremental opt-in promotion.
   hermetic sequencer suite passes 213 checks; no host lifecycle ran for this
   correction. The initial same-UID Planner binary remains unattestable through
   public KWin APIs.
+- Fresh authorized advisory transport attempt, 2026-09-08: one fresh
+  receipt-bound lifecycle passed the resource-free identity, production-loaded,
+  advisory-absence, and Planner-absence gates, then reached the exact returned
+  standalone Script object in its success phase. Its correlated terminal pair
+  was not receipt-eligible, and the exact recorded plugin unload returned the
+  logical boolean `false`; partial cleanup therefore remained unverified and
+  no receipt was created. This is restoration ambiguity, not a proven adapter
+  defect: no further host query, cleanup, or retry ran. Success, stale refusal,
+  service-loss refusal, after-equality, production continuity, and exact
+  restoration remain unestablished. The exact Script/plugin is treated as
+  ambiguous fresh residue, while prior unidentified residue remains untouched;
+  the public same-UID Planner-binary attestation limit is unchanged.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
