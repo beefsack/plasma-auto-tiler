@@ -7,13 +7,15 @@ Only meaningful pending or active work is listed.
   reconciliation; thin adapters own native boundaries. KWin direct geometry is
   the actuator and Custom Tiles are legacy-only, never dual structural
   authority. Preserve production behavior through small opt-in/shadow slices.
-    Checkpoint, Rust-core stabilization, and static slice 3 implementation are
-    complete. An authorized read-only host preflight stopped before lifecycle:
-    the committed boundary has no reviewed standalone advisory entry, builder, or
-    namespaced loader, while the existing POC route refuses the required loaded
-    production plugin. A reviewed narrow lifecycle procedure is required before
-    one minimal authenticated read-only request/reply plus stale-request and
-    service-loss evidence. The static planner-service route replaces
+    Checkpoint, Rust-core stabilization, static slice 3 implementation, and the
+    standalone advisory entry/builder/loader prerequisite are complete. The
+    namespaced standalone path deterministically binds its exact source, input,
+    and IIFE bundle, and can coexist with the loaded production plugin only
+    because its checked route invokes bounded read-only advisory queries with no
+    topology authority or actuation. One minimal authenticated read-only host
+    request/reply plus stale-request and service-loss evidence remains pending
+    fresh authorization after this static unit is committed. The static
+    planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved
     same-UID service binary.

@@ -129,13 +129,17 @@ production behavior through incremental opt-in promotion.
   service-loss evidence remain pending separate authorization.
 - The authorized 2026-09-08 read-only host verification stopped during static
   preflight before any host baseline, planner service, or KWin script lifecycle
-  action. The committed boundary intentionally has no standalone advisory entry
-  point, bundle builder, or namespaced loader; the existing carrier cannot make
-  the query and the POC route refuses the required loaded production plugin.
-  Focused Rust, standalone KWin-query, and lifecycle shell tests passed. A
-  reviewed, narrowly scoped advisory lifecycle procedure is the remaining gate;
-  no success, stale-refusal, service-loss, native-mutation, or restoration claim
-  exists from this stopped preflight.
+  action. The standalone advisory entry, deterministic ES2017 IIFE builder, and
+  namespaced exact-script loader are now statically complete: they bind exact
+  source/input/bundle identity, accept returned Script ID 0, run and clean up
+  only the recorded Script object, and parse bounded correlated diagnostics.
+  Production coexistence is limited to this independently checked read-only
+  advisory route, which has no topology authority, actuation, shortcut, Custom
+  Tile, controller, or production-startup path. Focused Rust, standalone
+  KWin-query, entry/builder, and lifecycle shell tests passed. The first
+  authenticated read-only host request/reply, stale-refusal, service-loss,
+  zero-mutation, and restoration evidence remain pending fresh authorization
+  after this static unit is committed.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

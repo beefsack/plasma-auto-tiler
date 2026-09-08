@@ -241,10 +241,12 @@ Historical implementation detail is recoverable in Git history.
   same-UID credential, and approved executable identity before and after the
   request. Public KWin scripting exposes no service credential API, so this
   cannot prove the initially resolved same-UID planner service binary against
-  a hostile same-UID owner. An authorized 2026-09-08 preflight stopped before
-  a lifecycle attempt because the committed boundary has no reviewed standalone
-  advisory entry, builder, or namespaced loader; the first host read-only round
-  trip, including stale and service-loss evidence, remains unestablished.
+  a hostile same-UID owner. The reviewed standalone advisory entry, builder,
+  and namespaced loader may coexist with the loaded production plugin only
+  because their checked route has no topology authority, actuation, shortcuts,
+  Custom Tile, controller, or production-startup path. The first host read-only
+  round trip, including stale and service-loss evidence, remains unestablished
+  pending fresh authorization after the static unit is committed.
 - Rust is the selected engine language and owns the durable portable model.
   The migration starts incrementally through opt-in, shadow, and diagnostic
   modes; it does not claim stock-KWin parity, atomic geometry, or Windows/macOS
