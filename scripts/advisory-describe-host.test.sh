@@ -74,6 +74,8 @@ assert_contains "$LOADER" 'AdvisoryPlanQuery'
 assert_contains "$LOADER" 'DescribeAdvisoryPlan'
 assert_contains "$LOADER" 'MANIFEST_BUNDLE_SHA'
 assert_contains "$LOADER" 'MANIFEST_INPUT_SHA'
+assert_contains "$LOADER" 'MANIFEST_SNAPSHOT_SHA'
+assert_contains "$LOADER" 'RECEIPT_SNAPSHOT_SHA'
 assert_contains "$LOADER" 'partial script-id='
 # Only the pinned bus/sha/node tools run; no generic IPC or POC tooling.
 if [[ "$(grep -o '"\$[A-Z0-9_]*BIN"' "$LOADER" | sort -u | tr '\n' ' ')" == '"$BUSCTL_BIN" "$NODE_BIN" "$SHA256SUM_BIN" ' ]]; then
@@ -198,10 +200,11 @@ fi
 
 seed_diag() {
   printf 'pre-run padding line\n' > "$TMP_DIR/diag.log"
-  local entry_sha query_sha
+  local entry_sha query_sha snapshot_sha
   entry_sha="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | cut -d' ' -f1)"
   query_sha="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
-  FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$entry_sha:$query_sha"
+  snapshot_sha="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-snapshot.ts" | cut -d' ' -f1)"
+  FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$entry_sha:$query_sha:$snapshot_sha"
   FAKE_READY="$READY"
   FAKE_RESULT="$RESULT"
   FAKE_APPEND=1
@@ -539,8 +542,9 @@ READY_D="plasma-auto-tiler:advisory-describe-ready:$NONCE"
 RESULT_D="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:workspace.x:$GENERATION:$REVISION:$NONCE:could-execute"
 ENTRY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | cut -d' ' -f1)"
 QUERY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
+SNAPSHOT_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-snapshot.ts" | cut -d' ' -f1)"
 printf 'pre-run padding line\n' > "$TMP_DIR/diag.log"
-FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_D:$QUERY_SHA_D"
+FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_D:$QUERY_SHA_D:$SNAPSHOT_SHA_D"
 FAKE_READY="$READY_D"; FAKE_RESULT="$RESULT_D"; FAKE_APPEND=1; FAKE_DIAG="$TMP_DIR/diag.log"
 export FAKE_SOURCE FAKE_READY FAKE_RESULT FAKE_APPEND FAKE_DIAG
 queue_loaded "b false" "b true"
@@ -550,7 +554,8 @@ seed_diag
 FAKE_READY="$READY_D"; FAKE_RESULT="$RESULT_D"; export FAKE_READY FAKE_RESULT
 ENTRY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | cut -d' ' -f1)"
 QUERY_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
-FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_D:$QUERY_SHA_D"; export FAKE_SOURCE
+SNAPSHOT_SHA_D="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-snapshot.ts" | cut -d' ' -f1)"
+FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_D:$QUERY_SHA_D:$SNAPSHOT_SHA_D"; export FAKE_SOURCE
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-denied.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 >/dev/null 2>&1; then
   pass "loader accepts denied-text data fixture"
 else
@@ -663,7 +668,9 @@ reset_fake; seed_diag
 cp -- "$TMP_DIR/r0.json" "$TMP_DIR/r-diag.json"
 ENTRY_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-describe-entry.ts" | cut -d' ' -f1)"
 QUERY_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-plan-query.ts" | cut -d' ' -f1)"
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute" > "$TMP_DIR/diag-bad-nonce.log"
+SNAPSHOT_SHA_T="$(sha256sum -- "$REPO_ROOT/kwin/src/advisory-snapshot.ts" | cut -d' ' -f1)"
+SOURCE_T="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T:$SNAPSHOT_SHA_T"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute" > "$TMP_DIR/diag-bad-nonce.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-bad-nonce.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a wrong-nonce result"
 else
@@ -671,32 +678,32 @@ else
 fi
 # Diagnostics applies the same versioned anchored rules: mid-line, empty,
 # oversize, wrong generation/revision, and missing source all fail.
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-mid.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-mid.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-mid.log" >/dev/null 2>&1; then
   fail "diagnostics must reject a mid-line prefix"
 else
   pass "diagnostics rejects a mid-line prefix"
 fi
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:" > "$TMP_DIR/diag-empty.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:" > "$TMP_DIR/diag-empty.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-empty.log" >/dev/null 2>&1; then
   fail "diagnostics must reject empty detail"
 else
   pass "diagnostics rejects empty detail"
 fi
 BIG_D="$(printf 'b%.0s' $(seq 1 513))"
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:$BIG_D" > "$TMP_DIR/diag-big.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:$BIG_D" > "$TMP_DIR/diag-big.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-big.log" >/dev/null 2>&1; then
   fail "diagnostics must reject oversize detail"
 else
   pass "diagnostics rejects oversize detail"
 fi
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-gen.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-gen.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-gen.log" >/dev/null 2>&1; then
   fail "diagnostics must reject wrong generation"
 else
   pass "diagnostics rejects wrong generation"
 fi
-printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-unver.log"
+printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute" > "$TMP_DIR/diag-unver.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-unver.log" >/dev/null 2>&1; then
   fail "diagnostics must reject an unversioned result"
 else
@@ -710,7 +717,7 @@ else
 fi
 # 15a: diagnostics validates only the bounded 64KiB tail.
 {
-  printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
+  printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
   head -c 70000 /dev/zero | tr '\0' 'p'; printf '\n'
 } > "$TMP_DIR/diag-old-tail.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-old-tail.log" >/dev/null 2>&1; then
@@ -720,7 +727,7 @@ else
 fi
 {
   head -c 70000 /dev/zero | tr '\0' 'p'; printf '\n'
-  printf '%s\n%s\n%s\n' "$READY" "plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_T:$QUERY_SHA_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
+  printf '%s\n%s\n%s\n' "$READY" "$SOURCE_T" "plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
 } > "$TMP_DIR/diag-current-tail.log"
 if "$LOADER" diagnostics --receipt "$TMP_DIR/r-diag.json" --diag-file "$TMP_DIR/diag-current-tail.log" >/dev/null 2>&1; then
   pass "diagnostics accepts a correlated current marker tail"

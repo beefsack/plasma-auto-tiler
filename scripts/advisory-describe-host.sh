@@ -34,7 +34,7 @@
 #     only the recorded exact plugin id, verify absent, remove the receipt.
 #
 # Diagnostics contract (emitted by kwin/src/advisory-describe-entry.ts):
-#   source: plasma-auto-tiler:advisory-describe-source:<entrySha>:<querySha>
+#   source: plasma-auto-tiler:advisory-describe-source:<entrySha>:<querySha>:<snapshotSha>
 #   ready:  plasma-auto-tiler:advisory-describe-ready:<correlation>
 #   result: plasma-auto-tiler:advisory-describe-result:v1:<correlation>:<owner>:
 #           <generation>:<revision>:<nonce>:<detail>
@@ -51,6 +51,7 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 KWIN_DIR="$REPO_ROOT/kwin"
 SRC_ENTRY="$KWIN_DIR/src/advisory-describe-entry.ts"
 SRC_QUERY="$KWIN_DIR/src/advisory-plan-query.ts"
+SRC_SNAPSHOT="$KWIN_DIR/src/advisory-snapshot.ts"
 BUILDER="$REPO_ROOT/scripts/advisory-describe-build.mjs"
 PLUGIN="plasma-auto-tiler-advisory-describe"
 BUNDLE_BASENAME="advisory-describe.js"
@@ -141,6 +142,21 @@ DENY_TOKENS=(
   "socat"
   "plasma-auto-tiler-kwin"
 )
+SNAPSHOT_DENY_TOKENS=(
+  "Reflect.set"
+  "registerShortcut"
+  "callDBus"
+  "showOutline"
+  "hideOutline"
+  "createDesktop"
+  "removeDesktop"
+  "setActiveWindow"
+  "manage("
+  "unmanage("
+  ".connect("
+  "setTimeout"
+  "setInterval"
+)
 
 fail() {
   printf 'error: %s\n' "$1" >&2
@@ -219,8 +235,8 @@ if (body.includes("\n")) { console.error("error: " + kind + " must be single-lin
 let parsed;
 try { parsed = JSON.parse(body); } catch (e) { console.error("error: " + kind + " is not valid JSON"); process.exit(1); }
 if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { console.error("error: " + kind + " must be a JSON object"); process.exit(1); }
-const manifestKeys = ["schema","bundle","bundleSha256","entry","entrySha256","query","querySha256","nonce","correlationId","owner","generation","revision","inputSha256"];
-const receiptKeys = ["schema","plugin","scriptId","scriptObject","bundleSha256","entrySha256","querySha256","owner","generation","revision","correlationId","nonce"];
+const manifestKeys = ["schema","bundle","bundleSha256","entry","entrySha256","query","querySha256","snapshot","snapshotSha256","nonce","correlationId","owner","generation","revision","inputSha256"];
+const receiptKeys = ["schema","plugin","scriptId","scriptObject","bundleSha256","entrySha256","querySha256","snapshotSha256","owner","generation","revision","correlationId","nonce"];
 const expected = kind === "manifest" ? manifestKeys : receiptKeys;
 const keys = Object.keys(parsed);
 if (keys.length !== expected.length) { console.error("error: " + kind + " has unexpected keys"); process.exit(1); }
@@ -240,9 +256,11 @@ if (kind === "manifest") {
   if (parsed.bundle !== process.env.BUNDLE_BASENAME_EXPECTED) fail("bundle mismatch");
   if (parsed.entry !== "advisory-describe-entry.ts") fail("entry mismatch");
   if (parsed.query !== "advisory-plan-query.ts") fail("query mismatch");
+  if (parsed.snapshot !== "advisory-snapshot.ts") fail("snapshot mismatch");
   if (!hex64(parsed.bundleSha256)) fail("bundle sha is malformed");
   if (!hex64(parsed.entrySha256)) fail("entry sha is malformed");
   if (!hex64(parsed.querySha256)) fail("query sha is malformed");
+  if (!hex64(parsed.snapshotSha256)) fail("snapshot sha is malformed");
   if (!hex64(parsed.inputSha256)) fail("input sha is malformed");
   if (!nonce(parsed.nonce)) fail("nonce is malformed");
   if (parsed.correlationId !== parsed.nonce) fail("correlation must equal the nonce");
@@ -252,6 +270,7 @@ if (kind === "manifest") {
   console.log("MANIFEST_BUNDLE_SHA=" + parsed.bundleSha256);
   console.log("MANIFEST_ENTRY_SHA=" + parsed.entrySha256);
   console.log("MANIFEST_QUERY_SHA=" + parsed.querySha256);
+  console.log("MANIFEST_SNAPSHOT_SHA=" + parsed.snapshotSha256);
   console.log("MANIFEST_INPUT_SHA=" + parsed.inputSha256);
   console.log("MANIFEST_NONCE=" + parsed.nonce);
   console.log("MANIFEST_CORRELATION=" + parsed.correlationId);
@@ -266,6 +285,7 @@ if (kind === "manifest") {
   if (!hex64(parsed.bundleSha256)) fail("bundle sha is malformed");
   if (!hex64(parsed.entrySha256)) fail("entry sha is malformed");
   if (!hex64(parsed.querySha256)) fail("query sha is malformed");
+  if (!hex64(parsed.snapshotSha256)) fail("snapshot sha is malformed");
   if (!owner(parsed.owner)) fail("owner is malformed");
   if (!generation(parsed.generation)) fail("generation is malformed");
   if (!(canonical(parsed.revision) && parsed.revision >= 0 && parsed.revision <= 1000000)) fail("revision is malformed");
@@ -277,6 +297,7 @@ if (kind === "manifest") {
   console.log("RECEIPT_BUNDLE_SHA=" + parsed.bundleSha256);
   console.log("RECEIPT_ENTRY_SHA=" + parsed.entrySha256);
   console.log("RECEIPT_QUERY_SHA=" + parsed.querySha256);
+  console.log("RECEIPT_SNAPSHOT_SHA=" + parsed.snapshotSha256);
   console.log("RECEIPT_OWNER=" + parsed.owner);
   console.log("RECEIPT_GENERATION=" + parsed.generation);
   console.log("RECEIPT_REVISION=" + parsed.revision);
@@ -319,6 +340,12 @@ prove_advisory_only() {
         return 1
       fi
     done
+  done
+  for token in "${SNAPSHOT_DENY_TOKENS[@]}"; do
+    if grep -Fq -- "$token" "$SRC_SNAPSHOT"; then
+      echo "error: advisory snapshot source carries a forbidden non-read-only marker: $token" >&2
+      return 1
+    fi
   done
   if grep -Eq -- '^import |^export ' "$bundle"; then
     echo "error: bundle carries ESM syntax" >&2
@@ -431,7 +458,7 @@ result_prefix_for() {
 }
 
 source_line_for() {
-  printf 'plasma-auto-tiler:advisory-describe-source:%s:%s' "$1" "$2"
+  printf 'plasma-auto-tiler:advisory-describe-source:%s:%s:%s' "$1" "$2" "$3"
 }
 
 parse_start_args() {
@@ -469,6 +496,7 @@ cmd_start() {
   require_regular_file "$START_INPUT" "input"
   require_regular_file "$SRC_ENTRY" "advisory entry source"
   require_regular_file "$SRC_QUERY" "advisory query source"
+  require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
   [[ "${START_BUNDLE##*/}" == "$BUNDLE_BASENAME" ]] || fail "bundle must be exactly $BUNDLE_BASENAME"
   [[ "${START_MANIFEST##*/}" == "$MANIFEST_BASENAME" ]] || fail "manifest must be exactly $MANIFEST_BASENAME"
   safe_abs "$START_RECEIPT" || fail "receipt path is unsafe: $START_RECEIPT"
@@ -478,21 +506,24 @@ cmd_start() {
   fi
   local manifest_eval=""
   manifest_eval="$(parse_manifest "$START_MANIFEST")" || exit 1
-  local MANIFEST_BUNDLE_SHA="" MANIFEST_ENTRY_SHA="" MANIFEST_QUERY_SHA="" MANIFEST_INPUT_SHA="" MANIFEST_NONCE="" MANIFEST_CORRELATION="" MANIFEST_OWNER="" MANIFEST_GENERATION="" MANIFEST_REVISION=""
+  local MANIFEST_BUNDLE_SHA="" MANIFEST_ENTRY_SHA="" MANIFEST_QUERY_SHA="" MANIFEST_SNAPSHOT_SHA="" MANIFEST_INPUT_SHA="" MANIFEST_NONCE="" MANIFEST_CORRELATION="" MANIFEST_OWNER="" MANIFEST_GENERATION="" MANIFEST_REVISION=""
   eval "$manifest_eval"
   local actual_input_sha
   actual_input_sha="$(sha256_file "$START_INPUT")"
   [[ -n "$actual_input_sha" ]] || fail "could not hash the input"
   [[ "$actual_input_sha" == "$MANIFEST_INPUT_SHA" ]] || fail "input bytes do not match the manifest input binding"
-  local actual_bundle_sha actual_entry_sha actual_query_sha
+  local actual_bundle_sha actual_entry_sha actual_query_sha actual_snapshot_sha
   actual_bundle_sha="$(sha256_file "$START_BUNDLE")"
   [[ "$actual_bundle_sha" == "$MANIFEST_BUNDLE_SHA" ]] || fail "bundle bytes do not match the manifest build identity"
   actual_entry_sha="$(sha256_file "$SRC_ENTRY")"
   actual_query_sha="$(sha256_file "$SRC_QUERY")"
+  actual_snapshot_sha="$(sha256_file "$SRC_SNAPSHOT")"
   [[ "$actual_entry_sha" == "$MANIFEST_ENTRY_SHA" ]] || fail "entry source does not match the manifest build identity"
   [[ "$actual_query_sha" == "$MANIFEST_QUERY_SHA" ]] || fail "query source does not match the manifest build identity"
+  [[ "$actual_snapshot_sha" == "$MANIFEST_SNAPSHOT_SHA" ]] || fail "snapshot source does not match the manifest build identity"
   grep -Fq -- "$MANIFEST_ENTRY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded entry source binding"
   grep -Fq -- "$MANIFEST_QUERY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  grep -Fq -- "$MANIFEST_SNAPSHOT_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded snapshot source binding"
   prove_advisory_only "$START_BUNDLE" || exit 1
   # Deterministic rebuild verification before any bus transport: rejects a
   # manually altered bundle even when its manifest bundle sha was recomputed.
@@ -534,7 +565,7 @@ cmd_start() {
     fail "run() failed on $SCRIPT_OBJ"
   }
   local ready_line result_prefix result_line detail source_line
-  source_line="$(source_line_for "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA")"
+  source_line="$(source_line_for "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA")"
   wait_diag_line "$START_DIAG" "$diag_start" "$source_line" "line" "$START_ATTEMPTS" "$START_DELAY" >/dev/null || {
     partial_cleanup
     fail "bound source marker not observed; refusing without source evidence"
@@ -561,8 +592,8 @@ cmd_start() {
     partial_cleanup
     fail "receipt appeared before exclusive creation; refusing overwrite: $RECEIPT_PATH"
   fi
-  (set -o noclobber; printf '{"schema":"%s","plugin":"%s","scriptId":%s,"scriptObject":"%s","bundleSha256":"%s","entrySha256":"%s","querySha256":"%s","owner":"%s","generation":"%s","revision":%s,"correlationId":"%s","nonce":"%s"}\n' \
-    "$RECEIPT_SCHEMA" "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" \
+  (set -o noclobber; printf '{"schema":"%s","plugin":"%s","scriptId":%s,"scriptObject":"%s","bundleSha256":"%s","entrySha256":"%s","querySha256":"%s","snapshotSha256":"%s","owner":"%s","generation":"%s","revision":%s,"correlationId":"%s","nonce":"%s"}\n' \
+    "$RECEIPT_SCHEMA" "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
     "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE" > "$RECEIPT_PATH") || {
     partial_cleanup
     fail "could not write the receipt exclusively"
@@ -585,7 +616,7 @@ cmd_status() {
   require_regular_file "$receipt" "receipt"
   local receipt_eval=""
   receipt_eval="$(parse_receipt "$receipt")" || exit 1
-  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA=""
+  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA="" RECEIPT_SNAPSHOT_SHA=""
   local RECEIPT_OWNER="" RECEIPT_GENERATION="" RECEIPT_REVISION="" RECEIPT_CORRELATION="" RECEIPT_NONCE=""
   eval "$receipt_eval"
   local state=""
@@ -607,7 +638,7 @@ cmd_diagnostics() {
   require_regular_file "$receipt" "receipt"
   local receipt_eval=""
   receipt_eval="$(parse_receipt "$receipt")" || exit 1
-  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA=""
+  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA="" RECEIPT_SNAPSHOT_SHA=""
   local RECEIPT_OWNER="" RECEIPT_GENERATION="" RECEIPT_REVISION="" RECEIPT_CORRELATION="" RECEIPT_NONCE=""
   eval "$receipt_eval"
   printf 'diagnostics: plugin=%s script=%s object=%s correlation=%s owner=%s generation=%s revision=%s bundle=%s\n' \
@@ -616,7 +647,7 @@ cmd_diagnostics() {
     require_regular_file "$diag" "diag file"
     local ready_line result_prefix source_line line found_ready="" found_result="" found_source="" slice=""
     ready_line="plasma-auto-tiler:advisory-describe-ready:$RECEIPT_CORRELATION"
-    source_line="$(source_line_for "$RECEIPT_ENTRY_SHA" "$RECEIPT_QUERY_SHA")"
+    source_line="$(source_line_for "$RECEIPT_ENTRY_SHA" "$RECEIPT_QUERY_SHA" "$RECEIPT_SNAPSHOT_SHA")"
     result_prefix="$(result_prefix_for "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")"
     slice="$(tail -c 65536 -- "$diag" 2>/dev/null)" || slice=""
     while IFS= read -r line || [[ -n "$line" ]]; do
@@ -648,7 +679,7 @@ cmd_stop() {
   require_regular_file "$receipt" "receipt"
   local receipt_eval=""
   receipt_eval="$(parse_receipt "$receipt")" || exit 1
-  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA=""
+  local RECEIPT_PLUGIN="" RECEIPT_SCRIPT_ID="" RECEIPT_SCRIPT_OBJ="" RECEIPT_BUNDLE_SHA="" RECEIPT_ENTRY_SHA="" RECEIPT_QUERY_SHA="" RECEIPT_SNAPSHOT_SHA=""
   local RECEIPT_OWNER="" RECEIPT_GENERATION="" RECEIPT_REVISION="" RECEIPT_CORRELATION="" RECEIPT_NONCE=""
   eval "$receipt_eval"
   SCRIPT_ID="$RECEIPT_SCRIPT_ID"

@@ -145,6 +145,19 @@ interface Window {
     // retention) and only observes it at startup to preserve an
     // already-maximized window's state.
     readonly maximizeMode: number;
+    // Read-only in the KWin scripting API at pinned v6.7.4 (window.h
+    // Q_PROPERTY `bool minimized READ isMinimized NOTIFY minimizedChanged`;
+    // scripting API -> KWin::Window -> Read-only Properties -> `minimized`).
+    // Declared read-only: adapters fail closed if this public property cannot
+    // be observed while evaluating minimized-window exclusions.
+    readonly minimized: boolean;
+    // Read-only `QUuid internalId` (window.h Q_PROPERTY `QUuid internalId
+    // READ internalId CONSTANT` at pinned v6.7.4; observed in scripting as
+    // the opaque `String(Window.internalId)` identity used by proof scripts).
+    // Declared read-only unknown here: the advisory observer only coerces it
+    // via `String(...)` and validates the opaque result, never relying on a
+    // string-typed binding.
+    readonly internalId: unknown;
     // Documented Window property (KWin scripting API): the window's caption
     // (title) string. Read for snapshot observability only.
     readonly caption: string;

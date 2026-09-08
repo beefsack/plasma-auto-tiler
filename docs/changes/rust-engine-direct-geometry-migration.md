@@ -143,13 +143,27 @@ production behavior through incremental opt-in promotion.
 - The later authorized 2026-09-08 read-only host preflight verified the KWin
   identity and public `/KWin` surface, production plugin loaded, advisory test
   plugin absent, Planner name unowned, and generated advisory artifacts absent.
-  `org.kde.KWin /KWin queryWindowInfo` timed out. The committed standalone
-  boundary accepts a caller-supplied normalized snapshot and has no read-only
-  observation adapter, so an exact three-window snapshot and equality baseline
-  could not be formed. No planner service or advisory script lifecycle action,
-  production action, or host mutation occurred. The lifecycle authorization is
-  unspent. The next gate is thin read-only KWin observation/snapshot adapter
-  work, followed by fresh authorization for the bounded host transport journey.
+  `org.kde.KWin /KWin queryWindowInfo` timed out. No planner service or advisory
+  script lifecycle action, production action, or host mutation occurred. The
+  lifecycle authorization is unspent.
+- The static bounded observation prerequisite completed 2026-09-08: the
+  standalone entry passes lexical `workspace` to a direct-public-API observer.
+  It accepts only every eligible normal managed resizable non-popup,
+  non-minimized, non-fullscreen, unmaximized, non-sticky, non-interactive,
+  non-floating window in the active window's current output and desktop scope;
+  it fails closed unless that set is exactly three with valid opaque session IDs
+  and frame/work-area geometry. It emits a flat advisory-only v1 snapshot with
+  explicit `swap_neighbor` capability only, retains native references inside the
+  adapter, and recaptures the same native identity, membership, tile, geometry,
+  and focus precondition immediately before pinned planner dispatch. KWin has
+  no public native generation/revision API for this scope, so the adapter makes
+  no such native-version claim; the existing injected generation/revision remain
+  strictly bound through the request/reply contract. It has no signal,
+  controller, shortcut, tile operation, focus/geometry write, or production
+  startup path. Static adapter, entry/query, builder, schema, and source-bound
+  bundle checks pass. The first host success, stale-request, service-loss,
+  zero-mutation, and restoration evidence remain pending fresh authorization
+  after this static unit is committed.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

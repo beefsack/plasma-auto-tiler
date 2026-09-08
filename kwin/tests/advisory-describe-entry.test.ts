@@ -32,10 +32,11 @@ function validRecord(nonce: string): Record<string, unknown> {
 const TEST_NONCE = "0123456789abcdef0123456789abcdef";
 
 describe("advisory describe entry wiring", () => {
-    it("imports only the advisory query module", () => {
+    it("imports only the advisory query and snapshot modules", () => {
         const imports = ENTRY_SOURCE.split("\n").filter((line) => line.startsWith("import "));
-        assert.equal(imports.length, 1);
-        assert.match(imports[0] ?? "", /from "\.\/advisory-plan-query"/);
+        assert.equal(imports.length, 2);
+        assert.ok(imports.some((line) => line.includes('from "./advisory-plan-query"')));
+        assert.ok(imports.some((line) => line.includes('from "./advisory-snapshot"')));
         assert.ok(!ENTRY_SOURCE.includes('from "./entry'));
         assert.ok(!ENTRY_SOURCE.includes('from "./controller'));
         assert.ok(!ENTRY_SOURCE.includes('from "./tray'));
@@ -96,7 +97,6 @@ describe("advisory describe entry wiring", () => {
             "poc3-",
             "POC3",
             "planner-shadow",
-            "workspace",
             "activeWindow",
             "rootTile",
             "frameGeometry",
@@ -123,6 +123,7 @@ describe("advisory describe entry wiring", () => {
         ]) {
             assert.ok(!ENTRY_SOURCE.includes(forbidden), `advisory coupling: ${forbidden}`);
         }
+        assert.ok(ENTRY_SOURCE.includes("captureAdvisorySnapshot(workspace"));
         const production = readFsFileSync("src/entry.ts", "utf8");
         assert.ok(!production.includes("advisory-describe"));
         assert.ok(!production.includes("AdvisoryPlanQuery"));

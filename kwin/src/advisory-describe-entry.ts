@@ -3,7 +3,8 @@
 // Separately bundled IIFE built ONLY by scripts/advisory-describe-build.mjs
 // into kwin/dist/advisory-describe.js plus its sidecar manifest. Ordinary
 // production startup never runs this module: src/entry.ts must not bring it
-// in, and it brings in nothing except ./advisory-plan-query.
+// in, and it brings in nothing except ./advisory-plan-query and
+// ./advisory-snapshot.
 //
 // At load it checks the builder-supplied request record
 // (ADVISORY_DESCRIBE_REQUEST_JSON), needs a high-entropy invocation nonce
@@ -18,10 +19,12 @@
 // follow-on action path.
 
 import { AdvisoryPlanQuery } from "./advisory-plan-query";
+import { captureAdvisorySnapshot } from "./advisory-snapshot";
 
 declare const ADVISORY_DESCRIBE_REQUEST_JSON: string;
 declare const ADVISORY_DESCRIBE_ENTRY_SHA256: string;
 declare const ADVISORY_DESCRIBE_QUERY_SHA256: string;
+declare const ADVISORY_DESCRIBE_SNAPSHOT_SHA256: string;
 
 export const ADVISORY_DESCRIBE_READY_PREFIX = "plasma-auto-tiler:advisory-describe-ready";
 export const ADVISORY_DESCRIBE_RESULT_PREFIX = "plasma-auto-tiler:advisory-describe-result";
@@ -177,9 +180,10 @@ function isSourceSha(value: unknown): value is string {
     return typeof value === "string" && /^[0-9a-f]{64}$/.test(value);
 }
 
-function readSourceBinding(): { readonly ok: true; readonly entrySha: string; readonly querySha: string } | { readonly ok: false } {
+function readSourceBinding(): { readonly ok: true; readonly entrySha: string; readonly querySha: string; readonly snapshotSha: string } | { readonly ok: false } {
     let entrySha: unknown = null;
     let querySha: unknown = null;
+    let snapshotSha: unknown = null;
     try {
         entrySha = ADVISORY_DESCRIBE_ENTRY_SHA256;
     } catch (error) {
@@ -192,14 +196,35 @@ function readSourceBinding(): { readonly ok: true; readonly entrySha: string; re
         void error;
         return { ok: false };
     }
-    if (!isSourceSha(entrySha) || !isSourceSha(querySha)) {
+    try {
+        snapshotSha = ADVISORY_DESCRIBE_SNAPSHOT_SHA256;
+    } catch (error) {
+        void error;
         return { ok: false };
     }
-    return { ok: true, entrySha, querySha };
+    if (!isSourceSha(entrySha) || !isSourceSha(querySha) || !isSourceSha(snapshotSha)) {
+        return { ok: false };
+    }
+    return { ok: true, entrySha, querySha, snapshotSha };
 }
 
-function sourceBindingLine(entrySha: string, querySha: string): string {
-    return `${ADVISORY_DESCRIBE_SOURCE_PREFIX}:${entrySha}:${querySha}`;
+function sourceBindingLine(entrySha: string, querySha: string, snapshotSha: string): string {
+    return `${ADVISORY_DESCRIBE_SOURCE_PREFIX}:${entrySha}:${querySha}:${snapshotSha}`;
+}
+
+function logCaptureFailure(record: AdvisoryDescribeRecord): void {
+    try {
+        console.log(ADVISORY_DESCRIBE_INVALID_LOG);
+    } catch (error) {
+        void error;
+    }
+    try {
+        console.log(
+            `${ADVISORY_DESCRIBE_RESULT_PREFIX}:${ADVISORY_DESCRIBE_RESULT_SCHEMA}:${record.correlationId}:${record.owner}:${record.generation}:${record.revision}:${record.nonce}:reject:advisory-invalid-input`,
+        );
+    } catch (error) {
+        void error;
+    }
 }
 
 function startAdvisoryDescribeOnce(): void {
@@ -222,6 +247,28 @@ function startAdvisoryDescribeOnce(): void {
         return;
     }
     const record = checked.record;
+    let direction: unknown = null;
+    try {
+        direction = (record.intent as Record<string, unknown>)["direction"];
+    } catch (error) {
+        void error;
+        direction = null;
+    }
+    let captured: ReturnType<typeof captureAdvisorySnapshot> | null = null;
+    try {
+        captured = captureAdvisorySnapshot(workspace, direction);
+    } catch (error) {
+        void error;
+        captured = null;
+    }
+    if (captured === null || !captured.ok) {
+        logCaptureFailure(record);
+        return;
+    }
+    const snapshot = captured.snapshot;
+    const intent = captured.intent;
+    const capabilities = captured.capabilities;
+    const revalidate = captured.revalidate;
     const query = new AdvisoryPlanQuery({
         callDbus: (service, path, dbusInterface, method, payload, callback) => {
             callDBus(service, path, dbusInterface, method, payload, callback);
@@ -250,13 +297,21 @@ function startAdvisoryDescribeOnce(): void {
             owner: record.owner,
             generation: record.generation,
             revision: record.revision,
-            snapshot: record.snapshot,
-            intent: record.intent,
-            capabilities: record.capabilities,
+            snapshot,
+            intent,
+            capabilities,
         }),
+        revalidateInput: () => {
+            try {
+                return revalidate();
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
     });
     try {
-        console.log(sourceBindingLine(binding.entrySha, binding.querySha));
+        console.log(sourceBindingLine(binding.entrySha, binding.querySha, binding.snapshotSha));
     } catch (error) {
         void error;
     }

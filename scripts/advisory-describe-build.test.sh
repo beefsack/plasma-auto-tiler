@@ -10,6 +10,7 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILDER="$REPO_ROOT/scripts/advisory-describe-build.mjs"
 ENTRY="$REPO_ROOT/kwin/src/advisory-describe-entry.ts"
 QUERY="$REPO_ROOT/kwin/src/advisory-plan-query.ts"
+SNAPSHOT="$REPO_ROOT/kwin/src/advisory-snapshot.ts"
 BUNDLE="$REPO_ROOT/kwin/dist/advisory-describe.js"
 MANIFEST="$REPO_ROOT/kwin/dist/advisory-describe.manifest.json"
 PASS=0
@@ -71,9 +72,12 @@ require("node:fs").writeFileSync(process.argv[1], JSON.stringify(record));
 if node --check "$BUILDER" >/dev/null 2>&1; then pass "node --check builder"; else fail "node --check builder"; fi
 if bash -n "$REPO_ROOT/scripts/advisory-describe-build.test.sh" >/dev/null 2>&1; then pass "bash -n self"; else fail "bash -n self"; fi
 
-# Entry shape: single advisory-only source import, KWin seams, nonce gate.
-if [[ "$(grep -c '^import ' "$ENTRY")" -eq 1 ]]; then pass "entry has exactly one import"; else fail "entry has exactly one import"; fi
+# Entry shape: advisory-only source imports, KWin seams, nonce gate.
+if [[ "$(grep -c '^import ' "$ENTRY")" -eq 2 ]]; then pass "entry has exactly two imports"; else fail "entry has exactly two imports"; fi
 assert_contains "$ENTRY" 'from "./advisory-plan-query"'
+assert_contains "$ENTRY" 'from "./advisory-snapshot"'
+assert_contains "$ENTRY" 'captureAdvisorySnapshot(workspace'
+assert_contains "$ENTRY" 'ADVISORY_DESCRIBE_SNAPSHOT_SHA256'
 assert_contains "$ENTRY" 'new AdvisoryPlanQuery'
 assert_contains "$ENTRY" 'callDBus(service, path, dbusInterface, method, payload, callback)'
 assert_contains "$ENTRY" 'new QTimer()'
@@ -84,7 +88,6 @@ assert_contains "$ENTRY" 'ADVISORY_DESCRIBE_REQUEST_JSON'
 assert_absent "$ENTRY" 'from "./controller'
 assert_absent "$ENTRY" 'from "./entry'
 assert_absent "$ENTRY" 'poc3-'
-assert_absent "$ENTRY" 'workspace'
 assert_absent "$ENTRY" 'registerShortcut'
 assert_absent "$ENTRY" 'plasma-auto-tiler-kwin'
 if grep -qF -- 'advisory-plan-query' "$REPO_ROOT/kwin/src/entry.ts"; then fail "forbidden present: production entry imports advisory query"; else pass "absent: production entry imports advisory query"; fi
@@ -174,13 +177,15 @@ assert_absent "$BUNDLE" 'plasma-auto-tiler-kwin'
 
 # Sidecar manifest: exact keys, source bindings match, no machine paths.
 if grep -qE -- '"schema":"advisory-describe-manifest-v1"' "$MANIFEST"; then pass "manifest schema"; else fail "manifest schema"; fi
-for key in '"bundleSha256":"' '"entrySha256":"' '"querySha256":"' '"inputSha256":"' "\"nonce\":\"$NONCE\"" "\"owner\":\"$OWNER\"" "\"generation\":\"$GENERATION\"" '"revision":7'; do
+for key in '"bundleSha256":"' '"entrySha256":"' '"querySha256":"' '"snapshotSha256":"' '"inputSha256":"' "\"nonce\":\"$NONCE\"" "\"owner\":\"$OWNER\"" "\"generation\":\"$GENERATION\"" '"revision":7'; do
   if grep -qF -- "$key" "$MANIFEST"; then pass "manifest carries: $key"; else fail "manifest missing: $key"; fi
 done
 ENTRY_SHA="$(sha256sum -- "$ENTRY" | cut -d' ' -f1)"
 QUERY_SHA="$(sha256sum -- "$QUERY" | cut -d' ' -f1)"
+SNAPSHOT_SHA="$(sha256sum -- "$SNAPSHOT" | cut -d' ' -f1)"
 if grep -qF -- "$ENTRY_SHA" "$MANIFEST" && grep -qF -- "$ENTRY_SHA" "$BUNDLE"; then pass "entry binding matches manifest and bundle"; else fail "entry binding matches manifest and bundle"; fi
 if grep -qF -- "$QUERY_SHA" "$MANIFEST" && grep -qF -- "$QUERY_SHA" "$BUNDLE"; then pass "query binding matches manifest and bundle"; else fail "query binding matches manifest and bundle"; fi
+if grep -qF -- "$SNAPSHOT_SHA" "$MANIFEST" && grep -qF -- "$SNAPSHOT_SHA" "$BUNDLE"; then pass "snapshot binding matches manifest and bundle"; else fail "snapshot binding matches manifest and bundle"; fi
 if grep -qF -- "$SHA_TWO" "$MANIFEST"; then pass "manifest carries the bundle sha"; else fail "manifest carries the bundle sha"; fi
 INPUT_SHA="$(sha256sum -- "$INPUT" | cut -d' ' -f1)"
 if grep -qF -- "$INPUT_SHA" "$MANIFEST"; then pass "manifest binds the exact input hash"; else fail "manifest binds the exact input hash"; fi

@@ -27,6 +27,7 @@ const REPO_ROOT = dirname(HERE);
 const KWIN_DIR = resolve(REPO_ROOT, "kwin");
 const ENTRY = resolve(KWIN_DIR, "src/advisory-describe-entry.ts");
 const QUERY = resolve(KWIN_DIR, "src/advisory-plan-query.ts");
+const SNAPSHOT = resolve(KWIN_DIR, "src/advisory-snapshot.ts");
 const DIST_DIR = resolve(KWIN_DIR, "dist");
 const FIXED_BUNDLE_BASENAME = "advisory-describe.js";
 const FIXED_MANIFEST_BASENAME = "advisory-describe.manifest.json";
@@ -185,6 +186,8 @@ const MANIFEST_KEYS = [
   "entrySha256",
   "query",
   "querySha256",
+  "snapshot",
+  "snapshotSha256",
   "nonce",
   "correlationId",
   "owner",
@@ -193,7 +196,7 @@ const MANIFEST_KEYS = [
   "inputSha256",
 ];
 
-async function buildBundleTo(record, entrySha, querySha, outfile) {
+async function buildBundleTo(record, entrySha, querySha, snapshotSha, outfile) {
   const kwinRequire = createRequire(resolve(KWIN_DIR, "package.json"));
   const esbuild = kwinRequire("esbuild");
   await esbuild.build({
@@ -208,11 +211,12 @@ async function buildBundleTo(record, entrySha, querySha, outfile) {
       ADVISORY_DESCRIBE_REQUEST_JSON: JSON.stringify(JSON.stringify(record)),
       ADVISORY_DESCRIBE_ENTRY_SHA256: JSON.stringify(entrySha),
       ADVISORY_DESCRIBE_QUERY_SHA256: JSON.stringify(querySha),
+      ADVISORY_DESCRIBE_SNAPSHOT_SHA256: JSON.stringify(snapshotSha),
     },
   });
 }
 
-function checkBundleShape(bundleText, entrySha, querySha) {
+function checkBundleShape(bundleText, entrySha, querySha, snapshotSha) {
   if (bundleText.includes("sourceMappingURL")) fail("built bundle must not carry a source map");
   if (!bundleText.includes("DescribeAdvisoryPlan")) fail("built bundle lost the advisory method");
   if (!bundleText.includes("advisory-describe-ready")) fail("built bundle lost the ready marker");
@@ -220,6 +224,7 @@ function checkBundleShape(bundleText, entrySha, querySha) {
   if (!bundleText.includes("ADVISORY_DESCRIBE_RESULT_SCHEMA")) fail("built bundle lost the versioned result schema");
   if (!bundleText.includes(entrySha)) fail("built bundle lost the entry source binding");
   if (!bundleText.includes(querySha)) fail("built bundle lost the query source binding");
+  if (!bundleText.includes(snapshotSha)) fail("built bundle lost the snapshot source binding");
   if (/^import |^export /m.test(bundleText)) fail("built bundle must not carry ESM syntax");
   if (bundleText.includes('from "./')) fail("built bundle must not carry a source import");
 }
@@ -256,7 +261,8 @@ function validateManifestRecord(manifest) {
   if (basename(String(manifest.bundle)) !== FIXED_BUNDLE_BASENAME) fail("manifest bundle mismatch");
   if (manifest.entry !== "advisory-describe-entry.ts") fail("manifest entry mismatch");
   if (manifest.query !== "advisory-plan-query.ts") fail("manifest query mismatch");
-  for (const key of ["bundleSha256", "entrySha256", "querySha256", "inputSha256"]) {
+  if (manifest.snapshot !== "advisory-snapshot.ts") fail("manifest snapshot mismatch");
+  for (const key of ["bundleSha256", "entrySha256", "querySha256", "snapshotSha256", "inputSha256"]) {
     if (typeof manifest[key] !== "string" || !/^[0-9a-f]{64}$/.test(manifest[key])) {
       fail(`manifest ${key} is malformed`);
     }
@@ -308,13 +314,14 @@ async function cmdBuild(input, out) {
   const record = validateRecord(raw);
   const entrySha = sha256File(ENTRY);
   const querySha = sha256File(QUERY);
+  const snapshotSha = sha256File(SNAPSHOT);
   const inputSha = sha256Bytes(inputBytes);
 
-  await buildBundleTo(record, entrySha, querySha, outPath);
+  await buildBundleTo(record, entrySha, querySha, snapshotSha, outPath);
 
   const bundleBytes = readFileSync(outPath);
   const bundleText = bundleBytes.toString("utf8");
-  checkBundleShape(bundleText, entrySha, querySha);
+  checkBundleShape(bundleText, entrySha, querySha, snapshotSha);
   const bundleSha = sha256Bytes(bundleBytes);
 
   // Deterministic sidecar manifest: fixed key order, basenames only, no
@@ -328,6 +335,8 @@ async function cmdBuild(input, out) {
     entrySha256: entrySha,
     query: "advisory-plan-query.ts",
     querySha256: querySha,
+    snapshot: "advisory-snapshot.ts",
+    snapshotSha256: snapshotSha,
     nonce: record.nonce,
     correlationId: record.correlationId,
     owner: record.owner,
@@ -374,8 +383,10 @@ async function cmdVerify(input, bundle, manifestPath) {
   if (manifest.inputSha256 !== inputSha) fail("input bytes do not match the manifest input binding");
   const entrySha = sha256File(ENTRY);
   const querySha = sha256File(QUERY);
+  const snapshotSha = sha256File(SNAPSHOT);
   if (manifest.entrySha256 !== entrySha) fail("entry source does not match the manifest build identity");
   if (manifest.querySha256 !== querySha) fail("query source does not match the manifest build identity");
+  if (manifest.snapshotSha256 !== snapshotSha) fail("snapshot source does not match the manifest build identity");
   if (record.nonce !== manifest.nonce) fail("input nonce does not match the manifest");
   if (record.correlationId !== manifest.correlationId) fail("input correlation does not match the manifest");
   if (record.owner !== manifest.owner) fail("input owner does not match the manifest");
@@ -383,7 +394,7 @@ async function cmdVerify(input, bundle, manifestPath) {
   if (record.revision !== manifest.revision) fail("input revision does not match the manifest");
   const bundleBytes = readFileSync(bundlePath);
   const bundleText = bundleBytes.toString("utf8");
-  checkBundleShape(bundleText, entrySha, querySha);
+  checkBundleShape(bundleText, entrySha, querySha, snapshotSha);
   const actualBundleSha = sha256Bytes(bundleBytes);
   if (manifest.bundleSha256 !== actualBundleSha) fail("bundle bytes do not match the manifest build identity");
   // Deterministic rebuild into a temp directory (never the production dist
@@ -392,7 +403,7 @@ async function cmdVerify(input, bundle, manifestPath) {
   const scratch = mkdtempSync(`${tmpdir()}/advisory-verify-`);
   const rebuiltPath = resolve(scratch, FIXED_BUNDLE_BASENAME);
   try {
-    await buildBundleTo(record, entrySha, querySha, rebuiltPath);
+    await buildBundleTo(record, entrySha, querySha, snapshotSha, rebuiltPath);
     const rebuiltBytes = readFileSync(rebuiltPath);
     if (!rebuiltBytes.equals(bundleBytes)) {
       fail("bundle is not the deterministic rebuild of the exact source plus exact input");

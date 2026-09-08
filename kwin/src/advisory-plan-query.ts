@@ -105,6 +105,7 @@ export interface AdvisoryPlanEnv {
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
     readonly provideInput: () => AdvisoryProviderInput | null;
+    readonly revalidateInput?: () => boolean;
 }
 
 const KNOWN_RULES: readonly string[] = Object.freeze(["R1", "R2a", "R2b", "R2c", "R3", "R4"]);
@@ -875,6 +876,19 @@ export class AdvisoryPlanQuery {
             return;
         }
         this.pinnedOwner = reply;
+        let fresh = true;
+        try {
+            fresh = typeof this.env.revalidateInput === "function" ? this.env.revalidateInput() : true;
+        } catch (error) {
+            void error;
+            fresh = false;
+        }
+        if (fresh !== true) {
+            this.clearTimer();
+            this.inFlight = false;
+            logReject(this.env, "advisory-stale-snapshot");
+            return;
+        }
         try {
             this.env.callDbus(
                 reply,
