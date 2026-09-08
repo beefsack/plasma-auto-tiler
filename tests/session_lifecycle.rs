@@ -32,6 +32,7 @@ fn domain(output: &str, workspace: &str, w: i32, h: i32) -> OutputDomain {
         workspace: WorkspaceId(workspace.to_owned()),
         bounds: Rect { x: 0, y: 0, w, h },
         gap: 0,
+        adjacent: std::collections::BTreeMap::new(),
     }
 }
 

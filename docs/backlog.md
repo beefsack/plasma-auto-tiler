@@ -143,9 +143,15 @@ Only meaningful pending or active work is listed.
        versioned `cosmic_v1` Rust sessions own opaque `(output, workspace)`
        domains, same-output workspace isolation, ordered N-ary admission/
        removal/collapse, focus, exception observations, complete projected
-       geometry, and the shared one-pending reconciler. The exact next Rust
-       slice is domain-scoped Session integration for frozen R1-R4 movement and
-       navigation; parked shadow transport/live cleanup remains unchanged |
+      geometry, and the shared one-pending reconciler. Domain-scoped Session
+        integration for frozen R1-R4 movement and directional focus/navigation
+        is complete: exact opaque `(DomainKey, WindowId)` scope, portable
+        same-workspace adjacency only for R4, complete semantic plans and
+        affected geometry, and acknowledgement/post-observation commit all pass
+        durable conformance, reconciliation, invariant, and fixture-lock tests.
+        The next product-shaped Rust slice is split-share keyboard resizing,
+        followed by explicit drag/drop placement; parked shadow transport/live
+        cleanup remains unchanged |
       [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

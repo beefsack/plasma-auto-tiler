@@ -98,6 +98,26 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Portable Session movement/navigation integration completed 2026-09-09:
+  authoritative `Session` APIs now bind the exact opaque `(DomainKey, WindowId)`
+  focus scope and delegate directional movement to the frozen source-evidenced
+  `cosmic_v1` R1-R4 planner. Portable same-workspace logical-output adjacency
+  enables only the planner's R4 crossing; all other navigation and movement are
+  domain-local. Accepted movement and focus plans carry complete portable
+  semantic dispatch, capability/preconditions, desired topology/focus, and
+  complete affected tiled rectangles, with no native execution command. Focus,
+  like movement and lifecycle, has one shared pending slot and commits only
+  after exact acknowledgement and matching post-observation verification.
+  Ordered N-ary topology, shares, and unaffected subtrees are retained except
+  for the selected structural transition; moved windows retain focus. Session
+  conformance covers each R1-R4 route, deep N-ary groups, focus navigation,
+  domain/capability/stale/pending refusal, geometry completeness, cross-kind
+  reconciliation, deterministic replay, and bounded structural invariants.
+  Full Rust tests, fixture locks, format, check, and touched-code Clippy pass;
+  all-target Clippy retains only unrelated existing planner-identity and tray
+  lints. No live KWin work ran and the parked shadow cleanup ambiguity remains
+  untouched. Next product-shaped Rust slice: split-share keyboard resizing,
+  followed by explicit drag/drop placement.
 - Portable authoritative session/lifecycle foundation completed 2026-09-09:
   Rust now owns versioned `cosmic_v1` lifecycle state for opaque logical
   `(output, workspace)` domains, including independent same-output workspace

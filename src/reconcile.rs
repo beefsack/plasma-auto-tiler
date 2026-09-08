@@ -35,10 +35,11 @@
 //!   fail-closed; arbitrary adapter detail is never stored or echoed.
 
 use crate::contract::{
-    AdapterAck, Dispatch, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
-    LifecycleDispatch, LifecycleOperation, LifecyclePlan, LifecyclePostObservation,
-    LifecyclePrecondition, MAX_PRECONDITIONS, Observation, PostObservation, is_correlation_id,
-    is_generation_id, is_owner_id, is_revision,
+    AdapterAck, Dispatch, DivergenceKind, FocusCapabilities, FocusDispatch, FocusOperation,
+    FocusPlanContract, FocusPostObservation, FocusPrecondition, LIFECYCLE_POLICY_VERSION,
+    LifecycleCapabilities, LifecycleDispatch, LifecycleOperation, LifecyclePlan,
+    LifecyclePostObservation, LifecyclePrecondition, MAX_PRECONDITIONS, Observation,
+    PostObservation, is_correlation_id, is_generation_id, is_owner_id, is_revision,
 };
 use crate::directional::{Capabilities, MovePlan, Precondition};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
@@ -199,6 +200,10 @@ enum PendingKind {
     Lifecycle {
         preconditions: Vec<LifecyclePrecondition>,
         operation: LifecycleOperation,
+    },
+    Focus {
+        preconditions: Vec<FocusPrecondition>,
+        operation: FocusOperation,
     },
 }
 
@@ -508,6 +513,105 @@ impl Reconciler {
         Ok(dispatch)
     }
 
+    /// Propose an already-computed focus plan against a normalized observation.
+    ///
+    /// Shares the single pending slot with movement and lifecycle: at most one
+    /// pending plan of any kind; acknowledgement binds identically, while
+    /// verification must use [`Reconciler::verify_focus`] here. Binds exactly
+    /// to owner/generation/base revision/correlation plus the focus plan's
+    /// preconditions and declared focus capabilities; emits a
+    /// transport-neutral [`FocusDispatch`].
+    pub fn propose_focus(
+        &mut self,
+        plan: &FocusPlanContract,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &FocusCapabilities,
+    ) -> Result<FocusDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.required_capability != plan.operation.required_capability() {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions != plan.operation.preconditions() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(plan.operation.required_capability()) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions.len() > MAX_PRECONDITIONS
+            || !plan
+                .preconditions
+                .contains(&FocusPrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.operation.from_leaf == plan.operation.to_leaf {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.operation.route.is_empty() || plan.operation.route.len() > MAX_PRECONDITIONS * 8 {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(plan.preconditions.len());
+        preconditions.extend_from_slice(&plan.preconditions);
+        let dispatch = FocusDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: plan.required_capability,
+            preconditions: preconditions.clone(),
+            intent: plan.intent.clone(),
+            operation: plan.operation.clone(),
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Focus {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
+        });
+        Ok(dispatch)
+    }
+
     /// Record an explicit adapter acknowledgement. Requires an exact binding
     /// match; non-accepted outcomes diverge fail-closed. Malformed shapes
     /// classify to their own typed kind (owner/generation/revision/
@@ -725,6 +829,93 @@ impl Reconciler {
             return Err(VerifyError::Diverged(reason));
         }
         let PendingKind::Lifecycle {
+            preconditions,
+            operation,
+        } = &pending.kind
+        else {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        };
+        if post.verified_preconditions != *preconditions {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.verified_operation != *operation {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if pending.base_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(VerifyError::Diverged(reason));
+        }
+        self.verified_revision = pending.base_revision + 1;
+        self.verified_fingerprint = post.observation.fingerprint;
+        self.pending = None;
+        Ok(Commit {
+            revision: self.verified_revision,
+            fingerprint: self.verified_fingerprint,
+        })
+    }
+
+    /// Commit after acknowledgement given a matching fresh focus
+    /// post-observation with explicit native verification. Mirrors
+    /// [`Reconciler::verify`] for [`FocusPostObservation`]: the reported
+    /// verified preconditions/operation must bind exactly to the pending focus
+    /// dispatch. Advances verified state by exactly one revision. Calling this
+    /// while a movement or lifecycle plan is pending (or those verifiers while
+    /// a focus plan is pending) diverges as
+    /// [`DivergenceKind::PostconditionMismatch`].
+    pub fn verify_focus(&mut self, post: &FocusPostObservation) -> Result<Commit, VerifyError> {
+        if let Some(reason) = self.diverged {
+            return Err(VerifyError::Diverged(reason));
+        }
+        let Some(pending) = self.pending.clone() else {
+            return Err(VerifyError::NoPending);
+        };
+        if !pending.acked {
+            return Err(VerifyError::NotAcknowledged);
+        }
+        if post.verified_preconditions.len() > MAX_PRECONDITIONS {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_correlation_id(post.correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_owner_id(post.observation.owner.as_str()) {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_generation_id(post.observation.generation.as_str()) {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_revision(post.observation.revision) {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.correlation_id != pending.correlation_id {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.owner != self.owner {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.revision != pending.base_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !post.verified {
+            let reason = self.diverge(DivergenceKind::PostconditionUnverified);
+            return Err(VerifyError::Diverged(reason));
+        }
+        let PendingKind::Focus {
             preconditions,
             operation,
         } = &pending.kind

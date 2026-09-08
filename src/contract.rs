@@ -17,8 +17,8 @@
 //! input (all id lengths are bounded; precondition vectors are capped).
 
 use crate::directional::{
-    Capability, MoveIntent, MoveOperation, NodeId, OutputId, Precondition, Rule, WindowId,
-    WorkspaceId,
+    Capability, Direction, MoveIntent, MoveOperation, NodeId, OutputId, Precondition, Rule,
+    WindowId, WorkspaceId,
 };
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 
@@ -521,6 +521,204 @@ impl LifecyclePostObservation {
         verified: bool,
         verified_preconditions: Vec<LifecyclePrecondition>,
         verified_operation: LifecycleOperation,
+    ) -> Self {
+        Self {
+            observation,
+            correlation_id,
+            verified,
+            verified_preconditions,
+            verified_operation,
+        }
+    }
+
+    /// Validity without echoing input (observation plus correlation shape and
+    /// bounded precondition vector).
+    #[must_use]
+    pub fn validate(&self) -> bool {
+        self.observation.validate()
+            && is_correlation_id(self.correlation_id.as_str())
+            && self.verified_preconditions.len() <= MAX_PRECONDITIONS
+    }
+}
+
+/// Adapter-facing focus capability required to realize a focus plan.
+/// Separate from movement [`Capability`] and lifecycle [`LifecycleCapability`]
+/// so frozen R1-R4 movement types are never misused for focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FocusCapability {
+    DirectionalFocus,
+}
+
+impl FocusCapability {
+    /// Stable kind string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::DirectionalFocus => "directional-focus",
+        }
+    }
+}
+
+/// Adapter-declared focus capabilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusCapabilities {
+    pub directional_focus: bool,
+}
+
+impl FocusCapabilities {
+    /// All focus capabilities declared.
+    #[must_use]
+    pub const fn full() -> Self {
+        Self {
+            directional_focus: true,
+        }
+    }
+
+    /// None declared.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            directional_focus: false,
+        }
+    }
+
+    /// Whether `capability` is declared.
+    #[must_use]
+    pub const fn supports(&self, capability: FocusCapability) -> bool {
+        match capability {
+            FocusCapability::DirectionalFocus => self.directional_focus,
+        }
+    }
+}
+
+/// Explicit preconditions the adapter must hold/verify to realize a focus
+/// plan. `AdapterMustVerifyPostconditions` is present on every focus plan,
+/// mirroring movement/lifecycle plans: realization is never assumed atomic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FocusPrecondition {
+    FocusedLeafOccupiedByFocusedWindow,
+    TargetLeafOccupied,
+    FocusTargetsSameDomain,
+    AdapterMustVerifyPostconditions,
+}
+
+/// Semantic focus intent: directional navigation from the focused leaf in one
+/// exact logical domain. Records the originating request so a plan can be
+/// interpreted without retaining caller-side state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusIntent {
+    pub domain_output: OutputId,
+    pub domain_workspace: WorkspaceId,
+    pub focused_leaf: NodeId,
+    pub focused_window: WindowId,
+    pub direction: Direction,
+}
+
+/// Structural focus operation with fully resolved portable identities.
+/// Names the exact logical domain, the source and target leaves/windows, the
+/// intentional direction, and the deterministic tree-relative `route` from the
+/// directional planner (group-to-leaf descent, outermost first including the
+/// target leaf). No geometry or native handles; desired topology is unmodified
+/// and carried by the session layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusOperation {
+    pub domain_output: OutputId,
+    pub domain_workspace: WorkspaceId,
+    pub from_leaf: NodeId,
+    pub to_leaf: NodeId,
+    pub from_window: WindowId,
+    pub to_window: WindowId,
+    pub direction: Direction,
+    pub route: Vec<NodeId>,
+}
+
+impl FocusOperation {
+    /// Adapter-facing capability required before emission.
+    #[must_use]
+    pub const fn required_capability(&self) -> FocusCapability {
+        FocusCapability::DirectionalFocus
+    }
+
+    /// Explicit preconditions for realization (always terminated by
+    /// [`FocusPrecondition::AdapterMustVerifyPostconditions`]).
+    #[must_use]
+    pub fn preconditions(&self) -> Vec<FocusPrecondition> {
+        vec![
+            FocusPrecondition::FocusedLeafOccupiedByFocusedWindow,
+            FocusPrecondition::TargetLeafOccupied,
+            FocusPrecondition::FocusTargetsSameDomain,
+            FocusPrecondition::AdapterMustVerifyPostconditions,
+        ]
+    }
+}
+
+/// Deterministic focus plan with explicit capability and preconditions.
+/// Self-contained: `intent` records the originating semantic intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusPlanContract {
+    pub intent: FocusIntent,
+    pub operation: FocusOperation,
+    pub required_capability: FocusCapability,
+    pub preconditions: Vec<FocusPrecondition>,
+}
+
+impl FocusPlanContract {
+    /// Construct from an intent and a resolved operation, deriving capability
+    /// and preconditions deterministically.
+    #[must_use]
+    pub fn for_operation(intent: FocusIntent, operation: FocusOperation) -> Self {
+        let required_capability = operation.required_capability();
+        let preconditions = operation.preconditions();
+        Self {
+            intent,
+            operation,
+            required_capability,
+            preconditions,
+        }
+    }
+}
+
+/// Transport-neutral focus dispatch payload emitted on a successful focus
+/// proposal. Mirrors [`Dispatch`] identity binding
+/// (owner/generation/correlation/base revision) plus the complete semantic
+/// focus plan. Desired topology/focus/geometry are carried by the session
+/// layer so this envelope stays geometry-free like [`Dispatch`]; native
+/// execution stays outside the reconciler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusDispatch {
+    pub correlation_id: CorrelationId,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
+    pub base_revision: u64,
+    pub required_capability: FocusCapability,
+    pub preconditions: Vec<FocusPrecondition>,
+    pub intent: FocusIntent,
+    pub operation: FocusOperation,
+}
+
+/// Fresh post-observation plus explicit native verification flag for a pending
+/// focus plan. Binds exactly like [`PostObservation`]: the reported
+/// `verified_preconditions` must equal the dispatched preconditions (capped by
+/// [`MAX_PRECONDITIONS`]) and `verified_operation` must equal the dispatched
+/// focus operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FocusPostObservation {
+    pub observation: Observation,
+    pub correlation_id: CorrelationId,
+    pub verified: bool,
+    pub verified_preconditions: Vec<FocusPrecondition>,
+    pub verified_operation: FocusOperation,
+}
+
+impl FocusPostObservation {
+    /// Typed construction (ids already validated by `ids` parsers).
+    #[must_use]
+    pub fn new(
+        observation: Observation,
+        correlation_id: CorrelationId,
+        verified: bool,
+        verified_preconditions: Vec<FocusPrecondition>,
+        verified_operation: FocusOperation,
     ) -> Self {
         Self {
             observation,
