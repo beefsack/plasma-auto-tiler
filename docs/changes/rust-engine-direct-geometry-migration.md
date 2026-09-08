@@ -98,6 +98,25 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Durable advisory boundary, 2026-09-08: the KWin standalone observer now
+  transmits only normalized exact-three opaque observations. Rust owns the
+  reusable `AdoptedTrio` initialization boundary, deterministically sorting
+  opaque IDs into explicit `cosmic_v1` `H[A,V[B,C]]` state with ordered axes,
+  shares, reciprocal links, and focus binding. The advisory contract rejects
+  any input `tree`, `leaf`, or `focused_leaf`, so JavaScript and Custom Tiles
+  cannot become structural authorities. Focused Rust and KWin tests cover
+  deterministic binding, ambiguity/stale/capability rejection, R1-R4 planning
+  compatibility, and observation-only schema locks. The path remains advisory
+  and read-only.
+- Durable Linux/KWin transport boundary, 2026-09-08: the Rust planner keeps
+  systemd, `/proc`, executable, and D-Bus identity outside the portable model.
+  For the approved host shape, unreadable owner `/proc/exe` may authenticate
+  only through exact current owner/PID/tick/boot, direct user-systemd MainPID
+  parentage, root-owned immutable Nix-store `ExecStart` wrapper-pair identity,
+  and complete pre/post revalidation. Any readable owner executable, mismatch,
+  malformed observation, unit drift, or deeper descendant fails closed. Static
+  adversarial tests pass; host success, stale refusal, service loss, and exact
+  restoration evidence remain unestablished.
 - Slice 2 Rust-core stabilization completed 2026-09-08: session
   owner/generation/correlation IDs are bounded opaque types; observations and
   plans use the immutable typed contract; ordered N-ary directional groups

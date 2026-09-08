@@ -68,20 +68,20 @@ Only meaningful pending or active work is listed.
        schema, keeps duplicate identity refusal distinct, and logs only bounded
        category/detail tokens. The correction accepted the exact-three host
        snapshot and reached Planner dispatch with after-equality true, proving
-       no extra/ineligible host-window condition. The current test-bound flat
-       topology still does not truthfully represent the observed nested
-       `H[A,V[B,C]]` arrangement and needs a separate explicit-boundary
-       decision. The attempt then refused `advisory-timeout`: the Planner authentication gate requires a
-       readable `/proc/<KWin PID>/exe`, while this host has only the separately
-       approved loader direct-parent fallback. KWin, Planner/advisory absence,
+       no extra/ineligible host-window condition. The current static path now
+       sends only normalized exact-three observations; Rust deterministically
+       adopts explicit ordered `H[A,V[B,C]]` `cosmic_v1` state and remains its
+       sole structural authority. The Planner now applies the approved
+       unreadable-executable direct-parent KWin identity fallback as a
+       Linux/KWin service boundary, including owner/PID/tick/boot, direct
+       MainPID parentage, immutable wrapper-pair, and pre/post revalidation.
+       KWin, Planner/advisory absence,
        generated-output absence, production-plugin continuity, and config hash/
        mtime matched exactly after each attempt; no native window, focus,
        geometry, workspace, output, or configuration mutation occurred, and no
        runtime residue was searched or changed. No native mutation API exists on
        this path, but success/stale/service-loss and after-snapshot equality are
-       not established. Do not retry: extending Rust Planner authentication to
-       the unreadable-executable direct-parent identity is a pending durable
-       security-boundary decision. The static
+       not established. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

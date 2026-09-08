@@ -4,16 +4,21 @@
 //! [`crate::cosmic_v1`] core. Exactly three normalized opaque windows per
 //! request, strict bounded schema/cardinality/size, and
 //! owner/generation/revision/correlation binding through the in-memory
-//! [`AdvisorySession`] tracker. Replies are deterministic advisory plans with
-//! no native command/execution fields and no mutation: the verified revision
-//! never advances and successful replies only echo the validated request
-//! binding.
+//! [`AdvisorySession`] tracker. Observation-only: requests carry no input
+//! topology (`tree`, `leaf`, and `focused_leaf` are all rejected); bare
+//! window observations normalize through the reusable
+//! [`crate::advisory_trio`] adoption into deterministic `H[A,V[B,C]]` state
+//! in stable order, so no caller can choose a topology. Replies are
+//! deterministic advisory plans with no native command/execution fields and
+//! no mutation: the verified revision never advances and successful replies
+//! only echo the validated request binding.
 //!
 //! Wire rejects (fixed redacted strings, input never echoed except a valid
 //! correlation id): oversized, malformed, unknown field/value, wrong schema
 //! version, invalid correlation/owner/generation/revision shape, invalid
-//! snapshot (including window count != 3), unsupported capabilities, stale
-//! revision, generation/owner mismatch, and duplicate-correlation mismatch.
+//! snapshot (including window count != 3 and any explicit topology fields),
+//! unsupported capabilities, stale revision, generation/owner mismatch, and
+//! duplicate-correlation mismatch.
 
 use std::collections::BTreeMap;
 
@@ -21,8 +26,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::directional::{
     Axis, Capabilities, Capability, CrossOutputTarget, Direction, EscapeContinuation, FocusedSide,
-    Insertion, MoveIntent, MoveOperation, Node, NodeId, Output, OutputId, Precondition,
-    RejectionKind, Rule, Snapshot, WindowId, WindowLink, WorkspaceId,
+    Insertion, MoveIntent, MoveOperation, Precondition, RejectionKind, Rule, Snapshot,
 };
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 
@@ -158,33 +162,13 @@ enum DirectionDto {
     Down,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
-#[serde(rename_all = "lowercase")]
-enum AxisDto {
-    Horizontal,
-    Vertical,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-#[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
-enum NodeDto {
-    Leaf {
-        id: String,
-    },
-    Group {
-        id: String,
-        axis: AxisDto,
-        children: Vec<NodeDto>,
-    },
-}
-
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct OutputDto {
     id: String,
     workspace: String,
     #[serde(default)]
-    tree: Option<NodeDto>,
+    tree: Option<serde_json::Value>,
     #[serde(default)]
     adjacent: BTreeMap<DirectionDto, String>,
 }
@@ -193,7 +177,11 @@ struct OutputDto {
 #[serde(deny_unknown_fields)]
 struct WindowLinkDto {
     window: String,
-    leaf: String,
+    // `None` on the observation path: JS supplies bare window observations
+    // without an input topology and Rust derives leaves deterministically.
+    // `Some` on the explicit-tree path preserved for non-advisory callers.
+    #[serde(default)]
+    leaf: Option<String>,
     output: String,
     workspace: String,
 }
@@ -210,7 +198,10 @@ struct SnapshotDto {
 #[serde(deny_unknown_fields)]
 struct IntentDto {
     source_output: String,
-    focused_leaf: String,
+    // `None` on the observation path (derived from `focused_window`);
+    // `Some` on the preserved explicit-tree path.
+    #[serde(default)]
+    focused_leaf: Option<String>,
     focused_window: String,
     direction: DirectionDto,
 }
@@ -371,118 +362,86 @@ fn convert_direction(direction: DirectionDto) -> Direction {
     }
 }
 
-fn convert_axis(axis: AxisDto) -> Axis {
-    match axis {
-        AxisDto::Horizontal => Axis::Horizontal,
-        AxisDto::Vertical => Axis::Vertical,
-    }
+fn is_observation_shape(snapshot: &SnapshotDto, intent: &IntentDto) -> bool {
+    intent.focused_leaf.is_none()
+        && snapshot.outputs.iter().all(|output| output.tree.is_none())
+        && snapshot.windows.iter().all(|link| link.leaf.is_none())
 }
 
-fn convert_node(dto: &NodeDto, depth: usize, total: &mut usize) -> Result<Node, &'static str> {
-    if depth > ADVISORY_MAX_DEPTH {
-        return Err(MSG_BOUND);
+/// Observation path: no input topology. Normalizes three bare window
+/// observations plus scope/focus/direction into deterministic explicit
+/// `cosmic_v1` `H[A,V[B,C]]` state via the reusable [`crate::advisory_trio`]
+/// adoption. Single-output standalone scope only; any mixed explicit/
+/// observation shape, scope mismatch, or trio ambiguity fails closed as
+/// `snapshot-invalid` without echo.
+fn convert_observation(
+    snapshot_dto: &SnapshotDto,
+    intent_dto: &IntentDto,
+) -> Result<(Snapshot, MoveIntent), &'static str> {
+    if snapshot_dto.outputs.len() != 1 {
+        return Err(MSG_SNAPSHOT);
     }
-    *total = total.checked_add(1).ok_or(MSG_BOUND)?;
-    if *total > ADVISORY_MAX_NODES_TOTAL {
-        return Err(MSG_BOUND);
-    }
-    match dto {
-        NodeDto::Leaf { id } => {
-            if !is_opaque_id(id) {
-                return Err(MSG_OPAQUE_ID);
-            }
-            Ok(Node::Leaf {
-                id: NodeId(id.clone()),
-            })
-        }
-        NodeDto::Group { id, axis, children } => {
-            if !is_opaque_id(id) {
-                return Err(MSG_OPAQUE_ID);
-            }
-            if children.len() > ADVISORY_MAX_CHILDREN {
-                return Err(MSG_BOUND);
-            }
-            let mut converted = Vec::with_capacity(children.len());
-            for child in children {
-                converted.push(convert_node(child, depth + 1, total)?);
-            }
-            let shares = vec![1u64; converted.len()];
-            Ok(Node::Group {
-                id: NodeId(id.clone()),
-                axis: convert_axis(*axis),
-                children: converted,
-                shares,
-            })
-        }
-    }
-}
-
-fn convert_snapshot(dto: &SnapshotDto) -> Result<Snapshot, &'static str> {
-    if dto.outputs.is_empty() || dto.outputs.len() > ADVISORY_MAX_OUTPUTS {
-        return Err(MSG_BOUND);
-    }
-    if dto.windows.len() != ADVISORY_WINDOW_COUNT {
+    if snapshot_dto.windows.len() != ADVISORY_WINDOW_COUNT {
         return Err(MSG_WINDOW_COUNT);
     }
-    let mut outputs = Vec::with_capacity(dto.outputs.len());
-    let mut total_nodes = 0usize;
-    for output in &dto.outputs {
-        if !is_opaque_id(&output.id) || !is_opaque_id(&output.workspace) {
-            return Err(MSG_OPAQUE_ID);
-        }
-        if output.adjacent.len() > 4 {
-            return Err(MSG_BOUND);
-        }
-        let mut adjacent = BTreeMap::new();
-        for (direction, target) in &output.adjacent {
-            if !is_opaque_id(target) {
-                return Err(MSG_OPAQUE_ID);
-            }
-            adjacent.insert(convert_direction(*direction), OutputId(target.clone()));
-        }
-        let tree = match &output.tree {
-            Some(tree) => Some(convert_node(tree, 0, &mut total_nodes)?),
-            None => None,
-        };
-        outputs.push(Output {
-            id: OutputId(output.id.clone()),
-            workspace: WorkspaceId(output.workspace.clone()),
-            tree,
-            adjacent,
-        });
+    let output = &snapshot_dto.outputs[0];
+    if !is_opaque_id(&output.id) || !is_opaque_id(&output.workspace) {
+        return Err(MSG_OPAQUE_ID);
     }
-    let mut windows = Vec::with_capacity(dto.windows.len());
-    for link in &dto.windows {
+    if output.adjacent.len() > 4 {
+        return Err(MSG_BOUND);
+    }
+    if !output.adjacent.is_empty() {
+        // Standalone trio scope is single-output; any adjacency would dangle.
+        return Err(MSG_SNAPSHOT);
+    }
+    for link in &snapshot_dto.windows {
+        if link.leaf.is_some() {
+            return Err(MSG_SNAPSHOT);
+        }
         if !is_opaque_id(&link.window)
-            || !is_opaque_id(&link.leaf)
             || !is_opaque_id(&link.output)
             || !is_opaque_id(&link.workspace)
         {
             return Err(MSG_OPAQUE_ID);
         }
-        windows.push(WindowLink {
-            window: WindowId(link.window.clone()),
-            leaf: NodeId(link.leaf.clone()),
-            output: OutputId(link.output.clone()),
-            workspace: WorkspaceId(link.workspace.clone()),
-        });
+        if link.output != output.id || link.workspace != output.workspace {
+            return Err(MSG_SNAPSHOT);
+        }
     }
-    Ok(Snapshot { outputs, windows })
-}
-
-fn convert_intent(dto: &IntentDto) -> Result<MoveIntent, &'static str> {
-    if !is_opaque_id(&dto.source_output)
-        || !is_opaque_id(&dto.focused_leaf)
-        || !is_opaque_id(&dto.focused_window)
-    {
+    if intent_dto.focused_leaf.is_some() {
+        return Err(MSG_SNAPSHOT);
+    }
+    if !is_opaque_id(&intent_dto.source_output) || !is_opaque_id(&intent_dto.focused_window) {
         return Err(MSG_OPAQUE_ID);
     }
-    Ok(MoveIntent {
-        source_output: OutputId(dto.source_output.clone()),
-        focused_leaf: NodeId(dto.focused_leaf.clone()),
-        focused_window: WindowId(dto.focused_window.clone()),
-        direction: convert_direction(dto.direction),
-    })
+    if intent_dto.source_output != output.id {
+        return Err(MSG_SNAPSHOT);
+    }
+    let observed: Vec<&str> = snapshot_dto
+        .windows
+        .iter()
+        .map(|link| link.window.as_str())
+        .collect();
+    let [w0, w1, w2] = observed.as_slice() else {
+        return Err(MSG_WINDOW_COUNT);
+    };
+    let adopted =
+        crate::advisory_trio::AdoptedTrio::adopt(&output.id, &output.workspace, [*w0, *w1, *w2])
+            .map_err(|error| {
+                if error.message().contains("malformed") {
+                    MSG_OPAQUE_ID
+                } else {
+                    MSG_SNAPSHOT
+                }
+            })?;
+    let intent = adopted
+        .intent_for(
+            &intent_dto.focused_window,
+            convert_direction(intent_dto.direction),
+        )
+        .map_err(|_| MSG_SNAPSHOT)?;
+    Ok((adopted.snapshot().clone(), intent))
 }
 
 fn convert_capabilities(dto: &CapabilitiesDto) -> Capabilities {
@@ -759,8 +718,14 @@ pub fn evaluate_advisory_json_for_armed_loss(
             return rejected(session, correlation_id, kind, message);
         }
     }
-    let snapshot = match convert_snapshot(&request.snapshot) {
-        Ok(snapshot) => snapshot,
+    // Observation-only: any explicit topology (`tree`, `leaf`, or
+    // `focused_leaf`) is not an observation and fails closed, so no caller
+    // can choose a topology. Rust alone builds H[A,V[B,C]].
+    if !is_observation_shape(&request.snapshot, &request.intent) {
+        return rejected(session, correlation_id, "snapshot-invalid", MSG_SNAPSHOT);
+    }
+    let (snapshot, intent) = match convert_observation(&request.snapshot, &request.intent) {
+        Ok(pair) => pair,
         Err(MSG_WINDOW_COUNT) => {
             return rejected(
                 session,
@@ -769,11 +734,9 @@ pub fn evaluate_advisory_json_for_armed_loss(
                 MSG_WINDOW_COUNT,
             );
         }
-        Err(message) => return rejected(session, correlation_id, "snapshot-invalid", message),
-    };
-    let intent = match convert_intent(&request.intent) {
-        Ok(intent) => intent,
-        Err(message) => return rejected(session, correlation_id, "snapshot-invalid", message),
+        Err(message) => {
+            return rejected(session, correlation_id, "snapshot-invalid", message);
+        }
     };
     let capabilities = convert_capabilities(&request.capabilities);
     match crate::cosmic_v1::plan_move_with_capabilities(&snapshot, &intent, &capabilities) {
@@ -841,6 +804,9 @@ mod tests {
     use super::*;
     use serde_json::{Value, json};
 
+    // Observation-only fixture: no tree/leaf/focused_leaf. Sorted
+    // [w-A,w-B,w-C] with B-down swaps with C inside the vertical inner,
+    // preserving the prior R2a expectation via Rust-built H[A,V[B,C]].
     fn valid_three_window_request(correlation: &str) -> Value {
         json!({
             "v": 1,
@@ -852,30 +818,17 @@ mod tests {
                 "outputs": [{
                     "id": "source",
                     "workspace": "workspace-1",
-                    "tree": {
-                        "kind": "group",
-                        "id": "root",
-                        "axis": "horizontal",
-                        "children": [
-                            {"kind": "group", "id": "left", "axis": "vertical", "children": [
-                                {"kind": "leaf", "id": "A"},
-                                {"kind": "leaf", "id": "B"}
-                            ]},
-                            {"kind": "leaf", "id": "C"}
-                        ]
-                    },
                     "adjacent": {}
                 }],
                 "windows": [
-                    {"window": "w-A", "leaf": "A", "output": "source", "workspace": "workspace-1"},
-                    {"window": "w-B", "leaf": "B", "output": "source", "workspace": "workspace-1"},
-                    {"window": "w-C", "leaf": "C", "output": "source", "workspace": "workspace-1"}
+                    {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-B", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-C", "output": "source", "workspace": "workspace-1"}
                 ]
             },
             "intent": {
                 "source_output": "source",
-                "focused_leaf": "A",
-                "focused_window": "w-A",
+                "focused_window": "w-B",
                 "direction": "down"
             },
             "capabilities": {
@@ -1008,8 +961,8 @@ mod tests {
         let mut session = fresh();
         let mut request = valid_three_window_request("corr-1");
         request["snapshot"]["windows"] = json!([
-            {"window": "w-A", "leaf": "A", "output": "source", "workspace": "workspace-1"},
-            {"window": "w-B", "leaf": "B", "output": "source", "workspace": "workspace-1"}
+            {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-B", "output": "source", "workspace": "workspace-1"}
         ]);
         let reply = evaluate(&mut session, &request);
         assert_eq!(reply["outcome"], "rejected");
@@ -1017,34 +970,52 @@ mod tests {
 
         let mut request = valid_three_window_request("corr-1");
         let mut windows = request["snapshot"]["windows"].as_array().unwrap().clone();
-        windows.push(
-            json!({"window": "w-D", "leaf": "C", "output": "source", "workspace": "workspace-1"}),
-        );
+        windows.push(json!({"window": "w-D", "output": "source", "workspace": "workspace-1"}));
         request["snapshot"]["windows"] = json!(windows);
         let reply = evaluate(&mut session, &request);
         assert_eq!(reply["message"], MSG_WINDOW_COUNT);
     }
 
     #[test]
+    fn explicit_topology_is_rejected_so_no_caller_chooses_a_topology() {
+        // Explicit tree.
+        let mut session = fresh();
+        let mut request = valid_three_window_request("corr-1");
+        request["snapshot"]["outputs"][0]["tree"] = json!({"kind": "leaf", "id": "A"});
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert!(!session.is_pinned());
+        // Explicit leaf links.
+        let mut request = valid_three_window_request("corr-1");
+        request["snapshot"]["windows"][0]["leaf"] = json!("leaf-w-A");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert!(!session.is_pinned());
+        // Explicit focused leaf.
+        let mut request = valid_three_window_request("corr-1");
+        request["intent"]["focused_leaf"] = json!("leaf-w-B");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert!(!session.is_pinned());
+    }
+
+    #[test]
     fn invalid_snapshots_reject_without_echo() {
         let mut session = fresh();
         let mut request = valid_three_window_request("corr-1");
-        request["snapshot"]["windows"][0]["window"] = json!("SECRET-WIN");
-        request["snapshot"]["windows"][0]["leaf"] = json!("SECRET-WIN");
+        request["snapshot"]["windows"][0]["window"] = json!("SECRET BAD");
         let reply = evaluate(&mut session, &request);
         assert_eq!(reply["outcome"], "rejected");
-        assert!(!reply.to_string().contains("SECRET-WIN"));
+        assert!(!reply.to_string().contains("SECRET BAD"));
 
         let mut request = valid_three_window_request("corr-1");
-        request["intent"]["focused_leaf"] = json!("missing-leaf");
         request["intent"]["focused_window"] = json!("missing-win");
         let reply = evaluate(&mut session, &request);
         assert_eq!(reply["outcome"], "rejected");
-        assert!(
-            reply["kind"] == "snapshot-invalid" || reply["kind"] == "focused-leaf-not-found",
-            "{}",
-            reply
-        );
+        assert_eq!(reply["kind"], "snapshot-invalid");
     }
 
     #[test]
@@ -1146,5 +1117,192 @@ mod tests {
         let mut session = fresh();
         let reply = evaluate_advisory_json(&mut session, &request);
         assert!(reply.len() <= ADVISORY_MAX_REPLY_BYTES);
+    }
+
+    fn valid_observation_request(correlation: &str) -> Value {
+        json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": 0,
+            "snapshot": {
+                "outputs": [{
+                    "id": "source",
+                    "workspace": "workspace-1",
+                    "adjacent": {}
+                }],
+                "windows": [
+                    {"window": "w-C", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-B", "output": "source", "workspace": "workspace-1"}
+                ]
+            },
+            "intent": {
+                "source_output": "source",
+                "focused_window": "w-B",
+                "direction": "down"
+            },
+            "capabilities": {
+                "swap_neighbor": true,
+                "wrap_perpendicular": true,
+                "wrap_siblings": true,
+                "insert_child": true,
+                "split_group_child": true,
+                "reparent_leaf": true,
+                "cross_output_transfer": true
+            }
+        })
+    }
+
+    #[test]
+    fn observation_builds_deterministic_nested_trio_state() {
+        let mut session = fresh();
+        let reply = evaluate(&mut session, &valid_observation_request("corr-trio-1"));
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["correlation_id"], "corr-trio-1");
+        assert_eq!(reply["owner"], "owner-1");
+        assert_eq!(reply["revision"], 0);
+        // Sorted [w-A, w-B, w-C]: B down swaps with C inside the vertical inner.
+        assert_eq!(reply["rule"], "R2a");
+        assert_eq!(reply["capability"], "swap-neighbor");
+        assert_eq!(reply["operation"]["kind"], "swap-neighbor");
+        assert_eq!(reply["operation"]["container"], "advisory-inner");
+        assert_eq!(reply["operation"]["neighbor"], "leaf-w-C");
+        assert!(session.is_pinned());
+    }
+
+    #[test]
+    fn observation_order_is_stable_across_permutations() {
+        let mut first_session = fresh();
+        let first = evaluate(
+            &mut first_session,
+            &valid_observation_request("corr-trio-1"),
+        );
+        let mut shuffled = valid_observation_request("corr-trio-1");
+        shuffled["snapshot"]["windows"] = json!([
+            {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-B", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-C", "output": "source", "workspace": "workspace-1"}
+        ]);
+        let mut second_session = fresh();
+        let second = evaluate(&mut second_session, &shuffled);
+        assert_eq!(first["rule"], second["rule"]);
+        assert_eq!(first["operation"], second["operation"]);
+        assert_eq!(first["outcome"], "planned");
+        assert_eq!(second["outcome"], "planned");
+    }
+
+    #[test]
+    fn observation_rejects_ambiguity_without_echo() {
+        // Duplicate observed windows.
+        let mut session = fresh();
+        let mut request = valid_observation_request("corr-trio-1");
+        request["snapshot"]["windows"] = json!([
+            {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-B", "output": "source", "workspace": "workspace-1"}
+        ]);
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert!(!reply.to_string().contains("w-A"));
+        assert!(!session.is_pinned());
+
+        // Focused window outside the observed set.
+        let mut request = valid_observation_request("corr-trio-1");
+        request["intent"]["focused_window"] = json!("w-Z");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+        assert!(!session.is_pinned());
+
+        // Mixed shape: one leaf present, others absent.
+        let mut request = valid_observation_request("corr-trio-1");
+        request["snapshot"]["windows"] = json!([
+            {"window": "w-A", "leaf": "leaf-w-A", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-B", "output": "source", "workspace": "workspace-1"},
+            {"window": "w-C", "output": "source", "workspace": "workspace-1"}
+        ]);
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+
+        // Mixed shape: explicit tree with observation-style windows.
+        let mut request = valid_observation_request("corr-trio-1");
+        request["snapshot"]["outputs"] = json!([{
+            "id": "source",
+            "workspace": "workspace-1",
+            "tree": {"kind": "leaf", "id": "A"},
+            "adjacent": {}
+        }]);
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+
+        // Scope mismatch across observed links.
+        let mut request = valid_observation_request("corr-trio-1");
+        request["snapshot"]["windows"][0]["workspace"] = json!("workspace-2");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "snapshot-invalid");
+    }
+
+    #[test]
+    fn observation_rejects_malformed_stale_and_capability() {
+        // Malformed opaque window without echo.
+        let mut session = fresh();
+        let mut request = valid_observation_request("corr-trio-1");
+        request["snapshot"]["windows"][0]["window"] = json!("SECRET BAD");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert!(!reply.to_string().contains("SECRET BAD"));
+        assert!(!session.is_pinned());
+
+        // Capability refusal: R2a needs swap-neighbor.
+        let mut request = valid_observation_request("corr-trio-1");
+        request["capabilities"]["swap_neighbor"] = json!(false);
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "capability-unsupported");
+        assert!(!session.is_pinned());
+
+        // Stale binding after one pinned observation success.
+        let first = evaluate(&mut session, &valid_observation_request("corr-trio-1"));
+        assert_eq!(first["outcome"], "planned");
+        let mut stale = valid_observation_request("corr-trio-2");
+        stale["revision"] = json!(9);
+        let reply = evaluate(&mut session, &stale);
+        assert_eq!(reply["kind"], "stale-revision");
+    }
+
+    #[test]
+    fn observation_covers_r1_r2b_r3_through_cosmic_v1() {
+        // R1: A faces the perpendicular axis moving down.
+        let mut session = fresh();
+        let mut request = valid_observation_request("corr-r1");
+        request["intent"]["focused_window"] = json!("w-A");
+        request["intent"]["direction"] = json!("down");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["rule"], "R1");
+
+        // R2b: A moves right into the perpendicular inner group.
+        let mut session = fresh();
+        let mut request = valid_observation_request("corr-r2b");
+        request["intent"]["focused_window"] = json!("w-A");
+        request["intent"]["direction"] = json!("right");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["rule"], "R2b");
+
+        // R3: B escapes its inner parent moving up past the first-child edge.
+        let mut session = fresh();
+        let mut request = valid_observation_request("corr-r3");
+        request["intent"]["focused_window"] = json!("w-B");
+        request["intent"]["direction"] = json!("up");
+        let reply = evaluate(&mut session, &request);
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["rule"], "R3");
     }
 }

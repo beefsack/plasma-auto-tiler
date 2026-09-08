@@ -24,6 +24,8 @@ import {
 
 const PINNED_OWNER = ":1.42";
 
+// Observation-only fixture: no tree/leaf/focused_leaf. Sorted [w-A,w-B,w-C]
+// with w-B down plans R2a inside advisory-inner against leaf-w-C.
 function validInput(overrides: Partial<Record<string, unknown>> = {}): AdvisoryProviderInput {
     return {
         correlationId: "corr-1",
@@ -35,36 +37,18 @@ function validInput(overrides: Partial<Record<string, unknown>> = {}): AdvisoryP
                 {
                     id: "source",
                     workspace: "workspace-1",
-                    tree: {
-                        kind: "group",
-                        id: "root",
-                        axis: "horizontal",
-                        children: [
-                            {
-                                kind: "group",
-                                id: "left",
-                                axis: "vertical",
-                                children: [
-                                    { kind: "leaf", id: "A" },
-                                    { kind: "leaf", id: "B" },
-                                ],
-                            },
-                            { kind: "leaf", id: "C" },
-                        ],
-                    },
                     adjacent: {},
                 },
             ],
             windows: [
-                { window: "w-A", leaf: "A", output: "source", workspace: "workspace-1" },
-                { window: "w-B", leaf: "B", output: "source", workspace: "workspace-1" },
-                { window: "w-C", leaf: "C", output: "source", workspace: "workspace-1" },
+                { window: "w-A", output: "source", workspace: "workspace-1" },
+                { window: "w-B", output: "source", workspace: "workspace-1" },
+                { window: "w-C", output: "source", workspace: "workspace-1" },
             ],
         },
         intent: {
             source_output: "source",
-            focused_leaf: "A",
-            focused_window: "w-A",
+            focused_window: "w-B",
             direction: "down",
         },
         capabilities: {
@@ -91,7 +75,7 @@ function plannedReply(): string {
         rule: "R2a",
         capability: "swap-neighbor",
         preconditions: ["adapter-must-verify-postconditions"],
-        operation: { kind: "swap-neighbor", rule: "R2a", container: "root", neighbor: "B" },
+        operation: { kind: "swap-neighbor", rule: "R2a", container: "advisory-inner", neighbor: "leaf-w-C" },
     });
 }
 
@@ -177,7 +161,7 @@ describe("advisory plan contract constants", () => {
         assert.equal(DBUS_METHOD, "GetNameOwner");
     });
 
-    it("normalizes the injected 3-window input without inventing topology", () => {
+    it("normalizes the injected 3-window observation without inventing topology", () => {
         const result = normalizeAdvisoryRequest(validInput());
         assert.equal(result.ok, true);
         if (!result.ok) {
@@ -196,7 +180,41 @@ describe("advisory plan contract constants", () => {
         ]);
         assert.equal(request["v"], 1);
         assert.ok(result.bundle.requestJson.length <= ADVISORY_MAX_REQUEST_BYTES);
-        assert.ok(result.bundle.snapshotIds.includes("root"));
+        // Observation-only: derived trio ids are not in the request; only
+        // observed output/workspace/window ids are bound.
+        assert.ok(result.bundle.snapshotIds.includes("w-A"));
+        assert.ok(!result.bundle.snapshotIds.includes("advisory-inner"));
+        assert.ok(!result.bundle.snapshotIds.includes("leaf-w-C"));
+        const snapshot = request["snapshot"] as Record<string, unknown>;
+        const outputs = snapshot["outputs"] as Array<Record<string, unknown>>;
+        assert.ok(!Object.prototype.hasOwnProperty.call(outputs[0] ?? {}, "tree"));
+        const intent = request["intent"] as Record<string, unknown>;
+        assert.ok(!Object.prototype.hasOwnProperty.call(intent, "focused_leaf"));
+    });
+
+    it("rejects explicit topology so no caller can choose one", () => {
+        const withTree = validInput({
+            snapshot: {
+                outputs: [{ id: "source", workspace: "workspace-1", tree: { kind: "leaf", id: "A" }, adjacent: {} }],
+                windows: (validInput().snapshot as Record<string, unknown>)["windows"],
+            },
+        });
+        assert.equal(normalizeAdvisoryRequest(withTree).ok, false);
+        const withLeaf = validInput({
+            snapshot: {
+                outputs: (validInput().snapshot as Record<string, unknown>)["outputs"],
+                windows: [
+                    { window: "w-A", leaf: "A", output: "source", workspace: "workspace-1" },
+                    { window: "w-B", output: "source", workspace: "workspace-1" },
+                    { window: "w-C", output: "source", workspace: "workspace-1" },
+                ],
+            },
+        });
+        assert.equal(normalizeAdvisoryRequest(withLeaf).ok, false);
+        const withFocusedLeaf = validInput({
+            intent: { source_output: "source", focused_leaf: "A", focused_window: "w-B", direction: "down" },
+        });
+        assert.equal(normalizeAdvisoryRequest(withFocusedLeaf).ok, false);
     });
 });
 
@@ -332,7 +350,7 @@ describe("advisory plan query", () => {
             owner: "owner-1",
             generation: "gen-1",
             revision: 0,
-            snapshotIds: ["source", "workspace-1", "root", "left", "A", "B", "C", "w-A", "w-B", "w-C"],
+            snapshotIds: ["source", "workspace-1", "w-A", "w-B", "w-C"],
         });
         assert.equal(validated.ok, true);
     });
@@ -396,8 +414,8 @@ describe("advisory plan query", () => {
             snapshot: {
                 outputs: (validInput().snapshot as Record<string, unknown>)["outputs"],
                 windows: [
-                    { window: "w-A", leaf: "A", output: "source", workspace: "workspace-1" },
-                    { window: "w-B", leaf: "B", output: "source", workspace: "workspace-1" },
+                    { window: "w-A", output: "source", workspace: "workspace-1" },
+                    { window: "w-B", output: "source", workspace: "workspace-1" },
                 ],
             },
         });
@@ -421,15 +439,14 @@ describe("advisory plan query", () => {
             },
         });
         assert.equal(normalizeAdvisoryRequest(badCapabilities).ok, false);
-        const unknownLeaf = validInput({
+        const unknownWindow = validInput({
             intent: {
                 source_output: "source",
-                focused_leaf: "MISSING",
-                focused_window: "w-A",
+                focused_window: "w-Z",
                 direction: "down",
             },
         });
-        assert.equal(normalizeAdvisoryRequest(unknownLeaf).ok, false);
+        assert.equal(normalizeAdvisoryRequest(unknownWindow).ok, false);
 
         const { mocks } = started(twoWindows);
         assert.ok(

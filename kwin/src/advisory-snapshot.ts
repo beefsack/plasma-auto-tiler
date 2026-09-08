@@ -5,11 +5,12 @@
 // no signal subscription, no writes, no transport. Observes public read-only
 // state only: activeWindow, windowList, currentDesktopForScreen, clientArea,
 // output identity, desktops membership, tile presence, frameGeometry,
-// output geometry, plus the small read-only flags below. Produces only v1
-// opaque primitives for DescribeAdvisoryPlan: one logical output/workspace
-// scope, one flat horizontal group with three leaves derived from the three
-// opaque window ids, three window links, focused leaf/window from the active
-// window, direction from injected intent, advisory-only capabilities.
+// output geometry, plus the small read-only flags below. Transmits only
+// normalized observations for DescribeAdvisoryPlan: one logical
+// output/workspace scope, three bare window observations, focused window
+// from the active window, direction from injected intent,
+// advisory-only capabilities. No tree, leaf, or focused_leaf leaves this
+// module; Rust alone builds H[A,V[B,C]].
 //
 // Ordinary production startup never runs this module: src/entry.ts must not
 // bring it in. Only advisory-describe-entry.ts brings it in.
@@ -22,7 +23,6 @@ export const ADVISORY_SNAPSHOT_MAX_ID_LEN = 128;
 export const ADVISORY_SNAPSHOT_WORK_AREA_OPTION = 5;
 export const ADVISORY_SNAPSHOT_OUTPUT_ID = "advisory-output";
 export const ADVISORY_SNAPSHOT_WORKSPACE_ID = "advisory-workspace";
-export const ADVISORY_SNAPSHOT_ROOT_ID = "advisory-root";
 
 // Bounded redacted capture rejection taxonomy. Each value reports only a
 // coarse category (input shape, surface availability, area availability,
@@ -291,9 +291,7 @@ function normalizeNativeId(value: unknown): string | null {
     return unwrapSingleBracedUuid(text);
 }
 
-function leafIdFor(windowId: string): string {
-    return `leaf-${windowId}`;
-}
+
 
 interface CaptureState {
     readonly sortedIds: readonly string[];
@@ -607,35 +605,22 @@ export function captureAdvisorySnapshot(
         return { ok: false, reason: outcome.reason };
     }
     const captured = outcome.state;
-    const leaves = captured.sortedIds.map((id) => leafIdFor(id));
     const activeIndex = captured.sortedIds.indexOf(captured.activeId);
     if (activeIndex < 0) {
         return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE };
     }
-    const focusedLeaf = leaves[activeIndex] as string;
-    const children: readonly Record<string, unknown>[] = Object.freeze(
-        leaves.map((leaf) => Object.freeze({ kind: "leaf", id: leaf })),
-    );
-    const tree: Record<string, unknown> = Object.freeze({
-        kind: "group",
-        id: ADVISORY_SNAPSHOT_ROOT_ID,
-        axis: "horizontal",
-        children,
-    });
     const snapshot: Record<string, unknown> = Object.freeze({
         outputs: Object.freeze([
             Object.freeze({
                 id: ADVISORY_SNAPSHOT_OUTPUT_ID,
                 workspace: ADVISORY_SNAPSHOT_WORKSPACE_ID,
-                tree,
                 adjacent: Object.freeze({}),
             }),
         ]),
         windows: Object.freeze(
-            captured.sortedIds.map((id, index) =>
+            captured.sortedIds.map((id) =>
                 Object.freeze({
                     window: id,
-                    leaf: leaves[index] as string,
                     output: ADVISORY_SNAPSHOT_OUTPUT_ID,
                     workspace: ADVISORY_SNAPSHOT_WORKSPACE_ID,
                 }),
@@ -644,7 +629,6 @@ export function captureAdvisorySnapshot(
     });
     const intent: Record<string, unknown> = Object.freeze({
         source_output: ADVISORY_SNAPSHOT_OUTPUT_ID,
-        focused_leaf: focusedLeaf,
         focused_window: captured.activeId,
         direction: direction as string,
     });

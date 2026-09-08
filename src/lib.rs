@@ -1,10 +1,15 @@
 pub mod advisory_contract;
+pub mod advisory_trio;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;
 pub mod geometry;
 pub mod ids;
 pub mod planner_contract;
+// Linux-only KWin identity boundary (systemd unit, wrapper files, process
+// identity). Portable advisory/core modules must not depend on it.
+#[cfg(target_os = "linux")]
+pub mod planner_kwin_identity;
 pub mod planner_service;
 pub mod poc3;
 pub mod poc3_contract;

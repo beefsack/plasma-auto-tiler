@@ -264,62 +264,10 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
     return true;
 }
 
-interface NodeCollect {
-    total: number;
-    ids: string[];
-}
-
-function collectNodeIds(node: unknown, depth: number, state: NodeCollect): boolean {
-    if (depth > ADVISORY_MAX_DEPTH || state.total > ADVISORY_MAX_NODES_TOTAL) {
-        return false;
-    }
-    if (!isRecord(node) || typeof node["kind"] !== "string") {
-        return false;
-    }
-    const kind = node["kind"] as string;
-    if (kind === "leaf") {
-        if (!hasExactKeys(node, ["kind", "id"]) || node["kind"] !== "leaf") {
-            return false;
-        }
-        if (!isOpaqueId(node["id"])) {
-            return false;
-        }
-        state.total += 1;
-        if (state.total > ADVISORY_MAX_NODES_TOTAL) {
-            return false;
-        }
-        state.ids.push(node["id"] as string);
-        return true;
-    }
-    if (kind === "group") {
-        if (!hasExactKeys(node, ["kind", "id", "axis", "children"])) {
-            return false;
-        }
-        if (!isOpaqueId(node["id"]) || !contains(KNOWN_AXES, node["axis"])) {
-            return false;
-        }
-        if (!Array.isArray(node["children"]) || node["children"].length > ADVISORY_MAX_CHILDREN) {
-            return false;
-        }
-        const children = node["children"] as unknown[];
-        state.total += 1;
-        if (state.total > ADVISORY_MAX_NODES_TOTAL) {
-            return false;
-        }
-        state.ids.push(node["id"] as string);
-        for (const child of children) {
-            if (!collectNodeIds(child, depth + 1, state)) {
-                return false;
-            }
-        }
-        return true;
-    }
-    return false;
-}
-
-// Strict bounded normalization of the injected pure 3-window advisory input.
-// Never reads native objects; only opaque logical ids supplied by the
-// provider are validated and serialized.
+// Strict bounded normalization of the injected pure 3-window advisory
+// observation input. Observation-only: no tree, leaf, or focused_leaf is
+// accepted; Rust alone builds H[A,V[B,C]]. Never reads native objects; only
+// opaque logical ids supplied by the provider are validated and serialized.
 export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResult {
     if (!isRecord(input)) {
         return { ok: false, reason: "advisory-invalid-input" };
@@ -353,19 +301,17 @@ export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResul
     }
     const snapshotIds: string[] = [];
     const outputIds: string[] = [];
-    const nodeIds = new Set<string>();
     const windowIds = new Set<string>();
-    const leafIds = new Set<string>();
-    const collect: NodeCollect = { total: 0, ids: [] };
     for (const output of outputs as unknown[]) {
         if (!isRecord(output)) {
             return { ok: false, reason: "advisory-unsupported-topology" };
         }
-        const hasTree = Object.prototype.hasOwnProperty.call(output, "tree");
-        const expectedKeys = hasTree
-            ? (["id", "workspace", "tree", "adjacent"] as const)
-            : (["id", "workspace", "adjacent"] as const);
-        if (!hasExactKeys(output, expectedKeys)) {
+        // Observation-only: any tree field is an explicit topology and is
+        // rejected so no caller can choose one.
+        if (Object.prototype.hasOwnProperty.call(output, "tree")) {
+            return { ok: false, reason: "advisory-unsupported-topology" };
+        }
+        if (!hasExactKeys(output, ["id", "workspace", "adjacent"])) {
             return { ok: false, reason: "advisory-unsupported-topology" };
         }
         if (!isOpaqueId(output["id"]) || !isOpaqueId(output["workspace"])) {
@@ -388,25 +334,14 @@ export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResul
             }
             snapshotIds.push(adjacent[key] as string);
         }
-        if (hasTree) {
-            const before = collect.ids.length;
-            if (!collectNodeIds(output["tree"], 0, collect)) {
-                return { ok: false, reason: "advisory-unsupported-topology" };
-            }
-            for (let index = before; index < collect.ids.length; index += 1) {
-                const id = collect.ids[index] as string;
-                nodeIds.add(id);
-                snapshotIds.push(id);
-            }
-        }
     }
     for (const link of windows as unknown[]) {
-        if (!isRecord(link) || !hasExactKeys(link, ["window", "leaf", "output", "workspace"])) {
+        // Observation-only: leaf links are explicit topology and are rejected.
+        if (!isRecord(link) || !hasExactKeys(link, ["window", "output", "workspace"])) {
             return { ok: false, reason: "advisory-unsupported-topology" };
         }
         if (
             !isOpaqueId(link["window"]) ||
-            !isOpaqueId(link["leaf"]) ||
             !isOpaqueId(link["output"]) ||
             !isOpaqueId(link["workspace"])
         ) {
@@ -417,15 +352,14 @@ export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResul
             return { ok: false, reason: "advisory-unsupported-topology" };
         }
         windowIds.add(windowId);
-        leafIds.add(link["leaf"] as string);
-        snapshotIds.push(windowId, link["leaf"] as string);
+        snapshotIds.push(windowId);
     }
-    if (!hasExactKeys(intent, ["source_output", "focused_leaf", "focused_window", "direction"])) {
+    // Observation-only: focused_leaf is explicit topology and is rejected.
+    if (!hasExactKeys(intent, ["source_output", "focused_window", "direction"])) {
         return { ok: false, reason: "advisory-unsupported-topology" };
     }
     if (
         !isOpaqueId(intent["source_output"]) ||
-        !isOpaqueId(intent["focused_leaf"]) ||
         !isOpaqueId(intent["focused_window"])
     ) {
         return { ok: false, reason: "advisory-unsupported-topology" };
@@ -434,9 +368,6 @@ export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResul
         return { ok: false, reason: "advisory-invalid-input" };
     }
     if (outputIds.indexOf(intent["source_output"] as string) < 0) {
-        return { ok: false, reason: "advisory-unsupported-topology" };
-    }
-    if (!nodeIds.has(intent["focused_leaf"] as string)) {
         return { ok: false, reason: "advisory-unsupported-topology" };
     }
     if (!windowIds.has(intent["focused_window"] as string)) {
@@ -472,7 +403,6 @@ export function normalizeAdvisoryRequest(input: unknown): AdvisoryNormalizeResul
         },
         intent: {
             source_output: intent["source_output"],
-            focused_leaf: intent["focused_leaf"],
             focused_window: intent["focused_window"],
             direction: intent["direction"],
         },
@@ -517,6 +447,26 @@ export interface AdvisoryReplyExpectation {
     readonly snapshotIds: readonly string[];
 }
 
+// Observation-only operation binding: Rust alone builds H[A,V[B,C]] with
+// fixed group ids and derived leaf-{window} leaves. Request snapshot ids
+// carry only output/workspace/window observations, so derived topology ids
+// are accepted when they resolve to observed windows; all other references
+// must still resolve to observed ids.
+const ADVISORY_TRIO_ROOT_ID = "advisory-root";
+const ADVISORY_TRIO_INNER_ID = "advisory-inner";
+const ADVISORY_TRIO_LEAF_PREFIX = "leaf-";
+
+function isDerivedTrioId(value: string, snapshotIds: readonly string[]): boolean {
+    if (value === ADVISORY_TRIO_ROOT_ID || value === ADVISORY_TRIO_INNER_ID) {
+        return true;
+    }
+    if (value.indexOf(ADVISORY_TRIO_LEAF_PREFIX) === 0) {
+        const window = value.slice(ADVISORY_TRIO_LEAF_PREFIX.length);
+        return snapshotIds.indexOf(window) >= 0;
+    }
+    return false;
+}
+
 function operationReferencesResolve(
     operation: Record<string, unknown>,
     snapshotIds: readonly string[],
@@ -536,7 +486,7 @@ function operationReferencesResolve(
         }
         const value = operation[key];
         if (typeof value === "string") {
-            if (snapshotIds.indexOf(value) < 0) {
+            if (snapshotIds.indexOf(value) < 0 && !isDerivedTrioId(value, snapshotIds)) {
                 return false;
             }
         }

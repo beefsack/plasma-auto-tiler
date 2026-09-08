@@ -5,7 +5,6 @@ import { describe, it } from "node:test";
 import {
     ADVISORY_SNAPSHOT_OUTPUT_ID,
     ADVISORY_SNAPSHOT_REJECTS,
-    ADVISORY_SNAPSHOT_ROOT_ID,
     ADVISORY_SNAPSHOT_WINDOW_COUNT,
     ADVISORY_SNAPSHOT_WORKSPACE_ID,
     captureAdvisorySnapshot,
@@ -97,7 +96,7 @@ function validTrio(): { workspace: StubWorkspace; windows: StubWindow[]; active:
 }
 
 describe("advisory snapshot exact-three and focused normalization", () => {
-    it("selects exactly three sorted by opaque id with focused leaf from active", () => {
+    it("transmits only normalized observations with no tree leaf or focused_leaf", () => {
         const { workspace } = validTrio();
         const result = captureAdvisorySnapshot(workspace as never, "left");
         assert.equal(result.ok, true);
@@ -108,30 +107,19 @@ describe("advisory snapshot exact-three and focused normalization", () => {
         assert.equal(outputs.length, 1);
         assert.equal(outputs[0]?.["id"], ADVISORY_SNAPSHOT_OUTPUT_ID);
         assert.equal(outputs[0]?.["workspace"], ADVISORY_SNAPSHOT_WORKSPACE_ID);
-        const tree = outputs[0]?.["tree"] as Record<string, unknown>;
-        assert.equal(tree["kind"], "group");
-        assert.equal(tree["axis"], "horizontal");
-        assert.equal(tree["id"], ADVISORY_SNAPSHOT_ROOT_ID);
-        const children = tree["children"] as Array<Record<string, unknown>>;
-        assert.deepEqual(
-            children.map((c) => c["id"]),
-            ["leaf-id-a", "leaf-id-b", "leaf-id-c"],
-        );
+        assert.ok(!Object.prototype.hasOwnProperty.call(outputs[0] ?? {}, "tree"));
         const links = snapshot["windows"] as Array<Record<string, unknown>>;
         assert.deepEqual(
             links.map((l) => l["window"]),
             ["id-a", "id-b", "id-c"],
         );
-        assert.deepEqual(
-            links.map((l) => l["leaf"]),
-            ["leaf-id-a", "leaf-id-b", "leaf-id-c"],
-        );
         for (const link of links) {
+            assert.ok(!Object.prototype.hasOwnProperty.call(link, "leaf"));
             assert.equal(link["output"], ADVISORY_SNAPSHOT_OUTPUT_ID);
             assert.equal(link["workspace"], ADVISORY_SNAPSHOT_WORKSPACE_ID);
         }
         assert.equal(intent["focused_window"], "id-b");
-        assert.equal(intent["focused_leaf"], "leaf-id-b");
+        assert.ok(!Object.prototype.hasOwnProperty.call(intent, "focused_leaf"));
         assert.equal(intent["source_output"], ADVISORY_SNAPSHOT_OUTPUT_ID);
         assert.equal(intent["direction"], "left");
         assert.equal(ADVISORY_SNAPSHOT_WINDOW_COUNT, 3);
@@ -457,7 +445,7 @@ describe("advisory snapshot capabilities and redaction", () => {
         });
     });
 
-    it("serializes only opaque ids with no native metadata", () => {
+    it("serializes only opaque observations with no native metadata or topology", () => {
         const { workspace } = validTrio();
         const result = captureAdvisorySnapshot(workspace as never, "down");
         assert.equal(result.ok, true);
@@ -473,7 +461,11 @@ describe("advisory snapshot capabilities and redaction", () => {
         assert.ok(!text.includes("100"));
         assert.ok(!text.includes("1920"));
         assert.ok(!text.includes("1040"));
-        assert.ok(text.includes("leaf-id-a"));
+        // Observation-only: window ids present, derived leaf ids absent.
+        assert.ok(text.includes("id-a"));
+        assert.ok(!text.includes("leaf-id-a"));
+        assert.ok(!text.includes("\"tree\""));
+        assert.ok(!text.includes("focused_leaf"));
         assert.ok(text.includes(ADVISORY_SNAPSHOT_OUTPUT_ID));
         assert.ok(text.includes(ADVISORY_SNAPSHOT_WORKSPACE_ID));
     });

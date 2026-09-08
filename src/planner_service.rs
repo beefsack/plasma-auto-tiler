@@ -32,6 +32,9 @@ use crate::advisory_contract::{
     evaluate_advisory_json_for_armed_loss,
 };
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
+// Linux-only identity boundary; portable core never depends on it.
+#[cfg(target_os = "linux")]
+use crate::planner_kwin_identity as kwin_identity;
 use crate::tray_lifecycle::{ProcProcessControl, ProcessControl, ProcessIdentity};
 
 pub const SERVICE: &str = "org.plasmaautotiler.Planner";
@@ -340,7 +343,8 @@ fn nested_key_valid(key: &str) -> bool {
 }
 
 /// Exact static Nix store launcher identity, never by executing the binary:
-/// `/nix/store/<32-char-hash>-kwin-<expected>/bin/kwin_wayland`.
+/// `/nix/store/<32-char-hash>-kwin-<expected>/bin/kwin_wayland` with no
+/// embedded separators in the store component.
 fn nested_kwin_store_exact(path: &str, expected: &str) -> bool {
     const PREFIX: &str = "/nix/store/";
     const SUFFIX: &str = "/bin/kwin_wayland";
@@ -350,6 +354,9 @@ fn nested_kwin_store_exact(path: &str, expected: &str) -> bool {
     let Some(base) = without_prefix.strip_suffix(SUFFIX) else {
         return false;
     };
+    if base.contains('/') || base.contains('\0') {
+        return false;
+    }
     let Some((hash, _rest)) = base.split_once('-') else {
         return false;
     };
@@ -364,7 +371,8 @@ fn nested_kwin_store_exact(path: &str, expected: &str) -> bool {
 }
 
 /// Exact static Nix wrapped executable identity, never by executing it:
-/// `/nix/store/<32-char-hash>-kwin-<expected>/bin/.kwin_wayland-wrapped`.
+/// `/nix/store/<32-char-hash>-kwin-<expected>/bin/.kwin_wayland-wrapped`
+/// with no embedded separators in the store component.
 fn nested_kwin_wrapped_exact(path: &str, expected: &str) -> bool {
     const PREFIX: &str = "/nix/store/";
     const SUFFIX: &str = "/bin/.kwin_wayland-wrapped";
@@ -374,6 +382,9 @@ fn nested_kwin_wrapped_exact(path: &str, expected: &str) -> bool {
     let Some(base) = without_prefix.strip_suffix(SUFFIX) else {
         return false;
     };
+    if base.contains('/') || base.contains('\0') {
+        return false;
+    }
     let Some((hash, _)) = base.split_once('-') else {
         return false;
     };
@@ -841,10 +852,46 @@ async fn verify_planner_caller(
         return None;
     }
     let process_id = credentials.process_id()?;
+    let owner_uid = credentials.unix_user_id()?;
+    let proc_root = Path::new("/proc").to_path_buf();
     let process = ProcProcessControl {
-        proc_root: Path::new("/proc").to_path_buf(),
+        proc_root: proc_root.clone(),
     };
-    let process_identity = process.identity(process_id).ok().flatten()?;
+    let process_identity = match process.identity(process_id) {
+        Ok(Some(identity)) => identity,
+        // Absent owner: no fallback. Deleted/malformed exe: no fallback.
+        Ok(None) => return None,
+        // Unreadable `/proc/<owner pid>/exe` only: approved Linux
+        // direct-parent fallback. Any other I/O error fails closed with no
+        // fallback. Non-Linux builds have no fallback and fail closed.
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
+            #[cfg(target_os = "linux")]
+            {
+                return verify_direct_parent_fallback(
+                    &dbus,
+                    owner.as_str(),
+                    caller,
+                    process_id,
+                    owner_uid,
+                )
+                .await;
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                let _ = (&dbus, owner.as_str(), caller, process_id, owner_uid, error);
+                return None;
+            }
+        }
+        Err(_) => return None,
+    };
+    // Primary boot binding: the exact live boot ID must be observable and
+    // well-formed alongside the readable exe pin. Non-Linux fails closed.
+    #[cfg(target_os = "linux")]
+    if kwin_identity::read_boot_id(Path::new("/proc")).is_err() {
+        return None;
+    }
+    #[cfg(not(target_os = "linux"))]
+    return None;
     let approved = resolve_approved_kwin_identities()
         .into_iter()
         .find(|approved| matches_approved_identity(&process_identity, approved))?;
@@ -861,6 +908,282 @@ async fn verify_planner_caller(
         .await
         .ok()?;
     if current_owner.as_str() != caller {
+        return None;
+    }
+    Some(identity)
+}
+
+/// Approved Linux/KWin direct-parent fallback (Linux only). Entered only when
+/// `/proc/<owner pid>/exe` is unreadable with permission-denied; every other
+/// owner exe state (readable, missing, deleted, malformed) never reaches
+/// here and fails closed in the primary path. Requires the exact current
+/// unique owner, same UID, exact owner PID/tick/boot with pre/post
+/// revalidation, owner PPid exactly equal to the user
+/// `plasma-kwin_wayland.service` MainPID (one direct level only), exact unit
+/// identity, approved root-owned immutable Nix-store `ExecStart` wrapper
+/// identity with the full raw `ExecStart` bound pre/post, and exact MainPID
+/// tick. A readable MainPID exe must agree with the wrapped pin; an
+/// unreadable MainPID exe skips only that pin. End revalidation re-reads
+/// current D-Bus owner credentials PID/UID, owner exe still
+/// `PermissionDenied`, the full systemd unit including MainPID and complete
+/// `ExecStart`, owner tick plus parent, main tick, boot, wrapper pair, and
+/// main exe state.
+#[cfg(target_os = "linux")]
+async fn verify_direct_parent_fallback(
+    dbus: &zbus::fdo::DBusProxy<'_>,
+    owner: &str,
+    caller: &str,
+    owner_pid: u32,
+    owner_uid: u32,
+) -> Option<CallerIdentity> {
+    use crate::planner_kwin_identity::{
+        DirectParentInput, ExeState, KWIN_ACTIVE_STATE, KWIN_BUS_NAME, KWIN_SUB_STATE, KWIN_UNIT,
+        KWIN_UNIT_TYPE, approve_wrapper_pair, classify_io_error, is_approved_wrapper_execstart,
+        is_safe_abs, is_unique_owner, parse_execstart_value, read_boot_id, read_proc_ppid,
+        read_proc_tick, read_systemd_unit,
+    };
+
+    fn classify_main_exe(
+        result: std::io::Result<Option<ProcessIdentity>>,
+        pair: &crate::planner_kwin_identity::WrapperPair,
+    ) -> ExeState {
+        match result {
+            Ok(Some(live)) => {
+                if live.resolved_executable_path == pair.wrapped_canon
+                    && live.executable.dev == pair.wrapped_dev
+                    && live.executable.ino == pair.wrapped_ino
+                    && live.executable.content == pair.wrapped_content
+                    && !live.executable.content.is_empty()
+                {
+                    ExeState::Matches
+                } else {
+                    ExeState::Mismatch
+                }
+            }
+            Ok(None) => ExeState::Missing,
+            Err(error) => classify_io_error(&error),
+        }
+    }
+
+    if !is_unique_owner(owner) || !is_unique_owner(caller) || owner != caller {
+        return None;
+    }
+    if owner_pid == 0 || owner_uid != rustix::process::geteuid().as_raw() {
+        return None;
+    }
+    let proc_root = Path::new("/proc").to_path_buf();
+    let owner_tick = read_proc_tick(owner_pid, &proc_root).ok()?;
+    if owner_tick == 0 {
+        return None;
+    }
+    let owner_ppid = read_proc_ppid(owner_pid, &proc_root).ok()?;
+    let boot = read_boot_id(&proc_root).ok()?;
+    let unit = read_systemd_unit().ok()?;
+    if unit.unit != KWIN_UNIT
+        || unit.active != KWIN_ACTIVE_STATE
+        || unit.sub != KWIN_SUB_STATE
+        || unit.unit_type != KWIN_UNIT_TYPE
+        || unit.bus_name != KWIN_BUS_NAME
+    {
+        return None;
+    }
+    if !is_safe_abs(&unit.fragment) {
+        return None;
+    }
+    if !unit.source.is_empty() && !is_safe_abs(&unit.source) {
+        return None;
+    }
+    if owner_ppid != unit.main_pid || owner_pid == unit.main_pid {
+        return None;
+    }
+    let exec_path = parse_execstart_value(&unit.execstart_raw)?;
+    if !is_approved_wrapper_execstart(&exec_path) {
+        return None;
+    }
+    let pair = approve_wrapper_pair(&exec_path)?;
+    let main_tick = read_proc_tick(unit.main_pid, &proc_root).ok()?;
+    if main_tick == 0 {
+        return None;
+    }
+    let process = ProcProcessControl {
+        proc_root: proc_root.clone(),
+    };
+    let main_exe = classify_main_exe(process.identity(unit.main_pid), &pair);
+    let expected_uid = rustix::process::geteuid().as_raw();
+    let pre = DirectParentInput {
+        owner,
+        caller,
+        owner_pid,
+        owner_pid_end: owner_pid,
+        owner_uid,
+        owner_uid_end: owner_uid,
+        expected_uid,
+        owner_tick,
+        owner_tick_end: owner_tick,
+        owner_ppid,
+        owner_ppid_end: owner_ppid,
+        main_pid: unit.main_pid,
+        main_pid_end: unit.main_pid,
+        main_tick,
+        main_tick_end: main_tick,
+        boot_id: &boot,
+        boot_id_end: &boot,
+        unit: &unit.unit,
+        unit_end: &unit.unit,
+        active: &unit.active,
+        active_end: &unit.active,
+        sub: &unit.sub,
+        sub_end: &unit.sub,
+        unit_type: &unit.unit_type,
+        unit_type_end: &unit.unit_type,
+        bus_name: &unit.bus_name,
+        bus_name_end: &unit.bus_name,
+        execstart_raw: &unit.execstart_raw,
+        execstart_raw_end: &unit.execstart_raw,
+        execstart_path: &exec_path,
+        execstart_path_end: &exec_path,
+        owner_exe: ExeState::Unreadable,
+        owner_exe_end: ExeState::Unreadable,
+        main_exe,
+        main_exe_end: main_exe,
+    };
+    if !crate::planner_kwin_identity::accept_direct_parent(&pre) {
+        return None;
+    }
+    // Comprehensive end revalidation. Every live binding is re-read and must
+    // be stable: current D-Bus owner credentials PID/UID, owner exe still
+    // `PermissionDenied` (readable/missing/deleted/malformed all reject),
+    // full systemd unit including MainPID and complete raw `ExecStart`
+    // unchanged, owner tick plus parent, main tick, boot, wrapper pair, and
+    // main exe state.
+    let current_owner = dbus
+        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
+        .await
+        .ok()?;
+    if current_owner.as_str() != caller || current_owner.as_str() != owner {
+        return None;
+    }
+    let unique_name = zbus::names::UniqueName::try_from(caller).ok()?;
+    let credentials = dbus
+        .get_connection_credentials(unique_name.into())
+        .await
+        .ok()?;
+    let owner_pid_end = credentials.process_id()?;
+    let owner_uid_end = credentials.unix_user_id()?;
+    if owner_pid_end != owner_pid || owner_uid_end != owner_uid {
+        return None;
+    }
+    // Owner exe must still be unreadable with permission-denied. Any other
+    // outcome (readable identity, absent, or any other error kind) rejects
+    // with no fallback.
+    match process.identity(owner_pid) {
+        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
+        _ => return None,
+    }
+    let owner_tick_end = read_proc_tick(owner_pid, &proc_root).ok()?;
+    let owner_ppid_end = read_proc_ppid(owner_pid, &proc_root).ok()?;
+    let unit_end = read_systemd_unit().ok()?;
+    if unit_end.unit != unit.unit
+        || unit_end.active != unit.active
+        || unit_end.sub != unit.sub
+        || unit_end.main_pid != unit.main_pid
+        || unit_end.unit_type != unit.unit_type
+        || unit_end.bus_name != unit.bus_name
+        || unit_end.execstart_raw != unit.execstart_raw
+        || unit_end.fragment != unit.fragment
+        || unit_end.source != unit.source
+    {
+        return None;
+    }
+    let exec_path_end = parse_execstart_value(&unit_end.execstart_raw)?;
+    if exec_path_end != exec_path {
+        return None;
+    }
+    let main_tick_end = read_proc_tick(unit.main_pid, &proc_root).ok()?;
+    let boot_end = read_boot_id(&proc_root).ok()?;
+    if owner_tick_end != owner_tick
+        || owner_ppid_end != owner_ppid
+        || main_tick_end != main_tick
+        || boot_end != boot
+    {
+        return None;
+    }
+    let pair_end = approve_wrapper_pair(&exec_path)?;
+    if pair_end != pair {
+        return None;
+    }
+    // Re-approve from the re-read raw path as well so a swapped raw that
+    // parses identically cannot bypass the pair pin.
+    let pair_from_reread = approve_wrapper_pair(&exec_path_end)?;
+    if pair_from_reread != pair {
+        return None;
+    }
+    let main_exe_end = classify_main_exe(process.identity(unit.main_pid), &pair);
+    if main_exe_end != main_exe {
+        return None;
+    }
+    let post = DirectParentInput {
+        owner,
+        caller,
+        owner_pid,
+        owner_pid_end,
+        owner_uid,
+        owner_uid_end,
+        expected_uid,
+        owner_tick,
+        owner_tick_end,
+        owner_ppid,
+        owner_ppid_end,
+        main_pid: unit.main_pid,
+        main_pid_end: unit_end.main_pid,
+        main_tick,
+        main_tick_end,
+        boot_id: &boot,
+        boot_id_end: &boot_end,
+        unit: &unit.unit,
+        unit_end: &unit_end.unit,
+        active: &unit.active,
+        active_end: &unit_end.active,
+        sub: &unit.sub,
+        sub_end: &unit_end.sub,
+        unit_type: &unit.unit_type,
+        unit_type_end: &unit_end.unit_type,
+        bus_name: &unit.bus_name,
+        bus_name_end: &unit_end.bus_name,
+        execstart_raw: &unit.execstart_raw,
+        execstart_raw_end: &unit_end.execstart_raw,
+        execstart_path: &exec_path,
+        execstart_path_end: &exec_path_end,
+        owner_exe: ExeState::Unreadable,
+        owner_exe_end: ExeState::Unreadable,
+        main_exe,
+        main_exe_end,
+    };
+    if !crate::planner_kwin_identity::accept_direct_parent(&post) {
+        return None;
+    }
+    // Synthetic attestation bound to the approved wrapped pin. The owner exe
+    // itself was unreadable; trust comes from the direct-parent/unit/wrapper
+    // pins above, and this identity passes the unchanged `authorized_caller`
+    // gate exactly like a primary match.
+    let approved = ApprovedKwinIdentity {
+        canonical_path: pair.wrapped_canon.clone(),
+        executable: crate::tray_lifecycle::ProcessExecutableIdentity {
+            dev: pair.wrapped_dev,
+            ino: pair.wrapped_ino,
+            content: pair.wrapped_content.clone(),
+        },
+    };
+    let identity = CallerIdentity {
+        process_id: owner_pid,
+        process: ProcessIdentity {
+            start_tick: owner_tick,
+            resolved_executable_path: pair.wrapped_canon,
+            executable: approved.executable.clone(),
+        },
+        approved,
+    };
+    if !authorized_caller(Some(owner), Some(caller), &identity) {
         return None;
     }
     Some(identity)
@@ -1423,6 +1746,8 @@ mod tests {
     }
 
     fn advisory_test_request(correlation: &str, owner: &str) -> String {
+        // Observation-only: no tree/leaf/focused_leaf. Rust builds H[A,V[B,C]]
+        // and sorted B-down swaps with C (R2a), preserving prior expectations.
         serde_json::json!({
             "v": 1,
             "correlation_id": correlation,
@@ -1433,30 +1758,17 @@ mod tests {
                 "outputs": [{
                     "id": "source",
                     "workspace": "workspace-1",
-                    "tree": {
-                        "kind": "group",
-                        "id": "root",
-                        "axis": "horizontal",
-                        "children": [
-                            {"kind": "group", "id": "left", "axis": "vertical", "children": [
-                                {"kind": "leaf", "id": "A"},
-                                {"kind": "leaf", "id": "B"}
-                            ]},
-                            {"kind": "leaf", "id": "C"}
-                        ]
-                    },
                     "adjacent": {}
                 }],
                 "windows": [
-                    {"window": "w-A", "leaf": "A", "output": "source", "workspace": "workspace-1"},
-                    {"window": "w-B", "leaf": "B", "output": "source", "workspace": "workspace-1"},
-                    {"window": "w-C", "leaf": "C", "output": "source", "workspace": "workspace-1"}
+                    {"window": "w-A", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-B", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-C", "output": "source", "workspace": "workspace-1"}
                 ]
             },
             "intent": {
                 "source_output": "source",
-                "focused_leaf": "A",
-                "focused_window": "w-A",
+                "focused_window": "w-B",
                 "direction": "down"
             },
             "capabilities": {
@@ -2376,6 +2688,33 @@ nested_exe_ino={ino}\n",
         assert!(loss_marker_for_armed_reply(&loss, "c-success-1").is_none());
         assert!(loss_marker_for_armed_reply(&loss, "").is_none());
         assert!(loss_marker_for_armed_reply(&loss, "bad id").is_none());
+    }
+
+    #[test]
+    fn nested_store_identities_reject_embedded_separators() {
+        let good_hash = "abcd1234abcd1234abcd1234abcd1234";
+        let good = format!("/nix/store/{good_hash}-kwin-6.7.4/bin/kwin_wayland");
+        assert!(nested_kwin_store_exact(&good, "6.7.4"));
+        let evil = format!("/nix/store/{good_hash}-kwin-6.7.4/bin/evil/bin/kwin_wayland");
+        assert!(!nested_kwin_store_exact(&evil, "6.7.4"));
+        let good_wrapped = format!("/nix/store/{good_hash}-kwin-6.7.4/bin/.kwin_wayland-wrapped");
+        assert!(nested_kwin_wrapped_exact(&good_wrapped, "6.7.4"));
+        let evil_wrapped =
+            format!("/nix/store/{good_hash}-kwin-6.7.4/bin/evil/bin/.kwin_wayland-wrapped");
+        assert!(!nested_kwin_wrapped_exact(&evil_wrapped, "6.7.4"));
+    }
+
+    #[test]
+    fn fallback_entry_is_permission_denied_only() {
+        use crate::planner_kwin_identity::owner_exe_requires_fallback;
+        let denied = std::io::Error::new(std::io::ErrorKind::PermissionDenied, "x");
+        let not_found = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
+        let invalid = std::io::Error::new(std::io::ErrorKind::InvalidData, "x (deleted)");
+        let other = std::io::Error::new(std::io::ErrorKind::Interrupted, "x");
+        assert!(owner_exe_requires_fallback(&denied));
+        assert!(!owner_exe_requires_fallback(&not_found));
+        assert!(!owner_exe_requires_fallback(&invalid));
+        assert!(!owner_exe_requires_fallback(&other));
     }
 
     #[test]

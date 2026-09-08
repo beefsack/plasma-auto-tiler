@@ -288,6 +288,16 @@ Historical implementation detail is recoverable in Git history.
   Windows/macOS runtime or packaging model. The core does not promise uniform
   workspace, group, atomicity, or geometry semantics where public platform APIs
    cannot provide them; unsupported capability paths fail closed.
+- Authorized 2026-09-08: Linux/systemd/KWin/D-Bus caller identity is a
+  platform-service concern, not portable engine data. The KWin planner may use
+  the exact unreadable-`/proc/exe` direct-parent fallback only with current
+  owner/PID/tick/boot, direct `plasma-kwin_wayland.service` MainPID parentage,
+  root-owned immutable Nix-store `ExecStart` wrapper-pair binding, and full
+  pre/post revalidation; any readable executable disagreement fails closed.
+- Durable validation prioritizes product-shaped Rust unit/integration/property
+  coverage and focused adapter contracts. Do not add lifecycle automation just
+  for assertion count; use the reviewed bounded host sequencer where useful,
+  otherwise stop at the smallest user-assisted manual journey.
 - KWin direct geometry remains sequential and non-atomic. The adapter must be
   signal-driven, not poll pointer resize, minimize visible intermediate frames,
   and record applied-versus-acknowledged divergence without claiming atomicity.

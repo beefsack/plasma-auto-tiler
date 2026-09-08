@@ -18,6 +18,9 @@ const BUILDER_SOURCE = readFileSync("../scripts/advisory-describe-build.mjs", "u
 
 const PINNED_OWNER = ":1.42";
 
+// Observation-only fixture: no tree/leaf/focused_leaf. Rust builds
+// H[A,V[B,C]]; sorted [id-a,id-b,id-c] with id-b down swaps with leaf-id-c
+// inside advisory-inner.
 function validInput(overrides: Partial<Record<string, unknown>> = {}): AdvisoryProviderInput {
     return {
         correlationId: "corr-9",
@@ -29,30 +32,19 @@ function validInput(overrides: Partial<Record<string, unknown>> = {}): AdvisoryP
                 {
                     id: "advisory-output",
                     workspace: "advisory-workspace",
-                    tree: {
-                        kind: "group",
-                        id: "advisory-root",
-                        axis: "horizontal",
-                        children: [
-                            { kind: "leaf", id: "leaf-id-a" },
-                            { kind: "leaf", id: "leaf-id-b" },
-                            { kind: "leaf", id: "leaf-id-c" },
-                        ],
-                    },
                     adjacent: {},
                 },
             ],
             windows: [
-                { window: "id-a", leaf: "leaf-id-a", output: "advisory-output", workspace: "advisory-workspace" },
-                { window: "id-b", leaf: "leaf-id-b", output: "advisory-output", workspace: "advisory-workspace" },
-                { window: "id-c", leaf: "leaf-id-c", output: "advisory-output", workspace: "advisory-workspace" },
+                { window: "id-a", output: "advisory-output", workspace: "advisory-workspace" },
+                { window: "id-b", output: "advisory-output", workspace: "advisory-workspace" },
+                { window: "id-c", output: "advisory-output", workspace: "advisory-workspace" },
             ],
         },
         intent: {
             source_output: "advisory-output",
-            focused_leaf: "leaf-id-b",
             focused_window: "id-b",
-            direction: "left",
+            direction: "down",
         },
         capabilities: {
             swap_neighbor: true,
@@ -78,7 +70,7 @@ function plannedReply(): string {
         rule: "R2a",
         capability: "swap-neighbor",
         preconditions: ["adapter-must-verify-postconditions"],
-        operation: { kind: "swap-neighbor", rule: "R2a", container: "advisory-root", neighbor: "leaf-id-a" },
+        operation: { kind: "swap-neighbor", rule: "R2a", container: "advisory-inner", neighbor: "leaf-id-c" },
     });
 }
 
