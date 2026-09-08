@@ -121,17 +121,22 @@ Only meaningful pending or active work is listed.
    service-loss, after-equality, production-continuity, or KWin-stability claim
    follows; this live route is halted and prior unidentified residue remains
     untouched. Recovery requires a user-provided exact receipt/lifecycle record.
-    The next durable static migration slice is complete: an explicit,
-    disabled-by-default KWin shadow projection path captures only the current
-    active-output/current-desktop exact-three scope on signals, while portable
+     The next durable static migration slice is complete: an explicit,
+     disabled-by-default KWin shadow projection path captures only the current
+     active-output/current-desktop exact-three scope on signals, while portable
     Rust alone adopts `H[A,V[B,C]]` and returns deterministic complete desired
     geometry, focus intent, capability, preconditions, and binding metadata.
-    KWin only owner-pins, revalidates, deduplicates, and reports redacted
-    match/divergence or refusal; it has no native actuation or production route.
-    Rust/service and focused adapter contracts pass. The live read-only
-    transport gate remains parked pending a natural session restart; the next
-    action is a user-directed product/manual shadow observation, not more
-    harness recovery | [change](changes/rust-engine-direct-geometry-migration.md)
+     KWin only owner-pins, revalidates, deduplicates, and reports redacted
+     match/divergence or refusal; it has no native actuation or production route.
+     Rust/service and focused adapter contracts pass. The live read-only
+     transport gate is now a retained development boundary: the manually
+     invoked, disabled-by-default `shadow-lifecycle.sh run` first performs
+     resource-free source/tool/KWin/production/shadow/Planner preflight, then
+     deterministically binds one ES2017 IIFE, exact Script ID, pinned Planner,
+     bounded match/divergence plus after-equality, and exact cleanup. It is not
+     reachable from production routes. Focused static verification passes; one
+     committed-source host journey remains pending its eligible-three preflight |
+     [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace

@@ -83,25 +83,105 @@ REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 # shellcheck source=./poc3-host-kwin-identity.sh
 . "$REPO_ROOT/scripts/poc3-host-kwin-identity.sh"
 KWIN_DIR="$REPO_ROOT/kwin"
-SRC_ENTRY="$KWIN_DIR/src/advisory-describe-entry.ts"
-SRC_QUERY="$KWIN_DIR/src/advisory-plan-query.ts"
+# Strictly internal shadow mode, selected only by the thin shadow-describe
+# wrapper (scripts/shadow-describe.sh via SHADOW_DESCRIBE_HOST_MODE=shadow).
+# Default (unset/any other value) is the exact advisory behavior with
+# byte-identical outputs. No normal production/KPackage/tray/KCM/shortcut/
+# autostart/controller route may set this mode.
+: "${SHADOW_DESCRIBE_HOST_MODE:=advisory}"
+case "$SHADOW_DESCRIBE_HOST_MODE" in
+  advisory|shadow) ;;
+  *) printf 'error: invalid SHADOW_DESCRIBE_HOST_MODE (expected advisory|shadow)\n' >&2; exit 1 ;;
+esac
+IS_SHADOW="0"
+KIND_LABEL="advisory"
+if [[ "$SHADOW_DESCRIBE_HOST_MODE" == "shadow" ]]; then
+  IS_SHADOW="1"
+  KIND_LABEL="shadow"
+fi
+# Builder verify must run in the same mode as the host so the deterministic
+# rebuild binds the same entry/second/snapshot sources and defines. Advisory
+# default (any non-shadow value) stays byte-identical; only the thin
+# shadow-describe wrapper selects shadow.
+if [[ "$IS_SHADOW" == "1" ]]; then
+  export SHADOW_DESCRIBE_BUILD_MODE="shadow"
+else
+  export SHADOW_DESCRIBE_BUILD_MODE="advisory"
+fi
+if [[ "$IS_SHADOW" == "1" ]]; then
+  SRC_ENTRY="$KWIN_DIR/src/shadow-describe-entry.ts"
+  SRC_QUERY="$KWIN_DIR/src/advisory-shadow-projection.ts"
+else
+  SRC_ENTRY="$KWIN_DIR/src/advisory-describe-entry.ts"
+  SRC_QUERY="$KWIN_DIR/src/advisory-plan-query.ts"
+fi
 SRC_SNAPSHOT="$KWIN_DIR/src/advisory-snapshot.ts"
+SRC_SECOND_BASENAME="advisory-plan-query.ts"
+SRC_ENTRY_BASENAME="advisory-describe-entry.ts"
+if [[ "$IS_SHADOW" == "1" ]]; then
+  SRC_SECOND_BASENAME="advisory-shadow-projection.ts"
+  SRC_ENTRY_BASENAME="shadow-describe-entry.ts"
+fi
 BUILDER="$REPO_ROOT/scripts/advisory-describe-build.mjs"
-PLUGIN="plasma-auto-tiler-advisory-describe"
+if [[ "$IS_SHADOW" == "1" ]]; then
+  PLUGIN="plasma-auto-tiler-shadow-describe"
+else
+  PLUGIN="plasma-auto-tiler-advisory-describe"
+fi
 PRODUCTION_PLUGIN="plasma-auto-tiler-kwin"
+ADVISORY_PLUGIN="plasma-auto-tiler-advisory-describe"
+SHADOW_PLUGIN="plasma-auto-tiler-shadow-describe"
 PLANNER_SERVICE="org.plasmaautotiler.Planner"
-BUNDLE_BASENAME="advisory-describe.js"
-MANIFEST_BASENAME="advisory-describe.manifest.json"
-MANIFEST_SCHEMA="advisory-describe-manifest-v1"
-RECEIPT_SCHEMA="advisory-describe-receipt-v1"
+if [[ "$IS_SHADOW" == "1" ]]; then
+  BUNDLE_BASENAME="shadow-describe.js"
+  MANIFEST_BASENAME="shadow-describe.manifest.json"
+  MANIFEST_SCHEMA="shadow-describe-manifest-v1"
+  RECEIPT_SCHEMA="shadow-describe-receipt-v1"
+else
+  BUNDLE_BASENAME="advisory-describe.js"
+  MANIFEST_BASENAME="advisory-describe.manifest.json"
+  MANIFEST_SCHEMA="advisory-describe-manifest-v1"
+  RECEIPT_SCHEMA="advisory-describe-receipt-v1"
+fi
 RESULT_SCHEMA="v1"
 AFTER_SCHEMA="v1"
-STALE_DETAIL="reject:advisory-stale-snapshot"
+ADVISORY_STALE_DETAIL="reject:advisory-stale-snapshot"
+SHADOW_STALE_DETAIL="reject:shadow-stale-snapshot"
+if [[ "$IS_SHADOW" == "1" ]]; then
+  STALE_DETAIL="$SHADOW_STALE_DETAIL"
+else
+  STALE_DETAIL="$ADVISORY_STALE_DETAIL"
+fi
 SUCCESS_DETAIL_PREFIX="could-execute:"
 SUCCESS_RULES="R1 R2a R2b R2c R3 R4"
 SUCCESS_CAPS="swap-neighbor wrap-perpendicular wrap-siblings insert-child split-group-child reparent-leaf cross-output-transfer"
+ADVISORY_READY_PREFIX="plasma-auto-tiler:advisory-describe-ready"
+SHADOW_READY_PREFIX="plasma-auto-tiler:shadow-describe-ready"
+ADVISORY_RESULT_PREFIX="plasma-auto-tiler:advisory-describe-result"
+SHADOW_RESULT_PREFIX="plasma-auto-tiler:shadow-describe-result"
+ADVISORY_AFTER_PREFIX="plasma-auto-tiler:advisory-describe-after"
+SHADOW_AFTER_PREFIX="plasma-auto-tiler:shadow-describe-after"
+ADVISORY_SOURCE_PREFIX="plasma-auto-tiler:advisory-describe-source"
+SHADOW_SOURCE_PREFIX="plasma-auto-tiler:shadow-describe-source"
+if [[ "$IS_SHADOW" == "1" ]]; then
+  READY_PREFIX="$SHADOW_READY_PREFIX"
+  RESULT_PREFIX_BASE="$SHADOW_RESULT_PREFIX"
+  AFTER_PREFIX_BASE="$SHADOW_AFTER_PREFIX"
+  SOURCE_PREFIX="$SHADOW_SOURCE_PREFIX"
+else
+  READY_PREFIX="$ADVISORY_READY_PREFIX"
+  RESULT_PREFIX_BASE="$ADVISORY_RESULT_PREFIX"
+  AFTER_PREFIX_BASE="$ADVISORY_AFTER_PREFIX"
+  SOURCE_PREFIX="$ADVISORY_SOURCE_PREFIX"
+fi
 DIAG_MAX_BYTES=1024
-RESULT_DETAIL_RE='^[A-Za-z0-9._:-]{1,512}$'
+ADVISORY_RESULT_DETAIL_RE='^[A-Za-z0-9._:-]{1,512}$'
+SHADOW_RESULT_DETAIL_RE='^(match|divergence|reject:[A-Za-z0-9._-]{1,128})$'
+if [[ "$IS_SHADOW" == "1" ]]; then
+  RESULT_DETAIL_RE="$SHADOW_RESULT_DETAIL_RE"
+else
+  RESULT_DETAIL_RE="$ADVISORY_RESULT_DETAIL_RE"
+fi
 : "${BUSCTL_BIN:=busctl}"
 : "${SHA256SUM_BIN:=sha256sum}"
 : "${NODE_BIN:=node}"
@@ -132,7 +212,12 @@ ACTIVE_CORR="none"
 # exact bundle bytes; deny tokens must each be absent. This gate runs before
 # any transport and is what permits coexistence with a loaded production
 # plugin (whose load state is checked read-only during preflight).
-ALLOW_TOKENS=(
+# Shadow mode uses the parallel SHADOW_* sets below (same deny breadth plus
+# shadow markers, advisory markers denied) with the shared read-only snapshot
+# narrow deny; snapshot reads (activeWindow/windowList/frameGeometry/clientArea
+# etc.) are never treated as mutation because only the narrow snapshot deny
+# applies transitively to advisory-snapshot.ts.
+ADVISORY_ALLOW_TOKENS=(
   "AdvisoryPlanQuery"
   "DescribeAdvisoryPlan"
   "callDBus"
@@ -142,7 +227,23 @@ ALLOW_TOKENS=(
   "advisory-describe-after"
   "advisory-describe-source"
 )
-DENY_TOKENS=(
+SHADOW_ALLOW_TOKENS=(
+  "ShadowProjection"
+  "DescribeShadowProjection"
+  "captureShadowProjectionObservation"
+  "callDBus"
+  "QTimer"
+  "shadow-describe-ready"
+  "shadow-describe-result"
+  "shadow-describe-after"
+  "shadow-describe-source"
+)
+if [[ "$IS_SHADOW" == "1" ]]; then
+  ALLOW_TOKENS=("${SHADOW_ALLOW_TOKENS[@]}")
+else
+  ALLOW_TOKENS=("${ADVISORY_ALLOW_TOKENS[@]}")
+fi
+ADVISORY_DENY_TOKENS=(
   "workspace."
   "registerShortcut"
   "TileController"
@@ -197,6 +298,84 @@ DENY_TOKENS=(
   "socat"
   "plasma-auto-tiler-kwin"
 )
+# Shadow deny: same native mutation/production-trigger breadth as advisory,
+# plus advisory markers denied so the shadow bundle cannot carry advisory
+# transport identity. Snapshot reads stay allowed via the narrow snapshot gate.
+# Exact source-aware note: both shadow sources mention the word "geometry"
+# only in full-line // comments documenting geometry-free logging
+# (shadow-describe-entry.ts: "No window ids or geometry are accepted here";
+# advisory-shadow-projection.ts: "carrying no ids, geometry, captions");
+# native geometry/focus/tile mutation stays denied via workspace./
+# frameGeometry/setActiveWindow/createDesktop plus the narrow snapshot gate,
+# and the gate below exempts only full-line // comments for the broad
+# "geometry" word in shadow mode so comment documentation cannot mask code
+# usage. (KWin TypeScript sources are not edited here.)
+SHADOW_DENY_TOKENS=(
+  "workspace."
+  "registerShortcut"
+  "TileController"
+  "Tile"
+  "manage"
+  "unmanage"
+  "activeWindow"
+  "frameGeometry"
+  "showOutline"
+  "hideOutline"
+  "CustomTile"
+  "EvaluateMove"
+  "PublishSnapshot"
+  "poc3"
+  "POC3"
+  "planner-shadow"
+  "AdvisoryPlanQuery"
+  "DescribeAdvisoryPlan"
+  "advisory-describe-ready"
+  "advisory-describe-result"
+  "advisory-describe-after"
+  "advisory-describe-source"
+  "isScriptLoaded"
+  "unloadScript"
+  "loadScript"
+  "Scripting"
+  "socket"
+  "fetch("
+  "XMLHttpRequest"
+  "require("
+  "sourceMappingURL"
+  "createDesktop"
+  "removeDesktop"
+  "closeWindow"
+  "setActiveWindow"
+  "rootTile"
+  "currentDesktop"
+  "windowList"
+  "clientArea"
+  "shortcut"
+  "Shortcut"
+  "tray"
+  "Tray"
+  "controller"
+  "Controller"
+  "desktops"
+  "screens"
+  "Output"
+  "Execute"
+  "geometry"
+  "apply"
+  "setTimeout"
+  "setInterval"
+  "process.env"
+  "__dirname"
+  "child_process"
+  "/dev/tcp"
+  "socat"
+  "plasma-auto-tiler-kwin"
+)
+if [[ "$IS_SHADOW" == "1" ]]; then
+  DENY_TOKENS=("${SHADOW_DENY_TOKENS[@]}")
+else
+  DENY_TOKENS=("${ADVISORY_DENY_TOKENS[@]}")
+fi
 SNAPSHOT_DENY_TOKENS=(
   "Reflect.set"
   "registerShortcut"
@@ -220,12 +399,13 @@ fail() {
 
 usage() {
   cat <<'EOF'
-usage: advisory-describe-host.sh <preflight|start|status|diagnostics|stop> [flags] [--help]
+usage: advisory-describe-host.sh <preflight|preflight-source-only|start|status|diagnostics|stop> [flags] [--help]
 
 Future authorized-host lifecycle for the advisory DescribeAdvisoryPlan
 bundle. Not invoked now; covered by static checks and fake-command tests.
 
   preflight --bundle B --manifest M --input I [--expected-planner-owner U]
+  preflight-source-only
   start --bundle B --manifest M --receipt R --diag-file D --input I
         [--attempts N] [--delay S] [--expected-planner-owner U]
         [--expected-refusal-detail D --expected-refusal-after V]
@@ -242,8 +422,11 @@ only the returned /Scripting/Script<ID> object, and runs only that object
 and KWin identity; stop unloads only the recorded exact id. Default start
 requires Planner absence; --expected-planner-owner U skips only that absence
 check while strictly proving that exact unique owner before and after the
-lifecycle. Preflight is read-only resource-free with no bus mutation and no
-receipt. Strict terminal-refusal mode requires paired exact
+  lifecycle. Preflight is read-only resource-free with no bus mutation and no
+  receipt. Preflight-source-only is the smallest resource-free variant with
+  no bundle/manifest/input arguments: tools, exact sources plus source-only
+  shape, KWin identity with recapture, production loaded, plugin absent, and
+  Planner absent. Strict terminal-refusal mode requires paired exact
 --expected-refusal-detail plus exact --expected-refusal-after; it accepts
 only that exact observed pair after all identity/order checks, exact-cleans
 only the recorded object/plugin, and returns success with no receipt.
@@ -281,6 +464,7 @@ valid_detail() { [[ "$1" =~ $RESULT_DETAIL_RE ]]; }
 # could-execute:<rule>:<capability> (from kwin/src/advisory-plan-query.ts)
 # and accepts only allowlisted rule/capability pairs. Bare could-execute,
 # extra segments, unknown rules/caps, or prefix-broadened details fail.
+# Shadow mode accepts only the exact correlated match/divergence details.
 is_success_detail() {
   local detail="${1:-}" rest="" rule="" cap=""
   case "$detail" in
@@ -303,6 +487,34 @@ is_success_detail() {
   esac
   valid_detail "$detail" || return 1
   return 0
+}
+
+# Strict shadow success-detail predicate: exactly match or divergence with
+# after true. Exact redacted parser shared by the shadow lifecycle command;
+# stale/snapshot rejects never satisfy success and fail closed with exact
+# cleanup and no receipt.
+is_shadow_success_detail() {
+  local detail="${1:-}"
+  [[ "$detail" == "match" || "$detail" == "divergence" ]] || return 1
+  valid_detail "$detail" || return 1
+  return 0
+}
+
+# Mode-dispatched terminal success predicate shared by start/diagnostics.
+is_terminal_success_detail() {
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    is_shadow_success_detail "$1"
+  else
+    is_success_detail "$1"
+  fi
+}
+
+# Mode-dispatched refusal-conflict predicate: a refusal expectation that
+# collides with receipt semantics (success detail with after true) fails.
+is_refusal_conflict() {
+  local detail="${1:-}" after="${2:-}"
+  [[ "$after" == "true" ]] || return 1
+  is_terminal_success_detail "$detail"
 }
 
 # Smallest reusable adapter observability: bound, redact, and emit causal
@@ -341,10 +553,13 @@ node_parse_json_file() {
   command -v "$NODE_BIN" >/dev/null 2>&1 || { echo "error: required tool '$NODE_BIN' not found in PATH" >&2; return 1; }
   MANIFEST_SCHEMA_EXPECTED="$MANIFEST_SCHEMA" RECEIPT_SCHEMA_EXPECTED="$RECEIPT_SCHEMA" \
     BUNDLE_BASENAME_EXPECTED="$BUNDLE_BASENAME" PLUGIN_EXPECTED="$PLUGIN" PARSE_KIND="$kind" \
+    SHADOW_DESCRIBE_HOST_MODE="$SHADOW_DESCRIBE_HOST_MODE" \
+    SRC_ENTRY_BASENAME_EXPECTED="$SRC_ENTRY_BASENAME" SRC_SECOND_BASENAME_EXPECTED="$SRC_SECOND_BASENAME" \
     "$NODE_BIN" -e '
 const fs = require("node:fs");
 const file = process.argv[1];
 const kind = process.env.PARSE_KIND;
+const shadowMode = process.env.SHADOW_DESCRIBE_HOST_MODE === "shadow";
 let text;
 try { text = fs.readFileSync(file, "utf8"); } catch (e) { console.error("error: cannot read " + kind); process.exit(1); }
 if (text.includes("\r")) { console.error("error: " + kind + " must be single-line JSON without CR"); process.exit(1); }
@@ -354,8 +569,12 @@ if (body.includes("\n")) { console.error("error: " + kind + " must be single-lin
 let parsed;
 try { parsed = JSON.parse(body); } catch (e) { console.error("error: " + kind + " is not valid JSON"); process.exit(1); }
 if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) { console.error("error: " + kind + " must be a JSON object"); process.exit(1); }
-const manifestKeys = ["schema","bundle","bundleSha256","entry","entrySha256","query","querySha256","snapshot","snapshotSha256","nonce","correlationId","owner","generation","revision","inputSha256"];
-const receiptKeys = ["schema","plugin","scriptId","scriptObject","bundleSha256","entrySha256","querySha256","snapshotSha256","owner","generation","revision","correlationId","nonce"];
+const manifestKeys = shadowMode
+  ? ["schema","bundle","bundleSha256","entry","entrySha256","shadow","shadowSha256","snapshot","snapshotSha256","nonce","correlationId","owner","generation","revision","inputSha256"]
+  : ["schema","bundle","bundleSha256","entry","entrySha256","query","querySha256","snapshot","snapshotSha256","nonce","correlationId","owner","generation","revision","inputSha256"];
+const receiptKeys = shadowMode
+  ? ["schema","plugin","scriptId","scriptObject","bundleSha256","entrySha256","shadowSha256","snapshotSha256","owner","generation","revision","correlationId","nonce"]
+  : ["schema","plugin","scriptId","scriptObject","bundleSha256","entrySha256","querySha256","snapshotSha256","owner","generation","revision","correlationId","nonce"];
 const expected = kind === "manifest" ? manifestKeys : receiptKeys;
 const keys = Object.keys(parsed);
 if (keys.length !== expected.length) { console.error("error: " + kind + " has unexpected keys"); process.exit(1); }
@@ -373,12 +592,16 @@ const fail = (m) => { console.error("error: " + kind + " " + m); process.exit(1)
 if (kind === "manifest") {
   if (parsed.schema !== process.env.MANIFEST_SCHEMA_EXPECTED) fail("schema mismatch");
   if (parsed.bundle !== process.env.BUNDLE_BASENAME_EXPECTED) fail("bundle mismatch");
-  if (parsed.entry !== "advisory-describe-entry.ts") fail("entry mismatch");
-  if (parsed.query !== "advisory-plan-query.ts") fail("query mismatch");
+  if (parsed.entry !== process.env.SRC_ENTRY_BASENAME_EXPECTED) fail("entry mismatch");
+  if (shadowMode) {
+    if (parsed.shadow !== process.env.SRC_SECOND_BASENAME_EXPECTED) fail("shadow mismatch");
+  } else if (parsed.query !== process.env.SRC_SECOND_BASENAME_EXPECTED) fail("query mismatch");
   if (parsed.snapshot !== "advisory-snapshot.ts") fail("snapshot mismatch");
   if (!hex64(parsed.bundleSha256)) fail("bundle sha is malformed");
   if (!hex64(parsed.entrySha256)) fail("entry sha is malformed");
-  if (!hex64(parsed.querySha256)) fail("query sha is malformed");
+  if (shadowMode) {
+    if (!hex64(parsed.shadowSha256)) fail("shadow sha is malformed");
+  } else if (!hex64(parsed.querySha256)) fail("query sha is malformed");
   if (!hex64(parsed.snapshotSha256)) fail("snapshot sha is malformed");
   if (!hex64(parsed.inputSha256)) fail("input sha is malformed");
   if (!nonce(parsed.nonce)) fail("nonce is malformed");
@@ -388,7 +611,11 @@ if (kind === "manifest") {
   if (!(canonical(parsed.revision) && parsed.revision >= 0 && parsed.revision <= 1000000)) fail("revision is malformed");
   console.log("MANIFEST_BUNDLE_SHA=" + parsed.bundleSha256);
   console.log("MANIFEST_ENTRY_SHA=" + parsed.entrySha256);
-  console.log("MANIFEST_QUERY_SHA=" + parsed.querySha256);
+  if (shadowMode) {
+    console.log("MANIFEST_QUERY_SHA=" + parsed.shadowSha256);
+  } else {
+    console.log("MANIFEST_QUERY_SHA=" + parsed.querySha256);
+  }
   console.log("MANIFEST_SNAPSHOT_SHA=" + parsed.snapshotSha256);
   console.log("MANIFEST_INPUT_SHA=" + parsed.inputSha256);
   console.log("MANIFEST_NONCE=" + parsed.nonce);
@@ -403,7 +630,9 @@ if (kind === "manifest") {
   if (parsed.scriptObject !== ("/Scripting/Script" + parsed.scriptId)) fail("object must be the exact Script id path");
   if (!hex64(parsed.bundleSha256)) fail("bundle sha is malformed");
   if (!hex64(parsed.entrySha256)) fail("entry sha is malformed");
-  if (!hex64(parsed.querySha256)) fail("query sha is malformed");
+  if (shadowMode) {
+    if (!hex64(parsed.shadowSha256)) fail("shadow sha is malformed");
+  } else if (!hex64(parsed.querySha256)) fail("query sha is malformed");
   if (!hex64(parsed.snapshotSha256)) fail("snapshot sha is malformed");
   if (!owner(parsed.owner)) fail("owner is malformed");
   if (!generation(parsed.generation)) fail("generation is malformed");
@@ -415,7 +644,11 @@ if (kind === "manifest") {
   console.log("RECEIPT_SCRIPT_OBJ=" + parsed.scriptObject);
   console.log("RECEIPT_BUNDLE_SHA=" + parsed.bundleSha256);
   console.log("RECEIPT_ENTRY_SHA=" + parsed.entrySha256);
-  console.log("RECEIPT_QUERY_SHA=" + parsed.querySha256);
+  if (shadowMode) {
+    console.log("RECEIPT_QUERY_SHA=" + parsed.shadowSha256);
+  } else {
+    console.log("RECEIPT_QUERY_SHA=" + parsed.querySha256);
+  }
   console.log("RECEIPT_SNAPSHOT_SHA=" + parsed.snapshotSha256);
   console.log("RECEIPT_OWNER=" + parsed.owner);
   console.log("RECEIPT_GENERATION=" + parsed.generation);
@@ -448,21 +681,26 @@ prove_advisory_only() {
   # structure plus embedded source bindings (checked by the caller).
   for token in "${ALLOW_TOKENS[@]}"; do
     if ! grep -Fq -- "$token" "$SRC_ENTRY" 2>/dev/null && ! grep -Fq -- "$token" "$SRC_QUERY" 2>/dev/null; then
-      echo "error: advisory source lacks marker: $token" >&2
+      echo "error: $KIND_LABEL source lacks marker: $token" >&2
       return 1
     fi
   done
   for src in "$SRC_ENTRY" "$SRC_QUERY"; do
     for token in "${DENY_TOKENS[@]}"; do
-      if grep -Fq -- "$token" "$src"; then
-        echo "error: advisory source carries a forbidden non-advisory marker: $token ($src)" >&2
+      if [[ "$IS_SHADOW" == "1" && "$token" == "geometry" ]]; then
+        if grep -v -- '^[[:space:]]*//' "$src" 2>/dev/null | grep -Fq -- "$token"; then
+          echo "error: $KIND_LABEL source carries a forbidden non-$KIND_LABEL marker: $token ($src)" >&2
+          return 1
+        fi
+      elif grep -Fq -- "$token" "$src"; then
+        echo "error: $KIND_LABEL source carries a forbidden non-$KIND_LABEL marker: $token ($src)" >&2
         return 1
       fi
     done
   done
   for token in "${SNAPSHOT_DENY_TOKENS[@]}"; do
     if grep -Fq -- "$token" "$SRC_SNAPSHOT"; then
-      echo "error: advisory snapshot source carries a forbidden non-read-only marker: $token" >&2
+      echo "error: $KIND_LABEL snapshot source carries a forbidden non-read-only marker: $token" >&2
       return 1
     fi
   done
@@ -474,6 +712,50 @@ prove_advisory_only() {
     echo "error: bundle carries a source import" >&2
     return 1
   fi
+}
+
+# Shared exact shape gate dispatched by mode. Advisory and shadow share the
+# same helper body above via mode-selected ALLOW/DENY sets and sources; the
+# snapshot narrow deny applies transitively so read-only snapshot API
+# (activeWindow/windowList/frameGeometry/clientArea and Reflect.get/apply
+# plumbing) is never treated as mutation, while native
+# geometry/focus/tile/shortcut/controller mutation and production triggers
+# stay denied in both modes.
+prove_shape_only() {
+  prove_advisory_only "$1"
+}
+
+# Smallest source-only shape gate for the resource-free preflight-source-only
+# variant below. Same ALLOW/DENY source checks as prove_advisory_only (with
+# the same shadow geometry comment exemption) but no bundle argument and no
+# bundle structure check, so it runs before any bundle/manifest/input exists.
+prove_sources_shape_only() {
+  local token="" src=""
+  for token in "${ALLOW_TOKENS[@]}"; do
+    if ! grep -Fq -- "$token" "$SRC_ENTRY" 2>/dev/null && ! grep -Fq -- "$token" "$SRC_QUERY" 2>/dev/null; then
+      echo "error: $KIND_LABEL source lacks marker: $token" >&2
+      return 1
+    fi
+  done
+  for src in "$SRC_ENTRY" "$SRC_QUERY"; do
+    for token in "${DENY_TOKENS[@]}"; do
+      if [[ "$IS_SHADOW" == "1" && "$token" == "geometry" ]]; then
+        if grep -v -- '^[[:space:]]*//' "$src" 2>/dev/null | grep -Fq -- "$token"; then
+          echo "error: $KIND_LABEL source carries a forbidden non-$KIND_LABEL marker: $token ($src)" >&2
+          return 1
+        fi
+      elif grep -Fq -- "$token" "$src"; then
+        echo "error: $KIND_LABEL source carries a forbidden non-$KIND_LABEL marker: $token ($src)" >&2
+        return 1
+      fi
+    done
+  done
+  for token in "${SNAPSHOT_DENY_TOKENS[@]}"; do
+    if grep -Fq -- "$token" "$SRC_SNAPSHOT"; then
+      echo "error: $KIND_LABEL snapshot source carries a forbidden non-read-only marker: $token" >&2
+      return 1
+    fi
+  done
 }
 
 parse_script_id() {
@@ -521,7 +803,7 @@ partial_cleanup() {
   local state="unverified"
   if [[ -n "$SCRIPT_ID" ]] && exact_cleanup "$_corr" >/dev/null; then state="verified"; fi
   if [[ "$RECEIPT_CREATED" == "1" && -n "$RECEIPT_PATH" ]]; then rm -f -- "$RECEIPT_PATH" 2>/dev/null || true; fi
-  printf 'plasma-auto-tiler-advisory-describe: partial script-id=%s cleanup=%s\n' "${SCRIPT_ID:-unknown}" "$state" >&2
+  printf '%s: partial script-id=%s cleanup=%s\n' "$PLUGIN" "${SCRIPT_ID:-unknown}" "$state" >&2
 }
 
 loaded_word() {
@@ -850,21 +1132,28 @@ wait_diag_line() {
 
 # Versioned result validation: exact column-zero prefix carrying schema plus
 # correlation/owner/generation/revision/nonce, with a bounded valid detail
-# suffix. Prints the detail on success.
+# suffix. Prints the detail on success. Mode-dispatched via READY/RESULT/
+# AFTER/SOURCE prefix variables so advisory and shadow share the exact
+# lifecycle (signed Script-ID load/introspect/run, correlated current
+# source/ready/result/after ordering, exact cleanup) with distinct markers.
 check_result_line() {
   local line="$1" correlation="$2" owner="$3" generation="$4" revision="$5" nonce="$6"
-  local prefix="plasma-auto-tiler:advisory-describe-result:$RESULT_SCHEMA:$correlation:$owner:$generation:$revision:$nonce:"
+  local prefix="$RESULT_PREFIX_BASE:$RESULT_SCHEMA:$correlation:$owner:$generation:$revision:$nonce:"
   [[ "$line" == "$prefix"* ]] || return 1
   local detail="${line#"$prefix"}"
   [[ -n "$detail" ]] || return 1
-  [[ "${#detail}" -le 512 ]] || return 1
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "${#detail}" -le 128 ]] || return 1
+  else
+    [[ "${#detail}" -le 512 ]] || return 1
+  fi
   [[ "$detail" != *$'\n'* && "$detail" != *$'\r'* ]] || return 1
   valid_detail "$detail" || return 1
   printf '%s' "$detail"
 }
 
 result_prefix_for() {
-  printf 'plasma-auto-tiler:advisory-describe-result:%s:%s:%s:%s:%s:%s:' "$RESULT_SCHEMA" "$1" "$2" "$3" "$4" "$5"
+  printf '%s:%s:%s:%s:%s:%s:%s:' "$RESULT_PREFIX_BASE" "$RESULT_SCHEMA" "$1" "$2" "$3" "$4" "$5"
 }
 
 # Bounded opaque correlated after-equality validation: exact column-zero
@@ -872,7 +1161,7 @@ result_prefix_for() {
 # Prints the verdict on success.
 check_after_line() {
   local line="$1" correlation="$2"
-  local prefix="plasma-auto-tiler:advisory-describe-after:$AFTER_SCHEMA:$correlation:"
+  local prefix="$AFTER_PREFIX_BASE:$AFTER_SCHEMA:$correlation:"
   [[ "$line" == "$prefix"* ]] || return 1
   local verdict="${line#"$prefix"}"
   [[ "$verdict" == "true" || "$verdict" == "false" ]] || return 1
@@ -882,11 +1171,11 @@ check_after_line() {
 }
 
 after_prefix_for() {
-  printf 'plasma-auto-tiler:advisory-describe-after:%s:%s:' "$AFTER_SCHEMA" "$1"
+  printf '%s:%s:%s:' "$AFTER_PREFIX_BASE" "$AFTER_SCHEMA" "$1"
 }
 
 source_line_for() {
-  printf 'plasma-auto-tiler:advisory-describe-source:%s:%s:%s' "$1" "$2" "$3"
+  printf '%s:%s:%s:%s' "$SOURCE_PREFIX" "$1" "$2" "$3"
 }
 
 parse_start_args() {
@@ -920,10 +1209,20 @@ parse_start_args() {
   fi
   if [[ "$seen_refusal_detail" -eq 1 || "$seen_refusal_after" -eq 1 || "$seen_service_loss" -eq 1 ]]; then
     [[ "$seen_refusal_detail" -eq 1 && "$seen_refusal_after" -eq 1 ]] || fail "start refusal requires paired --expected-refusal-detail and --expected-refusal-after"
-    valid_detail "$START_EXPECTED_REFUSAL_DETAIL" || fail "invalid --expected-refusal-detail (must match [A-Za-z0-9._:-]{1,512})"
+    if [[ "$IS_SHADOW" == "1" ]]; then
+      valid_detail "$START_EXPECTED_REFUSAL_DETAIL" || fail "invalid --expected-refusal-detail (must match the shadow detail shape)"
+    else
+      valid_detail "$START_EXPECTED_REFUSAL_DETAIL" || fail "invalid --expected-refusal-detail (must match [A-Za-z0-9._:-]{1,512})"
+    fi
     [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" || "$START_EXPECTED_REFUSAL_AFTER" == "false" ]] || fail "invalid --expected-refusal-after (must be true|false)"
-    if [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" && "$START_EXPECTED_REFUSAL_DETAIL" == "${SUCCESS_DETAIL_PREFIX%:}"* ]]; then
-      fail "refusal conflicts with receipt semantics; could-execute with after true requires a receipt"
+    if [[ "$IS_SHADOW" == "1" ]]; then
+      if is_refusal_conflict "$START_EXPECTED_REFUSAL_DETAIL" "$START_EXPECTED_REFUSAL_AFTER"; then
+        fail "refusal conflicts with receipt semantics; success detail with after true requires a receipt"
+      fi
+    else
+      if [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" && "$START_EXPECTED_REFUSAL_DETAIL" == "${SUCCESS_DETAIL_PREFIX%:}"* ]]; then
+        fail "refusal conflicts with receipt semantics; could-execute with after true requires a receipt"
+      fi
     fi
   fi
 }
@@ -940,9 +1239,15 @@ cmd_start() {
   require_regular_file "$START_MANIFEST" "manifest"
   require_regular_file "$START_DIAG" "diag file"
   require_regular_file "$START_INPUT" "input"
-  require_regular_file "$SRC_ENTRY" "advisory entry source"
-  require_regular_file "$SRC_QUERY" "advisory query source"
-  require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    require_regular_file "$SRC_ENTRY" "shadow entry source"
+    require_regular_file "$SRC_QUERY" "shadow second source"
+    require_regular_file "$SRC_SNAPSHOT" "shadow snapshot source"
+  else
+    require_regular_file "$SRC_ENTRY" "advisory entry source"
+    require_regular_file "$SRC_QUERY" "advisory query source"
+    require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  fi
   [[ "${START_BUNDLE##*/}" == "$BUNDLE_BASENAME" ]] || fail "bundle must be exactly $BUNDLE_BASENAME"
   [[ "${START_MANIFEST##*/}" == "$MANIFEST_BASENAME" ]] || fail "manifest must be exactly $MANIFEST_BASENAME"
   safe_abs "$START_RECEIPT" || fail "receipt path is unsafe: $START_RECEIPT"
@@ -969,9 +1274,13 @@ cmd_start() {
   [[ "$actual_query_sha" == "$MANIFEST_QUERY_SHA" ]] || fail "query source does not match the manifest build identity"
   [[ "$actual_snapshot_sha" == "$MANIFEST_SNAPSHOT_SHA" ]] || fail "snapshot source does not match the manifest build identity"
   grep -Fq -- "$MANIFEST_ENTRY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded entry source binding"
-  grep -Fq -- "$MANIFEST_QUERY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    grep -Fq -- "$MANIFEST_QUERY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded second source binding"
+  else
+    grep -Fq -- "$MANIFEST_QUERY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  fi
   grep -Fq -- "$MANIFEST_SNAPSHOT_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded snapshot source binding"
-  prove_advisory_only "$START_BUNDLE" || exit 1
+  prove_shape_only "$START_BUNDLE" || exit 1
   # Host immutable preflight (resource-free, read-only, in-memory only).
   # KWin full executable identity via kwin_identity_once, production loaded,
   # advisory absent, Planner absent by default via strict NameHasOwner or exact
@@ -1000,7 +1309,11 @@ cmd_start() {
   KWIN_SOURCE="${_pre[4]}"
   [[ -n "$KWIN_OWNER" && -n "$KWIN_PID" && -n "$KWIN_TICK" && -n "$KWIN_EXE" ]] || fail "KWin identity capture is ambiguous"
   [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
-  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow start"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  fi
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
   if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
     _planner_eval_1="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || exit 1
@@ -1028,7 +1341,11 @@ cmd_start() {
   [[ "$RE_PID" == "$KWIN_PID" && "$RE_TICK" == "$KWIN_TICK" ]] || fail "KWin PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
   [[ "$RE_EXE" == "$KWIN_EXE" ]] || fail "KWin executable drift detected; refusing ambiguous identity"
   [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
-  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow start"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  fi
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
   if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
     _planner_eval_2="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || exit 1
@@ -1101,7 +1418,7 @@ cmd_start() {
     partial_cleanup
     fail "bound source marker not observed; refusing without source evidence"
   }
-  ready_line="plasma-auto-tiler:advisory-describe-ready:$MANIFEST_CORRELATION"
+  ready_line="$READY_PREFIX:$MANIFEST_CORRELATION"
   wait_diag_line "$START_DIAG" "$diag_start" "$ready_line" "line" "$START_ATTEMPTS" "$START_DELAY" >/dev/null || {
     partial_cleanup
     fail "correlated ready marker not observed; refusing without readback evidence"
@@ -1191,7 +1508,7 @@ cmd_start() {
     fi
     return 0
   fi
-  if [[ "$verdict" == "true" ]] && is_success_detail "$detail"; then
+  if [[ "$verdict" == "true" ]] && is_terminal_success_detail "$detail"; then
     :
   elif [[ "$verdict" == "false" && "$detail" == "$STALE_DETAIL" ]]; then
     partial_cleanup
@@ -1233,12 +1550,21 @@ cmd_start() {
     partial_cleanup
     fail "receipt appeared before exclusive creation; refusing overwrite: $RECEIPT_PATH"
   fi
-  (set -o noclobber; printf '{"schema":"%s","plugin":"%s","scriptId":%s,"scriptObject":"%s","bundleSha256":"%s","entrySha256":"%s","querySha256":"%s","snapshotSha256":"%s","owner":"%s","generation":"%s","revision":%s,"correlationId":"%s","nonce":"%s"}\n' \
-    "$RECEIPT_SCHEMA" "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
-    "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE" > "$RECEIPT_PATH") || {
-    partial_cleanup
-    fail "could not write the receipt exclusively"
-  }
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    (set -o noclobber; printf '{"schema":"%s","plugin":"%s","scriptId":%s,"scriptObject":"%s","bundleSha256":"%s","entrySha256":"%s","shadowSha256":"%s","snapshotSha256":"%s","owner":"%s","generation":"%s","revision":%s,"correlationId":"%s","nonce":"%s"}\n' \
+      "$RECEIPT_SCHEMA" "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
+      "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE" > "$RECEIPT_PATH") || {
+      partial_cleanup
+      fail "could not write the receipt exclusively"
+    }
+  else
+    (set -o noclobber; printf '{"schema":"%s","plugin":"%s","scriptId":%s,"scriptObject":"%s","bundleSha256":"%s","entrySha256":"%s","querySha256":"%s","snapshotSha256":"%s","owner":"%s","generation":"%s","revision":%s,"correlationId":"%s","nonce":"%s"}\n' \
+      "$RECEIPT_SCHEMA" "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
+      "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE" > "$RECEIPT_PATH") || {
+      partial_cleanup
+      fail "could not write the receipt exclusively"
+    }
+  fi
   RECEIPT_CREATED="1"
   if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
     printf 'started: plugin=%s script=%s object=%s correlation=%s owner=%s generation=%s revision=%s planner-owner=%s\n' \
@@ -1287,9 +1613,15 @@ cmd_preflight() {
   require_regular_file "$PRE_BUNDLE" "bundle"
   require_regular_file "$PRE_MANIFEST" "manifest"
   require_regular_file "$PRE_INPUT" "input"
-  require_regular_file "$SRC_ENTRY" "advisory entry source"
-  require_regular_file "$SRC_QUERY" "advisory query source"
-  require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    require_regular_file "$SRC_ENTRY" "shadow entry source"
+    require_regular_file "$SRC_QUERY" "shadow second source"
+    require_regular_file "$SRC_SNAPSHOT" "shadow snapshot source"
+  else
+    require_regular_file "$SRC_ENTRY" "advisory entry source"
+    require_regular_file "$SRC_QUERY" "advisory query source"
+    require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  fi
   [[ "${PRE_BUNDLE##*/}" == "$BUNDLE_BASENAME" ]] || fail "bundle must be exactly $BUNDLE_BASENAME"
   [[ "${PRE_MANIFEST##*/}" == "$MANIFEST_BASENAME" ]] || fail "manifest must be exactly $MANIFEST_BASENAME"
   local manifest_eval=""
@@ -1310,7 +1642,11 @@ cmd_preflight() {
   [[ "$actual_query_sha" == "$MANIFEST_QUERY_SHA" ]] || fail "query source does not match the manifest build identity"
   [[ "$actual_snapshot_sha" == "$MANIFEST_SNAPSHOT_SHA" ]] || fail "snapshot source does not match the manifest build identity"
   grep -Fq -- "$MANIFEST_ENTRY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded entry source binding"
-  grep -Fq -- "$MANIFEST_QUERY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    grep -Fq -- "$MANIFEST_QUERY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded second source binding"
+  else
+    grep -Fq -- "$MANIFEST_QUERY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  fi
   grep -Fq -- "$MANIFEST_SNAPSHOT_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded snapshot source binding"
   prove_advisory_only "$PRE_BUNDLE" || exit 1
   local KWIN_OWNER="" KWIN_PID="" KWIN_TICK="" KWIN_EXE="" KWIN_SOURCE=""
@@ -1329,7 +1665,11 @@ cmd_preflight() {
   KWIN_SOURCE="${_pre[4]}"
   [[ -n "$KWIN_OWNER" && -n "$KWIN_PID" && -n "$KWIN_TICK" && -n "$KWIN_EXE" ]] || fail "KWin identity capture is ambiguous"
   [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
-  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow preflight"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  fi
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
   if [[ -n "$PRE_EXPECTED_PLANNER_OWNER" ]]; then
     _planner_eval_1="$(check_planner_present_owner "$PRE_EXPECTED_PLANNER_OWNER")" || exit 1
@@ -1357,7 +1697,11 @@ cmd_preflight() {
   [[ "$RE_PID" == "$KWIN_PID" && "$RE_TICK" == "$KWIN_TICK" ]] || fail "KWin PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
   [[ "$RE_EXE" == "$KWIN_EXE" ]] || fail "KWin executable drift detected; refusing ambiguous identity"
   [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
-  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow preflight"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  fi
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
   if [[ -n "$PRE_EXPECTED_PLANNER_OWNER" ]]; then
     _planner_eval_2="$(check_planner_present_owner "$PRE_EXPECTED_PLANNER_OWNER")" || exit 1
@@ -1372,6 +1716,87 @@ cmd_preflight() {
   printf 'preflight: bundle=%s entry=%s query=%s snapshot=%s input=%s owner=%s generation=%s revision=%s correlation=%s nonce=%s\n' \
     "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
     "$MANIFEST_INPUT_SHA" "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE"
+}
+
+# Smallest resource-free source-only preflight (read-only, in-memory only,
+# no bus mutation, no temp files, no dirs, no receipts, no bundle/manifest/
+# input). Validates exact tool identities, exact source identities plus the
+# source-only shape gate, KWin identity with recapture/drift guard,
+# production loaded, plugin absent, and Planner absent. Emits only safe
+# machine-independent source shas on stdout. Existing full preflight/start
+# behavior above is unchanged; this variant exists so a lifecycle can gate
+# before creating any file, dir, build output, input, receipt, or runtime
+# namespace. Takes no arguments; any flag fails. No mktemp, no mkdir, no
+# touch, no file-creating redirection here.
+cmd_preflight_source_only() {
+  [[ $# -eq 0 ]] || fail "preflight-source-only takes no arguments"
+  command -v "$BUSCTL_BIN" >/dev/null 2>&1 || fail "required tool '$BUSCTL_BIN' not found in PATH"
+  command -v "$SHA256SUM_BIN" >/dev/null 2>&1 || fail "required tool '$SHA256SUM_BIN' not found in PATH"
+  command -v "$NODE_BIN" >/dev/null 2>&1 || fail "required tool '$NODE_BIN' not found in PATH"
+  command -v "$SYSTEMCTL_BIN" >/dev/null 2>&1 || fail "required tool '$SYSTEMCTL_BIN' not found in PATH"
+  command -v "$STAT_BIN" >/dev/null 2>&1 || fail "required tool '$STAT_BIN' not found in PATH"
+  command -v "$READLINK_BIN" >/dev/null 2>&1 || fail "required tool '$READLINK_BIN' not found in PATH"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    require_regular_file "$SRC_ENTRY" "shadow entry source"
+    require_regular_file "$SRC_QUERY" "shadow second source"
+    require_regular_file "$SRC_SNAPSHOT" "shadow snapshot source"
+  else
+    require_regular_file "$SRC_ENTRY" "advisory entry source"
+    require_regular_file "$SRC_QUERY" "advisory query source"
+    require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  fi
+  prove_sources_shape_only || exit 1
+  local actual_entry_sha="" actual_query_sha="" actual_snapshot_sha=""
+  actual_entry_sha="$(sha256_file "$SRC_ENTRY")"
+  [[ -n "$actual_entry_sha" ]] || fail "could not hash the entry source"
+  actual_query_sha="$(sha256_file "$SRC_QUERY")"
+  [[ -n "$actual_query_sha" ]] || fail "could not hash the second source"
+  actual_snapshot_sha="$(sha256_file "$SRC_SNAPSHOT")"
+  [[ -n "$actual_snapshot_sha" ]] || fail "could not hash the snapshot source"
+  local KWIN_OWNER="" KWIN_PID="" KWIN_TICK="" KWIN_EXE="" KWIN_SOURCE=""
+  local _pre_out=""
+  _pre_out="$(kwin_identity_once)" || exit 1
+  local -a _pre=()
+  mapfile -t _pre <<<"$_pre_out" || fail "KWin identity capture is ambiguous"
+  [[ "${#_pre[@]}" -eq 5 ]] || fail "KWin identity capture is ambiguous"
+  KWIN_OWNER="${_pre[0]}"
+  KWIN_PID="${_pre[1]}"
+  KWIN_TICK="${_pre[2]}"
+  KWIN_EXE="${_pre[3]}"
+  KWIN_SOURCE="${_pre[4]}"
+  [[ -n "$KWIN_OWNER" && -n "$KWIN_PID" && -n "$KWIN_TICK" && -n "$KWIN_EXE" ]] || fail "KWin identity capture is ambiguous"
+  [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow preflight"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  fi
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  check_planner_absent || exit 1
+  local RE_OWNER="" RE_PID="" RE_TICK="" RE_EXE="" RE_SOURCE=""
+  local _re_out=""
+  _re_out="$(kwin_identity_once)" || fail "KWin identity recapture failed"
+  local -a _re=()
+  mapfile -t _re <<<"$_re_out" || fail "KWin identity recapture is ambiguous"
+  [[ "${#_re[@]}" -eq 5 ]] || fail "KWin identity recapture is ambiguous"
+  RE_OWNER="${_re[0]}"
+  RE_PID="${_re[1]}"
+  RE_TICK="${_re[2]}"
+  RE_EXE="${_re[3]}"
+  RE_SOURCE="${_re[4]}"
+  [[ "$RE_OWNER" == "$KWIN_OWNER" ]] || fail "KWin unique owner drift detected; refusing ambiguous identity"
+  [[ "$RE_PID" == "$KWIN_PID" && "$RE_TICK" == "$KWIN_TICK" ]] || fail "KWin PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
+  [[ "$RE_EXE" == "$KWIN_EXE" ]] || fail "KWin executable drift detected; refusing ambiguous identity"
+  [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
+  if [[ "$IS_SHADOW" == "1" ]]; then
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before shadow preflight"
+  else
+    [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  fi
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  check_planner_absent || exit 1
+  printf 'preflight-source-only: entry=%s query=%s snapshot=%s\n' \
+    "$actual_entry_sha" "$actual_query_sha" "$actual_snapshot_sha"
 }
 
 cmd_status() {
@@ -1417,7 +1842,7 @@ cmd_diagnostics() {
   if [[ -n "$diag" ]]; then
     require_regular_file "$diag" "diag file"
     local ready_line result_prefix after_prefix source_line line found_ready="" found_result="" found_after="" found_source="" slice="" found_detail="" found_verdict="" result_pos=-1 after_pos=-1 pos=0
-    ready_line="plasma-auto-tiler:advisory-describe-ready:$RECEIPT_CORRELATION"
+    ready_line="$READY_PREFIX:$RECEIPT_CORRELATION"
     source_line="$(source_line_for "$RECEIPT_ENTRY_SHA" "$RECEIPT_QUERY_SHA" "$RECEIPT_SNAPSHOT_SHA")"
     result_prefix="$(result_prefix_for "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")"
     after_prefix="$(after_prefix_for "$RECEIPT_CORRELATION")"
@@ -1440,7 +1865,7 @@ cmd_diagnostics() {
     found_detail="$(check_result_line "$found_result" "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")" || fail "result marker detail failed validation"
     found_verdict="$(check_after_line "$found_after" "$RECEIPT_CORRELATION")" || fail "after marker failed validation"
     [[ "$after_pos" -gt "$result_pos" ]] || fail "after marker must follow the correlated result marker"
-    if [[ "$found_verdict" == "true" ]] && ! is_success_detail "$found_detail"; then
+    if [[ "$found_verdict" == "true" ]] && ! is_terminal_success_detail "$found_detail"; then
       fail "diagnostics refuses non-success detail with after true"
     fi
     if [[ "$found_verdict" == "false" && "$found_detail" != "$STALE_DETAIL" ]]; then
@@ -1503,11 +1928,12 @@ main() {
   case "$1" in
     --help|-h|help) usage; exit 0 ;;
     preflight) shift; cmd_preflight "$@" ;;
+    preflight-source-only) shift; cmd_preflight_source_only "$@" ;;
     start) shift; cmd_start "$@" ;;
     status) shift; cmd_status "$@" ;;
     diagnostics) shift; cmd_diagnostics "$@" ;;
     stop) shift; cmd_stop "$@" ;;
-    *) fail "unknown command '$1' (expected preflight|start|status|diagnostics|stop|--help)" ;;
+    *) fail "unknown command '$1' (expected preflight|preflight-source-only|start|status|diagnostics|stop|--help)" ;;
   esac
 }
 

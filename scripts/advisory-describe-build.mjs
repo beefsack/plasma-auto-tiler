@@ -1,4 +1,10 @@
-// Advisory DescribeAdvisoryPlan build helper (dedicated, narrow).
+// Advisory DescribeAdvisoryPlan build helper (dedicated, narrow), with a
+// strictly internal shadow mode selected only by the thin shadow-describe
+// wrapper (SHADOW_DESCRIBE_BUILD_MODE=shadow). Default (unset) behavior is
+// byte-identical advisory: see below. Shadow mode builds the fixed
+// kwin/dist/shadow-describe.js plus sidecar from shadow-describe-entry.ts,
+// advisory-shadow-projection.ts, advisory-snapshot.ts with the 5-key
+// identity-only record and SHADOW_DESCRIBE_* defines.
 //
 // Strictly parses opaque --input (exact request JSON file) plus the fixed
 // --out path with no shell evaluation, embeds the validated request record
@@ -25,29 +31,51 @@ import { fileURLToPath } from "node:url";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = dirname(HERE);
 const KWIN_DIR = resolve(REPO_ROOT, "kwin");
-const ENTRY = resolve(KWIN_DIR, "src/advisory-describe-entry.ts");
-const QUERY = resolve(KWIN_DIR, "src/advisory-plan-query.ts");
+// Strictly internal shadow mode, selected only by the thin shadow-describe
+// wrapper (scripts/shadow-describe-build.mjs / scripts/shadow-describe.sh via
+// SHADOW_DESCRIBE_BUILD_MODE=shadow). Default (unset/any other value) is the
+// exact advisory behavior below with byte-identical outputs.
+const IS_SHADOW = process.env.SHADOW_DESCRIBE_BUILD_MODE === "shadow";
+const ENTRY = IS_SHADOW
+  ? resolve(KWIN_DIR, "src/shadow-describe-entry.ts")
+  : resolve(KWIN_DIR, "src/advisory-describe-entry.ts");
+const QUERY = IS_SHADOW
+  ? resolve(KWIN_DIR, "src/advisory-shadow-projection.ts")
+  : resolve(KWIN_DIR, "src/advisory-plan-query.ts");
+const SECOND_BASENAME = IS_SHADOW ? "advisory-shadow-projection.ts" : "advisory-plan-query.ts";
 const SNAPSHOT = resolve(KWIN_DIR, "src/advisory-snapshot.ts");
 const DIST_DIR = resolve(KWIN_DIR, "dist");
-const FIXED_BUNDLE_BASENAME = "advisory-describe.js";
-const FIXED_MANIFEST_BASENAME = "advisory-describe.manifest.json";
+const FIXED_BUNDLE_BASENAME = IS_SHADOW ? "shadow-describe.js" : "advisory-describe.js";
+const FIXED_MANIFEST_BASENAME = IS_SHADOW
+  ? "shadow-describe.manifest.json"
+  : "advisory-describe.manifest.json";
 const FIXED_OUT = resolve(DIST_DIR, FIXED_BUNDLE_BASENAME);
 const FIXED_MANIFEST = resolve(DIST_DIR, FIXED_MANIFEST_BASENAME);
-const MANIFEST_SCHEMA = "advisory-describe-manifest-v1";
+const MANIFEST_SCHEMA = IS_SHADOW ? "shadow-describe-manifest-v1" : "advisory-describe-manifest-v1";
+const ENTRY_BASENAME = IS_SHADOW ? "shadow-describe-entry.ts" : "advisory-describe-entry.ts";
+const LOG_PREFIX = IS_SHADOW ? "shadow-describe-build" : "advisory-describe-build";
 
-const EXPECTED_KEYS = [
-  "nonce",
-  "correlationId",
-  "owner",
-  "generation",
-  "revision",
-  "snapshot",
-  "intent",
-  "capabilities",
-];
+const EXPECTED_KEYS = IS_SHADOW
+  ? [
+      "nonce",
+      "correlationId",
+      "owner",
+      "generation",
+      "revision",
+    ]
+  : [
+      "nonce",
+      "correlationId",
+      "owner",
+      "generation",
+      "revision",
+      "snapshot",
+      "intent",
+      "capabilities",
+    ];
 
 function fail(message) {
-  process.stderr.write(`advisory-describe-build: error: ${message}\n`);
+  process.stderr.write(`${LOG_PREFIX}: error: ${message}\n`);
   process.exit(1);
 }
 
@@ -148,17 +176,17 @@ function requireSafeOutput(path, label) {
 }
 
 function validateRecord(raw) {
-  if (!isRecord(raw)) fail("--input must be a JSON object with exact advisory keys");
+  if (!isRecord(raw)) fail(IS_SHADOW ? "--input must be a JSON object with exact request keys" : "--input must be a JSON object with exact advisory keys");
   const keys = Object.keys(raw);
   if (keys.length !== EXPECTED_KEYS.length) {
-    fail("--input must carry exactly the advisory request keys");
+    fail(IS_SHADOW ? "--input must carry exactly the request keys" : "--input must carry exactly the advisory request keys");
   }
   for (const key of EXPECTED_KEYS) {
     if (!Object.prototype.hasOwnProperty.call(raw, key)) {
       fail(`--input is missing key ${JSON.stringify(key)}`);
     }
   }
-  const { nonce, correlationId, owner, generation, revision, snapshot, intent, capabilities } = raw;
+  const { nonce, correlationId, owner, generation, revision } = raw;
   if (typeof nonce !== "string" || !/^[0-9a-f]{32,128}$/.test(nonce)) {
     fail("--input nonce must be 32..128 lower hex chars");
   }
@@ -172,33 +200,70 @@ function validateRecord(raw) {
   if (!Number.isInteger(revision) || revision < 0 || revision > 1000000) {
     fail("--input revision must be an integer 0..1000000");
   }
+  if (IS_SHADOW) {
+    return { nonce, correlationId, owner, generation, revision };
+  }
+  const { snapshot, intent, capabilities } = raw;
   if (!isRecord(snapshot) || !isRecord(intent) || !isRecord(capabilities)) {
     fail("--input snapshot/intent/capabilities must be objects");
   }
   return { nonce, correlationId, owner, generation, revision, snapshot, intent, capabilities };
 }
 
-const MANIFEST_KEYS = [
-  "schema",
-  "bundle",
-  "bundleSha256",
-  "entry",
-  "entrySha256",
-  "query",
-  "querySha256",
-  "snapshot",
-  "snapshotSha256",
-  "nonce",
-  "correlationId",
-  "owner",
-  "generation",
-  "revision",
-  "inputSha256",
-];
+const MANIFEST_KEYS = IS_SHADOW
+  ? [
+      "schema",
+      "bundle",
+      "bundleSha256",
+      "entry",
+      "entrySha256",
+      "shadow",
+      "shadowSha256",
+      "snapshot",
+      "snapshotSha256",
+      "nonce",
+      "correlationId",
+      "owner",
+      "generation",
+      "revision",
+      "inputSha256",
+    ]
+  : [
+      "schema",
+      "bundle",
+      "bundleSha256",
+      "entry",
+      "entrySha256",
+      "query",
+      "querySha256",
+      "snapshot",
+      "snapshotSha256",
+      "nonce",
+      "correlationId",
+      "owner",
+      "generation",
+      "revision",
+      "inputSha256",
+    ];
+
+const SECOND_SHA_KEY = IS_SHADOW ? "shadowSha256" : "querySha256";
 
 async function buildBundleTo(record, entrySha, querySha, snapshotSha, outfile) {
   const kwinRequire = createRequire(resolve(KWIN_DIR, "package.json"));
   const esbuild = kwinRequire("esbuild");
+  const define = IS_SHADOW
+    ? {
+        SHADOW_DESCRIBE_REQUEST_JSON: JSON.stringify(JSON.stringify(record)),
+        SHADOW_DESCRIBE_ENTRY_SHA256: JSON.stringify(entrySha),
+        SHADOW_DESCRIBE_SHADOW_SHA256: JSON.stringify(querySha),
+        SHADOW_DESCRIBE_SNAPSHOT_SHA256: JSON.stringify(snapshotSha),
+      }
+    : {
+        ADVISORY_DESCRIBE_REQUEST_JSON: JSON.stringify(JSON.stringify(record)),
+        ADVISORY_DESCRIBE_ENTRY_SHA256: JSON.stringify(entrySha),
+        ADVISORY_DESCRIBE_QUERY_SHA256: JSON.stringify(querySha),
+        ADVISORY_DESCRIBE_SNAPSHOT_SHA256: JSON.stringify(snapshotSha),
+      };
   await esbuild.build({
     entryPoints: [ENTRY],
     bundle: true,
@@ -207,23 +272,25 @@ async function buildBundleTo(record, entrySha, querySha, snapshotSha, outfile) {
     sourcemap: false,
     outfile,
     logLevel: "warning",
-    define: {
-      ADVISORY_DESCRIBE_REQUEST_JSON: JSON.stringify(JSON.stringify(record)),
-      ADVISORY_DESCRIBE_ENTRY_SHA256: JSON.stringify(entrySha),
-      ADVISORY_DESCRIBE_QUERY_SHA256: JSON.stringify(querySha),
-      ADVISORY_DESCRIBE_SNAPSHOT_SHA256: JSON.stringify(snapshotSha),
-    },
+    define,
   });
 }
 
 function checkBundleShape(bundleText, entrySha, querySha, snapshotSha) {
   if (bundleText.includes("sourceMappingURL")) fail("built bundle must not carry a source map");
-  if (!bundleText.includes("DescribeAdvisoryPlan")) fail("built bundle lost the advisory method");
-  if (!bundleText.includes("advisory-describe-ready")) fail("built bundle lost the ready marker");
-  if (!bundleText.includes("advisory-describe-result")) fail("built bundle lost the result marker");
-  if (!bundleText.includes("ADVISORY_DESCRIBE_RESULT_SCHEMA")) fail("built bundle lost the versioned result schema");
+  if (IS_SHADOW) {
+    if (!bundleText.includes("ShadowProjection")) fail("built bundle lost the shadow method");
+    if (!bundleText.includes("shadow-describe-ready")) fail("built bundle lost the ready marker");
+    if (!bundleText.includes("shadow-describe-result")) fail("built bundle lost the result marker");
+    if (!bundleText.includes("SHADOW_DESCRIBE_RESULT_SCHEMA")) fail("built bundle lost the versioned result schema");
+  } else {
+    if (!bundleText.includes("DescribeAdvisoryPlan")) fail("built bundle lost the advisory method");
+    if (!bundleText.includes("advisory-describe-ready")) fail("built bundle lost the ready marker");
+    if (!bundleText.includes("advisory-describe-result")) fail("built bundle lost the result marker");
+    if (!bundleText.includes("ADVISORY_DESCRIBE_RESULT_SCHEMA")) fail("built bundle lost the versioned result schema");
+  }
   if (!bundleText.includes(entrySha)) fail("built bundle lost the entry source binding");
-  if (!bundleText.includes(querySha)) fail("built bundle lost the query source binding");
+  if (!bundleText.includes(querySha)) fail(IS_SHADOW ? "built bundle lost the second source binding" : "built bundle lost the query source binding");
   if (!bundleText.includes(snapshotSha)) fail("built bundle lost the snapshot source binding");
   if (/^import |^export /m.test(bundleText)) fail("built bundle must not carry ESM syntax");
   if (bundleText.includes('from "./')) fail("built bundle must not carry a source import");
@@ -259,10 +326,12 @@ function validateManifestRecord(manifest) {
     // Basename only; temp tainted copies keep the fixed basename.
   }
   if (basename(String(manifest.bundle)) !== FIXED_BUNDLE_BASENAME) fail("manifest bundle mismatch");
-  if (manifest.entry !== "advisory-describe-entry.ts") fail("manifest entry mismatch");
-  if (manifest.query !== "advisory-plan-query.ts") fail("manifest query mismatch");
+  if (manifest.entry !== ENTRY_BASENAME) fail("manifest entry mismatch");
+  if (IS_SHADOW) {
+    if (manifest.shadow !== SECOND_BASENAME) fail("manifest shadow mismatch");
+  } else if (manifest.query !== SECOND_BASENAME) fail("manifest query mismatch");
   if (manifest.snapshot !== "advisory-snapshot.ts") fail("manifest snapshot mismatch");
-  for (const key of ["bundleSha256", "entrySha256", "querySha256", "snapshotSha256", "inputSha256"]) {
+  for (const key of ["bundleSha256", "entrySha256", SECOND_SHA_KEY, "snapshotSha256", "inputSha256"]) {
     if (typeof manifest[key] !== "string" || !/^[0-9a-f]{64}$/.test(manifest[key])) {
       fail(`manifest ${key} is malformed`);
     }
@@ -327,25 +396,43 @@ async function cmdBuild(input, out) {
   // Deterministic sidecar manifest: fixed key order, basenames only, no
   // absolute paths, no timestamps, no machine identity. Binds the exact
   // input bytes so start can prove rebuild identity before any transport.
-  const manifest = {
-    schema: MANIFEST_SCHEMA,
-    bundle: FIXED_BUNDLE_BASENAME,
-    bundleSha256: bundleSha,
-    entry: "advisory-describe-entry.ts",
-    entrySha256: entrySha,
-    query: "advisory-plan-query.ts",
-    querySha256: querySha,
-    snapshot: "advisory-snapshot.ts",
-    snapshotSha256: snapshotSha,
-    nonce: record.nonce,
-    correlationId: record.correlationId,
-    owner: record.owner,
-    generation: record.generation,
-    revision: record.revision,
-    inputSha256: inputSha,
-  };
+  const manifest = IS_SHADOW
+    ? {
+        schema: MANIFEST_SCHEMA,
+        bundle: FIXED_BUNDLE_BASENAME,
+        bundleSha256: bundleSha,
+        entry: ENTRY_BASENAME,
+        entrySha256: entrySha,
+        shadow: SECOND_BASENAME,
+        shadowSha256: querySha,
+        snapshot: "advisory-snapshot.ts",
+        snapshotSha256: snapshotSha,
+        nonce: record.nonce,
+        correlationId: record.correlationId,
+        owner: record.owner,
+        generation: record.generation,
+        revision: record.revision,
+        inputSha256: inputSha,
+      }
+    : {
+        schema: MANIFEST_SCHEMA,
+        bundle: FIXED_BUNDLE_BASENAME,
+        bundleSha256: bundleSha,
+        entry: ENTRY_BASENAME,
+        entrySha256: entrySha,
+        query: SECOND_BASENAME,
+        querySha256: querySha,
+        snapshot: "advisory-snapshot.ts",
+        snapshotSha256: snapshotSha,
+        nonce: record.nonce,
+        correlationId: record.correlationId,
+        owner: record.owner,
+        generation: record.generation,
+        revision: record.revision,
+        inputSha256: inputSha,
+      };
   writeFileSync(FIXED_MANIFEST, `${JSON.stringify(manifest)}\n`);
-  process.stdout.write(`advisory-describe-build: wrote ${outPath}\n`);
+  process.stdout.write(`${LOG_PREFIX}: wrote ${outPath}\n`);
 }
 
 async function cmdVerify(input, bundle, manifestPath) {
@@ -385,7 +472,7 @@ async function cmdVerify(input, bundle, manifestPath) {
   const querySha = sha256File(QUERY);
   const snapshotSha = sha256File(SNAPSHOT);
   if (manifest.entrySha256 !== entrySha) fail("entry source does not match the manifest build identity");
-  if (manifest.querySha256 !== querySha) fail("query source does not match the manifest build identity");
+  if (manifest[SECOND_SHA_KEY] !== querySha) fail(IS_SHADOW ? "second source does not match the manifest build identity" : "query source does not match the manifest build identity");
   if (manifest.snapshotSha256 !== snapshotSha) fail("snapshot source does not match the manifest build identity");
   if (record.nonce !== manifest.nonce) fail("input nonce does not match the manifest");
   if (record.correlationId !== manifest.correlationId) fail("input correlation does not match the manifest");
@@ -400,7 +487,7 @@ async function cmdVerify(input, bundle, manifestPath) {
   // Deterministic rebuild into a temp directory (never the production dist
   // path) and byte-compare: rejects a source-valid manually altered bundle
   // even when its manifest bundle sha was recomputed.
-  const scratch = mkdtempSync(`${tmpdir()}/advisory-verify-`);
+  const scratch = mkdtempSync(`${tmpdir()}/${IS_SHADOW ? "shadow-verify-" : "advisory-verify-"}`);
   const rebuiltPath = resolve(scratch, FIXED_BUNDLE_BASENAME);
   try {
     await buildBundleTo(record, entrySha, querySha, snapshotSha, rebuiltPath);
@@ -415,7 +502,7 @@ async function cmdVerify(input, bundle, manifestPath) {
       void error;
     }
   }
-  process.stdout.write("advisory-describe-build: verify ok\n");
+  process.stdout.write(`${LOG_PREFIX}: verify ok\n`);
 }
 
 async function main() {

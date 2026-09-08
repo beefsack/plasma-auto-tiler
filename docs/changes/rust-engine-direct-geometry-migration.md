@@ -98,6 +98,22 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Retained shadow lifecycle boundary, 2026-09-09: the disabled-by-default
+  `scripts/shadow-lifecycle.sh run` route is the final-development activation
+  boundary for `DescribeShadowProjection`, not test automation. Its explicit
+  opt-in wrapper first performs resource-free source/tool, KWin identity,
+  production-loaded, shadow-absent, and Planner-absent checks; it then
+  deterministically builds the non-module ES2017 IIFE and binds only its exact
+  returned Script object. It starts and pins one Planner owner/PID/tick/exe,
+  accepts only a correlated redacted `match` or `divergence` with
+  after-equality true, unloads that exact object/plugin, proves Planner-owner
+  loss, and removes only its fresh namespace. The one-shot entry observes and
+  revalidates the current active-output/current-desktop exact-three scope,
+  while Rust alone owns `H[A,V[B,C]]` desired geometry. The path exposes no
+  native geometry/focus/tile/shortcut/controller mutation and has no production
+  route. Focused KWin, shell lifecycle, Rust contract/service, format/check,
+  test, and affected Clippy checks pass. One host run remains pending the
+  committed-route preflight.
 - Static shadow projection slice completed 2026-09-08: the portable Rust
   `DescribeShadowProjection` contract accepts only a bounded current-scope
   exact-three bare observation with explicit work area, gap, capability,
