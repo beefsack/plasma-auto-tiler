@@ -134,8 +134,12 @@ Only meaningful pending or active work is listed.
      resource-free source/tool/KWin/production/shadow/Planner preflight, then
      deterministically binds one ES2017 IIFE, exact Script ID, pinned Planner,
      bounded match/divergence plus after-equality, and exact cleanup. It is not
-     reachable from production routes. Focused static verification passes; one
-     committed-source host journey remains pending its eligible-three preflight |
+      reachable from production routes. Focused static verification passes. Its
+      one committed-source host run passed source-only preflight but stopped at
+      the bound source-marker gate with partial Script cleanup unverified; no
+      observer/projection result, after-equality, production-continuity, or
+      exact-restoration claim follows, and no further host inspection, cleanup,
+      or retry is authorized |
      [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

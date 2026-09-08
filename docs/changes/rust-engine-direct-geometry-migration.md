@@ -112,8 +112,12 @@ production behavior through incremental opt-in promotion.
   while Rust alone owns `H[A,V[B,C]]` desired geometry. The path exposes no
   native geometry/focus/tile/shortcut/controller mutation and has no production
   route. Focused KWin, shell lifecycle, Rust contract/service, format/check,
-  test, and affected Clippy checks pass. One host run remains pending the
-  committed-route preflight.
+  test, and affected Clippy checks pass. Its one committed-source host run
+  passed source-only preflight but stopped at the bound source-marker gate
+  before observer/projection terminal evidence. The loader reported partial
+  Script cleanup as unverified, so no further host inspection, cleanup, or
+  retry is authorized. No match/divergence, after-equality, production
+  continuity, or exact-restoration claim follows.
 - Static shadow projection slice completed 2026-09-08: the portable Rust
   `DescribeShadowProjection` contract accepts only a bounded current-scope
   exact-three bare observation with explicit work area, gap, capability,
