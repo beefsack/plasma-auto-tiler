@@ -739,6 +739,215 @@ impl FocusPostObservation {
     }
 }
 
+/// Adapter-facing resize capability required to realize a keyboard split-share
+/// resize plan. Separate from movement [`Capability`], lifecycle
+/// [`LifecycleCapability`], and focus [`FocusCapability`] so frozen movement
+/// behavior is never misused for resize.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResizeCapability {
+    KeyboardResize,
+}
+
+impl ResizeCapability {
+    /// Stable kind string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::KeyboardResize => "keyboard-resize",
+        }
+    }
+}
+
+/// Adapter-declared resize capabilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeCapabilities {
+    pub keyboard_resize: bool,
+}
+
+impl ResizeCapabilities {
+    /// All resize capabilities declared.
+    #[must_use]
+    pub const fn full() -> Self {
+        Self {
+            keyboard_resize: true,
+        }
+    }
+
+    /// None declared.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            keyboard_resize: false,
+        }
+    }
+
+    /// Whether `capability` is declared.
+    #[must_use]
+    pub const fn supports(&self, capability: ResizeCapability) -> bool {
+        match capability {
+            ResizeCapability::KeyboardResize => self.keyboard_resize,
+        }
+    }
+}
+
+/// Explicit preconditions the adapter must hold/verify to realize a resize
+/// plan. `AdapterMustVerifyPostconditions` is present on every resize plan,
+/// mirroring movement/lifecycle/focus plans: realization is never assumed
+/// atomic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ResizePrecondition {
+    FocusedLeafOccupiedByFocusedWindow,
+    TargetBoundaryValid,
+    ResizeTargetsSameDomain,
+    AdapterMustVerifyPostconditions,
+}
+
+/// Semantic resize intent: keyboard split-share resize from the focused leaf
+/// in one exact logical domain toward `direction`. Records the originating
+/// request so a plan can be interpreted without retaining caller-side state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeIntent {
+    pub domain_output: OutputId,
+    pub domain_workspace: WorkspaceId,
+    pub focused_leaf: NodeId,
+    pub focused_window: WindowId,
+    pub direction: Direction,
+}
+
+/// Structural resize operation with fully resolved portable identities.
+///
+/// Names the exact logical domain, the focused leaf/window, the intentional
+/// direction, the stable target split (`target_group`) plus the selected
+/// adjacent pair (`focused_child`/`neighbor_child` with their group indices),
+/// and the full selected-group share vectors before (`old_shares`) and after
+/// (`new_shares`). Only the two selected shares change (plus an exact x16
+/// ratio-preserving normalization of the whole group when the pair total is
+/// not divisible by 16); topology/order/descendants are unchanged. No geometry
+/// or native handles; desired topology/geometry are carried by the session
+/// layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeOperation {
+    pub domain_output: OutputId,
+    pub domain_workspace: WorkspaceId,
+    pub focused_leaf: NodeId,
+    pub focused_window: WindowId,
+    pub direction: Direction,
+    pub target_group: NodeId,
+    pub focused_child: NodeId,
+    pub neighbor_child: NodeId,
+    pub focused_index: usize,
+    pub neighbor_index: usize,
+    pub old_shares: Vec<u64>,
+    pub new_shares: Vec<u64>,
+}
+
+impl ResizeOperation {
+    /// Adapter-facing capability required before emission.
+    #[must_use]
+    pub const fn required_capability(&self) -> ResizeCapability {
+        ResizeCapability::KeyboardResize
+    }
+
+    /// Explicit preconditions for realization (always terminated by
+    /// [`ResizePrecondition::AdapterMustVerifyPostconditions`]).
+    #[must_use]
+    pub fn preconditions(&self) -> Vec<ResizePrecondition> {
+        vec![
+            ResizePrecondition::FocusedLeafOccupiedByFocusedWindow,
+            ResizePrecondition::TargetBoundaryValid,
+            ResizePrecondition::ResizeTargetsSameDomain,
+            ResizePrecondition::AdapterMustVerifyPostconditions,
+        ]
+    }
+}
+
+/// Deterministic resize plan with explicit capability and preconditions.
+/// Self-contained: `intent` records the originating semantic intent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizePlan {
+    pub intent: ResizeIntent,
+    pub operation: ResizeOperation,
+    pub required_capability: ResizeCapability,
+    pub preconditions: Vec<ResizePrecondition>,
+}
+
+impl ResizePlan {
+    /// Construct from an intent and a resolved operation, deriving capability
+    /// and preconditions deterministically.
+    #[must_use]
+    pub fn for_operation(intent: ResizeIntent, operation: ResizeOperation) -> Self {
+        let required_capability = operation.required_capability();
+        let preconditions = operation.preconditions();
+        Self {
+            intent,
+            operation,
+            required_capability,
+            preconditions,
+        }
+    }
+}
+
+/// Transport-neutral resize dispatch payload emitted on a successful resize
+/// proposal. Mirrors [`Dispatch`] identity binding
+/// (owner/generation/correlation/base revision) plus the complete semantic
+/// resize plan. Desired topology/focus/geometry are carried by the session
+/// layer so this envelope stays geometry-free like [`Dispatch`]; native
+/// execution stays outside the reconciler.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeDispatch {
+    pub correlation_id: CorrelationId,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
+    pub base_revision: u64,
+    pub required_capability: ResizeCapability,
+    pub preconditions: Vec<ResizePrecondition>,
+    pub intent: ResizeIntent,
+    pub operation: ResizeOperation,
+}
+
+/// Fresh post-observation plus explicit native verification flag for a pending
+/// resize plan. Binds exactly like [`PostObservation`]: the reported
+/// `verified_preconditions` must equal the dispatched preconditions (capped by
+/// [`MAX_PRECONDITIONS`]) and `verified_operation` must equal the dispatched
+/// resize operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizePostObservation {
+    pub observation: Observation,
+    pub correlation_id: CorrelationId,
+    pub verified: bool,
+    pub verified_preconditions: Vec<ResizePrecondition>,
+    pub verified_operation: ResizeOperation,
+}
+
+impl ResizePostObservation {
+    /// Typed construction (ids already validated by `ids` parsers).
+    #[must_use]
+    pub fn new(
+        observation: Observation,
+        correlation_id: CorrelationId,
+        verified: bool,
+        verified_preconditions: Vec<ResizePrecondition>,
+        verified_operation: ResizeOperation,
+    ) -> Self {
+        Self {
+            observation,
+            correlation_id,
+            verified,
+            verified_preconditions,
+            verified_operation,
+        }
+    }
+
+    /// Validity without echoing input (observation plus correlation shape and
+    /// bounded precondition vector).
+    #[must_use]
+    pub fn validate(&self) -> bool {
+        self.observation.validate()
+            && is_correlation_id(self.correlation_id.as_str())
+            && self.verified_preconditions.len() <= MAX_PRECONDITIONS
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

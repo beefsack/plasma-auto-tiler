@@ -1074,6 +1074,222 @@ fn rejects_misaligned_zero_and_overflowing_shares() {
 }
 
 #[test]
+fn resize_exhausted_inner_selects_viable_outer_same_axis() {
+    // Root H[inner H, C]; inner H[B, D] with focus B. Direction Right:
+    // inner donor D == 1 with divisible total (exhausted), outer donor C
+    // viable after x16 normalization. Must select the outer boundary.
+    let inner = group_with_shares(
+        "inner",
+        Axis::Horizontal,
+        vec![leaf("B"), leaf("D")],
+        vec![15, 1],
+    );
+    let tree = group_with_shares("root", Axis::Horizontal, vec![inner, leaf("C")], vec![1, 1]);
+    let step = plan_resize_step(&tree, &NodeId::from("B"), Direction::Right)
+        .expect("outer boundary viable");
+    assert_eq!(step.target_group, NodeId::from("root"));
+    assert_eq!(step.focused_child, NodeId::from("inner"));
+    assert_eq!(step.neighbor_child, NodeId::from("C"));
+    assert_eq!(step.old_shares, vec![1, 1]);
+    assert_eq!(step.new_shares, vec![18, 14]);
+}
+
+#[test]
+fn resize_no_viable_candidate_returns_no_boundary() {
+    // Same nesting, but the outer donor is also exhausted: root [15,1]
+    // divisible with donor C == 1. Neither boundary applies.
+    let inner = group_with_shares(
+        "inner",
+        Axis::Horizontal,
+        vec![leaf("B"), leaf("D")],
+        vec![15, 1],
+    );
+    let tree = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![inner, leaf("C")],
+        vec![15, 1],
+    );
+    assert_eq!(
+        plan_resize_step(&tree, &NodeId::from("B"), Direction::Right),
+        Err(ResizePlanError::NoBoundary)
+    );
+}
+
+#[test]
+fn resize_overflow_is_malformed_not_skipped() {
+    // Valid topology (non-overflowing total) with unrepresentable transfer:
+    // pair total not divisible by 16, x16 normalization overflows u64.
+    // Must fail closed as Malformed, not silently skip outward.
+    let tree = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![u64::MAX - 100, 1],
+    );
+    assert_eq!(
+        plan_resize_step(&tree, &NodeId::from("A"), Direction::Right),
+        Err(ResizePlanError::Malformed)
+    );
+    assert_eq!(expected_resize_shares(&[u64::MAX - 100, 1], 0, 1), None);
+    // Overflowing pair total is likewise malformed.
+    assert_eq!(expected_resize_shares(&[u64::MAX - 1, 2], 0, 1), None);
+}
+
+#[test]
+fn apply_resize_shares_hardens_identities_and_shapes() {
+    let tree = group("root", Axis::Horizontal, vec![leaf("A"), leaf("B")]);
+    // Success preserves order/axis/descendants, replaces shares only.
+    let next = apply_resize_shares(&tree, &NodeId::from("root"), &[14, 18]).expect("apply");
+    match &next {
+        Node::Group {
+            id,
+            axis,
+            children,
+            shares,
+        } => {
+            assert_eq!(id, &NodeId::from("root"));
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(*shares, vec![14, 18]);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id(), &NodeId::from("A"));
+            assert_eq!(children[1].id(), &NodeId::from("B"));
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    // Nested target replaces only the nested group.
+    let nested = Node::Group {
+        id: NodeId::from("root"),
+        axis: Axis::Horizontal,
+        children: vec![
+            Node::Group {
+                id: NodeId::from("inner"),
+                axis: Axis::Vertical,
+                children: vec![leaf("A"), leaf("B")],
+                shares: vec![1, 1],
+            },
+            leaf("C"),
+        ],
+        shares: vec![1, 1],
+    };
+    let next = apply_resize_shares(&nested, &NodeId::from("inner"), &[14, 18]).expect("nested");
+    match &next {
+        Node::Group {
+            children, shares, ..
+        } => {
+            assert_eq!(*shares, vec![1, 1]);
+            match &children[0] {
+                Node::Group { shares, axis, .. } => {
+                    assert_eq!(*shares, vec![14, 18]);
+                    assert_eq!(*axis, Axis::Vertical);
+                }
+                other => panic!("inner {other:?}"),
+            }
+        }
+        other => panic!("root {other:?}"),
+    }
+    // Duplicate node identities rejected (no first-match path).
+    let dup = Node::Group {
+        id: NodeId::from("root"),
+        axis: Axis::Horizontal,
+        children: vec![
+            Node::Group {
+                id: NodeId::from("dup"),
+                axis: Axis::Horizontal,
+                children: vec![leaf("A"), leaf("B")],
+                shares: vec![1, 1],
+            },
+            Node::Group {
+                id: NodeId::from("dup"),
+                axis: Axis::Horizontal,
+                children: vec![leaf("C"), leaf("D")],
+                shares: vec![1, 1],
+            },
+        ],
+        shares: vec![1, 1],
+    };
+    assert_eq!(
+        apply_resize_shares(&dup, &NodeId::from("dup"), &[14, 18]),
+        None
+    );
+    // Empty identities rejected anywhere in the tree.
+    let empty = group("root", Axis::Horizontal, vec![leaf("A"), leaf("")]);
+    assert_eq!(
+        apply_resize_shares(&empty, &NodeId::from("root"), &[14, 18]),
+        None
+    );
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from(""), &[14, 18]),
+        None
+    );
+    // Malformed group shares anywhere in the tree rejected.
+    let zero = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1, 0],
+    );
+    assert_eq!(
+        apply_resize_shares(&zero, &NodeId::from("root"), &[14, 18]),
+        None
+    );
+    let misaligned = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![1, 1, 1],
+    );
+    assert_eq!(
+        apply_resize_shares(&misaligned, &NodeId::from("root"), &[14, 18]),
+        None
+    );
+    let single = group_with_shares("root", Axis::Horizontal, vec![leaf("A")], vec![1]);
+    assert_eq!(
+        apply_resize_shares(&single, &NodeId::from("root"), &[14, 18]),
+        None
+    );
+    let overflow_tree = group_with_shares(
+        "root",
+        Axis::Horizontal,
+        vec![leaf("A"), leaf("B")],
+        vec![u64::MAX, 1],
+    );
+    assert_eq!(
+        apply_resize_shares(&overflow_tree, &NodeId::from("root"), &[14, 18]),
+        None
+    );
+    // Target must be an existing group with matching arity.
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("A"), &[14, 18]),
+        None,
+        "leaf target rejected"
+    );
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("missing"), &[14, 18]),
+        None
+    );
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("root"), &[14, 18, 1]),
+        None,
+        "arity mismatch"
+    );
+    // Malformed replacement shares rejected.
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("root"), &[14, 0]),
+        None
+    );
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("root"), &[14]),
+        None
+    );
+    assert_eq!(
+        apply_resize_shares(&tree, &NodeId::from("root"), &[u64::MAX, u64::MAX]),
+        None,
+        "replacement total overflow"
+    );
+}
+
+#[test]
 fn rejects_empty_window_link_workspace_before_scope_comparison() {
     let mut snap = single_output(group("root", Axis::Horizontal, vec![leaf("A"), leaf("B")]));
     snap.windows[0].workspace = WorkspaceId::from("");

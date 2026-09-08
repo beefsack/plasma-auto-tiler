@@ -39,7 +39,9 @@ use crate::contract::{
     FocusPlanContract, FocusPostObservation, FocusPrecondition, LIFECYCLE_POLICY_VERSION,
     LifecycleCapabilities, LifecycleDispatch, LifecycleOperation, LifecyclePlan,
     LifecyclePostObservation, LifecyclePrecondition, MAX_PRECONDITIONS, Observation,
-    PostObservation, is_correlation_id, is_generation_id, is_owner_id, is_revision,
+    PostObservation, ResizeCapabilities, ResizeDispatch, ResizeOperation, ResizePlan,
+    ResizePostObservation, ResizePrecondition, is_correlation_id, is_generation_id, is_owner_id,
+    is_revision,
 };
 use crate::directional::{Capabilities, MovePlan, Precondition};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
@@ -204,6 +206,10 @@ enum PendingKind {
     Focus {
         preconditions: Vec<FocusPrecondition>,
         operation: FocusOperation,
+    },
+    Resize {
+        preconditions: Vec<ResizePrecondition>,
+        operation: ResizeOperation,
     },
 }
 
@@ -612,6 +618,110 @@ impl Reconciler {
         Ok(dispatch)
     }
 
+    /// Propose an already-computed resize plan against a normalized observation.
+    ///
+    /// Shares the single pending slot with movement, lifecycle, and focus: at
+    /// most one pending plan of any kind; acknowledgement binds identically,
+    /// while verification must use [`Reconciler::verify_resize`] here. Binds
+    /// exactly to owner/generation/base revision/correlation plus the resize
+    /// plan's preconditions and declared resize capabilities; emits a
+    /// transport-neutral [`ResizeDispatch`].
+    pub fn propose_resize(
+        &mut self,
+        plan: &ResizePlan,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<ResizeDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.required_capability != plan.operation.required_capability() {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions != plan.operation.preconditions() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(plan.operation.required_capability()) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions.len() > MAX_PRECONDITIONS
+            || !plan
+                .preconditions
+                .contains(&ResizePrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.intent.domain_output != plan.operation.domain_output
+            || plan.intent.domain_workspace != plan.operation.domain_workspace
+            || plan.intent.focused_leaf != plan.operation.focused_leaf
+            || plan.intent.focused_window != plan.operation.focused_window
+            || plan.intent.direction != plan.operation.direction
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !valid_resize_operation(&plan.operation) {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(plan.preconditions.len());
+        preconditions.extend_from_slice(&plan.preconditions);
+        let dispatch = ResizeDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: plan.required_capability,
+            preconditions: preconditions.clone(),
+            intent: plan.intent.clone(),
+            operation: plan.operation.clone(),
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Resize {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
+        });
+        Ok(dispatch)
+    }
+
     /// Record an explicit adapter acknowledgement. Requires an exact binding
     /// match; non-accepted outcomes diverge fail-closed. Malformed shapes
     /// classify to their own typed kind (owner/generation/revision/
@@ -944,6 +1054,93 @@ impl Reconciler {
         })
     }
 
+    /// Commit after acknowledgement given a matching fresh resize
+    /// post-observation with explicit native verification. Mirrors
+    /// [`Reconciler::verify`] for [`ResizePostObservation`]: the reported
+    /// verified preconditions/operation must bind exactly to the pending resize
+    /// dispatch. Advances verified state by exactly one revision. Calling this
+    /// while a movement, lifecycle, or focus plan is pending (or those
+    /// verifiers while a resize plan is pending) diverges as
+    /// [`DivergenceKind::PostconditionMismatch`].
+    pub fn verify_resize(&mut self, post: &ResizePostObservation) -> Result<Commit, VerifyError> {
+        if let Some(reason) = self.diverged {
+            return Err(VerifyError::Diverged(reason));
+        }
+        let Some(pending) = self.pending.clone() else {
+            return Err(VerifyError::NoPending);
+        };
+        if !pending.acked {
+            return Err(VerifyError::NotAcknowledged);
+        }
+        if post.verified_preconditions.len() > MAX_PRECONDITIONS {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_correlation_id(post.correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_owner_id(post.observation.owner.as_str()) {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_generation_id(post.observation.generation.as_str()) {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_revision(post.observation.revision) {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.correlation_id != pending.correlation_id {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.owner != self.owner {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.revision != pending.base_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !post.verified {
+            let reason = self.diverge(DivergenceKind::PostconditionUnverified);
+            return Err(VerifyError::Diverged(reason));
+        }
+        let PendingKind::Resize {
+            preconditions,
+            operation,
+        } = &pending.kind
+        else {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        };
+        if post.verified_preconditions != *preconditions {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.verified_operation != *operation {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if pending.base_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(VerifyError::Diverged(reason));
+        }
+        self.verified_revision = pending.base_revision + 1;
+        self.verified_fingerprint = post.observation.fingerprint;
+        self.pending = None;
+        Ok(Commit {
+            revision: self.verified_revision,
+            fingerprint: self.verified_fingerprint,
+        })
+    }
+
     /// Explicit adapter-loss signal: enters typed fail-closed divergence with
     /// no further dispatch or mutation.
     pub fn note_adapter_loss(&mut self) -> DivergenceKind {
@@ -951,6 +1148,63 @@ impl Reconciler {
             return reason;
         }
         self.diverge(DivergenceKind::AdapterLost)
+    }
+}
+
+fn resize_step_for(direction: crate::directional::Direction) -> i32 {
+    match direction {
+        crate::directional::Direction::Right | crate::directional::Direction::Down => 1,
+        crate::directional::Direction::Left | crate::directional::Direction::Up => -1,
+    }
+}
+
+fn valid_resize_operation(operation: &ResizeOperation) -> bool {
+    if operation.domain_output.0.is_empty()
+        || operation.domain_workspace.0.is_empty()
+        || operation.focused_leaf.0.is_empty()
+        || operation.focused_window.0.is_empty()
+        || operation.target_group.0.is_empty()
+        || operation.focused_child.0.is_empty()
+        || operation.neighbor_child.0.is_empty()
+    {
+        return false;
+    }
+    if operation.focused_child == operation.neighbor_child {
+        return false;
+    }
+    if operation.old_shares.len() < 2
+        || operation.old_shares.len() > 64
+        || operation.new_shares.len() != operation.old_shares.len()
+    {
+        return false;
+    }
+    if operation.focused_index >= operation.old_shares.len()
+        || operation.neighbor_index >= operation.old_shares.len()
+        || operation.focused_index == operation.neighbor_index
+    {
+        return false;
+    }
+    if (operation.focused_index as i32 - operation.neighbor_index as i32).abs() != 1 {
+        return false;
+    }
+    if operation.neighbor_index as i32 - operation.focused_index as i32
+        != resize_step_for(operation.direction)
+    {
+        return false;
+    }
+    if operation.old_shares.contains(&0) || operation.new_shares.contains(&0) {
+        return false;
+    }
+    if operation.old_shares == operation.new_shares {
+        return false;
+    }
+    match crate::directional::expected_resize_shares(
+        &operation.old_shares,
+        operation.focused_index,
+        operation.neighbor_index,
+    ) {
+        Some(expected) => expected == operation.new_shares,
+        None => false,
     }
 }
 
@@ -1693,5 +1947,360 @@ mod tests {
             r.verify(&bad),
             Err(VerifyError::Diverged(DivergenceKind::StaleRevision))
         );
+    }
+
+    // ---- resize plan validation (semantic, topology-free) ----
+
+    fn resize_operation() -> ResizeOperation {
+        ResizeOperation {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            focused_leaf: NodeId("leaf-win-2".to_owned()),
+            focused_window: WindowId("win-2".to_owned()),
+            direction: Direction::Left,
+            target_group: NodeId("root".to_owned()),
+            focused_child: NodeId("leaf-win-2".to_owned()),
+            neighbor_child: NodeId("leaf-win-1".to_owned()),
+            focused_index: 1,
+            neighbor_index: 0,
+            old_shares: vec![1, 1],
+            new_shares: vec![14, 18],
+        }
+    }
+
+    fn resize_intent() -> crate::contract::ResizeIntent {
+        crate::contract::ResizeIntent {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            focused_leaf: NodeId("leaf-win-2".to_owned()),
+            focused_window: WindowId("win-2".to_owned()),
+            direction: Direction::Left,
+        }
+    }
+
+    fn resize_plan() -> ResizePlan {
+        ResizePlan::for_operation(resize_intent(), resize_operation())
+    }
+
+    fn resize_post(correlation: &str, revision: u64, verified: bool) -> ResizePostObservation {
+        let plan = resize_plan();
+        ResizePostObservation::new(
+            Observation::new(owner(), generation(), revision, 22),
+            self::correlation(correlation),
+            verified,
+            plan.preconditions.clone(),
+            plan.operation.clone(),
+        )
+    }
+
+    fn acked_resize(r: &mut Reconciler) {
+        r.propose_resize(
+            &resize_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("propose");
+        r.acknowledge(&ack_for("corr-1", 0, AckOutcome::Accepted))
+            .expect("ack");
+    }
+
+    #[test]
+    fn resize_intent_binds_operation_exactly() {
+        for mutate in [
+            "domain_output",
+            "domain_workspace",
+            "focused_leaf",
+            "focused_window",
+            "direction",
+        ] {
+            let mut r = reconciler();
+            let mut intent = resize_intent();
+            let mut operation = resize_operation();
+            match mutate {
+                "domain_output" => {
+                    intent.domain_output = OutputId("out-9".to_owned());
+                }
+                "domain_workspace" => {
+                    intent.domain_workspace = crate::directional::WorkspaceId("ws-9".to_owned());
+                }
+                "focused_leaf" => {
+                    intent.focused_leaf = NodeId("leaf-9".to_owned());
+                }
+                "focused_window" => {
+                    intent.focused_window = WindowId("win-9".to_owned());
+                }
+                "direction" => {
+                    intent.direction = Direction::Right;
+                }
+                _ => unreachable!(),
+            }
+            let plan = ResizePlan::for_operation(intent, operation.clone());
+            // `for_operation` derives capability/preconditions honestly, so a
+            // bare intent drift is the only inconsistency under test.
+            assert_eq!(
+                r.propose_resize(
+                    &plan,
+                    &observation(0),
+                    &correlation("corr-1"),
+                    &ResizeCapabilities::full()
+                ),
+                Err(ProposeError::Diverged(
+                    DivergenceKind::PostconditionMismatch
+                )),
+                "{mutate}"
+            );
+            // Drift in the operation direction alone also breaks intent
+            // binding (and orientation).
+            let mut r = reconciler();
+            operation.direction = Direction::Right;
+            let plan = ResizePlan::for_operation(resize_intent(), operation);
+            assert_eq!(
+                r.propose_resize(
+                    &plan,
+                    &observation(0),
+                    &correlation("corr-1"),
+                    &ResizeCapabilities::full()
+                ),
+                Err(ProposeError::Diverged(
+                    DivergenceKind::PostconditionMismatch
+                )),
+                "{mutate} operation"
+            );
+        }
+    }
+
+    #[test]
+    fn resize_capability_and_preconditions_bind() {
+        // Tampered capability diverges.
+        let mut r = reconciler();
+        let mut plan = resize_plan();
+        plan.required_capability = crate::contract::ResizeCapability::KeyboardResize;
+        plan.preconditions.pop();
+        assert_eq!(
+            r.propose_resize(
+                &plan,
+                &observation(0),
+                &correlation("corr-1"),
+                &ResizeCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+        // Missing terminal precondition diverges even with capability held.
+        let mut r = reconciler();
+        let operation = resize_operation();
+        let mut preconditions = operation.preconditions();
+        preconditions.pop();
+        let plan = ResizePlan {
+            intent: resize_intent(),
+            operation,
+            required_capability: crate::contract::ResizeCapability::KeyboardResize,
+            preconditions,
+        };
+        assert_eq!(
+            r.propose_resize(
+                &plan,
+                &observation(0),
+                &correlation("corr-1"),
+                &ResizeCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+        // Missing adapter capability diverges as capability-refused.
+        let mut r = reconciler();
+        assert_eq!(
+            r.propose_resize(
+                &resize_plan(),
+                &observation(0),
+                &correlation("corr-1"),
+                &ResizeCapabilities::none()
+            ),
+            Err(ProposeError::Diverged(DivergenceKind::CapabilityRefused))
+        );
+    }
+
+    #[test]
+    fn resize_operation_semantics_validated_without_topology() {
+        // Each mutation keeps ids well-formed but breaks adjacency
+        // orientation, index validity, or the exact share step.
+        let cases: Vec<ResizeOperation> = vec![
+            // Non-adjacent indices.
+            ResizeOperation {
+                focused_index: 0,
+                neighbor_index: 0,
+                ..resize_operation()
+            },
+            // Wrong orientation for Direction::Left (needs neighbor - focused == -1).
+            ResizeOperation {
+                focused_index: 0,
+                neighbor_index: 1,
+                ..resize_operation()
+            },
+            // No change.
+            ResizeOperation {
+                new_shares: vec![1, 1],
+                ..resize_operation()
+            },
+            // Inexact step.
+            ResizeOperation {
+                new_shares: vec![15, 17],
+                ..resize_operation()
+            },
+            // Zero share.
+            ResizeOperation {
+                new_shares: vec![0, 32],
+                ..resize_operation()
+            },
+            // Identical children.
+            ResizeOperation {
+                neighbor_child: NodeId("leaf-win-2".to_owned()),
+                ..resize_operation()
+            },
+        ];
+        for (index, operation) in cases.into_iter().enumerate() {
+            let mut r = reconciler();
+            let plan = ResizePlan::for_operation(resize_intent(), operation);
+            assert_eq!(
+                r.propose_resize(
+                    &plan,
+                    &observation(0),
+                    &correlation("corr-1"),
+                    &ResizeCapabilities::full()
+                ),
+                Err(ProposeError::Diverged(
+                    DivergenceKind::PostconditionMismatch
+                )),
+                "case {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn resize_shares_single_pending_slot_across_kinds() {
+        let mut r = reconciler();
+        r.propose_resize(
+            &resize_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("resize first");
+        assert_eq!(
+            r.propose(
+                &plan(),
+                &observation(0),
+                &correlation("corr-2"),
+                &Capabilities::full()
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        let mut r = reconciler();
+        r.propose(
+            &plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect("move first");
+        assert_eq!(
+            r.propose_resize(
+                &resize_plan(),
+                &observation(0),
+                &correlation("corr-2"),
+                &ResizeCapabilities::full()
+            ),
+            Err(ProposeError::PendingExists)
+        );
+    }
+
+    #[test]
+    fn resize_ack_verify_failure_paths() {
+        // Verify without acknowledgement.
+        let mut r = reconciler();
+        r.propose_resize(
+            &resize_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("propose");
+        assert_eq!(
+            r.verify_resize(&resize_post("corr-1", 0, true)),
+            Err(VerifyError::NotAcknowledged)
+        );
+        // Non-accepted acknowledgement diverges.
+        let mut r = reconciler();
+        r.propose_resize(
+            &resize_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("propose");
+        assert_eq!(
+            r.acknowledge(&ack_for("corr-1", 0, AckOutcome::RefusedCapability)),
+            Err(AckError::Diverged(DivergenceKind::CapabilityRefused))
+        );
+        // Wrong verified preconditions diverge.
+        let mut r = reconciler();
+        acked_resize(&mut r);
+        let mut bad = resize_post("corr-1", 0, true);
+        bad.verified_preconditions.pop();
+        assert_eq!(
+            r.verify_resize(&bad),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Wrong verified operation diverges.
+        let mut r = reconciler();
+        acked_resize(&mut r);
+        let mut bad = resize_post("corr-1", 0, true);
+        bad.verified_operation.new_shares = vec![15, 17];
+        assert_eq!(
+            r.verify_resize(&bad),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Unverified diverges without committing.
+        let mut r = reconciler();
+        acked_resize(&mut r);
+        assert_eq!(
+            r.verify_resize(&resize_post("corr-1", 0, false)),
+            Err(VerifyError::Diverged(
+                DivergenceKind::PostconditionUnverified
+            ))
+        );
+        // Cross-kind verify while resize pending diverges.
+        let mut r = reconciler();
+        acked_resize(&mut r);
+        assert_eq!(
+            r.verify(&post_for("corr-1", 0, true)),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Resize verify while movement pending diverges.
+        let mut r = reconciler();
+        r.propose(
+            &plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect("move");
+        r.acknowledge(&ack_for("corr-1", 0, AckOutcome::Accepted))
+            .expect("ack");
+        assert_eq!(
+            r.verify_resize(&resize_post("corr-1", 0, true)),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Happy path still commits exactly one revision.
+        let mut r = reconciler();
+        acked_resize(&mut r);
+        let commit = r
+            .verify_resize(&resize_post("corr-1", 0, true))
+            .expect("verify");
+        assert_eq!(commit.revision, 1);
+        assert_eq!(r.verified_revision(), 1);
     }
 }

@@ -75,7 +75,8 @@ use crate::contract::{
     Dispatch, DivergenceKind, FocusCapabilities, FocusDispatch, FocusIntent, FocusOperation,
     FocusPlanContract, FocusPostObservation, LifecycleCapabilities, LifecycleDispatch,
     LifecycleIntent, LifecycleOperation, LifecyclePlan, LifecyclePostObservation, Observation,
-    PostObservation, is_revision,
+    PostObservation, ResizeCapabilities, ResizeDispatch, ResizeIntent, ResizeOperation, ResizePlan,
+    ResizePostObservation, is_revision,
 };
 use crate::directional::{
     Axis, Capabilities, Direction, FocusPlan, MoveOperation, MovePlan, Node, NodeId, OutputId,
@@ -425,6 +426,25 @@ pub struct SessionMovePlan {
 pub struct SessionFocusPlan {
     pub dispatch: FocusDispatch,
     pub focus_plan: FocusPlan,
+    pub desired_snapshot: SessionSnapshot,
+    pub desired_focus_domain: DomainKey,
+    pub desired_focus_leaf: NodeId,
+    pub desired_geometry: Vec<DesiredGeometry>,
+}
+
+/// Authoritative resize plan: reconciler identity-bound portable
+/// [`ResizeDispatch`] (semantic resize operation/preconditions/
+/// capability/intent plus owner/generation/correlation/base revision) plus the
+/// deterministic contract [`ResizePlan`], desired topology/snapshot (shares
+/// only), unchanged desired focus, and complete desired rectangles for every
+/// tiled window in the affected domain. No native commands. The resizer
+/// commits only via acknowledge-then-[`Session::verify_resize`]; missing
+/// boundaries refuse as [`RefusalKind::Unchanged`] with no plan and no
+/// pending. Focus is retained exactly. Immutable and complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionResizePlan {
+    pub dispatch: ResizeDispatch,
+    pub resize_plan: ResizePlan,
     pub desired_snapshot: SessionSnapshot,
     pub desired_focus_domain: DomainKey,
     pub desired_focus_leaf: NodeId,
@@ -1692,6 +1712,239 @@ impl Session {
     /// [`Session::verify_lifecycle`].
     pub fn verify_focus(&mut self, post: &FocusPostObservation) -> Result<Commit, VerifyError> {
         match self.reconciler.verify_focus(post) {
+            Ok(commit) => {
+                if let Some(desired) = self.pending_desired.take() {
+                    self.trees = desired.trees;
+                    self.windows = desired.windows;
+                    self.focused_domain = desired.focused_domain;
+                    self.focused_leaf = desired.focused_leaf;
+                    self.exceptions = desired.exceptions;
+                    self.accepted_fingerprint = commit.fingerprint;
+                }
+                Ok(commit)
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.pending_desired = None;
+                Err(VerifyError::Diverged(reason))
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Propose portable keyboard split-share resize for the selected exact
+    /// opaque `(domain, window)` pair.
+    ///
+    /// The supplied opaque [`WindowId`] must equal the authoritative logical
+    /// focused tiled window in exactly `domain`; mismatch, unknown windows,
+    /// or exception windows refuse without pending. The pure
+    /// [`crate::directional::plan_resize_step`] nearest matching-axis ancestor
+    /// boundary is resolved, the deterministic 1/16 share-step transfer is
+    /// computed, and the normalized shares are applied through the reusable
+    /// [`crate::directional::apply_resize_shares`] primitive (future
+    /// pointer-resize submits normalized boundary/share operations through the
+    /// same primitive). Only the two selected adjacent shares change (plus an
+    /// exact x16 ratio-preserving normalization of the whole selected group
+    /// when the pair total is not divisible by 16); descendants/topology/order
+    /// are unchanged and focus is retained exactly.
+    ///
+    /// Complete geometry for every tiled window in the affected domain must
+    /// project before any pending is staged; unprojectable/minimum-geometry
+    /// failures refuse without pending. Missing boundaries refuse as
+    /// [`RefusalKind::Unchanged`] with no plan and no pending. Stale,
+    /// incomplete, malformed, pending, or unsupported-resize-capability inputs
+    /// refuse or diverge fail-closed.
+    pub fn propose_resize(
+        &mut self,
+        domain: &DomainKey,
+        window: &WindowId,
+        direction: Direction,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &ResizeCapabilities,
+    ) -> Result<SessionResizePlan, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.domains.iter().find(|d| &d.key() == domain).is_none() {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        }
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if window.0.is_empty() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let (Some(focused_domain), Some(focused_leaf)) =
+            (self.focused_domain.clone(), self.focused_leaf.clone())
+        else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        if &focused_domain != domain {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let Some(focused_window) = self.focused_window_for(&focused_leaf, domain) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if self.exceptions.contains_key(&focused_window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if window != &focused_window {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        // Exception/floating/fullscreen/maximized/sticky focus refuses: the
+        // observed entry for the focused tiled window must carry no flags
+        // (tiled bindings already checked via observed_known_match, but check
+        // explicitly for a stable NotTiled classification).
+        if let Some(entry) = session_observation
+            .windows
+            .iter()
+            .find(|w| w.window == focused_window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        if !capabilities.supports(crate::contract::ResizeCapability::KeyboardResize) {
+            return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+        }
+        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        let step = match crate::cosmic_v1::plan_resize_step(&tree, &focused_leaf, direction) {
+            Ok(step) => step,
+            Err(crate::cosmic_v1::ResizePlanError::NoBoundary) => {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            Err(crate::cosmic_v1::ResizePlanError::Malformed) => {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            }
+        };
+        let Some(updated_tree) =
+            crate::cosmic_v1::apply_resize_shares(&tree, &step.target_group, &step.new_shares)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(domain.clone(), Some(updated_tree));
+        if desired_trees == self.trees {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        if !validate_topology(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            &self.exceptions,
+            &Some(domain.clone()),
+            &Some(focused_leaf.clone()),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            std::slice::from_ref(domain),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &desired_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let intent = ResizeIntent {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction,
+        };
+        let operation = ResizeOperation {
+            domain_output: domain.output.clone(),
+            domain_workspace: domain.workspace.clone(),
+            focused_leaf: focused_leaf.clone(),
+            focused_window: focused_window.clone(),
+            direction,
+            target_group: step.target_group.clone(),
+            focused_child: step.focused_child.clone(),
+            neighbor_child: step.neighbor_child.clone(),
+            focused_index: step.focused_index,
+            neighbor_index: step.neighbor_index,
+            old_shares: step.old_shares.clone(),
+            new_shares: step.new_shares.clone(),
+        };
+        let plan = ResizePlan::for_operation(intent, operation);
+        let dispatch = self
+            .reconciler
+            .propose_resize(
+                &plan,
+                &session_observation.observation,
+                correlation_id,
+                capabilities,
+            )
+            .map_err(|e| match e {
+                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
+                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
+            })?;
+        let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
+        self.pending_desired = Some(PendingDesired {
+            trees: desired_trees.clone(),
+            windows: self.windows.clone(),
+            focused_domain: Some(domain.clone()),
+            focused_leaf: Some(focused_leaf.clone()),
+            exceptions: self.exceptions.clone(),
+        });
+        Ok(SessionResizePlan {
+            dispatch,
+            resize_plan: plan,
+            desired_snapshot,
+            desired_focus_domain: domain.clone(),
+            desired_focus_leaf: focused_leaf,
+            desired_geometry,
+        })
+    }
+
+    /// Commit a pending resize plan after acknowledgement. On commit only the
+    /// resized shares apply atomically (windows/focus/exceptions unmodified)
+    /// and the accepted revision advances by exactly one. Terminal divergence
+    /// clears the pending desired state. Movement plans must use
+    /// [`Session::verify_move`]; lifecycle plans must use
+    /// [`Session::verify_lifecycle`]; focus plans must use
+    /// [`Session::verify_focus`].
+    pub fn verify_resize(&mut self, post: &ResizePostObservation) -> Result<Commit, VerifyError> {
+        match self.reconciler.verify_resize(post) {
             Ok(commit) => {
                 if let Some(desired) = self.pending_desired.take() {
                     self.trees = desired.trees;

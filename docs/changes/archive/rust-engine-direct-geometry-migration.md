@@ -98,6 +98,28 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Portable `cosmic_v1` Session split-share keyboard resizing completed
+  2026-09-09: `Session::propose_resize` resolves the nearest viable
+  direction-matching ancestor boundary from the exact focused tiled leaf,
+  continuing outward past nested edges or exhausted donors. It grows the
+  focused-containing region while shrinking only its adjacent directional
+  neighbor. The portable typed plan carries the target group/pair, old/new
+  full group shares, capability, preconditions, revision binding, unchanged
+  focus, desired topology, and complete projectable affected-domain geometry;
+  it has no native execution command. A deterministic display-independent
+  step normalizes the selected group by an exact factor of 16 only when its
+  selected pair total is not divisible by 16, then transfers one sixteenth of
+  that pair while preserving positive checked shares and clamping at one.
+  Reusable pure share application validates the complete tree so future
+  signal-driven pointer resizing can submit normalized boundary/share changes
+  without duplicating topology/share validation. Resize shares the one-pending
+  reconciler, common acknowledgement, and exact post-observation commit
+  boundary with lifecycle, movement, and focus. Durable horizontal/vertical,
+  nested/N-ary, geometry/gap, normalization/overflow, refusal, reconciliation,
+  deterministic replay-sequence, and bounded property coverage passes;
+  movement/lifecycle/conformance and frozen trace fixtures remain unchanged.
+  No live KWin work ran and parked shadow Script/residue remains untouched.
+  Next product slice: explicit portable Rust drag/drop placement.
 - Portable Session movement/navigation integration completed 2026-09-09:
   authoritative `Session` APIs now bind the exact opaque `(DomainKey, WindowId)`
   focus scope and delegate directional movement to the frozen source-evidenced

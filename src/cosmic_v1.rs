@@ -13,7 +13,9 @@ pub use crate::contract::POLICY_VERSION;
 pub const COSMIC_V1_VERSION: u32 = 1;
 
 pub use crate::directional::{
-    Capabilities, Capability, MoveIntent, MoveOutcome, MovePlan, Rule, Snapshot,
+    Capabilities, Capability, MoveIntent, MoveOutcome, MovePlan, RESIZE_STEP_DENOMINATOR,
+    ResizePlanError, ResizeStep, Rule, Snapshot, apply_resize_shares, expected_resize_shares,
+    plan_resize_step,
 };
 
 /// Accepted R1-R4 planning surface with full adapter capabilities.

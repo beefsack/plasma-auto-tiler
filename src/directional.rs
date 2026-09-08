@@ -1124,6 +1124,366 @@ pub fn plan_focus(tree: &Node, focused_leaf: &NodeId, direction: Direction) -> O
     Some(FocusPlan::Edge)
 }
 
+// ---- split-share keyboard resize (portable, display-independent) ----
+
+/// Share-step denominator: a resize transfers exactly 1/16 of the selected
+/// adjacent pair total.
+pub const RESIZE_STEP_DENOMINATOR: u64 = 16;
+
+/// Resolved keyboard resize step: the stable target split (`target_group`),
+/// the selected adjacent pair (`focused_child` grows toward the resize
+/// direction, `neighbor_child` shrinks), their group indices, and the full
+/// selected-group share vectors before (`old_shares`) and after
+/// (`new_shares`). Descendants/topology/order are unchanged; only the two
+/// selected shares change plus an exact x16 ratio-preserving normalization of
+/// the whole group when the pair total is not divisible by 16.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResizeStep {
+    pub target_group: NodeId,
+    pub focused_index: usize,
+    pub neighbor_index: usize,
+    pub focused_child: NodeId,
+    pub neighbor_child: NodeId,
+    pub old_shares: Vec<u64>,
+    pub new_shares: Vec<u64>,
+}
+
+/// Resize planning failure: `NoBoundary` means no applicable directional
+/// boundary exists (non-divergent unchanged); `Malformed` means topology,
+/// shares, or arithmetic are malformed/unrepresentable (fail closed).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizePlanError {
+    NoBoundary,
+    Malformed,
+}
+
+fn resize_group_shares(tree: &Node, id: &NodeId) -> Option<Vec<u64>> {
+    match tree {
+        Node::Leaf { .. } => None,
+        Node::Group {
+            id: gid,
+            shares,
+            children,
+            ..
+        } => {
+            if gid == id {
+                return Some(shares.clone());
+            }
+            for child in children {
+                if let Some(found) = resize_group_shares(child, id) {
+                    return Some(found);
+                }
+            }
+            None
+        }
+    }
+}
+
+/// Pure share-step transfer over one N-ary group share vector.
+///
+/// Transfers exactly 1/16 of the selected adjacent pair total from the
+/// directional neighbor (`neighbor_index`, donor) to the focused-containing
+/// child (`focused_index`, recipient). Before transfer, if the pair total is
+/// not divisible by 16, every share in the group is multiplied by 16 as an
+/// exact ratio-preserving normalization; then `delta = pair_total / 16`.
+///
+/// Checked arithmetic throughout: scaling/total/add/subtract overflow, zero
+/// shares, out-of-bounds or non-adjacent indices fail closed (`None`). If the
+/// donor would fall below one, the transfer clamps to `donor - 1`; a zero
+/// clamped transfer (donor at one) also fails closed (`None`) so callers can
+/// refuse unchanged. Pair sum is conserved after normalization.
+#[must_use]
+pub fn expected_resize_shares(
+    old_shares: &[u64],
+    focused_index: usize,
+    neighbor_index: usize,
+) -> Option<Vec<u64>> {
+    if old_shares.len() < 2
+        || focused_index >= old_shares.len()
+        || neighbor_index >= old_shares.len()
+        || focused_index == neighbor_index
+    {
+        return None;
+    }
+    if (focused_index as i32 - neighbor_index as i32).abs() != 1 {
+        return None;
+    }
+    if old_shares.contains(&0) {
+        return None;
+    }
+    let mut total: u64 = 0;
+    for share in old_shares {
+        total = total.checked_add(*share)?;
+    }
+    if total == 0 {
+        return None;
+    }
+    let pair_total = old_shares[focused_index].checked_add(old_shares[neighbor_index])?;
+    if pair_total == 0 {
+        return None;
+    }
+    let scaled: Vec<u64> = if pair_total % RESIZE_STEP_DENOMINATOR != 0 {
+        let mut out = Vec::with_capacity(old_shares.len());
+        for share in old_shares {
+            out.push(share.checked_mul(RESIZE_STEP_DENOMINATOR)?);
+        }
+        out
+    } else {
+        old_shares.to_vec()
+    };
+    let mut scaled_total: u64 = 0;
+    for share in &scaled {
+        scaled_total = scaled_total.checked_add(*share)?;
+    }
+    let scaled_pair = scaled[focused_index].checked_add(scaled[neighbor_index])?;
+    if scaled_pair % RESIZE_STEP_DENOMINATOR != 0 {
+        return None;
+    }
+    let mut delta = scaled_pair / RESIZE_STEP_DENOMINATOR;
+    if delta == 0 {
+        return None;
+    }
+    let donor = scaled[neighbor_index];
+    if donor <= 1 {
+        return None;
+    }
+    if donor <= delta {
+        delta = donor.checked_sub(1)?;
+        if delta == 0 {
+            return None;
+        }
+    }
+    let mut next = scaled.clone();
+    next[focused_index] = scaled[focused_index].checked_add(delta)?;
+    next[neighbor_index] = scaled[neighbor_index].checked_sub(delta)?;
+    if next.contains(&0) {
+        return None;
+    }
+    // Pair sum conserved after normalization.
+    if next[focused_index].checked_add(next[neighbor_index])? != scaled_pair {
+        return None;
+    }
+    if next == scaled {
+        return None;
+    }
+    Some(next)
+}
+
+/// Reusable pure primitive for normalized target boundary/share operations.
+///
+/// Validates the entire input tree before applying: every node identity is
+/// non-empty and globally unique, and every group carries exactly one
+/// positive share per child (at least two children) with a non-overflowing
+/// total. Then validates `target_group` names exactly one existing group
+/// with exactly `new_shares.len()` children, all new shares positive with a
+/// non-overflowing total, and returns a new tree with only that group's
+/// shares replaced. Topology, order, axis, descendants, and all other groups
+/// are unchanged. Fail-closed (`None`) on any mismatch, including duplicate
+/// ids (no first-match duplicate path: the whole tree is scanned and exactly
+/// one replacement must apply). Future pointer-resize can submit a
+/// normalized boundary/share operation through this primitive without
+/// duplicating operation validation/application.
+#[must_use]
+pub fn apply_resize_shares(tree: &Node, target_group: &NodeId, new_shares: &[u64]) -> Option<Node> {
+    if target_group.0.is_empty() || new_shares.len() < 2 || new_shares.contains(&0) {
+        return None;
+    }
+    let mut total: u64 = 0;
+    for share in new_shares {
+        total = total.checked_add(*share)?;
+    }
+    if total == 0 {
+        return None;
+    }
+    if !validate_resize_tree(tree, &mut HashSet::new()) {
+        return None;
+    }
+    let mut replacements = 0usize;
+    let next = apply_resize_shares_checked(tree, target_group, new_shares, &mut replacements)?;
+    if replacements != 1 {
+        return None;
+    }
+    Some(next)
+}
+
+fn validate_resize_tree(node: &Node, seen: &mut HashSet<NodeId>) -> bool {
+    if node.id().0.is_empty() || !seen.insert(node.id().clone()) {
+        return false;
+    }
+    match node {
+        Node::Leaf { .. } => true,
+        Node::Group {
+            children, shares, ..
+        } => {
+            if children.len() < 2 || shares.len() != children.len() {
+                return false;
+            }
+            if shares.contains(&0) {
+                return false;
+            }
+            let mut total: u64 = 0;
+            for share in shares {
+                match total.checked_add(*share) {
+                    Some(next) => total = next,
+                    None => return false,
+                }
+            }
+            if total == 0 {
+                return false;
+            }
+            children
+                .iter()
+                .all(|child| validate_resize_tree(child, seen))
+        }
+    }
+}
+
+fn apply_resize_shares_checked(
+    node: &Node,
+    target_group: &NodeId,
+    new_shares: &[u64],
+    replacements: &mut usize,
+) -> Option<Node> {
+    match node {
+        Node::Leaf { id } => Some(Node::Leaf { id: id.clone() }),
+        Node::Group {
+            id,
+            axis,
+            children,
+            shares,
+        } => {
+            let mut next_children = Vec::with_capacity(children.len());
+            for child in children {
+                next_children.push(apply_resize_shares_checked(
+                    child,
+                    target_group,
+                    new_shares,
+                    replacements,
+                )?);
+            }
+            if id == target_group {
+                if children.len() != new_shares.len() || shares.len() != children.len() {
+                    return None;
+                }
+                *replacements += 1;
+                return Some(Node::Group {
+                    id: id.clone(),
+                    axis: *axis,
+                    children: next_children,
+                    shares: new_shares.to_vec(),
+                });
+            }
+            Some(Node::Group {
+                id: id.clone(),
+                axis: *axis,
+                children: next_children,
+                shares: shares.clone(),
+            })
+        }
+    }
+}
+
+/// Deterministic nearest applicable matching-axis ancestor boundary.
+///
+/// Walks focus-leaf ancestors nearest outward; the first ancestor with
+/// `Axis::for_direction(direction)` and a direct child on the requested side
+/// is selected. At a matching-axis edge, the walk continues outward. Returns
+/// [`ResizePlanError::NoBoundary`] when no candidate exists and
+/// [`ResizePlanError::Malformed`] on malformed topology/shares or
+/// unrepresentable arithmetic.
+pub fn plan_resize_step(
+    tree: &Node,
+    focused_leaf: &NodeId,
+    direction: Direction,
+) -> Result<ResizeStep, ResizePlanError> {
+    if focused_leaf.0.is_empty() {
+        return Err(ResizePlanError::Malformed);
+    }
+    if !check_focus_node(tree, &mut HashSet::new()) {
+        return Err(ResizePlanError::Malformed);
+    }
+    let path = path_to(tree, focused_leaf).ok_or(ResizePlanError::Malformed)?;
+    if path.is_empty() {
+        return Err(ResizePlanError::NoBoundary);
+    }
+    let wanted = Axis::for_direction(direction);
+    let step = step_for(direction);
+    for ancestor in path.iter().rev() {
+        if ancestor.axis != wanted {
+            continue;
+        }
+        let neighbor = ancestor.child_index as i32 + step;
+        if neighbor < 0 || (neighbor as usize) >= ancestor.children.len() {
+            continue;
+        }
+        let neighbor_index = neighbor as usize;
+        let focused_index = ancestor.child_index;
+        let focused_child = ancestor.children[focused_index].id().clone();
+        let neighbor_child = ancestor.children[neighbor_index].id().clone();
+        let old_shares =
+            resize_group_shares(tree, &ancestor.group_id).ok_or(ResizePlanError::Malformed)?;
+        if old_shares.len() != ancestor.children.len() {
+            return Err(ResizePlanError::Malformed);
+        }
+        // An exhausted donor (post-normalization donor <= 1, or zero
+        // permitted transfer) makes this boundary not applicable: continue
+        // outward to the next matching-axis ancestor. Overflow or malformed
+        // shares/topology still fail closed.
+        if old_shares.contains(&0) {
+            return Err(ResizePlanError::Malformed);
+        }
+        let pair_total = old_shares[focused_index]
+            .checked_add(old_shares[neighbor_index])
+            .ok_or(ResizePlanError::Malformed)?;
+        let needs_scaling = pair_total % RESIZE_STEP_DENOMINATOR != 0;
+        let scaled_donor = if needs_scaling {
+            old_shares[neighbor_index]
+                .checked_mul(RESIZE_STEP_DENOMINATOR)
+                .ok_or(ResizePlanError::Malformed)?
+        } else {
+            old_shares[neighbor_index]
+        };
+        if scaled_donor <= 1 {
+            continue;
+        }
+        let scaled_pair = if needs_scaling {
+            let scaled_focused = old_shares[focused_index]
+                .checked_mul(RESIZE_STEP_DENOMINATOR)
+                .ok_or(ResizePlanError::Malformed)?;
+            scaled_focused
+                .checked_add(scaled_donor)
+                .ok_or(ResizePlanError::Malformed)?
+        } else {
+            pair_total
+        };
+        if scaled_pair / RESIZE_STEP_DENOMINATOR == 0 {
+            continue;
+        }
+        if scaled_donor <= scaled_pair / RESIZE_STEP_DENOMINATOR
+            && scaled_donor
+                .checked_sub(1)
+                .ok_or(ResizePlanError::Malformed)?
+                == 0
+        {
+            continue;
+        }
+        let Some(new_shares) = expected_resize_shares(&old_shares, focused_index, neighbor_index)
+        else {
+            return Err(ResizePlanError::Malformed);
+        };
+        return Ok(ResizeStep {
+            target_group: ancestor.group_id.clone(),
+            focused_index,
+            neighbor_index,
+            focused_child,
+            neighbor_child,
+            old_shares,
+            new_shares,
+        });
+    }
+    Err(ResizePlanError::NoBoundary)
+}
+
 // ---- proportional fraction sizing (analogue of cosmic-move-adapter.ts) ----
 
 fn valid_shares(existing: &[f64]) -> bool {
