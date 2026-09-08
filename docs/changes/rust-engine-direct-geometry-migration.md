@@ -334,6 +334,16 @@ production behavior through incremental opt-in promotion.
   for this path is paused pending a safe next boundary. The remaining gate is a
   user-assisted authorized read-only advisory journey with preserved bounded
   transport evidence, followed by its existing exact restoration checks.
+- Fresh advisory lifecycle boundary correction, 2026-09-08: the sequencer now
+  derives one 256-bit runtime token in memory, binds and exact-checks that
+  path before `mkdir`, and retains it for receipt-scoped cleanup. It refuses
+  exact known build-output collisions without overwriting them, uses no
+  historical runtime scan or global D-Bus enumeration, and proves pinned
+  unique-owner loss with an exact parsed `NameHasOwner` false reply. Setup
+  failures remove only the known empty fresh directory or fail closed. The
+  hermetic sequencer suite passes 213 checks; no host lifecycle ran for this
+  correction. The initial same-UID Planner binary remains unattestable through
+  public KWin APIs.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

@@ -293,19 +293,6 @@ process.stdout.write(String(v.data[0]));
 ' 2>/dev/null
 }
 
-bus_unique_name_absent() {
-  BUS_JSON="$1" BUS_OWNER="$2" "$NODE_BIN" -e '
-const raw = process.env.BUS_JSON || "";
-let v;
-try { v = JSON.parse(raw); } catch (e) { process.exit(1); }
-if (typeof v !== "object" || v === null || Array.isArray(v)) process.exit(1);
-if (v.type !== "as" || !Array.isArray(v.data) || v.data.length !== 1 || !Array.isArray(v.data[0])) process.exit(1);
-const names = v.data[0];
-if (names.some((name) => typeof name !== "string")) process.exit(1);
-if (names.includes(process.env.BUS_OWNER)) process.exit(1);
-' 2>/dev/null
-}
-
 planner_absent_check() {
   local out="" has="" _rc=0
   out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_SERVICE" 2>&1)" || _rc=$?
@@ -511,20 +498,27 @@ prove_planner_owner_loss() {
     printf 'error: planner service %s is still owned; refusing timeout acceptance\n' "$PLANNER_SERVICE" >&2
     return 1
   }
-  # NameHasOwner proves well-known-name loss. ListNames is the authoritative
-  # structured bus reply for the pinned unique-owner absence, avoiding an
-  # ambiguous failed GetConnectionUnixProcessID transport call.
-  local names_out="" _ln_rc=0
-  names_out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus ListNames 2>&1)" || _ln_rc=$?
-  if [[ "$_ln_rc" -ne 0 ]]; then
-    seq_emit_diag "bus:ListNames-loss" "$_ln_rc" "none" "$names_out"
+  # NameHasOwner proves well-known-name loss. Re-querying the pinned unique
+  # owner avoids global enumeration and strictly parses its exact absence.
+  [[ "$PLANNER_OWNER" =~ ^:[0-9]+\.[0-9]+$ ]] || {
+    printf 'error: pinned planner owner is malformed for loss proof\n' >&2
+    return 1
+  }
+  local owner_out="" owner_has="" _owner_rc=0
+  owner_out="$("$BUSCTL_BIN" --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus NameHasOwner s "$PLANNER_OWNER" 2>&1)" || _owner_rc=$?
+  if [[ "$_owner_rc" -ne 0 ]]; then
+    seq_emit_diag "bus:NameHasOwner-unique-loss" "$_owner_rc" "none" "$owner_out"
     printf 'error: planner unique-owner loss check failed (transport failure)\n' >&2
     return 1
   fi
-  bus_unique_name_absent "$names_out" "$PLANNER_OWNER" || {
-    printf 'error: pinned planner owner %s is still present or ListNames is malformed\n' "$PLANNER_OWNER" >&2
+  owner_has="$(bus_bool "$owner_out")" || {
+    printf 'error: malformed NameHasOwner reply for pinned planner owner\n' >&2
     return 1
   }
+  if [[ "$owner_has" != "false" ]]; then
+    printf 'error: pinned planner owner %s is still present; refusing timeout acceptance\n' "$PLANNER_OWNER" >&2
+    return 1
+  fi
   return 0
 }
 
@@ -733,7 +727,7 @@ cmd_run() {
   [[ "$SEQUENCER_ATTEMPTS" =~ ^(0|[1-9][0-9]*)$ && "$SEQUENCER_ATTEMPTS" -ge 1 && "$SEQUENCER_ATTEMPTS" -le 500 ]] || fail "invalid SEQUENCER_ATTEMPTS (1..500)"
   [[ "$SEQUENCER_MARKER_ATTEMPTS" =~ ^(0|[1-9][0-9]*)$ && "$SEQUENCER_MARKER_ATTEMPTS" -ge 1 ]] || fail "invalid SEQUENCER_MARKER_ATTEMPTS"
   if [[ -e "$dist/advisory-describe.js" || -L "$dist/advisory-describe.js" || -e "$dist/advisory-describe.manifest.json" || -L "$dist/advisory-describe.manifest.json" ]]; then
-    fail "prior advisory dist residue is present; refusing to overwrite or scan it"
+    fail "exact advisory build output collision; refusing to overwrite"
   fi
   # Distinct bootstrap nonces for the three phases, one shared binding.
   local NONCE_SUCCESS="" NONCE_STALE="" NONCE_LOSS=""
@@ -779,22 +773,54 @@ cmd_run() {
   rm -f -- "$BOOTSTRAP_INPUT"
 
   # One fresh namespaced runtime dir, only after the preflight above passed.
+  # Fresh high-entropy runtime token in memory; the exact path is composed
+  # before creation and retained as the lifecycle-bound identity before
+  # mkdir creates it. Collision/create failure stops before lifecycle and
+  # never deletes the exact path.
   RUNDIR_PARENT="${TMPDIR:-/tmp}"
-  RUNDIR="$(mktemp -d "$RUNDIR_PARENT/advisory-transport-XXXXXX")" || {
+  safe_abs "$RUNDIR_PARENT" && [[ -d "$RUNDIR_PARENT" && ! -L "$RUNDIR_PARENT" ]] || {
+    cleanup_generated
+    fail "fresh runtime parent is unsafe"
+  }
+  local RUNDIR_TOKEN=""
+  RUNDIR_TOKEN="$("$NODE_BIN" -e 'process.stdout.write(require("node:crypto").randomBytes(32).toString("hex"))' 2>/dev/null)" || {
+    cleanup_generated
+    fail "could not generate the fresh runtime token"
+  }
+  [[ "$RUNDIR_TOKEN" =~ ^[0-9a-f]{64}$ ]] || {
+    cleanup_generated
+    fail "fresh runtime token is malformed"
+  }
+  RUNDIR="$RUNDIR_PARENT/advisory-transport-$RUNDIR_TOKEN"
+  safe_abs "$RUNDIR" || {
+    cleanup_generated
+    fail "fresh runtime path is unsafe"
+  }
+  [[ ! -e "$RUNDIR" && ! -L "$RUNDIR" ]] || {
+    cleanup_generated
+    fail "fresh runtime dir collision; refusing to reuse the exact path"
+  }
+  mkdir -- "$RUNDIR" || {
     cleanup_generated
     fail "could not create the fresh runtime dir"
   }
   chmod 700 -- "$RUNDIR" || {
     cleanup_generated
+    rmdir -- "$RUNDIR" 2>/dev/null || fail "could not lock the fresh runtime dir and exact cleanup failed"
+    RUNDIR=""
     fail "could not lock the fresh runtime dir"
   }
   local RUNDIR_MODE=""
   RUNDIR_MODE="$("$STAT_BIN" -c '%a' -- "$RUNDIR" 2>/dev/null)" || {
     cleanup_generated
+    rmdir -- "$RUNDIR" 2>/dev/null || fail "could not stat the fresh runtime dir and exact cleanup failed"
+    RUNDIR=""
     fail "could not stat the fresh runtime dir"
   }
   [[ "$RUNDIR_MODE" == "700" ]] || {
     cleanup_generated
+    rmdir -- "$RUNDIR" 2>/dev/null || fail "fresh runtime dir mode is $RUNDIR_MODE, expected 700; exact cleanup failed"
+    RUNDIR=""
     fail "fresh runtime dir mode is $RUNDIR_MODE, expected 700"
   }
   local SUCCESS_RECEIPT="$RUNDIR/success/receipt.json"

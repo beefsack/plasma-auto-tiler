@@ -103,7 +103,13 @@ Only meaningful pending or active work is listed.
    protocol, geometry, or restoration proof. Because full fresh-runtime cleanup
    remains unproven, live mutation authorization on this path is paused. The
    next gate is one user-assisted authorized read-only journey with retained
-   bounded transport evidence and existing exact restoration checks |
+   bounded transport evidence and existing exact restoration checks. Fresh
+   boundary correction: the sequencer pre-binds one 256-bit exact runtime
+   path before creation, refuses exact known build-output collisions without
+   overwriting them, avoids historical runtime scans and global D-Bus
+   enumeration, parses exact pinned-owner loss, and exact-cleans setup
+   failures; its hermetic suite passes 213 checks, with no host lifecycle
+   for this correction |
    [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

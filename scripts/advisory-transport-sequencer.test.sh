@@ -80,7 +80,7 @@ assert_contains "$SEQ" 'PHASE_DONE="success,stale,loss"'
 assert_contains "$SEQ" 'stale requires success first'
 assert_contains "$SEQ" 'loss requires success then stale first'
 assert_contains "$SEQ" 'preserving exact residue'
-assert_contains "$SEQ" 'prior advisory dist residue'
+assert_absent "$SEQ" 'prior advisory dist residue'
 assert_contains "$SEQ" 'phase correlations must be distinct'
 assert_contains "$SEQ" 'ADVISORY_TRANSPORT_TEST_FAKE'
 assert_contains "$SEQ" 'is test-only (requires ADVISORY_TRANSPORT_TEST_FAKE=1)'
@@ -123,14 +123,34 @@ assert_contains "$SEQ" 'LOSS_TICK'
 assert_contains "$SEQ" 'loss loader job exited before owner loss'
 assert_contains "$SEQ" 'stale/receipt.json'
 assert_contains "$SEQ" 'loss/receipt.json'
-# Ordering: bootstrap preflight precedes the fresh-dir mktemp; phases are ordered.
+# Ordering: bootstrap preflight precedes the exact fresh path (token, compose,
+# exact check, mkdir); phases are ordered.
 N_PREFLIGHT="$(grep -n 'loader_preflight "$loader" "$dist/advisory-describe.js"' "$SEQ" | head -n 1 | cut -d: -f1)"
-N_MKDIR="$(grep -n 'mktemp -d "$RUNDIR_PARENT/advisory-transport-XXXXXX"' "$SEQ" | head -n 1 | cut -d: -f1)"
-if [[ -n "$N_PREFLIGHT" && -n "$N_MKDIR" && "$N_PREFLIGHT" -lt "$N_MKDIR" ]]; then
-  pass "preflight precedes fresh-dir creation"
+N_TOKEN="$(grep -n 'randomBytes(32)' "$SEQ" | head -n 1 | cut -d: -f1)"
+N_COMPOSE="$(grep -n 'RUNDIR="$RUNDIR_PARENT/advisory-transport-$RUNDIR_TOKEN"' "$SEQ" | head -n 1 | cut -d: -f1)"
+N_CHECK="$(grep -n '! -L "$RUNDIR"' "$SEQ" | head -n 1 | cut -d: -f1)"
+N_MKDIR="$(grep -n 'mkdir -- "$RUNDIR"' "$SEQ" | head -n 1 | cut -d: -f1)"
+if [[ -n "$N_PREFLIGHT" && -n "$N_TOKEN" && -n "$N_COMPOSE" && -n "$N_CHECK" && -n "$N_MKDIR" \
+  && "$N_PREFLIGHT" -lt "$N_TOKEN" && "$N_TOKEN" -lt "$N_COMPOSE" && "$N_COMPOSE" -lt "$N_CHECK" && "$N_CHECK" -lt "$N_MKDIR" ]]; then
+  pass "preflight precedes exact fresh-path token/compose/check/mkdir"
 else
-  fail "preflight must precede fresh-dir creation"
+  fail "preflight must precede exact fresh-path token/compose/check/mkdir"
 fi
+assert_contains "$SEQ" 'randomBytes(32)'
+assert_contains "$SEQ" 'RUNDIR_TOKEN'
+assert_contains "$SEQ" '! -e "$RUNDIR"'
+assert_contains "$SEQ" '! -L "$RUNDIR"'
+assert_contains "$SEQ" 'mkdir -- "$RUNDIR"'
+assert_contains "$SEQ" 'fresh runtime dir collision'
+assert_contains "$SEQ" 'exact advisory build output collision'
+assert_absent "$SEQ" 'mktemp -d "$RUNDIR_PARENT'
+assert_absent "$SEQ" 'ListNames'
+assert_absent "$SEQ" 'bus_unique_name_absent'
+assert_absent "$SEQ" 'prior advisory dist residue'
+assert_contains "$SEQ" 'NameHasOwner s "$PLANNER_OWNER"'
+assert_contains "$SEQ" 'pinned planner owner is malformed for loss proof'
+assert_contains "$SEQ" 'planner unique-owner loss check failed (transport failure)'
+assert_contains "$SEQ" 'is still present; refusing timeout acceptance'
 N_S="$(grep -n 'build_one "$loader" "$builder" "$dist" "success"' "$SEQ" | head -n 1 | cut -d: -f1)"
 N_T="$(grep -n 'build_one "$loader" "$builder" "$dist" "stale"' "$SEQ" | head -n 1 | cut -d: -f1)"
 N_L="$(grep -n 'build_one "$loader" "$builder" "$dist" "loss"' "$SEQ" | head -n 1 | cut -d: -f1)"
@@ -144,17 +164,21 @@ fi
 cat > "$FAKE_BIN/fake-busctl" <<'FAKE_BUSCTL'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_DIR/busctl.log"
+if [[ "$*" == *NameHasOwner* && "$*" == *":1.77"* ]]; then
+  if [[ "${FAKE_OWNER_LOSS_BUS_FAILURE:-0}" == "1" ]]; then
+    echo "fake busctl: unique-owner transport failure" >&2
+    exit 2
+  fi
+  if [[ -f "$FAKE_DIR/planner-alive" ]]; then printf '{"type":"b","data":[true]}'; else printf '{"type":"b","data":[false]}'; fi
+  exit 0
+fi
 if [[ "$*" == *NameHasOwner* && "$*" == *"org.plasmaautotiler.Planner"* ]]; then
   if [[ -f "$FAKE_DIR/planner-alive" ]]; then printf '{"type":"b","data":[true]}'; else printf '{"type":"b","data":[false]}'; fi
   exit 0
 fi
 if [[ "$*" == *ListNames* ]]; then
-  if [[ -f "$FAKE_DIR/planner-alive" ]]; then
-    printf '{"type":"as","data":[["org.freedesktop.DBus",":1.10",":1.77"]]}'
-  else
-    printf '{"type":"as","data":[["org.freedesktop.DBus",":1.10"]]}'
-  fi
-  exit 0
+  echo "fake busctl: ListNames enumeration is forbidden (exact owner query only)" >&2
+  exit 1
 fi
 if [[ "$*" == *GetNameOwner* && "$*" == *"org.plasmaautotiler.Planner"* ]]; then
   if [[ -s "$FAKE_DIR/planner-owner-seq" ]]; then
@@ -497,6 +521,7 @@ seq_env() {
   export PLANNER_FAKE_TICK=777001
   export FAKE_ORDER=in-order
   export FAKE_READY=normal
+  export FAKE_OWNER_LOSS_BUS_FAILURE=0
   unset SEQUENCER_TEST_HOOK_AFTER_PIN SEQUENCER_TEST_HOOK_BEFORE_STOP
 }
 
@@ -619,11 +644,42 @@ fi
 if grep -q 'NameHasOwner.*org.plasmaautotiler.Planner' "$FAKE_DIR/busctl.log" \
   && grep -q 'GetNameOwner.*org.plasmaautotiler.Planner' "$FAKE_DIR/busctl.log" \
   && grep -q 'GetConnectionUnixProcessID.*:1.77' "$FAKE_DIR/busctl.log" \
-  && grep -q 'ListNames' "$FAKE_DIR/busctl.log"; then
-  pass "planner owner/PID pinned and unique-owner loss checked"
+  && grep -q 'NameHasOwner.*:1.77' "$FAKE_DIR/busctl.log"; then
+  pass "planner owner/PID pinned and exact unique-owner loss queried"
 else
-  fail "planner owner/PID pinned and unique-owner loss checked"
+  fail "planner owner/PID pinned and exact unique-owner loss queried"
 fi
+if grep -q 'ListNames' "$FAKE_DIR/busctl.log"; then
+  fail "no ListNames enumeration during unique-owner loss"
+else
+  pass "no ListNames enumeration during unique-owner loss"
+fi
+if grep -q 'NameHasOwner.*:1.77' "$FAKE_DIR/busctl.log"; then
+  pass "loss proves pinned-owner absence with an exact false reply"
+else
+  fail "loss proves pinned-owner absence with an exact false reply"
+fi
+
+# Exact build-output collision refuses without overwriting the known path.
+reset_fake
+printf 'preserve\n' > "$FAKE_DIST/advisory-describe.js"
+if "$SEQ" run >/dev/null 2>&1; then fail "build output collision must refuse"; else pass "build output collision refuses"; fi
+if [[ "$(<"$FAKE_DIST/advisory-describe.js")" == "preserve" && ! -f "$FAKE_DIR/planner-argv.log" ]]; then
+  pass "build output collision preserves exact prior output"
+else
+  fail "build output collision preserves exact prior output"
+fi
+
+# An exact owner-loss transport failure is not evidence of owner disappearance.
+reset_fake
+export FAKE_OWNER_LOSS_BUS_FAILURE=1
+if "$SEQ" run >/dev/null 2>&1; then fail "unique-owner transport failure must refuse"; else pass "unique-owner transport failure refuses"; fi
+if [[ ! -f "$FAKE_DIR/planner-alive" && -z "$(ls -A -- "$FAKE_TMP" 2>/dev/null)" ]]; then
+  pass "unique-owner transport failure exact-cleans"
+else
+  fail "unique-owner transport failure exact-cleans"
+fi
+export FAKE_OWNER_LOSS_BUS_FAILURE=0
 # Follower per phase with the pinned KWin PID filter and message-only output; all reaped.
 if [[ "$(grep -c -- '_PID=4242' "$FAKE_DIR/journalctl.log")" -ge 3 ]] && grep -q -- '--after-cursor fake-cursor-1' "$FAKE_DIR/journalctl.log" && grep -q -- '-o cat' "$FAKE_DIR/journalctl.log"; then
   pass "PID-filtered message-only journal followers capture the ready barrier"
