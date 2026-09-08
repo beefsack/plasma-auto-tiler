@@ -27,7 +27,10 @@ use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::message::Type;
 use zbus::{MatchRule, fdo::NameOwnerChanged};
 
-use crate::advisory_contract::{ADVISORY_MAX_REPLY_BYTES, AdvisorySession, evaluate_advisory_json};
+use crate::advisory_contract::{
+    ADVISORY_MAX_REPLY_BYTES, ADVISORY_MAX_REVISION, AdvisorySession,
+    evaluate_advisory_json_for_armed_loss,
+};
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
 use crate::tray_lifecycle::{ProcProcessControl, ProcessControl, ProcessIdentity};
 
@@ -95,6 +98,14 @@ pub struct PlannerEndpoint {
     // exactly one pinned owner/generation/revision binding. The pinned
     // revision never advances; advisory evaluation performs no mutation.
     advisory_session: Arc<std::sync::Mutex<AdvisorySession>>,
+    // Optional bounded advisory-loss arming. `None` is the normal
+    // `planner-service` mode (unchanged: every accepted reply returns
+    // normally). `Some` arms exactly one bounded correlation id: only an
+    // authenticated accepted `DescribeAdvisoryPlan` reply whose
+    // `correlation_id` exactly equals the armed value emits the stderr
+    // marker and withholds that single reply. Earlier success/stale
+    // correlations return normally with no marker and no hang.
+    advisory_loss_correlation: Option<String>,
 }
 
 impl PlannerEndpoint {
@@ -103,7 +114,29 @@ impl PlannerEndpoint {
         Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
+            advisory_loss_correlation: None,
         }
+    }
+
+    /// Armed endpoint for the explicit
+    /// `planner-service --advisory-loss-correlation <correlation>` launch
+    /// option. Returns `None` (fail closed, no endpoint) for any missing or
+    /// invalid bounded correlation instead of arming broadly. No I/O, no
+    /// persistence.
+    #[must_use]
+    pub fn with_advisory_loss_correlation(correlation: &str) -> Option<Self> {
+        let armed = parse_advisory_loss_correlation(correlation)?;
+        Some(Self {
+            operation_lock: Arc::new(async_lock::Mutex::new(())),
+            advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
+            advisory_loss_correlation: Some(armed),
+        })
+    }
+
+    /// Borrow the armed loss correlation, if any. `None` is normal mode.
+    #[must_use]
+    pub fn advisory_loss_correlation(&self) -> Option<&str> {
+        self.advisory_loss_correlation.as_deref()
     }
 
     /// Synchronous read-only advisory request route over the shared session
@@ -116,7 +149,11 @@ impl PlannerEndpoint {
             .advisory_session
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
-        Ok(evaluate_advisory_json(&mut session, request))
+        Ok(evaluate_advisory_json_for_armed_loss(
+            &mut session,
+            request,
+            self.advisory_loss_correlation(),
+        ))
     }
 }
 
@@ -898,6 +935,23 @@ impl PlannerEndpoint {
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        // Bounded advisory-loss barrier. Normal mode (`None`) returns every
+        // reply directly. Armed mode withholds only the single authenticated
+        // accepted reply whose `correlation_id` exactly equals the armed
+        // launch correlation: emit one strict bounded schema-v1 marker to
+        // stderr, then withhold that reply until the process is stopped while
+        // holding the single-flight guard so further calls fail fast.
+        // Earlier success/stale correlations (mismatch or rejected) return
+        // normally with no marker and no hang.
+        if let Some(armed) = self.advisory_loss_correlation.as_deref()
+            && let Some(marker) = loss_marker_for_armed_reply(&reply, armed)
+        {
+            eprintln!("{marker}");
+            std::future::pending::<()>().await;
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
         Ok(reply)
     }
 }
@@ -967,8 +1021,27 @@ fn handle_name_owner_changed(
 /// without queueing and serves `EvaluateMove` until the serving connection or
 /// the planner name is lost. No persistence, no tray coupling.
 pub fn run() -> zbus::Result<()> {
+    serve(PlannerEndpoint::new())
+}
+
+/// Explicit bounded launch option for the authorized advisory service-loss
+/// phase: `planner-service --advisory-loss-correlation <correlation>`.
+/// Normal `planner-service` with no option remains unchanged. The armed
+/// correlation must be a valid bounded correlation id; missing, extra, or
+/// invalid values fail closed before serving. Same bus name, object,
+/// interface, methods, and caller verification as `run()`; no new method,
+/// no persistence, no host/path/config changes.
+pub fn run_with_advisory_loss_correlation(correlation: &str) -> zbus::Result<()> {
+    let Some(endpoint) = PlannerEndpoint::with_advisory_loss_correlation(correlation) else {
+        return Err(zbus::Error::Failure(
+            "planner-service advisory loss correlation is invalid".to_owned(),
+        ));
+    };
+    serve(endpoint)
+}
+
+fn serve(endpoint: PlannerEndpoint) -> zbus::Result<()> {
     let connection = Connection::session()?;
-    let endpoint = PlannerEndpoint::new();
     connection.object_server().at(OBJECT, endpoint)?;
     request_planner_name(&connection)?;
     let our_unique = connection.unique_name().map(|name| name.to_string());
@@ -1112,6 +1185,122 @@ pub fn run_nested(manifest_path: &Path) -> zbus::Result<()> {
         )?;
     }
     Err(owner_monitor_ended_error())
+}
+
+/// Explicit bounded launch flag for the authorized advisory service-loss
+/// phase. Used only as `planner-service --advisory-loss-correlation
+/// <correlation>`; there is no separate loss-test command or endpoint.
+pub const ADVISORY_LOSS_CORRELATION_FLAG: &str = "--advisory-loss-correlation";
+
+/// Bounded schema-v1 service-loss-ready marker kind/version. The marker is a
+/// single JSON line on stderr only, binding the accepted advisory reply's
+/// correlation/owner/generation/revision.
+pub const LOSS_READY_MARKER_KIND: &str = "planner-service-loss-ready";
+pub const LOSS_READY_MARKER_VERSION: u32 = 1;
+pub const MAX_LOSS_READY_MARKER_BYTES: usize = 1024;
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct LossReadyMarker {
+    v: u32,
+    marker: String,
+    correlation_id: String,
+    owner: String,
+    generation: String,
+    revision: u64,
+}
+
+/// Strict bounded schema-v1 marker builder. Returns `None` for any malformed
+/// binding instead of echoing it. No I/O, no persistence.
+#[must_use]
+pub fn format_loss_ready_marker(
+    correlation_id: &str,
+    owner: &str,
+    generation: &str,
+    revision: u64,
+) -> Option<String> {
+    crate::ids::CorrelationId::parse(correlation_id)?;
+    crate::ids::OwnerId::parse(owner)?;
+    crate::ids::GenerationId::parse(generation)?;
+    if revision > ADVISORY_MAX_REVISION {
+        return None;
+    }
+    let marker = LossReadyMarker {
+        v: LOSS_READY_MARKER_VERSION,
+        marker: LOSS_READY_MARKER_KIND.to_owned(),
+        correlation_id: correlation_id.to_owned(),
+        owner: owner.to_owned(),
+        generation: generation.to_owned(),
+        revision,
+    };
+    let text = serde_json::to_string(&marker).ok()?;
+    if text.len() > MAX_LOSS_READY_MARKER_BYTES {
+        return None;
+    }
+    // Schema strictness: round-trip must preserve exactly this shape.
+    let parsed: LossReadyMarker = serde_json::from_str(&text).ok()?;
+    if parsed != marker || parsed.v != 1 || parsed.marker != LOSS_READY_MARKER_KIND {
+        return None;
+    }
+    Some(text)
+}
+
+/// Pure acceptance decision for the armed loss mode. Returns the bounded
+/// marker to emit (and then withhold the reply for) only when `reply` is an
+/// authenticated-accepted advisory reply (`planned`/`noop`, schema v1, with a
+/// strictly valid correlation/owner/generation/revision binding). Rejected or
+/// malformed replies yield `None`: no marker, no hang.
+#[must_use]
+pub fn loss_marker_for_advisory_reply(reply: &str) -> Option<String> {
+    if reply.is_empty() || reply.len() > ADVISORY_MAX_REPLY_BYTES {
+        return None;
+    }
+    let value: serde_json::Value = serde_json::from_str(reply).ok()?;
+    if value.get("v")?.as_u64()? != u64::from(LOSS_READY_MARKER_VERSION) {
+        return None;
+    }
+    let outcome = value.get("outcome")?.as_str()?;
+    if outcome != "planned" && outcome != "noop" {
+        return None;
+    }
+    let correlation_id = value.get("correlation_id")?.as_str()?;
+    let owner = value.get("owner")?.as_str()?;
+    let generation = value.get("generation")?.as_str()?;
+    let revision = value.get("revision")?.as_u64()?;
+    format_loss_ready_marker(correlation_id, owner, generation, revision)
+}
+
+/// Bounded launch-correlation parser for
+/// `planner-service --advisory-loss-correlation <correlation>`. Returns the
+/// owned correlation only when it is a valid bounded correlation id;
+/// missing/empty/malformed/overlong values yield `None` (fail closed, no
+/// echo). No I/O, no persistence.
+#[must_use]
+pub fn parse_advisory_loss_correlation(value: &str) -> Option<String> {
+    crate::ids::CorrelationId::parse(value).map(|id| id.as_str().to_owned())
+}
+
+/// Pure armed acceptance decision. Returns the bounded marker to emit (and
+/// then withhold the reply for) only when `armed_correlation` is itself a
+/// valid bounded correlation, `reply` is an authenticated-accepted advisory
+/// reply, and the reply's `correlation_id` exactly equals the armed value.
+/// Any mismatch, rejected/malformed reply, or invalid arming yields `None`:
+/// the call returns normally with no marker and no hang. Exact string
+/// equality only; no prefix, substring, or case folding.
+#[must_use]
+pub fn loss_marker_for_armed_reply(reply: &str, armed_correlation: &str) -> Option<String> {
+    crate::ids::CorrelationId::parse(armed_correlation)?;
+    let marker = loss_marker_for_advisory_reply(reply)?;
+    let value: serde_json::Value = serde_json::from_str(reply).ok()?;
+    let reply_correlation = value.get("correlation_id")?.as_str()?;
+    if reply_correlation != armed_correlation {
+        return None;
+    }
+    // Marker binding must agree with the armed correlation exactly.
+    let marker_value: serde_json::Value = serde_json::from_str(&marker).ok()?;
+    if marker_value.get("correlation_id")?.as_str()? != armed_correlation {
+        return None;
+    }
+    Some(marker)
 }
 
 #[cfg(test)]
@@ -2034,5 +2223,206 @@ nested_exe_ino={ino}\n",
         live.resolved_executable_path =
             PathBuf::from("/tmp/nested-test-workdir/kwin-6.7.4/bin/kwin_wayland (deleted)");
         assert!(!nested_live_identity_matches(&manifest, &live));
+    }
+
+    #[test]
+    fn advisory_loss_launch_option_is_bounded_and_distinct() {
+        assert_eq!(
+            ADVISORY_LOSS_CORRELATION_FLAG,
+            "--advisory-loss-correlation"
+        );
+        assert_eq!(LOSS_READY_MARKER_KIND, "planner-service-loss-ready");
+        assert_eq!(LOSS_READY_MARKER_VERSION, 1);
+        assert_eq!(MAX_LOSS_READY_MARKER_BYTES, 1024);
+        // Same contract identity in both modes: no new method, no rename.
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(METHOD, "EvaluateMove");
+        assert_eq!(ADVISORY_METHOD, "DescribeAdvisoryPlan");
+    }
+
+    #[test]
+    fn advisory_loss_correlation_parsing_is_bounded_fail_closed() {
+        assert_eq!(
+            parse_advisory_loss_correlation("c-loss-1").as_deref(),
+            Some("c-loss-1")
+        );
+        assert_eq!(
+            parse_advisory_loss_correlation("UPPERCASE-1").as_deref(),
+            Some("UPPERCASE-1")
+        );
+        assert_eq!(
+            parse_advisory_loss_correlation("a.b_c-d9").as_deref(),
+            Some("a.b_c-d9")
+        );
+        // Missing/empty/malformed/overlong fail closed with no endpoint.
+        assert!(parse_advisory_loss_correlation("").is_none());
+        assert!(parse_advisory_loss_correlation("bad id").is_none());
+        assert!(parse_advisory_loss_correlation("bad/corr").is_none());
+        assert!(parse_advisory_loss_correlation(&"x".repeat(129)).is_none());
+        assert!(parse_advisory_loss_correlation(&"x".repeat(4096)).is_none());
+    }
+
+    #[test]
+    fn advisory_loss_arming_requires_valid_correlation() {
+        let armed = PlannerEndpoint::with_advisory_loss_correlation("c-loss-1")
+            .expect("valid correlation arms");
+        assert_eq!(armed.advisory_loss_correlation(), Some("c-loss-1"));
+        let cloned = armed.clone();
+        assert_eq!(cloned.advisory_loss_correlation(), Some("c-loss-1"));
+        assert!(Arc::ptr_eq(
+            &armed.advisory_session,
+            &cloned.advisory_session
+        ));
+        assert!(PlannerEndpoint::with_advisory_loss_correlation("").is_none());
+        assert!(PlannerEndpoint::with_advisory_loss_correlation("bad id").is_none());
+        assert!(PlannerEndpoint::with_advisory_loss_correlation(&"x".repeat(129)).is_none());
+    }
+
+    #[test]
+    fn normal_planner_service_has_no_loss_arming() {
+        let endpoint = PlannerEndpoint::new();
+        assert_eq!(endpoint.advisory_loss_correlation(), None);
+        let reply = endpoint
+            .evaluate_advisory_request(&advisory_test_request("c-normal-1", "owner-1"))
+            .expect("normal route returns a reply");
+        let parsed: serde_json::Value = serde_json::from_str(&reply).expect("reply is JSON");
+        assert_eq!(parsed["outcome"], "planned");
+        assert_eq!(parsed["correlation_id"], "c-normal-1");
+    }
+
+    #[test]
+    fn loss_ready_marker_is_strict_schema_v1_and_bounded() {
+        let marker =
+            format_loss_ready_marker("c-1", "owner-1", "gen-1", 0).expect("valid binding formats");
+        assert!(marker.len() <= MAX_LOSS_READY_MARKER_BYTES);
+        assert!(!marker.contains('\n'));
+        let parsed: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
+        assert_eq!(parsed["v"], 1);
+        assert_eq!(parsed["marker"], "planner-service-loss-ready");
+        assert_eq!(parsed["correlation_id"], "c-1");
+        assert_eq!(parsed["owner"], "owner-1");
+        assert_eq!(parsed["generation"], "gen-1");
+        assert_eq!(parsed["revision"], 0);
+        // Exact keys only.
+        let obj = parsed.as_object().expect("marker is an object");
+        assert_eq!(obj.len(), 6);
+
+        // Strict rejections: no echo path, just None.
+        assert!(format_loss_ready_marker("", "owner-1", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("bad id", "owner-1", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "bad owner", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "owner-1", "UPPERCASE", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "owner-1", "", 0).is_none());
+        assert!(
+            format_loss_ready_marker("c-1", "owner-1", "gen-1", ADVISORY_MAX_REVISION + 1)
+                .is_none()
+        );
+        assert!(format_loss_ready_marker(&"x".repeat(129), "owner-1", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", &"x".repeat(129), "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "owner-1", &"x".repeat(65), 0).is_none());
+    }
+
+    #[test]
+    fn loss_marker_armed_requires_exact_correlation_equality() {
+        // One armed process serves success, stale, then loss: earlier
+        // correlations return normally (no marker), only the exact armed
+        // accepted correlation yields the marker. Pure decision keeps the
+        // session out of the equality proof, so each reply is judged alone.
+        let endpoint = PlannerEndpoint::with_advisory_loss_correlation("c-loss-9")
+            .expect("valid armed endpoint");
+        let success = endpoint
+            .evaluate_advisory_request(&advisory_test_request("c-success-1", "owner-1"))
+            .expect("success reply");
+        let success_value: serde_json::Value =
+            serde_json::from_str(&success).expect("success is JSON");
+        assert_eq!(success_value["outcome"], "planned");
+        // Earlier success correlation returns normally under the loss arming.
+        assert!(loss_marker_for_armed_reply(&success, "c-loss-9").is_none());
+        // Stale reuse of the success correlation is rejected and also
+        // returns normally (no marker even under its own arming).
+        let stale = endpoint
+            .evaluate_advisory_request(&advisory_test_request("c-success-1", "owner-1"))
+            .expect("stale still returns JSON");
+        let stale_value: serde_json::Value = serde_json::from_str(&stale).expect("stale is JSON");
+        assert_eq!(stale_value["outcome"], "rejected");
+        assert!(loss_marker_for_armed_reply(&stale, "c-success-1").is_none());
+        assert!(loss_marker_for_armed_reply(&stale, "c-loss-9").is_none());
+
+        // The exact armed loss correlation is the sole exception to the
+        // consumed-session stale-request rule. It is accepted only to emit
+        // the terminal marker; the D-Bus method withholds this reply.
+        let loss = endpoint
+            .evaluate_advisory_request(&advisory_test_request("c-loss-9", "owner-1"))
+            .expect("loss reply");
+        let marker =
+            loss_marker_for_armed_reply(&loss, "c-loss-9").expect("exact match yields marker");
+        assert!(marker.len() <= MAX_LOSS_READY_MARKER_BYTES);
+        assert!(!marker.contains('\n'));
+        let parsed: serde_json::Value = serde_json::from_str(&marker).expect("marker is JSON");
+        let reply: serde_json::Value = serde_json::from_str(&loss).expect("reply is JSON");
+        assert_eq!(parsed["correlation_id"], "c-loss-9");
+        assert_eq!(parsed["correlation_id"], reply["correlation_id"]);
+        assert_eq!(parsed["owner"], reply["owner"]);
+        assert_eq!(parsed["generation"], reply["generation"]);
+        assert_eq!(parsed["revision"], reply["revision"]);
+
+        // Exact equality only: prefix, suffix, case, and neighbor all miss.
+        assert!(loss_marker_for_armed_reply(&loss, "c-loss-90").is_none());
+        assert!(loss_marker_for_armed_reply(&loss, "c-loss").is_none());
+        assert!(loss_marker_for_armed_reply(&loss, "C-LOSS-9").is_none());
+        assert!(loss_marker_for_armed_reply(&loss, "c-success-1").is_none());
+        assert!(loss_marker_for_armed_reply(&loss, "").is_none());
+        assert!(loss_marker_for_armed_reply(&loss, "bad id").is_none());
+    }
+
+    #[test]
+    fn loss_marker_rejects_malformed_marker_and_reply() {
+        // Malformed marker bindings never format (no echo path, just None).
+        assert!(format_loss_ready_marker("", "owner-1", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("bad id", "owner-1", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "bad owner", "gen-1", 0).is_none());
+        assert!(format_loss_ready_marker("c-1", "owner-1", "UPPERCASE", 0).is_none());
+        assert!(
+            format_loss_ready_marker("c-1", "owner-1", "gen-1", ADVISORY_MAX_REVISION + 1)
+                .is_none()
+        );
+        // Malformed replies never yield a marker, armed or not.
+        assert!(loss_marker_for_advisory_reply("").is_none());
+        assert!(loss_marker_for_advisory_reply("not json").is_none());
+        assert!(loss_marker_for_armed_reply("not json", "c-1").is_none());
+        assert!(loss_marker_for_armed_reply("", "c-1").is_none());
+        let rejected_json = serde_json::json!({
+            "v": 1, "correlation_id": "c-1", "owner": "", "generation": "",
+            "revision": 0, "outcome": "rejected", "kind": "snapshot-invalid",
+            "message": "snapshot or intent is malformed"
+        })
+        .to_string();
+        assert!(loss_marker_for_advisory_reply(&rejected_json).is_none());
+        assert!(loss_marker_for_armed_reply(&rejected_json, "c-1").is_none());
+        let wrong_v = serde_json::json!({
+            "v": 2, "correlation_id": "c-1", "owner": "owner-1",
+            "generation": "gen-1", "revision": 0, "outcome": "planned"
+        })
+        .to_string();
+        assert!(loss_marker_for_advisory_reply(&wrong_v).is_none());
+        assert!(loss_marker_for_armed_reply(&wrong_v, "c-1").is_none());
+        // Missing correlation field in an otherwise planned-shaped reply.
+        let missing_corr = serde_json::json!({
+            "v": 1, "owner": "owner-1", "generation": "gen-1",
+            "revision": 0, "outcome": "planned"
+        })
+        .to_string();
+        assert!(loss_marker_for_advisory_reply(&missing_corr).is_none());
+        assert!(loss_marker_for_armed_reply(&missing_corr, "c-1").is_none());
+        // Oversized reply never yields a marker.
+        let big = format!(
+            "{{\"v\":1,\"correlation_id\":\"c-1\",\"owner\":\"owner-1\",\"generation\":\"gen-1\",\"revision\":0,\"outcome\":\"planned\",\"pad\":\"{}\"}}",
+            "x".repeat(ADVISORY_MAX_REPLY_BYTES)
+        );
+        assert!(loss_marker_for_advisory_reply(&big).is_none());
+        assert!(loss_marker_for_armed_reply(&big, "c-1").is_none());
     }
 }

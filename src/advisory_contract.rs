@@ -674,6 +674,19 @@ fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static st
 /// verified revision.
 #[must_use]
 pub fn evaluate_advisory_json(session: &mut AdvisorySession, request_json: &str) -> String {
+    evaluate_advisory_json_for_armed_loss(session, request_json, None)
+}
+
+/// Evaluates the one explicitly armed terminal service-loss request. Normal
+/// callers pass `None` through `evaluate_advisory_json`, retaining the
+/// one-success advisory contract. The armed correlation may bypass only the
+/// otherwise exact `stale-request` result after the session has already pinned
+/// the same owner, generation, and revision; it never returns to a caller.
+pub fn evaluate_advisory_json_for_armed_loss(
+    session: &mut AdvisorySession,
+    request_json: &str,
+    armed_loss_correlation: Option<&str>,
+) -> String {
     if request_json.len() > ADVISORY_MAX_REQUEST_BYTES {
         return rejected(session, String::new(), "oversized", MSG_OVERSIZED);
     }
@@ -738,7 +751,13 @@ pub fn evaluate_advisory_json(session: &mut AdvisorySession, request_json: &str)
     if let Some((kind, message)) =
         session.binding_error(&owner, &generation, revision, &correlation_id)
     {
-        return rejected(session, correlation_id, kind, message);
+        // The bounded loss barrier needs one second, deliberately withheld
+        // accepted reply after proving the ordinary stale refusal. Its exact
+        // correlation is fixed at service launch and all other binding errors
+        // remain terminal.
+        if !(kind == "stale-request" && armed_loss_correlation == Some(correlation_id.as_str())) {
+            return rejected(session, correlation_id, kind, message);
+        }
     }
     let snapshot = match convert_snapshot(&request.snapshot) {
         Ok(snapshot) => snapshot,

@@ -51,10 +51,22 @@ Only meaningful pending or active work is listed.
      the required absence-to-owner transition, PID-filtered diagnostic capture,
      or deterministic owner-loss timing. No planner, advisory Script, runtime
      directory, artifact, receipt, or service was created. The remaining gate
-     is a reviewed fail-closed transport sequencer, then one bounded journey
-     with success, stale request/revision/generation refusal, service-loss
-     refusal, zero-mutation, production continuity, and exact restoration
-     evidence. The static
+      is a reviewed fail-closed transport sequencer, then one bounded journey
+      with success, stale request/revision/generation refusal, service-loss
+      refusal, zero-mutation, production continuity, and exact restoration
+      evidence. The sequencer and static fault matrix are complete. Two early
+      live attempts stopped before effective lifecycle on omitted user-bus
+      scoping and Script-object introspection scoping, each followed by a
+      reviewed causal correction and public exact restoration. The final
+      bounded attempt loaded and ran only the advisory Script, then stopped
+      fail-closed at `advisory-invalid-input`: the observer did not accept the
+      current host as an eligible exact-three scope. Planner/advisory absence,
+      generated-output absence, and production-plugin continuity were verified
+      afterward; no runtime residue was searched or changed. No native mutation
+      API exists on this path, but success/stale/service-loss and after-snapshot
+      equality are not established. Do not retry unchanged or manufacture host
+      conditions; the remaining gate is a naturally eligible exact-three
+      observer scope. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

@@ -41,13 +41,23 @@ assert_absent() {
 
 if bash -n "$LOADER" >/dev/null 2>&1; then pass "bash -n loader"; else fail "bash -n loader"; fi
 if bash -n "$REPO_ROOT/scripts/advisory-describe-host.test.sh" >/dev/null 2>&1; then pass "bash -n self"; else fail "bash -n self"; fi
+assert_contains "$LOADER" '"$BUSCTL_BIN" "$BUS_SCOPE" introspect'
 
 # Narrow project-namespaced interface with receipt-scoped commands.
 assert_contains "$LOADER" 'PLUGIN="plasma-auto-tiler-advisory-describe"'
+assert_contains "$LOADER" 'preflight --bundle B --manifest M --input I'
 assert_contains "$LOADER" 'start --bundle B --manifest M --receipt R --diag-file D --input I'
 assert_contains "$LOADER" 'status --receipt R'
 assert_contains "$LOADER" 'diagnostics --receipt R'
 assert_contains "$LOADER" 'stop --receipt R'
+assert_contains "$LOADER" '--expected-planner-owner'
+assert_contains "$LOADER" 'check_planner_present_owner'
+assert_contains "$LOADER" 'valid_planner_unique_owner'
+assert_contains "$LOADER" 'cmd_preflight'
+assert_contains "$LOADER" 'parse_preflight_args'
+assert_contains "$LOADER" 'planner unique owner mismatch'
+assert_contains "$LOADER" 'planner unique owner drift after lifecycle'
+assert_contains "$LOADER" 'preflight: bundle='
 # Exact transport: loadScript with the exact bundle, introspect and run only
 # the returned exact object, strict canonical id parsing incl. 0.
 assert_contains "$LOADER" 'loadScript ss "$START_BUNDLE" "$PLUGIN"'
@@ -87,11 +97,20 @@ assert_contains "$LOADER" 'MANIFEST_INPUT_SHA'
 assert_contains "$LOADER" 'MANIFEST_SNAPSHOT_SHA'
 assert_contains "$LOADER" 'RECEIPT_SNAPSHOT_SHA'
 assert_contains "$LOADER" 'partial script-id='
-# Only the pinned bus/sha/node/systemctl/stat/readlink tools run; no generic IPC.
-if [[ "$(grep -o '"\$[A-Z0-9_]*BIN"' "$LOADER" | sort -u | tr '\n' ' ')" == '"$BUSCTL_BIN" "$NODE_BIN" "$READLINK_BIN" "$SHA256SUM_BIN" "$STAT_BIN" "$SYSTEMCTL_BIN" ' ]]; then
-  pass "only pinned bus/sha/node/systemctl/stat/readlink commands run"
+assert_contains "$LOADER" 'ambiguous loadScript identity'
+assert_contains "$LOADER" 'preserving residue with no cleanup'
+# Host-contact tools are pinned via BIN vars; no bare bus/systemctl contact.
+assert_contains "$LOADER" '"$BUSCTL_BIN"'
+assert_contains "$LOADER" '"$SYSTEMCTL_BIN"'
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -w -F 'busctl' | grep -v -F 'BUSCTL_BIN' > /dev/null; then
+  fail "host busctl contact must be pinned via BUSCTL_BIN"
 else
-  fail "only pinned bus/sha/node/systemctl/stat/readlink commands run"
+  pass "host busctl contact is pinned via BUSCTL_BIN"
+fi
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -w -F 'systemctl' | grep -v -F 'SYSTEMCTL_BIN' | grep -v -F 'systemctl-show' > /dev/null; then
+  fail "host systemctl contact must be pinned via SYSTEMCTL_BIN"
+else
+  pass "host systemctl contact is pinned via SYSTEMCTL_BIN"
 fi
 assert_absent "$LOADER" 'Script0'
 assert_contains "$LOADER" 'PRODUCTION_PLUGIN="plasma-auto-tiler-kwin"'
@@ -121,19 +140,57 @@ assert_absent "$LOADER" 'Scripting start'
 assert_absent "$LOADER" 'nested-'
 # Planner absence must fail closed on NameHasOwner boolean, never on a failed
 # GetNameOwner. The planner check must not call GetNameOwner.
-if grep -A30 -F 'check_planner_absent()' "$LOADER" | grep -Fq 'GetNameOwner'; then
+if grep -A30 -F 'check_planner_absent()' "$LOADER" | grep -F 'GetNameOwner' > /dev/null; then
   fail "planner absence must not rely on GetNameOwner"
 else
   pass "planner absence avoids GetNameOwner"
 fi
+# Strict present-owner resolver must require the full chain.
+if grep -A80 -F 'check_planner_present_owner()' "$LOADER" | grep -F 'NameHasOwner' > /dev/null; then
+  pass "present-owner requires NameHasOwner true"
+else
+  fail "present-owner requires NameHasOwner true"
+fi
+if grep -A80 -F 'check_planner_present_owner()' "$LOADER" | grep -F 'GetNameOwner' > /dev/null; then
+  pass "present-owner requires GetNameOwner equality"
+else
+  fail "present-owner requires GetNameOwner equality"
+fi
+if grep -A120 -F 'check_planner_present_owner()' "$LOADER" | grep -F 'GetConnectionUnixProcessID' > /dev/null; then
+  pass "present-owner requires GetConnectionUnixProcessID"
+else
+  fail "present-owner requires GetConnectionUnixProcessID"
+fi
+if grep -A150 -F 'check_planner_present_owner()' "$LOADER" | grep -F 'proc_start_tick' > /dev/null; then
+  pass "present-owner requires PID/start tick"
+else
+  fail "present-owner requires PID/start tick"
+fi
+# Default start must preserve the absent requirement; expected mode skips only it.
+assert_contains "$LOADER" 'check_planner_absent || exit 1'
+assert_contains "$LOADER" 'check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER"'
+assert_contains "$LOADER" 'check_planner_present_owner "$PRE_EXPECTED_PLANNER_OWNER"'
+assert_contains "$LOADER" 'is absent; refusing without the expected present owner'
+# No Planner launch/kill, no journald, no generic runtime directory.
+assert_absent "$LOADER" 'journalctl'
+assert_absent "$LOADER" 'journald'
+assert_absent "$LOADER" 'planner-launch'
+assert_absent "$LOADER" 'planner-kill'
+assert_absent "$LOADER" 'systemd-run'
+assert_absent "$LOADER" 'XDG_RUNTIME_DIR'
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -F 'RuntimeDirectory=' > /dev/null; then
+  fail "no runtime directory in loader"
+else
+  pass "no runtime directory in loader"
+fi
 # Direct-parent fallback only on the fixed MainPID-mismatch status, never by
 # matching stderr text.
-if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'does not match KWin PID'; then
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -F 'does not match KWin PID' > /dev/null; then
   fail "direct-parent avoids stderr matching"
 else
   pass "direct-parent avoids stderr matching"
 fi
-if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq '"$rc" -eq 42'; then
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -F '"$rc" -eq 42' > /dev/null; then
   pass "direct-parent routes on the fixed mismatch status"
 else
   fail "direct-parent routes on the fixed mismatch status"
@@ -145,12 +202,12 @@ else
   pass "sourced identity helper creates no temp files"
 fi
 # Only the approved helper route may mention poc3 identity helpers.
-if grep -F 'poc3_' "$LOADER" | grep -Fvq -e 'poc3_kwin_systemd_fallback' -e 'poc3_kwin_direct_parent_fallback'; then
+if grep -F 'poc3_' "$LOADER" | grep -Fv -e 'poc3_kwin_systemd_fallback' -e 'poc3_kwin_direct_parent_fallback' > /dev/null; then
   fail "only approved poc3 helper route present"
 else
   pass "only approved poc3 helper route present"
 fi
-if grep -F 'scripts/poc3' "$LOADER" | grep -Fvq 'scripts/poc3-host-kwin-identity.sh'; then
+if grep -F 'scripts/poc3' "$LOADER" | grep -Fv 'scripts/poc3-host-kwin-identity.sh' > /dev/null; then
   fail "only approved poc3 helper source present"
 else
   pass "only approved poc3 helper source present"
@@ -170,17 +227,39 @@ if grep -E '(^|[^>&0-9])>>( |"|\$|/)' "$PREVERIFY_SECT" >/dev/null 2>&1; then
 else
   pass "pre-verify has no file-append redirection"
 fi
-if grep -E '(^|[^>&0-9])> ("|\$|/[^d])' "$PREVERIFY_SECT" 2>/dev/null | grep -v '/dev/null' | grep -q .; then
+if grep -E '(^|[^>&0-9])> ("|\$|/[^d])' "$PREVERIFY_SECT" 2>/dev/null | grep -v '/dev/null' | grep '.' > /dev/null; then
   fail "pre-verify has no file-create redirection"
 else
   pass "pre-verify has no file-create redirection"
 fi
-if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'mktemp'; then
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -F 'mktemp' > /dev/null; then
   fail "loader creates no temp files"
 else
   pass "loader creates no temp files"
 fi
-if grep -o 'unloadScript s "[^"]*"' "$LOADER" | sort -u | tr '\n' ' ' | grep -qF 'unloadScript s "$PLUGIN" unloadScript s "$RECEIPT_PLUGIN"'; then
+# Preflight subcommand must be resource-free: no temp/dir creation in code.
+PREFLIGHT_SECT="$TMP_DIR/preflight-sect.txt"
+sed -n '/^cmd_preflight() {/,/^}/p' "$LOADER" \
+  | grep -v '^[[:space:]]*#' > "$PREFLIGHT_SECT"
+for _tok in mktemp mkdtemp mkdir touch; do
+  if grep -wq -- "$_tok" "$PREFLIGHT_SECT"; then fail "preflight has no $_tok"; else pass "preflight has no $_tok"; fi
+done
+if grep -E '(^|[^>&0-9])>>( |"|\$|/)' "$PREFLIGHT_SECT" >/dev/null 2>&1; then
+  fail "preflight has no file-append redirection"
+else
+  pass "preflight has no file-append redirection"
+fi
+if grep -E '(^|[^>&0-9])> ("|\$|/[^d])' "$PREFLIGHT_SECT" 2>/dev/null | grep -v '/dev/null' | grep '.' > /dev/null; then
+  fail "preflight has no file-create redirection"
+else
+  pass "preflight has no file-create redirection"
+fi
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -F 'preflight.*mkdir' > /dev/null; then
+  fail "preflight creates no runtime directory"
+else
+  pass "preflight creates no runtime directory"
+fi
+if grep -o 'unloadScript s "[^"]*"' "$LOADER" | sort -u | tr '\n' ' ' | grep -F 'unloadScript s "$PLUGIN" unloadScript s "$RECEIPT_PLUGIN"' > /dev/null; then
   pass "unload targets only the recorded plugin"
 else
   fail "unload targets only the recorded plugin"
@@ -204,9 +283,13 @@ if printf '%s' "$*" | grep -Fq 'loadScript'; then
   cat -- "$FAKE_DIR/load_reply"
   exit "${FAKE_LOAD_EXIT:-0}"
 fi
-if [[ "${1:-}" == "introspect" ]]; then
+if [[ "${1:-}" == "--user" && "${2:-}" == "introspect" ]]; then
   cat -- "$FAKE_DIR/introspect_reply"
   exit "${FAKE_INTROSPECT_EXIT:-0}"
+fi
+if [[ "${1:-}" == "introspect" ]]; then
+  echo "fake busctl: unscoped introspect" >&2
+  exit 1
 fi
 if printf '%s' "$*" | grep -Fq 'NameHasOwner'; then
   if printf '%s' "$*" | grep -Fq 'org.plasmaautotiler.Planner'; then
@@ -219,7 +302,20 @@ if printf '%s' "$*" | grep -Fq 'NameHasOwner'; then
 fi
 if printf '%s' "$*" | grep -Fq 'GetNameOwner'; then
   if printf '%s' "$*" | grep -Fq 'org.plasmaautotiler.Planner'; then
-    echo "fake busctl: planner must use NameHasOwner, not GetNameOwner" >&2
+    if [[ -f "$FAKE_DIR/bad-planner-owner-reply" ]]; then cat -- "$FAKE_DIR/bad-planner-owner-reply"; exit 0; fi
+    if [[ -f "$FAKE_DIR/planner-owner-seq" && -s "$FAKE_DIR/planner-owner-seq" ]]; then
+      line="$(head -n 1 -- "$FAKE_DIR/planner-owner-seq")"
+      tail -n +2 -- "$FAKE_DIR/planner-owner-seq" > "$FAKE_DIR/planner-owner-seq.tmp" 2>/dev/null || true
+      mv -- "$FAKE_DIR/planner-owner-seq.tmp" "$FAKE_DIR/planner-owner-seq" 2>/dev/null || true
+      printf '{"type":"s","data":["%s"]}' "$line"
+      exit 0
+    fi
+    if [[ -f "$FAKE_DIR/planner-owner" ]]; then
+      planner_now="$(head -n 1 -- "$FAKE_DIR/planner-owner" | tr -d '\r ')"
+      printf '{"type":"s","data":["%s"]}' "$planner_now"
+      exit 0
+    fi
+    echo "fake busctl: planner has no owner" >&2
     exit 1
   fi
   if printf '%s' "$*" | grep -Fq 'org.kde.KWin'; then
@@ -236,8 +332,25 @@ if printf '%s' "$*" | grep -Fq 'GetNameOwner'; then
   fi
 fi
 if printf '%s' "$*" | grep -Fq 'GetConnectionUnixProcessID'; then
-  if [[ -f "$FAKE_DIR/bad-pid-reply" ]]; then cat -- "$FAKE_DIR/bad-pid-reply"; exit 0; fi
   last="${*: -1}"
+  kwin_owner_now="$(tr -d '\r\n ' < "$FAKE_DIR/kwin-owner" 2>/dev/null || printf '')"
+  if [[ -n "$kwin_owner_now" && "$last" != "$kwin_owner_now" && "$last" == :* ]]; then
+    if [[ -f "$FAKE_DIR/bad-planner-pid-reply" ]]; then cat -- "$FAKE_DIR/bad-planner-pid-reply"; exit 0; fi
+    if [[ -f "$FAKE_DIR/planner-pid-seq" && -s "$FAKE_DIR/planner-pid-seq" ]]; then
+      line="$(head -n 1 -- "$FAKE_DIR/planner-pid-seq")"
+      tail -n +2 -- "$FAKE_DIR/planner-pid-seq" > "$FAKE_DIR/planner-pid-seq.tmp" 2>/dev/null || true
+      mv -- "$FAKE_DIR/planner-pid-seq.tmp" "$FAKE_DIR/planner-pid-seq" 2>/dev/null || true
+      printf '{"type":"u","data":[%s]}' "$line"
+      exit 0
+    fi
+    if [[ -f "$FAKE_DIR/planner-pid" ]]; then
+      printf '{"type":"u","data":[%s]}' "$(cat -- "$FAKE_DIR/planner-pid")"
+      exit 0
+    fi
+    echo "fake busctl: unknown planner owner $last" >&2
+    exit 1
+  fi
+  if [[ -f "$FAKE_DIR/bad-pid-reply" ]]; then cat -- "$FAKE_DIR/bad-pid-reply"; exit 0; fi
   if [[ -f "$FAKE_DIR/pid-seq" && -s "$FAKE_DIR/pid-seq" ]]; then
     line="$(head -n 1 -- "$FAKE_DIR/pid-seq")"
     tail -n +2 -- "$FAKE_DIR/pid-seq" > "$FAKE_DIR/pid-seq.tmp" 2>/dev/null || true
@@ -372,14 +485,25 @@ setup_kwin_identity() {
   printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
   printf '%s\n' "$mainpid" > "$FAKE_DIR/kwin-pid"
   rm -f -- "$FAKE_DIR/owner-seq" "$FAKE_DIR/pid-seq" "$FAKE_DIR/bad-owner-reply" "$FAKE_DIR/bad-pid-reply" "$FAKE_DIR/planner-owner" "$FAKE_DIR/bad-planner-reply" "$FAKE_DIR/planner-fail"
-  rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243" "$FAKE_PROC/9999"
+  rm -f -- "$FAKE_DIR/planner-owner-seq" "$FAKE_DIR/planner-pid" "$FAKE_DIR/planner-pid-seq" "$FAKE_DIR/bad-planner-owner-reply" "$FAKE_DIR/bad-planner-pid-reply"
+  rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243" "$FAKE_PROC/4343" "$FAKE_PROC/4344" "$FAKE_PROC/9999"
   proc_fixture "$mainpid" 424200 "$FAKE_WRAPPED" 1
   write_systemctl_show "$FAKE_LAUNCHER" "$mainpid"
+}
+
+setup_planner_present() {
+  local owner="${1:-:1.99}" pid="${2:-4343}" tick="${3:-434300}"
+  printf '%s\n' "$owner" > "$FAKE_DIR/planner-owner"
+  printf '%s\n' "$pid" > "$FAKE_DIR/planner-pid"
+  rm -f -- "$FAKE_DIR/planner-owner-seq" "$FAKE_DIR/planner-pid-seq" "$FAKE_DIR/bad-planner-owner-reply" "$FAKE_DIR/bad-planner-pid-reply" "$FAKE_DIR/bad-planner-reply" "$FAKE_DIR/planner-fail"
+  rm -rf -- "$FAKE_PROC/$pid"
+  proc_fixture "$pid" "$tick" "$FAKE_WRAPPED" 1
 }
 
 reset_fake() {
   rm -f -- "$FAKE_DIR/calls.log" "$FAKE_DIR/builder.log" "$FAKE_DIR/events.log" "$FAKE_DIR/systemctl.log" "$FAKE_DIR/is_loaded_count" "$FAKE_DIR/is_loaded_seq" "$FAKE_DIR/is_loaded_queue"
   rm -f -- "$FAKE_DIR/owner-seq" "$FAKE_DIR/pid-seq" "$FAKE_DIR/bad-owner-reply" "$FAKE_DIR/bad-pid-reply" "$FAKE_DIR/planner-owner" "$FAKE_DIR/bad-planner-reply" "$FAKE_DIR/planner-fail"
+  rm -f -- "$FAKE_DIR/planner-owner-seq" "$FAKE_DIR/planner-pid" "$FAKE_DIR/planner-pid-seq" "$FAKE_DIR/bad-planner-owner-reply" "$FAKE_DIR/bad-planner-pid-reply"
   : > "$FAKE_DIR/events.log"
   : > "$FAKE_DIR/calls.log"
   rm -rf -- "$TMP_DIR/guard-tmp"
@@ -470,7 +594,7 @@ else
   fail "receipt records the exact id and object"
 fi
 if grep -qF "loadScript ss $BUNDLE plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log" \
-  && grep -qF "introspect org.kde.KWin /Scripting/Script3" "$FAKE_DIR/calls.log" \
+  && grep -qF -- "--user introspect org.kde.KWin /Scripting/Script3" "$FAKE_DIR/calls.log" \
   && grep -qF "/Scripting/Script3 org.kde.kwin.Script run" "$FAKE_DIR/calls.log"; then
   pass "exact Script path and object run"
 else
@@ -561,7 +685,7 @@ done
 for reply in "i -1" "s hello" "i 2147483648" "i 99999999999" "oops"; do
   reset_fake; seed_diag
   printf '%s' "$reply" > "$FAKE_DIR/load_reply"
-  if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-bad.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-bad.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >"$TMP_DIR/o-bad.log" 2>&1; then
     fail "start must reject id reply: $reply"
   else
     pass "start rejects id reply: $reply"
@@ -572,7 +696,17 @@ for reply in "i -1" "s hello" "i 2147483648" "i 99999999999" "oops"; do
   else
     pass "no object traffic on rejected id: $reply"
   fi
-  rm -f -- "$TMP_DIR/r-bad.json"
+  if grep -qF 'ambiguous loadScript identity' "$TMP_DIR/o-bad.log" && grep -qF 'preserving residue' "$TMP_DIR/o-bad.log"; then
+    pass "malformed id emits ambiguity/preserved-residue: $reply"
+  else
+    fail "malformed id emits ambiguity/preserved-residue: $reply"
+  fi
+  if grep -qF 'unloadScript' "$FAKE_DIR/calls.log"; then
+    fail "no guessed unload on unknown object: $reply"
+  else
+    pass "no guessed unload on unknown object: $reply"
+  fi
+  rm -f -- "$TMP_DIR/r-bad.json" "$TMP_DIR/o-bad.log"
 done
 
 # 6: run failure triggers partial cleanup of the exact id only.
@@ -1473,6 +1607,461 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 if "$LOADER" start --bundle "$BUNDLE" --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-arg.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" >/dev/null 2>&1; then fail "start must reject duplicate flags"; else pass "start rejects duplicate flags"; fi
 if "$LOADER" bogus --receipt "$TMP_DIR/r0.json" >/dev/null 2>&1; then fail "loader must reject unknown commands"; else pass "loader rejects unknown commands"; fi
 if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on argument refusal"; else pass "no bus traffic on argument refusal"; fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-arg2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-planner-owner ":1.99" --expected-planner-owner ":1.99" >/dev/null 2>&1; then fail "start must reject duplicate expected owner"; else pass "start rejects duplicate expected owner"; fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-arg2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-planner-owner "not-unique" >/dev/null 2>&1; then fail "start must reject malformed expected owner"; else pass "start rejects malformed expected owner"; fi
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" >/dev/null 2>&1; then fail "preflight must require --input"; else pass "preflight requires --input"; fi
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" --input "$TMP_DIR/request.json" >/dev/null 2>&1; then fail "preflight must reject duplicate --input"; else pass "preflight rejects duplicate --input"; fi
+
+# 17: strict preflight subcommand is resource-free and emits only safe
+# machine-independent manifest identity.
+preflight_cmd_no_resources() {
+  local label="$1"
+  if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "no builder verify on preflight $label"; else pass "no builder verify on preflight $label"; fi
+  if [[ -f "$FAKE_DIR/calls.log" ]] && { grep -qF 'loadScript' "$FAKE_DIR/calls.log" 2>/dev/null || grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log" 2>/dev/null; }; then
+    fail "no load/run on preflight $label"
+  else
+    pass "no load/run on preflight $label"
+  fi
+  if [[ -f "$FAKE_DIR/events.log" ]] && grep -qF -- '--verify' "$FAKE_DIR/events.log" 2>/dev/null; then
+    fail "no verify event on preflight $label"
+  else
+    pass "no verify event on preflight $label"
+  fi
+  if [[ -d "$TMP_DIR/guard-tmp" ]] && [[ -n "$(ls -A -- "$TMP_DIR/guard-tmp" 2>/dev/null)" ]]; then
+    fail "no guard-tmp resources on preflight $label"
+  else
+    pass "no guard-tmp resources on preflight $label"
+  fi
+}
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" > "$TMP_DIR/o-preflight" 2>&1; then
+  pass "preflight accepts absent default"
+else
+  fail "preflight accepts absent default"
+fi
+if grep -qF 'preflight: bundle=' "$TMP_DIR/o-preflight" && grep -qF "owner=$OWNER" "$TMP_DIR/o-preflight" && grep -qF "correlation=$NONCE" "$TMP_DIR/o-preflight"; then
+  pass "preflight emits safe manifest identity"
+else
+  fail "preflight emits safe manifest identity"
+fi
+for _secret in ":1.10" "4242" "424200" "kwin_wayland" ":1.99"; do
+  if grep -qF -- "$_secret" "$TMP_DIR/o-preflight"; then fail "preflight hides machine detail $_secret"; else pass "preflight hides machine detail $_secret"; fi
+done
+if grep -qF 'NameHasOwner' "$FAKE_DIR/calls.log" && grep -qF 'GetNameOwner' "$FAKE_DIR/calls.log" && grep -qF 'GetConnectionUnixProcessID' "$FAKE_DIR/calls.log"; then
+  pass "preflight proves source/tool/KWin/prod/advisory/planner-absence"
+else
+  fail "preflight proves source/tool/KWin/prod/advisory/planner-absence"
+fi
+preflight_cmd_no_resources "absent-success"
+# Preflight collision by default (planner present without explicit owner).
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf ':1.99\n' > "$FAKE_DIR/planner-owner"
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" >/dev/null 2>&1; then
+  fail "preflight must refuse planner collision by default"
+else
+  pass "preflight refuses planner collision by default"
+fi
+preflight_cmd_no_resources "collision"
+# Preflight with explicit expected owner succeeds when present.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" --expected-planner-owner ":1.99" > "$TMP_DIR/o-preflight-exp" 2>&1; then
+  pass "preflight accepts expected present owner"
+else
+  fail "preflight accepts expected present owner"
+fi
+if grep -qF 'GetNameOwner' "$FAKE_DIR/calls.log" && grep -qF 'GetConnectionUnixProcessID' "$FAKE_DIR/calls.log"; then
+  pass "preflight proves exact present owner"
+else
+  fail "preflight proves exact present owner"
+fi
+preflight_cmd_no_resources "expected-success"
+# Preflight expected owner absent/mismatch/malformed refuses resource-free.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "preflight must refuse absent expected owner"
+else
+  pass "preflight refuses absent expected owner"
+fi
+preflight_cmd_no_resources "absent-expected"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.77" 4343 434300
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "preflight must refuse owner mismatch"
+else
+  pass "preflight refuses owner mismatch"
+fi
+preflight_cmd_no_resources "mismatch"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf 'garbage' > "$FAKE_DIR/bad-planner-owner-reply"
+if "$LOADER" preflight --bundle "$BUNDLE" --manifest "$MANIFEST" --input "$TMP_DIR/request.json" --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "preflight must refuse malformed present owner"
+else
+  pass "preflight refuses malformed present owner"
+fi
+preflight_cmd_no_resources "malformed-owner"
+
+# 18: start with exact expected Planner unique owner skips only absence.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" > "$TMP_DIR/o-exp" 2>&1; then
+  pass "start accepts expected present owner"
+else
+  fail "start accepts expected present owner"
+fi
+if grep -qF '"scriptId":3' "$TMP_DIR/r-exp.json" && grep -qF 'planner-owner=:1.99' "$TMP_DIR/o-exp"; then
+  pass "expected-owner start records exact id and proves planner owner"
+else
+  fail "expected-owner start records exact id and proves planner owner"
+fi
+if grep -qF 'GetNameOwner s org.plasmaautotiler.Planner' "$FAKE_DIR/calls.log" && grep -qF 'GetConnectionUnixProcessID s :1.99' "$FAKE_DIR/calls.log"; then
+  pass "expected-owner start proves exact present owner before and after"
+else
+  fail "expected-owner start proves exact present owner before and after"
+fi
+if grep -qF -- '--verify' "$FAKE_DIR/builder.log" && grep -qF 'loadScript ss' "$FAKE_DIR/calls.log"; then
+  pass "expected-owner start runs verify before lifecycle"
+else
+  fail "expected-owner start runs verify before lifecycle"
+fi
+rm -f -- "$TMP_DIR/r-exp.json"
+# Default still requires absence even with a valid planner present.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-default.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "default start must still refuse planner collision"
+else
+  pass "default start still refuses planner collision"
+fi
+preflight_no_resources "default-collision-with-planner-present" "$TMP_DIR/r-exp-default.json"
+rm -f -- "$TMP_DIR/r-exp-default.json"
+# Expected mismatch refuses with exact cleanup and no receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.77" 4343 434300
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-mismatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse mismatch"
+else
+  pass "expected-owner start refuses mismatch"
+fi
+if [[ -e "$TMP_DIR/r-exp-mismatch.json" ]]; then fail "no receipt on planner mismatch"; else pass "no receipt on planner mismatch"; fi
+if grep -qF 'loadScript' "$FAKE_DIR/calls.log" 2>/dev/null || grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log" 2>/dev/null; then fail "no load/run on planner mismatch"; else pass "no load/run on planner mismatch"; fi
+# Post-lifecycle drift: two pre proofs stable, after proof drifts.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf ':1.99\n:1.99\n:1.77\n' > "$FAKE_DIR/planner-owner-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-drift.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse post-lifecycle drift"
+else
+  pass "expected-owner start refuses post-lifecycle drift"
+fi
+if [[ -e "$TMP_DIR/r-exp-drift.json" ]]; then fail "no receipt on planner drift"; else pass "no receipt on planner drift"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "planner drift cleans the exact id"; else fail "planner drift cleans the exact id"; fi
+rm -f -- "$TMP_DIR/r-exp-drift.json"
+# PID drift with stable owner between the two pre-lifecycle proofs: exact
+# triple comparison must fail closed before verify/load/run with no receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+proc_fixture 4344 434400 "$FAKE_WRAPPED" 1
+printf '4343\n4344\n' > "$FAKE_DIR/planner-pid-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-pid-pre.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse pre-lifecycle PID drift with stable owner"
+else
+  pass "expected-owner start refuses pre-lifecycle PID drift with stable owner"
+fi
+if [[ -e "$TMP_DIR/r-exp-pid-pre.json" ]]; then fail "no receipt on pre-lifecycle PID drift"; else pass "no receipt on pre-lifecycle PID drift"; fi
+preflight_no_resources "pre-lifecycle-planner-pid-drift" "$TMP_DIR/r-exp-pid-pre.json"
+rm -f -- "$TMP_DIR/r-exp-pid-pre.json"
+# PID drift with stable owner after lifecycle: two pre proofs stable, post
+# proof drifts PID while owner stays exact. Must refuse with no receipt and
+# clean the exact id.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+proc_fixture 4344 434400 "$FAKE_WRAPPED" 1
+printf '4343\n4343\n4344\n' > "$FAKE_DIR/planner-pid-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-pid-drift.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse post-lifecycle PID drift with stable owner"
+else
+  pass "expected-owner start refuses post-lifecycle PID drift with stable owner"
+fi
+if [[ -e "$TMP_DIR/r-exp-pid-drift.json" ]]; then fail "no receipt on post-lifecycle PID drift"; else pass "no receipt on post-lifecycle PID drift"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "post-lifecycle PID drift cleans the exact id"; else fail "post-lifecycle PID drift cleans the exact id"; fi
+rm -f -- "$TMP_DIR/r-exp-pid-drift.json"
+# Malformed planner proofs refuse: bad NameHasOwner, bad GetNameOwner, bad PID.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf 'garbage' > "$FAKE_DIR/bad-planner-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-mal1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse malformed NameHasOwner"
+else
+  pass "expected-owner start refuses malformed NameHasOwner"
+fi
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf 'garbage' > "$FAKE_DIR/bad-planner-owner-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-mal2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse malformed GetNameOwner"
+else
+  pass "expected-owner start refuses malformed GetNameOwner"
+fi
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf '{"type":"u","data":[]}' > "$FAKE_DIR/bad-planner-pid-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-mal3.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must refuse malformed planner PID"
+else
+  pass "expected-owner start refuses malformed planner PID"
+fi
+# Expected mode skips only absence: production/advisory still enforced.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf 'b false' > "$FAKE_DIR/prod_reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exp-prod.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" >/dev/null 2>&1; then
+  fail "expected-owner start must still require production"
+else
+  pass "expected-owner start still requires production"
+fi
+
+# 19: explicit strict terminal-refusal mode for a sequencer.
+assert_contains "$LOADER" '--expected-refusal-detail'
+assert_contains "$LOADER" '--expected-refusal-after'
+assert_contains "$LOADER" '--refusal-service-loss'
+assert_contains "$LOADER" 'refusal requires paired'
+assert_contains "$LOADER" 'refusal conflicts with receipt semantics'
+assert_absent "$LOADER" 'refusal service-loss conflicts'
+assert_contains "$LOADER" 'refusal expectation mismatch'
+assert_contains "$LOADER" 'refused: plugin='
+assert_absent "$LOADER" 'reject:advisory-rejected*'
+STALE_SVC_DETAIL="reject:advisory-rejected-stale-request"
+TIMEOUT_DETAIL="reject:advisory-timeout"
+STALE_SVC_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:$STALE_SVC_DETAIL"
+TIMEOUT_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:$TIMEOUT_DETAIL"
+
+# 19a: present-owner refusal success with the stale service reply pair.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+FAKE_RESULT="$STALE_SVC_RESULT"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-stale.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$STALE_SVC_DETAIL" --expected-refusal-after true > "$TMP_DIR/o-ref-stale" 2>&1; then
+  pass "present-owner refusal accepts stale service reply"
+else
+  fail "present-owner refusal accepts stale service reply"
+fi
+if grep -qF 'refused: plugin=plasma-auto-tiler-advisory-describe' "$TMP_DIR/o-ref-stale" && grep -qF "detail=$STALE_SVC_DETAIL" "$TMP_DIR/o-ref-stale"; then
+  pass "refusal success reports the exact pair"
+else
+  fail "refusal success reports the exact pair"
+fi
+if [[ ! -e "$TMP_DIR/r-ref-stale.json" ]]; then pass "refusal success leaves no receipt"; else fail "refusal success leaves no receipt"; fi
+if grep -qF "/Scripting/Script3 org.kde.kwin.Script stop" "$FAKE_DIR/calls.log" && grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then
+  pass "refusal success exact-cleans only the recorded id"
+else
+  fail "refusal success exact-cleans only the recorded id"
+fi
+if grep -qF 'GetNameOwner s org.plasmaautotiler.Planner' "$FAKE_DIR/calls.log"; then
+  pass "present-owner refusal post-revalidates before accepting"
+else
+  fail "present-owner refusal post-revalidates before accepting"
+fi
+if [[ "$(grep -cF 'GetNameOwner s org.plasmaautotiler.Planner' "$FAKE_DIR/calls.log")" -eq 3 ]]; then
+  pass "non-service-loss refusal still postchecks the present owner"
+else
+  fail "non-service-loss refusal still postchecks the present owner"
+fi
+if grep -qF 'unloadScript s plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log" || grep -qF "loadScript ss $BUNDLE plasma-auto-tiler-kwin" "$FAKE_DIR/calls.log"; then fail "production never mutated on refusal"; else pass "production never mutated on refusal"; fi
+rm -f -- "$TMP_DIR/r-ref-stale.json"
+
+# 19b: service-loss refusal with the pinned present owner starts while the
+# Planner exists, then intentionally loses it. Full initial exact-present
+# owner/PID/tick checks run; only the final post-lifecycle present-owner
+# check is skipped. Accepts the exact timeout pair with no receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+FAKE_RESULT="$TIMEOUT_RESULT"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-timeout.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss > "$TMP_DIR/o-ref-timeout" 2>&1; then
+  pass "service-loss refusal accepts timeout reply with pinned owner"
+else
+  fail "service-loss refusal accepts timeout reply with pinned owner"
+fi
+if grep -qF 'service-loss' "$TMP_DIR/o-ref-timeout" && grep -qF "detail=$TIMEOUT_DETAIL" "$TMP_DIR/o-ref-timeout"; then
+  pass "service-loss success reports the distinct mode"
+else
+  fail "service-loss success reports the distinct mode"
+fi
+if [[ ! -e "$TMP_DIR/r-ref-timeout.json" ]]; then pass "service-loss leaves no receipt"; else fail "service-loss leaves no receipt"; fi
+if grep -qF "/Scripting/Script3 org.kde.kwin.Script stop" "$FAKE_DIR/calls.log" && grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then
+  pass "service-loss exact-cleans only the recorded id"
+else
+  fail "service-loss exact-cleans only the recorded id"
+fi
+if grep -qF 'GetNameOwner s org.plasmaautotiler.Planner' "$FAKE_DIR/calls.log"; then
+  pass "service-loss with pinned owner retains the initial present-owner proof"
+else
+  fail "service-loss with pinned owner retains the initial present-owner proof"
+fi
+if [[ "$(grep -cF 'GetNameOwner s org.plasmaautotiler.Planner' "$FAKE_DIR/calls.log")" -eq 2 ]]; then
+  pass "service-loss skips only the final post-lifecycle present-owner check"
+else
+  fail "service-loss skips only the final post-lifecycle present-owner check"
+fi
+rm -f -- "$TMP_DIR/r-ref-timeout.json"
+
+# 19c: missing paired flags refused before transport.
+reset_fake; seed_diag
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-pair1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$TIMEOUT_DETAIL" >/dev/null 2>&1; then
+  fail "refusal must require paired after"
+else
+  pass "refusal requires paired after"
+fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-pair2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must require paired detail"
+else
+  pass "refusal requires paired detail"
+fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-pair3.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --refusal-service-loss >/dev/null 2>&1; then
+  fail "service-loss must require the paired refusal"
+else
+  pass "service-loss requires the paired refusal"
+fi
+if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on missing paired refusal flags"; else pass "no bus traffic on missing paired refusal flags"; fi
+
+# 19d: duplicate refusal flags refused.
+reset_fake; seed_diag
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-dup.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must reject duplicate detail"
+else
+  pass "refusal rejects duplicate detail"
+fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-dup2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must reject duplicate after"
+else
+  pass "refusal rejects duplicate after"
+fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-dup3.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss --refusal-service-loss >/dev/null 2>&1; then
+  fail "refusal must reject duplicate service-loss"
+else
+  pass "refusal rejects duplicate service-loss"
+fi
+
+# 19e: malformed expected detail/verdict refused.
+reset_fake; seed_diag
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-badd.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail 'bad detail!' --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must reject malformed detail"
+else
+  pass "refusal rejects malformed detail"
+fi
+BIG_REFUSE="$(printf 'c%.0s' $(seq 1 513))"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-bigd.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$BIG_REFUSE" --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must reject oversize detail"
+else
+  pass "refusal rejects oversize detail"
+fi
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-bada.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after maybe >/dev/null 2>&1; then
+  fail "refusal must reject malformed after"
+else
+  pass "refusal rejects malformed after"
+fi
+if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on malformed refusal expectation"; else pass "no bus traffic on malformed refusal expectation"; fi
+
+# 19f: conflicting semantics refused.
+reset_fake; seed_diag
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-conf1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --expected-refusal-detail could-execute --expected-refusal-after true >/dev/null 2>&1; then
+  fail "refusal must refuse receipt-conflicting pair"
+else
+  pass "refusal refuses receipt-conflicting pair"
+fi
+# 19f2: service-loss with pinned owner fails before Script lifecycle on
+# initial absent/mismatch/drift, proving the full initial exact-present
+# owner/PID/tick checks still run.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-combo-absent.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "service-loss with pinned owner must refuse initial absent"
+else
+  pass "service-loss with pinned owner refuses initial absent"
+fi
+preflight_no_resources "service-loss-pinned-absent" "$TMP_DIR/r-ref-combo-absent.json"
+rm -f -- "$TMP_DIR/r-ref-combo-absent.json"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.77" 4343 434300
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-combo-mismatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "service-loss with pinned owner must refuse initial mismatch"
+else
+  pass "service-loss with pinned owner refuses initial mismatch"
+fi
+preflight_no_resources "service-loss-pinned-mismatch" "$TMP_DIR/r-ref-combo-mismatch.json"
+rm -f -- "$TMP_DIR/r-ref-combo-mismatch.json"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+printf ':1.99\n:1.77\n' > "$FAKE_DIR/planner-owner-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-combo-drift.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "service-loss with pinned owner must refuse initial drift"
+else
+  pass "service-loss with pinned owner refuses initial drift"
+fi
+preflight_no_resources "service-loss-pinned-drift" "$TMP_DIR/r-ref-combo-drift.json"
+rm -f -- "$TMP_DIR/r-ref-combo-drift.json"
+
+# 19g: mismatched observed pair fails closed with partial cleanup and no receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="$TIMEOUT_RESULT"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-mismatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-refusal-detail "$STALE_SVC_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "refusal must reject mismatched detail"
+else
+  pass "refusal rejects mismatched detail"
+fi
+if [[ -e "$TMP_DIR/r-ref-mismatch.json" ]]; then fail "no receipt on refusal mismatch"; else pass "no receipt on refusal mismatch"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "refusal mismatch cleans the exact id"; else fail "refusal mismatch cleans the exact id"; fi
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="$TIMEOUT_RESULT"; FAKE_AFTER="$AFTER_FALSE"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-mismatch2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "refusal must reject mismatched after"
+else
+  pass "refusal rejects mismatched after"
+fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log" && [[ ! -e "$TMP_DIR/r-ref-mismatch2.json" ]]; then
+  pass "after mismatch cleans the exact id with no receipt"
+else
+  fail "after mismatch cleans the exact id with no receipt"
+fi
+# Prefix broadening refused: expected timeout must not accept timeout-extra.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:${TIMEOUT_DETAIL}-extra"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-prefix.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "refusal must not broaden by prefix"
+else
+  pass "refusal refuses prefix broadening"
+fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log" && [[ ! -e "$TMP_DIR/r-ref-prefix.json" ]]; then
+  pass "prefix mismatch cleans the exact id with no receipt"
+else
+  fail "prefix mismatch cleans the exact id with no receipt"
+fi
+rm -f -- "$TMP_DIR/r-ref-mismatch.json" "$TMP_DIR/r-ref-mismatch2.json" "$TMP_DIR/r-ref-prefix.json"
+
+# 19h: ordering still enforced in refusal mode.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+FAKE_RESULT="$TIMEOUT_RESULT"; FAKE_AFTER="$AFTER"; FAKE_ORDER="after-first"; export FAKE_RESULT FAKE_AFTER FAKE_ORDER
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-order.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 --expected-refusal-detail "$TIMEOUT_DETAIL" --expected-refusal-after true --refusal-service-loss >/dev/null 2>&1; then
+  fail "refusal must reject out-of-order after"
+else
+  pass "refusal rejects out-of-order after"
+fi
+if [[ -e "$TMP_DIR/r-ref-order.json" ]]; then fail "no receipt on out-of-order refusal"; else pass "no receipt on out-of-order refusal"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "out-of-order refusal cleans the exact id"; else fail "out-of-order refusal cleans the exact id"; fi
+rm -f -- "$TMP_DIR/r-ref-order.json"
+
+# 19i: present-owner post-drift still refused in refusal mode.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+setup_planner_present ":1.99" 4343 434300
+FAKE_RESULT="$STALE_SVC_RESULT"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
+printf ':1.99\n:1.99\n:1.77\n' > "$FAKE_DIR/planner-owner-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-ref-drift.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 --expected-planner-owner ":1.99" --expected-refusal-detail "$STALE_SVC_DETAIL" --expected-refusal-after true >/dev/null 2>&1; then
+  fail "present-owner refusal must refuse post-lifecycle drift"
+else
+  pass "present-owner refusal refuses post-lifecycle drift"
+fi
+if [[ -e "$TMP_DIR/r-ref-drift.json" ]]; then fail "no receipt on refusal drift"; else pass "no receipt on refusal drift"; fi
+if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "refusal drift cleans the exact id"; else fail "refusal drift cleans the exact id"; fi
+rm -f -- "$TMP_DIR/r-ref-drift.json"
 
 # Cleanup proof: built and temp artifacts removed, ignored/untracked.
 rm -f -- "$BUNDLE" "$MANIFEST"

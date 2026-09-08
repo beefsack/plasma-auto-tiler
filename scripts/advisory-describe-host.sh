@@ -14,15 +14,33 @@
 # build identity plus the exact input binding, and runs the builder verify
 # mode (deterministic rebuild to temp, byte-compare) before any bus call.
 #
-# Subcommands (all narrow, all receipt-scoped):
+# Subcommands (all narrow, all receipt-scoped unless noted):
+#   preflight --bundle B --manifest M --input I
+#         [--expected-planner-owner U]
+#     strict resource-free read-only checks only: tools, exact sources,
+#     advisory-only shape, KWin identity, production loaded, advisory absent,
+#     Planner absent by default or exact present-owner proof when the explicit
+#     unique owner is supplied. Emits only safe machine-independent manifest
+#     identity (bundle/entry/query/snapshot/input shas plus owner/generation/
+#     revision/correlation/nonce). Creates no temp files, dirs, or receipts and
+#     performs no bus mutation.
 #   start --bundle B --manifest M --receipt R --diag-file D --input I
-#         [--attempts N] [--delay S]
+#         [--attempts N] [--delay S] [--expected-planner-owner U]
+#         [--expected-refusal-detail D --expected-refusal-after V]
+#         [--refusal-service-loss]
 #     validate bundle plus manifest exactly, prove advisory-only shape,
 #     loadScript the exact bundle under the fixed plugin id, introspect only
 #     the returned /Scripting/Script<ID> object, run only that object, then
 #     collect the correlation-bound ready/result markers boundedly. Writes
 #     the receipt only on full success. Any run failure or identity mismatch
-#     unloads only the recorded exact id and leaves no receipt.
+#     unloads only the recorded exact id and leaves no receipt. The explicit
+#     strict terminal-refusal mode requires the paired exact expected detail
+#     plus exact expected after verdict; after all source/ready/result/after
+#     identity/order checks it accepts only that exact pair, then exact-cleans
+#     only the recorded object/plugin and returns success with no receipt.
+#     Present-owner refusal (with --expected-planner-owner) post-revalidates
+#     the exact owner triple before accepting; service-loss refusal (with
+#     --refusal-service-loss) skips the present postcheck.
 #   status --receipt R
 #     strict-parse the receipt, then report only the recorded plugin load
 #     state plus the recorded identity. No mutation.
@@ -195,13 +213,16 @@ fail() {
 
 usage() {
   cat <<'EOF'
-usage: advisory-describe-host.sh <start|status|diagnostics|stop> [flags] [--help]
+usage: advisory-describe-host.sh <preflight|start|status|diagnostics|stop> [flags] [--help]
 
 Future authorized-host lifecycle for the advisory DescribeAdvisoryPlan
 bundle. Not invoked now; covered by static checks and fake-command tests.
 
+  preflight --bundle B --manifest M --input I [--expected-planner-owner U]
   start --bundle B --manifest M --receipt R --diag-file D --input I
-        [--attempts N] [--delay S]
+        [--attempts N] [--delay S] [--expected-planner-owner U]
+        [--expected-refusal-detail D --expected-refusal-after V]
+        [--refusal-service-loss]
   status --receipt R
   diagnostics --receipt R [--diag-file D]
   stop --receipt R
@@ -211,7 +232,17 @@ Fixed plugin id plasma-auto-tiler-advisory-describe. Production is checked
 read-only and is never unloaded or reloaded. Transport uses loadScript with the exact bundle, introspects
 only the returned /Scripting/Script<ID> object, and runs only that object
 (never a global start). Receipts carry exact bundle sha, source bindings,
-and KWin identity; stop unloads only the recorded exact id.
+and KWin identity; stop unloads only the recorded exact id. Default start
+requires Planner absence; --expected-planner-owner U skips only that absence
+check while strictly proving that exact unique owner before and after the
+lifecycle. Preflight is read-only resource-free with no bus mutation and no
+receipt. Strict terminal-refusal mode requires paired exact
+--expected-refusal-detail plus exact --expected-refusal-after; it accepts
+only that exact observed pair after all identity/order checks, exact-cleans
+only the recorded object/plugin, and returns success with no receipt.
+Present-owner refusal post-revalidates the exact owner triple; service-loss
+refusal uses distinct --refusal-service-loss with no present postcheck.
+No Planner start/stop; no system log collection.
 EOF
 }
 
@@ -404,9 +435,9 @@ parse_bool() {
 exact_cleanup() {
   [[ -n "$SCRIPT_ID" ]] || return 1
   valid_script_id "$SCRIPT_ID" || return 1
-  "$BUSCTL_BIN" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
+  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
   local out=""
-  out="$("$BUSCTL_BIN" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$PLUGIN" 2>/dev/null)" || return 1
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$PLUGIN" 2>/dev/null)" || return 1
   [[ "$(parse_bool "$out")" == "true" ]] || return 1
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || return 1
 }
@@ -420,7 +451,7 @@ partial_cleanup() {
 
 loaded_word() {
   local plugin="$1" out=""
-  out="$("$BUSCTL_BIN" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" isScriptLoaded s "$plugin" 2>/dev/null)" || {
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" isScriptLoaded s "$plugin" 2>/dev/null)" || {
     echo "error: isScriptLoaded call failed for '$plugin'" >&2
     return 1
   }
@@ -555,6 +586,106 @@ process.stdout.write(v.data[0] ? "true" : "false");
   return 0
 }
 
+valid_planner_unique_owner() { [[ "$1" =~ ^:[0-9]+\.[0-9]+$ ]]; }
+
+# Strict Planner present-owner proof for an explicit sequencer-supplied
+# expected unique owner. Requires NameHasOwner true, GetNameOwner exact
+# equality with the expected unique owner, GetConnectionUnixProcessID for
+# that exact owner, and a readable PID/start tick (PID reuse guarded). Prints
+# only shell-safe assignments for the exact triple (owner/PID/tick already
+# restricted to safe charsets) for caller-side triple comparison. No
+# launch/kill, no absence bypass beyond this exact owner; caller holds the
+# expected owner in memory and never prints machine detail.
+check_planner_present_owner() {
+  local expected="$1" out="" has="" actual="" pid="" tick=""
+  valid_planner_unique_owner "$expected" || {
+    echo "error: expected planner owner is not a unique name: $expected" >&2
+    return 1
+  }
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" NameHasOwner s "$PLANNER_SERVICE" 2>/dev/null)" || {
+    echo "error: planner present-owner check failed for $PLANNER_SERVICE (transport failure)" >&2
+    return 1
+  }
+  has="$(HAS_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.HAS_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (v.type !== "b") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "boolean") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+process.stdout.write(v.data[0] ? "true" : "false");
+' 2>/dev/null)" || {
+    echo "error: malformed NameHasOwner reply for $PLANNER_SERVICE" >&2
+    return 1
+  }
+  [[ "$has" == "true" ]] || {
+    echo "error: planner service $PLANNER_SERVICE is absent; refusing without the expected present owner $expected" >&2
+    return 1
+  }
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" GetNameOwner s "$PLANNER_SERVICE" 2>/dev/null)" || {
+    echo "error: planner GetNameOwner failed for $PLANNER_SERVICE (transport failure)" >&2
+    return 1
+  }
+  actual="$(OWNER_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.OWNER_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed GetNameOwner reply"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed GetNameOwner reply"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed GetNameOwner reply"); process.exit(1); }
+if (v.type !== "s") { console.error("error: malformed GetNameOwner reply"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "string") { console.error("error: malformed GetNameOwner reply"); process.exit(1); }
+if (!/^:[0-9]+\.[0-9]+$/.test(v.data[0])) { console.error("error: planner owner is not a unique name"); process.exit(1); }
+process.stdout.write(v.data[0]);
+' 2>/dev/null)" || {
+    echo "error: malformed GetNameOwner reply for $PLANNER_SERVICE" >&2
+    return 1
+  }
+  valid_planner_unique_owner "$actual" || {
+    echo "error: planner owner for $PLANNER_SERVICE is not a unique name: $actual" >&2
+    return 1
+  }
+  [[ "$actual" == "$expected" ]] || {
+    echo "error: planner unique owner mismatch for $PLANNER_SERVICE; refusing (expected $expected, present $actual)" >&2
+    return 1
+  }
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" GetConnectionUnixProcessID s "$actual" 2>/dev/null)" || {
+    echo "error: could not resolve the Unix PID for planner owner $actual" >&2
+    return 1
+  }
+  pid="$(PID_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.PID_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (v.type !== "u") { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "number" || !Number.isInteger(v.data[0])) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (!/^[1-9][0-9]*$/.test(String(v.data[0])) || v.data[0] <= 0 || v.data[0] > 4294967295) { console.error("error: planner owner PID is malformed"); process.exit(1); }
+process.stdout.write(String(v.data[0]));
+' 2>/dev/null)" || {
+    echo "error: malformed GetConnectionUnixProcessID reply for planner owner $actual" >&2
+    return 1
+  }
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: planner owner PID is malformed: $pid" >&2
+    return 1
+  }
+  tick="$(proc_start_tick "$pid")" || {
+    echo "error: planner PID $pid is stale or unreadable (PID reuse suspected)" >&2
+    return 1
+  }
+  [[ "$tick" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: planner PID $pid start tick is unreadable" >&2
+    return 1
+  }
+  printf 'PLANNER_OWNER=%s\nPLANNER_PID=%s\nPLANNER_TICK=%s\n' "$actual" "$pid" "$tick"
+  return 0
+}
+
 # Single KWin identity capture via the exact authorized helper route.
 # Prints owner/pid/tick/exe/source on separate lines (source is systemd or
 # systemd-direct-parent). In-memory only: helper output is captured in a
@@ -681,8 +812,8 @@ source_line_for() {
 }
 
 parse_start_args() {
-  START_BUNDLE=""; START_MANIFEST=""; START_RECEIPT=""; START_DIAG=""; START_INPUT=""; START_ATTEMPTS="50"; START_DELAY="0.1"
-  local seen_bundle=0 seen_manifest=0 seen_receipt=0 seen_diag=0 seen_attempts=0 seen_delay=0 seen_input=0
+  START_BUNDLE=""; START_MANIFEST=""; START_RECEIPT=""; START_DIAG=""; START_INPUT=""; START_ATTEMPTS="50"; START_DELAY="0.1"; START_EXPECTED_PLANNER_OWNER=""; START_EXPECTED_REFUSAL_DETAIL=""; START_EXPECTED_REFUSAL_AFTER=""; START_REFUSAL_SERVICE_LOSS="0"
+  local seen_bundle=0 seen_manifest=0 seen_receipt=0 seen_diag=0 seen_attempts=0 seen_delay=0 seen_input=0 seen_expected=0 seen_refusal_detail=0 seen_refusal_after=0 seen_service_loss=0
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --bundle) [[ "$seen_bundle" -eq 0 ]] || fail "duplicate --bundle"; seen_bundle=1; [[ -n "${2:-}" ]] || fail "missing value for --bundle"; START_BUNDLE="$2"; shift 2 ;;
@@ -692,6 +823,10 @@ parse_start_args() {
       --input) [[ "$seen_input" -eq 0 ]] || fail "duplicate --input"; seen_input=1; [[ -n "${2:-}" ]] || fail "missing value for --input"; START_INPUT="$2"; shift 2 ;;
       --attempts) [[ "$seen_attempts" -eq 0 ]] || fail "duplicate --attempts"; seen_attempts=1; [[ -n "${2:-}" ]] || fail "missing value for --attempts"; START_ATTEMPTS="$2"; shift 2 ;;
       --delay) [[ "$seen_delay" -eq 0 ]] || fail "duplicate --delay"; seen_delay=1; [[ -n "${2:-}" ]] || fail "missing value for --delay"; START_DELAY="$2"; shift 2 ;;
+      --expected-planner-owner) [[ "$seen_expected" -eq 0 ]] || fail "duplicate --expected-planner-owner"; seen_expected=1; [[ -n "${2:-}" ]] || fail "missing value for --expected-planner-owner"; START_EXPECTED_PLANNER_OWNER="$2"; shift 2 ;;
+      --expected-refusal-detail) [[ "$seen_refusal_detail" -eq 0 ]] || fail "duplicate --expected-refusal-detail"; seen_refusal_detail=1; [[ -n "${2:-}" ]] || fail "missing value for --expected-refusal-detail"; START_EXPECTED_REFUSAL_DETAIL="$2"; shift 2 ;;
+      --expected-refusal-after) [[ "$seen_refusal_after" -eq 0 ]] || fail "duplicate --expected-refusal-after"; seen_refusal_after=1; [[ -n "${2:-}" ]] || fail "missing value for --expected-refusal-after"; START_EXPECTED_REFUSAL_AFTER="$2"; shift 2 ;;
+      --refusal-service-loss) [[ "$seen_service_loss" -eq 0 ]] || fail "duplicate --refusal-service-loss"; seen_service_loss=1; START_REFUSAL_SERVICE_LOSS="1"; shift 1 ;;
       *) fail "unknown start flag '$1'" ;;
     esac
   done
@@ -702,6 +837,17 @@ parse_start_args() {
   [[ -n "$START_INPUT" ]] || fail "start requires --input"
   [[ "$START_ATTEMPTS" =~ ^(0|[1-9][0-9]*)$ && "$START_ATTEMPTS" -ge 1 && "$START_ATTEMPTS" -le 500 ]] || fail "invalid --attempts (1..500)"
   [[ "$START_DELAY" =~ ^(0(\.[0-9]+)?|[1-9][0-9]*(\.[0-9]+)?)$ ]] || fail "invalid --delay"
+  if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+    valid_planner_unique_owner "$START_EXPECTED_PLANNER_OWNER" || fail "invalid --expected-planner-owner (must be :N.M)"
+  fi
+  if [[ "$seen_refusal_detail" -eq 1 || "$seen_refusal_after" -eq 1 || "$seen_service_loss" -eq 1 ]]; then
+    [[ "$seen_refusal_detail" -eq 1 && "$seen_refusal_after" -eq 1 ]] || fail "start refusal requires paired --expected-refusal-detail and --expected-refusal-after"
+    valid_detail "$START_EXPECTED_REFUSAL_DETAIL" || fail "invalid --expected-refusal-detail (must match [A-Za-z0-9._:-]{1,512})"
+    [[ "$START_EXPECTED_REFUSAL_AFTER" == "true" || "$START_EXPECTED_REFUSAL_AFTER" == "false" ]] || fail "invalid --expected-refusal-after (must be true|false)"
+    if [[ "$START_EXPECTED_REFUSAL_DETAIL" == "could-execute" && "$START_EXPECTED_REFUSAL_AFTER" == "true" ]]; then
+      fail "refusal conflicts with receipt semantics; could-execute with after true requires a receipt"
+    fi
+  fi
 }
 
 cmd_start() {
@@ -749,13 +895,20 @@ cmd_start() {
   prove_advisory_only "$START_BUNDLE" || exit 1
   # Host immutable preflight (resource-free, read-only, in-memory only).
   # KWin full executable identity via kwin_identity_once, production loaded,
-  # advisory absent, Planner absent via strict NameHasOwner, then a final
-  # resource-free immutable recapture with exact (owner,pid,tick,exe,source)
-  # comparison plus production/advisory/Planner checks again. Any drift or
-  # collision fails closed before the resource-creating builder verify below
+  # advisory absent, Planner absent by default via strict NameHasOwner or exact
+  # present-owner proof when --expected-planner-owner is supplied (which skips
+  # only the absence check), then a final resource-free immutable recapture
+  # with exact (owner,pid,tick,exe,source) comparison plus
+  # production/advisory/Planner checks again. The Planner present-owner triple
+  # (owner/PID/tick) is captured via safe assignments from both proofs and
+  # compared exactly; any drift or collision fails
+  # closed before the resource-creating builder verify below
   # (which creates mkdtemp) and before any load/run/receipt. No mktemp, no
   # mkdtemp, no mkdir, no touch, no file-creating redirection here.
   local KWIN_OWNER="" KWIN_PID="" KWIN_TICK="" KWIN_EXE="" KWIN_SOURCE=""
+  local PLANNER_OWNER="" PLANNER_PID="" PLANNER_TICK=""
+  local PLANNER_OWNER_1="" PLANNER_PID_1="" PLANNER_TICK_1=""
+  local _planner_eval_1="" _planner_eval_2=""
   local _pre_out=""
   _pre_out="$(kwin_identity_once)" || exit 1
   local -a _pre=()
@@ -770,7 +923,17 @@ cmd_start() {
   [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
   [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
-  check_planner_absent || exit 1
+  if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+    _planner_eval_1="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || exit 1
+    PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+    eval "$_planner_eval_1"
+    [[ -n "$PLANNER_OWNER" && -n "$PLANNER_PID" && -n "$PLANNER_TICK" ]] || fail "planner present-owner proof is ambiguous"
+    valid_planner_unique_owner "$PLANNER_OWNER" || fail "planner present-owner proof is ambiguous"
+    [[ "$PLANNER_OWNER" == "$START_EXPECTED_PLANNER_OWNER" ]] || fail "planner unique owner mismatch for $PLANNER_SERVICE; refusing (expected $START_EXPECTED_PLANNER_OWNER, present $PLANNER_OWNER)"
+    PLANNER_OWNER_1="$PLANNER_OWNER"; PLANNER_PID_1="$PLANNER_PID"; PLANNER_TICK_1="$PLANNER_TICK"
+  else
+    check_planner_absent || exit 1
+  fi
   local RE_OWNER="" RE_PID="" RE_TICK="" RE_EXE="" RE_SOURCE=""
   local _re_out=""
   _re_out="$(kwin_identity_once)" || fail "KWin identity recapture failed"
@@ -788,7 +951,17 @@ cmd_start() {
   [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
   [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
-  check_planner_absent || exit 1
+  if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+    _planner_eval_2="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || exit 1
+    PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+    eval "$_planner_eval_2"
+    [[ -n "$PLANNER_OWNER" && -n "$PLANNER_PID" && -n "$PLANNER_TICK" ]] || fail "planner present-owner proof is ambiguous"
+    [[ "$PLANNER_OWNER" == "$PLANNER_OWNER_1" ]] || fail "planner unique owner mismatch for $PLANNER_SERVICE; refusing (expected $PLANNER_OWNER_1, present $PLANNER_OWNER)"
+    [[ "$PLANNER_PID" == "$PLANNER_PID_1" && "$PLANNER_TICK" == "$PLANNER_TICK_1" ]] || fail "planner PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
+    PLANNER_OWNER_1="$PLANNER_OWNER"; PLANNER_PID_1="$PLANNER_PID"; PLANNER_TICK_1="$PLANNER_TICK"
+  else
+    check_planner_absent || exit 1
+  fi
   # Deterministic rebuild verification before any bus transport: rejects a
   # manually altered bundle even when its manifest bundle sha was recomputed.
   # The verify path rebuilds to a temp directory and never writes dist outputs.
@@ -803,16 +976,18 @@ cmd_start() {
   [[ "$diag_start" =~ ^(0|[1-9][0-9]*)$ ]] || fail "diag boundary is not a byte size; refusing stale-prone scan"
   [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
   local load_out=""
-  load_out="$("$BUSCTL_BIN" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" loadScript ss "$START_BUNDLE" "$PLUGIN" 2>/dev/null)" || {
+  load_out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" loadScript ss "$START_BUNDLE" "$PLUGIN" 2>/dev/null)" || {
     fail "loadScript call failed for '$PLUGIN'"
   }
   SCRIPT_ID="$(parse_script_id "$load_out")" || {
-    printf 'error: unexpected loadScript reply: %s\n' "$load_out" >&2
+    SCRIPT_ID=""
+    SCRIPT_OBJ=""
+    printf 'error: ambiguous loadScript identity (malformed reply: %s); no known object to unload, preserving residue with no cleanup\n' "$load_out" >&2
     exit 1
   }
   SCRIPT_OBJ="/Scripting/Script$SCRIPT_ID"
   local introspect_out=""
-  introspect_out="$("$BUSCTL_BIN" introspect "$BUS_DEST" "$SCRIPT_OBJ" 2>/dev/null)" || {
+  introspect_out="$("$BUSCTL_BIN" "$BUS_SCOPE" introspect "$BUS_DEST" "$SCRIPT_OBJ" 2>/dev/null)" || {
     partial_cleanup
     fail "introspect failed for $SCRIPT_OBJ"
   }
@@ -824,7 +999,7 @@ cmd_start() {
     partial_cleanup
     fail "plugin '$PLUGIN' was not reported loaded after exact object introspection"
   }
-  "$BUSCTL_BIN" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" run >/dev/null 2>&1 || {
+  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" run >/dev/null 2>&1 || {
     partial_cleanup
     fail "run() failed on $SCRIPT_OBJ"
   }
@@ -870,6 +1045,60 @@ cmd_start() {
     partial_cleanup
     fail "after marker failed validation; refusing on schema mismatch"
   }
+  # Explicit strict terminal-refusal mode for a sequencer. Runs only after
+  # all source/ready/result/after identity/order checks above. Accepts only
+  # the exact caller-supplied valid detail plus exact expected after verdict
+  # (generic exact equality across valid_detail, no prefix allowlist), then
+  # exact-cleans only the recorded Script object/plugin and returns success
+  # with no receipt. Present-owner refusal (with --expected-planner-owner)
+  # post-revalidates the exact owner triple before accepting; service-loss
+  # refusal (distinct --refusal-service-loss) skips the present postcheck
+  # because the sequencer independently proves owner loss.
+  if [[ -n "$START_EXPECTED_REFUSAL_DETAIL" ]]; then
+    if [[ "$detail" != "$START_EXPECTED_REFUSAL_DETAIL" || "$verdict" != "$START_EXPECTED_REFUSAL_AFTER" ]]; then
+      partial_cleanup
+      fail "refusal expectation mismatch; refusing without receipt"
+    fi
+    if [[ "$START_REFUSAL_SERVICE_LOSS" == "0" && -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+      local _refusal_eval_post=""
+      _refusal_eval_post="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || {
+        partial_cleanup
+        fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+      }
+      PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+      eval "$_refusal_eval_post"
+      if [[ "$PLANNER_OWNER" != "$PLANNER_OWNER_1" ]]; then
+        partial_cleanup
+        fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+      fi
+      if [[ "$PLANNER_PID" != "$PLANNER_PID_1" || "$PLANNER_TICK" != "$PLANNER_TICK_1" ]]; then
+        partial_cleanup
+        fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+      fi
+    fi
+    if [[ -e "$START_RECEIPT" || -L "$START_RECEIPT" ]]; then
+      partial_cleanup
+      fail "receipt appeared before refusal cleanup; refusing overwrite: $START_RECEIPT"
+    fi
+    exact_cleanup || {
+      partial_cleanup
+      fail "refusal cleanup failed for the exact id"
+    }
+    if [[ -e "$START_RECEIPT" || -L "$START_RECEIPT" ]]; then
+      fail "refusal must leave no receipt: $START_RECEIPT"
+    fi
+    if [[ "$START_REFUSAL_SERVICE_LOSS" == "1" ]]; then
+      printf 'refused: plugin=%s script=%s object=%s correlation=%s detail=%s after=%s service-loss\n' \
+        "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$detail" "$verdict"
+    elif [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+      printf 'refused: plugin=%s script=%s object=%s correlation=%s detail=%s after=%s planner-owner=%s\n' \
+        "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$detail" "$verdict" "$START_EXPECTED_PLANNER_OWNER"
+    else
+      printf 'refused: plugin=%s script=%s object=%s correlation=%s detail=%s after=%s\n' \
+        "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$detail" "$verdict"
+    fi
+    return 0
+  fi
   if [[ "$verdict" == "true" && "$detail" == "could-execute" ]]; then
     :
   elif [[ "$verdict" == "false" && "$detail" == "$STALE_DETAIL" ]]; then
@@ -878,6 +1107,31 @@ cmd_start() {
   else
     partial_cleanup
     fail "result/after pairing refused; receipt requires could-execute with after true"
+  fi
+  # Post-lifecycle exact Planner proof when an expected owner is supplied:
+  # re-prove the same exact unique owner after the KWin lifecycle and before
+  # any receipt, comparing the exact triple (owner/PID/tick) against both
+  # pre-lifecycle proofs. Skips only absence; any mismatch/drift/malformation
+  # cleans the exact id with no receipt. The expected owner stays caller-held
+  # in memory and is not added to the receipt schema (receipt remains advisory
+  # identity; not logically necessary to persist the sequencer binding).
+  # Machine detail is never printed; only the generic drift refusal.
+  if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+    local _planner_eval_post=""
+    _planner_eval_post="$(check_planner_present_owner "$START_EXPECTED_PLANNER_OWNER")" || {
+      partial_cleanup
+      fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+    }
+    PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+    eval "$_planner_eval_post"
+    if [[ "$PLANNER_OWNER" != "$PLANNER_OWNER_1" ]]; then
+      partial_cleanup
+      fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+    fi
+    if [[ "$PLANNER_PID" != "$PLANNER_PID_1" || "$PLANNER_TICK" != "$PLANNER_TICK_1" ]]; then
+      partial_cleanup
+      fail "planner unique owner drift after lifecycle; refusing without stable present owner"
+    fi
   fi
   RECEIPT_PATH="$START_RECEIPT"
   # Exclusive fail-closed receipt creation: real parent dir required above,
@@ -894,8 +1148,138 @@ cmd_start() {
     fail "could not write the receipt exclusively"
   }
   RECEIPT_CREATED="1"
-  printf 'started: plugin=%s script=%s object=%s correlation=%s owner=%s generation=%s revision=%s\n' \
-    "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION"
+  if [[ -n "$START_EXPECTED_PLANNER_OWNER" ]]; then
+    printf 'started: plugin=%s script=%s object=%s correlation=%s owner=%s generation=%s revision=%s planner-owner=%s\n' \
+      "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$START_EXPECTED_PLANNER_OWNER"
+  else
+    printf 'started: plugin=%s script=%s object=%s correlation=%s owner=%s generation=%s revision=%s\n' \
+      "$PLUGIN" "$SCRIPT_ID" "$SCRIPT_OBJ" "$MANIFEST_CORRELATION" "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION"
+  fi
+}
+
+parse_preflight_args() {
+  PRE_BUNDLE=""; PRE_MANIFEST=""; PRE_INPUT=""; PRE_EXPECTED_PLANNER_OWNER=""
+  local seen_bundle=0 seen_manifest=0 seen_input=0 seen_expected=0
+  while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --bundle) [[ "$seen_bundle" -eq 0 ]] || fail "duplicate --bundle"; seen_bundle=1; [[ -n "${2:-}" ]] || fail "missing value for --bundle"; PRE_BUNDLE="$2"; shift 2 ;;
+      --manifest) [[ "$seen_manifest" -eq 0 ]] || fail "duplicate --manifest"; seen_manifest=1; [[ -n "${2:-}" ]] || fail "missing value for --manifest"; PRE_MANIFEST="$2"; shift 2 ;;
+      --input) [[ "$seen_input" -eq 0 ]] || fail "duplicate --input"; seen_input=1; [[ -n "${2:-}" ]] || fail "missing value for --input"; PRE_INPUT="$2"; shift 2 ;;
+      --expected-planner-owner) [[ "$seen_expected" -eq 0 ]] || fail "duplicate --expected-planner-owner"; seen_expected=1; [[ -n "${2:-}" ]] || fail "missing value for --expected-planner-owner"; PRE_EXPECTED_PLANNER_OWNER="$2"; shift 2 ;;
+      *) fail "unknown preflight flag '$1'" ;;
+    esac
+  done
+  [[ -n "$PRE_BUNDLE" ]] || fail "preflight requires --bundle"
+  [[ -n "$PRE_MANIFEST" ]] || fail "preflight requires --manifest"
+  [[ -n "$PRE_INPUT" ]] || fail "preflight requires --input"
+  if [[ -n "$PRE_EXPECTED_PLANNER_OWNER" ]]; then
+    valid_planner_unique_owner "$PRE_EXPECTED_PLANNER_OWNER" || fail "invalid --expected-planner-owner (must be :N.M)"
+  fi
+}
+
+# Strict resource-free preflight (read-only, in-memory only, no bus
+# mutation, no temp files, no dirs, no receipts, no runtime directory, no
+# generic interface). Mirrors the start immutable checks: tools, exact
+# sources, advisory-only shape, KWin identity with recapture/drift guard,
+# production loaded, advisory absent, Planner absent by default or exact
+# present-owner proof when the explicit unique owner is supplied. Emits only
+# safe machine-independent manifest identity on stdout.
+cmd_preflight() {
+  parse_preflight_args "$@"
+  command -v "$BUSCTL_BIN" >/dev/null 2>&1 || fail "required tool '$BUSCTL_BIN' not found in PATH"
+  command -v "$SHA256SUM_BIN" >/dev/null 2>&1 || fail "required tool '$SHA256SUM_BIN' not found in PATH"
+  command -v "$NODE_BIN" >/dev/null 2>&1 || fail "required tool '$NODE_BIN' not found in PATH"
+  command -v "$SYSTEMCTL_BIN" >/dev/null 2>&1 || fail "required tool '$SYSTEMCTL_BIN' not found in PATH"
+  command -v "$STAT_BIN" >/dev/null 2>&1 || fail "required tool '$STAT_BIN' not found in PATH"
+  command -v "$READLINK_BIN" >/dev/null 2>&1 || fail "required tool '$READLINK_BIN' not found in PATH"
+  require_regular_file "$PRE_BUNDLE" "bundle"
+  require_regular_file "$PRE_MANIFEST" "manifest"
+  require_regular_file "$PRE_INPUT" "input"
+  require_regular_file "$SRC_ENTRY" "advisory entry source"
+  require_regular_file "$SRC_QUERY" "advisory query source"
+  require_regular_file "$SRC_SNAPSHOT" "advisory snapshot source"
+  [[ "${PRE_BUNDLE##*/}" == "$BUNDLE_BASENAME" ]] || fail "bundle must be exactly $BUNDLE_BASENAME"
+  [[ "${PRE_MANIFEST##*/}" == "$MANIFEST_BASENAME" ]] || fail "manifest must be exactly $MANIFEST_BASENAME"
+  local manifest_eval=""
+  manifest_eval="$(parse_manifest "$PRE_MANIFEST")" || exit 1
+  local MANIFEST_BUNDLE_SHA="" MANIFEST_ENTRY_SHA="" MANIFEST_QUERY_SHA="" MANIFEST_SNAPSHOT_SHA="" MANIFEST_INPUT_SHA="" MANIFEST_NONCE="" MANIFEST_CORRELATION="" MANIFEST_OWNER="" MANIFEST_GENERATION="" MANIFEST_REVISION=""
+  eval "$manifest_eval"
+  local actual_input_sha
+  actual_input_sha="$(sha256_file "$PRE_INPUT")"
+  [[ -n "$actual_input_sha" ]] || fail "could not hash the input"
+  [[ "$actual_input_sha" == "$MANIFEST_INPUT_SHA" ]] || fail "input bytes do not match the manifest input binding"
+  local actual_bundle_sha actual_entry_sha actual_query_sha actual_snapshot_sha
+  actual_bundle_sha="$(sha256_file "$PRE_BUNDLE")"
+  [[ "$actual_bundle_sha" == "$MANIFEST_BUNDLE_SHA" ]] || fail "bundle bytes do not match the manifest build identity"
+  actual_entry_sha="$(sha256_file "$SRC_ENTRY")"
+  actual_query_sha="$(sha256_file "$SRC_QUERY")"
+  actual_snapshot_sha="$(sha256_file "$SRC_SNAPSHOT")"
+  [[ "$actual_entry_sha" == "$MANIFEST_ENTRY_SHA" ]] || fail "entry source does not match the manifest build identity"
+  [[ "$actual_query_sha" == "$MANIFEST_QUERY_SHA" ]] || fail "query source does not match the manifest build identity"
+  [[ "$actual_snapshot_sha" == "$MANIFEST_SNAPSHOT_SHA" ]] || fail "snapshot source does not match the manifest build identity"
+  grep -Fq -- "$MANIFEST_ENTRY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded entry source binding"
+  grep -Fq -- "$MANIFEST_QUERY_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded query source binding"
+  grep -Fq -- "$MANIFEST_SNAPSHOT_SHA" "$PRE_BUNDLE" || fail "bundle lacks the embedded snapshot source binding"
+  prove_advisory_only "$PRE_BUNDLE" || exit 1
+  local KWIN_OWNER="" KWIN_PID="" KWIN_TICK="" KWIN_EXE="" KWIN_SOURCE=""
+  local PLANNER_OWNER="" PLANNER_PID="" PLANNER_TICK=""
+  local PLANNER_OWNER_1="" PLANNER_PID_1="" PLANNER_TICK_1=""
+  local _planner_eval_1="" _planner_eval_2=""
+  local _pre_out=""
+  _pre_out="$(kwin_identity_once)" || exit 1
+  local -a _pre=()
+  mapfile -t _pre <<<"$_pre_out" || fail "KWin identity capture is ambiguous"
+  [[ "${#_pre[@]}" -eq 5 ]] || fail "KWin identity capture is ambiguous"
+  KWIN_OWNER="${_pre[0]}"
+  KWIN_PID="${_pre[1]}"
+  KWIN_TICK="${_pre[2]}"
+  KWIN_EXE="${_pre[3]}"
+  KWIN_SOURCE="${_pre[4]}"
+  [[ -n "$KWIN_OWNER" && -n "$KWIN_PID" && -n "$KWIN_TICK" && -n "$KWIN_EXE" ]] || fail "KWin identity capture is ambiguous"
+  [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
+  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  if [[ -n "$PRE_EXPECTED_PLANNER_OWNER" ]]; then
+    _planner_eval_1="$(check_planner_present_owner "$PRE_EXPECTED_PLANNER_OWNER")" || exit 1
+    PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+    eval "$_planner_eval_1"
+    [[ -n "$PLANNER_OWNER" && -n "$PLANNER_PID" && -n "$PLANNER_TICK" ]] || fail "planner present-owner proof is ambiguous"
+    valid_planner_unique_owner "$PLANNER_OWNER" || fail "planner present-owner proof is ambiguous"
+    [[ "$PLANNER_OWNER" == "$PRE_EXPECTED_PLANNER_OWNER" ]] || fail "planner unique owner mismatch for $PLANNER_SERVICE; refusing (expected $PRE_EXPECTED_PLANNER_OWNER, present $PLANNER_OWNER)"
+    PLANNER_OWNER_1="$PLANNER_OWNER"; PLANNER_PID_1="$PLANNER_PID"; PLANNER_TICK_1="$PLANNER_TICK"
+  else
+    check_planner_absent || exit 1
+  fi
+  local RE_OWNER="" RE_PID="" RE_TICK="" RE_EXE="" RE_SOURCE=""
+  local _re_out=""
+  _re_out="$(kwin_identity_once)" || fail "KWin identity recapture failed"
+  local -a _re=()
+  mapfile -t _re <<<"$_re_out" || fail "KWin identity recapture is ambiguous"
+  [[ "${#_re[@]}" -eq 5 ]] || fail "KWin identity recapture is ambiguous"
+  RE_OWNER="${_re[0]}"
+  RE_PID="${_re[1]}"
+  RE_TICK="${_re[2]}"
+  RE_EXE="${_re[3]}"
+  RE_SOURCE="${_re[4]}"
+  [[ "$RE_OWNER" == "$KWIN_OWNER" ]] || fail "KWin unique owner drift detected; refusing ambiguous identity"
+  [[ "$RE_PID" == "$KWIN_PID" && "$RE_TICK" == "$KWIN_TICK" ]] || fail "KWin PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
+  [[ "$RE_EXE" == "$KWIN_EXE" ]] || fail "KWin executable drift detected; refusing ambiguous identity"
+  [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
+  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory preflight"
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  if [[ -n "$PRE_EXPECTED_PLANNER_OWNER" ]]; then
+    _planner_eval_2="$(check_planner_present_owner "$PRE_EXPECTED_PLANNER_OWNER")" || exit 1
+    PLANNER_OWNER=""; PLANNER_PID=""; PLANNER_TICK=""
+    eval "$_planner_eval_2"
+    [[ -n "$PLANNER_OWNER" && -n "$PLANNER_PID" && -n "$PLANNER_TICK" ]] || fail "planner present-owner proof is ambiguous"
+    [[ "$PLANNER_OWNER" == "$PLANNER_OWNER_1" ]] || fail "planner unique owner mismatch for $PLANNER_SERVICE; refusing (expected $PLANNER_OWNER_1, present $PLANNER_OWNER)"
+    [[ "$PLANNER_PID" == "$PLANNER_PID_1" && "$PLANNER_TICK" == "$PLANNER_TICK_1" ]] || fail "planner PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
+  else
+    check_planner_absent || exit 1
+  fi
+  printf 'preflight: bundle=%s entry=%s query=%s snapshot=%s input=%s owner=%s generation=%s revision=%s correlation=%s nonce=%s\n' \
+    "$MANIFEST_BUNDLE_SHA" "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA" \
+    "$MANIFEST_INPUT_SHA" "$MANIFEST_OWNER" "$MANIFEST_GENERATION" "$MANIFEST_REVISION" "$MANIFEST_CORRELATION" "$MANIFEST_NONCE"
 }
 
 cmd_status() {
@@ -994,9 +1378,9 @@ cmd_stop() {
     printf 'stopped: plugin=%s script=%s already-absent cleanup=verified\n' "$RECEIPT_PLUGIN" "$RECEIPT_SCRIPT_ID"
     return 0
   fi
-  "$BUSCTL_BIN" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
+  "$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$SCRIPT_OBJ" "$BUS_SCRIPT_IFACE" stop >/dev/null 2>&1 || true
   local unload_out=""
-  unload_out="$("$BUSCTL_BIN" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$RECEIPT_PLUGIN" 2>/dev/null)" || {
+  unload_out="$("$BUSCTL_BIN" "$BUS_SCOPE" call "$BUS_DEST" "$BUS_PATH" "$BUS_SCRIPTING_IFACE" unloadScript s "$RECEIPT_PLUGIN" 2>/dev/null)" || {
     fail "unloadScript failed for '$RECEIPT_PLUGIN'"
   }
   [[ "$(parse_bool "$unload_out")" == "true" ]] || fail "unloadScript refused '$RECEIPT_PLUGIN'"
@@ -1009,11 +1393,12 @@ main() {
   [[ $# -ge 1 ]] || { usage >&2; exit 1; }
   case "$1" in
     --help|-h|help) usage; exit 0 ;;
+    preflight) shift; cmd_preflight "$@" ;;
     start) shift; cmd_start "$@" ;;
     status) shift; cmd_status "$@" ;;
     diagnostics) shift; cmd_diagnostics "$@" ;;
     stop) shift; cmd_stop "$@" ;;
-    *) fail "unknown command '$1' (expected start|status|diagnostics|stop|--help)" ;;
+    *) fail "unknown command '$1' (expected preflight|start|status|diagnostics|stop|--help)" ;;
   esac
 }
 

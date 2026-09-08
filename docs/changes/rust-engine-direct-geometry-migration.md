@@ -241,6 +241,31 @@ production behavior through incremental opt-in promotion.
   residue was not searched, inspected, modified, or deleted. The transport
   gate remains pending a separately reviewed fail-closed sequencer. Public
   KWin still cannot attest the initially resolved same-UID planner binary.
+- Fail-closed advisory sequencer and bounded host transport attempts,
+  2026-09-08: the standalone sequencer now performs resource-free absent-state
+  preflight, creates one fresh lifecycle only after that gate, pins one Planner
+  unique owner/PID/tick/executable, drives a successful response candidate,
+  stale refusal, and armed service-loss barrier in order, and exact-cleans only
+  recorded Script/Planner resources. Its static fake route exercises malformed,
+  duplicate, stale, timeout, collision, identity drift, Script-ID, partial
+  cleanup, unique-owner disappearance, production continuity, and no-resource
+  preflight failures. The first live attempt stopped before lifecycle because
+  KWin calls lacked the user-bus scope; the second stopped at unscoped
+  Script-object introspection. Both were corrected with regression coverage
+  after exact public restoration. The final bounded attempt loaded and ran only
+  the exact advisory Script but its first lexical observer rejected the current
+  scope as `advisory-invalid-input` before Planner dispatch. It therefore
+  establishes no eligible-three snapshot, success, stale, service-loss, or
+  after-equality proof. The standalone source has no native actuation API, and
+  public restoration reads found the Planner and advisory Script absent, the
+  generated advisory outputs absent, and the production plugin loaded. No
+  runtime residue was searched; the previously preserved unidentified advisory
+  residue remains untouched. Separately, the four user-authorized exact orphan
+  nested-KWin process targets were terminated and verified absent; no other
+  process or path was touched. The remaining transport gate is a naturally
+  eligible exact-three observer scope, without manufacturing or mutating host
+  window state. Public KWin still cannot attest the initially resolved
+  same-UID Planner binary.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
