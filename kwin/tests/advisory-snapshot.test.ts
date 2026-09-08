@@ -4,10 +4,12 @@ import { describe, it } from "node:test";
 
 import {
     ADVISORY_SNAPSHOT_OUTPUT_ID,
+    ADVISORY_SNAPSHOT_REJECTS,
     ADVISORY_SNAPSHOT_ROOT_ID,
     ADVISORY_SNAPSHOT_WINDOW_COUNT,
     ADVISORY_SNAPSHOT_WORKSPACE_ID,
     captureAdvisorySnapshot,
+    isAdvisorySnapshotReject,
 } from "../src/advisory-snapshot";
 import { normalizeAdvisoryRequest } from "../src/advisory-plan-query";
 
@@ -319,7 +321,11 @@ describe("advisory snapshot identity and count failures", () => {
         const wb = stubWindow("id-a", output, desktop, {}, 1);
         const wc = stubWindow("id-c", output, desktop, {}, 2);
         const workspace = stubWorkspace([wa, wb, wc], wa);
-        assert.equal(captureAdvisorySnapshot(workspace as never, "left").ok, false);
+        const result = captureAdvisorySnapshot(workspace as never, "left");
+        assert.equal(result.ok, false);
+        if (!result.ok) {
+            assert.equal(result.reason, "advisory-snapshot-identity-duplicate");
+        }
     });
 
     it("refuses missing and invalid ids", () => {
@@ -517,6 +523,356 @@ describe("advisory snapshot source boundaries", () => {
             "manufacturer",
         ]) {
             assert.ok(!ADAPTER_SOURCE.includes(forbidden), `mutation coupling: ${forbidden}`);
+        }
+    });
+});
+
+describe("advisory snapshot redacted rejection taxonomy", () => {
+    function reasonOf(result: ReturnType<typeof captureAdvisorySnapshot>): string {
+        assert.equal(result.ok, false);
+        if (result.ok) throw new Error("expected failure");
+        return result.reason;
+    }
+
+    it("exposes exactly eleven bounded enum members and a frozen list", () => {
+        assert.deepEqual([...ADVISORY_SNAPSHOT_REJECTS], [
+            "advisory-snapshot-invalid-input",
+            "advisory-snapshot-surface-unavailable",
+            "advisory-snapshot-area-unavailable",
+            "advisory-snapshot-identity-invalid",
+            "advisory-snapshot-identity-duplicate",
+            "advisory-snapshot-geometry-invalid",
+            "advisory-snapshot-count-mismatch",
+            "advisory-snapshot-active-unavailable",
+            "advisory-snapshot-eligibility-state",
+            "advisory-snapshot-eligibility-type",
+            "advisory-snapshot-eligibility-binding",
+        ]);
+        assert.ok(Object.isFrozen(ADVISORY_SNAPSHOT_REJECTS));
+        for (const member of ADVISORY_SNAPSHOT_REJECTS) {
+            assert.ok(isAdvisorySnapshotReject(member));
+            assert.ok(ADAPTER_SOURCE.includes(`"${member}"`), `missing static enum: ${member}`);
+        }
+        assert.ok(!ADAPTER_SOURCE.includes('"advisory-invalid-input"'));
+    });
+
+    it("maps input shape to invalid-input without sensitive payload", () => {
+        const { workspace } = validTrio();
+        assert.equal(reasonOf(captureAdvisorySnapshot(workspace as never, "diagonal")), "advisory-snapshot-invalid-input");
+        assert.equal(reasonOf(captureAdvisorySnapshot(null as never, "left")), "advisory-snapshot-invalid-input");
+    });
+
+    it("maps surface access to surface-unavailable", () => {
+        const { workspace } = validTrio();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        assert.equal(reasonOf(captureAdvisorySnapshot(workspace as never, "left")), "advisory-snapshot-surface-unavailable");
+        const { windows, active } = validTrio();
+        const output = windows[0]?.["output"] as object;
+        const desktop = (windows[0]?.["desktops"] as unknown[])[0] as object;
+        const noList: StubWorkspace = {
+            activeWindow: active,
+            screens: [output],
+            currentDesktopForScreen: (): unknown => desktop,
+            clientArea: (): unknown => ({ ...WORK_AREA }),
+        };
+        assert.equal(reasonOf(captureAdvisorySnapshot(noList as never, "left")), "advisory-snapshot-surface-unavailable");
+    });
+
+    it("maps work-area and output geometry to area-unavailable", () => {
+        const { windows, active } = validTrio();
+        const output = windows[0]?.["output"] as object;
+        const desktop = (windows[0]?.["desktops"] as unknown[])[0] as object;
+        const noArea: StubWorkspace = {
+            activeWindow: active,
+            windowList: (): unknown[] => [...windows],
+            screens: [output],
+            currentDesktopForScreen: (): unknown => desktop,
+            clientArea: (): unknown => null,
+        };
+        assert.equal(reasonOf(captureAdvisorySnapshot(noArea as never, "left")), "advisory-snapshot-area-unavailable");
+    });
+
+    it("maps opaque id faults to identity-invalid and duplicates to identity-duplicate", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-a", output, desktop, {}, 1);
+        const wc = stubWindow("id-c", output, desktop, {}, 2);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wa) as never, "left")),
+            "advisory-snapshot-identity-duplicate",
+        );
+        const bad = stubWindow("id-c", output, desktop, { frameGeometry: { x: 10, y: 10, width: 100, height: 100 } }, 2);
+        (bad as Record<string, unknown>)["internalId"] = "bad id";
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, stubWindow("id-b", output, desktop, {}, 1), bad], wa) as never, "left")),
+            "advisory-snapshot-identity-invalid",
+        );
+    });
+
+    it("maps frame faults to geometry-invalid", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-b", output, desktop, {}, 1);
+        const outside = stubWindow("id-c", output, desktop, { frameGeometry: { x: 5000, y: 10, width: 100, height: 100 } }, 2);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, outside], wb) as never, "up")),
+            "advisory-snapshot-geometry-invalid",
+        );
+    });
+
+    it("maps non-three eligible sets to count-mismatch", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-b", output, desktop, {}, 1);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb], wa) as never, "left")),
+            "advisory-snapshot-count-mismatch",
+        );
+        const wc = stubWindow("id-c", output, desktop, {}, 2);
+        const wd = stubWindow("id-d", output, desktop, {}, 3);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc, wd], wa) as never, "left")),
+            "advisory-snapshot-count-mismatch",
+        );
+    });
+
+    it("maps underfull in-scope exclusions to redacted eligibility field classes", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const cases: Array<[Record<string, unknown>, string]> = [
+            [{ minimized: true }, "advisory-snapshot-eligibility-state"],
+            [{ fullScreen: true }, "advisory-snapshot-eligibility-state"],
+            [{ maximizeMode: 3 }, "advisory-snapshot-eligibility-state"],
+            [{ move: true }, "advisory-snapshot-eligibility-state"],
+            [{ resize: true }, "advisory-snapshot-eligibility-state"],
+            [{ normalWindow: false }, "advisory-snapshot-eligibility-type"],
+            [{ managed: false }, "advisory-snapshot-eligibility-type"],
+            [{ resizeable: false }, "advisory-snapshot-eligibility-type"],
+            [{ appletPopup: true }, "advisory-snapshot-eligibility-type"],
+            [{ tile: null }, "advisory-snapshot-eligibility-binding"],
+            [{ onAllDesktops: true }, "advisory-snapshot-eligibility-binding"],
+        ];
+        for (const [override, expected] of cases) {
+            const wa = stubWindow("id-a", output, desktop, {}, 0);
+            const wb = stubWindow("id-b", output, desktop, {}, 1);
+            const bad = stubWindow("id-c", output, desktop, override, 2);
+            assert.equal(
+                reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, bad], wa) as never, "left")),
+                expected,
+                JSON.stringify(override),
+            );
+        }
+    });
+
+    it("prefers state over type over binding without identifying a window", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const stateBad = stubWindow("id-b", output, desktop, { minimized: true }, 1);
+        const typeBad = stubWindow("id-c", output, desktop, { normalWindow: false }, 2);
+        const bindingBad = stubWindow("id-d", output, desktop, { tile: null }, 3);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, stateBad, typeBad], wa) as never, "left")),
+            "advisory-snapshot-eligibility-state",
+        );
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, stateBad, bindingBad], wa) as never, "left")),
+            "advisory-snapshot-eligibility-state",
+        );
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, typeBad, bindingBad], wa) as never, "left")),
+            "advisory-snapshot-eligibility-type",
+        );
+    });
+
+    it("keeps count-mismatch when underfull has no in-scope excluded window", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const otherOutput = stubOutput();
+        const otherDesktop = { id: "d2" };
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-b", output, desktop, {}, 1);
+        const elsewhere = stubWindow("id-c", otherOutput, otherDesktop, {}, 2);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, elsewhere], wa) as never, "left")),
+            "advisory-snapshot-count-mismatch",
+        );
+    });
+
+    it("keeps extra eligible counts as count-mismatch despite an unrelated excluded window", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-b", output, desktop, {}, 1);
+        const wc = stubWindow("id-c", output, desktop, {}, 2);
+        const wd = stubWindow("id-d", output, desktop, {}, 3);
+        const excluded = stubWindow("id-e", output, desktop, { minimized: true }, 0);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc, wd, excluded], wa) as never, "left")),
+            "advisory-snapshot-count-mismatch",
+        );
+    });
+
+    it("maps missing active binding to active-unavailable", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow("id-a", output, desktop, {}, 0);
+        const wb = stubWindow("id-b", output, desktop, {}, 1);
+        const wc = stubWindow("id-c", output, desktop, {}, 2);
+        const excluded = stubWindow("id-d", output, desktop, { minimized: true }, 3);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc, excluded], excluded) as never, "left")),
+            "advisory-snapshot-active-unavailable",
+        );
+    });
+
+    it("keeps rejection reasons free of sensitive values", () => {
+        const samples: Array<ReturnType<typeof captureAdvisorySnapshot>> = [];
+        const { workspace } = validTrio();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        samples.push(captureAdvisorySnapshot(workspace as never, "left"));
+        for (const member of ADVISORY_SNAPSHOT_REJECTS) {
+            const text = JSON.stringify(member);
+            assert.ok(/^[a-z0-9-]+$/.test(member.replace("advisory-snapshot-", "")));
+            assert.ok(!text.includes("caption-"));
+            assert.ok(!text.includes("id-a"));
+            assert.ok(!text.includes("1920"));
+            assert.ok(!text.includes("100"));
+            void text;
+        }
+        for (const result of samples) {
+            const reason = reasonOf(result);
+            assert.ok(isAdvisorySnapshotReject(reason));
+            assert.ok(/^advisory-snapshot-[a-z-]+$/.test(reason));
+        }
+    });
+
+    it("keeps identity format and duplicate enums distinct and redacted", () => {
+        assert.ok(isAdvisorySnapshotReject("advisory-snapshot-identity-invalid"));
+        assert.ok(isAdvisorySnapshotReject("advisory-snapshot-identity-duplicate"));
+        assert.ok(!isAdvisorySnapshotReject("advisory-snapshot-identity-unknown"));
+        for (const member of ["advisory-snapshot-identity-invalid", "advisory-snapshot-identity-duplicate"]) {
+            assert.ok(ADVISORY_SNAPSHOT_REJECTS.includes(member as never));
+            assert.ok(ADAPTER_SOURCE.includes(`"${member}"`));
+            assert.ok(/^advisory-snapshot-[a-z-]+$/.test(member));
+        }
+    });
+});
+
+describe("advisory snapshot single-braced QUuid normalization", () => {
+    const UUID_A = "11111111-1111-1111-1111-111111111111";
+    const UUID_B = "22222222-2222-2222-2222-222222222222";
+    const UUID_C = "33333333-3333-3333-3333-333333333333";
+
+    function reasonOf(result: ReturnType<typeof captureAdvisorySnapshot>): string {
+        assert.equal(result.ok, false);
+        if (result.ok) throw new Error("expected failure");
+        return result.reason;
+    }
+
+    it("accepts exact single-braced string form and emits bare ids", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow(`{${UUID_A}}`, output, desktop, {}, 0);
+        const wb = stubWindow(`{${UUID_B}}`, output, desktop, {}, 1);
+        const wc = stubWindow(`{${UUID_C}}`, output, desktop, {}, 2);
+        const result = captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wb) as never, "left");
+        assert.equal(result.ok, true);
+        if (!result.ok) throw new Error("expected ok");
+        const snapshot = result.snapshot as Record<string, unknown>;
+        const links = snapshot["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            links.map((l) => l["window"]),
+            [UUID_A, UUID_B, UUID_C],
+        );
+        const text = JSON.stringify(snapshot);
+        assert.ok(!text.includes(`{${UUID_A}}`));
+        assert.ok(!text.includes(`{${UUID_B}}`));
+        assert.ok(!text.includes(`{${UUID_C}}`));
+        assert.ok(text.includes(UUID_A));
+    });
+
+    it("accepts QUuid object form via String() coercion", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const braced = (uuid: string): unknown => ({ toString: (): string => `{${uuid}}` });
+        const wa = stubWindow("placeholder-a", output, desktop, {}, 0);
+        const wb = stubWindow("placeholder-b", output, desktop, {}, 1);
+        const wc = stubWindow("placeholder-c", output, desktop, {}, 2);
+        (wa as Record<string, unknown>)["internalId"] = braced(UUID_A);
+        (wb as Record<string, unknown>)["internalId"] = braced(UUID_B);
+        (wc as Record<string, unknown>)["internalId"] = braced(UUID_C);
+        const result = captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wa) as never, "right");
+        assert.equal(result.ok, true);
+        if (!result.ok) throw new Error("expected ok");
+        const intent = result.intent as Record<string, unknown>;
+        assert.equal(intent["focused_window"], UUID_A);
+    });
+
+    it("round-trips normalized braced snapshot through the request normalizer", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow(`{${UUID_A}}`, output, desktop, {}, 0);
+        const wb = stubWindow(UUID_B, output, desktop, {}, 1);
+        const wc = stubWindow("id-c", output, desktop, {}, 2);
+        const result = captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wb) as never, "down");
+        assert.equal(result.ok, true);
+        if (!result.ok) throw new Error("expected ok");
+        const normalized = normalizeAdvisoryRequest({
+            correlationId: "corr-braced",
+            owner: "owner-1",
+            generation: "gen-1",
+            revision: 0,
+            snapshot: result.snapshot,
+            intent: result.intent,
+            capabilities: result.capabilities,
+        });
+        assert.equal(normalized.ok, true);
+    });
+
+    it("refuses bare-vs-braced duplicates as identity-duplicate", () => {
+        const output = stubOutput();
+        const desktop = stubDesktop();
+        const wa = stubWindow(UUID_A, output, desktop, {}, 0);
+        const wb = stubWindow(`{${UUID_A}}`, output, desktop, {}, 1);
+        const wc = stubWindow(UUID_B, output, desktop, {}, 2);
+        assert.equal(
+            reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wa) as never, "left")),
+            "advisory-snapshot-identity-duplicate",
+        );
+    });
+
+    it("refuses malformed and double-bracing forms as identity-invalid", () => {
+        const badForms = [
+            "{{" + UUID_A + "}}",
+            `{${UUID_A}}extra`,
+            `extra{${UUID_A}}`,
+            `{${UUID_A}`,
+            `${UUID_A}}`,
+            "{not-a-uuid}",
+            "{}",
+            "{brace}",
+            `{${UUID_A.slice(0, 35)}}`,
+            `{${UUID_A} }`,
+            "{11111111-1111-1111-1111-11111111111Z}",
+            "bad id",
+            "bad;id",
+        ];
+        for (const badId of badForms) {
+            const output = stubOutput();
+            const desktop = stubDesktop();
+            const wa = stubWindow(UUID_A, output, desktop, {}, 0);
+            const wb = stubWindow(UUID_B, output, desktop, {}, 1);
+            const wc = stubWindow(UUID_C, output, desktop, {}, 2);
+            (wc as Record<string, unknown>)["internalId"] = badId;
+            assert.equal(
+                reasonOf(captureAdvisorySnapshot(stubWorkspace([wa, wb, wc], wa) as never, "left")),
+                "advisory-snapshot-identity-invalid",
+                badId,
+            );
         }
     });
 });

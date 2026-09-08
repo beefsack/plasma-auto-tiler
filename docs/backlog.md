@@ -58,15 +58,30 @@ Only meaningful pending or active work is listed.
       live attempts stopped before effective lifecycle on omitted user-bus
       scoping and Script-object introspection scoping, each followed by a
       reviewed causal correction and public exact restoration. The final
-      bounded attempt loaded and ran only the advisory Script, then stopped
-      fail-closed at `advisory-invalid-input`: the observer did not accept the
-      current host as an eligible exact-three scope. Planner/advisory absence,
-      generated-output absence, and production-plugin continuity were verified
-      afterward; no runtime residue was searched or changed. No native mutation
-      API exists on this path, but success/stale/service-loss and after-snapshot
-      equality are not established. Do not retry unchanged or manufacture host
-      conditions; the remaining gate is a naturally eligible exact-three
-      observer scope. The static
+       bounded attempt loaded and ran only the advisory Script, then stopped
+       fail-closed at `advisory-invalid-input`. A reviewed redacted observer
+       diagnostic split capture rejection classes and a second bounded attempt
+       identified `identity-invalid`; current public `String(Window.internalId)`
+       is the documented single-braced `QUuid` form, which the observer had
+       rejected despite accepting the equivalent bare opaque UUID. The adapter
+       now normalizes only that exact canonical form to the existing bare opaque
+       schema, keeps duplicate identity refusal distinct, and logs only bounded
+       category/detail tokens. The correction accepted the exact-three host
+       snapshot and reached Planner dispatch with after-equality true, proving
+       no extra/ineligible host-window condition. The current test-bound flat
+       topology still does not truthfully represent the observed nested
+       `H[A,V[B,C]]` arrangement and needs a separate explicit-boundary
+       decision. The attempt then refused `advisory-timeout`: the Planner authentication gate requires a
+       readable `/proc/<KWin PID>/exe`, while this host has only the separately
+       approved loader direct-parent fallback. KWin, Planner/advisory absence,
+       generated-output absence, production-plugin continuity, and config hash/
+       mtime matched exactly after each attempt; no native window, focus,
+       geometry, workspace, output, or configuration mutation occurred, and no
+       runtime residue was searched or changed. No native mutation API exists on
+       this path, but success/stale/service-loss and after-snapshot equality are
+       not established. Do not retry: extending Rust Planner authentication to
+       the unreadable-executable direct-parent identity is a pending durable
+       security-boundary decision. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

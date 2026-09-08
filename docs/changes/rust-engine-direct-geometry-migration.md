@@ -266,6 +266,36 @@ production behavior through incremental opt-in promotion.
   eligible exact-three observer scope, without manufacturing or mutating host
   window state. Public KWin still cannot attest the initially resolved
   same-UID Planner binary.
+- Advisory observer diagnosis and transport stop, 2026-09-08: the first
+  sequencer attempt emitted only the prior generic capture rejection. A small
+  redacted diagnostic taxonomy made source, ready, correlated result, and
+  `after:false` observable without reporting native identifiers, geometry,
+  captions, application IDs, PIDs, or host values. The resulting
+  `identity-invalid` class was an adapter/schema defect: public
+  `String(Window.internalId)` supplies a single-braced canonical `QUuid`, while
+  the observer accepted only the equivalent bare opaque form. The adapter now
+  accepts and normalizes only that exact braced canonical UUID to its existing
+  bare opaque schema, retains distinct malformed and duplicate identity
+  refusals, and does not infer or plan topology. Static adversarial tests cover
+  every exposed rejection class, braced/bare duplicate collision, malformed
+  UUID forms, marker order, no Planner call on capture rejection, and no
+  sensitive diagnostic payload. The correction's one fresh bounded sequencer
+  attempt accepted the active exact-three scope and reached Planner dispatch
+  with after-equality true, so no temporary host arrangement was needed. The
+  current test-bound flat topology does not truthfully represent the observed
+  nested `H[A,V[B,C]]` arrangement; choosing an explicit topology boundary is
+  a separate durable decision. Its success phase then timed out: the Rust
+  Planner caller authentication requires
+  a readable `/proc/<KWin PID>/exe`, but that read is unavailable on this host;
+  the loader's approved direct-parent fallback is not available to the Rust
+  service. KWin identity, production plugin continuity, advisory/Planner
+  absence, generated-output absence, and the `kwinrc` hash/mtime matched the
+  exact preimage after both attempts. No native window, focus, geometry,
+  workspace, output, configuration, or production lifecycle state changed; no
+  residue was searched or changed. A retry is blocked pending an explicit
+  durable security-boundary decision on whether and how Rust may authenticate
+  the unreadable-executable direct-parent KWin identity. Success, stale,
+  service-loss, and complete transport-gate evidence remain unclaimed.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

@@ -21,7 +21,7 @@
 // handles, no state changes, and no follow-on action path.
 
 import { AdvisoryPlanQuery } from "./advisory-plan-query";
-import { captureAdvisorySnapshot } from "./advisory-snapshot";
+import { ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT, captureAdvisorySnapshot, isAdvisorySnapshotReject } from "./advisory-snapshot";
 
 declare const ADVISORY_DESCRIBE_REQUEST_JSON: string;
 declare const ADVISORY_DESCRIBE_ENTRY_SHA256: string;
@@ -36,6 +36,9 @@ export const ADVISORY_DESCRIBE_AFTER_SCHEMA = "v1";
 export const ADVISORY_DESCRIBE_AFTER_TRUE = "true";
 export const ADVISORY_DESCRIBE_AFTER_FALSE = "false";
 export const ADVISORY_DESCRIBE_STALE_DETAIL = "reject:advisory-stale-snapshot";
+export const ADVISORY_DESCRIBE_SNAPSHOT_REJECT_PREFIX = "reject:advisory-snapshot-";
+export const ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL =
+    `reject:${ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT}`;
 export const ADVISORY_DESCRIBE_SOURCE_PREFIX = "plasma-auto-tiler:advisory-describe-source";
 export const ADVISORY_DESCRIBE_INVALID_LOG = "plasma-auto-tiler:advisory-describe-invalid";
 export const ADVISORY_DESCRIBE_NONCE_RE = /^[0-9a-f]{32,128}$/;
@@ -232,7 +235,31 @@ function readAfterEquality(revalidate: () => boolean): boolean {
     }
 }
 
-function logCaptureFailure(record: AdvisoryDescribeRecord): void {
+function snapshotRejectDetail(reason: unknown): string {
+    if (isAdvisorySnapshotReject(reason)) {
+        return `${ADVISORY_DESCRIBE_SNAPSHOT_REJECT_PREFIX}${reason.slice("advisory-snapshot-".length)}`;
+    }
+    return ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL;
+}
+
+function logCaptureFailure(
+    record: AdvisoryDescribeRecord,
+    entrySha: string,
+    querySha: string,
+    snapshotSha: string,
+    reason: unknown,
+): void {
+    const detail = snapshotRejectDetail(reason);
+    try {
+        console.log(sourceBindingLine(entrySha, querySha, snapshotSha));
+    } catch (error) {
+        void error;
+    }
+    try {
+        console.log(`${ADVISORY_DESCRIBE_READY_PREFIX}:${record.correlationId}`);
+    } catch (error) {
+        void error;
+    }
     try {
         console.log(ADVISORY_DESCRIBE_INVALID_LOG);
     } catch (error) {
@@ -240,8 +267,13 @@ function logCaptureFailure(record: AdvisoryDescribeRecord): void {
     }
     try {
         console.log(
-            `${ADVISORY_DESCRIBE_RESULT_PREFIX}:${ADVISORY_DESCRIBE_RESULT_SCHEMA}:${record.correlationId}:${record.owner}:${record.generation}:${record.revision}:${record.nonce}:reject:advisory-invalid-input`,
+            `${ADVISORY_DESCRIBE_RESULT_PREFIX}:${ADVISORY_DESCRIBE_RESULT_SCHEMA}:${record.correlationId}:${record.owner}:${record.generation}:${record.revision}:${record.nonce}:${detail}`,
         );
+    } catch (error) {
+        void error;
+    }
+    try {
+        console.log(afterVerdictLine(record.correlationId, false));
     } catch (error) {
         void error;
     }
@@ -282,7 +314,8 @@ function startAdvisoryDescribeOnce(): void {
         captured = null;
     }
     if (captured === null || !captured.ok) {
-        logCaptureFailure(record);
+        const reason = captured === null ? ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT : captured.reason;
+        logCaptureFailure(record, binding.entrySha, binding.querySha, binding.snapshotSha, reason);
         return;
     }
     const snapshot = captured.snapshot;

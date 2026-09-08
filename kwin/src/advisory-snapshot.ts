@@ -24,6 +24,76 @@ export const ADVISORY_SNAPSHOT_OUTPUT_ID = "advisory-output";
 export const ADVISORY_SNAPSHOT_WORKSPACE_ID = "advisory-workspace";
 export const ADVISORY_SNAPSHOT_ROOT_ID = "advisory-root";
 
+// Bounded redacted capture rejection taxonomy. Each value reports only a
+// coarse category (input shape, surface availability, area availability,
+// opaque identity format, opaque identity duplicate, geometry class,
+// exact-three count, active binding, plus underfull eligibility
+// field-classes). Values carry no titles, app ids, PIDs, native ids,
+// geometry, or host detail; only the enum string leaves the capture.
+// Eligibility families fire only when the eligible set is underfull (<3) and
+// at least one same-output/same-desktop window was excluded by that field
+// class. Overfull sets (>3) stay count-mismatch so an unrelated excluded
+// window never masks an extra eligible count; underfull sets with no
+// in-scope excluded window stay count-mismatch (zero underlying eligibility
+// signal). When several in-scope classes are present the precedence is
+// state, then type, then binding; no window is identified. Identity format
+// covers unparseable/malformed native ids; identity duplicate covers a
+// repeated normalized id (including bare-vs-braced collisions).
+export const ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT = "advisory-snapshot-invalid-input";
+export const ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE = "advisory-snapshot-surface-unavailable";
+export const ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE = "advisory-snapshot-area-unavailable";
+export const ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID = "advisory-snapshot-identity-invalid";
+export const ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE = "advisory-snapshot-identity-duplicate";
+export const ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID = "advisory-snapshot-geometry-invalid";
+export const ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH = "advisory-snapshot-count-mismatch";
+export const ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE = "advisory-snapshot-active-unavailable";
+export const ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_STATE = "advisory-snapshot-eligibility-state";
+export const ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_TYPE = "advisory-snapshot-eligibility-type";
+export const ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_BINDING = "advisory-snapshot-eligibility-binding";
+
+export type AdvisorySnapshotReject =
+    | typeof ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT
+    | typeof ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE
+    | typeof ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE
+    | typeof ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID
+    | typeof ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE
+    | typeof ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID
+    | typeof ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH
+    | typeof ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE
+    | typeof ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_STATE
+    | typeof ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_TYPE
+    | typeof ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_BINDING;
+
+export const ADVISORY_SNAPSHOT_REJECTS: readonly AdvisorySnapshotReject[] = Object.freeze([
+    ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT,
+    ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE,
+    ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE,
+    ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID,
+    ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE,
+    ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID,
+    ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH,
+    ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE,
+    ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_STATE,
+    ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_TYPE,
+    ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_BINDING,
+]);
+
+export function isAdvisorySnapshotReject(value: unknown): value is AdvisorySnapshotReject {
+    return (
+        value === ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT ||
+        value === ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE ||
+        value === ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE ||
+        value === ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID ||
+        value === ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE ||
+        value === ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID ||
+        value === ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH ||
+        value === ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE ||
+        value === ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_STATE ||
+        value === ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_TYPE ||
+        value === ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_BINDING
+    );
+}
+
 export type AdvisorySnapshotResult =
     | {
           readonly ok: true;
@@ -33,7 +103,7 @@ export type AdvisorySnapshotResult =
           readonly fingerprint: string;
           readonly revalidate: () => boolean;
       }
-    | { readonly ok: false; readonly reason: string };
+    | { readonly ok: false; readonly reason: AdvisorySnapshotReject };
 
 interface RectLike {
     readonly x: number;
@@ -147,12 +217,63 @@ function rectInside(inner: RectLike, outer: RectLike): boolean {
     );
 }
 
+function isHexRun(text: string): boolean {
+    if (text.length === 0) {
+        return false;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+        const code = text.charCodeAt(index);
+        const digit = code >= 48 && code <= 57;
+        const lower = code >= 97 && code <= 102;
+        const upper = code >= 65 && code <= 70;
+        if (!(digit || lower || upper)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function isUuidText(text: string): boolean {
+    const parts = text.split("-");
+    const lens: readonly number[] = [8, 4, 4, 4, 12];
+    if (parts.length !== lens.length) {
+        return false;
+    }
+    for (let index = 0; index < lens.length; index += 1) {
+        const part = parts[index] as string;
+        if (part.length !== (lens[index] as number) || !isHexRun(part)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// Live `String(Window.internalId)` (QUuid) emits the canonical 8-4-4-4-12
+// hex form wrapped in exactly one `{...}` pair. Normalize only that exact
+// single-braced canonical form to the bare UUID so downstream opaque ids
+// stay brace-free. Legacy opaque values (including bare UUIDs, which already
+// satisfy the opaque alphabet) pass through unchanged. Every other bracing
+// shape refuses.
+function unwrapSingleBracedUuid(text: string): string | null {
+    if (text.length !== 38 || !text.startsWith("{") || !text.endsWith("}")) {
+        return null;
+    }
+    const inner = text.slice(1, 37);
+    if (!isUuidText(inner)) {
+        return null;
+    }
+    return isOpaqueId(inner) ? inner : null;
+}
+
 function normalizeNativeId(value: unknown): string | null {
     if (value === undefined || value === null) {
         return null;
     }
     if (typeof value === "string") {
-        return isOpaqueId(value) ? value : null;
+        if (isOpaqueId(value)) {
+            return value;
+        }
+        return unwrapSingleBracedUuid(value);
     }
     let text = "";
     try {
@@ -164,7 +285,10 @@ function normalizeNativeId(value: unknown): string | null {
     if (typeof text !== "string") {
         return null;
     }
-    return isOpaqueId(text) ? text : null;
+    if (isOpaqueId(text)) {
+        return text;
+    }
+    return unwrapSingleBracedUuid(text);
 }
 
 function leafIdFor(windowId: string): string {
@@ -182,12 +306,20 @@ interface CaptureState {
     readonly tiles: Readonly<Record<string, object>>;
 }
 
-function captureState(workspace: unknown, direction: unknown): CaptureState | null {
+type CaptureOutcome =
+    | { readonly ok: true; readonly state: CaptureState }
+    | { readonly ok: false; readonly reason: AdvisorySnapshotReject };
+
+function fail(reason: AdvisorySnapshotReject): CaptureOutcome {
+    return { ok: false, reason };
+}
+
+function captureState(workspace: unknown, direction: unknown): CaptureOutcome {
     if (typeof workspace !== "object" || workspace === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
     if (!isDirection(direction)) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
     const surface = workspace as Record<string, unknown>;
     let active: unknown = undefined;
@@ -195,36 +327,36 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         active = Reflect.get(surface, "activeWindow");
     } catch (error) {
         void error;
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     if (typeof active !== "object" || active === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const activeRef = active as object;
     const activeOutput = readProp(activeRef, "output");
     if (typeof activeOutput !== "object" || activeOutput === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const outputRef = activeOutput as object;
     const lister = readProp(surface, "windowList");
     if (typeof lister !== "function") {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     let rawList: unknown = undefined;
     try {
         rawList = Reflect.apply(lister as (...args: readonly never[]) => unknown, surface, []);
     } catch (error) {
         void error;
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const windows = decodeBoundedList(rawList, ADVISORY_SNAPSHOT_MAX_WINDOW_LIST);
     if (windows === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const screensRaw = readProp(surface, "screens");
     const screens = decodeBoundedList(screensRaw, ADVISORY_SNAPSHOT_MAX_SCREENS);
     if (screens === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     let outputKnown = false;
     for (const screen of screens) {
@@ -234,11 +366,11 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         }
     }
     if (!outputKnown) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const currentFn = readProp(surface, "currentDesktopForScreen");
     if (typeof currentFn !== "function") {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     let desktop: unknown = undefined;
     try {
@@ -249,15 +381,15 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         );
     } catch (error) {
         void error;
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     if (typeof desktop !== "object" || desktop === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_SURFACE_UNAVAILABLE);
     }
     const desktopRef = desktop as object;
     const clientAreaFn = readProp(surface, "clientArea");
     if (typeof clientAreaFn !== "function") {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE);
     }
     let areaRaw: unknown = undefined;
     try {
@@ -268,16 +400,16 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         );
     } catch (error) {
         void error;
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE);
     }
     const workArea = asPositiveRect(areaRaw);
     if (workArea === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE);
     }
     const outputGeomRaw = readProp(outputRef, "geometry");
     const outputGeom = asPositiveRect(outputGeomRaw);
     if (outputGeom === null) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_AREA_UNAVAILABLE);
     }
     const candidates: Array<{
         readonly id: string;
@@ -286,41 +418,79 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         readonly frame: RectLike;
     }> = [];
     const seen = new Set<string>();
+    // In-scope means the window is on the active output and the active
+    // desktop. Only those exclusions can explain an underfull trio; scope
+    // mismatches stay silent so they collapse to count-mismatch.
+    const isInScope = (ref: object): boolean => {
+        if (readProp(ref, "output") !== outputRef) {
+            return false;
+        }
+        const membership = decodeBoundedList(readProp(ref, "desktops"), ADVISORY_SNAPSHOT_MAX_DESKTOPS);
+        return membership !== null && membership.length === 1 && membership[0] === desktopRef;
+    };
+    let excludedType = false;
+    let excludedState = false;
+    let excludedBinding = false;
+    const markType = (ref: object): void => {
+        if (isInScope(ref)) {
+            excludedType = true;
+        }
+    };
+    const markState = (ref: object): void => {
+        if (isInScope(ref)) {
+            excludedState = true;
+        }
+    };
+    const markBinding = (ref: object): void => {
+        if (isInScope(ref)) {
+            excludedBinding = true;
+        }
+    };
     for (const entry of windows) {
         if (typeof entry !== "object" || entry === null) {
             continue;
         }
         const ref = entry as object;
         if (readProp(ref, "normalWindow") !== true) {
+            markType(ref);
             continue;
         }
         if (readProp(ref, "managed") !== true) {
+            markType(ref);
             continue;
         }
         if (readProp(ref, "resizeable") !== true) {
+            markType(ref);
             continue;
         }
         if (readProp(ref, "appletPopup") !== false) {
+            markType(ref);
             continue;
         }
         if (readProp(ref, "minimized") !== false) {
+            markState(ref);
             continue;
         }
         if (readProp(ref, "fullScreen") !== false) {
+            markState(ref);
             continue;
         }
         const mode = readProp(ref, "maximizeMode");
         if (mode !== 0) {
+            markState(ref);
             continue;
         }
         if (readProp(ref, "onAllDesktops") !== false) {
+            markBinding(ref);
             continue;
         }
         if (readProp(ref, "move") !== false || readProp(ref, "resize") !== false) {
+            markState(ref);
             continue;
         }
         const tile = readProp(ref, "tile");
         if (typeof tile !== "object" || tile === null) {
+            markBinding(ref);
             continue;
         }
         if (readProp(ref, "output") !== outputRef) {
@@ -335,36 +505,48 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
             idText = normalizeNativeId(Reflect.get(ref, "internalId"));
         } catch (error) {
             void error;
-            return null;
+            return fail(ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID);
         }
         if (idText === null) {
-            return null;
+            return fail(ADVISORY_SNAPSHOT_REJECT_IDENTITY_INVALID);
         }
         if (seen.has(idText)) {
-            return null;
+            return fail(ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE);
         }
         seen.add(idText);
         const frame = asPositiveRect(readProp(ref, "frameGeometry"));
         if (frame === null) {
-            return null;
+            return fail(ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID);
         }
         if (!rectInside(frame, outputGeom) || !rectInside(frame, workArea)) {
-            return null;
+            return fail(ADVISORY_SNAPSHOT_REJECT_GEOMETRY_INVALID);
         }
         candidates.push({ id: idText, ref, tile, frame });
     }
-    if (candidates.length !== ADVISORY_SNAPSHOT_WINDOW_COUNT) {
-        return null;
+    if (candidates.length > ADVISORY_SNAPSHOT_WINDOW_COUNT) {
+        return fail(ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH);
+    }
+    if (candidates.length < ADVISORY_SNAPSHOT_WINDOW_COUNT) {
+        if (excludedState) {
+            return fail(ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_STATE);
+        }
+        if (excludedType) {
+            return fail(ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_TYPE);
+        }
+        if (excludedBinding) {
+            return fail(ADVISORY_SNAPSHOT_REJECT_ELIGIBILITY_BINDING);
+        }
+        return fail(ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH);
     }
     const sorted = [...candidates].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
     const sortedIds = sorted.map((entry) => entry.id);
     const idSet = new Set(sortedIds);
     if (idSet.size !== ADVISORY_SNAPSHOT_WINDOW_COUNT) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_IDENTITY_DUPLICATE);
     }
     const activeCandidate = sorted.find((candidate) => candidate.ref === activeRef);
     if (activeCandidate === undefined || !idSet.has(activeCandidate.id)) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE);
     }
     const activeId = activeCandidate.id;
     const frames: Record<string, RectLike> = {};
@@ -386,12 +568,14 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         });
     } catch (error) {
         void error;
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
     if (typeof fingerprint !== "string" || fingerprint.length === 0) {
-        return null;
+        return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
     return {
+        ok: true,
+        state: {
         sortedIds: Object.freeze(sortedIds),
         activeId,
         fingerprint,
@@ -400,6 +584,7 @@ function captureState(workspace: unknown, direction: unknown): CaptureState | nu
         active: activeRef,
         windows: Object.freeze(windowRefs),
         tiles: Object.freeze(tileRefs),
+        },
     };
 }
 
@@ -411,21 +596,21 @@ export function captureAdvisorySnapshot(
     workspace: Workspace,
     direction: unknown,
 ): AdvisorySnapshotResult {
-    let state: CaptureState | null = null;
+    let outcome: CaptureOutcome;
     try {
-        state = captureState(workspace as unknown, direction);
+        outcome = captureState(workspace as unknown, direction);
     } catch (error) {
         void error;
-        return { ok: false, reason: "advisory-invalid-input" };
+        return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT };
     }
-    if (state === null) {
-        return { ok: false, reason: "advisory-invalid-input" };
+    if (!outcome.ok) {
+        return { ok: false, reason: outcome.reason };
     }
-    const captured = state;
+    const captured = outcome.state;
     const leaves = captured.sortedIds.map((id) => leafIdFor(id));
     const activeIndex = captured.sortedIds.indexOf(captured.activeId);
     if (activeIndex < 0) {
-        return { ok: false, reason: "advisory-invalid-input" };
+        return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE };
     }
     const focusedLeaf = leaves[activeIndex] as string;
     const children: readonly Record<string, unknown>[] = Object.freeze(
@@ -484,17 +669,20 @@ export function captureAdvisorySnapshot(
         revalidate: () => {
             try {
                 const fresh = captureState(workspaceRef, directionValue);
+                if (!fresh.ok) {
+                    return false;
+                }
+                const current = fresh.state;
                 if (
-                    fresh === null ||
-                    fresh.fingerprint !== expected ||
-                    fresh.output !== captured.output ||
-                    fresh.desktop !== captured.desktop ||
-                    fresh.active !== captured.active
+                    current.fingerprint !== expected ||
+                    current.output !== captured.output ||
+                    current.desktop !== captured.desktop ||
+                    current.active !== captured.active
                 ) {
                     return false;
                 }
                 for (const id of captured.sortedIds) {
-                    if (fresh.windows[id] !== captured.windows[id] || fresh.tiles[id] !== captured.tiles[id]) {
+                    if (current.windows[id] !== captured.windows[id] || current.tiles[id] !== captured.tiles[id]) {
                         return false;
                     }
                 }

@@ -15,6 +15,8 @@ import {
     ADVISORY_DESCRIBE_READY_PREFIX,
     ADVISORY_DESCRIBE_RESULT_PREFIX,
     ADVISORY_DESCRIBE_RESULT_SCHEMA,
+    ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL,
+    ADVISORY_DESCRIBE_SNAPSHOT_REJECT_PREFIX,
     ADVISORY_DESCRIBE_STALE_DETAIL,
     validateDescribeInput,
 } from "../src/advisory-describe-entry";
@@ -202,5 +204,57 @@ describe("advisory describe entry wiring", () => {
         }
         assert.ok(ENTRY_SOURCE.includes("readAfterEquality(revalidate)"));
         assert.ok(!ENTRY_SOURCE.includes("workspace.queryWindowInfo"));
+    });
+
+    it("exposes the bounded snapshot rejection detail contract", () => {
+        assert.equal(ADVISORY_DESCRIBE_SNAPSHOT_REJECT_PREFIX, "reject:advisory-snapshot-");
+        assert.equal(ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL, "reject:advisory-snapshot-invalid-input");
+        assert.ok(/^[A-Za-z0-9._:-]{1,512}$/.test(ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_SNAPSHOT_REJECT_PREFIX"));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_SNAPSHOT_FALLBACK_DETAIL"));
+        assert.ok(ENTRY_SOURCE.includes("snapshotRejectDetail"));
+        assert.ok(ENTRY_SOURCE.includes("isAdvisorySnapshotReject"));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT"));
+        for (const family of [
+            "invalid-input",
+            "surface-unavailable",
+            "area-unavailable",
+            "identity-invalid",
+            "geometry-invalid",
+            "count-mismatch",
+            "active-unavailable",
+            "eligibility-state",
+            "eligibility-type",
+            "eligibility-binding",
+        ]) {
+            assert.ok(
+                ENTRY_SOURCE.includes(family) || readFsFileSync("src/advisory-snapshot.ts", "utf8").includes(family),
+                `missing enum family: ${family}`,
+            );
+        }
+    });
+
+    it("refuses capture with source -> ready -> correlated result -> after:false and no Planner", () => {
+        assert.ok(ENTRY_SOURCE.includes("function logCaptureFailure"));
+        assert.ok(ENTRY_SOURCE.includes("snapshotRejectDetail(reason)"));
+        assert.ok(ENTRY_SOURCE.includes("sourceBindingLine(entrySha, querySha, snapshotSha)"));
+        assert.ok(ENTRY_SOURCE.includes("afterVerdictLine(record.correlationId, false)"));
+        assert.ok(ENTRY_SOURCE.includes("logCaptureFailure(record, binding.entrySha, binding.querySha, binding.snapshotSha, reason)"));
+        const failureStart = ENTRY_SOURCE.indexOf("function logCaptureFailure");
+        const sourceEmit = ENTRY_SOURCE.indexOf("sourceBindingLine(entrySha, querySha, snapshotSha)", failureStart);
+        const readyEmit = ENTRY_SOURCE.indexOf("ADVISORY_DESCRIBE_READY_PREFIX", failureStart);
+        const resultEmit = ENTRY_SOURCE.indexOf("ADVISORY_DESCRIBE_RESULT_PREFIX}:${ADVISORY_DESCRIBE_RESULT_SCHEMA}", failureStart);
+        const afterEmit = ENTRY_SOURCE.indexOf("afterVerdictLine(record.correlationId, false)", failureStart);
+        assert.ok(failureStart >= 0 && sourceEmit > failureStart && readyEmit > sourceEmit);
+        assert.ok(resultEmit > readyEmit && afterEmit > resultEmit);
+        const captureBranch = ENTRY_SOURCE.indexOf("if (captured === null || !captured.ok)");
+        const queryBuild = ENTRY_SOURCE.indexOf("new AdvisoryPlanQuery");
+        assert.ok(captureBranch >= 0 && queryBuild > captureBranch);
+        assert.ok(ENTRY_SOURCE.slice(captureBranch, queryBuild).includes("logCaptureFailure(record, binding.entrySha"));
+        assert.ok(ENTRY_SOURCE.slice(captureBranch, queryBuild).includes("return;"));
+        for (const forbidden of ["caption", "internalId", "frameGeometry", "\"pid\"", "resourceClass", "serialNumber"]) {
+            const segment = ENTRY_SOURCE.slice(failureStart, ENTRY_SOURCE.indexOf("function startAdvisoryDescribeOnce", failureStart));
+            assert.ok(!segment.includes(forbidden), `capture diagnostic leak: ${forbidden}`);
+        }
     });
 });
