@@ -35,6 +35,7 @@ use crate::advisory_contract::{
     ADVISORY_MAX_REPLY_BYTES, ADVISORY_MAX_REVISION, AdvisorySession,
     evaluate_advisory_json_for_armed_loss,
 };
+use crate::focus_service::{FOCUS_MAX_REPLY_BYTES, FocusService};
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
 use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
 // Linux-only identity boundary; portable core never depends on it.
@@ -48,6 +49,9 @@ pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
 pub const METHOD: &str = "EvaluateMove";
 pub const ADVISORY_METHOD: &str = "DescribeAdvisoryPlan";
 pub const SHADOW_METHOD: &str = "DescribeShadowProjection";
+pub const FOCUS_METHOD: &str = "DescribeFocus";
+/// Bounded focus reply cap, mirroring the portable focus service bound.
+pub const FOCUS_MAX_REPLY: usize = FOCUS_MAX_REPLY_BYTES;
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -112,6 +116,11 @@ pub struct PlannerEndpoint {
     // strictly increasing revisions with fresh correlations, so
     // signal-driven recomputations can proceed. Never shared with advisory.
     shadow_session: Arc<std::sync::Mutex<ShadowSession>>,
+    // Owned focus transaction service held in process memory only, shared
+    // across endpoint clones so the single manually started service owns
+    // exactly one portable focus session (seeded from the first strict
+    // request, single pending). No generic IPC; this route only.
+    focus_service: Arc<std::sync::Mutex<FocusService>>,
     // Optional bounded advisory-loss arming. `None` is the normal
     // `planner-service` mode (unchanged: every accepted reply returns
     // normally). `Some` arms exactly one bounded correlation id: only an
@@ -129,6 +138,7 @@ impl PlannerEndpoint {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
+            focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
             advisory_loss_correlation: None,
         }
     }
@@ -145,6 +155,7 @@ impl PlannerEndpoint {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
+            focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
             advisory_loss_correlation: Some(armed),
         })
     }
@@ -183,6 +194,19 @@ impl PlannerEndpoint {
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
         Ok(evaluate_shadow_json(&mut session, request))
+    }
+
+    /// Synchronous focus transaction route over the shared owned focus
+    /// service. The caller must hold the single-flight `operation_lock`
+    /// guard and have passed caller verification; this only locks the
+    /// service briefly with no awaits while held. A poisoned service is
+    /// terminal fail-closed.
+    fn evaluate_focus_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut service = self
+            .focus_service
+            .lock()
+            .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
+        Ok(service.evaluate_json(request))
     }
 }
 
@@ -1342,6 +1366,44 @@ impl PlannerEndpoint {
         }
         Ok(reply)
     }
+
+    async fn describe_focus(
+        &self,
+        request: String,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> Result<String, PlannerError> {
+        // Focus transaction route alongside the frozen EvaluateMove /
+        // DescribeAdvisoryPlan / DescribeShadowProjection contracts: the
+        // exact same bounded non-queuing single-flight, current-KWin-owner/
+        // same-uid/executable pinning with pre/post owner revalidation,
+        // connection-loss, and reply-size checks. No existing route changes
+        // behavior and no generic IPC is introduced. The reply is a bounded
+        // focus plan/ack/verify transaction over the endpoint-owned
+        // in-memory focus service (single portable session, single pending).
+        let Some(_guard) = self.operation_lock.try_lock() else {
+            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+        };
+        if emitter.connection().is_closed() {
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
+        let caller = header.sender().map(ToString::to_string);
+        let Some(caller) = caller.as_deref() else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let reply = self.evaluate_focus_request(&request)?;
+        if reply.len() > FOCUS_MAX_REPLY {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
+    }
 }
 
 fn serving_connection_lost_error() -> zbus::Error {
@@ -1792,6 +1854,121 @@ mod tests {
             &endpoint.operation_lock,
             &cloned.operation_lock
         ));
+        assert!(Arc::ptr_eq(&endpoint.focus_service, &cloned.focus_service));
+    }
+
+    #[test]
+    fn focus_method_identity_is_exact_and_distinct() {
+        assert_eq!(FOCUS_METHOD, "DescribeFocus");
+        assert_ne!(FOCUS_METHOD, METHOD);
+        assert_ne!(FOCUS_METHOD, ADVISORY_METHOD);
+        assert_ne!(FOCUS_METHOD, SHADOW_METHOD);
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(FOCUS_MAX_REPLY, 64 * 1024);
+        assert_eq!(FOCUS_MAX_REPLY, crate::focus_service::FOCUS_MAX_REPLY_BYTES);
+    }
+
+    #[test]
+    fn focus_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, FOCUS_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("{\"v\":1}".to_owned(),))
+            .unwrap();
+        assert_eq!(message.body().signature().to_string(), "s");
+        let body: (String,) = message.body().deserialize().unwrap();
+        assert_eq!(body.0, "{\"v\":1}");
+    }
+
+    fn focus_seed_request(correlation: &str, owner: &str, fingerprint: u64) -> String {
+        serde_json::json!({
+            "v": 1,
+            "action": "request",
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": "gen-1",
+            "revision": 3,
+            "fingerprint": fingerprint,
+            "domain": {"output": "focus-output", "workspace": "focus-workspace"},
+            "focused_window": "win-b",
+            "direction": "right",
+            "windows": [
+                {"window": "win-a", "output": "focus-output", "workspace": "focus-workspace"},
+                {"window": "win-b", "output": "focus-output", "workspace": "focus-workspace"},
+                {"window": "win-c", "output": "focus-output", "workspace": "focus-workspace"}
+            ],
+            "capabilities": {"directional_focus": true}
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn focus_request_route_seeds_and_plans_bounded() {
+        let endpoint = PlannerEndpoint::new();
+        let fingerprint = crate::focus_service::focus_fingerprint(
+            "focus-output",
+            "focus-workspace",
+            "win-b",
+            &["win-a".to_owned(), "win-b".to_owned(), "win-c".to_owned()],
+        );
+        // Malformed input is rejected fail-closed without echo.
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_focus_request("{not json}")
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        // First strict request seeds the owned session and plans.
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_focus_request(&focus_seed_request("f-1", "owner-1", fingerprint))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert!(
+            reply["outcome"] == "planned" || reply["outcome"] == "noop",
+            "{reply}"
+        );
+        assert!(reply.to_string().len() <= FOCUS_MAX_REPLY);
+        // Literal-zero fingerprint is rejected (exact deterministic binding).
+        let zeroed = focus_seed_request("f-2", "owner-1", 0);
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_focus_request(&zeroed)
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        // Changed membership after seeding is rejected without divergence.
+        let changed = serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": "f-3",
+            "owner": "owner-1", "generation": "gen-1", "revision": 2,
+            "fingerprint": crate::focus_service::focus_fingerprint(
+                "focus-output", "focus-workspace", "win-a",
+                &["win-a".to_owned(), "win-z".to_owned()],
+            ),
+            "domain": {"output": "focus-output", "workspace": "focus-workspace"},
+            "focused_window": "win-a", "direction": "right",
+            "windows": [
+                {"window": "win-a", "output": "focus-output", "workspace": "focus-workspace"},
+                {"window": "win-z", "output": "focus-output", "workspace": "focus-workspace"}
+            ],
+            "capabilities": {"directional_focus": true}
+        })
+        .to_string();
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_focus_request(&changed)
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
     }
 
     #[test]

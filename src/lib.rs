@@ -3,6 +3,7 @@ pub mod advisory_trio;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;
+pub mod focus_service;
 pub mod geometry;
 pub mod ids;
 pub mod planner_contract;

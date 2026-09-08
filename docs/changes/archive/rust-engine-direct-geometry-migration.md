@@ -98,6 +98,24 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Static Rust-focus KWin adapter slice completed 2026-09-09: the authenticated
+  KWin-only `DescribeFocus` planner route owns one bounded portable `Session`,
+  deterministically seeds its normalized current-domain membership in Rust, and
+  returns only capability/precondition/revision/correlation-bound directional
+  focus plans. It commits only after the exact acknowledgement and fresh
+  verified post-observation; native refusal, mismatch, adapter loss, stale
+  scope, owner/generation/revision drift, or service fault terminally diverges
+  and disables the adapter. The standalone KWin adapter is disabled by default
+  and unreachable from normal production startup, tray, KCM, autostart, or
+  shortcuts. A future wiring caller must prove exclusive focus-path ownership;
+  no legacy and Rust focus handler may run for the same command. It observes
+  minimum active/window/output/desktop signals without polling, maps only exact
+  opaque native targets, revalidates before its at-most-one active-window write,
+  skips already-active writes, and reports a bounded adapter-loss acknowledgement
+  on local post-plan faults. Static Rust and KWin contracts pass. No live KWin
+  work, geometry/tile/workspace/output/configuration/shortcut mutation, or
+  parked-residue action occurred. Next product slice: structural movement/direct
+  geometry under the same explicit authority boundary.
 - Portable `cosmic_v1` Session drag/drop placement completed 2026-09-09:
   `begin_drag` captures the exact tiled focused source, domain, revision,
   topology/membership, and projected source/work-area geometry while free native

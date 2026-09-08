@@ -211,6 +211,15 @@ Historical implementation detail is recoverable in Git history.
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
   until its individual replacement paths are promoted.
+- Rust focus adapter authority, authorized 2026-09-09: the production-shaped
+  KWin focus adapter is disabled by default and has no normal startup, tray,
+  KCM, autostart, lifecycle, or shortcut activation route. A later reviewed
+  explicit wiring route must bind one owner/generation and prove exclusive
+  focus-path ownership before any native focus write; it must never run the
+  legacy and Rust focus handlers for one command. Owner, service, scope,
+  revision, acknowledgement, or post-observation failure disables this
+  development authority fail closed. This selects no movement or geometry
+  actuation.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
   and a live multi-window Custom Tile stability proof. No group carrier,
   controls, bindings, or shared active-border behavior is selected.

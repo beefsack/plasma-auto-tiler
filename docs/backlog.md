@@ -158,11 +158,19 @@ Only meaningful pending or active work is listed.
           motion, normalizes logical pointer coordinates to edge-only target-leaf
           placement, previews deterministic nested/N-ary structure, and commits
           complete geometry/focus only through shared acknowledgement and
-          post-observation reconciliation. Invalid/cancelled releases snap back
-          without topology mutation. The next product slice is signal-driven KWin
-          adapter integration for focus/movement/resize/drag behind explicit
-          development mode; parked shadow transport/live cleanup remains unchanged |
-       [change](changes/archive/rust-engine-direct-geometry-migration.md)
+           post-observation reconciliation. Invalid/cancelled releases snap back
+           without topology mutation. Static Rust-focus KWin adapter integration
+           is complete: the authenticated `DescribeFocus` route owns one portable
+           Session seeded from the first normalized scope and returns only bound
+           directional focus plan/acknowledgement/post-observation transactions.
+           The standalone KWin adapter is disabled by default, has no production
+           activation/shortcut route, requires explicit exclusive authority,
+           invalidates on minimum public signals, writes at most one exact active
+           target, and terminally reports adapter loss. No geometry or Custom Tile
+           mutation exists. Next: structural movement/direct geometry behind the
+           same authority boundary; parked shadow transport/live cleanup remains
+           unchanged |
+        [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace
