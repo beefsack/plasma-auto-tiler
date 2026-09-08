@@ -103,12 +103,12 @@ assert_contains "$LOADER" 'kwin_unique_owner'
 assert_contains "$LOADER" 'kwin_pid_for_owner'
 assert_contains "$LOADER" 'proc_start_tick'
 assert_contains "$LOADER" 'kwin_identity_once'
+assert_contains "$LOADER" '"$rc" -eq 42'
 assert_contains "$LOADER" 'check_planner_absent'
 assert_contains "$LOADER" 'NameHasOwner'
 assert_contains "$LOADER" 'GetNameOwner'
 assert_contains "$LOADER" 'GetConnectionUnixProcessID'
 assert_contains "$LOADER" '--json=short'
-assert_contains "$LOADER" '^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'
 assert_contains "$LOADER" 'KWin executable drift detected'
 assert_contains "$LOADER" 'KWin identity source drift detected'
 assert_contains "$LOADER" 'KWin identity recapture failed'
@@ -126,12 +126,23 @@ if grep -A30 -F 'check_planner_absent()' "$LOADER" | grep -Fq 'GetNameOwner'; th
 else
   pass "planner absence avoids GetNameOwner"
 fi
-# Direct-parent fallback only on the exact line-anchored MainPID mismatch, not
-# a loose substring.
-if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'grep -Fq "does not match KWin PID"'; then
-  fail "direct-parent uses strict anchored MainPID mismatch"
+# Direct-parent fallback only on the fixed MainPID-mismatch status, never by
+# matching stderr text.
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'does not match KWin PID'; then
+  fail "direct-parent avoids stderr matching"
 else
-  pass "direct-parent avoids loose substring"
+  pass "direct-parent avoids stderr matching"
+fi
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq '"$rc" -eq 42'; then
+  pass "direct-parent routes on the fixed mismatch status"
+else
+  fail "direct-parent routes on the fixed mismatch status"
+fi
+IDENTITY_HELPER="$REPO_ROOT/scripts/poc3-host-kwin-identity.sh"
+if grep -Fq 'mktemp' "$IDENTITY_HELPER"; then
+  fail "sourced identity helper creates no temp files"
+else
+  pass "sourced identity helper creates no temp files"
 fi
 # Only the approved helper route may mention poc3 identity helpers.
 if grep -F 'poc3_' "$LOADER" | grep -Fvq -e 'poc3_kwin_systemd_fallback' -e 'poc3_kwin_direct_parent_fallback'; then
@@ -1090,39 +1101,40 @@ else
 fi
 preflight_no_resources "fallback mismatch" "$TMP_DIR/r-pre-fallback.json"
 # Exact MainPID mismatch must attempt direct-parent (2 systemctl calls for the
-# first failed capture), proving the anchored gate is reached.
+# first failed capture), proving the status gate is reached.
 if [[ -f "$FAKE_DIR/systemctl.log" ]] && [[ "$(wc -l < "$FAKE_DIR/systemctl.log" | tr -d ' ')" == "2" ]]; then
   pass "exact mismatch reaches direct-parent"
 else
   fail "exact mismatch reaches direct-parent"
 fi
 
-# Synthetic anchored-gate test: non-exact messages must not match the strict
-# line-anchored MainPID pattern (no helper modification).
-STRICT_PAT='^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'
-if printf '%s\n' 'error: unit MainPID 4242 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
-  pass "strict gate accepts the exact mismatch line"
+# Status-gate proof at the helper boundary: only the exact valid parsed
+# MainPID-not-equal-owner case returns the fixed status; any other helper
+# failure returns a different status.
+HELPER_UNDER_TEST="$REPO_ROOT/scripts/poc3-host-kwin-identity.sh"
+helper_status_for_mainpid() {
+  local fake_mainpid="$1"
+  write_systemctl_show "$FAKE_LAUNCHER" "$fake_mainpid"
+  set +e
+  SYSTEMCTL_BIN="$FAKE_BIN/systemctl" PROC_ROOT="$FAKE_PROC" \
+    POC3_KWIN_IDENTITY_TEST_ALLOW_NONPROC=1 POC3_KWIN_IDENTITY_TEST_ALLOW_NONSTORE=1 \
+    bash -c '. "$1"; poc3_kwin_systemd_fallback "$2" "$3" "$4"' _ "$HELPER_UNDER_TEST" ":1.10" "4242" "424200" >/dev/null 2>&1
+  printf '%s' "$?"
+  set -e
+}
+if [[ "$(helper_status_for_mainpid 9999)" == "42" ]]; then
+  pass "helper returns the fixed status for the exact mismatch"
 else
-  fail "strict gate accepts the exact mismatch line"
+  fail "helper returns the fixed status for the exact mismatch"
 fi
-if printf '%s\n' 'xx error: unit MainPID 4242 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
-  fail "strict gate rejects prefixed mismatch"
+if [[ "$(helper_status_for_mainpid 0)" != "42" ]]; then
+  pass "helper does not return the fixed status for malformed MainPID"
 else
-  pass "strict gate rejects prefixed mismatch"
-fi
-if printf '%s\n' 'error: unit MainPID 4242 does not match KWin PID 4243 extra' | grep -Eq "$STRICT_PAT"; then
-  fail "strict gate rejects suffixed mismatch"
-else
-  pass "strict gate rejects suffixed mismatch"
-fi
-if printf '%s\n' 'error: unit MainPID 0 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
-  fail "strict gate rejects non-canonical PID"
-else
-  pass "strict gate rejects non-canonical PID"
+  fail "helper does not return the fixed status for malformed MainPID"
 fi
 # Non-MainPID failure must not reach direct-parent: valid direct-parent
 # topology but missing unit (ordinary fails with unit unavailable, not the
-# exact mismatch) must show exactly 1 systemctl call.
+# fixed mismatch status) must show exactly 1 systemctl call.
 reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243"
 proc_fixture 4242 424100 "$FAKE_WRAPPED" 1
@@ -1137,9 +1149,9 @@ else
 fi
 preflight_no_resources "non-mismatch fallback failure" "$TMP_DIR/r-pre-nonmatch.json"
 if [[ -f "$FAKE_DIR/systemctl.log" ]] && [[ "$(wc -l < "$FAKE_DIR/systemctl.log" | tr -d ' ')" == "1" ]]; then
-  pass "non-exact message does not reach direct-parent"
+  pass "non-mismatch status does not reach direct-parent"
 else
-  fail "non-exact message does not reach direct-parent"
+  fail "non-mismatch status does not reach direct-parent"
 fi
 
 # Production absent (must be loaded).
@@ -1246,6 +1258,46 @@ else
 fi
 assert_event_order "direct-parent-success"
 rm -f -- "$TMP_DIR/r-direct.json"
+
+# 13f-ii: near-miss PPid (owner parent off by one level) fails closed with no
+# resources, even though the exact mismatch status routes to direct-parent.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243"
+proc_fixture 4242 424100 "$FAKE_WRAPPED" 1
+proc_fixture 4243 424200 "$FAKE_WRAPPED" 9999
+printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
+printf '4243\n' > "$FAKE_DIR/kwin-pid"
+write_systemctl_show "$FAKE_LAUNCHER" "4242"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-nearmiss.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse near-miss PPid"
+else
+  pass "start refuses near-miss PPid"
+fi
+preflight_no_resources "near-miss PPid" "$TMP_DIR/r-nearmiss.json"
+if [[ -f "$FAKE_DIR/systemctl.log" ]] && [[ "$(wc -l < "$FAKE_DIR/systemctl.log" | tr -d ' ')" == "2" ]]; then
+  pass "near-miss still routes via the mismatch status then refuses"
+else
+  fail "near-miss still routes via the mismatch status then refuses"
+fi
+
+# 13f-iii: readable owner exe mismatch fails closed with no resources.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243"
+proc_fixture 4242 424100 "$FAKE_WRAPPED" 1
+proc_fixture 4243 424200 "$FAKE_WRAPPED" 4242
+printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
+printf '4243\n' > "$FAKE_DIR/kwin-pid"
+write_systemctl_show "$FAKE_LAUNCHER" "4242"
+printf 'foreign-exe-fixture\n' > "$TMP_DIR/foreign-exe"
+chmod 555 -- "$TMP_DIR/foreign-exe"
+rm -f -- "$FAKE_PROC/4243/exe"
+ln -s -- "$TMP_DIR/foreign-exe" "$FAKE_PROC/4243/exe"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-exemismatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse readable exe mismatch"
+else
+  pass "start refuses readable exe mismatch"
+fi
+preflight_no_resources "readable exe mismatch" "$TMP_DIR/r-exemismatch.json"
 
 # 14: stop and status fail closed on stale/malformed receipts with no bus calls.
 reset_fake

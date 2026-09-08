@@ -218,6 +218,29 @@ production behavior through incremental opt-in promotion.
   artifact, receipt, or service was created. No success, stale, service-loss,
   zero-mutation, production-continuity, or restoration live evidence is
   claimed; the transport gate remains open.
+- Current-host identity correction and transport diagnosis, 2026-09-08: the
+  host's KWin D-Bus owner is the exact direct child of the active
+  `plasma-kwin_wayland.service` MainPID, matching the already approved
+  direct-parent route rather than a new topology. Read-only exact reads
+  re-pinned owner/PID/start tick/boot and the immutable Nix-store wrapper pair;
+  owner executable readback remained unreadable, while readable disagreement
+  paths remain fail-closed. The prior Planner-absence diagnostic did not
+  reproduce: the bounded `NameHasOwner` response was the exact false boolean.
+  The static repair removes a fragile error-text selector in favor of the
+  helper's fixed internal MainPID-mismatch status and removes helper temporary
+  files, so advisory preflight creates no resource before all identity and
+  absence gates pass. Adversarial direct-parent, malformed/MainPID, readable
+  executable, PID/tick/boot, wrapper/store, Planner transport/parser, and
+  resource-order tests pass. No transport lifecycle ran because the present
+  loader requires Planner absence throughout `start`, but the advisory call
+  requires a pinned Planner owner; no reviewed sequencer exists to establish
+  that transition, PID-filtered diagnostics, and deterministic owner-loss
+  refusal. No planner, advisory Script, runtime directory, artifact, receipt,
+  service, window, focus, geometry, workspace, output, configuration, or
+  production lifecycle state changed. The preserved unidentified advisory
+  residue was not searched, inspected, modified, or deleted. The transport
+  gate remains pending a separately reviewed fail-closed sequencer. Public
+  KWin still cannot attest the initially resolved same-UID planner binary.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

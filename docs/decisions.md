@@ -72,6 +72,15 @@ Historical implementation detail is recoverable in Git history.
   repository protocol. They must be namespaced, fail closed, and provide exact
   restoration; if exact restoration cannot be verified, stop and leave the
   residue for user action.
+- The user grants standing authorization, until revoked, to read and mutate the
+  existing KWin session for project-scoped testing. Autonomous product work
+  remains off: this operational authorization does not select product,
+  security, or architecture changes. Every action remains bounded to exact
+  identified project resources with a recorded baseline and exact restoration;
+  no broad cleanup, window closure, system path, dotfile, NixOS, Home Manager,
+  sudo, session-boundary, irreversible, unrelated-host action, or preserved
+  residue handling is authorized. Stop on ownership, parser, diagnostic,
+  baseline, source, or restoration ambiguity.
 - This covers project builds; native-effect staging/removal; the project's
   `plasma-workspace/env` script and same-name legacy migration; KWin `/Effects`
   load/unload and read-only queries; KWin script install, enable, disable, and
@@ -116,7 +125,7 @@ Historical implementation detail is recoverable in Git history.
   authorizes a Custom Tile lifecycle, live journey, or user physical or manual
   action on its own; carrier setup is limited to its bounded operational
   binding.
-- Standing user authorization permits only bounded read-only
+- The standing authorization currently selects only bounded read-only
   `DescribeAdvisoryPlan` host transport journeys: start and stop one uniquely
   namespaced project planner service and load, run, then unload only the exact
   standalone advisory KWin Script object. It excludes all native-window,

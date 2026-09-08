@@ -36,13 +36,25 @@ Only meaningful pending or active work is listed.
     full KWin owner/PID/start-tick/executable identity through the approved
     systemd/direct-parent fallback, production-loaded, advisory-absence, and
     Planner-absence checks before deterministic rebuild scratch space or any
-    lifecycle resource. Its one fresh resource-free host preflight stopped on
-    the current host's reviewed identity route and an unexpected Planner
-    absence diagnostic; no planner, advisory Script, runtime directory,
-    artifact, receipt, or service was created. The remaining gate is a newly
-    safe bounded journey with success, stale request/revision/generation
-    refusal, service-loss refusal, zero-mutation, production continuity, and
-    exact restoration evidence. The static
+     lifecycle resource. The current host matches the already approved exact
+     direct-parent route: owner PPid equals the unit MainPID, with stable
+     owner/PID/tick/boot, immutable wrapper-pair identity, and unreadable owner
+     executable tolerated only under that compound proof. The repair makes the
+     direct-parent selector a fixed internal status, not an error-string parser
+     or caller-controlled value, and removes helper temporary files so the
+     preflight is genuinely resource-free. A bounded raw Planner
+     `NameHasOwner` read returned the required exact false value, so the earlier
+     diagnostic was not reproduced and no new identity topology is claimed.
+     Focused adversarial static coverage passes. No lifecycle ran: the current
+     loader requires Planner absence through `start`, but the KWin advisory
+     call requires the pinned Planner owner, and no reviewed sequencer provides
+     the required absence-to-owner transition, PID-filtered diagnostic capture,
+     or deterministic owner-loss timing. No planner, advisory Script, runtime
+     directory, artifact, receipt, or service was created. The remaining gate
+     is a reviewed fail-closed transport sequencer, then one bounded journey
+     with success, stale request/revision/generation refusal, service-loss
+     refusal, zero-mutation, production continuity, and exact restoration
+     evidence. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

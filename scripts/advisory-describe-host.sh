@@ -442,12 +442,14 @@ require_receipt_parent() {
 # --json=short, strict-parses the JSON with the pinned Node tool, pins the
 # /proc start tick paren-safe, then runs the exact authorized helper route:
 # ordinary poc3_kwin_systemd_fallback first; direct-parent only when the
-# ordinary route refuses with the exact MainPID mismatch; readable exe must
-# agree inside the helpers. Production must be loaded, advisory absent,
-# Planner name absent. Owner/PID/tick are rechecked after the immutable
-# checks and before any resource-creating verify/lifecycle; drift fails
-# closed. All captures stay in memory (command substitution, mapfile);
-# no mktemp, no dirs, no receipts, no services, no scripts before preflight.
+# ordinary route returns the fixed status 42
+# (valid parsed MainPID differs from the owner PID), never by matching
+# stderr; readable exe must agree inside the helpers. Production must be
+# loaded, advisory absent, Planner name absent. Owner/PID/tick are rechecked
+# after the immutable checks and before any resource-creating
+# verify/lifecycle; drift fails closed. All captures stay in memory (command
+# substitution, mapfile); no mktemp, no dirs, no receipts, no services, no
+# scripts before preflight.
 kwin_unique_owner() {
   local out="" owner=""
   out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" GetNameOwner s "$BUS_DEST" 2>/dev/null)" || {
@@ -556,7 +558,10 @@ process.stdout.write(v.data[0] ? "true" : "false");
 # Single KWin identity capture via the exact authorized helper route.
 # Prints owner/pid/tick/exe/source on separate lines (source is systemd or
 # systemd-direct-parent). In-memory only: helper output is captured in a
-# variable and split with mapfile; no temp files.
+# variable and split with mapfile; no temp files. Direct-parent is entered
+# only when poc3_kwin_systemd_fallback returns the fixed
+# status 42; helper failure text is
+# preserved on stderr alongside the generic fallback refusal.
 kwin_identity_once() {
   local owner="" pid="" tick=""
   owner="$(kwin_unique_owner)" || return 1
@@ -566,6 +571,7 @@ kwin_identity_once() {
     return 1
   }
   local combined=""
+  local rc=0
   if combined="$(poc3_kwin_systemd_fallback "$owner" "$pid" "$tick" 2>&1)"; then
     local -a lines=()
     mapfile -t lines <<<"$combined" || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
@@ -579,8 +585,8 @@ kwin_identity_once() {
     printf '%s\n%s\n%s\n%s\n%s\n' "$owner" "$pid" "$tick" "${lines[0]}" "systemd"
     return 0
   else
-    local err="$combined"
-    if printf '%s\n' "$err" | grep -Eq '^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'; then
+    rc=$?
+    if [[ "$rc" -eq 42 ]]; then
       local dp_combined=""
       if dp_combined="$(poc3_kwin_direct_parent_fallback "$owner" "$pid" "$tick" 2>&1)"; then
         local -a dp_lines=()
@@ -590,10 +596,12 @@ kwin_identity_once() {
         printf '%s\n%s\n%s\n%s\n%s\n' "$owner" "$pid" "$tick" "${dp_lines[0]}" "systemd-direct-parent"
         return 0
       else
+        [[ -n "$dp_combined" ]] && printf '%s\n' "$dp_combined" >&2
         echo "error: KWin PID $pid executable identity is unreadable and systemd fallback failed" >&2
         return 1
       fi
     else
+      [[ -n "$combined" ]] && printf '%s\n' "$combined" >&2
       echo "error: KWin PID $pid executable identity is unreadable and systemd fallback failed" >&2
       return 1
     fi
