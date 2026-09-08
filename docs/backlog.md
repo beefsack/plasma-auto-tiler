@@ -12,9 +12,13 @@ Only meaningful pending or active work is listed.
     namespaced standalone path deterministically binds its exact source, input,
     and IIFE bundle, and can coexist with the loaded production plugin only
     because its checked route invokes bounded read-only advisory queries with no
-    topology authority or actuation. One minimal authenticated read-only host
-    request/reply plus stale-request and service-loss evidence remains pending
-    fresh authorization after this static unit is committed. The static
+    topology authority or actuation. A read-only host preflight stopped before
+    lifecycle because public `queryWindowInfo` timed out and the committed path
+    has no observation adapter to form an exact three-window snapshot. No
+    service or script lifecycle action occurred; authorization remains unspent.
+    The next gate is thin read-only KWin observation/snapshot adapter work, then
+    a newly authorized host request/reply with stale-request and service-loss
+    evidence. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

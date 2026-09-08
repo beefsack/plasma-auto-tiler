@@ -140,6 +140,16 @@ production behavior through incremental opt-in promotion.
   authenticated read-only host request/reply, stale-refusal, service-loss,
   zero-mutation, and restoration evidence remain pending fresh authorization
   after this static unit is committed.
+- The later authorized 2026-09-08 read-only host preflight verified the KWin
+  identity and public `/KWin` surface, production plugin loaded, advisory test
+  plugin absent, Planner name unowned, and generated advisory artifacts absent.
+  `org.kde.KWin /KWin queryWindowInfo` timed out. The committed standalone
+  boundary accepts a caller-supplied normalized snapshot and has no read-only
+  observation adapter, so an exact three-window snapshot and equality baseline
+  could not be formed. No planner service or advisory script lifecycle action,
+  production action, or host mutation occurred. The lifecycle authorization is
+  unspent. The next gate is thin read-only KWin observation/snapshot adapter
+  work, followed by fresh authorization for the bounded host transport journey.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
