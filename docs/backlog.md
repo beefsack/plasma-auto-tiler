@@ -114,9 +114,13 @@ Only meaningful pending or active work is listed.
    reached the exact returned advisory Script in the success phase, but its
    terminal result was not receipt-eligible and exact plugin unload returned
    `false`. No receipt or exact Script/plugin absence exists, so restoration
-   is ambiguous. No host query, cleanup, retry, success/stale/service-loss,
-   after-equality, or production-continuity claim follows; this live route is
-   halted and prior unidentified residue remains untouched |
+   is ambiguous. The authorized identity-bound recovery then stopped without
+   host inspection or mutation because the latest active record confirms no
+   deterministic receipt/lifecycle path, Script ID, source hash, KWin identity,
+   or Planner PID binding. No host query, cleanup, retry, success/stale/
+   service-loss, after-equality, production-continuity, or KWin-stability claim
+   follows; this live route is halted and prior unidentified residue remains
+   untouched. Recovery requires a user-provided exact receipt/lifecycle record |
    [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

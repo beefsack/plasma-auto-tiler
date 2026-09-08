@@ -356,6 +356,17 @@ production behavior through incremental opt-in promotion.
   restoration remain unestablished. The exact Script/plugin is treated as
   ambiguous fresh residue, while prior unidentified residue remains untouched;
   the public same-UID Planner-binary attestation limit is unchanged.
+- Identity-bound advisory recovery, 2026-09-08: the authorized recovery unit
+  stopped before any host inspection or mutation. The latest failed journey's
+  active record confirms that no receipt was created and contains no
+  deterministic lifecycle path, Script ID, source hash, KWin identity, or
+  Planner PID binding. Exact Script-object introspection, unload, Planner
+  verification, lifecycle cleanup, production-continuity, and KWin-stability
+  checks are consequently unavailable under the recovery boundary. No runtime
+  directory, preserved residue, KWin script, process, configuration, or window
+  was inspected or changed. Recovery requires a user-provided exact
+  receipt/lifecycle record with those bindings; user visual confirmation of
+  unchanged windows remains pending evidence.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
