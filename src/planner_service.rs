@@ -10,6 +10,10 @@
 //! focus service), and `DescribeMovement` (bounded v1 movement transaction
 //! over the owned movement service, delegating to one `Session`'s `cosmic_v1`
 //! R1-R4 move planning with complete desired geometry/focus), and
+//! `DescribeResize` (bounded v1 keyboard resize transaction over the owned
+//! resize service, delegating to one `Session`'s `propose_resize` split-share
+//! planning with complete adjacent/share/projected geometry and retained
+//! focus), and
 //! `DescribeShadowProjection` (read-only v1 shadow projection
 //! request -> desired rectangles for exactly three opaque windows, delegated
 //! through `AdoptedTrio` + `geometry::project`; no native
@@ -42,6 +46,7 @@ use crate::advisory_contract::{
 use crate::focus_service::{FOCUS_MAX_REPLY_BYTES, FocusService};
 use crate::movement_service::{MOVEMENT_MAX_REPLY_BYTES, MovementService};
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
+use crate::resize_service::{RESIZE_MAX_REPLY_BYTES, ResizeService};
 use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
 // Linux-only identity boundary; portable core never depends on it.
 #[cfg(target_os = "linux")]
@@ -60,6 +65,9 @@ pub const FOCUS_MAX_REPLY: usize = FOCUS_MAX_REPLY_BYTES;
 pub const MOVEMENT_METHOD: &str = "DescribeMovement";
 /// Bounded movement reply cap, mirroring the portable movement service bound.
 pub const MOVEMENT_MAX_REPLY: usize = MOVEMENT_MAX_REPLY_BYTES;
+pub const RESIZE_METHOD: &str = "DescribeResize";
+/// Bounded resize reply cap, mirroring the portable resize service bound.
+pub const RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -135,6 +143,13 @@ pub struct PlannerEndpoint {
     // request, single pending, `cosmic_v1` R1-R4). Separate from the focus
     // session; no generic IPC, no shared mutable topology.
     movement_service: Arc<std::sync::Mutex<MovementService>>,
+    // Owned resize transaction service held in process memory only, shared
+    // across endpoint clones so the single manually started service owns
+    // exactly one portable resize session (seeded from the first strict
+    // request, single pending, `Session::propose_resize` split-share).
+    // Separate from the focus and movement sessions; no generic IPC, no
+    // shared mutable topology.
+    resize_service: Arc<std::sync::Mutex<ResizeService>>,
     // Optional bounded advisory-loss arming. `None` is the normal
     // `planner-service` mode (unchanged: every accepted reply returns
     // normally). `Some` arms exactly one bounded correlation id: only an
@@ -154,6 +169,7 @@ impl PlannerEndpoint {
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
             movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
+            resize_service: Arc::new(std::sync::Mutex::new(ResizeService::new())),
             advisory_loss_correlation: None,
         }
     }
@@ -172,6 +188,7 @@ impl PlannerEndpoint {
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
             movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
+            resize_service: Arc::new(std::sync::Mutex::new(ResizeService::new())),
             advisory_loss_correlation: Some(armed),
         })
     }
@@ -234,6 +251,20 @@ impl PlannerEndpoint {
     fn evaluate_movement_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
             .movement_service
+            .lock()
+            .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
+        Ok(service.evaluate_json(request))
+    }
+
+    /// Synchronous resize transaction route over the shared owned resize
+    /// service. The caller must hold the single-flight `operation_lock`
+    /// guard and have passed caller verification; this only locks the
+    /// service briefly with no awaits while held. A poisoned service is
+    /// terminal fail-closed. Separate pending from focus and movement; same
+    /// authentication and one-flight rules.
+    fn evaluate_resize_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut service = self
+            .resize_service
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
         Ok(service.evaluate_json(request))
@@ -1474,6 +1505,47 @@ impl PlannerEndpoint {
         }
         Ok(reply)
     }
+
+    async fn describe_resize(
+        &self,
+        request: String,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> Result<String, PlannerError> {
+        // Keyboard resize transaction route alongside the frozen EvaluateMove /
+        // DescribeAdvisoryPlan / DescribeShadowProjection / DescribeFocus /
+        // DescribeMovement contracts: the exact same bounded non-queuing
+        // single-flight, current-KWin-owner/same-uid/executable pinning with
+        // pre/post owner revalidation, connection-loss, and reply-size
+        // checks. No existing route changes behavior and no generic IPC is
+        // introduced. The reply is a bounded resize plan/ack/verify
+        // transaction over the endpoint-owned in-memory resize service
+        // (single portable session, single pending, `Session::propose_resize`
+        // split-share with complete adjacent/share/projected geometry and
+        // retained focus).
+        let Some(_guard) = self.operation_lock.try_lock() else {
+            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+        };
+        if emitter.connection().is_closed() {
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
+        let caller = header.sender().map(ToString::to_string);
+        let Some(caller) = caller.as_deref() else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let reply = self.evaluate_resize_request(&request)?;
+        if reply.len() > RESIZE_MAX_REPLY {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
+    }
 }
 
 fn serving_connection_lost_error() -> zbus::Error {
@@ -1929,6 +2001,10 @@ mod tests {
             &endpoint.movement_service,
             &cloned.movement_service
         ));
+        assert!(Arc::ptr_eq(
+            &endpoint.resize_service,
+            &cloned.resize_service
+        ));
     }
 
     #[test]
@@ -1938,6 +2014,7 @@ mod tests {
         assert_ne!(MOVEMENT_METHOD, ADVISORY_METHOD);
         assert_ne!(MOVEMENT_METHOD, SHADOW_METHOD);
         assert_ne!(MOVEMENT_METHOD, FOCUS_METHOD);
+        assert_ne!(MOVEMENT_METHOD, RESIZE_METHOD);
         assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
         assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
         assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
@@ -2058,6 +2135,7 @@ mod tests {
         assert_ne!(FOCUS_METHOD, METHOD);
         assert_ne!(FOCUS_METHOD, ADVISORY_METHOD);
         assert_ne!(FOCUS_METHOD, SHADOW_METHOD);
+        assert_ne!(FOCUS_METHOD, RESIZE_METHOD);
         assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
         assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
         assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
@@ -2078,6 +2156,51 @@ mod tests {
         assert_eq!(message.body().signature().to_string(), "s");
         let body: (String,) = message.body().deserialize().unwrap();
         assert_eq!(body.0, "{\"v\":1}");
+    }
+
+    #[test]
+    fn resize_method_identity_is_exact_and_distinct() {
+        assert_eq!(RESIZE_METHOD, "DescribeResize");
+        assert_ne!(RESIZE_METHOD, METHOD);
+        assert_ne!(RESIZE_METHOD, ADVISORY_METHOD);
+        assert_ne!(RESIZE_METHOD, SHADOW_METHOD);
+        assert_ne!(RESIZE_METHOD, FOCUS_METHOD);
+        assert_ne!(RESIZE_METHOD, MOVEMENT_METHOD);
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(RESIZE_MAX_REPLY, 64 * 1024);
+        assert_eq!(
+            RESIZE_MAX_REPLY,
+            crate::resize_service::RESIZE_MAX_REPLY_BYTES
+        );
+    }
+
+    #[test]
+    fn resize_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, RESIZE_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("{\"v\":1}".to_owned(),))
+            .unwrap();
+        assert_eq!(message.body().signature().to_string(), "s");
+        let body: (String,) = message.body().deserialize().unwrap();
+        assert_eq!(body.0, "{\"v\":1}");
+    }
+
+    #[test]
+    fn resize_route_rejects_malformed_without_session_state() {
+        let endpoint = PlannerEndpoint::new();
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_resize_request("{\"v\":1}")
+                .expect("reply"),
+        )
+        .expect("json");
+        assert_eq!(reply["outcome"], "rejected");
     }
 
     fn focus_seed_request(correlation: &str, owner: &str, fingerprint: u64) -> String {

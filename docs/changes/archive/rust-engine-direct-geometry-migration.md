@@ -98,6 +98,32 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Static Rust-owned KWin keyboard split-share resize/direct-geometry adapter
+  slice completed 2026-09-09: the authenticated KWin-only `DescribeResize`
+  route owns one bounded portable `Session` and uses
+  `Session::propose_resize`, reusable share application, and the shared
+  acknowledgement/post-observation reconciler without JavaScript share or
+  boundary policy. The strict transaction carries exact normalized membership,
+  work area, geometry, focus, owner/generation/revision, capability, and
+  precondition bindings; Rust returns the complete adjacent-share operation,
+  desired geometry, and retained focus. The standalone adapter is disabled by
+  default and has no normal startup, shortcut, tray, KCM, autostart, or
+  production route. A future caller must provide function-form exclusive
+  resize authority for the exact command/domain; no Custom Tile read, write,
+  or fallback occurs after Rust ownership. KWin only revalidates native scope
+  and special-state eligibility, applies changed `frameGeometry` rectangles
+  through the shared deterministic grow-before-shrink orderer, retains focus,
+  acknowledges, and freshly observes exact geometry/focus before Rust commits.
+  Adapter-originated geometry signals are guarded; unrelated drift, stale or
+  malformed/partial/extra/cross-domain plans, authority loss, refusal,
+  service loss, or verification mismatch disable development authority and
+  diverge fail closed. Durable resize-service work-area, plan, refusal, loss,
+  acknowledgement, and verification tests; focused KWin authority, ordering,
+  signal, focus, no-op, and source-isolation contracts; full Rust tests,
+  focused Clippy, typecheck, movement regression, and trace-lock checks pass.
+  No live KWin work ran and parked Script/runtime residue remains untouched.
+  Next product slice: signal-driven pointer split-share resize through this
+  authority boundary.
 - Static Rust-owned R1-R4 KWin movement/direct-geometry adapter slice completed
   2026-09-09: the authenticated KWin-only `DescribeMovement` route owns one
   bounded `cosmic_v1` movement `Session`, accepts only strict complete native

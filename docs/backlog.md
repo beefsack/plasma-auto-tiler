@@ -178,9 +178,18 @@ Only meaningful pending or active work is listed.
             signals, and terminally disables on refusal, divergence, or loss.
             Normal production routes remain unable to activate it and no Custom
             Tile fallback runs after ownership. Focused Rust/KWin static
-            contracts pass; no live KWin action occurred. Next: keyboard/pointer
-            split resizing integration behind this authority; parked shadow
-            transport/live cleanup remains unchanged |
+             contracts pass; no live KWin action occurred. Static Rust-owned
+             keyboard split-share resize/direct geometry is now complete behind
+             the same disabled-by-default exclusive authority: `DescribeResize`
+             binds normalized native membership/work-area/geometry and returns
+             Rust-owned complete shares, desired geometry, and retained focus;
+             KWin revalidates and applies changed rectangles only in shared
+             grow-before-shrink order, then acknowledges and fresh-observes
+             before Rust commits. Rust/KWin authority, refusal, drift, loss,
+             ordering, focus, and source-isolation contracts pass with no live
+             work and no Custom Tile/shortcut/configuration route. Next:
+             signal-driven pointer split-share resizing through this authority;
+             parked shadow transport/live cleanup remains unchanged |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

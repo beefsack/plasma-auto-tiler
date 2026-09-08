@@ -1,26 +1,26 @@
-// Bounded static movement adapter (standalone, opt-in only).
+// Bounded static keyboard resize adapter (standalone, opt-in only).
 //
 // Product-shaped but with no normal startup route: ordinary production
 // startup never runs this module (src/entry.ts must not import it, and no
 // controller route under src/controller*.ts may import it or reference the
-// DescribeMovement route; the module constraints below are the explicit future
+// DescribeResize route; the module constraints below are the explicit future
 // wiring contract). The only activation is the explicit exported
-// MovementAdapter class plus the separate entry helper, called by no
+// ResizeAdapter class plus the separate entry helper, called by no
 // production source.
 //
 // Future exclusive wiring contract: any future caller must supply an explicit
-// hasExclusiveMovementAuthority boundary proving no prior handler runs in the
+// hasExclusiveResizeAuthority boundary proving no prior handler runs in the
 // same call for the same command domain; the adapter rechecks it before the
 // request and again before native writes, and the entry requires it as a
 // function (never a bare boolean). A false value rejects before any native
-// write so legacy movement and geometry authority cannot co-exist. The module
+// write so legacy resize and geometry authority cannot co-exist. The module
 // never reads, mirrors, or mutates the legacy tiling tree and never falls
 // back.
 //
-// Rust owns normalized domains, move intent, capabilities, preconditions,
+// Rust owns normalized domains, resize intent, capabilities, preconditions,
 // revision binding, and reconciliation via the narrow JSON action protocol.
 // This module owns KWin observation, native identity mapping, revalidation,
-// sequential native frameGeometry writes, focus restore, signals, and
+// sequential native frameGeometry writes, focus retention, signals, and
 // post-observation. One exact owner/generation binding, one in-flight command,
 // one direction per request. Any owner, service, correlation, revision,
 // precondition, eligibility, geometry, focus, or post-observation fault fails
@@ -31,69 +31,64 @@
 // Native writes are non-atomic: exact frameGeometry rectangles are applied
 // sequentially in a deterministic native-boundary order (growing covering
 // rectangles first, stable lexical tie-break), only when changed, then focus
-// is restored to the moved window. There is no configure barrier and no
+// is retained on the focused window. There is no configure barrier and no
 // timer polling; adapter-originated geometry signals are guarded while
 // unrelated geometry changes invalidate terminally.
 
-export const MOVEMENT_SERVICE = "org.plasmaautotiler.Planner";
-export const MOVEMENT_OBJECT = "/org/plasmaautotiler/Planner";
-export const MOVEMENT_INTERFACE = "org.plasmaautotiler.Planner1";
-export const MOVEMENT_METHOD = "DescribeMovement";
+export const RESIZE_SERVICE = "org.plasmaautotiler.Planner";
+export const RESIZE_OBJECT = "/org/plasmaautotiler/Planner";
+export const RESIZE_INTERFACE = "org.plasmaautotiler.Planner1";
+export const RESIZE_METHOD = "DescribeResize";
 
-export const MOVEMENT_CONTRACT_VERSION = 1;
-export const MOVEMENT_MAX_REQUEST_BYTES = 64 * 1024;
-export const MOVEMENT_MAX_REPLY_BYTES = 64 * 1024;
-export const MOVEMENT_TIMEOUT_MS = 2000;
-export const MOVEMENT_MAX_CORRELATION_LEN = 128;
-export const MOVEMENT_MAX_OWNER_LEN = 128;
-export const MOVEMENT_MAX_GENERATION_LEN = 64;
-export const MOVEMENT_MAX_REVISION = 1000000;
-export const MOVEMENT_MAX_ID_LEN = 128;
-export const MOVEMENT_MAX_WINDOWS = 64;
-export const MOVEMENT_MAX_GEOMETRY = 64;
-export const MOVEMENT_MAX_DOMAINS = 16;
-export const MOVEMENT_MAX_SEQ = 1000000;
+export const RESIZE_CONTRACT_VERSION = 1;
+export const RESIZE_MAX_REQUEST_BYTES = 64 * 1024;
+export const RESIZE_MAX_REPLY_BYTES = 64 * 1024;
+export const RESIZE_TIMEOUT_MS = 2000;
+export const RESIZE_MAX_CORRELATION_LEN = 128;
+export const RESIZE_MAX_OWNER_LEN = 128;
+export const RESIZE_MAX_GENERATION_LEN = 64;
+export const RESIZE_MAX_REVISION = 1000000;
+export const RESIZE_MAX_ID_LEN = 128;
+export const RESIZE_MAX_WINDOWS = 64;
+export const RESIZE_MAX_GEOMETRY = 64;
+export const RESIZE_MAX_SHARES = 64;
+export const RESIZE_MAX_SEQ = 1000000;
 
-const LOG_PREFIX = "plasma-auto-tiler:movement";
+import { orderGeometryWrites } from "./geometry-order";
 
-export type MovementDirection = "left" | "right" | "up" | "down";
-export type MovementSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
+const LOG_PREFIX = "plasma-auto-tiler:resize";
 
-export interface MovementRect {
+export type ResizeDirection = "left" | "right" | "up" | "down";
+export type ResizeSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
+
+export interface ResizeRect {
     readonly x: number;
     readonly y: number;
     readonly w: number;
     readonly h: number;
 }
 
-export interface MovementObservedWindow {
+export interface ResizeObservedWindow {
     readonly id: string;
     readonly ref: object;
-    readonly rect: MovementRect;
+    readonly rect: ResizeRect;
     readonly output: string;
     readonly workspace: string;
 }
 
-export interface MovementDomain {
-    readonly output: string;
-    readonly workspace: string;
-    readonly bounds: MovementRect;
-    readonly gap: number;
-    readonly adjacent: Readonly<Record<string, string>>;
-}
-
-export interface MovementObserved {
+export interface ResizeObserved {
     readonly domainOutput: string;
     readonly domainWorkspace: string;
+    readonly domainBounds: ResizeRect;
+    readonly domainGap: number;
     readonly focusedId: string;
-    readonly windows: ReadonlyArray<MovementObservedWindow>;
-    readonly domains: ReadonlyArray<MovementDomain>;
+    readonly windows: ReadonlyArray<ResizeObservedWindow>;
     readonly activeRef: object | null;
     readonly fingerprint: string;
     readonly revalidate: () => boolean;
 }
 
-export interface MovementAdapterEnv {
+export interface ResizeAdapterEnv {
     readonly callDbus: (
         service: string,
         path: string,
@@ -104,23 +99,23 @@ export interface MovementAdapterEnv {
     ) => void;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
-    readonly observe: () => MovementObserved | null;
-    readonly setGeometry: (target: object, rect: MovementRect) => boolean;
+    readonly observe: () => ResizeObserved | null;
+    readonly setGeometry: (target: object, rect: ResizeRect) => boolean;
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
-    readonly hasExclusiveMovementAuthority: () => boolean;
-    readonly subscribe: (kind: MovementSignal, handler: () => void) => () => void;
+    readonly hasExclusiveResizeAuthority: () => boolean;
+    readonly subscribe: (kind: ResizeSignal, handler: () => void) => () => void;
 }
 
-export interface MovementDesired {
+export interface ResizeDesired {
     readonly window: string;
     readonly leaf: string;
     readonly output: string;
     readonly workspace: string;
-    readonly rect: MovementRect;
+    readonly rect: ResizeRect;
 }
 
-export interface MovementDesiredFocus {
+export interface ResizeDesiredFocus {
     readonly domainOutput: string;
     readonly domainWorkspace: string;
     readonly leaf: string;
@@ -128,8 +123,8 @@ export interface MovementDesiredFocus {
 
 // Deterministic bounded observation fingerprint (FNV-1a 32-bit over
 // `output\x1fworkspace\x1ffocused\x1fids...`, sorted ids). Mirrors the Rust
-// movement_fingerprint binding exactly; sent as the numeric fingerprint.
-export function movementFingerprint(
+// resize_fingerprint binding exactly; sent as the numeric fingerprint.
+export function resizeFingerprint(
     domainOutput: string,
     domainWorkspace: string,
     focusedId: string,
@@ -158,7 +153,7 @@ export function movementFingerprint(
 }
 
 function isOpaqueId(value: unknown): value is string {
-    if (typeof value !== "string" || value.length === 0 || value.length > MOVEMENT_MAX_ID_LEN) {
+    if (typeof value !== "string" || value.length === 0 || value.length > RESIZE_MAX_ID_LEN) {
         return false;
     }
     for (let index = 0; index < value.length; index += 1) {
@@ -176,7 +171,7 @@ function isCorrelationId(value: unknown): value is string {
     return (
         typeof value === "string" &&
         value.length > 0 &&
-        value.length <= MOVEMENT_MAX_CORRELATION_LEN &&
+        value.length <= RESIZE_MAX_CORRELATION_LEN &&
         isOpaqueId(value)
     );
 }
@@ -185,13 +180,13 @@ function isOwnerId(value: unknown): value is string {
     return (
         typeof value === "string" &&
         value.length > 0 &&
-        value.length <= MOVEMENT_MAX_OWNER_LEN &&
+        value.length <= RESIZE_MAX_OWNER_LEN &&
         isOpaqueId(value)
     );
 }
 
 function isGeneration(value: unknown): value is string {
-    if (typeof value !== "string" || value.length === 0 || value.length > MOVEMENT_MAX_GENERATION_LEN) {
+    if (typeof value !== "string" || value.length === 0 || value.length > RESIZE_MAX_GENERATION_LEN) {
         return false;
     }
     for (let index = 0; index < value.length; index += 1) {
@@ -209,11 +204,11 @@ function isRevision(value: unknown): value is number {
         typeof value === "number" &&
         Number.isInteger(value) &&
         value >= 0 &&
-        value <= MOVEMENT_MAX_REVISION
+        value <= RESIZE_MAX_REVISION
     );
 }
 
-function isDirection(value: unknown): value is MovementDirection {
+function isDirection(value: unknown): value is ResizeDirection {
     return value === "left" || value === "right" || value === "up" || value === "down";
 }
 
@@ -225,7 +220,7 @@ function isFiniteInt(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
 }
 
-function isTargetRect(value: unknown): value is MovementRect {
+function isTargetRect(value: unknown): value is ResizeRect {
     if (!isRecord(value)) {
         return false;
     }
@@ -249,19 +244,11 @@ function isTargetRect(value: unknown): value is MovementRect {
     return true;
 }
 
-function sameRect(a: MovementRect, b: MovementRect): boolean {
+function sameRect(a: ResizeRect, b: ResizeRect): boolean {
     return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
 }
 
-function rectArea(rect: MovementRect): number {
-    return rect.w * rect.h;
-}
-
-function rectsOverlap(a: MovementRect, b: MovementRect): boolean {
-    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
-}
-
-function rectContained(inner: MovementRect, outer: MovementRect): boolean {
+function rectContained(inner: ResizeRect, outer: ResizeRect): boolean {
     return (
         inner.x >= outer.x &&
         inner.y >= outer.y &&
@@ -270,145 +257,29 @@ function rectContained(inner: MovementRect, outer: MovementRect): boolean {
     );
 }
 
-const KNOWN_RULES: readonly string[] = Object.freeze(["R1", "R2a", "R2b", "R2c", "R3", "R4"]);
-const KNOWN_CAPABILITIES: readonly string[] = Object.freeze([
-    "swap-neighbor",
-    "wrap-perpendicular",
-    "wrap-siblings",
-    "insert-child",
-    "split-group-child",
-    "reparent-leaf",
-    "cross-output-transfer",
-]);
-const KNOWN_PRECONDITIONS: readonly string[] = Object.freeze([
+const RESIZE_KIND = "ResizeSplitShare";
+const RESIZE_CAPABILITY = "keyboard-resize";
+const RESIZE_PRECONDITIONS: readonly string[] = Object.freeze([
     "focused-leaf-occupied-by-focused-window",
-    "neighbor-leaf-occupied",
-    "container-is-direct-parent",
-    "target-group-membership",
-    "parent-group-membership",
-    "source-root-membership-and-adjacent-same-workspace-output",
+    "target-boundary-valid",
+    "resize-targets-same-domain",
     "adapter-must-verify-postconditions",
 ]);
-const KNOWN_KINDS: readonly string[] = Object.freeze([
-    "WrapPerpendicular",
-    "SwapNeighbor",
-    "InsertIntoGroup",
-    "SplitGroupChild",
-    "WrapNeighbor",
-    "EscapeParent",
-    "CrossOutput",
+const RESIZE_OPERATION_KEYS: readonly string[] = Object.freeze([
+    "kind",
+    "domain_output",
+    "domain_workspace",
+    "focused_leaf",
+    "focused_window",
+    "direction",
+    "target_group",
+    "focused_child",
+    "neighbor_child",
+    "focused_index",
+    "neighbor_index",
+    "old_shares",
+    "new_shares",
 ]);
-const KNOWN_AXES: readonly string[] = Object.freeze(["horizontal", "vertical"]);
-const KNOWN_DIRECTIONS: readonly string[] = Object.freeze(["left", "right", "up", "down"]);
-
-function expectedPreconditions(kind: string): readonly string[] | null {
-    switch (kind) {
-        case "WrapPerpendicular":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "container-is-direct-parent",
-                "adapter-must-verify-postconditions",
-            ];
-        case "SwapNeighbor":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "neighbor-leaf-occupied",
-                "container-is-direct-parent",
-                "adapter-must-verify-postconditions",
-            ];
-        case "InsertIntoGroup":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "container-is-direct-parent",
-                "target-group-membership",
-                "adapter-must-verify-postconditions",
-            ];
-        case "SplitGroupChild":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "neighbor-leaf-occupied",
-                "container-is-direct-parent",
-                "target-group-membership",
-                "adapter-must-verify-postconditions",
-            ];
-        case "WrapNeighbor":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "neighbor-leaf-occupied",
-                "container-is-direct-parent",
-                "adapter-must-verify-postconditions",
-            ];
-        case "EscapeParent":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "container-is-direct-parent",
-                "parent-group-membership",
-                "adapter-must-verify-postconditions",
-            ];
-        case "CrossOutput":
-            return [
-                "focused-leaf-occupied-by-focused-window",
-                "source-root-membership-and-adjacent-same-workspace-output",
-                "adapter-must-verify-postconditions",
-            ];
-        default:
-            return null;
-    }
-}
-
-function expectedCapability(kind: string): string | null {
-    switch (kind) {
-        case "WrapPerpendicular":
-            return "wrap-perpendicular";
-        case "SwapNeighbor":
-            return "swap-neighbor";
-        case "InsertIntoGroup":
-            return "insert-child";
-        case "SplitGroupChild":
-            return "split-group-child";
-        case "WrapNeighbor":
-            return "wrap-siblings";
-        case "EscapeParent":
-            return "reparent-leaf";
-        case "CrossOutput":
-            return "cross-output-transfer";
-        default:
-            return null;
-    }
-}
-
-function expectedRule(kind: string): string | null {
-    switch (kind) {
-        case "WrapPerpendicular":
-            return "R1";
-        case "SwapNeighbor":
-            return "R2a";
-        case "InsertIntoGroup":
-        case "SplitGroupChild":
-            return "R2b";
-        case "WrapNeighbor":
-            return "R2c";
-        case "EscapeParent":
-            return "R3";
-        case "CrossOutput":
-            return "R4";
-        default:
-            return null;
-    }
-}
-
-function oppositeMovementDirection(direction: MovementDirection): MovementDirection {
-    switch (direction) {
-        case "left":
-            return "right";
-        case "right":
-            return "left";
-        case "up":
-            return "down";
-        case "down":
-            return "up";
-    }
-}
 
 function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): boolean {
     const actual = Object.keys(value);
@@ -427,122 +298,76 @@ function isNonNegativeInt(value: unknown): value is number {
     return typeof value === "number" && Number.isInteger(value) && value >= 0;
 }
 
-function validateOperationShape(operation: unknown, rule: string, capability: string): boolean {
-    if (!isRecord(operation) || typeof operation["kind"] !== "string") {
+function isShareVector(value: unknown): value is number[] {
+    if (!Array.isArray(value) || value.length < 2 || value.length > RESIZE_MAX_SHARES) {
         return false;
     }
-    const kind = operation["kind"] as string;
-    if (KNOWN_KINDS.indexOf(kind) < 0) {
-        return false;
-    }
-    if (operation["rule"] !== rule) {
-        return false;
-    }
-    if (expectedRule(kind) !== rule) {
-        return false;
-    }
-    if (expectedCapability(kind) !== capability) {
-        return false;
-    }
-    switch (kind) {
-        case "WrapPerpendicular":
-            return (
-                hasExactKeys(operation, ["kind", "rule", "container", "axis"]) &&
-                isOpaqueId(operation["container"]) &&
-                KNOWN_AXES.indexOf(operation["axis"] as string) >= 0
-            );
-        case "SwapNeighbor":
-            return (
-                hasExactKeys(operation, ["kind", "rule", "container", "neighbor"]) &&
-                isOpaqueId(operation["container"]) &&
-                isOpaqueId(operation["neighbor"])
-            );
-        case "InsertIntoGroup":
-            return (
-                hasExactKeys(operation, [
-                    "kind",
-                    "rule",
-                    "container",
-                    "target_group",
-                    "insertion_index",
-                    "insertion",
-                ]) &&
-                isOpaqueId(operation["container"]) &&
-                isOpaqueId(operation["target_group"]) &&
-                isNonNegativeInt(operation["insertion_index"]) &&
-                (operation["insertion"] === "midpoint" || operation["insertion"] === "near-edge")
-            );
-        case "SplitGroupChild":
-            return (
-                hasExactKeys(operation, [
-                    "kind",
-                    "rule",
-                    "container",
-                    "target_group",
-                    "target_child",
-                    "target_child_index",
-                    "focused_side",
-                    "axis",
-                ]) &&
-                isOpaqueId(operation["container"]) &&
-                isOpaqueId(operation["target_group"]) &&
-                isOpaqueId(operation["target_child"]) &&
-                isNonNegativeInt(operation["target_child_index"]) &&
-                (operation["focused_side"] === "first" || operation["focused_side"] === "second") &&
-                KNOWN_AXES.indexOf(operation["axis"] as string) >= 0
-            );
-        case "WrapNeighbor":
-            return (
-                hasExactKeys(operation, [
-                    "kind",
-                    "rule",
-                    "container",
-                    "neighbor",
-                    "focused_before_neighbor",
-                    "axis",
-                ]) &&
-                isOpaqueId(operation["container"]) &&
-                isOpaqueId(operation["neighbor"]) &&
-                typeof operation["focused_before_neighbor"] === "boolean" &&
-                KNOWN_AXES.indexOf(operation["axis"] as string) >= 0
-            );
-        case "EscapeParent":
-            return (
-                hasExactKeys(operation, [
-                    "kind",
-                    "rule",
-                    "container",
-                    "parent",
-                    "container_child_index",
-                    "parent_insertion_index",
-                    "continuation",
-                ]) &&
-                isOpaqueId(operation["container"]) &&
-                isOpaqueId(operation["parent"]) &&
-                isNonNegativeInt(operation["container_child_index"]) &&
-                (isNonNegativeInt(operation["parent_insertion_index"]) ||
-                    operation["parent_insertion_index"] === null) &&
-                (operation["continuation"] === "none" || operation["continuation"] === "R1")
-            );
-        case "CrossOutput":
-            return (
-                hasExactKeys(operation, [
-                    "kind",
-                    "rule",
-                    "target_output",
-                    "source_root_child_index",
-                    "target",
-                ]) &&
-                isOpaqueId(operation["target_output"]) &&
-                isNonNegativeInt(operation["source_root_child_index"]) &&
-                (operation["target"] === "empty" || operation["target"] === "occupied")
-            );
-        default:
+    for (const entry of value) {
+        if (!isNonNegativeInt(entry) || entry === 0) {
             return false;
+        }
     }
+    return true;
 }
 
-function validateGeometryEntry(value: unknown): value is MovementDesired {
+function validateOperationShape(operation: unknown): boolean {
+    if (!isRecord(operation)) {
+        return false;
+    }
+    if (!hasExactKeys(operation, RESIZE_OPERATION_KEYS)) {
+        return false;
+    }
+    if (operation["kind"] !== RESIZE_KIND) {
+        return false;
+    }
+    if (
+        !isOpaqueId(operation["domain_output"]) ||
+        !isOpaqueId(operation["domain_workspace"]) ||
+        !isOpaqueId(operation["focused_leaf"]) ||
+        !isOpaqueId(operation["focused_window"]) ||
+        !isOpaqueId(operation["target_group"]) ||
+        !isOpaqueId(operation["focused_child"]) ||
+        !isOpaqueId(operation["neighbor_child"])
+    ) {
+        return false;
+    }
+    if (!isDirection(operation["direction"])) {
+        return false;
+    }
+    if (!isNonNegativeInt(operation["focused_index"]) || !isNonNegativeInt(operation["neighbor_index"])) {
+        return false;
+    }
+    if (operation["focused_index"] === operation["neighbor_index"]) {
+        return false;
+    }
+    if (operation["focused_child"] === operation["neighbor_child"]) {
+        return false;
+    }
+    if (!isShareVector(operation["old_shares"]) || !isShareVector(operation["new_shares"])) {
+        return false;
+    }
+    const oldShares = operation["old_shares"] as number[];
+    const newShares = operation["new_shares"] as number[];
+    if (oldShares.length !== newShares.length) {
+        return false;
+    }
+    if ((operation["focused_index"] as number) >= oldShares.length) {
+        return false;
+    }
+    if ((operation["neighbor_index"] as number) >= oldShares.length) {
+        return false;
+    }
+    let same = true;
+    for (let index = 0; index < oldShares.length; index += 1) {
+        if (oldShares[index] !== newShares[index]) {
+            same = false;
+            break;
+        }
+    }
+    return !same;
+}
+
+function validateGeometryEntry(value: unknown): value is ResizeDesired {
     if (!isRecord(value)) {
         return false;
     }
@@ -567,7 +392,7 @@ function validateGeometryEntry(value: unknown): value is MovementDesired {
     return isTargetRect({ x: rect["x"], y: rect["y"], w: rect["w"], h: rect["h"] });
 }
 
-function validateDesiredFocus(value: unknown): value is MovementDesiredFocus {
+function validateDesiredFocus(value: unknown): value is ResizeDesiredFocus {
     if (!isRecord(value)) {
         return false;
     }
@@ -581,18 +406,16 @@ function validateDesiredFocus(value: unknown): value is MovementDesiredFocus {
     );
 }
 
-interface PlannedMovement {
+interface PlannedResize {
     readonly correlationId: string;
     readonly baseRevision: number;
-    readonly capability: string;
-    readonly rule: string;
     readonly preconditions: ReadonlyArray<string>;
     readonly operation: Record<string, unknown>;
-    readonly geometry: ReadonlyArray<MovementDesired>;
-    readonly focus: MovementDesiredFocus;
+    readonly geometry: ReadonlyArray<ResizeDesired>;
+    readonly focus: ResizeDesiredFocus;
 }
 
-function validatePlanned(reply: unknown, correlationId: string): PlannedMovement | null {
+function validatePlanned(reply: unknown, correlationId: string): PlannedResize | null {
     if (!isRecord(reply)) {
         return null;
     }
@@ -603,7 +426,6 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedMovement
             "outcome",
             "base_revision",
             "capability",
-            "rule",
             "preconditions",
             "operation",
             "desired_geometry",
@@ -612,7 +434,7 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedMovement
     ) {
         return null;
     }
-    if (reply["v"] !== MOVEMENT_CONTRACT_VERSION) {
+    if (reply["v"] !== RESIZE_CONTRACT_VERSION) {
         return null;
     }
     if (reply["correlation_id"] !== correlationId) {
@@ -621,53 +443,36 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedMovement
     if (reply["outcome"] !== "planned") {
         return null;
     }
-    const capability = reply["capability"];
-    const rule = reply["rule"];
-    if (typeof capability !== "string" || KNOWN_CAPABILITIES.indexOf(capability) < 0) {
-        return null;
-    }
-    if (typeof rule !== "string" || KNOWN_RULES.indexOf(rule) < 0) {
+    if (reply["capability"] !== RESIZE_CAPABILITY) {
         return null;
     }
     const preconditions = reply["preconditions"];
-    if (!Array.isArray(preconditions) || preconditions.length === 0 || preconditions.length > 7) {
+    if (!Array.isArray(preconditions) || preconditions.length !== RESIZE_PRECONDITIONS.length) {
         return null;
     }
-    const seenPre = new Set<string>();
-    for (const entry of preconditions) {
-        if (typeof entry !== "string" || KNOWN_PRECONDITIONS.indexOf(entry) < 0 || seenPre.has(entry)) {
+    for (let index = 0; index < RESIZE_PRECONDITIONS.length; index += 1) {
+        if (preconditions[index] !== RESIZE_PRECONDITIONS[index]) {
             return null;
         }
-        seenPre.add(entry);
     }
-    const operation = reply["operation"];
-    if (!validateOperationShape(operation, rule as string, capability as string)) {
+    if (!validateOperationShape(reply["operation"])) {
         return null;
-    }
-    const expected = expectedPreconditions((operation as Record<string, unknown>)["kind"] as string);
-    if (expected === null || preconditions.length !== expected.length) {
-        return null;
-    }
-    for (let index = 0; index < expected.length; index += 1) {
-        if (preconditions[index] !== expected[index]) {
-            return null;
-        }
     }
     const baseRevision = reply["base_revision"];
     if (!isRevision(baseRevision)) {
         return null;
     }
     const geometryRaw = reply["desired_geometry"];
-    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > MOVEMENT_MAX_GEOMETRY) {
+    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > RESIZE_MAX_GEOMETRY) {
         return null;
     }
-    const geometry: MovementDesired[] = [];
+    const geometry: ResizeDesired[] = [];
     const seenWindow = new Set<string>();
     for (const entry of geometryRaw) {
         if (!validateGeometryEntry(entry)) {
             return null;
         }
-        const typed = entry as unknown as MovementDesired;
+        const typed = entry as unknown as ResizeDesired;
         if (seenWindow.has(typed.window)) {
             return null;
         }
@@ -688,10 +493,8 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedMovement
     return {
         correlationId,
         baseRevision: baseRevision as number,
-        capability: capability as string,
-        rule: rule as string,
         preconditions: Object.freeze([...(preconditions as string[])]),
-        operation: operation as Record<string, unknown>,
+        operation: reply["operation"] as Record<string, unknown>,
         geometry: Object.freeze(geometry),
         focus: {
             domainOutput: focusRecord["domain_output"] as string,
@@ -701,15 +504,7 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedMovement
     };
 }
 
-function toDesiredFocus(raw: Record<string, unknown>): MovementDesiredFocus {
-    return {
-        domainOutput: raw["domain_output"] as string,
-        domainWorkspace: raw["domain_workspace"] as string,
-        leaf: raw["leaf"] as string,
-    };
-}
-
-function validateObserved(observed: MovementObserved | null): observed is MovementObserved {
+function validateObserved(observed: ResizeObserved | null): observed is ResizeObserved {
     if (observed === null || typeof observed !== "object") {
         return false;
     }
@@ -719,96 +514,39 @@ function validateObserved(observed: MovementObserved | null): observed is Moveme
     if (!isOpaqueId(observed.focusedId)) {
         return false;
     }
-    if (!Array.isArray(observed.windows as unknown) || !Array.isArray(observed.domains as unknown)) {
+    if (!Array.isArray(observed.windows as unknown)) {
         return false;
     }
     const windows = observed.windows;
-    const domains = observed.domains;
-    if (windows.length === 0 || windows.length > MOVEMENT_MAX_WINDOWS) {
+    if (windows.length === 0 || windows.length > RESIZE_MAX_WINDOWS) {
         return false;
     }
-    if (domains.length === 0 || domains.length > MOVEMENT_MAX_DOMAINS) {
+    if (
+        !isTargetRect({
+            x: observed.domainBounds.x,
+            y: observed.domainBounds.y,
+            w: observed.domainBounds.w,
+            h: observed.domainBounds.h,
+        })
+    ) {
+        return false;
+    }
+    if (!Number.isInteger(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
         return false;
     }
     const seen = new Set<string>();
     let focusedFound = false;
-    const domainKeys = new Set<string>();
-    for (const domain of domains) {
-        if (typeof domain !== "object" || domain === null) {
-            return false;
-        }
-        const candidate = domain as MovementDomain;
-        if (!isOpaqueId(candidate.output) || !isOpaqueId(candidate.workspace)) {
-            return false;
-        }
-        if (!isTargetRect({ x: candidate.bounds.x, y: candidate.bounds.y, w: candidate.bounds.w, h: candidate.bounds.h })) {
-            return false;
-        }
-        if (!isFiniteInt(candidate.gap) || candidate.gap < 0 || candidate.gap > 64) {
-            return false;
-        }
-        if (typeof candidate.adjacent !== "object" || candidate.adjacent === null || Array.isArray(candidate.adjacent)) {
-            return false;
-        }
-        const keys = Object.keys(candidate.adjacent);
-        if (keys.length > 4) {
-            return false;
-        }
-        for (const key of keys) {
-            if (KNOWN_DIRECTIONS.indexOf(key) < 0) {
-                return false;
-            }
-            const target = (candidate.adjacent as Record<string, unknown>)[key];
-            if (!isOpaqueId(target) || target === candidate.output) {
-                return false;
-            }
-        }
-        const pair = `${candidate.output}\x1f${candidate.workspace}`;
-        if (domainKeys.has(pair)) {
-            return false;
-        }
-        domainKeys.add(pair);
-    }
-    // Observed adjacency must be strictly reciprocal between known
-    // same-workspace domains (mirrors the Rust session binding): every named
-    // target resolves to a known domain sharing the source workspace and
-    // points back via the opposite cardinal direction.
-    const domainByKey = new Map<string, MovementDomain>();
-    for (const domain of domains) {
-        const candidate = domain as MovementDomain;
-        domainByKey.set(`${candidate.output}\x1f${candidate.workspace}`, candidate);
-    }
-    const oppositeOf: Readonly<Record<string, string>> = {
-        left: "right",
-        right: "left",
-        up: "down",
-        down: "up",
-    };
-    for (const domain of domains) {
-        const candidate = domain as MovementDomain;
-        for (const key of Object.keys(candidate.adjacent)) {
-            const target = (candidate.adjacent as Record<string, unknown>)[key] as string;
-            const targetDomain = domainByKey.get(`${target}\x1f${candidate.workspace}`);
-            if (targetDomain === undefined) {
-                return false;
-            }
-            const back = (targetDomain.adjacent as Record<string, unknown>)[
-                oppositeOf[key] as string
-            ];
-            if (back !== candidate.output) {
-                return false;
-            }
-        }
-    }
     for (const entry of windows) {
         if (typeof entry !== "object" || entry === null) {
             return false;
         }
-        const candidate = entry as MovementObservedWindow;
+        const candidate = entry as ResizeObservedWindow;
         if (!isOpaqueId(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
             return false;
         }
-        if (!isOpaqueId(candidate.output) || !isOpaqueId(candidate.workspace)) {
+        // Single-domain static resize: every observed window must live in the
+        // request domain. Anything else is a cross-domain mismatch.
+        if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
             return false;
         }
         if (!isTargetRect({ x: candidate.rect.x, y: candidate.rect.y, w: candidate.rect.w, h: candidate.rect.h })) {
@@ -820,9 +558,6 @@ function validateObserved(observed: MovementObserved | null): observed is Moveme
         seen.add(candidate.id);
         if (candidate.id === observed.focusedId) {
             focusedFound = true;
-        }
-        if (!domainKeys.has(`${candidate.output}\x1f${candidate.workspace}`)) {
-            return false;
         }
     }
     if (!focusedFound) {
@@ -837,28 +572,23 @@ function validateObserved(observed: MovementObserved | null): observed is Moveme
     return true;
 }
 
-import { orderGeometryWrites } from "./geometry-order";
-
-// Deterministic native-boundary application order: changed windows only,
-// descending new-minus-old area delta (growing covering rectangles first),
-// lexical window id tie-break. Every changed window appears exactly once;
-// unchanged windows are skipped. N-window swaps and cycles keep all writes.
-// Shared canonical order via geometry-order; this wrapper preserves the
-// existing movement entry point and behavior exactly.
-export function orderMovementWrites(
-    oldById: ReadonlyMap<string, MovementRect>,
-    desired: ReadonlyArray<MovementDesired>,
-): ReadonlyArray<MovementDesired> {
+// Deterministic native-boundary application order: shared canonical
+// grow-before-shrink order via geometry-order (same as movement).
+// Preserves the existing resize entry point and behavior exactly.
+export function orderResizeWrites(
+    oldById: ReadonlyMap<string, ResizeRect>,
+    desired: ReadonlyArray<ResizeDesired>,
+): ReadonlyArray<ResizeDesired> {
     return orderGeometryWrites(oldById, desired);
 }
 
-export interface MovementEnableAuth {
+export interface ResizeEnableAuth {
     readonly owner: unknown;
     readonly generation: unknown;
     readonly revision?: unknown;
 }
 
-export class MovementAdapter {
+export class ResizeAdapter {
     private enabled = false;
     private owner = "";
     private generation = "";
@@ -874,13 +604,13 @@ export class MovementAdapter {
     private seq = 0;
     private lastFingerprint = "";
     private lastDirection = "";
-    private pending: PlannedMovement | null = null;
-    private pendingObserved: MovementObserved | null = null;
-    private pendingDirection: MovementDirection | null = null;
-    private pendingMover: string | null = null;
+    private pending: PlannedResize | null = null;
+    private pendingObserved: ResizeObserved | null = null;
+    private pendingDirection: ResizeDirection | null = null;
+    private pendingFocused: string | null = null;
     private lossReported = false;
 
-    constructor(private readonly env: MovementAdapterEnv) {}
+    constructor(private readonly env: ResizeAdapterEnv) {}
 
     get isEnabled(): boolean {
         return this.enabled;
@@ -895,7 +625,7 @@ export class MovementAdapter {
         this.lastDirection = "";
     }
 
-    private reportAdapterLost(planned: PlannedMovement | null): void {
+    private reportAdapterLost(planned: PlannedResize | null): void {
         if (planned === null || this.lossReported) {
             return;
         }
@@ -903,7 +633,7 @@ export class MovementAdapter {
         let payload = "";
         try {
             payload = JSON.stringify({
-                v: MOVEMENT_CONTRACT_VERSION,
+                v: RESIZE_CONTRACT_VERSION,
                 action: "acknowledge",
                 correlation_id: planned.correlationId,
                 owner: this.owner,
@@ -915,15 +645,15 @@ export class MovementAdapter {
             void error;
             return;
         }
-        if (payload.length === 0 || payload.length > MOVEMENT_MAX_REQUEST_BYTES) {
+        if (payload.length === 0 || payload.length > RESIZE_MAX_REQUEST_BYTES) {
             return;
         }
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
-                MOVEMENT_OBJECT,
-                MOVEMENT_INTERFACE,
-                MOVEMENT_METHOD,
+                RESIZE_SERVICE,
+                RESIZE_OBJECT,
+                RESIZE_INTERFACE,
+                RESIZE_METHOD,
                 payload,
                 () => {},
             );
@@ -932,24 +662,24 @@ export class MovementAdapter {
         }
     }
 
-    enable(auth: MovementEnableAuth): boolean {
+    enable(auth: ResizeEnableAuth): boolean {
         if (this.enabled) {
             return false;
         }
         if (!isRecord(auth as unknown as Record<string, unknown>)) {
-            this.reject("movement-invalid-auth");
+            this.reject("resize-invalid-auth");
             return false;
         }
         if (!isOwnerId(auth.owner) || !isGeneration(auth.generation)) {
-            this.reject("movement-invalid-auth");
+            this.reject("resize-invalid-auth");
             return false;
         }
         const revision = auth.revision === undefined ? 0 : auth.revision;
         if (!isRevision(revision)) {
-            this.reject("movement-invalid-auth");
+            this.reject("resize-invalid-auth");
             return false;
         }
-        const kinds: readonly MovementSignal[] = ["active", "added", "removed", "output", "desktop", "geometry"];
+        const kinds: readonly ResizeSignal[] = ["active", "added", "removed", "output", "desktop", "geometry"];
         const attached: Array<() => void> = [];
         for (const kind of kinds) {
             let detach: (() => void) | null = null;
@@ -967,7 +697,7 @@ export class MovementAdapter {
                         void error;
                     }
                 }
-                this.reject("movement-signal-failed");
+                this.reject("resize-signal-failed");
                 return false;
             }
             attached.push(detach);
@@ -983,7 +713,7 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
-        this.pendingMover = null;
+        this.pendingFocused = null;
         this.lossReported = false;
         this.clearDedup();
         this.log(`${LOG_PREFIX}:ready`);
@@ -999,7 +729,7 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
-        this.pendingMover = null;
+        this.pendingFocused = null;
         this.suppressing = false;
         this.clearDedup();
         this.clearTimer();
@@ -1014,32 +744,32 @@ export class MovementAdapter {
         this.log(`${LOG_PREFIX}:disabled`);
     }
 
-    requestMovement(direction: unknown): void {
+    requestResize(direction: unknown): void {
         if (!this.enabled) {
-            this.reject("movement-disabled");
+            this.reject("resize-disabled");
             return;
         }
         if (this.inFlight) {
-            this.reject("movement-busy");
+            this.reject("resize-busy");
             return;
         }
         if (!isDirection(direction)) {
-            this.reject("movement-invalid-intent");
+            this.reject("resize-invalid-intent");
             return;
         }
         let authority = false;
         try {
-            authority = this.env.hasExclusiveMovementAuthority() === true;
+            authority = this.env.hasExclusiveResizeAuthority() === true;
         } catch (error) {
             void error;
             authority = false;
         }
         if (!authority) {
-            this.reject("movement-exclusive-conflict");
+            this.reject("resize-exclusive-conflict");
             this.disable();
             return;
         }
-        let observed: MovementObserved | null = null;
+        let observed: ResizeObserved | null = null;
         try {
             observed = this.env.observe();
         } catch (error) {
@@ -1047,24 +777,24 @@ export class MovementAdapter {
             observed = null;
         }
         if (!validateObserved(observed)) {
-            this.reject("movement-stale-scope");
+            this.reject("resize-stale-scope");
             this.disable();
             return;
         }
-        const current = observed as MovementObserved;
+        const current = observed as ResizeObserved;
         if (current.fingerprint === this.lastFingerprint && direction === this.lastDirection) {
-            this.reject("movement-dedup");
+            this.reject("resize-dedup");
             return;
         }
-        if (this.seq < 0 || this.seq > MOVEMENT_MAX_SEQ) {
-            this.reject("movement-seq-exhausted");
+        if (this.seq < 0 || this.seq > RESIZE_MAX_SEQ) {
+            this.reject("resize-seq-exhausted");
             this.disable();
             return;
         }
-        const correlation = `${this.generation}-m${String(this.seq)}`;
+        const correlation = `${this.generation}-r${String(this.seq)}`;
         this.seq += 1;
         if (!isCorrelationId(correlation)) {
-            this.reject("movement-invalid-auth");
+            this.reject("resize-invalid-auth");
             this.disable();
             return;
         }
@@ -1072,6 +802,7 @@ export class MovementAdapter {
             window: entry.id,
             output: entry.output,
             workspace: entry.workspace,
+            rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
         }));
         const sortedIds = current.windows.map((entry) => entry.id).sort();
         let requestRevision = this.revision;
@@ -1079,51 +810,45 @@ export class MovementAdapter {
             requestRevision = sortedIds.length;
             this.revision = requestRevision;
         }
-        const fingerprint = movementFingerprint(
+        const fingerprint = resizeFingerprint(
             current.domainOutput,
             current.domainWorkspace,
             current.focusedId,
             sortedIds,
         );
-        const domains = current.domains.map((domain) => ({
-            output: domain.output,
-            workspace: domain.workspace,
-            bounds: { x: domain.bounds.x, y: domain.bounds.y, w: domain.bounds.w, h: domain.bounds.h },
-            gap: domain.gap,
-            adjacent: { ...(domain.adjacent as Record<string, string>) },
-        }));
         let payload = "";
         try {
             payload = JSON.stringify({
-                v: MOVEMENT_CONTRACT_VERSION,
+                v: RESIZE_CONTRACT_VERSION,
                 action: "request",
                 correlation_id: correlation,
                 owner: this.owner,
                 generation: this.generation,
                 revision: requestRevision,
                 fingerprint,
-                domain: { output: current.domainOutput, workspace: current.domainWorkspace },
+                domain: {
+                    output: current.domainOutput,
+                    workspace: current.domainWorkspace,
+                    bounds: {
+                        x: current.domainBounds.x,
+                        y: current.domainBounds.y,
+                        w: current.domainBounds.w,
+                        h: current.domainBounds.h,
+                    },
+                    gap: current.domainGap,
+                },
                 focused_window: current.focusedId,
                 direction,
                 windows,
-                capabilities: {
-                    swap_neighbor: true,
-                    wrap_perpendicular: true,
-                    wrap_siblings: true,
-                    insert_child: true,
-                    split_group_child: true,
-                    reparent_leaf: true,
-                    cross_output_transfer: true,
-                },
-                domains,
+                capabilities: { keyboard_resize: true },
             });
         } catch (error) {
             void error;
-            this.reject("movement-invalid-intent");
+            this.reject("resize-invalid-intent");
             return;
         }
-        if (payload.length > MOVEMENT_MAX_REQUEST_BYTES) {
-            this.reject("movement-oversized");
+        if (payload.length > RESIZE_MAX_REQUEST_BYTES) {
+            this.reject("resize-oversized");
             return;
         }
         this.lastFingerprint = current.fingerprint;
@@ -1131,7 +856,7 @@ export class MovementAdapter {
         this.startFlight(payload, correlation, direction, current);
     }
 
-    private onSignal(kind: MovementSignal): void {
+    private onSignal(kind: ResizeSignal): void {
         if (kind === "geometry" && this.suppressing) {
             return;
         }
@@ -1141,8 +866,8 @@ export class MovementAdapter {
     private startFlight(
         payload: string,
         correlation: string,
-        direction: MovementDirection,
-        observed: MovementObserved,
+        direction: ResizeDirection,
+        observed: ResizeObserved,
     ): void {
         this.inFlight = true;
         this.invalidated = false;
@@ -1150,7 +875,7 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = observed;
         this.pendingDirection = direction;
-        this.pendingMover = observed.focusedId;
+        this.pendingFocused = observed.focusedId;
         this.lossReported = false;
         this.callbackSeen = false;
         this.token += 1;
@@ -1158,21 +883,21 @@ export class MovementAdapter {
         this.activeToken = flight;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
         } catch (error) {
             void error;
             this.inFlight = false;
-            this.reject("movement-timer-failed");
+            this.reject("resize-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
-                MOVEMENT_OBJECT,
-                MOVEMENT_INTERFACE,
-                MOVEMENT_METHOD,
+                RESIZE_SERVICE,
+                RESIZE_OBJECT,
+                RESIZE_INTERFACE,
+                RESIZE_METHOD,
                 payload,
                 (reply) => this.onRequestReply(reply, flight, correlation),
             );
@@ -1180,7 +905,7 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.inFlight = false;
-            this.reject("movement-dbus-failed");
+            this.reject("resize-dbus-failed");
             this.disable();
         }
     }
@@ -1198,8 +923,8 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
-        this.pendingMover = null;
-        this.reject(`movement-timeout-${stage}`);
+        this.pendingFocused = null;
+        this.reject(`resize-timeout-${stage}`);
         this.disable();
     }
 
@@ -1209,9 +934,9 @@ export class MovementAdapter {
         }
         this.callbackSeen = true;
         this.clearTimer();
-        if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.inFlight = false;
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
@@ -1221,27 +946,27 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed)) {
             this.inFlight = false;
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
         const outcome = parsed["outcome"];
         if (outcome === "noop") {
-            if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+            if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
                 this.inFlight = false;
-                this.reject("movement-service-fault");
+                this.reject("resize-service-fault");
                 this.disable();
                 return;
             }
             if (parsed["correlation_id"] !== correlation) {
                 this.inFlight = false;
-                this.reject("movement-correlation-mismatch");
+                this.reject("resize-correlation-mismatch");
                 this.disable();
                 return;
             }
@@ -1249,7 +974,7 @@ export class MovementAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
-            this.pendingMover = null;
+            this.pendingFocused = null;
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -1258,8 +983,8 @@ export class MovementAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
-            this.pendingMover = null;
-            this.reject("movement-rejected");
+            this.pendingFocused = null;
+            this.reject("resize-rejected");
             this.disable();
             return;
         }
@@ -1268,249 +993,139 @@ export class MovementAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
-            this.pendingMover = null;
-            this.reject("movement-diverged");
+            this.pendingFocused = null;
+            this.reject("resize-diverged");
             this.disable();
             return;
         }
         if (outcome !== "planned") {
             this.inFlight = false;
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
-        // Rehydrate the strict focus shape lost by the compact validator.
-        const rawFocus = (parsed as Record<string, unknown>)["desired_focus"];
         const planned = validatePlanned(parsed, correlation);
-        if (planned === null || !isRecord(rawFocus)) {
+        if (planned === null) {
             this.inFlight = false;
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
-            this.pendingMover = null;
-            this.reject("movement-precondition-mismatch");
+            this.pendingFocused = null;
+            this.reject("resize-precondition-mismatch");
             this.disable();
             return;
         }
-        if (!validateDesiredFocus(rawFocus)) {
+        if (planned.baseRevision !== this.revision) {
             this.inFlight = false;
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
-            this.pendingMover = null;
-            this.reject("movement-precondition-mismatch");
+            this.pendingFocused = null;
+            this.reject("resize-revision-mismatch");
             this.disable();
             return;
         }
-        const full: PlannedMovement = {
-            correlationId: planned.correlationId,
-            baseRevision: planned.baseRevision,
-            capability: planned.capability,
-            rule: planned.rule,
-            preconditions: planned.preconditions,
-            operation: planned.operation,
-            geometry: planned.geometry,
-            focus: toDesiredFocus(rawFocus as Record<string, unknown>),
-        };
-        if (full.baseRevision !== this.revision) {
-            this.inFlight = false;
-            this.pending = null;
-            this.pendingObserved = null;
-            this.pendingDirection = null;
-            this.pendingMover = null;
-            this.reject("movement-revision-mismatch");
-            this.disable();
-            return;
-        }
-        this.pending = full;
-        this.applyPlanned(flight);
-    }
-
-    private boundsFor(
-        output: string,
-        workspace: string,
-        domains: ReadonlyArray<MovementDomain>,
-    ): MovementRect | null {
-        for (const domain of domains) {
-            if (domain.output === output && domain.workspace === workspace) {
-                return domain.bounds;
+        // Geometry must cover exactly the observed window set: no partial,
+        // no extra, no unknown windows.
+        const captured = this.pendingObserved;
+        if (captured !== null) {
+            const observedIds = new Set(captured.windows.map((entry) => entry.id));
+            if (planned.geometry.length !== observedIds.size) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pendingFocused = null;
+                this.reject("resize-precondition-mismatch");
+                this.disable();
+                return;
+            }
+            for (const entry of planned.geometry) {
+                if (!observedIds.has(entry.window)) {
+                    this.inFlight = false;
+                    this.pending = null;
+                    this.pendingObserved = null;
+                    this.pendingDirection = null;
+                    this.pendingFocused = null;
+                    this.reject("resize-precondition-mismatch");
+                    this.disable();
+                    return;
+                }
+                if (entry.output !== captured.domainOutput || entry.workspace !== captured.domainWorkspace) {
+                    this.inFlight = false;
+                    this.pending = null;
+                    this.pendingObserved = null;
+                    this.pendingDirection = null;
+                    this.pendingFocused = null;
+                    this.reject("resize-precondition-mismatch");
+                    this.disable();
+                    return;
+                }
+            }
+            // Desired focus must retain the request domain.
+            if (
+                planned.focus.domainOutput !== captured.domainOutput ||
+                planned.focus.domainWorkspace !== captured.domainWorkspace
+            ) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pendingFocused = null;
+                this.reject("resize-precondition-mismatch");
+                this.disable();
+                return;
             }
         }
-        return null;
+        this.pending = planned;
+        this.applyPlanned(flight);
     }
 
     private applyPlanned(flight: number): void {
         const planned = this.pending;
         const captured = this.pendingObserved;
         const wantedDirection = this.pendingDirection;
-        const mover = this.pendingMover;
-        if (planned === null || captured === null || wantedDirection === null || mover === null) {
-            this.inFlight = false;
-            this.reject("movement-service-fault");
-            this.disable();
-            return;
-        }
-        // Desired projection must exactly cover the captured membership.
-        const capturedIds = captured.windows.map((entry) => entry.id).sort();
-        const desiredIds = planned.geometry.map((entry) => entry.window).sort();
-        if (capturedIds.length !== desiredIds.length) {
+        const focused = this.pendingFocused;
+        if (
+            planned === null ||
+            captured === null ||
+            focused === null ||
+            wantedDirection === null
+        ) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-target-mismatch");
+            this.failApply("resize-target-mismatch");
             return;
         }
-        for (let index = 0; index < capturedIds.length; index += 1) {
-            if (capturedIds[index] !== desiredIds[index]) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-target-mismatch");
-                return;
-            }
-        }
-        // Finite integer targets, membership containment, no overlap.
-        for (const entry of planned.geometry) {
-            if (!isTargetRect({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h })) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-geometry-mismatch");
-                return;
-            }
-            const bounds = this.boundsFor(entry.output, entry.workspace, captured.domains);
-            if (bounds === null || !rectContained(entry.rect, bounds)) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-geometry-mismatch");
-                return;
-            }
-        }
-        for (let a = 0; a < planned.geometry.length; a += 1) {
-            for (let b = a + 1; b < planned.geometry.length; b += 1) {
-                const ra = (planned.geometry[a] as MovementDesired).rect;
-                const rb = (planned.geometry[b] as MovementDesired).rect;
-                if (rectsOverlap(ra, rb)) {
-                    this.reportAdapterLost(planned);
-                    this.failApply("movement-overlap-mismatch");
-                    return;
-                }
-            }
-        }
-        // Complete desired final projection per affected nonempty domain:
-        // every entry is contained in its domain bounds, entries within one
-        // domain never overlap, and a zero-gap domain must be exactly filled
-        // (no unaccounted gap). Domains with no desired windows (an emptied
-        // R4 source) are skipped. Identity/membership exactness is checked by
-        // the caller; this is native plan validation, not a geometry policy.
-        const byDomain = new Map<string, MovementDesired[]>();
-        for (const entry of planned.geometry) {
-            const key = `${entry.output}\x1f${entry.workspace}`;
-            const group = byDomain.get(key);
-            if (group === undefined) {
-                byDomain.set(key, [entry]);
-            } else {
-                group.push(entry);
-            }
-        }
-        for (const [key, group] of byDomain) {
-            for (let a = 0; a < group.length; a += 1) {
-                for (let b = a + 1; b < group.length; b += 1) {
-                    const ra = (group[a] as MovementDesired).rect;
-                    const rb = (group[b] as MovementDesired).rect;
-                    if (rectsOverlap(ra, rb)) {
-                        this.reportAdapterLost(planned);
-                        this.failApply("movement-overlap-mismatch");
-                        return;
-                    }
-                }
-            }
-            const first = group[0] as MovementDesired;
-            const bounds = this.boundsFor(first.output, first.workspace, captured.domains);
-            if (bounds === null) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-geometry-mismatch");
-                return;
-            }
-            let gap = 0;
-            let gapFound = false;
-            for (const domain of captured.domains) {
-                if (domain.output === first.output && domain.workspace === first.workspace) {
-                    gap = domain.gap;
-                    gapFound = true;
-                    break;
-                }
-            }
-            void key;
-            if (!gapFound) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-geometry-mismatch");
-                return;
-            }
-            if (gap === 0) {
-                let area = 0;
-                for (const entry of group) {
-                    area += rectArea(entry.rect);
-                }
-                if (area !== rectArea(bounds)) {
-                    this.reportAdapterLost(planned);
-                    this.failApply("movement-gap-mismatch");
-                    return;
-                }
-            }
-        }
-        // R4 cross-output target must be reciprocal and current-direction
-        // adjacent to the source domain: the source domain names the target
-        // output in the requested direction and the target names the source
-        // back via the opposite direction in the same workspace.
-        if (planned.rule === "R4") {
-            const operation = planned.operation;
-            const targetOutput = operation["target_output"];
-            const sourceDomain =
-                captured.domains.find(
-                    (domain) =>
-                        domain.output === captured.domainOutput &&
-                        domain.workspace === captured.domainWorkspace,
-                ) ?? null;
-            const sourceOut = sourceDomain?.output ?? captured.domainOutput;
-            const sourceWs = sourceDomain?.workspace ?? captured.domainWorkspace;
-            const targetDomain =
-                captured.domains.find(
-                    (domain) => domain.output === targetOutput && domain.workspace === sourceWs,
-                ) ?? null;
-            if (
-                typeof targetOutput !== "string" ||
-                sourceDomain === null ||
-                targetDomain === null ||
-                wantedDirection === null
-            ) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-target-mismatch");
-                return;
-            }
-            const forward = (sourceDomain.adjacent as Record<string, unknown>)[
-                wantedDirection
-            ];
-            const back = (targetDomain.adjacent as Record<string, unknown>)[
-                oppositeMovementDirection(wantedDirection)
-            ];
-            if (forward !== targetOutput || back !== sourceOut) {
-                this.reportAdapterLost(planned);
-                this.failApply("movement-target-mismatch");
-                return;
-            }
+        // The planned operation must name the focused window and direction.
+        const operation = planned.operation;
+        if (
+            operation["focused_window"] !== focused ||
+            operation["direction"] !== wantedDirection ||
+            operation["domain_output"] !== captured.domainOutput ||
+            operation["domain_workspace"] !== captured.domainWorkspace
+        ) {
+            this.reportAdapterLost(planned);
+            this.failApply("resize-target-mismatch");
+            return;
         }
         if (this.invalidated) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-signal-invalid");
+            this.failApply("resize-signal-invalid");
             return;
         }
         let authority = false;
         try {
-            authority = this.env.hasExclusiveMovementAuthority() === true;
+            authority = this.env.hasExclusiveResizeAuthority() === true;
         } catch (error) {
             void error;
             authority = false;
         }
         if (!authority) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-exclusive-conflict");
+            this.failApply("resize-exclusive-conflict");
             return;
         }
-        let fresh: MovementObserved | null = null;
+        let fresh: ResizeObserved | null = null;
         try {
             fresh = this.env.observe();
         } catch (error) {
@@ -1519,10 +1134,10 @@ export class MovementAdapter {
         }
         if (!validateObserved(fresh)) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-stale-scope");
+            this.failApply("resize-stale-scope");
             return;
         }
-        const current = fresh as MovementObserved;
+        const current = fresh as ResizeObserved;
         let ok = false;
         try {
             ok = current.revalidate() === true;
@@ -1532,12 +1147,12 @@ export class MovementAdapter {
         }
         if (!ok) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-stale-revalidate");
+            this.failApply("resize-stale-revalidate");
             return;
         }
         if (current.fingerprint !== captured.fingerprint) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-stale-revalidate");
+            this.failApply("resize-stale-revalidate");
             return;
         }
         if (
@@ -1546,11 +1161,11 @@ export class MovementAdapter {
             current.focusedId !== captured.focusedId
         ) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-stale-scope");
+            this.failApply("resize-stale-scope");
             return;
         }
-        // Geometries and work areas must still match the captured preconditions.
-        const capturedRects = new Map<string, MovementRect>();
+        // Geometries must still match the captured preconditions.
+        const capturedRects = new Map<string, ResizeRect>();
         for (const entry of captured.windows) {
             capturedRects.set(entry.id, entry.rect);
         }
@@ -1558,17 +1173,12 @@ export class MovementAdapter {
             const want = capturedRects.get(entry.id);
             if (want === undefined || !sameRect(want, entry.rect)) {
                 this.reportAdapterLost(planned);
-                this.failApply("movement-stale-revalidate");
+                this.failApply("resize-stale-revalidate");
                 return;
             }
         }
-        if (current.domains.length !== captured.domains.length) {
-            this.reportAdapterLost(planned);
-            this.failApply("movement-stale-scope");
-            return;
-        }
         // Deterministic native-boundary order, changed-only.
-        const ordered = orderMovementWrites(capturedRects, planned.geometry);
+        const ordered = orderResizeWrites(capturedRects, planned.geometry);
         const byId = new Map<string, object>();
         for (const entry of current.windows) {
             byId.set(entry.id, entry.ref);
@@ -1576,8 +1186,8 @@ export class MovementAdapter {
         this.suppressing = false;
         let applied = 0;
         let partial = false;
-        let partialToken = "movement-partial-apply";
-        const desiredById = new Map<string, MovementDesired>();
+        let partialToken = "resize-partial-apply";
+        const desiredById = new Map<string, ResizeDesired>();
         for (const entry of planned.geometry) {
             desiredById.set(entry.window, entry);
         }
@@ -1587,7 +1197,7 @@ export class MovementAdapter {
             // the loop polls no timer and waits on no configure barrier.
             if (this.invalidated) {
                 partial = true;
-                partialToken = "movement-signal-invalid";
+                partialToken = "resize-signal-invalid";
                 break;
             }
             const target = byId.get(entry.window);
@@ -1615,8 +1225,20 @@ export class MovementAdapter {
                 partial = true;
                 break;
             }
-            const bounds = this.boundsFor(entry.output, entry.workspace, captured.domains);
-            if (bounds === null || !rectContained(entry.rect, bounds)) {
+            // Re-check exclusive authority before each write.
+            let writeAuthority = false;
+            try {
+                writeAuthority = this.env.hasExclusiveResizeAuthority() === true;
+            } catch (error) {
+                void error;
+                writeAuthority = false;
+            }
+            if (!writeAuthority) {
+                this.reportAdapterLost(planned);
+                this.failApply("resize-exclusive-conflict");
+                return;
+            }
+            if (!rectContained(entry.rect, captured.domainBounds)) {
                 partial = true;
                 break;
             }
@@ -1641,7 +1263,7 @@ export class MovementAdapter {
             writtenIds.add(entry.window);
             if (this.invalidated) {
                 partial = true;
-                partialToken = "movement-signal-invalid";
+                partialToken = "resize-signal-invalid";
                 break;
             }
             // Active-transaction revalidation from public state (no polling,
@@ -1654,21 +1276,21 @@ export class MovementAdapter {
                 const refetch = this.env.observe();
                 if (refetch === null) {
                     partial = true;
-                    partialToken = "movement-signal-invalid";
+                    partialToken = "resize-signal-invalid";
                     break;
                 }
                 if (refetch.windows.length !== captured.windows.length) {
                     partial = true;
-                    partialToken = "movement-signal-invalid";
+                    partialToken = "resize-signal-invalid";
                     break;
                 }
                 for (const candidate of refetch.windows) {
                     const want = writtenIds.has(candidate.id)
-                        ? (desiredById.get(candidate.id) as MovementDesired).rect
+                        ? (desiredById.get(candidate.id) as ResizeDesired).rect
                         : capturedRects.get(candidate.id);
                     if (want === undefined || !sameRect(want, candidate.rect)) {
                         partial = true;
-                        partialToken = "movement-signal-invalid";
+                        partialToken = "resize-signal-invalid";
                         break;
                     }
                 }
@@ -1678,7 +1300,7 @@ export class MovementAdapter {
             } catch (error) {
                 void error;
                 partial = true;
-                partialToken = "movement-signal-invalid";
+                partialToken = "resize-signal-invalid";
                 break;
             }
         }
@@ -1689,11 +1311,11 @@ export class MovementAdapter {
             this.failApply(partialToken);
             return;
         }
-        // Restore focus to the moved window.
-        const moverRef = byId.get(mover);
-        if (typeof moverRef !== "object" || moverRef === null) {
+        // Retain focus on the focused window.
+        const focusedRef = byId.get(focused);
+        if (typeof focusedRef !== "object" || focusedRef === null) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-target-mismatch");
+            this.failApply("resize-target-mismatch");
             return;
         }
         let currentActive: object | null = null;
@@ -1703,17 +1325,17 @@ export class MovementAdapter {
             void error;
             currentActive = null;
         }
-        if (currentActive !== moverRef) {
-            let focused = false;
+        if (currentActive !== focusedRef) {
+            let retained = false;
             try {
-                focused = this.env.setActive(moverRef) === true;
+                retained = this.env.setActive(focusedRef) === true;
             } catch (error) {
                 void error;
-                focused = false;
+                retained = false;
             }
-            if (!focused) {
+            if (!retained) {
                 this.reportAdapterLost(planned);
-                this.failApply("movement-focus-failed");
+                this.failApply("resize-focus-failed");
                 return;
             }
         }
@@ -1726,17 +1348,17 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
-        this.pendingMover = null;
+        this.pendingFocused = null;
         this.suppressing = false;
         this.reject(token);
         this.disable();
     }
 
-    private sendAcknowledge(flight: number, planned: PlannedMovement): void {
+    private sendAcknowledge(flight: number, planned: PlannedResize): void {
         void flight;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-signal-invalid");
+            this.failApply("resize-signal-invalid");
             return;
         }
         this.callbackSeen = false;
@@ -1746,7 +1368,7 @@ export class MovementAdapter {
         let payload = "";
         try {
             payload = JSON.stringify({
-                v: MOVEMENT_CONTRACT_VERSION,
+                v: RESIZE_CONTRACT_VERSION,
                 action: "acknowledge",
                 correlation_id: planned.correlationId,
                 owner: this.owner,
@@ -1757,25 +1379,25 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.failApply("movement-timer-failed");
+            this.failApply("resize-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
-                MOVEMENT_OBJECT,
-                MOVEMENT_INTERFACE,
-                MOVEMENT_METHOD,
+                RESIZE_SERVICE,
+                RESIZE_OBJECT,
+                RESIZE_INTERFACE,
+                RESIZE_METHOD,
                 payload,
                 (reply) => this.onAckReply(reply, next, planned),
             );
@@ -1783,11 +1405,11 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
-            this.failApply("movement-dbus-failed");
+            this.failApply("resize-dbus-failed");
         }
     }
 
-    private onAckReply(reply: unknown, flight: number, planned: PlannedMovement): void {
+    private onAckReply(reply: unknown, flight: number, planned: PlannedResize): void {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
             return;
         }
@@ -1795,12 +1417,12 @@ export class MovementAdapter {
         this.clearTimer();
         if (this.invalidated) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-signal-invalid");
+            this.failApply("resize-signal-invalid");
             return;
         }
-        if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
         let parsed: unknown = null;
@@ -1809,43 +1431,43 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "acknowledged") {
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
-        if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+        if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-correlation-mismatch");
+            this.failApply("resize-correlation-mismatch");
             return;
         }
         if (parsed["base_revision"] !== planned.baseRevision) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-revision-mismatch");
+            this.failApply("resize-revision-mismatch");
             return;
         }
         this.sendVerify(planned);
     }
 
-    private sendVerify(planned: PlannedMovement): void {
+    private sendVerify(planned: PlannedResize): void {
         if (this.invalidated) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-signal-invalid");
+            this.failApply("resize-signal-invalid");
             return;
         }
         this.callbackSeen = false;
         this.token += 1;
         const next = this.token;
         this.activeToken = next;
-        let fresh: MovementObserved | null = null;
+        let fresh: ResizeObserved | null = null;
         try {
             fresh = this.env.observe();
         } catch (error) {
@@ -1854,10 +1476,10 @@ export class MovementAdapter {
         }
         if (!validateObserved(fresh)) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-stale");
+            this.failApply("resize-post-stale");
             return;
         }
-        const current = fresh as MovementObserved;
+        const current = fresh as ResizeObserved;
         let ok = false;
         try {
             ok = current.revalidate() === true;
@@ -1867,7 +1489,7 @@ export class MovementAdapter {
         }
         if (!ok) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-stale");
+            this.failApply("resize-post-stale");
             return;
         }
         if (
@@ -1875,26 +1497,26 @@ export class MovementAdapter {
             current.domainWorkspace !== planned.focus.domainWorkspace
         ) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-mismatch");
+            this.failApply("resize-post-mismatch");
             return;
         }
-        // Post-observation must still focus the moved window in the desired
+        // Post-observation must still focus the resized window in the desired
         // domain: either a domain drift or a focus mismatch rejects before
         // any verify payload is built.
-        const moverId = this.pendingMover;
-        if (moverId === null || current.focusedId !== moverId) {
+        const focusedId = this.pendingFocused;
+        if (focusedId === null || current.focusedId !== focusedId) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-mismatch");
+            this.failApply("resize-post-mismatch");
             return;
         }
         // Post-observation must project exactly to the desired geometry.
-        const freshById = new Map<string, MovementObservedWindow>();
+        const freshById = new Map<string, ResizeObservedWindow>();
         for (const entry of current.windows) {
             freshById.set(entry.id, entry);
         }
         if (freshById.size !== planned.geometry.length) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-mismatch");
+            this.failApply("resize-post-mismatch");
             return;
         }
         const leafByWindow = new Map<string, string>();
@@ -1906,17 +1528,17 @@ export class MovementAdapter {
             const live = freshById.get(entry.window);
             if (live === undefined) {
                 this.reportAdapterLost(planned);
-                this.failApply("movement-post-mismatch");
+                this.failApply("resize-post-mismatch");
                 return;
             }
             if (!sameRect(live.rect, entry.rect)) {
                 this.reportAdapterLost(planned);
-                this.failApply("movement-post-mismatch");
+                this.failApply("resize-post-mismatch");
                 return;
             }
             if (live.output !== entry.output || live.workspace !== entry.workspace) {
                 this.reportAdapterLost(planned);
-                this.failApply("movement-post-mismatch");
+                this.failApply("resize-post-mismatch");
                 return;
             }
             verifiedGeometry.push({
@@ -1927,7 +1549,7 @@ export class MovementAdapter {
                 rect: { x: live.rect.x, y: live.rect.y, w: live.rect.w, h: live.rect.h },
             });
         }
-        // Focus must be restored to the mover.
+        // Focus must be retained on the focused window.
         let activeRef: object | null = null;
         try {
             activeRef = this.env.active();
@@ -1935,23 +1557,23 @@ export class MovementAdapter {
             void error;
             activeRef = null;
         }
-        const moverRef = freshById.get(this.pendingMover as string)?.ref ?? null;
-        if (activeRef !== moverRef || moverRef === null) {
+        const focusedRef = freshById.get(this.pendingFocused as string)?.ref ?? null;
+        if (activeRef !== focusedRef || focusedRef === null) {
             this.reportAdapterLost(planned);
-            this.failApply("movement-post-mismatch");
+            this.failApply("resize-post-mismatch");
             return;
         }
         const sortedIds = current.windows.map((entry) => entry.id).sort();
-        const fingerprint = movementFingerprint(
+        const fingerprint = resizeFingerprint(
             planned.focus.domainOutput,
             planned.focus.domainWorkspace,
-            this.pendingMover as string,
+            this.pendingFocused as string,
             sortedIds,
         );
         let payload = "";
         try {
             payload = JSON.stringify({
-                v: MOVEMENT_CONTRACT_VERSION,
+                v: RESIZE_CONTRACT_VERSION,
                 action: "verify",
                 correlation_id: planned.correlationId,
                 owner: this.owner,
@@ -1971,25 +1593,25 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.failApply("movement-service-fault");
+            this.failApply("resize-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.failApply("movement-timer-failed");
+            this.failApply("resize-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
-                MOVEMENT_OBJECT,
-                MOVEMENT_INTERFACE,
-                MOVEMENT_METHOD,
+                RESIZE_SERVICE,
+                RESIZE_OBJECT,
+                RESIZE_INTERFACE,
+                RESIZE_METHOD,
                 payload,
                 (reply) => this.onVerifyReply(reply, next, planned),
             );
@@ -1997,11 +1619,11 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
-            this.failApply("movement-dbus-failed");
+            this.failApply("resize-dbus-failed");
         }
     }
 
-    private onVerifyReply(reply: unknown, flight: number, planned: PlannedMovement): void {
+    private onVerifyReply(reply: unknown, flight: number, planned: PlannedResize): void {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
             return;
         }
@@ -2011,17 +1633,17 @@ export class MovementAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
-        this.pendingMover = null;
+        this.pendingFocused = null;
         this.suppressing = false;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
-            this.reject("movement-signal-invalid");
+            this.reject("resize-signal-invalid");
             this.disable();
             return;
         }
-        if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
@@ -2031,25 +1653,25 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "committed") {
             this.reportAdapterLost(planned);
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
-        if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+        if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
-            this.reject("movement-service-fault");
+            this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
-            this.reject("movement-correlation-mismatch");
+            this.reject("resize-correlation-mismatch");
             this.disable();
             return;
         }
@@ -2058,7 +1680,7 @@ export class MovementAdapter {
             this.revision = revision;
         } else {
             this.reportAdapterLost(planned);
-            this.reject("movement-revision-mismatch");
+            this.reject("resize-revision-mismatch");
             this.disable();
             return;
         }
