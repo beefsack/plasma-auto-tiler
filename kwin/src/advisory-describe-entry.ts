@@ -14,9 +14,11 @@
 // carrying the correlation, then runs exactly one AdvisoryPlanQuery flight
 // through KWin callDBus with its own QTimer pacing and console notes. Every
 // query note is mirrored with a correlation-bound result marker so a later
-// host pass can match reply to request. A bad record notes a fixed invalid
-// marker and sends nothing. No native handles, no state changes, and no
-// follow-on action path.
+// host pass can match reply to request, followed by a bounded opaque
+// correlated after-equality verdict after every terminal query result. A
+// drifted after forces an explicit stale reject result instead of success.
+// A bad record notes a fixed invalid marker and sends nothing. No native
+// handles, no state changes, and no follow-on action path.
 
 import { AdvisoryPlanQuery } from "./advisory-plan-query";
 import { captureAdvisorySnapshot } from "./advisory-snapshot";
@@ -29,6 +31,11 @@ declare const ADVISORY_DESCRIBE_SNAPSHOT_SHA256: string;
 export const ADVISORY_DESCRIBE_READY_PREFIX = "plasma-auto-tiler:advisory-describe-ready";
 export const ADVISORY_DESCRIBE_RESULT_PREFIX = "plasma-auto-tiler:advisory-describe-result";
 export const ADVISORY_DESCRIBE_RESULT_SCHEMA = "v1";
+export const ADVISORY_DESCRIBE_AFTER_PREFIX = "plasma-auto-tiler:advisory-describe-after";
+export const ADVISORY_DESCRIBE_AFTER_SCHEMA = "v1";
+export const ADVISORY_DESCRIBE_AFTER_TRUE = "true";
+export const ADVISORY_DESCRIBE_AFTER_FALSE = "false";
+export const ADVISORY_DESCRIBE_STALE_DETAIL = "reject:advisory-stale-snapshot";
 export const ADVISORY_DESCRIBE_SOURCE_PREFIX = "plasma-auto-tiler:advisory-describe-source";
 export const ADVISORY_DESCRIBE_INVALID_LOG = "plasma-auto-tiler:advisory-describe-invalid";
 export const ADVISORY_DESCRIBE_NONCE_RE = /^[0-9a-f]{32,128}$/;
@@ -212,6 +219,19 @@ function sourceBindingLine(entrySha: string, querySha: string, snapshotSha: stri
     return `${ADVISORY_DESCRIBE_SOURCE_PREFIX}:${entrySha}:${querySha}:${snapshotSha}`;
 }
 
+function afterVerdictLine(correlationId: string, equal: boolean): string {
+    return `${ADVISORY_DESCRIBE_AFTER_PREFIX}:${ADVISORY_DESCRIBE_AFTER_SCHEMA}:${correlationId}:${equal ? ADVISORY_DESCRIBE_AFTER_TRUE : ADVISORY_DESCRIBE_AFTER_FALSE}`;
+}
+
+function readAfterEquality(revalidate: () => boolean): boolean {
+    try {
+        return revalidate() === true;
+    } catch (error) {
+        void error;
+        return false;
+    }
+}
+
 function logCaptureFailure(record: AdvisoryDescribeRecord): void {
     try {
         console.log(ADVISORY_DESCRIBE_INVALID_LOG);
@@ -283,10 +303,17 @@ function startAdvisoryDescribeOnce(): void {
             try {
                 const marker = "plasma-auto-tiler:advisory-plan:";
                 if (message.indexOf(marker) === 0) {
-                    const detail = message.slice(marker.length);
+                    const terminal = message.slice(marker.length);
+                    const equal = readAfterEquality(revalidate);
+                    const detail = equal ? terminal : ADVISORY_DESCRIBE_STALE_DETAIL;
                     console.log(
                         `${ADVISORY_DESCRIBE_RESULT_PREFIX}:${ADVISORY_DESCRIBE_RESULT_SCHEMA}:${record.correlationId}:${record.owner}:${record.generation}:${record.revision}:${record.nonce}:${detail}`,
                     );
+                    try {
+                        console.log(afterVerdictLine(record.correlationId, equal));
+                    } catch (error) {
+                        void error;
+                    }
                 }
             } catch (error) {
                 void error;

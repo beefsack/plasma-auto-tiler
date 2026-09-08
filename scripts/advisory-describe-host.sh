@@ -38,13 +38,23 @@
 #   ready:  plasma-auto-tiler:advisory-describe-ready:<correlation>
 #   result: plasma-auto-tiler:advisory-describe-result:v1:<correlation>:<owner>:
 #           <generation>:<revision>:<nonce>:<detail>
+#   after:  plasma-auto-tiler:advisory-describe-after:v1:<correlation>:<true|false>
 # The loader accepts a result only when the fixed v1 prefix sits at column
 # zero with every identity field equal to the manifest record and the detail
-# suffix matching [A-Za-z0-9._:-]{1,512}. Mid-line prefixes, empty/oversize
-# details, and any generation/revision/nonce mismatch fail closed with
-# exact-id cleanup. The bound source marker is required post-run in start and
-# on diagnostics with a diag file. Receipt creation is exclusive (real parent
-# dir, symlink refusal, noclobber) and never overwrites.
+# suffix matching [A-Za-z0-9._:-]{1,512}. The bounded opaque correlated after
+# verdict is required after the correlated result from a byte boundary
+# captured after the result marker (an earlier/replayed after marker cannot
+# satisfy start) with the fixed v1 prefix at column zero and verdict exactly
+# true or false. Receipt creation requires the successful could-execute
+# detail paired with after true; after false with the exact stale reject
+# reject:advisory-stale-snapshot is an observed terminal refusal that
+# exact-cleans with no receipt (diagnostic preserved, nonzero exit); no other
+# detail receives a receipt. Mid-line prefixes,
+# empty/oversize details, invalid/mismatched after markers, and any
+# generation/revision/nonce mismatch fail closed with
+# exact-id cleanup. The bound source and after markers are required post-run
+# in start and on diagnostics with a diag file. Receipt creation is exclusive
+# (real parent dir, symlink refusal, noclobber) and never overwrites.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -59,6 +69,8 @@ MANIFEST_BASENAME="advisory-describe.manifest.json"
 MANIFEST_SCHEMA="advisory-describe-manifest-v1"
 RECEIPT_SCHEMA="advisory-describe-receipt-v1"
 RESULT_SCHEMA="v1"
+AFTER_SCHEMA="v1"
+STALE_DETAIL="reject:advisory-stale-snapshot"
 RESULT_DETAIL_RE='^[A-Za-z0-9._:-]{1,512}$'
 : "${BUSCTL_BIN:=busctl}"
 : "${SHA256SUM_BIN:=sha256sum}"
@@ -85,6 +97,7 @@ ALLOW_TOKENS=(
   "QTimer"
   "advisory-describe-ready"
   "advisory-describe-result"
+  "advisory-describe-after"
   "advisory-describe-source"
 )
 DENY_TOKENS=(
@@ -457,6 +470,24 @@ result_prefix_for() {
   printf 'plasma-auto-tiler:advisory-describe-result:%s:%s:%s:%s:%s:%s:' "$RESULT_SCHEMA" "$1" "$2" "$3" "$4" "$5"
 }
 
+# Bounded opaque correlated after-equality validation: exact column-zero
+# prefix carrying schema plus correlation, with verdict exactly true/false.
+# Prints the verdict on success.
+check_after_line() {
+  local line="$1" correlation="$2"
+  local prefix="plasma-auto-tiler:advisory-describe-after:$AFTER_SCHEMA:$correlation:"
+  [[ "$line" == "$prefix"* ]] || return 1
+  local verdict="${line#"$prefix"}"
+  [[ "$verdict" == "true" || "$verdict" == "false" ]] || return 1
+  [[ "$line" == "$prefix$verdict" ]] || return 1
+  [[ "$line" != *$'\n'* && "$line" != *$'\r'* ]] || return 1
+  printf '%s' "$verdict"
+}
+
+after_prefix_for() {
+  printf 'plasma-auto-tiler:advisory-describe-after:%s:%s:' "$AFTER_SCHEMA" "$1"
+}
+
 source_line_for() {
   printf 'plasma-auto-tiler:advisory-describe-source:%s:%s:%s' "$1" "$2" "$3"
 }
@@ -564,7 +595,7 @@ cmd_start() {
     partial_cleanup
     fail "run() failed on $SCRIPT_OBJ"
   }
-  local ready_line result_prefix result_line detail source_line
+  local ready_line result_prefix result_line detail source_line after_prefix after_line verdict result_offset after_start
   source_line="$(source_line_for "$MANIFEST_ENTRY_SHA" "$MANIFEST_QUERY_SHA" "$MANIFEST_SNAPSHOT_SHA")"
   wait_diag_line "$START_DIAG" "$diag_start" "$source_line" "line" "$START_ATTEMPTS" "$START_DELAY" >/dev/null || {
     partial_cleanup
@@ -584,6 +615,37 @@ cmd_start() {
     partial_cleanup
     fail "result detail failed validation; refusing on schema mismatch"
   }
+  after_prefix="$(after_prefix_for "$MANIFEST_CORRELATION")"
+  # The after marker must follow the correlated result in file order: capture
+  # a byte boundary immediately after the correlated result marker so an
+  # earlier/replayed after marker cannot satisfy start.
+  result_offset="$(grep -b -F -x -- "$result_line" "$START_DIAG" 2>/dev/null | tail -n 1 | cut -d: -f1)"
+  [[ "$result_offset" =~ ^(0|[1-9][0-9]*)$ ]] || {
+    partial_cleanup
+    fail "could not locate the correlated result marker; refusing without ordering evidence"
+  }
+  [[ "$result_offset" -ge "$diag_start" ]] || {
+    partial_cleanup
+    fail "correlated result marker precedes the run boundary; refusing stale-prone evidence"
+  }
+  after_start=$((result_offset + ${#result_line} + 1))
+  after_line="$(wait_diag_line "$START_DIAG" "$after_start" "$after_prefix" "prefix" "$START_ATTEMPTS" "$START_DELAY")" || {
+    partial_cleanup
+    fail "correlated after marker not observed after the result; refusing without after-equality evidence"
+  }
+  verdict="$(check_after_line "$after_line" "$MANIFEST_CORRELATION")" || {
+    partial_cleanup
+    fail "after marker failed validation; refusing on schema mismatch"
+  }
+  if [[ "$verdict" == "true" && "$detail" == "could-execute" ]]; then
+    :
+  elif [[ "$verdict" == "false" && "$detail" == "$STALE_DETAIL" ]]; then
+    partial_cleanup
+    fail "observed terminal stale refusal; cleaned exact id with no receipt"
+  else
+    partial_cleanup
+    fail "result/after pairing refused; receipt requires could-execute with after true"
+  fi
   RECEIPT_PATH="$START_RECEIPT"
   # Exclusive fail-closed receipt creation: real parent dir required above,
   # pre-existing path (including symlinks) refused above, and noclobber
@@ -645,23 +707,33 @@ cmd_diagnostics() {
     "$RECEIPT_PLUGIN" "$RECEIPT_SCRIPT_ID" "$RECEIPT_SCRIPT_OBJ" "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_BUNDLE_SHA"
   if [[ -n "$diag" ]]; then
     require_regular_file "$diag" "diag file"
-    local ready_line result_prefix source_line line found_ready="" found_result="" found_source="" slice=""
+    local ready_line result_prefix after_prefix source_line line found_ready="" found_result="" found_after="" found_source="" slice="" found_detail="" found_verdict="" result_pos=-1 after_pos=-1 pos=0
     ready_line="plasma-auto-tiler:advisory-describe-ready:$RECEIPT_CORRELATION"
     source_line="$(source_line_for "$RECEIPT_ENTRY_SHA" "$RECEIPT_QUERY_SHA" "$RECEIPT_SNAPSHOT_SHA")"
     result_prefix="$(result_prefix_for "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")"
+    after_prefix="$(after_prefix_for "$RECEIPT_CORRELATION")"
     slice="$(tail -c 65536 -- "$diag" 2>/dev/null)" || slice=""
     while IFS= read -r line || [[ -n "$line" ]]; do
       if [[ "$line" == "$ready_line" ]]; then found_ready="$line"; fi
       if [[ "$line" == "$source_line" ]]; then found_source="$line"; fi
-      if [[ "$line" == "$result_prefix"* ]]; then found_result="$line"; fi
+      if [[ "$line" == "$result_prefix"* ]]; then found_result="$line"; result_pos="$pos"; fi
+      if [[ "$line" == "$after_prefix"* ]]; then found_after="$line"; after_pos="$pos"; fi
+      pos=$((pos + 1))
     done <<< "$slice"
     found_ready="$(printf '%s' "$found_ready" | head -c 1024)" || found_ready=""
     found_source="$(printf '%s' "$found_source" | head -c 1024)" || found_source=""
     found_result="$(printf '%s' "$found_result" | head -c 1024)" || found_result=""
+    found_after="$(printf '%s' "$found_after" | head -c 1024)" || found_after=""
     [[ -n "$found_ready" ]] || fail "ready marker for the recorded correlation is absent"
     [[ -n "$found_source" ]] || fail "bound source marker for the recorded identity is absent"
     [[ -n "$found_result" ]] || fail "result marker for the recorded identity is absent"
-    check_result_line "$found_result" "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE" >/dev/null || fail "result marker detail failed validation"
+    [[ -n "$found_after" ]] || fail "after marker for the recorded correlation is absent"
+    found_detail="$(check_result_line "$found_result" "$RECEIPT_CORRELATION" "$RECEIPT_OWNER" "$RECEIPT_GENERATION" "$RECEIPT_REVISION" "$RECEIPT_NONCE")" || fail "result marker detail failed validation"
+    found_verdict="$(check_after_line "$found_after" "$RECEIPT_CORRELATION")" || fail "after marker failed validation"
+    [[ "$after_pos" -gt "$result_pos" ]] || fail "after marker must follow the correlated result marker"
+    if [[ "$found_verdict" == "false" && "$found_detail" != "$STALE_DETAIL" ]]; then
+      fail "after drift without explicit stale rejection"
+    fi
     printf 'diagnostics: markers=correlated\n'
   fi
 }

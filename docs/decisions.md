@@ -116,6 +116,20 @@ Historical implementation detail is recoverable in Git history.
   authorizes a Custom Tile lifecycle, live journey, or user physical or manual
   action on its own; carrier setup is limited to its bounded operational
   binding.
+- Standing user authorization permits only bounded read-only
+  `DescribeAdvisoryPlan` host transport journeys: start and stop one uniquely
+  namespaced project planner service and load, run, then unload only the exact
+  standalone advisory KWin Script object. It excludes all native-window,
+  focus, geometry, workspace, output, configuration, shortcut, Custom Tile,
+  production-plugin lifecycle, session-boundary, manual, and physical action.
+  Each journey must preserve an exact-three active-output/current-desktop
+  scope without manufacturing it, pin KWin and planner ownership, use one
+  in-flight correlation, and prove exact restoration. A reviewed static
+  correction permits one fresh bounded retry only when earlier work stopped
+  before resource creation or proved exact restoration with no ambiguous
+  residue. The authorization is revoked for any restoration ambiguity,
+  broader host mutation, material security/product/architecture change, or
+  need for manual arrangement; stop and ask the user in those cases.
 
 ## Window And Workspace Behavior
 
@@ -245,8 +259,7 @@ Historical implementation detail is recoverable in Git history.
   and namespaced loader may coexist with the loaded production plugin only
   because their checked route has no topology authority, actuation, shortcuts,
   Custom Tile, controller, or production-startup path. The first host read-only
-  round trip, including stale and service-loss evidence, remains unestablished
-  pending fresh authorization after the static unit is committed.
+  round trip, including stale and service-loss evidence, remains unestablished.
 - Rust is the selected engine language and owns the durable portable model.
   The migration starts incrementally through opt-in, shadow, and diagnostic
   modes; it does not claim stock-KWin parity, atomic geometry, or Windows/macOS

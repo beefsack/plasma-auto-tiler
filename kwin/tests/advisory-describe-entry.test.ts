@@ -3,6 +3,10 @@ import { readFileSync as readFsFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
+    ADVISORY_DESCRIBE_AFTER_FALSE,
+    ADVISORY_DESCRIBE_AFTER_PREFIX,
+    ADVISORY_DESCRIBE_AFTER_SCHEMA,
+    ADVISORY_DESCRIBE_AFTER_TRUE,
     ADVISORY_DESCRIBE_GENERATION_RE,
     ADVISORY_DESCRIBE_INVALID_LOG,
     ADVISORY_DESCRIBE_MAX_REVISION,
@@ -11,6 +15,7 @@ import {
     ADVISORY_DESCRIBE_READY_PREFIX,
     ADVISORY_DESCRIBE_RESULT_PREFIX,
     ADVISORY_DESCRIBE_RESULT_SCHEMA,
+    ADVISORY_DESCRIBE_STALE_DETAIL,
     validateDescribeInput,
 } from "../src/advisory-describe-entry";
 
@@ -154,5 +159,48 @@ describe("advisory describe entry wiring", () => {
         const queryPos = ENTRY_SOURCE.indexOf("query.enableOnce()");
         assert.ok(bindingPos >= 0 && recordPos > bindingPos && queryPos > bindingPos);
         assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_SOURCE_PREFIX"));
+    });
+
+    it("emits a bounded opaque correlated after-equality verdict after every terminal result", () => {
+        assert.equal(ADVISORY_DESCRIBE_AFTER_PREFIX, "plasma-auto-tiler:advisory-describe-after");
+        assert.equal(ADVISORY_DESCRIBE_AFTER_SCHEMA, "v1");
+        assert.equal(ADVISORY_DESCRIBE_AFTER_TRUE, "true");
+        assert.equal(ADVISORY_DESCRIBE_AFTER_FALSE, "false");
+        assert.equal(ADVISORY_DESCRIBE_STALE_DETAIL, "reject:advisory-stale-snapshot");
+        assert.ok(ENTRY_SOURCE.includes("afterVerdictLine"));
+        assert.ok(ENTRY_SOURCE.includes("readAfterEquality"));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_AFTER_PREFIX"));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_AFTER_SCHEMA"));
+        assert.ok(ENTRY_SOURCE.includes("ADVISORY_DESCRIBE_STALE_DETAIL"));
+        const resultEmit = ENTRY_SOURCE.indexOf("ADVISORY_DESCRIBE_RESULT_PREFIX");
+        const afterEmit = ENTRY_SOURCE.indexOf("afterVerdictLine(record.correlationId");
+        assert.ok(resultEmit >= 0 && afterEmit > resultEmit);
+        assert.ok(ENTRY_SOURCE.includes("afterVerdictLine(record.correlationId, equal)"));
+        assert.ok(ENTRY_SOURCE.includes("${ADVISORY_DESCRIBE_RESULT_SCHEMA}:"));
+        assert.equal(ADVISORY_DESCRIBE_RESULT_SCHEMA, "v1");
+    });
+
+    it("fails closed to stale rejection when before vs after differs", () => {
+        assert.ok(ENTRY_SOURCE.includes("const equal = readAfterEquality(revalidate)"));
+        assert.ok(ENTRY_SOURCE.includes("const detail = equal ? terminal : ADVISORY_DESCRIBE_STALE_DETAIL"));
+        assert.ok(ENTRY_SOURCE.includes("revalidate() === true"));
+        assert.ok(!ENTRY_SOURCE.includes("queryWindowInfo"));
+    });
+
+    it("keeps after-equality free of native discovery routes", () => {
+        for (const forbidden of [
+            "queryWindowInfo",
+            "queryWindow",
+            "getWindow",
+            "windowFromPoint",
+            "subscribe",
+            "signal",
+            "JSON.stringify(workspace",
+            "queryScreen",
+        ]) {
+            assert.ok(!ENTRY_SOURCE.includes(forbidden), `after coupling: ${forbidden}`);
+        }
+        assert.ok(ENTRY_SOURCE.includes("readAfterEquality(revalidate)"));
+        assert.ok(!ENTRY_SOURCE.includes("workspace.queryWindowInfo"));
     });
 });

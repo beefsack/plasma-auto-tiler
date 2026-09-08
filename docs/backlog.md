@@ -18,18 +18,24 @@ Only meaningful pending or active work is listed.
     three-window scope, validate native geometry/work area and exclusions,
     serialize only opaque v1 primitives, and reobserve before pinned dispatch.
     It has no signals, mutation, controller, shortcut, or production authority.
-    The earlier read-only host preflight stopped before lifecycle because public
-    `queryWindowInfo` timed out; no service or script lifecycle action occurred.
-    A later authorized host preflight repeated the bounded read-only
-    `queryWindowInfo` request after confirming the committed observer, entry,
-    builder, loader, KWin identity, loaded production plugin, absent advisory
-    plugin, absent Planner name/process, and unchanged configuration diagnostic.
-    It again timed out before an exact eligible-three snapshot could be
-    established, so no planner or advisory script resource was created and the
-    lifecycle authorization remains unspent. The remaining gate is a fresh
-    authorization after a safe read-only exact-three baseline route is available,
-    then one request/reply with stale-request, service-loss, zero-mutation, and
-    restoration evidence. The static
+    The unsafe interactive `queryWindowInfo` host-baseline dependency is
+    removed. The exact standalone script now takes the first lexical-workspace
+    exact-three snapshot immediately on run, revalidates before its pinned
+    request, then emits a bounded opaque correlated after-equality verdict.
+    The loader requires that verdict after the correlated result, refuses drift
+    or non-success result pairings with exact-ID cleanup and no receipt, and
+    preserves production-plugin continuity. Focused observer/entry/builder/
+    loader tests cover snapshot drift, result correlation, stale refusal,
+    source absence of `queryWindowInfo`, and partial cleanup. One authorized
+    host preflight after this correction stopped before planner or advisory
+    Script creation because canonical KWin executable readback was unavailable.
+    It created one fresh project runtime directory before the failed identity
+    check but did not retain its exact generated identity, so that directory is
+    ambiguous residue and must not be broadly discovered or cleaned. The
+    standing authorization is therefore blocked. The remaining gate is user
+    direction for that residue, then a newly authorized bounded journey with
+    success, stale request/revision/generation refusal, service-loss refusal,
+    zero-mutation, production continuity, and exact restoration evidence. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved

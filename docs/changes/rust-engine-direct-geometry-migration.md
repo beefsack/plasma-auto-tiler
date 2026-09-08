@@ -177,6 +177,26 @@ production behavior through incremental opt-in promotion.
   exact-three baseline route. The accepted public-KWin limitation remains only
   that initial same-UID planner-binary identity cannot be attested; this run
   makes no hostile same-UID resistance claim.
+- Static correction and bounded host preflight, 2026-09-08: the interactive
+  `queryWindowInfo` baseline dependency is removed. The standalone advisory
+  entry captures the first exact-three lexical-workspace observation on its
+  exact run, revalidates before pinned dispatch, and emits an opaque,
+  correlation-bound after-equality verdict after the terminal result. A false
+  verdict forces `reject:advisory-stale-snapshot`; the host loader requires an
+  after marker that follows the result and creates a receipt only for
+  `could-execute` plus after true. Drift and all refusal pairs exact-clean with
+  no receipt. Focused KWin typecheck/advisory, builder, loader, Rust advisory
+  contract/service, format/check, and focused Clippy verification pass; the
+  only Clippy warnings remain unrelated tray test lints. The one standing-
+  authorized preflight confirmed production loaded and advisory/planner absent,
+  then stopped before planner or Script creation because canonical KWin
+  executable readback was unavailable. A fresh project runtime directory had
+  already been created, but its generated identity was not retained. It is
+  ambiguous residue, no broad cleanup occurred, and no further live attempt is
+  authorized until the user directs its handling. No success, stale,
+  service-loss, zero-mutation, production-continuity, or exact-restoration live
+  claim is made. The accepted transport limit remains owner-pinned
+  same-session evidence only, not resistance to a hostile same-UID planner.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
