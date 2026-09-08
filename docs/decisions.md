@@ -194,6 +194,19 @@ Historical implementation detail is recoverable in Git history.
 - Grouping here means nested split-tree structure and placement. `H[H[1 2] 3]`
   is distinct from `H[1 H[2 3]]`; tabs, stacked/shared groups, and compositor
   group behavior are excluded.
+- Lifecycle foundation, authorized 2026-09-09: portable `cosmic_v1` lifecycle
+  plans carry policy version 1 and use the same single-pending acknowledgement
+  and post-observation reconciliation boundary as movement. Logical domains are
+  keyed by the opaque `(output, workspace)` pair, so one logical output may
+  retain independent workspace trees without inventing native workspace
+  semantics. Source-evidenced existing policy remains ordered N-ary nested
+  split structure only. Initial-root creation, focused sibling insertion,
+  input-bounds orientation (horizontal on a tie), unit-share admission,
+  recursive collapse, and deterministic focus fallback are project-selected
+  lifecycle behavior, not a COSMIC parity claim. Floating, fullscreen,
+  maximized, and sticky flags are retained as explicit observed exceptions;
+  only explicit deferred tracking/removal is selected here, while tiled
+  exception behavior remains fail-closed and deferred to its native slice.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only

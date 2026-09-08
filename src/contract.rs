@@ -16,13 +16,24 @@
 //! ids are never echoed and no unbounded allocations are made from adapter
 //! input (all id lengths are bounded; precondition vectors are capped).
 
-use crate::directional::{Capability, MoveIntent, MoveOperation, Precondition, Rule};
+use crate::directional::{
+    Capability, MoveIntent, MoveOperation, NodeId, OutputId, Precondition, Rule, WindowId,
+    WorkspaceId,
+};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
 
 /// Adapter envelope version.
 pub const CONTRACT_VERSION: u32 = 1;
 /// Sealed POC1 planning policy version carried by plans.
 pub const POLICY_VERSION: u32 = 1;
+/// Portable session lifecycle policy version (`cosmic_v1`).
+///
+/// The session lifecycle foundation in [`crate::session`] is versioned
+/// `cosmic_v1`. Placement fallback inside the session (append after the last
+/// root child or nest when there is no eligible focus) is project-selected
+/// and makes no source COSMIC parity claim. Frozen R1-R4 movement
+/// APIs/fixtures are unaffected; this binds lifecycle plans/dispatch only.
+pub const LIFECYCLE_POLICY_VERSION: u32 = 1;
 /// Opaque correlation token bound (shared with [`crate::ids`]).
 pub use crate::ids::MAX_CORRELATION_LEN;
 /// Opaque generation bound (shared with [`crate::ids`]).
@@ -281,6 +292,252 @@ impl DivergenceKind {
             Self::PostconditionMismatch => "plan postconditions do not bind the pending plan",
             Self::RevisionExhausted => "revision bound reached",
         }
+    }
+}
+
+/// Adapter-facing lifecycle capability required to realize one lifecycle
+/// operation. Separate from [`Capability`] movement capabilities so the frozen
+/// R1-R4 movement surface stays unchanged; lifecycle admission and removal
+/// each gate on their own explicit capability.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LifecycleCapability {
+    AdmitTiled,
+    RemoveTiled,
+}
+
+impl LifecycleCapability {
+    /// Stable kind string.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AdmitTiled => "admit-tiled",
+            Self::RemoveTiled => "remove-tiled",
+        }
+    }
+}
+
+/// Adapter-declared lifecycle capabilities.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleCapabilities {
+    pub admit_tiled: bool,
+    pub remove_tiled: bool,
+}
+
+impl LifecycleCapabilities {
+    /// All lifecycle capabilities declared.
+    #[must_use]
+    pub const fn full() -> Self {
+        Self {
+            admit_tiled: true,
+            remove_tiled: true,
+        }
+    }
+
+    /// None declared.
+    #[must_use]
+    pub const fn none() -> Self {
+        Self {
+            admit_tiled: false,
+            remove_tiled: false,
+        }
+    }
+
+    /// Whether `capability` is declared.
+    #[must_use]
+    pub const fn supports(&self, capability: LifecycleCapability) -> bool {
+        match capability {
+            LifecycleCapability::AdmitTiled => self.admit_tiled,
+            LifecycleCapability::RemoveTiled => self.remove_tiled,
+        }
+    }
+}
+
+/// Explicit preconditions the adapter must hold/verify to realize a lifecycle
+/// plan. `AdapterMustVerifyPostconditions` is present on every lifecycle plan,
+/// mirroring movement plans: realization is never assumed atomic.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum LifecyclePrecondition {
+    WindowObserved,
+    DesiredTopologyValid,
+    AdapterMustVerifyPostconditions,
+}
+
+/// Semantic lifecycle intent: admit a window into an output/workspace domain
+/// or remove a window from the session. Structural resolution (leaf identity,
+/// deferred exception handling) lives in [`LifecycleOperation`]; the intent
+/// records the originating request so a plan can be interpreted without
+/// retaining caller-side state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LifecycleIntent {
+    Admit {
+        window: WindowId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
+    Remove {
+        window: WindowId,
+    },
+}
+
+/// Structural lifecycle operation with fully resolved portable identities.
+/// Tiled variants name the affected leaf; deferred variants track an observed
+/// exception window with no topology effect. No geometry or native handles.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LifecycleOperation {
+    Admit {
+        window: WindowId,
+        leaf: NodeId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
+    AdmitDeferred {
+        window: WindowId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
+    Remove {
+        window: WindowId,
+        leaf: NodeId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
+    RemoveDeferred {
+        window: WindowId,
+        output: OutputId,
+        workspace: WorkspaceId,
+    },
+}
+
+impl LifecycleOperation {
+    /// Adapter-facing capability required before emission.
+    #[must_use]
+    pub const fn required_capability(&self) -> LifecycleCapability {
+        match self {
+            Self::Admit { .. } | Self::AdmitDeferred { .. } => LifecycleCapability::AdmitTiled,
+            Self::Remove { .. } | Self::RemoveDeferred { .. } => LifecycleCapability::RemoveTiled,
+        }
+    }
+
+    /// Explicit preconditions for realization (always terminated by
+    /// [`LifecyclePrecondition::AdapterMustVerifyPostconditions`]).
+    #[must_use]
+    pub fn preconditions(&self) -> Vec<LifecyclePrecondition> {
+        vec![
+            LifecyclePrecondition::WindowObserved,
+            LifecyclePrecondition::DesiredTopologyValid,
+            LifecyclePrecondition::AdapterMustVerifyPostconditions,
+        ]
+    }
+
+    /// Affected window, if any.
+    #[must_use]
+    pub fn window(&self) -> &WindowId {
+        match self {
+            Self::Admit { window, .. }
+            | Self::AdmitDeferred { window, .. }
+            | Self::Remove { window, .. }
+            | Self::RemoveDeferred { window, .. } => window,
+        }
+    }
+}
+
+/// Deterministic lifecycle plan with explicit capability and preconditions.
+/// Self-contained: `intent` records the originating semantic intent.
+/// `policy_version` binds the plan to [`LIFECYCLE_POLICY_VERSION`]
+/// (`cosmic_v1` lifecycle policy); the reconciler rejects any other version
+/// without affecting frozen R1-R4 movement plans.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecyclePlan {
+    pub intent: LifecycleIntent,
+    pub operation: LifecycleOperation,
+    pub required_capability: LifecycleCapability,
+    pub preconditions: Vec<LifecyclePrecondition>,
+    pub policy_version: u32,
+}
+
+impl LifecyclePlan {
+    /// Construct from an intent and a resolved operation, deriving capability
+    /// and preconditions deterministically.
+    #[must_use]
+    pub fn for_operation(intent: LifecycleIntent, operation: LifecycleOperation) -> Self {
+        let required_capability = operation.required_capability();
+        let preconditions = operation.preconditions();
+        Self {
+            intent,
+            operation,
+            required_capability,
+            preconditions,
+            policy_version: LIFECYCLE_POLICY_VERSION,
+        }
+    }
+
+    /// Validity of the portable lifecycle policy binding.
+    #[must_use]
+    pub const fn valid_policy(&self) -> bool {
+        self.policy_version == LIFECYCLE_POLICY_VERSION
+    }
+}
+
+/// Transport-neutral lifecycle dispatch payload emitted on a successful
+/// lifecycle proposal. Mirrors [`Dispatch`] identity binding
+/// (owner/generation/correlation/base revision) plus the complete semantic
+/// lifecycle plan. Desired topology/focus/geometry are carried by the session
+/// layer (`crate::session`) so this envelope stays geometry-free like
+/// [`Dispatch`]; native execution stays outside the reconciler.
+/// `policy_version` echoes the plan binding ([`LIFECYCLE_POLICY_VERSION`]).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecycleDispatch {
+    pub correlation_id: CorrelationId,
+    pub owner: OwnerId,
+    pub generation: GenerationId,
+    pub base_revision: u64,
+    pub required_capability: LifecycleCapability,
+    pub preconditions: Vec<LifecyclePrecondition>,
+    pub intent: LifecycleIntent,
+    pub operation: LifecycleOperation,
+    pub policy_version: u32,
+}
+
+/// Fresh post-observation plus explicit native verification flag for a pending
+/// lifecycle plan. Binds exactly like [`PostObservation`]: the reported
+/// `verified_preconditions` must equal the dispatched preconditions (capped by
+/// [`MAX_PRECONDITIONS`]) and `verified_operation` must equal the dispatched
+/// lifecycle operation.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LifecyclePostObservation {
+    pub observation: Observation,
+    pub correlation_id: CorrelationId,
+    pub verified: bool,
+    pub verified_preconditions: Vec<LifecyclePrecondition>,
+    pub verified_operation: LifecycleOperation,
+}
+
+impl LifecyclePostObservation {
+    /// Typed construction (ids already validated by `ids` parsers).
+    #[must_use]
+    pub fn new(
+        observation: Observation,
+        correlation_id: CorrelationId,
+        verified: bool,
+        verified_preconditions: Vec<LifecyclePrecondition>,
+        verified_operation: LifecycleOperation,
+    ) -> Self {
+        Self {
+            observation,
+            correlation_id,
+            verified,
+            verified_preconditions,
+            verified_operation,
+        }
+    }
+
+    /// Validity without echoing input (observation plus correlation shape and
+    /// bounded precondition vector).
+    #[must_use]
+    pub fn validate(&self) -> bool {
+        self.observation.validate()
+            && is_correlation_id(self.correlation_id.as_str())
+            && self.verified_preconditions.len() <= MAX_PRECONDITIONS
     }
 }
 

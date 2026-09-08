@@ -98,6 +98,25 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Portable authoritative session/lifecycle foundation completed 2026-09-09:
+  Rust now owns versioned `cosmic_v1` lifecycle state for opaque logical
+  `(output, workspace)` domains, including independent same-output workspace
+  trees, ordered N-ary shares, focused leaf, exception observations, accepted
+  revision, and one shared pending reconciliation slot. Admission creates a
+  root leaf or deterministically inserts/nests at focused structure; removal
+  retains empty domains and recursively collapses empty/single-child groups.
+  Plans bind session identity, revision, correlation, lifecycle capability and
+  preconditions, policy version, desired topology/focus, and complete affected
+  tiled geometry through the integer projector. Source evidence supports
+  ordered nested split structure; lifecycle placement and focus details are
+  explicitly project-selected, not COSMIC parity. Exception flags are retained
+  only through explicit deferred tracking/removal and otherwise fail closed.
+  Portable lifecycle, reconciliation, R1-R4/trace fixture locks, full library,
+  format, and all-target checks pass. No live KWin work ran; the parked shadow
+  Script cleanup ambiguity remains untouched. Next Rust slice: expose frozen
+  R1-R4 movement and navigation through the authoritative `Session` against a
+  selected `DomainKey`, committing desired topology/focus through the shared
+  reconciler without an adapter or native actuation path.
 - Retained shadow lifecycle boundary, 2026-09-09: the disabled-by-default
   `scripts/shadow-lifecycle.sh run` route is the final-development activation
   boundary for `DescribeShadowProjection`, not test automation. Its explicit

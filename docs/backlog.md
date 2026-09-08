@@ -135,12 +135,18 @@ Only meaningful pending or active work is listed.
      deterministically binds one ES2017 IIFE, exact Script ID, pinned Planner,
      bounded match/divergence plus after-equality, and exact cleanup. It is not
       reachable from production routes. Focused static verification passes. Its
-      one committed-source host run passed source-only preflight but stopped at
-      the bound source-marker gate with partial Script cleanup unverified; no
-      observer/projection result, after-equality, production-continuity, or
-      exact-restoration claim follows, and no further host inspection, cleanup,
-      or retry is authorized |
-     [change](changes/rust-engine-direct-geometry-migration.md)
+       one committed-source host run passed source-only preflight but stopped at
+       the bound source-marker gate with partial Script cleanup unverified; no
+       observer/projection result, after-equality, production-continuity, or
+       exact-restoration claim follows, and no further host inspection, cleanup,
+       or retry is authorized. Portable lifecycle foundation is complete:
+       versioned `cosmic_v1` Rust sessions own opaque `(output, workspace)`
+       domains, same-output workspace isolation, ordered N-ary admission/
+       removal/collapse, focus, exception observations, complete projected
+       geometry, and the shared one-pending reconciler. The exact next Rust
+       slice is domain-scoped Session integration for frozen R1-R4 movement and
+       navigation; parked shadow transport/live cleanup remains unchanged |
+      [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace

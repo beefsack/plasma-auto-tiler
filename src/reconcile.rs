@@ -1,12 +1,19 @@
 //! Deterministic transport-independent reconciler.
 //!
 //! Portable state machine over [`crate::contract`] observations and already
-//! computed [`crate::directional::MovePlan`]s. No platform, process, IPC,
+//! computed [`crate::directional::MovePlan`]s plus lifecycle
+//! [`crate::contract::LifecyclePlan`]s. No platform, process, IPC,
 //! geometry, or native execution imports.
 //!
 //! State transitions:
 //! - `Verified --propose--> PendingUnacked --acknowledge--> PendingAcked
 //!   --verify--> Verified(base + 1)`.
+//! - Movement (`propose`/`verify`) and lifecycle
+//!   (`propose_lifecycle`/`verify_lifecycle`) share at most one pending plan:
+//!   a second proposal of either kind while pending is `PendingExists` without
+//!   divergence; acknowledgement binds either kind by owner/generation/base
+//!   revision/correlation; verification must use the matching kind-specific
+//!   verifier.
 //! - Any stale/mismatched/partial/capability-refusal/adapter-loss/unverified
 //!   or mismatch condition records a typed [`DivergenceKind`] and enters
 //!   terminal `Divergent`: no further dispatch or mutation.
@@ -28,8 +35,10 @@
 //!   fail-closed; arbitrary adapter detail is never stored or echoed.
 
 use crate::contract::{
-    AdapterAck, Dispatch, DivergenceKind, MAX_PRECONDITIONS, Observation, PostObservation,
-    is_correlation_id, is_generation_id, is_owner_id, is_revision,
+    AdapterAck, Dispatch, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
+    LifecycleDispatch, LifecycleOperation, LifecyclePlan, LifecyclePostObservation,
+    LifecyclePrecondition, MAX_PRECONDITIONS, Observation, PostObservation, is_correlation_id,
+    is_generation_id, is_owner_id, is_revision,
 };
 use crate::directional::{Capabilities, MovePlan, Precondition};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
@@ -182,12 +191,23 @@ impl NewError {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+enum PendingKind {
+    Move {
+        preconditions: Vec<Precondition>,
+        operation: crate::directional::MoveOperation,
+    },
+    Lifecycle {
+        preconditions: Vec<LifecyclePrecondition>,
+        operation: LifecycleOperation,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct Pending {
     correlation_id: CorrelationId,
     base_revision: u64,
     acked: bool,
-    preconditions: Vec<Precondition>,
-    operation: crate::directional::MoveOperation,
+    kind: PendingKind,
 }
 
 /// Deterministic reconciler: at most one pending plan bound exactly to
@@ -377,8 +397,113 @@ impl Reconciler {
             correlation_id: correlation_id.clone(),
             base_revision: self.verified_revision,
             acked: false,
-            preconditions,
+            kind: PendingKind::Move {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
+        });
+        Ok(dispatch)
+    }
+
+    /// Propose an already-computed lifecycle plan against a normalized
+    /// observation.
+    ///
+    /// Shares the single pending slot with movement [`Reconciler::propose`]:
+    /// at most one pending plan of either kind; acknowledgement
+    /// ([`Reconciler::acknowledge`]) binds either kind identically, while
+    /// verification must use the kind-specific verifier
+    /// ([`Reconciler::verify`] for moves, [`Reconciler::verify_lifecycle`]
+    /// here). Binds exactly to owner/generation/base revision/correlation
+    /// plus the lifecycle plan's preconditions and declared lifecycle
+    /// capabilities; emits a transport-neutral [`LifecycleDispatch`].
+    pub fn propose_lifecycle(
+        &mut self,
+        plan: &LifecyclePlan,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &LifecycleCapabilities,
+    ) -> Result<LifecycleDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        // Reject internally inconsistent hand-built lifecycle plans before
+        // dispatch; mirrors the movement consistency gate. The portable
+        // lifecycle policy binding (`cosmic_v1`) is validated here; frozen
+        // R1-R4 movement plans never carry it.
+        if plan.policy_version != LIFECYCLE_POLICY_VERSION || !plan.valid_policy() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.required_capability != plan.operation.required_capability() {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions != plan.operation.preconditions() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(plan.operation.required_capability()) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions.len() > MAX_PRECONDITIONS
+            || !plan
+                .preconditions
+                .contains(&LifecyclePrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(plan.preconditions.len());
+        preconditions.extend_from_slice(&plan.preconditions);
+        let dispatch = LifecycleDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: plan.required_capability,
+            preconditions: preconditions.clone(),
+            intent: plan.intent.clone(),
             operation: plan.operation.clone(),
+            policy_version: plan.policy_version,
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Lifecycle {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
         });
         Ok(dispatch)
     }
@@ -509,11 +634,109 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::PostconditionUnverified);
             return Err(VerifyError::Diverged(reason));
         }
-        if post.verified_preconditions != pending.preconditions {
+        let PendingKind::Move {
+            preconditions,
+            operation,
+        } = &pending.kind
+        else {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        };
+        if post.verified_preconditions != *preconditions {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(VerifyError::Diverged(reason));
         }
-        if post.verified_operation != pending.operation {
+        if post.verified_operation != *operation {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if pending.base_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(VerifyError::Diverged(reason));
+        }
+        self.verified_revision = pending.base_revision + 1;
+        self.verified_fingerprint = post.observation.fingerprint;
+        self.pending = None;
+        Ok(Commit {
+            revision: self.verified_revision,
+            fingerprint: self.verified_fingerprint,
+        })
+    }
+
+    /// Commit after acknowledgement given a matching fresh lifecycle
+    /// post-observation with explicit native verification. Mirrors
+    /// [`Reconciler::verify`] for [`LifecyclePostObservation`]: the reported
+    /// verified preconditions/operation must bind exactly to the pending
+    /// lifecycle dispatch. Advances verified state by exactly one revision.
+    /// Calling this while a movement plan is pending (or [`Reconciler::verify`]
+    /// while a lifecycle plan is pending) diverges as
+    /// [`DivergenceKind::PostconditionMismatch`].
+    pub fn verify_lifecycle(
+        &mut self,
+        post: &LifecyclePostObservation,
+    ) -> Result<Commit, VerifyError> {
+        if let Some(reason) = self.diverged {
+            return Err(VerifyError::Diverged(reason));
+        }
+        let Some(pending) = self.pending.clone() else {
+            return Err(VerifyError::NoPending);
+        };
+        if !pending.acked {
+            return Err(VerifyError::NotAcknowledged);
+        }
+        if post.verified_preconditions.len() > MAX_PRECONDITIONS {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_correlation_id(post.correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_owner_id(post.observation.owner.as_str()) {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_generation_id(post.observation.generation.as_str()) {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_revision(post.observation.revision) {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.correlation_id != pending.correlation_id {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.owner != self.owner {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.revision != pending.base_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !post.verified {
+            let reason = self.diverge(DivergenceKind::PostconditionUnverified);
+            return Err(VerifyError::Diverged(reason));
+        }
+        let PendingKind::Lifecycle {
+            preconditions,
+            operation,
+        } = &pending.kind
+        else {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        };
+        if post.verified_preconditions != *preconditions {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.verified_operation != *operation {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(VerifyError::Diverged(reason));
         }
