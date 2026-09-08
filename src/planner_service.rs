@@ -2,11 +2,15 @@
 //!
 //! Contract identity: service `org.plasmaautotiler.Planner`, object
 //! `/org/plasmaautotiler/Planner`, interface `org.plasmaautotiler.Planner1`,
-//! methods `EvaluateMove` (frozen JSON string request -> JSON string reply)
-//! and `DescribeAdvisoryPlan` (read-only v1 advisory request -> advisory
+//! methods `EvaluateMove` (frozen JSON string request -> JSON string reply),
+//! `DescribeAdvisoryPlan` (read-only v1 advisory request -> advisory
 //! plan reply with exactly three normalized opaque windows, delegated through
 //! the portable `cosmic_v1` core; no native command/execution fields and no
-//! mutation). The POC-shaped `EvaluatePoc3` route is removed.
+//! mutation), and `DescribeShadowProjection` (read-only v1 shadow projection
+//! request -> desired rectangles for exactly three opaque windows, delegated
+//! through `AdoptedTrio` + `geometry::project`; no native
+//! command/execution/actuation fields and no mutation). The POC-shaped
+//! `EvaluatePoc3` route is removed.
 //!
 //! Boundary rules: no Rust-to-KWin calls (only `org.freedesktop.DBus`
 //! owner/credential queries for caller verification), no persistence, no tray
@@ -32,6 +36,7 @@ use crate::advisory_contract::{
     evaluate_advisory_json_for_armed_loss,
 };
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
+use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
 // Linux-only identity boundary; portable core never depends on it.
 #[cfg(target_os = "linux")]
 use crate::planner_kwin_identity as kwin_identity;
@@ -42,6 +47,7 @@ pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
 pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
 pub const METHOD: &str = "EvaluateMove";
 pub const ADVISORY_METHOD: &str = "DescribeAdvisoryPlan";
+pub const SHADOW_METHOD: &str = "DescribeShadowProjection";
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -101,6 +107,11 @@ pub struct PlannerEndpoint {
     // exactly one pinned owner/generation/revision binding. The pinned
     // revision never advances; advisory evaluation performs no mutation.
     advisory_session: Arc<std::sync::Mutex<AdvisorySession>>,
+    // Separate read-only shadow projection session tracker held in process
+    // memory only. Pins owner/generation on first success and accepts only
+    // strictly increasing revisions with fresh correlations, so
+    // signal-driven recomputations can proceed. Never shared with advisory.
+    shadow_session: Arc<std::sync::Mutex<ShadowSession>>,
     // Optional bounded advisory-loss arming. `None` is the normal
     // `planner-service` mode (unchanged: every accepted reply returns
     // normally). `Some` arms exactly one bounded correlation id: only an
@@ -117,6 +128,7 @@ impl PlannerEndpoint {
         Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
+            shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             advisory_loss_correlation: None,
         }
     }
@@ -132,6 +144,7 @@ impl PlannerEndpoint {
         Some(Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
+            shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             advisory_loss_correlation: Some(armed),
         })
     }
@@ -157,6 +170,19 @@ impl PlannerEndpoint {
             request,
             self.advisory_loss_correlation(),
         ))
+    }
+
+    /// Synchronous read-only shadow projection request route over the
+    /// separate shadow session tracker. The caller must hold the
+    /// single-flight `operation_lock` guard and have passed caller
+    /// verification; this only locks the session briefly with no awaits
+    /// while held. A poisoned session is terminal fail-closed.
+    fn evaluate_shadow_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut session = self
+            .shadow_session
+            .lock()
+            .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
+        Ok(evaluate_shadow_json(&mut session, request))
     }
 }
 
@@ -1277,6 +1303,45 @@ impl PlannerEndpoint {
         }
         Ok(reply)
     }
+
+    async fn describe_shadow_projection(
+        &self,
+        request: String,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> Result<String, PlannerError> {
+        // Read-only shadow projection route alongside the frozen
+        // EvaluateMove / DescribeAdvisoryPlan contracts: the exact same
+        // bounded single-flight, current-KWin-owner/same-uid/executable
+        // pinning with pre/post owner revalidation, request/reply bounds,
+        // and terminal service-loss semantics. Neither existing method
+        // changes behavior. The reply carries complete desired rectangles
+        // for exactly three opaque windows with no native
+        // command/execution/actuation fields and no mutation, over a
+        // separate session tracker from advisory.
+        let Some(_guard) = self.operation_lock.try_lock() else {
+            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+        };
+        if emitter.connection().is_closed() {
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
+        let caller = header.sender().map(ToString::to_string);
+        let Some(caller) = caller.as_deref() else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let reply = self.evaluate_shadow_request(&request)?;
+        if reply.len() > SHADOW_MAX_REPLY_BYTES {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
+    }
 }
 
 fn serving_connection_lost_error() -> zbus::Error {
@@ -1782,6 +1847,161 @@ mod tests {
             }
         })
         .to_string()
+    }
+
+    fn shadow_test_request(correlation: &str, owner: &str, revision: u64) -> String {
+        // Read-only shadow projection: explicit work area, exact-three opaque
+        // windows, focus binding, gap, and shadow-projection capability. Rust
+        // builds H[A,V[B,C]] through AdoptedTrio + geometry::project.
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": "gen-1",
+            "revision": revision,
+            "output": {
+                "id": "source",
+                "workspace": "workspace-1",
+                "work_area": {"x": 0, "y": 0, "w": 90, "h": 60}
+            },
+            "windows": [
+                {"window": "w-A", "output": "source", "workspace": "workspace-1", "rect": {"x": 0, "y": 0, "w": 10, "h": 10}},
+                {"window": "w-B", "output": "source", "workspace": "workspace-1", "rect": {"x": 10, "y": 0, "w": 10, "h": 10}},
+                {"window": "w-C", "output": "source", "workspace": "workspace-1", "rect": {"x": 20, "y": 0, "w": 10, "h": 10}}
+            ],
+            "gap": 4,
+            "focused_window": "w-B",
+            "capabilities": {"shadow_projection": true}
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn shadow_method_identity_is_exact_and_distinct() {
+        assert_eq!(SHADOW_METHOD, "DescribeShadowProjection");
+        assert_ne!(SHADOW_METHOD, METHOD);
+        assert_ne!(SHADOW_METHOD, ADVISORY_METHOD);
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(
+            crate::shadow_projection::SHADOW_MAX_REPLY_BYTES,
+            SHADOW_MAX_REPLY_BYTES
+        );
+        assert_eq!(SHADOW_MAX_REPLY_BYTES, 64 * 1024);
+    }
+
+    #[test]
+    fn shadow_request_route_is_bounded_owner_pinned_and_read_only() {
+        let endpoint = PlannerEndpoint::new();
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request("{not json}")
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        assert!(reply.to_string().len() <= SHADOW_MAX_REPLY_BYTES);
+
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-1", "owner-1", 0))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "projected");
+        assert_eq!(reply["correlation_id"], "s-1");
+        assert_eq!(reply["owner"], "owner-1");
+        assert_eq!(reply["capability"], "shadow-projection");
+        assert_eq!(reply["desired"].as_array().expect("desired").len(), 3);
+        let text = reply.to_string();
+        for forbidden in ["command", "execute", "exec", "script", "native", "action"] {
+            assert!(
+                !text.contains(&format!("\"{forbidden}\"")),
+                "reply must not contain {forbidden}"
+            );
+        }
+
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-2", "owner-2", 1))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "owner-mismatch");
+        assert!(!reply.to_string().contains("owner-2"));
+    }
+
+    #[test]
+    fn shadow_session_is_separate_and_signal_driven() {
+        let endpoint = PlannerEndpoint::new();
+        // Advisory pinning never shares state with the shadow tracker.
+        let advisory: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_advisory_request(&advisory_test_request("c-1", "owner-1"))
+                .expect("advisory route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(advisory["outcome"], "planned");
+        let shadow_locked = endpoint
+            .shadow_session
+            .lock()
+            .expect("shadow session lock succeeds");
+        assert!(!shadow_locked.is_pinned());
+        assert_eq!(shadow_locked.pinned_revision(), 0);
+        drop(shadow_locked);
+
+        // Shadow revisions advance strictly so signal-driven recomputations
+        // proceed; stale and duplicate correlations fail closed.
+        let first: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-1", "owner-1", 0))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(first["outcome"], "projected");
+        let second: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-2", "owner-1", 1))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(second["outcome"], "projected");
+        assert_eq!(second["revision"], 1);
+        let stale: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-3", "owner-1", 1))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(stale["outcome"], "rejected");
+        assert_eq!(stale["kind"], "stale-revision");
+        let dupe: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_shadow_request(&shadow_test_request("s-2", "owner-1", 2))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(dupe["outcome"], "rejected");
+        assert_eq!(dupe["kind"], "correlation-mismatch");
+        // Nested endpoint support is intentionally POC-only/out of scope: the
+        // shadow route never consults nested manifests here.
+    }
+
+    #[test]
+    fn shadow_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, SHADOW_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("{\"v\":1}".to_owned(),))
+            .unwrap();
+        assert_eq!(message.body().signature().to_string(), "s");
+        let body: (String,) = message.body().deserialize().unwrap();
+        assert_eq!(body.0, "{\"v\":1}");
     }
 
     #[test]

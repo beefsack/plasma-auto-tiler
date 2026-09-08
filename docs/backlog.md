@@ -120,8 +120,18 @@ Only meaningful pending or active work is listed.
    or Planner PID binding. No host query, cleanup, retry, success/stale/
    service-loss, after-equality, production-continuity, or KWin-stability claim
    follows; this live route is halted and prior unidentified residue remains
-   untouched. Recovery requires a user-provided exact receipt/lifecycle record |
-   [change](changes/rust-engine-direct-geometry-migration.md)
+    untouched. Recovery requires a user-provided exact receipt/lifecycle record.
+    The next durable static migration slice is complete: an explicit,
+    disabled-by-default KWin shadow projection path captures only the current
+    active-output/current-desktop exact-three scope on signals, while portable
+    Rust alone adopts `H[A,V[B,C]]` and returns deterministic complete desired
+    geometry, focus intent, capability, preconditions, and binding metadata.
+    KWin only owner-pins, revalidates, deduplicates, and reports redacted
+    match/divergence or refusal; it has no native actuation or production route.
+    Rust/service and focused adapter contracts pass. The live read-only
+    transport gate remains parked pending a natural session restart; the next
+    action is a user-directed product/manual shadow observation, not more
+    harness recovery | [change](changes/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace

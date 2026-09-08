@@ -98,6 +98,23 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Static shadow projection slice completed 2026-09-08: the portable Rust
+  `DescribeShadowProjection` contract accepts only a bounded current-scope
+  exact-three bare observation with explicit work area, gap, capability,
+  correlation, owner, generation, and revision. It deterministically adopts
+  `H[A,V[B,C]]` through `AdoptedTrio` and projects complete desired rectangles
+  through the shared integer geometry projector, returning focus intent and
+  complete preconditions without a native execution field. Its separate
+  session accepts only strictly increasing revisions with fresh correlations.
+  The opt-in, disabled-by-default KWin companion captures only the current
+  active-output/current-desktop trio, schedules from active/window/geometry
+  signals without polling, pins and rechecks the Planner owner, performs
+  pre- and post-reply snapshot revalidation, and emits only redacted
+  match/divergence/refusal tokens. It has no production entry, builder,
+  shortcut, persistence, or native mutation path. Rust contract/service,
+  projection, stale/refusal, KWin observer/scheduling/comparison, and static
+  no-actuation coverage pass. No live route was run; the read-only transport
+  gate remains parked until a natural session restart.
 - Durable advisory boundary, 2026-09-08: the KWin standalone observer now
   transmits only normalized exact-three opaque observations. Rust owns the
   reusable `AdoptedTrio` initialization boundary, deterministically sorting

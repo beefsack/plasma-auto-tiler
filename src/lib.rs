@@ -18,6 +18,7 @@ pub mod poc3_diag_supervisor;
 pub mod poc3_host_pilot;
 pub mod poc3_host_trio;
 pub mod reconcile;
+pub mod shadow_projection;
 pub mod trace;
 pub mod tray;
 pub mod tray_endpoint;

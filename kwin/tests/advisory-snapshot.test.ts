@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
@@ -7,12 +8,50 @@ import {
     ADVISORY_SNAPSHOT_REJECTS,
     ADVISORY_SNAPSHOT_WINDOW_COUNT,
     ADVISORY_SNAPSHOT_WORKSPACE_ID,
+    attachShadowTrioGeometry,
     captureAdvisorySnapshot,
+    captureShadowProjectionObservation,
     isAdvisorySnapshotReject,
 } from "../src/advisory-snapshot";
 import { normalizeAdvisoryRequest } from "../src/advisory-plan-query";
 
-const ADAPTER_SOURCE = readFileSync("src/advisory-snapshot.ts", "utf8");
+function kwinSrcDir(): string {
+    const override = process.env["KWIN_SRC_DIR"];
+    if (typeof override === "string" && override.length > 0) {
+        try {
+            if (existsSync(join(override, "advisory-snapshot.ts"))) {
+                return override;
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+    const candidates: string[] = [];
+    try {
+        const here: unknown = typeof __dirname === "string" ? __dirname : process.cwd();
+        if (typeof here === "string") {
+            candidates.push(resolve(here, "..", "..", "src"));
+            candidates.push(resolve(here, "..", "src"));
+            candidates.push(resolve(here, "src"));
+        }
+    } catch (error) {
+        void error;
+    }
+    candidates.push(resolve(process.cwd(), "src"));
+    candidates.push(resolve(process.cwd(), "kwin", "src"));
+    for (const dir of candidates) {
+        try {
+            if (existsSync(join(dir, "advisory-snapshot.ts"))) {
+                return dir;
+            }
+        } catch (error) {
+            void error;
+        }
+    }
+    return resolve(process.cwd(), "src");
+}
+
+const ADAPTER_SOURCE = readFileSync(join(kwinSrcDir(), "advisory-snapshot.ts"), "utf8");
 
 interface StubWindow {
     [key: string]: unknown;
@@ -866,5 +905,80 @@ describe("advisory snapshot single-braced QUuid normalization", () => {
                 badId,
             );
         }
+    });
+});
+
+describe("shadow projection primitive observation extraction", () => {
+    it("exposes work area, sorted opaque rects, focus, and revalidation without native refs", () => {
+        const { workspace } = validTrio();
+        const result = captureShadowProjectionObservation(workspace as never);
+        assert.equal(result.ok, true);
+        if (!result.ok) throw new Error("expected ok");
+        const observation = result.observation;
+        assert.equal(observation.output.id, ADVISORY_SNAPSHOT_OUTPUT_ID);
+        assert.equal(observation.output.workspace, ADVISORY_SNAPSHOT_WORKSPACE_ID);
+        assert.deepEqual(observation.output.workArea, { x: 0, y: 0, w: 1920, h: 1040 });
+        assert.equal(observation.windows.length, ADVISORY_SNAPSHOT_WINDOW_COUNT);
+        assert.deepEqual(
+            observation.windows.map((entry) => entry.window),
+            ["id-a", "id-b", "id-c"],
+        );
+        assert.deepEqual(observation.windows[0]?.rect, { x: 200, y: 10, w: 100, h: 100 });
+        assert.equal(observation.focusedWindow, "id-b");
+        assert.ok(typeof observation.fingerprint === "string" && observation.fingerprint.length > 0);
+        assert.equal(observation.revalidate(), true);
+        assert.ok(Object.isFrozen(observation.windows));
+        assert.ok(Object.isFrozen(observation.output));
+        const serialized = JSON.stringify(observation);
+        assert.ok(!serialized.includes("caption-must-not-serialize"));
+        assert.ok(!serialized.includes("frameGeometry"));
+    });
+
+    it("fails closed with the shared taxonomy and detects drift via revalidation", () => {
+        const { workspace, windows } = validTrio();
+        const ok = captureShadowProjectionObservation(workspace as never);
+        assert.equal(ok.ok, true);
+        if (!ok.ok) throw new Error("expected ok");
+        (windows[0] as Record<string, unknown>)["frameGeometry"] = { x: 999, y: 999, width: 10, height: 10 };
+        assert.equal(ok.observation.revalidate(), false);
+
+        const underfull = stubWorkspace(windows.slice(0, 2), windows[1] as never);
+        const short = captureShadowProjectionObservation(underfull as never);
+        assert.equal(short.ok, false);
+        if (!short.ok) {
+            assert.ok(isAdvisorySnapshotReject(short.reason));
+        }
+    });
+
+    it("binds trio frameGeometryChanged read-only and fails closed without leaking refs", () => {
+        const { workspace } = validTrio();
+        const result = captureShadowProjectionObservation(workspace as never);
+        assert.equal(result.ok, true);
+        if (!result.ok) throw new Error("expected ok");
+        const ids = result.observation.windows.map((entry) => entry.window);
+        const connected: string[] = [];
+        const lister = (workspace as Record<string, unknown>)["windowList"];
+        assert.equal(typeof lister, "function");
+        const fakeWorkspace = {
+            windowList: lister as () => unknown,
+        };
+        const listed = fakeWorkspace.windowList() as Array<Record<string, unknown>>;
+        for (const ref of listed) {
+            ref["frameGeometryChanged"] = {
+                connect: (): void => {
+                    connected.push(String(ref["internalId"]));
+                },
+                disconnect: (): void => {},
+            };
+        }
+        const bound = attachShadowTrioGeometry(fakeWorkspace, ids, () => {});
+        assert.equal(bound.ok, true);
+        assert.deepEqual([...connected].sort(), ["id-a", "id-b", "id-c"]);
+        if (bound.ok) {
+            bound.detach();
+        }
+        assert.equal(attachShadowTrioGeometry(fakeWorkspace, ["id-a", "id-b"], () => {}).ok, false);
+        assert.equal(attachShadowTrioGeometry(fakeWorkspace, ["id-a", "id-a", "id-b"], () => {}).ok, false);
+        assert.equal(attachShadowTrioGeometry(null, ids, () => {}).ok, false);
     });
 });

@@ -302,6 +302,8 @@ interface CaptureState {
     readonly active: object;
     readonly windows: Readonly<Record<string, object>>;
     readonly tiles: Readonly<Record<string, object>>;
+    readonly workArea: RectLike;
+    readonly frames: Readonly<Record<string, RectLike>>;
 }
 
 type CaptureOutcome =
@@ -313,10 +315,14 @@ function fail(reason: AdvisorySnapshotReject): CaptureOutcome {
 }
 
 function captureState(workspace: unknown, direction: unknown): CaptureOutcome {
-    if (typeof workspace !== "object" || workspace === null) {
+    if (!isDirection(direction)) {
         return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
-    if (!isDirection(direction)) {
+    return captureTrioCore(workspace);
+}
+
+function captureTrioCore(workspace: unknown): CaptureOutcome {
+    if (typeof workspace !== "object" || workspace === null) {
         return fail(ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT);
     }
     const surface = workspace as Record<string, unknown>;
@@ -582,6 +588,8 @@ function captureState(workspace: unknown, direction: unknown): CaptureOutcome {
         active: activeRef,
         windows: Object.freeze(windowRefs),
         tiles: Object.freeze(tileRefs),
+        workArea,
+        frames: Object.freeze(frames),
         },
     };
 }
@@ -675,6 +683,252 @@ export function captureAdvisorySnapshot(
                 void error;
                 return false;
             }
+        },
+    };
+}
+
+export interface ShadowPrimitiveRect {
+    readonly x: number;
+    readonly y: number;
+    readonly w: number;
+    readonly h: number;
+}
+
+export interface ShadowProjectionWindow {
+    readonly window: string;
+    readonly output: string;
+    readonly workspace: string;
+    readonly rect: ShadowPrimitiveRect;
+}
+
+export interface ShadowProjectionObservation {
+    readonly output: {
+        readonly id: string;
+        readonly workspace: string;
+        readonly workArea: ShadowPrimitiveRect;
+    };
+    readonly windows: ReadonlyArray<ShadowProjectionWindow>;
+    readonly focusedWindow: string;
+    readonly fingerprint: string;
+    readonly revalidate: () => boolean;
+}
+
+export type ShadowProjectionObservationResult =
+    | { readonly ok: true; readonly observation: ShadowProjectionObservation }
+    | { readonly ok: false; readonly reason: AdvisorySnapshotReject };
+
+// Non-leaking trio geometry binder for the shadow projection entry. Resolves
+// the exact opaque trio ids to live refs through the same bounded list and
+// native-id normalization internals (no eligibility duplication: the caller
+// supplies ids already observed by captureShadowProjectionObservation), then
+// connects only `frameGeometryChanged` read-only notifications. Native refs
+// never leave this module; only a detach closure is returned. Any shape,
+// count, ambiguity, or signal failure fails closed with no partial binding.
+export function attachShadowTrioGeometry(
+    workspace: unknown,
+    ids: readonly string[],
+    handler: () => void,
+): { readonly ok: true; readonly detach: () => void } | { readonly ok: false } {
+    try {
+        if (!Array.isArray(ids) || ids.length !== ADVISORY_SNAPSHOT_WINDOW_COUNT) {
+            return { ok: false };
+        }
+        const wanted = new Set<string>();
+        for (const id of ids) {
+            if (!isOpaqueId(id) || wanted.has(id)) {
+                return { ok: false };
+            }
+            wanted.add(id);
+        }
+        if (typeof workspace !== "object" || workspace === null) {
+            return { ok: false };
+        }
+        const surface = workspace as Record<string, unknown>;
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return { ok: false };
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: readonly never[]) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return { ok: false };
+        }
+        const windows = decodeBoundedList(rawList, ADVISORY_SNAPSHOT_MAX_WINDOW_LIST);
+        if (windows === null) {
+            return { ok: false };
+        }
+        const byId = new Map<string, object>();
+        for (const entry of windows) {
+            if (typeof entry !== "object" || entry === null) {
+                continue;
+            }
+            const ref = entry as object;
+            let id: string | null = null;
+            try {
+                id = normalizeNativeId(Reflect.get(ref, "internalId"));
+            } catch (error) {
+                void error;
+                continue;
+            }
+            if (id === null || !wanted.has(id) || byId.has(id)) {
+                continue;
+            }
+            byId.set(id, ref);
+        }
+        if (byId.size !== ADVISORY_SNAPSHOT_WINDOW_COUNT) {
+            return { ok: false };
+        }
+        const disconnects: Array<() => void> = [];
+        for (const id of wanted) {
+            const ref = byId.get(id) as object;
+            let signal: unknown = undefined;
+            try {
+                signal = Reflect.get(ref, "frameGeometryChanged");
+            } catch (error) {
+                void error;
+                signal = undefined;
+            }
+            if (
+                typeof signal !== "object" ||
+                signal === null ||
+                typeof (signal as Record<string, unknown>)["connect"] !== "function"
+            ) {
+                for (const disconnect of disconnects) {
+                    try {
+                        disconnect();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                return { ok: false };
+            }
+            const connect = (signal as { connect: (next: () => void) => void }).connect.bind(signal);
+            try {
+                connect(handler);
+            } catch (error) {
+                void error;
+                for (const disconnect of disconnects) {
+                    try {
+                        disconnect();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                return { ok: false };
+            }
+            disconnects.push(() => {
+                try {
+                    (signal as { disconnect: (next: () => void) => void }).disconnect(handler);
+                } catch (error) {
+                    void error;
+                }
+            });
+        }
+        return {
+            ok: true,
+            detach: () => {
+                for (const disconnect of disconnects) {
+                    try {
+                        disconnect();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            },
+        };
+    } catch (error) {
+        void error;
+        return { ok: false };
+    }
+}
+// Typed redacted primitive projection observation built from the same
+// read-only trio capture internals as the advisory snapshot (eligibility,
+// opaque identity normalization, frame/work-area validation). No new capture
+// logic: work area, sorted opaque ids/frame rects, and focus come from the
+// shared core; native refs never leave the closure. Existing advisory
+// snapshot semantics are unchanged.
+export function captureShadowProjectionObservation(
+    workspace: Workspace,
+): ShadowProjectionObservationResult {
+    let outcome: CaptureOutcome;
+    try {
+        outcome = captureTrioCore(workspace as unknown);
+    } catch (error) {
+        void error;
+        return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_INVALID_INPUT };
+    }
+    if (!outcome.ok) {
+        return { ok: false, reason: outcome.reason };
+    }
+    const captured = outcome.state;
+    if (captured.sortedIds.length !== ADVISORY_SNAPSHOT_WINDOW_COUNT) {
+        return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_COUNT_MISMATCH };
+    }
+    const activeIndex = captured.sortedIds.indexOf(captured.activeId);
+    if (activeIndex < 0) {
+        return { ok: false, reason: ADVISORY_SNAPSHOT_REJECT_ACTIVE_UNAVAILABLE };
+    }
+    const workArea: ShadowPrimitiveRect = Object.freeze({
+        x: captured.workArea.x,
+        y: captured.workArea.y,
+        w: captured.workArea.width,
+        h: captured.workArea.height,
+    });
+    const windows = Object.freeze(
+        captured.sortedIds.map((id) => {
+            const frame = captured.frames[id] as RectLike;
+            return Object.freeze({
+                window: id,
+                output: ADVISORY_SNAPSHOT_OUTPUT_ID,
+                workspace: ADVISORY_SNAPSHOT_WORKSPACE_ID,
+                rect: Object.freeze({ x: frame.x, y: frame.y, w: frame.width, h: frame.height }),
+            });
+        }),
+    );
+    const expected = captured.fingerprint;
+    const workspaceRef = workspace as unknown;
+    return {
+        ok: true,
+        observation: {
+            output: Object.freeze({
+                id: ADVISORY_SNAPSHOT_OUTPUT_ID,
+                workspace: ADVISORY_SNAPSHOT_WORKSPACE_ID,
+                workArea,
+            }),
+            windows,
+            focusedWindow: captured.activeId,
+            fingerprint: expected,
+            revalidate: () => {
+                try {
+                    const fresh = captureTrioCore(workspaceRef);
+                    if (!fresh.ok) {
+                        return false;
+                    }
+                    const current = fresh.state;
+                    if (
+                        current.fingerprint !== expected ||
+                        current.output !== captured.output ||
+                        current.desktop !== captured.desktop ||
+                        current.active !== captured.active
+                    ) {
+                        return false;
+                    }
+                    for (const id of captured.sortedIds) {
+                        if (
+                            current.windows[id] !== captured.windows[id] ||
+                            current.tiles[id] !== captured.tiles[id]
+                        ) {
+                            return false;
+                        }
+                    }
+                    return true;
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            },
         },
     };
 }
