@@ -130,6 +130,12 @@ Historical implementation detail is recoverable in Git history.
   residue. The authorization is revoked for any restoration ambiguity,
   broader host mutation, material security/product/architecture change, or
   need for manual arrangement; stop and ask the user in those cases.
+- The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
+  residue is preserved untouched. Do not search for, enumerate, inspect,
+  identify heuristically, modify, or delete it. After the resource-order
+  correction, the standing authorization above resumes only for fresh bounded
+  attempts that stop before resource creation or prove exact restoration with
+  no new ambiguity.
 
 ## Window And Workspace Behavior
 

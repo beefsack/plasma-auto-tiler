@@ -87,19 +87,88 @@ assert_contains "$LOADER" 'MANIFEST_INPUT_SHA'
 assert_contains "$LOADER" 'MANIFEST_SNAPSHOT_SHA'
 assert_contains "$LOADER" 'RECEIPT_SNAPSHOT_SHA'
 assert_contains "$LOADER" 'partial script-id='
-# Only the pinned bus/sha/node tools run; no generic IPC or POC tooling.
-if [[ "$(grep -o '"\$[A-Z0-9_]*BIN"' "$LOADER" | sort -u | tr '\n' ' ')" == '"$BUSCTL_BIN" "$NODE_BIN" "$SHA256SUM_BIN" ' ]]; then
-  pass "only pinned bus/sha/node commands run"
+# Only the pinned bus/sha/node/systemctl/stat/readlink tools run; no generic IPC.
+if [[ "$(grep -o '"\$[A-Z0-9_]*BIN"' "$LOADER" | sort -u | tr '\n' ' ')" == '"$BUSCTL_BIN" "$NODE_BIN" "$READLINK_BIN" "$SHA256SUM_BIN" "$STAT_BIN" "$SYSTEMCTL_BIN" ' ]]; then
+  pass "only pinned bus/sha/node/systemctl/stat/readlink commands run"
 else
-  fail "only pinned bus/sha/node commands run"
+  fail "only pinned bus/sha/node/systemctl/stat/readlink commands run"
 fi
 assert_absent "$LOADER" 'Script0'
-assert_absent "$LOADER" 'PRODUCTION'
+assert_contains "$LOADER" 'PRODUCTION_PLUGIN="plasma-auto-tiler-kwin"'
+assert_contains "$LOADER" 'PLANNER_SERVICE="org.plasmaautotiler.Planner"'
+assert_contains "$LOADER" 'scripts/poc3-host-kwin-identity.sh'
+assert_contains "$LOADER" 'poc3_kwin_systemd_fallback'
+assert_contains "$LOADER" 'poc3_kwin_direct_parent_fallback'
+assert_contains "$LOADER" 'kwin_unique_owner'
+assert_contains "$LOADER" 'kwin_pid_for_owner'
+assert_contains "$LOADER" 'proc_start_tick'
+assert_contains "$LOADER" 'kwin_identity_once'
+assert_contains "$LOADER" 'check_planner_absent'
+assert_contains "$LOADER" 'NameHasOwner'
+assert_contains "$LOADER" 'GetNameOwner'
+assert_contains "$LOADER" 'GetConnectionUnixProcessID'
+assert_contains "$LOADER" '--json=short'
+assert_contains "$LOADER" '^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'
+assert_contains "$LOADER" 'KWin executable drift detected'
+assert_contains "$LOADER" 'KWin identity source drift detected'
+assert_contains "$LOADER" 'KWin identity recapture failed'
+assert_contains "$LOADER" 'RE_EXE'
+assert_contains "$LOADER" 'RE_SOURCE'
+assert_contains "$LOADER" 'must be loaded before advisory start'
+assert_contains "$LOADER" 'drift detected'
+assert_absent "$LOADER" 'queryWindowInfo'
 assert_absent "$LOADER" 'Scripting start'
-assert_absent "$LOADER" 'poc3-'
-assert_absent "$LOADER" 'poc3_'
-assert_absent "$LOADER" 'scripts/poc3'
 assert_absent "$LOADER" 'nested-'
+# Planner absence must fail closed on NameHasOwner boolean, never on a failed
+# GetNameOwner. The planner check must not call GetNameOwner.
+if grep -A30 -F 'check_planner_absent()' "$LOADER" | grep -Fq 'GetNameOwner'; then
+  fail "planner absence must not rely on GetNameOwner"
+else
+  pass "planner absence avoids GetNameOwner"
+fi
+# Direct-parent fallback only on the exact line-anchored MainPID mismatch, not
+# a loose substring.
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'grep -Fq "does not match KWin PID"'; then
+  fail "direct-parent uses strict anchored MainPID mismatch"
+else
+  pass "direct-parent avoids loose substring"
+fi
+# Only the approved helper route may mention poc3 identity helpers.
+if grep -F 'poc3_' "$LOADER" | grep -Fvq -e 'poc3_kwin_systemd_fallback' -e 'poc3_kwin_direct_parent_fallback'; then
+  fail "only approved poc3 helper route present"
+else
+  pass "only approved poc3 helper route present"
+fi
+if grep -F 'scripts/poc3' "$LOADER" | grep -Fvq 'scripts/poc3-host-kwin-identity.sh'; then
+  fail "only approved poc3 helper source present"
+else
+  pass "only approved poc3 helper source present"
+fi
+# Resource-free static detection: pre-verify section (comments excluded) must
+# contain no mktemp/mkdtemp/mkdir/touch and no file-creating redirection.
+PREVERIFY_SECT="$TMP_DIR/preverify-sect.txt"
+sed -n '/^cmd_start() {/,/^  "\$NODE_BIN" -- "\$BUILDER" --verify/p' "$LOADER" \
+  | grep -v '^[[:space:]]*#' > "$PREVERIFY_SECT"
+for _tok in mktemp mkdtemp mkdir touch; do
+  if grep -wq -- "$_tok" "$PREVERIFY_SECT"; then fail "pre-verify has no $_tok"; else pass "pre-verify has no $_tok"; fi
+done
+# File-creating redirection before verify: look for >" / >$ / >> outside of
+# >&2, 2>/dev/null, 2>&1, >/dev/null.
+if grep -E '(^|[^>&0-9])>>( |"|\$|/)' "$PREVERIFY_SECT" >/dev/null 2>&1; then
+  fail "pre-verify has no file-append redirection"
+else
+  pass "pre-verify has no file-append redirection"
+fi
+if grep -E '(^|[^>&0-9])> ("|\$|/[^d])' "$PREVERIFY_SECT" 2>/dev/null | grep -v '/dev/null' | grep -q .; then
+  fail "pre-verify has no file-create redirection"
+else
+  pass "pre-verify has no file-create redirection"
+fi
+if grep -v '^[[:space:]]*#' "$LOADER" | grep -Fq 'mktemp'; then
+  fail "loader creates no temp files"
+else
+  pass "loader creates no temp files"
+fi
 if grep -o 'unloadScript s "[^"]*"' "$LOADER" | sort -u | tr '\n' ' ' | grep -qF 'unloadScript s "$PLUGIN" unloadScript s "$RECEIPT_PLUGIN"'; then
   pass "unload targets only the recorded plugin"
 else
@@ -107,10 +176,15 @@ else
 fi
 
 # Fake busctl fixture: behavior driven only by files under FAKE_DIR, every
-# invocation appended to calls.log for exact-sequence assertions.
+# invocation appended to calls.log plus the shared events.log for exact
+# preflight-before-verify-before-load/run ordering assertions.
+# Supports JSON owner/PID plus strict NameHasOwner planner boolean plus plain
+# isScriptLoaded split by plugin (production vs advisory) so preflight
+# collisions are observable with no live host contact.
 cat > "$FAKE_BIN/busctl" <<'FAKE_BUSCTL'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >> "$FAKE_DIR/calls.log"
+printf 'busctl %s\n' "$*" >> "$FAKE_DIR/events.log"
 if printf '%s' "$*" | grep -Fq 'unloadScript'; then
   cat -- "$FAKE_DIR/unload_reply"
   exit "${FAKE_UNLOAD_EXIT:-0}"
@@ -123,7 +197,51 @@ if [[ "${1:-}" == "introspect" ]]; then
   cat -- "$FAKE_DIR/introspect_reply"
   exit "${FAKE_INTROSPECT_EXIT:-0}"
 fi
+if printf '%s' "$*" | grep -Fq 'NameHasOwner'; then
+  if printf '%s' "$*" | grep -Fq 'org.plasmaautotiler.Planner'; then
+    if [[ -f "$FAKE_DIR/planner-fail" ]]; then echo "fake busctl: planner NameHasOwner transport failure" >&2; exit 1; fi
+    if [[ -f "$FAKE_DIR/bad-planner-reply" ]]; then cat -- "$FAKE_DIR/bad-planner-reply"; exit 0; fi
+    if [[ -f "$FAKE_DIR/planner-owner" ]]; then printf '{"type":"b","data":[true]}'; exit 0; fi
+    printf '{"type":"b","data":[false]}'
+    exit 0
+  fi
+fi
+if printf '%s' "$*" | grep -Fq 'GetNameOwner'; then
+  if printf '%s' "$*" | grep -Fq 'org.plasmaautotiler.Planner'; then
+    echo "fake busctl: planner must use NameHasOwner, not GetNameOwner" >&2
+    exit 1
+  fi
+  if printf '%s' "$*" | grep -Fq 'org.kde.KWin'; then
+    if [[ -f "$FAKE_DIR/bad-owner-reply" ]]; then cat -- "$FAKE_DIR/bad-owner-reply"; exit 0; fi
+    if [[ -f "$FAKE_DIR/owner-seq" && -s "$FAKE_DIR/owner-seq" ]]; then
+      line="$(head -n 1 -- "$FAKE_DIR/owner-seq")"
+      tail -n +2 -- "$FAKE_DIR/owner-seq" > "$FAKE_DIR/owner-seq.tmp" 2>/dev/null || true
+      mv -- "$FAKE_DIR/owner-seq.tmp" "$FAKE_DIR/owner-seq" 2>/dev/null || true
+      printf '{"type":"s","data":["%s"]}' "$line"
+      exit 0
+    fi
+    printf '{"type":"s","data":["%s"]}' "$(cat -- "$FAKE_DIR/kwin-owner")"
+    exit 0
+  fi
+fi
+if printf '%s' "$*" | grep -Fq 'GetConnectionUnixProcessID'; then
+  if [[ -f "$FAKE_DIR/bad-pid-reply" ]]; then cat -- "$FAKE_DIR/bad-pid-reply"; exit 0; fi
+  last="${*: -1}"
+  if [[ -f "$FAKE_DIR/pid-seq" && -s "$FAKE_DIR/pid-seq" ]]; then
+    line="$(head -n 1 -- "$FAKE_DIR/pid-seq")"
+    tail -n +2 -- "$FAKE_DIR/pid-seq" > "$FAKE_DIR/pid-seq.tmp" 2>/dev/null || true
+    mv -- "$FAKE_DIR/pid-seq.tmp" "$FAKE_DIR/pid-seq" 2>/dev/null || true
+    printf '{"type":"u","data":[%s]}' "$line"
+    exit 0
+  fi
+  printf '{"type":"u","data":[%s]}' "$(cat -- "$FAKE_DIR/kwin-pid")"
+  exit 0
+fi
 if printf '%s' "$*" | grep -Fq 'isScriptLoaded'; then
+  if printf '%s' "$*" | grep -Fq 'plasma-auto-tiler-kwin'; then
+    cat -- "$FAKE_DIR/prod_reply"
+    exit 0
+  fi
   if [[ -f "$FAKE_DIR/is_loaded_queue" && -s "$FAKE_DIR/is_loaded_queue" ]]; then
     line="$(head -n 1 -- "$FAKE_DIR/is_loaded_queue")"
     tail -n +2 -- "$FAKE_DIR/is_loaded_queue" > "$FAKE_DIR/is_loaded_queue.tmp" 2>/dev/null || true
@@ -157,20 +275,114 @@ exit 1
 FAKE_BUSCTL
 chmod +x -- "$FAKE_BIN/busctl"
 
+# Fake systemctl fixture: only the exact read-only unit show, driven by
+# FAKE_DIR/systemctl-show. Absent file means fallback failure (fail closed).
+# Every invocation is logged for direct-parent gating assertions.
+cat > "$FAKE_BIN/systemctl" <<'FAKE_SYSTEMCTL'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >> "$FAKE_DIR/systemctl.log"
+printf 'systemctl %s\n' "$*" >> "$FAKE_DIR/events.log"
+joined="$*"
+case "$joined" in
+  *"show plasma-kwin_wayland.service"*) ;;
+  *) echo "fake systemctl: unexpected call: $joined" >&2; exit 1 ;;
+esac
+[[ -f "$FAKE_DIR/systemctl-show" ]] || { echo "fake systemctl: unit unavailable" >&2; exit 1; }
+cat -- "$FAKE_DIR/systemctl-show"
+FAKE_SYSTEMCTL
+chmod +x -- "$FAKE_BIN/systemctl"
+
+# Fake node shim: logs builder --verify invocations to builder.log plus the
+# shared events.log for ordering assertions, then delegates to real node.
+REAL_NODE="$(command -v node)"
+cat > "$FAKE_BIN/node" <<FAKE_NODE
+#!/usr/bin/env bash
+for a in "\$@"; do
+  if [[ "\$a" == "--verify" ]]; then printf '%s\n' "\$*" >> "$FAKE_DIR/builder.log"; printf 'node --verify %s\n' "\$*" >> "$FAKE_DIR/events.log"; break; fi
+done
+exec "$REAL_NODE" "\$@"
+FAKE_NODE
+chmod +x -- "$FAKE_BIN/node"
+
 export BUSCTL_BIN="$FAKE_BIN/busctl"
+export SYSTEMCTL_BIN="$FAKE_BIN/systemctl"
+export NODE_BIN="$FAKE_BIN/node"
 export FAKE_DIR
 export FAKE_DIAG="$TMP_DIR/diag.log"
 export FAKE_APPEND=1
+FAKE_PKG_ROOT="$TMP_DIR/fake-pkg"
+FAKE_LAUNCHER="$FAKE_PKG_ROOT/bin/kwin_wayland_wrapper"
+FAKE_WRAPPED="$FAKE_PKG_ROOT/bin/.kwin_wayland_wrapper-wrapped"
+FAKE_PROC="$TMP_DIR/proc"
+export PROC_ROOT="$FAKE_PROC"
+export POC3_KWIN_IDENTITY_TEST_ALLOW_NONPROC=1
+export POC3_KWIN_IDENTITY_TEST_ALLOW_NONSTORE=1
+
+proc_fixture() {
+  local pid="$1" tick="$2" exe="$3" ppid="${4:-1}"
+  local dir="$FAKE_PROC/$pid"
+  mkdir -p -- "$dir"
+  local fields="S"
+  fields+=" $ppid"
+  local k
+  for ((k = 1; k < 18; k += 1)); do fields+=' 0'; done
+  fields+=" $tick"
+  # stat layout: pid (comm) state ppid ... starttick ; ppid is field 4.
+  printf '%s (kwin_wayland) %s\n' "$pid" "$fields" > "$dir/stat"
+  rm -f -- "$dir/exe"
+  ln -s -- "$exe" "$dir/exe"
+  printf '0::/\n' > "$dir/cgroup"
+}
+
+write_systemctl_show() {
+  local exec_path="$1" mainpid="${2:-4242}"
+  cat > "$FAKE_DIR/systemctl-show" <<EOF
+Id=plasma-kwin_wayland.service
+ActiveState=active
+SubState=running
+MainPID=$mainpid
+Type=dbus
+BusName=org.kde.KWinWrapper
+ExecStart={ path=$exec_path ; argv[]=$exec_path --socket test ; ignore=no }
+FragmentPath=/run/systemd/user/plasma-kwin_wayland.service
+SourcePath=
+EOF
+}
+
+setup_kwin_identity() {
+  local mainpid="${1:-4242}"
+  mkdir -p -- "$FAKE_PKG_ROOT/bin" "$FAKE_PROC/sys/kernel/random"
+  rm -f -- "$FAKE_LAUNCHER" "$FAKE_WRAPPED"
+  printf 'launcher-fixture\n' > "$FAKE_LAUNCHER"
+  chmod 555 -- "$FAKE_LAUNCHER"
+  printf 'wrapped-fixture\n' > "$FAKE_WRAPPED"
+  chmod 555 -- "$FAKE_WRAPPED"
+  printf '12345678-1234-1234-1234-123456789abc\n' > "$FAKE_PROC/sys/kernel/random/boot_id"
+  printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
+  printf '%s\n' "$mainpid" > "$FAKE_DIR/kwin-pid"
+  rm -f -- "$FAKE_DIR/owner-seq" "$FAKE_DIR/pid-seq" "$FAKE_DIR/bad-owner-reply" "$FAKE_DIR/bad-pid-reply" "$FAKE_DIR/planner-owner" "$FAKE_DIR/bad-planner-reply" "$FAKE_DIR/planner-fail"
+  rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243" "$FAKE_PROC/9999"
+  proc_fixture "$mainpid" 424200 "$FAKE_WRAPPED" 1
+  write_systemctl_show "$FAKE_LAUNCHER" "$mainpid"
+}
 
 reset_fake() {
-  rm -f -- "$FAKE_DIR/calls.log" "$FAKE_DIR/is_loaded_count" "$FAKE_DIR/is_loaded_seq" "$FAKE_DIR/is_loaded_queue"
+  rm -f -- "$FAKE_DIR/calls.log" "$FAKE_DIR/builder.log" "$FAKE_DIR/events.log" "$FAKE_DIR/systemctl.log" "$FAKE_DIR/is_loaded_count" "$FAKE_DIR/is_loaded_seq" "$FAKE_DIR/is_loaded_queue"
+  rm -f -- "$FAKE_DIR/owner-seq" "$FAKE_DIR/pid-seq" "$FAKE_DIR/bad-owner-reply" "$FAKE_DIR/bad-pid-reply" "$FAKE_DIR/planner-owner" "$FAKE_DIR/bad-planner-reply" "$FAKE_DIR/planner-fail"
+  : > "$FAKE_DIR/events.log"
+  : > "$FAKE_DIR/calls.log"
+  rm -rf -- "$TMP_DIR/guard-tmp"
+  mkdir -p -- "$TMP_DIR/guard-tmp"
+  export TMPDIR="$TMP_DIR/guard-tmp"
   printf 'i 3' > "$FAKE_DIR/load_reply"
   printf 'interface org.kde.kwin.Script { };' > "$FAKE_DIR/introspect_reply"
   printf 'b false' > "$FAKE_DIR/is_loaded_reply"
+  printf 'b true' > "$FAKE_DIR/prod_reply"
   printf 'b true' > "$FAKE_DIR/unload_reply"
   FAKE_LOAD_EXIT=0; FAKE_INTROSPECT_EXIT=0; FAKE_RUN_EXIT=0; FAKE_STOP_EXIT=0; FAKE_UNLOAD_EXIT=0
   export FAKE_LOAD_EXIT FAKE_INTROSPECT_EXIT FAKE_RUN_EXIT FAKE_STOP_EXIT FAKE_UNLOAD_EXIT
   FAKE_ORDER="in-order"; export FAKE_ORDER
+  setup_kwin_identity 4242
 }
 
 queue_loaded() {
@@ -235,7 +447,7 @@ start_args() {
 }
 
 # 1: start success with a valid non-zero id.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r1.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 > "$TMP_DIR/o1" 2>&1; then
   pass "start accepts valid id 3"
 else
@@ -253,8 +465,34 @@ if grep -qF "loadScript ss $BUNDLE plasma-auto-tiler-advisory-describe" "$FAKE_D
 else
   fail "exact Script path and object run"
 fi
-if grep -qF 'plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log"; then fail "production untouched on start"; else pass "production untouched on start"; fi
+if grep -qF 'isScriptLoaded s plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log"; then pass "production load state proven read-only on start"; else fail "production load state proven read-only on start"; fi
+if grep -qF 'unloadScript s plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log" || grep -qF "loadScript ss $BUNDLE plasma-auto-tiler-kwin" "$FAKE_DIR/calls.log"; then fail "production never mutated on start"; else pass "production never mutated on start"; fi
 if grep -qF 'Scripting start' "$FAKE_DIR/calls.log"; then fail "no global start on start"; else pass "no global start on start"; fi
+if grep -qF -- '--verify' "$FAKE_DIR/builder.log"; then pass "builder verify ran after preflight on success"; else fail "builder verify ran after preflight on success"; fi
+if grep -qF 'GetNameOwner' "$FAKE_DIR/calls.log" && grep -qF 'GetConnectionUnixProcessID' "$FAKE_DIR/calls.log"; then pass "KWin owner/PID preflight ran before lifecycle"; else fail "KWin owner/PID preflight ran before lifecycle"; fi
+if grep -qF 'NameHasOwner' "$FAKE_DIR/calls.log"; then pass "planner NameHasOwner preflight ran"; else fail "planner NameHasOwner preflight ran"; fi
+# Shared event ordering: full preflight precedes --verify, which precedes load/run.
+assert_event_order() {
+  local label="$1"
+  local ev="$FAKE_DIR/events.log"
+  local n_pre n_verify n_load n_run
+  n_pre="$(grep -nF 'NameHasOwner' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  [[ -n "$n_pre" ]] || { fail "ordering $label misses planner preflight"; return 0; }
+  local n_owner n_pid n_prod
+  n_owner="$(grep -nF 'GetNameOwner' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  n_pid="$(grep -nF 'GetConnectionUnixProcessID' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  n_prod="$(grep -nF 'isScriptLoaded s plasma-auto-tiler-kwin' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  n_verify="$(grep -nF -- '--verify' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  n_load="$(grep -nF 'loadScript' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  n_run="$(grep -nF 'org.kde.kwin.Script run' "$ev" 2>/dev/null | head -n 1 | cut -d: -f1)"
+  [[ -n "$n_owner" && -n "$n_pid" && -n "$n_prod" && -n "$n_verify" && -n "$n_load" && -n "$n_run" ]] || { fail "ordering $label misses events"; return 0; }
+  if [[ "$n_owner" -lt "$n_verify" && "$n_pid" -lt "$n_verify" && "$n_pre" -lt "$n_verify" && "$n_prod" -lt "$n_verify" && "$n_verify" -lt "$n_load" && "$n_load" -lt "$n_run" ]]; then
+    pass "ordering $label preflight before verify before load/run"
+  else
+    fail "ordering $label preflight before verify before load/run"
+  fi
+}
+assert_event_order "start-success"
 
 # status and diagnostics against the recorded receipt only.
 printf 'b true' > "$FAKE_DIR/is_loaded_reply"
@@ -286,7 +524,7 @@ fi
 if grep -qF 'plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log"; then fail "production untouched on stop"; else pass "production untouched on stop"; fi
 
 # 2: valid id 0 is accepted (0 valid only when returned).
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 printf 'i 0' > "$FAKE_DIR/load_reply"
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r0.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 >/dev/null 2>&1 \
   && grep -qF '"scriptId":0' "$TMP_DIR/r0.json" && grep -qF '"/Scripting/Script0"' "$TMP_DIR/r0.json"; then
@@ -327,7 +565,7 @@ for reply in "i -1" "s hello" "i 2147483648" "i 99999999999" "oops"; do
 done
 
 # 6: run failure triggers partial cleanup of the exact id only.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RUN_EXIT=1; export FAKE_RUN_EXIT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-run.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 >/dev/null 2>&1; then
   fail "start must fail when run fails"
@@ -342,7 +580,7 @@ else
 fi
 
 # 7/8: wrong correlation and wrong owner in the result fail closed.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE2:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-corr.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -352,7 +590,7 @@ else
 fi
 if [[ -e "$TMP_DIR/r-corr.json" ]]; then fail "no receipt on correlation mismatch"; else pass "no receipt on correlation mismatch"; fi
 if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "correlation mismatch cleans the exact id"; else fail "correlation mismatch cleans the exact id"; fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:lost-owner:$GENERATION:$REVISION:$NONCE:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-owner.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -363,7 +601,7 @@ fi
 if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "owner loss cleans the exact id"; else fail "owner loss cleans the exact id"; fi
 
 # 7b/7c: wrong generation/revision/nonce fail closed; unversioned prefix rejected.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:WRONG:$REVISION:$NONCE:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-gen.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -371,7 +609,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects wrong generation"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:999:$NONCE:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-rev.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -379,7 +617,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects wrong revision"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE2:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-nonce.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -387,7 +625,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects wrong nonce"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-unver.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -397,7 +635,7 @@ else
 fi
 
 # 7d: mid-line prefix, empty detail, and oversize detail rejected.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="xx plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:could-execute"
 export FAKE_RESULT
 # Fake appends source/ready/result lines; prepend junk on the result line to force a mid-line match.
@@ -407,7 +645,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects a mid-line prefix"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:"
 export FAKE_RESULT
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-empty.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -415,7 +653,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects empty detail"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 BIG_DETAIL="$(printf 'a%.0s' $(seq 1 513))"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:$BIG_DETAIL"
 export FAKE_RESULT
@@ -426,7 +664,7 @@ else
 fi
 
 # 8: required after marker with invalid/mismatched rejection and drift fail-closed.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_AFTER=""; export FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-noafter.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject a missing after marker"
@@ -434,21 +672,21 @@ else
   pass "start rejects a missing after marker"
 fi
 if [[ -e "$TMP_DIR/r-noafter.json" ]]; then fail "no receipt on missing after"; else pass "no receipt on missing after"; fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_AFTER="plasma-auto-tiler:advisory-describe-after:v1:$NONCE2:true"; export FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-aftermismatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject a mismatched after marker"
 else
   pass "start rejects a mismatched after marker"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_AFTER="plasma-auto-tiler:advisory-describe-after:v1:$NONCE:maybe"; export FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-afterinvalid.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject an invalid after verdict"
 else
   pass "start rejects an invalid after verdict"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="$RESULT"; FAKE_AFTER="$AFTER_FALSE"; export FAKE_RESULT FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-drift-success.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject after drift with success detail"
@@ -456,7 +694,7 @@ else
   pass "start rejects after drift with success detail"
 fi
 if [[ -e "$TMP_DIR/r-drift-success.json" ]]; then fail "no receipt on drifted success"; else pass "no receipt on drifted success"; fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="$STALE_RESULT"; FAKE_AFTER="$AFTER_FALSE"; export FAKE_RESULT FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-drift-stale.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must refuse a receipt on stale refusal"
@@ -469,7 +707,7 @@ if grep -qF 'reject:advisory-stale-snapshot' "$TMP_DIR/diag.log"; then pass "dri
 rm -f -- "$TMP_DIR/r-drift-stale.json"
 # 8b: only could-execute with after true receives a receipt; any other valid
 # detail with after true is refused fail-closed.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="plasma-auto-tiler:advisory-describe-result:v1:$NONCE:$OWNER:$GENERATION:$REVISION:$NONCE:other-detail"; FAKE_AFTER="$AFTER"; export FAKE_RESULT FAKE_AFTER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-other.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject a non-could-execute detail"
@@ -481,7 +719,7 @@ if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/call
 rm -f -- "$TMP_DIR/r-other.json"
 # 8c: the after marker must follow the correlated result marker; a replayed
 # earlier after marker cannot satisfy start.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_RESULT="$RESULT"; FAKE_AFTER="$AFTER"; FAKE_ORDER="after-first"; export FAKE_RESULT FAKE_AFTER FAKE_ORDER
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-order.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject an after marker before the result"
@@ -493,7 +731,7 @@ if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/call
 rm -f -- "$TMP_DIR/r-order.json"
 
 # 9: timeout with no markers fails closed with exact cleanup.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_APPEND=0; export FAKE_APPEND
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-timeout.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
   fail "start must time out without markers"
@@ -507,7 +745,7 @@ else
 fi
 
 # 9b: stale pre-run markers are ignored (post-run boundary only).
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 printf '%s\n%s\n%s\n%s\n' "$FAKE_SOURCE" "$READY" "$RESULT" "$AFTER" > "$TMP_DIR/diag.log"
 FAKE_APPEND=0; export FAKE_APPEND
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-stale-mark.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
@@ -522,7 +760,7 @@ else
 fi
 
 # 9c: missing or mismatched source marker fails closed.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:0000000000000000000000000000000000000000000000000000000000000000:0000000000000000000000000000000000000000000000000000000000000000"
 export FAKE_SOURCE
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-srcbad.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 3 --delay 0.01 >/dev/null 2>&1; then
@@ -530,7 +768,7 @@ if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR
 else
   pass "start rejects a mismatched source marker"
 fi
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 FAKE_SOURCE=""; export FAKE_SOURCE
 FAKE_APPEND=1; export FAKE_APPEND
 # Empty source line cannot equal the bound marker; loader must still fail.
@@ -541,7 +779,7 @@ else
 fi
 
 # 10: missing Script interface on the exact object fails closed.
-reset_fake; seed_diag; queue_loaded "b false" "b true"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
 printf 'no interfaces here' > "$FAKE_DIR/introspect_reply"
 if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-iface.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
   fail "start must reject a foreign object"
@@ -550,7 +788,10 @@ else
 fi
 if grep -qF "unloadScript s plasma-auto-tiler-advisory-describe" "$FAKE_DIR/calls.log"; then pass "foreign object cleans the exact id"; else fail "foreign object cleans the exact id"; fi
 
-# 11: the static advisory-only gate refuses a tainted bundle before any bus call.
+# 11: the static advisory-only gate refuses a tainted bundle before any load.
+# Note: workspace-text in the bundle is opaque data (sources are deny-scanned,
+# the bundle only for ESM/imports), so this taint reaches verify after
+# preflight but still allows no load/run and no receipt.
 reset_fake; seed_diag
 mkdir -p -- "$TMP_DIR/tainted"
 cp -- "$BUNDLE" "$TMP_DIR/tainted/advisory-describe.js"
@@ -568,7 +809,35 @@ if "$LOADER" start --bundle "$TMP_DIR/tainted/advisory-describe.js" --manifest "
 else
   pass "start refuses a tainted bundle"
 fi
-if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic after static refusal"; else pass "no bus traffic after static refusal"; fi
+if grep -qF 'loadScript' "$FAKE_DIR/calls.log" 2>/dev/null || grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log" 2>/dev/null; then fail "no load/run after tainted refusal"; else pass "no load/run after tainted refusal"; fi
+if [[ -e "$TMP_DIR/r-taint.json" ]]; then fail "no receipt on tainted bundle"; else pass "no receipt on tainted bundle"; fi
+
+# 11a: truly static taint (ESM syntax in the bundle) fails before any bus
+# transport and before verify: zero bus event plus zero verify.
+reset_fake; seed_diag
+mkdir -p -- "$TMP_DIR/tainted-static"
+cp -- "$BUNDLE" "$TMP_DIR/tainted-static/advisory-describe.js"
+cp -- "$MANIFEST" "$TMP_DIR/tainted-static/advisory-describe.manifest.json"
+printf 'import x from "./y";\n' > "$TMP_DIR/tainted-static/advisory-describe.js.tmp"
+cat -- "$BUNDLE" >> "$TMP_DIR/tainted-static/advisory-describe.js.tmp"
+printf 'export const tainted = 1;\n' >> "$TMP_DIR/tainted-static/advisory-describe.js.tmp"
+mv -- "$TMP_DIR/tainted-static/advisory-describe.js.tmp" "$TMP_DIR/tainted-static/advisory-describe.js"
+TAINTED_STATIC_SHA="$(sha256sum -- "$TMP_DIR/tainted-static/advisory-describe.js" | cut -d' ' -f1)"
+node -e '
+const fs = require("node:fs");
+const m = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+m.bundleSha256 = process.argv[2];
+fs.writeFileSync(process.argv[1], JSON.stringify(m) + "\n");
+' "$TMP_DIR/tainted-static/advisory-describe.manifest.json" "$TAINTED_STATIC_SHA"
+if "$LOADER" start --bundle "$TMP_DIR/tainted-static/advisory-describe.js" --manifest "$TMP_DIR/tainted-static/advisory-describe.manifest.json" --receipt "$TMP_DIR/r-taint-static.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse a statically tainted bundle"
+else
+  pass "start refuses a statically tainted bundle"
+fi
+if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "zero bus event on static taint"; else pass "zero bus event on static taint"; fi
+if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "zero verify on static taint"; else pass "zero verify on static taint"; fi
+if [[ -f "$FAKE_DIR/events.log" ]] && [[ -s "$FAKE_DIR/events.log" ]]; then fail "zero shared events on static taint"; else pass "zero shared events on static taint"; fi
+if [[ -e "$TMP_DIR/r-taint-static.json" ]]; then fail "no receipt on static taint"; else pass "no receipt on static taint"; fi
 
 # 11b: source-valid manually altered bundle with recomputed sha refused by verify.
 reset_fake; seed_diag
@@ -588,7 +857,8 @@ if "$LOADER" start --bundle "$TMP_DIR/altered/advisory-describe.js" --manifest "
 else
   pass "start refuses a manually altered bundle"
 fi
-if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on altered bundle"; else pass "no bus traffic on altered bundle"; fi
+if grep -qF 'loadScript' "$FAKE_DIR/calls.log" || grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log"; then fail "no load/run on altered bundle"; else pass "no load/run on altered bundle"; fi
+if grep -qF -- '--verify' "$FAKE_DIR/builder.log"; then pass "altered bundle reaches verify after preflight"; else fail "altered bundle reaches verify after preflight"; fi
 if node "$BUILDER" --verify --input "$TMP_DIR/request.json" --bundle "$TMP_DIR/altered/advisory-describe.js" --manifest "$TMP_DIR/altered/advisory-describe.manifest.json" >/dev/null 2>&1; then
   fail "builder verify must reject the altered bundle"
 else
@@ -634,7 +904,7 @@ printf 'pre-run padding line\n' > "$TMP_DIR/diag.log"
 FAKE_SOURCE="plasma-auto-tiler:advisory-describe-source:$ENTRY_SHA_D:$QUERY_SHA_D:$SNAPSHOT_SHA_D"
 FAKE_READY="$READY_D"; FAKE_RESULT="$RESULT_D"; FAKE_AFTER="$AFTER_D"; FAKE_APPEND=1; FAKE_DIAG="$TMP_DIR/diag.log"
 export FAKE_SOURCE FAKE_READY FAKE_RESULT FAKE_AFTER FAKE_APPEND FAKE_DIAG
-queue_loaded "b false" "b true"
+queue_loaded "b false" "b false" "b false" "b true"
 cp -- "$TMP_DIR/request-denied-saved.json" "$TMP_DIR/request.json"
 if node "$BUILDER" --input "$TMP_DIR/request.json" --out "$BUNDLE" >/dev/null 2>&1; then pass "fixture rebuilt for denied-text"; else fail "fixture rebuilt for denied-text"; fi
 seed_diag
@@ -683,6 +953,7 @@ else
   pass "start refuses stale build identity"
 fi
 if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on stale identity"; else pass "no bus traffic on stale identity"; fi
+if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "no builder verify on stale identity"; else pass "no builder verify on stale identity"; fi
 
 # 13: start refuses when a receipt is already recorded.
 reset_fake; seed_diag
@@ -693,6 +964,7 @@ else
   pass "start refuses an existing receipt"
 fi
 if [[ -s "$FAKE_DIR/calls.log" ]]; then fail "no bus traffic on existing receipt"; else pass "no bus traffic on existing receipt"; fi
+if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "no builder verify on existing receipt"; else pass "no builder verify on existing receipt"; fi
 
 # 13b: symlink receipt refused exclusively with no overwrite and no bus traffic.
 reset_fake; seed_diag
@@ -731,8 +1003,249 @@ else
   pass "start refuses an already-loaded plugin"
 fi
 if grep -qF 'loadScript' "$FAKE_DIR/calls.log"; then fail "no loadScript when already loaded"; else pass "no loadScript when already loaded"; fi
-if grep -qF 'plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log"; then fail "production untouched on already-loaded"; else pass "production untouched on already-loaded"; fi
+if grep -qF 'unloadScript s plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log"; then fail "production never mutated on already-loaded"; else pass "production never mutated on already-loaded"; fi
 if [[ -e "$TMP_DIR/r-already.json" ]]; then fail "no receipt when already loaded"; else pass "no receipt when already loaded"; fi
+if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "no builder verify when already loaded"; else pass "no builder verify when already loaded"; fi
+
+# 13e: host immutable preflight is resource-free until all checks pass.
+# Each failure must show no builder verify, no load/run, no receipt, no
+# resource creation in the guarded TMPDIR.
+preflight_no_resources() {
+  local label="$1" receipt="$2"
+  if [[ -s "$FAKE_DIR/builder.log" ]]; then fail "no builder verify on $label"; else pass "no builder verify on $label"; fi
+  if [[ -f "$FAKE_DIR/calls.log" ]] && { grep -qF 'loadScript' "$FAKE_DIR/calls.log" 2>/dev/null || grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log" 2>/dev/null; }; then
+    fail "no load/run on $label"
+  else
+    pass "no load/run on $label"
+  fi
+  if [[ -e "$receipt" ]]; then fail "no receipt on $label"; else pass "no receipt on $label"; fi
+  if [[ -d "$TMP_DIR/guard-tmp" ]] && [[ -n "$(ls -A -- "$TMP_DIR/guard-tmp" 2>/dev/null)" ]]; then
+    fail "no guard-tmp resources on $label"
+  else
+    pass "no guard-tmp resources on $label"
+  fi
+  if [[ -f "$FAKE_DIR/events.log" ]] && grep -qF -- '--verify' "$FAKE_DIR/events.log" 2>/dev/null; then
+    fail "no verify event on $label"
+  else
+    pass "no verify event on $label"
+  fi
+}
+
+# Canonical executable unreadability / fallback failure (no unit).
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+rm -f -- "$FAKE_DIR/systemctl-show"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-exe.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse unreadable executable fallback"
+else
+  pass "start refuses unreadable executable fallback"
+fi
+preflight_no_resources "unreadable executable fallback" "$TMP_DIR/r-pre-exe.json"
+
+# Owner drift between preflight and recheck.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf ':1.10\n:1.11\n' > "$FAKE_DIR/owner-seq"
+printf '4242\n4242\n' > "$FAKE_DIR/pid-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-owner.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse owner drift"
+else
+  pass "start refuses owner drift"
+fi
+preflight_no_resources "owner drift" "$TMP_DIR/r-pre-owner.json"
+
+# PID drift between preflight and recheck.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+proc_fixture 4243 424300 "$FAKE_WRAPPED" 1
+printf '4242\n4243\n' > "$FAKE_DIR/pid-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-pid.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse PID drift"
+else
+  pass "start refuses PID drift"
+fi
+preflight_no_resources "PID drift" "$TMP_DIR/r-pre-pid.json"
+
+# Executable drift between preflight and recapture (same owner, different PID
+# with a different executable identity must fail exact exe comparison).
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+mkdir -p -- "$TMP_DIR/fake-pkg-alt/bin"
+printf 'alt-wrapped-fixture\n' > "$TMP_DIR/fake-pkg-alt/bin/.kwin_wayland_wrapper-wrapped"
+chmod 555 -- "$TMP_DIR/fake-pkg-alt/bin/.kwin_wayland_wrapper-wrapped"
+printf 'alt-launcher-fixture\n' > "$TMP_DIR/fake-pkg-alt/bin/kwin_wayland_wrapper"
+chmod 555 -- "$TMP_DIR/fake-pkg-alt/bin/kwin_wayland_wrapper"
+proc_fixture 4243 424300 "$TMP_DIR/fake-pkg-alt/bin/.kwin_wayland_wrapper-wrapped" 1
+printf '4242\n4243\n' > "$FAKE_DIR/pid-seq"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-exe-drift.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse executable drift"
+else
+  pass "start refuses executable drift"
+fi
+preflight_no_resources "executable drift" "$TMP_DIR/r-pre-exe-drift.json"
+
+# Fallback mismatch: MainPID mismatch without a valid direct-parent topology.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+write_systemctl_show "$FAKE_LAUNCHER" "9999"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-fallback.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse fallback mismatch"
+else
+  pass "start refuses fallback mismatch"
+fi
+preflight_no_resources "fallback mismatch" "$TMP_DIR/r-pre-fallback.json"
+# Exact MainPID mismatch must attempt direct-parent (2 systemctl calls for the
+# first failed capture), proving the anchored gate is reached.
+if [[ -f "$FAKE_DIR/systemctl.log" ]] && [[ "$(wc -l < "$FAKE_DIR/systemctl.log" | tr -d ' ')" == "2" ]]; then
+  pass "exact mismatch reaches direct-parent"
+else
+  fail "exact mismatch reaches direct-parent"
+fi
+
+# Synthetic anchored-gate test: non-exact messages must not match the strict
+# line-anchored MainPID pattern (no helper modification).
+STRICT_PAT='^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'
+if printf '%s\n' 'error: unit MainPID 4242 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
+  pass "strict gate accepts the exact mismatch line"
+else
+  fail "strict gate accepts the exact mismatch line"
+fi
+if printf '%s\n' 'xx error: unit MainPID 4242 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
+  fail "strict gate rejects prefixed mismatch"
+else
+  pass "strict gate rejects prefixed mismatch"
+fi
+if printf '%s\n' 'error: unit MainPID 4242 does not match KWin PID 4243 extra' | grep -Eq "$STRICT_PAT"; then
+  fail "strict gate rejects suffixed mismatch"
+else
+  pass "strict gate rejects suffixed mismatch"
+fi
+if printf '%s\n' 'error: unit MainPID 0 does not match KWin PID 4243' | grep -Eq "$STRICT_PAT"; then
+  fail "strict gate rejects non-canonical PID"
+else
+  pass "strict gate rejects non-canonical PID"
+fi
+# Non-MainPID failure must not reach direct-parent: valid direct-parent
+# topology but missing unit (ordinary fails with unit unavailable, not the
+# exact mismatch) must show exactly 1 systemctl call.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243"
+proc_fixture 4242 424100 "$FAKE_WRAPPED" 1
+proc_fixture 4243 424200 "$FAKE_WRAPPED" 4242
+printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
+printf '4243\n' > "$FAKE_DIR/kwin-pid"
+rm -f -- "$FAKE_DIR/systemctl-show"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-nonmatch.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse non-mismatch fallback failure"
+else
+  pass "start refuses non-mismatch fallback failure"
+fi
+preflight_no_resources "non-mismatch fallback failure" "$TMP_DIR/r-pre-nonmatch.json"
+if [[ -f "$FAKE_DIR/systemctl.log" ]] && [[ "$(wc -l < "$FAKE_DIR/systemctl.log" | tr -d ' ')" == "1" ]]; then
+  pass "non-exact message does not reach direct-parent"
+else
+  fail "non-exact message does not reach direct-parent"
+fi
+
+# Production absent (must be loaded).
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf 'b false' > "$FAKE_DIR/prod_reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-prod.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse absent production"
+else
+  pass "start refuses absent production"
+fi
+preflight_no_resources "absent production" "$TMP_DIR/r-pre-prod.json"
+
+# Planner collision (must be absent).
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf ':1.99\n' > "$FAKE_DIR/planner-owner"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-planner.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse planner collision"
+else
+  pass "start refuses planner collision"
+fi
+preflight_no_resources "planner collision" "$TMP_DIR/r-pre-planner.json"
+
+# Planner transport failure must fail closed with no verify/load/run/receipt.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+: > "$FAKE_DIR/planner-fail"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-planner-transport.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse planner transport failure"
+else
+  pass "start refuses planner transport failure"
+fi
+preflight_no_resources "planner transport failure" "$TMP_DIR/r-pre-planner-transport.json"
+
+# Planner malformed boolean/reply must fail closed with no verify/load/run.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf 'garbage' > "$FAKE_DIR/bad-planner-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-planner-malformed.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse malformed planner boolean"
+else
+  pass "start refuses malformed planner boolean"
+fi
+preflight_no_resources "malformed planner boolean" "$TMP_DIR/r-pre-planner-malformed.json"
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf '{"type":"s","data":["x"]}' > "$FAKE_DIR/bad-planner-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-planner-malformed2.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse malformed planner reply type"
+else
+  pass "start refuses malformed planner reply type"
+fi
+preflight_no_resources "malformed planner reply type" "$TMP_DIR/r-pre-planner-malformed2.json"
+
+# Malformed KWin owner output.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf 'garbage' > "$FAKE_DIR/bad-owner-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-badowner.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse malformed owner output"
+else
+  pass "start refuses malformed owner output"
+fi
+preflight_no_resources "malformed owner" "$TMP_DIR/r-pre-badowner.json"
+
+# Malformed KWin PID output.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+printf '{"type":"u","data":[]}' > "$FAKE_DIR/bad-pid-reply"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-badpid.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse malformed PID output"
+else
+  pass "start refuses malformed PID output"
+fi
+preflight_no_resources "malformed PID" "$TMP_DIR/r-pre-badpid.json"
+
+# Tool mismatch: missing systemctl tool fails closed before verify.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+if SYSTEMCTL_BIN="/nonexistent-systemctl" "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-pre-tool.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 2 --delay 0.01 >/dev/null 2>&1; then
+  fail "start must refuse a missing tool"
+else
+  pass "start refuses a missing tool"
+fi
+preflight_no_resources "tool mismatch" "$TMP_DIR/r-pre-tool.json"
+
+# 13f: approved direct-parent fallback success with production loaded and
+# absence checks before verify then lifecycle.
+reset_fake; seed_diag; queue_loaded "b false" "b false" "b false" "b true"
+rm -rf -- "$FAKE_PROC/4242" "$FAKE_PROC/4243"
+proc_fixture 4242 424100 "$FAKE_WRAPPED" 1
+proc_fixture 4243 424200 "$FAKE_WRAPPED" 4242
+printf ':1.10\n' > "$FAKE_DIR/kwin-owner"
+printf '4243\n' > "$FAKE_DIR/kwin-pid"
+write_systemctl_show "$FAKE_LAUNCHER" "4242"
+if "$LOADER" start --bundle "$BUNDLE" --manifest "$MANIFEST" --receipt "$TMP_DIR/r-direct.json" --diag-file "$TMP_DIR/diag.log" --input "$TMP_DIR/request.json" --attempts 5 --delay 0.01 >/dev/null 2>&1; then
+  pass "start accepts approved direct-parent fallback"
+else
+  fail "start accepts approved direct-parent fallback"
+fi
+if grep -qF '"scriptId":3' "$TMP_DIR/r-direct.json"; then pass "direct-parent receipt records the exact id"; else fail "direct-parent receipt records the exact id"; fi
+if grep -qF -- '--verify' "$FAKE_DIR/builder.log" && grep -qF 'loadScript ss' "$FAKE_DIR/calls.log" && grep -qF ' org.kde.kwin.Script run' "$FAKE_DIR/calls.log"; then
+  pass "direct-parent runs verify before lifecycle"
+else
+  fail "direct-parent runs verify before lifecycle"
+fi
+if grep -qF 'isScriptLoaded s plasma-auto-tiler-kwin' "$FAKE_DIR/calls.log" && grep -qF 'GetNameOwner' "$FAKE_DIR/calls.log"; then
+  pass "direct-parent proves production plus absence before verify"
+else
+  fail "direct-parent proves production plus absence before verify"
+fi
+assert_event_order "direct-parent-success"
+rm -f -- "$TMP_DIR/r-direct.json"
 
 # 14: stop and status fail closed on stale/malformed receipts with no bus calls.
 reset_fake

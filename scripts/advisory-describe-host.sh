@@ -6,8 +6,8 @@
 # authorized host pass, and only through the exact recorded receipt of this
 # namespace. Static checks and fake-command tests cover the contract instead.
 #
-# The advisory bundle is read-only coexistence-safe: production stays loaded
-# and is never queried, unloaded, or reloaded here. Before any transport the
+# The advisory bundle is read-only coexistence-safe: production must stay
+# loaded and is never unloaded or reloaded here. Before any transport the
 # loader proves advisory-only shape against the exact current sources (pinned
 # to the manifest shas and embedded in the bundle), checks the bundle only
 # for IIFE/no-ESM/no-imports/no-source-map structure, requires byte-exact
@@ -58,12 +58,18 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+# Canonical shared systemd-backed KWin identity helper (authorized fallback
+# only). Sourced for the read-only host immutable preflight below.
+# shellcheck source=./poc3-host-kwin-identity.sh
+. "$REPO_ROOT/scripts/poc3-host-kwin-identity.sh"
 KWIN_DIR="$REPO_ROOT/kwin"
 SRC_ENTRY="$KWIN_DIR/src/advisory-describe-entry.ts"
 SRC_QUERY="$KWIN_DIR/src/advisory-plan-query.ts"
 SRC_SNAPSHOT="$KWIN_DIR/src/advisory-snapshot.ts"
 BUILDER="$REPO_ROOT/scripts/advisory-describe-build.mjs"
 PLUGIN="plasma-auto-tiler-advisory-describe"
+PRODUCTION_PLUGIN="plasma-auto-tiler-kwin"
+PLANNER_SERVICE="org.plasmaautotiler.Planner"
 BUNDLE_BASENAME="advisory-describe.js"
 MANIFEST_BASENAME="advisory-describe.manifest.json"
 MANIFEST_SCHEMA="advisory-describe-manifest-v1"
@@ -75,6 +81,17 @@ RESULT_DETAIL_RE='^[A-Za-z0-9._:-]{1,512}$'
 : "${BUSCTL_BIN:=busctl}"
 : "${SHA256SUM_BIN:=sha256sum}"
 : "${NODE_BIN:=node}"
+: "${SYSTEMCTL_BIN:=systemctl}"
+: "${STAT_BIN:=stat}"
+: "${READLINK_BIN:=readlink}"
+: "${PROC_ROOT:=/proc}"
+: "${POC3_KWIN_IDENTITY_TEST_ALLOW_NONPROC:=0}"
+: "${POC3_KWIN_IDENTITY_TEST_ALLOW_NONSTORE:=0}"
+
+BUS_SCOPE="--user"
+DBUS_SERVICE="org.freedesktop.DBus"
+DBUS_PATH="/org/freedesktop/DBus"
+DBUS_IFACE="org.freedesktop.DBus"
 
 BUS_DEST="org.kde.KWin"
 BUS_PATH="/Scripting"
@@ -89,7 +106,7 @@ RECEIPT_PATH=""
 # Fixed static advisory-only shape. Allow tokens must each occur in the
 # exact bundle bytes; deny tokens must each be absent. This gate runs before
 # any transport and is what permits coexistence with a loaded production
-# plugin (which is never queried here).
+# plugin (whose load state is checked read-only during preflight).
 ALLOW_TOKENS=(
   "AdvisoryPlanQuery"
   "DescribeAdvisoryPlan"
@@ -190,8 +207,8 @@ bundle. Not invoked now; covered by static checks and fake-command tests.
   stop --receipt R
   --help  show this help and exit
 
-Fixed plugin id plasma-auto-tiler-advisory-describe. Production is never queried, unloaded,
-or reloaded. Transport uses loadScript with the exact bundle, introspects
+Fixed plugin id plasma-auto-tiler-advisory-describe. Production is checked
+read-only and is never unloaded or reloaded. Transport uses loadScript with the exact bundle, introspects
 only the returned /Scripting/Script<ID> object, and runs only that object
 (never a global start). Receipts carry exact bundle sha, source bindings,
 and KWin identity; stop unloads only the recorded exact id.
@@ -420,6 +437,169 @@ require_receipt_parent() {
   [[ -d "$parent" ]] || { echo "error: receipt parent must be a real directory: $parent" >&2; return 1; }
 }
 
+# Host immutable preflight (read-only, resource-free, no temp files).
+# Resolves the current org.kde.KWin unique owner plus PID via busctl
+# --json=short, strict-parses the JSON with the pinned Node tool, pins the
+# /proc start tick paren-safe, then runs the exact authorized helper route:
+# ordinary poc3_kwin_systemd_fallback first; direct-parent only when the
+# ordinary route refuses with the exact MainPID mismatch; readable exe must
+# agree inside the helpers. Production must be loaded, advisory absent,
+# Planner name absent. Owner/PID/tick are rechecked after the immutable
+# checks and before any resource-creating verify/lifecycle; drift fails
+# closed. All captures stay in memory (command substitution, mapfile);
+# no mktemp, no dirs, no receipts, no services, no scripts before preflight.
+kwin_unique_owner() {
+  local out="" owner=""
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" GetNameOwner s "$BUS_DEST" 2>/dev/null)" || {
+    echo "error: current host KWin service org.kde.KWin is not available (no unique bus owner)" >&2
+    return 1
+  }
+  owner="$(OWNER_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.OWNER_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed GetNameOwner reply for org.kde.KWin"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed GetNameOwner reply for org.kde.KWin"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed GetNameOwner reply for org.kde.KWin"); process.exit(1); }
+if (v.type !== "s") { console.error("error: malformed GetNameOwner reply for org.kde.KWin"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "string") { console.error("error: malformed GetNameOwner reply for org.kde.KWin"); process.exit(1); }
+if (!/^:[0-9]+\.[0-9]+$/.test(v.data[0])) { console.error("error: owner for org.kde.KWin is not a unique name"); process.exit(1); }
+process.stdout.write(v.data[0]);
+' 2>/dev/null)" || {
+    echo "error: malformed GetNameOwner reply for org.kde.KWin" >&2
+    return 1
+  }
+  [[ "$owner" =~ ^:[0-9]+\.[0-9]+$ ]] || {
+    echo "error: owner for org.kde.KWin is not a unique name: $owner" >&2
+    return 1
+  }
+  printf '%s' "$owner"
+}
+
+kwin_pid_for_owner() {
+  local owner="$1" out="" pid=""
+  [[ "$owner" =~ ^:[0-9]+\.[0-9]+$ ]] || { echo "error: KWin owner is not a unique name: $owner" >&2; return 1; }
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" GetConnectionUnixProcessID s "$owner" 2>/dev/null)" || {
+    echo "error: could not resolve the Unix PID for KWin owner $owner" >&2
+    return 1
+  }
+  pid="$(PID_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.PID_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (v.type !== "u") { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "number" || !Number.isInteger(v.data[0])) { console.error("error: malformed GetConnectionUnixProcessID reply"); process.exit(1); }
+if (!/^[1-9][0-9]*$/.test(String(v.data[0])) || v.data[0] <= 0 || v.data[0] > 4294967295) { console.error("error: KWin owner PID is malformed"); process.exit(1); }
+process.stdout.write(String(v.data[0]));
+' 2>/dev/null)" || {
+    echo "error: malformed GetConnectionUnixProcessID reply for $owner" >&2
+    return 1
+  }
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || {
+    echo "error: KWin owner PID is malformed: $pid" >&2
+    return 1
+  }
+  printf '%s' "$pid"
+}
+
+proc_start_tick() {
+  local pid="$1" stat_line="" stat_pid="" rest=""
+  [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+  stat_line="$(<"$PROC_ROOT/$pid/stat")" || return 1
+  [[ "$stat_line" != *$'\n'* ]] || return 1
+  stat_pid="${stat_line%% *}"
+  [[ "$stat_pid" == "$pid" ]] || return 1
+  rest="${stat_line##*) }"
+  [[ "$rest" != "$stat_line" ]] || return 1
+  local -a fields=()
+  read -r -a fields <<<"$rest" || return 1
+  [[ "${#fields[@]}" -ge 20 && "${fields[0]:-}" =~ ^[A-Za-z]$ ]] || return 1
+  [[ "${fields[0]}" != "Z" ]] || return 1
+  [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
+  printf '%s' "${fields[19]}"
+}
+
+check_planner_absent() {
+  local out="" has=""
+  out="$("$BUSCTL_BIN" "$BUS_SCOPE" --json=short call "$DBUS_SERVICE" "$DBUS_PATH" "$DBUS_IFACE" NameHasOwner s "$PLANNER_SERVICE" 2>/dev/null)" || {
+    echo "error: planner absence check failed for $PLANNER_SERVICE (transport failure)" >&2
+    return 1
+  }
+  has="$(HAS_JSON="$out" "$NODE_BIN" -e '
+const raw = process.env.HAS_JSON || "";
+let v;
+try { v = JSON.parse(raw); } catch (e) { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (typeof v !== "object" || v === null || Array.isArray(v)) { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+const keys = Object.keys(v).sort();
+if (keys.length !== 2 || keys[0] !== "data" || keys[1] !== "type") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (v.type !== "b") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+if (!Array.isArray(v.data) || v.data.length !== 1 || typeof v.data[0] !== "boolean") { console.error("error: malformed NameHasOwner reply"); process.exit(1); }
+process.stdout.write(v.data[0] ? "true" : "false");
+' 2>/dev/null)" || {
+    echo "error: malformed NameHasOwner reply for $PLANNER_SERVICE" >&2
+    return 1
+  }
+  [[ "$has" == "true" || "$has" == "false" ]] || {
+    echo "error: malformed NameHasOwner reply for $PLANNER_SERVICE" >&2
+    return 1
+  }
+  if [[ "$has" == "true" ]]; then
+    echo "error: planner service $PLANNER_SERVICE is present; refusing coexistence collision" >&2
+    return 1
+  fi
+  return 0
+}
+
+# Single KWin identity capture via the exact authorized helper route.
+# Prints owner/pid/tick/exe/source on separate lines (source is systemd or
+# systemd-direct-parent). In-memory only: helper output is captured in a
+# variable and split with mapfile; no temp files.
+kwin_identity_once() {
+  local owner="" pid="" tick=""
+  owner="$(kwin_unique_owner)" || return 1
+  pid="$(kwin_pid_for_owner "$owner")" || return 1
+  tick="$(proc_start_tick "$pid")" || {
+    echo "error: KWin PID $pid is stale or unreadable (PID reuse suspected)" >&2
+    return 1
+  }
+  local combined=""
+  if combined="$(poc3_kwin_systemd_fallback "$owner" "$pid" "$tick" 2>&1)"; then
+    local -a lines=()
+    mapfile -t lines <<<"$combined" || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+    # Command substitution strips trailing newlines, so an empty SourcePath
+    # (21st line empty) arrives as 20 lines; a non-empty source arrives as 21.
+    if [[ "${#lines[@]}" -eq 20 ]]; then
+      lines+=( "" )
+    fi
+    [[ "${#lines[@]}" -eq 21 ]] || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+    [[ -n "${lines[0]}" ]] || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+    printf '%s\n%s\n%s\n%s\n%s\n' "$owner" "$pid" "$tick" "${lines[0]}" "systemd"
+    return 0
+  else
+    local err="$combined"
+    if printf '%s\n' "$err" | grep -Eq '^error: unit MainPID [1-9][0-9]* does not match KWin PID [1-9][0-9]*$'; then
+      local dp_combined=""
+      if dp_combined="$(poc3_kwin_direct_parent_fallback "$owner" "$pid" "$tick" 2>&1)"; then
+        local -a dp_lines=()
+        mapfile -t dp_lines <<<"$dp_combined" || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+        [[ "${#dp_lines[@]}" -eq 25 ]] || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+        [[ -n "${dp_lines[0]}" && "${dp_lines[24]}" == "direct-parent" ]] || { echo "error: KWin systemd identity capture is ambiguous" >&2; return 1; }
+        printf '%s\n%s\n%s\n%s\n%s\n' "$owner" "$pid" "$tick" "${dp_lines[0]}" "systemd-direct-parent"
+        return 0
+      else
+        echo "error: KWin PID $pid executable identity is unreadable and systemd fallback failed" >&2
+        return 1
+      fi
+    else
+      echo "error: KWin PID $pid executable identity is unreadable and systemd fallback failed" >&2
+      return 1
+    fi
+  fi
+}
+
 # Bounded correlated marker scan: only bytes appended after the pre-run
 # boundary (fixed 64KiB tail window of the post-run slice). Exact-line mode
 # requires a full-line match; prefix mode requires the fixed prefix at column
@@ -521,6 +701,9 @@ cmd_start() {
   command -v "$BUSCTL_BIN" >/dev/null 2>&1 || fail "required tool '$BUSCTL_BIN' not found in PATH"
   command -v "$SHA256SUM_BIN" >/dev/null 2>&1 || fail "required tool '$SHA256SUM_BIN' not found in PATH"
   command -v "$NODE_BIN" >/dev/null 2>&1 || fail "required tool '$NODE_BIN' not found in PATH"
+  command -v "$SYSTEMCTL_BIN" >/dev/null 2>&1 || fail "required tool '$SYSTEMCTL_BIN' not found in PATH"
+  command -v "$STAT_BIN" >/dev/null 2>&1 || fail "required tool '$STAT_BIN' not found in PATH"
+  command -v "$READLINK_BIN" >/dev/null 2>&1 || fail "required tool '$READLINK_BIN' not found in PATH"
   require_regular_file "$START_BUNDLE" "bundle"
   require_regular_file "$START_MANIFEST" "manifest"
   require_regular_file "$START_DIAG" "diag file"
@@ -556,6 +739,48 @@ cmd_start() {
   grep -Fq -- "$MANIFEST_QUERY_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded query source binding"
   grep -Fq -- "$MANIFEST_SNAPSHOT_SHA" "$START_BUNDLE" || fail "bundle lacks the embedded snapshot source binding"
   prove_advisory_only "$START_BUNDLE" || exit 1
+  # Host immutable preflight (resource-free, read-only, in-memory only).
+  # KWin full executable identity via kwin_identity_once, production loaded,
+  # advisory absent, Planner absent via strict NameHasOwner, then a final
+  # resource-free immutable recapture with exact (owner,pid,tick,exe,source)
+  # comparison plus production/advisory/Planner checks again. Any drift or
+  # collision fails closed before the resource-creating builder verify below
+  # (which creates mkdtemp) and before any load/run/receipt. No mktemp, no
+  # mkdtemp, no mkdir, no touch, no file-creating redirection here.
+  local KWIN_OWNER="" KWIN_PID="" KWIN_TICK="" KWIN_EXE="" KWIN_SOURCE=""
+  local _pre_out=""
+  _pre_out="$(kwin_identity_once)" || exit 1
+  local -a _pre=()
+  mapfile -t _pre <<<"$_pre_out" || fail "KWin identity capture is ambiguous"
+  [[ "${#_pre[@]}" -eq 5 ]] || fail "KWin identity capture is ambiguous"
+  KWIN_OWNER="${_pre[0]}"
+  KWIN_PID="${_pre[1]}"
+  KWIN_TICK="${_pre[2]}"
+  KWIN_EXE="${_pre[3]}"
+  KWIN_SOURCE="${_pre[4]}"
+  [[ -n "$KWIN_OWNER" && -n "$KWIN_PID" && -n "$KWIN_TICK" && -n "$KWIN_EXE" ]] || fail "KWin identity capture is ambiguous"
+  [[ "$KWIN_SOURCE" == "systemd" || "$KWIN_SOURCE" == "systemd-direct-parent" ]] || fail "KWin identity source is ambiguous"
+  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  check_planner_absent || exit 1
+  local RE_OWNER="" RE_PID="" RE_TICK="" RE_EXE="" RE_SOURCE=""
+  local _re_out=""
+  _re_out="$(kwin_identity_once)" || fail "KWin identity recapture failed"
+  local -a _re=()
+  mapfile -t _re <<<"$_re_out" || fail "KWin identity recapture is ambiguous"
+  [[ "${#_re[@]}" -eq 5 ]] || fail "KWin identity recapture is ambiguous"
+  RE_OWNER="${_re[0]}"
+  RE_PID="${_re[1]}"
+  RE_TICK="${_re[2]}"
+  RE_EXE="${_re[3]}"
+  RE_SOURCE="${_re[4]}"
+  [[ "$RE_OWNER" == "$KWIN_OWNER" ]] || fail "KWin unique owner drift detected; refusing ambiguous identity"
+  [[ "$RE_PID" == "$KWIN_PID" && "$RE_TICK" == "$KWIN_TICK" ]] || fail "KWin PID/start-tick drift detected; refusing ambiguous identity (PID reuse suspected)"
+  [[ "$RE_EXE" == "$KWIN_EXE" ]] || fail "KWin executable drift detected; refusing ambiguous identity"
+  [[ "$RE_SOURCE" == "$KWIN_SOURCE" ]] || fail "KWin identity source drift detected; refusing ambiguous identity"
+  [[ "$(loaded_word "$PRODUCTION_PLUGIN")" == "loaded" ]] || fail "production plugin '$PRODUCTION_PLUGIN' must be loaded before advisory start"
+  [[ "$(loaded_word "$PLUGIN")" == "not-loaded" ]] || fail "plugin '$PLUGIN' is already loaded; stop the recorded script first"
+  check_planner_absent || exit 1
   # Deterministic rebuild verification before any bus transport: rejects a
   # manually altered bundle even when its manifest bundle sha was recomputed.
   # The verify path rebuilds to a temp directory and never writes dist outputs.

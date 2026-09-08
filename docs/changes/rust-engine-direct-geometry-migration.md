@@ -197,6 +197,27 @@ production behavior through incremental opt-in promotion.
   service-loss, zero-mutation, production-continuity, or exact-restoration live
   claim is made. The accepted transport limit remains owner-pinned
   same-session evidence only, not resistance to a hostile same-UID planner.
+- Resource-order correction and bounded host preflight, 2026-09-08: the
+  advisory loader now performs all source/tool checks and its complete
+  read-only KWin owner/PID/start-tick/executable identity route before its
+  deterministic rebuild scratch space, receipt, or Script lifecycle. It uses
+  only the reviewed systemd fallback, with the direct-parent route available
+  only for the exact documented MainPID mismatch. Production must be loaded;
+  the advisory plugin and Planner name must be absent; owner, PID, tick,
+  executable, and identity source are captured twice and must agree. Planner
+  absence uses a strict `NameHasOwner` false reply, so transport or malformed
+  replies fail closed. Focused loader tests prove no resource for identity,
+  fallback, production, collision, planner-diagnostic, malformed-output, and
+  tool/source failures; shell identity tests, KWin advisory tests, Rust
+  advisory/service tests, format/check/test, and focused Clippy pass. The
+  user's unidentified prior advisory runtime residue is explicitly preserved:
+  it was not searched, inspected, identified, modified, or deleted. One fresh
+  resource-free host preflight stopped because the current KWin identity did
+  not satisfy the reviewed fallback route and Planner absence returned an
+  unexpected diagnostic. No planner, advisory Script, runtime directory,
+  artifact, receipt, or service was created. No success, stale, service-loss,
+  zero-mutation, production-continuity, or restoration live evidence is
+  claimed; the transport gate remains open.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

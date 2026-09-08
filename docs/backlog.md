@@ -27,15 +27,22 @@ Only meaningful pending or active work is listed.
     preserves production-plugin continuity. Focused observer/entry/builder/
     loader tests cover snapshot drift, result correlation, stale refusal,
     source absence of `queryWindowInfo`, and partial cleanup. One authorized
-    host preflight after this correction stopped before planner or advisory
-    Script creation because canonical KWin executable readback was unavailable.
-    It created one fresh project runtime directory before the failed identity
-    check but did not retain its exact generated identity, so that directory is
-    ambiguous residue and must not be broadly discovered or cleaned. The
-    standing authorization is therefore blocked. The remaining gate is user
-    direction for that residue, then a newly authorized bounded journey with
-    success, stale request/revision/generation refusal, service-loss refusal,
-    zero-mutation, production continuity, and exact restoration evidence. The static
+    host preflight created one fresh project runtime directory before the
+    failed identity check but did not retain its exact generated identity, so
+    that directory is ambiguous residue and must not be broadly discovered,
+    identified, inspected, or cleaned. The user explicitly preserves it
+    untouched and reinstated standing authorization after the resource-order
+    correction. The corrected loader now completes source/tool validation and
+    full KWin owner/PID/start-tick/executable identity through the approved
+    systemd/direct-parent fallback, production-loaded, advisory-absence, and
+    Planner-absence checks before deterministic rebuild scratch space or any
+    lifecycle resource. Its one fresh resource-free host preflight stopped on
+    the current host's reviewed identity route and an unexpected Planner
+    absence diagnostic; no planner, advisory Script, runtime directory,
+    artifact, receipt, or service was created. The remaining gate is a newly
+    safe bounded journey with success, stale request/revision/generation
+    refusal, service-loss refusal, zero-mutation, production continuity, and
+    exact restoration evidence. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved
