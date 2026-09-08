@@ -2,7 +2,11 @@
 //!
 //! Contract identity: service `org.plasmaautotiler.Planner`, object
 //! `/org/plasmaautotiler/Planner`, interface `org.plasmaautotiler.Planner1`,
-//! method `EvaluateMove` (JSON string request -> JSON string reply).
+//! methods `EvaluateMove` (frozen JSON string request -> JSON string reply)
+//! and `DescribeAdvisoryPlan` (read-only v1 advisory request -> advisory
+//! plan reply with exactly three normalized opaque windows, delegated through
+//! the portable `cosmic_v1` core; no native command/execution fields and no
+//! mutation). The POC-shaped `EvaluatePoc3` route is removed.
 //!
 //! Boundary rules: no Rust-to-KWin calls (only `org.freedesktop.DBus`
 //! owner/credential queries for caller verification), no persistence, no tray
@@ -23,16 +27,15 @@ use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::message::Type;
 use zbus::{MatchRule, fdo::NameOwnerChanged};
 
+use crate::advisory_contract::{ADVISORY_MAX_REPLY_BYTES, AdvisorySession, evaluate_advisory_json};
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
-use crate::poc3::Poc3Engine;
-use crate::poc3_contract::{POC3_MAX_REPLY_BYTES, evaluate_poc3_json};
 use crate::tray_lifecycle::{ProcProcessControl, ProcessControl, ProcessIdentity};
 
 pub const SERVICE: &str = "org.plasmaautotiler.Planner";
 pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
 pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
 pub const METHOD: &str = "EvaluateMove";
-pub const POC3_METHOD: &str = "EvaluatePoc3";
+pub const ADVISORY_METHOD: &str = "DescribeAdvisoryPlan";
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -87,9 +90,11 @@ struct CallerIdentity {
 #[derive(Clone, Debug)]
 pub struct PlannerEndpoint {
     operation_lock: Arc<async_lock::Mutex<()>>,
-    // POC3 session engine held in process memory only. Shared across endpoint
-    // clones so the single manually started service owns exactly one session.
-    poc3_engine: Arc<std::sync::Mutex<Poc3Engine>>,
+    // Read-only advisory session tracker held in process memory only. Shared
+    // across endpoint clones so the single manually started service owns
+    // exactly one pinned owner/generation/revision binding. The pinned
+    // revision never advances; advisory evaluation performs no mutation.
+    advisory_session: Arc<std::sync::Mutex<AdvisorySession>>,
 }
 
 impl PlannerEndpoint {
@@ -97,20 +102,21 @@ impl PlannerEndpoint {
     pub fn new() -> Self {
         Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
-            poc3_engine: Arc::new(std::sync::Mutex::new(Poc3Engine::new())),
+            advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
         }
     }
 
-    /// Synchronous POC3 request route over the shared in-process engine.
-    /// The caller must hold the single-flight `operation_lock` guard and have
-    /// passed caller verification; this only locks the engine briefly with no
-    /// awaits while held. A poisoned engine is terminal fail-closed.
-    fn evaluate_poc3_request(&self, request: &str) -> Result<String, PlannerError> {
-        let mut engine = self
-            .poc3_engine
+    /// Synchronous read-only advisory request route over the shared session
+    /// tracker. The caller must hold the single-flight `operation_lock` guard
+    /// and have passed caller verification; this only locks the session
+    /// briefly with no awaits while held. A poisoned session is terminal
+    /// fail-closed.
+    fn evaluate_advisory_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut session = self
+            .advisory_session
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
-        Ok(evaluate_poc3_json(&mut engine, request))
+        Ok(evaluate_advisory_json(&mut session, request))
     }
 }
 
@@ -858,16 +864,19 @@ impl PlannerEndpoint {
         Ok(reply)
     }
 
-    async fn evaluate_poc3(
+    async fn describe_advisory_plan(
         &self,
         request: String,
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
-        // Additive POC3 route on the same manually started service: the exact
-        // same bounded single-flight, current-KWin-owner/same-uid/executable
-        // pinning, request/reply bounds, and terminal service-loss semantics
-        // as EvaluateMove. The existing EvaluateMove contract is frozen.
+        // Read-only advisory route replacing the POC-shaped EvaluatePoc3: the
+        // exact same bounded single-flight, current-KWin-owner/same-uid/
+        // executable pinning with pre/post owner revalidation, request/reply
+        // bounds, and terminal service-loss semantics as EvaluateMove. The
+        // existing EvaluateMove contract is frozen. The reply is a
+        // deterministic advisory plan with no native command/execution fields
+        // and no mutation.
         let Some(_guard) = self.operation_lock.try_lock() else {
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
@@ -883,8 +892,8 @@ impl PlannerEndpoint {
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_poc3_request(&request)?;
-        if reply.len() > POC3_MAX_REPLY_BYTES {
+        let reply = self.evaluate_advisory_request(&request)?;
+        if reply.len() > ADVISORY_MAX_REPLY_BYTES {
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
@@ -1051,43 +1060,6 @@ impl NestedPlannerEndpoint {
         }
         Ok(reply)
     }
-
-    async fn evaluate_poc3(
-        &self,
-        request: String,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
-    ) -> Result<String, PlannerError> {
-        let Some(_guard) = self.inner.operation_lock.try_lock() else {
-            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
-        };
-        if emitter.connection().is_closed() {
-            return Err(PlannerError::Unavailable(
-                "planner serving connection was lost".to_owned(),
-            ));
-        }
-        let caller = header.sender().map(ToString::to_string);
-        let Some(caller) = caller.as_deref() else {
-            return Err(PlannerError::Unauthorized);
-        };
-        let Some(_identity) = verify_nested_caller(
-            emitter.connection(),
-            caller,
-            &self.manifest,
-            &self.proc_root,
-        )
-        .await
-        else {
-            return Err(PlannerError::Unauthorized);
-        };
-        let reply = self.inner.evaluate_poc3_request(&request)?;
-        if reply.len() > POC3_MAX_REPLY_BYTES {
-            return Err(PlannerError::Unavailable(
-                "reply exceeds size bound".to_owned(),
-            ));
-        }
-        Ok(reply)
-    }
 }
 
 fn nested_private_connections(bus_address: &str) -> zbus::Result<(Connection, Connection)> {
@@ -1155,15 +1127,15 @@ mod tests {
     }
 
     #[test]
-    fn poc3_method_identity_is_additive_and_frozen_move_untouched() {
-        assert_eq!(POC3_METHOD, "EvaluatePoc3");
+    fn advisory_method_identity_replaces_poc3_and_freezes_move() {
+        assert_eq!(ADVISORY_METHOD, "DescribeAdvisoryPlan");
         assert_eq!(METHOD, "EvaluateMove");
-        assert_ne!(METHOD, POC3_METHOD);
+        assert_ne!(METHOD, ADVISORY_METHOD);
         assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
         assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
         assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
-        assert_eq!(POC3_MAX_REPLY_BYTES, 64 * 1024);
-        assert_eq!(POC3_MAX_REPLY_BYTES, MAX_REPLY_BYTES);
+        assert_eq!(ADVISORY_MAX_REPLY_BYTES, 64 * 1024);
+        assert_eq!(ADVISORY_MAX_REPLY_BYTES, MAX_REPLY_BYTES);
     }
 
     #[test]
@@ -1246,66 +1218,115 @@ mod tests {
     }
 
     #[test]
-    fn poc3_engine_is_shared_process_memory_starting_disabled() {
+    fn advisory_session_is_shared_and_unpinned_initially() {
         let endpoint = PlannerEndpoint::new();
         let cloned = endpoint.clone();
-        assert!(Arc::ptr_eq(&endpoint.poc3_engine, &cloned.poc3_engine));
-        let engine = endpoint
-            .poc3_engine
+        assert!(Arc::ptr_eq(
+            &endpoint.advisory_session,
+            &cloned.advisory_session
+        ));
+        let session = endpoint
+            .advisory_session
             .lock()
-            .expect("fresh engine lock succeeds");
-        assert_eq!(engine.status().state, "disabled");
-        assert_eq!(engine.status().revision, 0);
+            .expect("fresh session lock succeeds");
+        assert!(!session.is_pinned());
+        assert_eq!(session.pinned_revision(), 0);
+    }
+
+    fn advisory_test_request(correlation: &str, owner: &str) -> String {
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": "gen-1",
+            "revision": 0,
+            "snapshot": {
+                "outputs": [{
+                    "id": "source",
+                    "workspace": "workspace-1",
+                    "tree": {
+                        "kind": "group",
+                        "id": "root",
+                        "axis": "horizontal",
+                        "children": [
+                            {"kind": "group", "id": "left", "axis": "vertical", "children": [
+                                {"kind": "leaf", "id": "A"},
+                                {"kind": "leaf", "id": "B"}
+                            ]},
+                            {"kind": "leaf", "id": "C"}
+                        ]
+                    },
+                    "adjacent": {}
+                }],
+                "windows": [
+                    {"window": "w-A", "leaf": "A", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-B", "leaf": "B", "output": "source", "workspace": "workspace-1"},
+                    {"window": "w-C", "leaf": "C", "output": "source", "workspace": "workspace-1"}
+                ]
+            },
+            "intent": {
+                "source_output": "source",
+                "focused_leaf": "A",
+                "focused_window": "w-A",
+                "direction": "down"
+            },
+            "capabilities": {
+                "swap_neighbor": true,
+                "wrap_perpendicular": true,
+                "wrap_siblings": true,
+                "insert_child": true,
+                "split_group_child": true,
+                "reparent_leaf": true,
+                "cross_output_transfer": true
+            }
+        })
+        .to_string()
     }
 
     #[test]
-    fn poc3_request_route_is_bounded_and_owner_pinned() {
+    fn advisory_request_route_is_bounded_owner_pinned_and_read_only() {
         let endpoint = PlannerEndpoint::new();
-        // No session: focus is rejected fail-closed without echo.
+        // Malformed input is rejected fail-closed without echo.
         let reply: serde_json::Value = serde_json::from_str(
             &endpoint
-                .evaluate_poc3_request(
-                    r#"{"v":3,"command":"focus","correlation_id":"c-1","owner":"owner-1","generation":"gen-1","expected_revision":0,"direction":"right"}"#,
-                )
+                .evaluate_advisory_request("{not json}")
                 .expect("route returns a reply string"),
         )
         .expect("reply is JSON");
         assert_eq!(reply["outcome"], "rejected");
-        assert_eq!(reply["error"]["kind"], "no-session");
-        assert!(reply.to_string().len() <= POC3_MAX_REPLY_BYTES);
+        assert!(reply.to_string().len() <= ADVISORY_MAX_REPLY_BYTES);
 
-        // Start a session, then prove a mismatched owner is rejected.
-        let start = serde_json::json!({
-            "v": 3, "command": "start", "correlation_id": "c-start",
-            "owner": "owner-1", "generation": "gen-1", "scope": "scope-1",
-            "usable": {"x": 0, "y": 0, "w": 900, "h": 600}, "gap": 8,
-            "windows": [
-                {"id": "w-1", "scope": "scope-1", "rollback": "rb-1"},
-                {"id": "w-2", "scope": "scope-1", "rollback": "rb-2"},
-                {"id": "w-3", "scope": "scope-1", "rollback": "rb-3"}
-            ],
-            "session_rollback": "session-rb",
-            "capabilities": {"untiled_asserted": true, "disposable": true, "restore_capable": true},
-            "cleanup": "close-disposable"
-        })
-        .to_string();
+        // First valid advisory pins the session and echoes the binding.
         let reply: serde_json::Value = serde_json::from_str(
             &endpoint
-                .evaluate_poc3_request(&start)
-                .expect("start returns a reply string"),
-        )
-        .expect("reply is JSON");
-        assert_eq!(reply["outcome"], "ok");
-        let reply: serde_json::Value = serde_json::from_str(
-            &endpoint
-                .evaluate_poc3_request(
-                    r#"{"v":3,"command":"focus","correlation_id":"c-2","owner":"owner-2","generation":"gen-1","expected_revision":0,"direction":"right"}"#,
-                )
+                .evaluate_advisory_request(&advisory_test_request("c-1", "owner-1"))
                 .expect("route returns a reply string"),
         )
         .expect("reply is JSON");
-        assert_eq!(reply["error"]["kind"], "owner-mismatch");
+        assert_eq!(reply["outcome"], "planned");
+        assert_eq!(reply["correlation_id"], "c-1");
+        assert_eq!(reply["owner"], "owner-1");
+        assert_eq!(reply["rule"], "R2a");
+        let text = reply.to_string();
+        assert!(!text.contains("command"));
+        assert!(!text.contains("desired"));
+
+        // Mismatched owner is rejected without echo; revision never advances.
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_advisory_request(&advisory_test_request("c-2", "owner-2"))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        assert_eq!(reply["kind"], "owner-mismatch");
         assert!(!reply.to_string().contains("owner-2"));
+        let session = endpoint
+            .advisory_session
+            .lock()
+            .expect("session lock succeeds");
+        assert!(session.is_pinned());
+        assert_eq!(session.pinned_revision(), 0);
     }
 
     #[test]
@@ -1411,18 +1432,18 @@ mod tests {
     }
 
     #[test]
-    fn poc3_method_signature_is_json_string_to_json_string() {
-        let message = zbus::message::Message::method_call(OBJECT, POC3_METHOD)
+    fn advisory_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, ADVISORY_METHOD)
             .unwrap()
             .destination(SERVICE)
             .unwrap()
             .interface(INTERFACE)
             .unwrap()
-            .build(&("{\"v\":3}".to_owned(),))
+            .build(&("{\"v\":1}".to_owned(),))
             .unwrap();
         assert_eq!(message.body().signature().to_string(), "s");
         let body: (String,) = message.body().deserialize().unwrap();
-        assert_eq!(body.0, "{\"v\":3}");
+        assert_eq!(body.0, "{\"v\":1}");
     }
 
     const NESTED_TEST_SHA: &str =

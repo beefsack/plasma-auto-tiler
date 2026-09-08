@@ -109,10 +109,24 @@ production behavior through incremental opt-in promotion.
   replay and all accepted planner/trace fixtures remain byte-stable and pass
   through `cosmic_v1`. Deterministic unit and property-style matrix coverage,
   `cargo fmt`, `cargo check --all-targets`, and full `cargo test` pass.
-  Full-target Clippy has only the pre-existing accepted `src/tray.rs` test
-  lints (`assertions_on_constants` and `type_complexity`). The next minimal
-  gate is slice 3: one authenticated read-only Rust/KWin request/reply with
-  strict identity, schema, correlation, timeout, and fail-closed behavior.
+   Full-target Clippy has only the pre-existing accepted `src/tray.rs` test
+   lints (`assertions_on_constants` and `type_complexity`). The next minimal
+   gate is slice 3: one authenticated read-only Rust/KWin request/reply with
+   strict identity, schema, correlation, timeout, and fail-closed behavior.
+- Slice 3 static implementation completed 2026-09-08: the session-D-Bus
+  planner service route replaces `EvaluatePoc3` with `DescribeAdvisoryPlan`, a bounded JSON
+  v1 request/reply for exactly three normalized opaque windows. It delegates
+  deterministically through `cosmic_v1`, has no native execution fields or
+  mutation, tracks owner/generation/revision/correlation fail-closed, and
+  consumes its one advisory request until an explicit service restart. It
+  retains existing KWin sender identity verification. The standalone KWin
+  client validates the same bounded envelope, resolves the planner well-known
+  name, pins its `:N.M` owner for dispatch, revalidates that owner before
+  accepting a reply, and enforces one flight with timeout. Rust and adapter
+  static tests pass. Public KWin scripting cannot attest the resolved
+  same-UID planner service binary, and no live KWin/Plasma request/reply was
+  attempted. The first authenticated read-only host round trip plus stale and
+  service-loss evidence remain pending separate authorization.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

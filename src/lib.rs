@@ -1,3 +1,4 @@
+pub mod advisory_contract;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;

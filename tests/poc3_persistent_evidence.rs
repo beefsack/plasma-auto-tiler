@@ -5,7 +5,7 @@
 //! the generated adapter bundle must embed. No compositor, D-Bus, or process
 //! access: pure constants and contract identity only.
 
-use plasma_auto_tiler::planner_service::{INTERFACE, METHOD, OBJECT, POC3_METHOD, SERVICE};
+use plasma_auto_tiler::planner_service::{ADVISORY_METHOD, INTERFACE, METHOD, OBJECT, SERVICE};
 use plasma_auto_tiler::poc3_diag::slot_desc;
 
 #[test]
@@ -43,11 +43,11 @@ fn persistent_slot_evidence_matches_kwin_adapter_allowlist() {
 }
 
 #[test]
-fn persistent_planner_contract_is_exact_and_additive() {
+fn planner_contract_replaces_poc3_with_read_only_advisory_method() {
     assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
     assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
     assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
-    assert_eq!(POC3_METHOD, "EvaluatePoc3");
+    assert_eq!(ADVISORY_METHOD, "DescribeAdvisoryPlan");
     assert_eq!(METHOD, "EvaluateMove");
-    assert_ne!(METHOD, POC3_METHOD);
+    assert_ne!(METHOD, ADVISORY_METHOD);
 }

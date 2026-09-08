@@ -232,6 +232,17 @@ Historical implementation detail is recoverable in Git history.
 
 ## Deferred Scope
 
+- Session D-Bus is selected for the initial Rust/KWin migration transport only:
+  one bounded read-only KWin snapshot request to the Rust planner and one
+  advisory reply. It selects neither a generic cross-platform IPC abstraction
+  nor a permanent topology for other platform adapters. The KWin client
+  resolves the planner well-known name then targets the pinned unique owner;
+  the Rust service verifies the D-Bus sender is the current KWin unique owner,
+  same-UID credential, and approved executable identity before and after the
+  request. Public KWin scripting exposes no service credential API, so this
+  cannot prove the initially resolved same-UID planner service binary against
+  a hostile same-UID owner. The first host read-only round trip, including
+  stale and service-loss evidence, remains separately authorized and pending.
 - Rust is the selected engine language and owns the durable portable model.
   The migration starts incrementally through opt-in, shadow, and diagnostic
   modes; it does not claim stock-KWin parity, atomic geometry, or Windows/macOS

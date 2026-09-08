@@ -7,10 +7,13 @@ Only meaningful pending or active work is listed.
   reconciliation; thin adapters own native boundaries. KWin direct geometry is
   the actuator and Custom Tiles are legacy-only, never dual structural
   authority. Preserve production behavior through small opt-in/shadow slices.
-    Checkpoint and Rust-core stabilization slices complete. Current slice: prove
-    one minimal authenticated read-only Rust/KWin request/reply with strict
-    identity, schema, correlation, timeout, and fail-closed behavior after the
-    prior `EvaluatePoc3` EIO. The completed POC is archived: manual/visual evidence
+    Checkpoint, Rust-core stabilization, and static slice 3 implementation are
+    complete. Pending separate authorization: one minimal authenticated
+    read-only host Rust/KWin request/reply plus stale-request and service-loss
+    evidence. The static planner-service route replaces `EvaluatePoc3` with bounded
+    `DescribeAdvisoryPlan` and pins the planner unique D-Bus owner; public KWin
+    scripting cannot attest the initially resolved same-UID service binary.
+    The completed POC is archived: manual/visual evidence
   supports bounded three-window projection, focus, structural movement, resize,
   and drag gesture separation only - not production, parity, lifecycle,
   atomicity, or measured latency |
