@@ -164,6 +164,19 @@ production behavior through incremental opt-in promotion.
   bundle checks pass. The first host success, stale-request, service-loss,
   zero-mutation, and restoration evidence remain pending fresh authorization
   after this static unit is committed.
+- The authorized 2026-09-08 host journey stopped during read-only preflight
+  before any planner service or advisory Script object was created. Focused
+  Rust, standalone KWin-query, builder, and loader checks passed; the committed
+  observer/entry/builder/loader binding, KWin identity, loaded production
+  plugin, absent advisory plugin and Planner name/process, and configuration
+  diagnostic were established and remained unchanged after the stop. The public
+  `queryWindowInfo` baseline request again exceeded its bounded timeout, so an
+  exact eligible-three snapshot was unavailable. No request/reply, stale,
+  service-loss, or mutation evidence is claimed; lifecycle authorization is
+  unspent. A future attempt requires fresh authorization and a safe read-only
+  exact-three baseline route. The accepted public-KWin limitation remains only
+  that initial same-UID planner-binary identity cannot be attested; this run
+  makes no hostile same-UID resistance claim.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive

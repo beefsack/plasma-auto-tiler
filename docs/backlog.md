@@ -20,9 +20,16 @@ Only meaningful pending or active work is listed.
     It has no signals, mutation, controller, shortcut, or production authority.
     The earlier read-only host preflight stopped before lifecycle because public
     `queryWindowInfo` timed out; no service or script lifecycle action occurred.
-    The next gate is a newly authorized host request/reply with success,
-    stale-request, service-loss, zero-mutation, and restoration evidence after
-    this static unit is committed. The static
+    A later authorized host preflight repeated the bounded read-only
+    `queryWindowInfo` request after confirming the committed observer, entry,
+    builder, loader, KWin identity, loaded production plugin, absent advisory
+    plugin, absent Planner name/process, and unchanged configuration diagnostic.
+    It again timed out before an exact eligible-three snapshot could be
+    established, so no planner or advisory script resource was created and the
+    lifecycle authorization remains unspent. The remaining gate is a fresh
+    authorization after a safe read-only exact-three baseline route is available,
+    then one request/reply with stale-request, service-loss, zero-mutation, and
+    restoration evidence. The static
     planner-service route replaces
     `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
     D-Bus owner; public KWin scripting cannot attest the initially resolved
