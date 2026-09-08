@@ -98,6 +98,28 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Portable `cosmic_v1` Session drag/drop placement completed 2026-09-09:
+  `begin_drag` captures the exact tiled focused source, domain, revision,
+  topology/membership, and projected source/work-area geometry while free native
+  movement remains adapter-owned and Session topology is unchanged. Pure logical
+  pointer updates resolve a target leaf and bounded edge region. Left/right map
+  to horizontal before/after and top/bottom to vertical before/after; center,
+  self, gap, cross-domain, invalid, and unsupported releases return a portable
+  snap-back intent. Same-axis target parents receive ordered N-ary insertion;
+  perpendicular placement wraps only the target subtree in the smallest ordered
+  split. Source removal recursively collapses empty/single-child groups, keeps
+  unaffected subtree order/identity/shares, initializes only local new shares,
+  and preserves moved-window focus. Accepted drops carry complete desired
+  topology, focus, and affected-domain geometry through a drag-specific portable
+  capability/precondition/dispatch contract and the shared one-pending
+  acknowledgement plus post-observation reconciler; refusal, partial,
+  mismatch, and adapter loss diverge fail-closed. Durable side, nesting,
+  collapse/share, preview/final agreement, refusal/snap-back, reconciliation,
+  deterministic replay, and invariant-loop coverage pass with format, check,
+  test, fixture lock, and focused Clippy. No live KWin work ran and parked
+  shadow Script/residue remains untouched. Next product slice: signal-driven
+  KWin adapter integration for focus/movement/resize/drag behind explicit
+  development mode.
 - Portable `cosmic_v1` Session split-share keyboard resizing completed
   2026-09-09: `Session::propose_resize` resolves the nearest viable
   direction-matching ancestor boundary from the exact focused tiled leaf,

@@ -149,13 +149,19 @@ Only meaningful pending or active work is listed.
         same-workspace adjacency only for R4, complete semantic plans and
         affected geometry, and acknowledgement/post-observation commit all pass
         durable conformance, reconciliation, invariant, and fixture-lock tests.
-         Portable `cosmic_v1` Session split-share keyboard resizing is complete:
-         deterministic nearest viable ancestor-boundary selection, N-ary
-         adjacent-pair share reflow, complete geometry plans, reusable normalized
-         share application, and shared acknowledgement/reconciliation all have
-         durable Rust coverage. The next product-shaped Rust slice is explicit
-         drag/drop placement; parked shadow transport/live cleanup remains
-         unchanged |
+          Portable `cosmic_v1` Session split-share keyboard resizing is complete:
+          deterministic nearest viable ancestor-boundary selection, N-ary
+          adjacent-pair share reflow, complete geometry plans, reusable normalized
+          share application, and shared acknowledgement/reconciliation all have
+          durable Rust coverage. Portable drag/drop placement is complete:
+          Session captures a source without changing topology during free native
+          motion, normalizes logical pointer coordinates to edge-only target-leaf
+          placement, previews deterministic nested/N-ary structure, and commits
+          complete geometry/focus only through shared acknowledgement and
+          post-observation reconciliation. Invalid/cancelled releases snap back
+          without topology mutation. The next product slice is signal-driven KWin
+          adapter integration for focus/movement/resize/drag behind explicit
+          development mode; parked shadow transport/live cleanup remains unchanged |
        [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

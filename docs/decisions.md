@@ -220,6 +220,12 @@ Historical implementation detail is recoverable in Git history.
 - Replace the temporary outline interaction with a minimal COSMIC-like,
   deterministic nested-placement affordance. It is a placement affordance, not
   opacity or dimming behavior.
+- Portable drag placement is edge-only: left/right create horizontal
+  before/after placement and top/bottom create vertical before/after placement.
+  A center release has no structural meaning and snaps back. Same-axis target
+  parents use ordered N-ary sibling insertion; perpendicular placement wraps
+  only the target subtree in the smallest ordered split. This remains split-tree
+  structure only, never tabs, stacks, shared tiles, or compositor groups.
 
 ## Tray
 

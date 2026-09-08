@@ -72,7 +72,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::contract::{
-    Dispatch, DivergenceKind, FocusCapabilities, FocusDispatch, FocusIntent, FocusOperation,
+    Dispatch, DivergenceKind, DragCapabilities, DragDispatch, DragIntent, DragOperation, DragPlan,
+    DragPostObservation, DragSide, FocusCapabilities, FocusDispatch, FocusIntent, FocusOperation,
     FocusPlanContract, FocusPostObservation, LifecycleCapabilities, LifecycleDispatch,
     LifecycleIntent, LifecycleOperation, LifecyclePlan, LifecyclePostObservation, Observation,
     PostObservation, ResizeCapabilities, ResizeDispatch, ResizeIntent, ResizeOperation, ResizePlan,
@@ -451,6 +452,85 @@ pub struct SessionResizePlan {
     pub desired_geometry: Vec<DesiredGeometry>,
 }
 
+/// Authoritative drag plan: reconciler identity-bound portable
+/// [`DragDispatch`] (semantic drag operation/preconditions/capability/intent
+/// plus owner/generation/correlation/base revision) plus the deterministic
+/// contract [`DragPlan`], desired topology/snapshot (source removed, collapsed,
+/// then inserted/wrapped), preserved focus on the moved window, and complete
+/// desired rectangles for every tiled window in the affected domain. No native
+/// commands. The drag commits only via acknowledge-then-[`Session::verify_drag`];
+/// self/center/invalid releases snap back with no plan and no pending. Focus is
+/// preserved on the moved window. Immutable and complete.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDragPlan {
+    pub dispatch: DragDispatch,
+    pub drag_plan: DragPlan,
+    pub desired_snapshot: SessionSnapshot,
+    pub desired_focus_domain: DomainKey,
+    pub desired_focus_leaf: NodeId,
+    pub desired_geometry: Vec<DesiredGeometry>,
+}
+
+/// Portable drag capture returned by [`Session::begin_drag`]: the source domain
+/// and tiled leaf/window, the accepted revision bound to the capture, and the
+/// projected source rectangle plus the domain work area. Carries no topology
+/// mutation and no native commands.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragCapture {
+    pub domain: DomainKey,
+    pub source_leaf: NodeId,
+    pub source_window: WindowId,
+    pub revision: u64,
+    pub source_rect: Rect,
+    pub work_area: Rect,
+}
+
+/// Pure non-mutating drag preview from logical pointer coordinates. Names the
+/// source and target portable ids with their projected rectangles plus the
+/// normalized `side`/`axis`/`before` ordering and the resolved placement form
+/// (`wrap` with `target_group`/`insertion_index`). `proposed_rect` is the
+/// deterministic projected desired source rectangle after applying the
+/// placement (subregion of the work area for the moved source leaf), not the
+/// target current rectangle alone. No native rendering or effects.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragPreview {
+    pub domain: DomainKey,
+    pub source_leaf: NodeId,
+    pub source_window: WindowId,
+    pub source_rect: Rect,
+    pub target_leaf: NodeId,
+    pub target_window: WindowId,
+    pub target_rect: Rect,
+    pub proposed_rect: Rect,
+    pub side: DragSide,
+    pub axis: Axis,
+    pub before: bool,
+    pub wrap: bool,
+    pub target_group: NodeId,
+    pub insertion_index: usize,
+}
+
+/// Portable no-structure snap-back intent: the accepted source rectangle the
+/// adapter must restore visually. Carries no topology and no geometry beyond
+/// the accepted source rect. Returned by [`Session::cancel_drag`] and by
+/// invalid [`Session::drop_drag`] releases.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DragSnapBack {
+    pub domain: DomainKey,
+    pub source_leaf: NodeId,
+    pub source_window: WindowId,
+    pub source_rect: Rect,
+}
+
+/// Drag release outcome: either a complete structural/focus/geometry
+/// [`SessionDragPlan`] staged through the shared reconciler slot, or a
+/// no-structure [`DragSnapBack`] with no reconciler use.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DragRelease {
+    Planned(Box<SessionDragPlan>),
+    SnapBack(DragSnapBack),
+}
+
 /// Stored exception record for a deferred window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExceptionRecord {
@@ -469,6 +549,27 @@ struct PendingDesired {
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
 }
 
+/// Transient drag capture: source identity plus the accepted
+/// revision/generation, the full topology/membership/focus at capture time,
+/// and the projected source/work-area geometry preconditions. Holds no
+/// reconciler pending slot; cleared by drop, cancel, commit-divergence paths,
+/// or acknowledgement-divergence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DragState {
+    domain: DomainKey,
+    source_leaf: NodeId,
+    source_window: WindowId,
+    revision: u64,
+    generation: GenerationId,
+    trees: BTreeMap<DomainKey, Option<Node>>,
+    windows: BTreeMap<WindowId, WindowLink>,
+    exceptions: BTreeMap<WindowId, ExceptionRecord>,
+    focused_domain: Option<DomainKey>,
+    focused_leaf: Option<NodeId>,
+    source_rect: Rect,
+    work_area: Rect,
+}
+
 /// Durable authoritative session. See module docs for the transaction model.
 #[derive(Debug, Clone)]
 pub struct Session {
@@ -483,6 +584,7 @@ pub struct Session {
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     reconciler: Reconciler,
     pending_desired: Option<PendingDesired>,
+    drag: Option<DragState>,
 }
 
 impl Session {
@@ -538,6 +640,7 @@ impl Session {
             exceptions: BTreeMap::new(),
             reconciler,
             pending_desired: None,
+            drag: None,
         })
     }
 
@@ -724,6 +827,9 @@ impl Session {
         if self.has_pending() {
             return Err(ProposeError::PendingExists);
         }
+        if self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
         if !self.validate_current_topology() {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
@@ -870,20 +976,22 @@ impl Session {
                 workspace: workspace.clone(),
             };
             let plan = LifecyclePlan::for_operation(intent, operation);
-            let dispatch = self
-                .reconciler
-                .propose_lifecycle(
-                    &plan,
-                    &session_observation.observation,
-                    correlation_id,
-                    capabilities,
-                )
-                .map_err(|e| match e {
-                    crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                    crate::reconcile::ProposeError::Diverged(reason) => {
-                        ProposeError::Diverged(reason)
-                    }
-                })?;
+            let dispatch = match self.reconciler.propose_lifecycle(
+                &plan,
+                &session_observation.observation,
+                correlation_id,
+                capabilities,
+            ) {
+                Ok(dispatch) => dispatch,
+                Err(crate::reconcile::ProposeError::PendingExists) => {
+                    return Err(ProposeError::PendingExists);
+                }
+                Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                    self.pending_desired = None;
+                    self.drag = None;
+                    return Err(ProposeError::Diverged(reason));
+                }
+            };
             self.pending_desired = Some(PendingDesired {
                 trees: self.trees.clone(),
                 windows: self.windows.clone(),
@@ -973,18 +1081,22 @@ impl Session {
             workspace: workspace.clone(),
         };
         let plan = LifecyclePlan::for_operation(intent, operation);
-        let dispatch = self
-            .reconciler
-            .propose_lifecycle(
-                &plan,
-                &session_observation.observation,
-                correlation_id,
-                capabilities,
-            )
-            .map_err(|e| match e {
-                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
-            })?;
+        let dispatch = match self.reconciler.propose_lifecycle(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
         self.pending_desired = Some(PendingDesired {
             trees: desired_trees.clone(),
             windows: desired_windows.clone(),
@@ -1053,20 +1165,22 @@ impl Session {
                 workspace: record.workspace.clone(),
             };
             let plan = LifecyclePlan::for_operation(intent, operation);
-            let dispatch = self
-                .reconciler
-                .propose_lifecycle(
-                    &plan,
-                    &session_observation.observation,
-                    correlation_id,
-                    capabilities,
-                )
-                .map_err(|e| match e {
-                    crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                    crate::reconcile::ProposeError::Diverged(reason) => {
-                        ProposeError::Diverged(reason)
-                    }
-                })?;
+            let dispatch = match self.reconciler.propose_lifecycle(
+                &plan,
+                &session_observation.observation,
+                correlation_id,
+                capabilities,
+            ) {
+                Ok(dispatch) => dispatch,
+                Err(crate::reconcile::ProposeError::PendingExists) => {
+                    return Err(ProposeError::PendingExists);
+                }
+                Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                    self.pending_desired = None;
+                    self.drag = None;
+                    return Err(ProposeError::Diverged(reason));
+                }
+            };
             self.pending_desired = Some(PendingDesired {
                 trees: self.trees.clone(),
                 windows: self.windows.clone(),
@@ -1169,18 +1283,22 @@ impl Session {
             workspace: key.workspace.clone(),
         };
         let plan = LifecyclePlan::for_operation(intent, operation);
-        let dispatch = self
-            .reconciler
-            .propose_lifecycle(
-                &plan,
-                &session_observation.observation,
-                correlation_id,
-                capabilities,
-            )
-            .map_err(|e| match e {
-                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
-            })?;
+        let dispatch = match self.reconciler.propose_lifecycle(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
         self.pending_desired = Some(PendingDesired {
             trees: desired_trees.clone(),
             windows: desired_windows.clone(),
@@ -1344,7 +1462,10 @@ impl Session {
         if self.has_pending() {
             return Err(ProposeError::PendingExists);
         }
-        let Some(source_domain) = self.domains.iter().find(|d| &d.key() == domain).cloned() else {
+        if self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        let Some(_source_domain) = self.domains.iter().find(|d| &d.key() == domain).cloned() else {
             return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
         };
         if !self.validate_current_topology() {
@@ -1478,19 +1599,22 @@ impl Session {
         if !geometry_covers_affected(&desired_geometry, &desired_windows, &affected) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        let _ = source_domain;
-        let dispatch = self
-            .reconciler
-            .propose(
-                &plan,
-                &session_observation.observation,
-                correlation_id,
-                capabilities,
-            )
-            .map_err(|e| match e {
-                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
-            })?;
+        let dispatch = match self.reconciler.propose(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
         self.pending_desired = Some(PendingDesired {
             trees: desired_trees.clone(),
             windows: desired_windows.clone(),
@@ -1526,6 +1650,7 @@ impl Session {
             }
             Err(VerifyError::Diverged(reason)) => {
                 self.pending_desired = None;
+                self.drag = None;
                 Err(VerifyError::Diverged(reason))
             }
             Err(other) => Err(other),
@@ -1561,6 +1686,9 @@ impl Session {
             return Err(ProposeError::Diverged(reason));
         }
         if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.drag.is_some() {
             return Err(ProposeError::PendingExists);
         }
         if self.domains.iter().find(|d| &d.key() == domain).is_none() {
@@ -1674,18 +1802,22 @@ impl Session {
             route,
         };
         let plan = FocusPlanContract::for_operation(intent, operation);
-        let dispatch = self
-            .reconciler
-            .propose_focus(
-                &plan,
-                &session_observation.observation,
-                correlation_id,
-                capabilities,
-            )
-            .map_err(|e| match e {
-                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
-            })?;
+        let dispatch = match self.reconciler.propose_focus(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
         let desired_snapshot = self.snapshot_for(&self.trees, &self.windows);
         self.pending_desired = Some(PendingDesired {
             trees: self.trees.clone(),
@@ -1725,6 +1857,7 @@ impl Session {
             }
             Err(VerifyError::Diverged(reason)) => {
                 self.pending_desired = None;
+                self.drag = None;
                 Err(VerifyError::Diverged(reason))
             }
             Err(other) => Err(other),
@@ -1766,6 +1899,9 @@ impl Session {
             return Err(ProposeError::Diverged(reason));
         }
         if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if self.drag.is_some() {
             return Err(ProposeError::PendingExists);
         }
         if self.domains.iter().find(|d| &d.key() == domain).is_none() {
@@ -1906,18 +2042,22 @@ impl Session {
             new_shares: step.new_shares.clone(),
         };
         let plan = ResizePlan::for_operation(intent, operation);
-        let dispatch = self
-            .reconciler
-            .propose_resize(
-                &plan,
-                &session_observation.observation,
-                correlation_id,
-                capabilities,
-            )
-            .map_err(|e| match e {
-                crate::reconcile::ProposeError::PendingExists => ProposeError::PendingExists,
-                crate::reconcile::ProposeError::Diverged(reason) => ProposeError::Diverged(reason),
-            })?;
+        let dispatch = match self.reconciler.propose_resize(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
         let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
         self.pending_desired = Some(PendingDesired {
             trees: desired_trees.clone(),
@@ -1958,15 +2098,567 @@ impl Session {
             }
             Err(VerifyError::Diverged(reason)) => {
                 self.pending_desired = None;
+                self.drag = None;
                 Err(VerifyError::Diverged(reason))
             }
             Err(other) => Err(other),
         }
     }
 
-    /// Record an explicit adapter acknowledgement (shared binding for movement
-    /// and lifecycle pending plans). Terminal divergence clears the pending
-    /// desired state, matching [`Session::note_adapter_loss`].
+    /// Commit a pending drag plan after acknowledgement. On commit the pending
+    /// desired topology applies atomically (windows/exceptions unmodified, focus
+    /// preserved on the moved window) and the accepted revision advances by
+    /// exactly one. Terminal divergence clears the pending desired state.
+    /// Movement plans must use [`Session::verify_move`]; lifecycle plans must
+    /// use [`Session::verify_lifecycle`]; focus plans must use
+    /// [`Session::verify_focus`]; resize plans must use
+    /// [`Session::verify_resize`].
+    pub fn verify_drag(&mut self, post: &DragPostObservation) -> Result<Commit, VerifyError> {
+        match self.reconciler.verify_drag(post) {
+            Ok(commit) => {
+                if let Some(desired) = self.pending_desired.take() {
+                    self.trees = desired.trees;
+                    self.windows = desired.windows;
+                    self.focused_domain = desired.focused_domain;
+                    self.focused_leaf = desired.focused_leaf;
+                    self.exceptions = desired.exceptions;
+                    self.accepted_fingerprint = commit.fingerprint;
+                }
+                Ok(commit)
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                Err(VerifyError::Diverged(reason))
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    /// Whether a transient drag capture is active.
+    #[must_use]
+    pub fn has_drag(&self) -> bool {
+        self.drag.is_some()
+    }
+
+    /// Begin a product-facing drag for the authoritative logical focused tiled
+    /// window `window`.
+    ///
+    /// Captures the source domain/leaf, the accepted revision/generation, the
+    /// current topology/membership/focus, and the projected source/work-area
+    /// geometry preconditions. Alters no authoritative topology, stages no
+    /// reconciler pending slot, and emits no native commands. Active drags,
+    /// reconciler pending plans, unknown or exception windows, focus mismatches
+    /// (the source must be the focused tiled window), cross-domain or partial
+    /// observations, and malformed or unprojectable states refuse fail-closed.
+    /// Observation identity mismatches (owner/generation/revision) refuse as
+    /// malformed without touching the shared reconciler; revision freshness at
+    /// release is enforced by [`Session::drop_drag`] through it.
+    pub fn begin_drag(
+        &mut self,
+        window: &WindowId,
+        session_observation: &SessionObservation,
+    ) -> Result<DragCapture, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.has_pending() || self.drag.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if window.0.is_empty() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if session_observation.observation.owner != self.owner
+            || session_observation.observation.generation != self.generation
+            || session_observation.observation.revision != self.accepted_revision()
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let Some(link) = self.windows.get(window).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        };
+        let key = DomainKey {
+            output: link.output.clone(),
+            workspace: link.workspace.clone(),
+        };
+        if self.domains.iter().find(|d| d.key() == key).is_none() {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        }
+        // The drag source must be the authoritative logical focused tiled
+        // window in its domain; focus is preserved on it through release.
+        if self.focused_domain.as_ref() != Some(&key)
+            || self.focused_leaf.as_ref() != Some(&link.leaf)
+        {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        if let Some(entry) = session_observation
+            .windows
+            .iter()
+            .find(|w| &w.window == window)
+            && entry.flags().any()
+        {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let Some(domain) = self.domains.iter().find(|d| d.key() == key).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        let tree = self.trees.get(&key).cloned().flatten();
+        let geometry = project_output_geometry(Some(&domain), tree.as_ref(), &self.windows, &key)
+            .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let Some(source_rect) = geometry
+            .iter()
+            .find(|g| g.leaf == link.leaf)
+            .map(|g| g.rect)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let revision = self.accepted_revision();
+        self.drag = Some(DragState {
+            domain: key.clone(),
+            source_leaf: link.leaf.clone(),
+            source_window: window.clone(),
+            revision,
+            generation: self.generation.clone(),
+            trees: self.trees.clone(),
+            windows: self.windows.clone(),
+            exceptions: self.exceptions.clone(),
+            focused_domain: self.focused_domain.clone(),
+            focused_leaf: self.focused_leaf.clone(),
+            source_rect,
+            work_area: domain.bounds,
+        });
+        Ok(DragCapture {
+            domain: key,
+            source_leaf: link.leaf,
+            source_window: window.clone(),
+            revision,
+            source_rect,
+            work_area: domain.bounds,
+        })
+    }
+
+    /// Pure non-mutating drag preview for the active capture at logical pointer
+    /// coordinates `(x, y)`.
+    ///
+    /// Core owns point-to-leaf resolution and bounded edge/center normalization
+    /// from the domain work area and the projected target rectangles: the
+    /// pointer must land inside the source domain work area on a projected
+    /// leaf, and inside that leaf the outer thirds normalize to
+    /// left/right/top/bottom edges (left/right take priority in corners) while
+    /// the middle carries no structural meaning and refuses as
+    /// [`RefusalKind::Unchanged`]. Self drops refuse the same way;
+    /// out-of-area or gap points refuse as
+    /// [`RefusalKind::CrossDomainMismatch`]. Reads only; stages nothing and
+    /// touches no reconciler state. Exposes portable opaque ids, rects, and
+    /// axis/order/relation only.
+    pub fn preview_drag(&self, x: i32, y: i32) -> Result<DragPreview, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            return Err(ProposeError::Diverged(reason));
+        }
+        let Some(capture) = self.drag.as_ref() else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        };
+        if !self.validate_current_topology() {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        if capture.revision != self.accepted_revision()
+            || capture.generation != self.generation
+            || self.trees != capture.trees
+            || self.windows != capture.windows
+            || self.exceptions != capture.exceptions
+            || self.focused_domain != capture.focused_domain
+            || self.focused_leaf != capture.focused_leaf
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let resolved = self.resolve_drag_point(capture, x, y)?;
+        let Some(current) = self.trees.get(&capture.domain).cloned().flatten() else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let Some(placement) = apply_drag_placement(
+            &current,
+            &capture.source_leaf,
+            &resolved.target_leaf,
+            resolved.side,
+            capture.revision,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if placement.tree == current {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(capture.domain.clone(), Some(placement.tree.clone()));
+        let desired_geometry = project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            std::slice::from_ref(&capture.domain),
+        )
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let Some(proposed_rect) = desired_geometry
+            .iter()
+            .find(|g| g.leaf == capture.source_leaf)
+            .map(|g| g.rect)
+        else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        Ok(DragPreview {
+            domain: capture.domain.clone(),
+            source_leaf: capture.source_leaf.clone(),
+            source_window: capture.source_window.clone(),
+            source_rect: capture.source_rect,
+            target_leaf: resolved.target_leaf,
+            target_window: resolved.target_window,
+            target_rect: resolved.target_rect,
+            proposed_rect,
+            side: resolved.side,
+            axis: resolved.side.axis(),
+            before: resolved.side.before(),
+            wrap: placement.wrap,
+            target_group: placement.target_group,
+            insertion_index: placement.insertion_index,
+        })
+    }
+
+    /// Release the active drag at logical pointer coordinates `(x, y)`.
+    ///
+    /// Recomputes the same deterministic result as [`Session::preview_drag`],
+    /// then freshly validates the begin capture plus the supplied observation
+    /// (source/target/domain/membership/projected geometry/revision) and the
+    /// required drag capability through the shared one-pending reconciler slot
+    /// before emitting a complete structural/focus/geometry [`SessionDragPlan`]
+    /// (focus preserved on the moved window). No topology commits until the
+    /// existing acknowledgement plus a matching drag post-observation complete
+    /// via [`Session::verify_drag`]; refusal, partial, mismatch, or loss paths
+    /// diverge fail-closed through shared reconciler semantics. Self, center,
+    /// out-of-area, gap, and no-op releases are invalid: they clear only the
+    /// transient drag state and return a portable no-structure snap-back with
+    /// the accepted source rect, without touching the reconciler. Once an
+    /// active capture is loaded with no competing pending plan, every other
+    /// non-divergent invalid-release validation failure (malformed, partial,
+    /// or cross-domain observed shape; invalid capture, topology, or geometry;
+    /// unsupported drag capability) also clears only the transient drag and
+    /// returns a snap-back; terminal reconciler owner, generation, revision,
+    /// correlation, and capability divergences stay terminal errors.
+    pub fn drop_drag(
+        &mut self,
+        x: i32,
+        y: i32,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &DragCapabilities,
+    ) -> Result<DragRelease, ProposeError> {
+        if let Some(reason) = self.reconciler.divergence() {
+            self.pending_desired = None;
+            self.drag = None;
+            return Err(ProposeError::Diverged(reason));
+        }
+        let Some(capture) = self.drag.clone() else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        };
+        if self.has_pending() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !self.validate_current_topology() {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
+            || !valid_observed_shapes(&session_observation.windows)
+        {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        for entry in &session_observation.windows {
+            if self.domain_for(&entry.output, &entry.workspace).is_none() {
+                return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+            }
+        }
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        // The begin capture still binds the live session: no revision,
+        // generation, topology, membership, or focus drift is accepted between
+        // begin and drop. Stale captures snap back so no permanently unusable
+        // capture remains.
+        if capture.revision != self.accepted_revision()
+            || capture.generation != self.generation
+            || self.trees != capture.trees
+            || self.windows != capture.windows
+            || self.exceptions != capture.exceptions
+            || self.focused_domain != capture.focused_domain
+            || self.focused_leaf != capture.focused_leaf
+        {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        if !capabilities.supports(crate::contract::DragCapability::PlaceTiled) {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        // Invalid releases snap back with the accepted source rect and no
+        // reconciler use; only the transient drag state clears.
+        let resolved = match self.resolve_drag_point(&capture, x, y) {
+            Ok(resolved) => resolved,
+            Err(ProposeError::Refused(_)) => {
+                return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+            }
+            Err(ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+            Err(other) => return Err(other),
+        };
+        let Some(current) = self.trees.get(&capture.domain).cloned().flatten() else {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        };
+        let Some(placement) = apply_drag_placement(
+            &current,
+            &capture.source_leaf,
+            &resolved.target_leaf,
+            resolved.side,
+            capture.revision,
+        ) else {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        };
+        if placement.tree == current {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(capture.domain.clone(), Some(placement.tree));
+        if !validate_topology(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            &self.exceptions,
+            &Some(capture.domain.clone()),
+            &Some(capture.source_leaf.clone()),
+        ) {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        let desired_geometry = match project_affected_geometry(
+            &self.domains,
+            &desired_trees,
+            &self.windows,
+            std::slice::from_ref(&capture.domain),
+        ) {
+            Ok(geometry) => geometry,
+            Err(_) => {
+                return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+            }
+        };
+        if !geometry_covers_affected(
+            &desired_geometry,
+            &self.windows,
+            std::slice::from_ref(&capture.domain),
+        ) {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        }
+        let intent = DragIntent {
+            domain_output: capture.domain.output.clone(),
+            domain_workspace: capture.domain.workspace.clone(),
+            source_leaf: capture.source_leaf.clone(),
+            source_window: capture.source_window.clone(),
+            target_leaf: resolved.target_leaf.clone(),
+            target_window: resolved.target_window.clone(),
+            side: resolved.side,
+        };
+        let operation = DragOperation {
+            domain_output: capture.domain.output.clone(),
+            domain_workspace: capture.domain.workspace.clone(),
+            source_leaf: capture.source_leaf.clone(),
+            source_window: capture.source_window.clone(),
+            target_leaf: resolved.target_leaf.clone(),
+            target_window: resolved.target_window.clone(),
+            side: resolved.side,
+            axis: resolved.side.axis(),
+            before: resolved.side.before(),
+            target_group: placement.target_group.clone(),
+            insertion_index: placement.insertion_index,
+            wrap: placement.wrap,
+            new_group: placement.new_group.clone(),
+        };
+        let plan = DragPlan::for_operation(intent, operation);
+        let dispatch = match self.reconciler.propose_drag(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
+        let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
+        self.pending_desired = Some(PendingDesired {
+            trees: desired_trees,
+            windows: self.windows.clone(),
+            focused_domain: Some(capture.domain.clone()),
+            focused_leaf: Some(capture.source_leaf.clone()),
+            exceptions: self.exceptions.clone(),
+        });
+        self.drag = None;
+        Ok(DragRelease::Planned(Box::new(SessionDragPlan {
+            dispatch,
+            drag_plan: plan,
+            desired_snapshot,
+            desired_focus_domain: capture.domain,
+            desired_focus_leaf: capture.source_leaf,
+            desired_geometry,
+        })))
+    }
+
+    /// Cancel the active drag, clearing only transient drag state and returning
+    /// a portable no-structure snap-back with the accepted source rect. Never
+    /// mutates topology and never touches the reconciler pending slot. Returns
+    /// `None` when no drag is active.
+    pub fn cancel_drag(&mut self) -> Option<DragSnapBack> {
+        let capture = self.drag.clone()?;
+        Some(self.clear_drag_snap_back(&capture))
+    }
+
+    fn clear_drag_snap_back(&mut self, capture: &DragState) -> DragSnapBack {
+        // The accepted source rect is re-projected so cancel reflects accepted
+        // state; the captured rect is the fail-closed fallback.
+        let rect = self
+            .domains
+            .iter()
+            .find(|d| d.key() == capture.domain)
+            .and_then(|domain| {
+                let tree = self.trees.get(&capture.domain).cloned().flatten();
+                project_output_geometry(Some(domain), tree.as_ref(), &self.windows, &capture.domain)
+                    .ok()
+            })
+            .and_then(|geometry| {
+                geometry
+                    .iter()
+                    .find(|g| g.leaf == capture.source_leaf)
+                    .map(|g| g.rect)
+            })
+            .unwrap_or(capture.source_rect);
+        self.drag = None;
+        DragSnapBack {
+            domain: capture.domain.clone(),
+            source_leaf: capture.source_leaf.clone(),
+            source_window: capture.source_window.clone(),
+            source_rect: rect,
+        }
+    }
+
+    /// Resolve a drag pointer to its target leaf, window, rectangle, and edge.
+    /// Fails closed: outside the captured work area or on no projected leaf is
+    /// [`RefusalKind::CrossDomainMismatch`]; the source leaf itself or a target
+    /// center with no structural meaning is [`RefusalKind::Unchanged`].
+    fn resolve_drag_point(
+        &self,
+        capture: &DragState,
+        x: i32,
+        y: i32,
+    ) -> Result<ResolvedDragPoint, ProposeError> {
+        let area = capture.work_area;
+        if x < area.x
+            || y < area.y
+            || x.checked_sub(area.x).is_none_or(|dx| dx >= area.w)
+            || y.checked_sub(area.y).is_none_or(|dy| dy >= area.h)
+        {
+            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+        }
+        let Some(domain) = self.domains.iter().find(|d| d.key() == capture.domain) else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        let tree = self.trees.get(&capture.domain).cloned().flatten();
+        let Some(tree) = tree else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let projected = crate::geometry::project(&tree, domain.bounds, domain.gap)
+            .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        let Some(hit) = projected
+            .iter()
+            .find(|leaf| contains_point(&leaf.rect, x, y))
+        else {
+            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+        };
+        if hit.leaf == capture.source_leaf {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let Some(side) = drag_edge_for(&hit.rect, x, y) else {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        };
+        let Some(link) = self.windows.get(&capture.source_window) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if link.leaf != capture.source_leaf {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let target_window = self
+            .windows
+            .values()
+            .find(|l| {
+                l.leaf == hit.leaf
+                    && l.output == capture.domain.output
+                    && l.workspace == capture.domain.workspace
+            })
+            .map(|l| l.window.clone());
+        let Some(target_window) = target_window else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        if self.exceptions.contains_key(&target_window) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        Ok(ResolvedDragPoint {
+            target_leaf: hit.leaf.clone(),
+            target_window,
+            target_rect: hit.rect,
+            side,
+        })
+    }
+
+    /// Record an explicit adapter acknowledgement (shared binding for movement,
+    /// lifecycle, focus, resize, and drag pending plans). Terminal divergence
+    /// clears the pending desired state, matching [`Session::note_adapter_loss`].
     pub fn acknowledge(
         &mut self,
         ack: &crate::contract::AdapterAck,
@@ -1976,6 +2668,7 @@ impl Session {
             Err(AckError::NoPending) => Err(AckError::NoPending),
             Err(AckError::Diverged(reason)) => {
                 self.pending_desired = None;
+                self.drag = None;
                 Err(AckError::Diverged(reason))
             }
         }
@@ -2003,6 +2696,7 @@ impl Session {
             }
             Err(VerifyError::Diverged(reason)) => {
                 self.pending_desired = None;
+                self.drag = None;
                 Err(VerifyError::Diverged(reason))
             }
             Err(other) => Err(other),
@@ -2012,6 +2706,7 @@ impl Session {
     /// Explicit adapter-loss signal: terminal divergence, pending discarded.
     pub fn note_adapter_loss(&mut self) -> DivergenceKind {
         self.pending_desired = None;
+        self.drag = None;
         self.reconciler.note_adapter_loss()
     }
 }
@@ -2809,7 +3504,7 @@ fn apply_move_operation(
                     working = replace_node_by_id(working, parent, wrapped)?;
                 }
             }
-            desired_trees.insert(source.clone(), Some(updated_tree(working)));
+            desired_trees.insert(source.clone(), Some(working));
             Some((
                 desired_trees,
                 desired_windows,
@@ -2926,10 +3621,6 @@ fn apply_move_operation(
             ))
         }
     }
-}
-
-fn updated_tree(tree: Node) -> Node {
-    tree
 }
 
 fn find_group(tree: &Node, id: &NodeId) -> Option<(Vec<Node>, Axis, NodeId)> {
@@ -3199,6 +3890,197 @@ fn swap_direct_children(tree: Node, container: &NodeId, a: &NodeId, b: &NodeId) 
             None
         }
     }
+}
+
+/// Resolved drag pointer: target leaf/window/rect plus the normalized edge.
+struct ResolvedDragPoint {
+    target_leaf: NodeId,
+    target_window: WindowId,
+    target_rect: Rect,
+    side: DragSide,
+}
+
+/// Deterministic drag placement: the new domain tree plus the resolved
+/// operation bindings (`target_group`/`insertion_index`/`wrap`/`new_group`).
+struct DragPlacement {
+    tree: Node,
+    target_group: NodeId,
+    insertion_index: usize,
+    wrap: bool,
+    new_group: Option<NodeId>,
+}
+
+fn contains_point(rect: &Rect, x: i32, y: i32) -> bool {
+    x >= rect.x
+        && y >= rect.y
+        && x.checked_sub(rect.x).is_some_and(|dx| dx < rect.w)
+        && y.checked_sub(rect.y).is_some_and(|dy| dy < rect.h)
+}
+
+/// Bounded edge normalization inside a projected target rectangle: the outer
+/// thirds order along an edge (left/right take priority in corners); the
+/// middle carries no structural meaning (`None`). Integer math only. The edge
+/// band is at least one pixel so projected rectangles narrower or shorter
+/// than 3px still deterministically choose an edge instead of collapsing to
+/// center.
+fn drag_edge_for(rect: &Rect, x: i32, y: i32) -> Option<DragSide> {
+    if rect.w <= 0 || rect.h <= 0 {
+        return None;
+    }
+    let dx = x.checked_sub(rect.x)?;
+    let dy = y.checked_sub(rect.y)?;
+    if dx < 0 || dy < 0 || dx >= rect.w || dy >= rect.h {
+        return None;
+    }
+    let band_w = (rect.w / 3).max(1).min(rect.w);
+    let band_h = (rect.h / 3).max(1).min(rect.h);
+    if dx < band_w {
+        return Some(DragSide::Left);
+    }
+    if dx >= rect.w - band_w {
+        return Some(DragSide::Right);
+    }
+    if dy < band_h {
+        return Some(DragSide::Top);
+    }
+    if dy >= rect.h - band_h {
+        return Some(DragSide::Bottom);
+    }
+    None
+}
+
+fn generate_drag_group_id(
+    source_leaf: &NodeId,
+    base_revision: u64,
+    existing: &BTreeSet<NodeId>,
+) -> NodeId {
+    let base = format!("grp-{}-r{}-drag", source_leaf.0, base_revision);
+    if !existing.contains(&NodeId(base.clone())) {
+        return NodeId(base);
+    }
+    let mut n = 1u32;
+    loop {
+        let candidate = NodeId(format!("{base}-{n}"));
+        if !existing.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
+}
+
+/// Deterministically place `source_leaf` onto `target_leaf`'s `side`.
+///
+/// Removes the source first (recursively collapsing emptied/single-child
+/// groups), then either inserts it as an ordered N-ary sibling in the target
+/// parent when that parent runs along the drop axis, or wraps only the target
+/// subtree in a new smallest 2-child split ordered before/after by side.
+/// Unaffected subtree order/identity/shares are preserved: inserts carry share
+/// `1`, wraps carry `[1, 1]` with the wrapper inheriting the target share slot.
+/// Returns `None` when the target cannot resolve; callers compare against the
+/// input tree to refuse no-op placements as unchanged.
+fn apply_drag_placement(
+    tree: &Node,
+    source_leaf: &NodeId,
+    target_leaf: &NodeId,
+    side: DragSide,
+    base_revision: u64,
+) -> Option<DragPlacement> {
+    if source_leaf == target_leaf {
+        return None;
+    }
+    let axis = side.axis();
+    let before = side.before();
+    let mover = Node::Leaf {
+        id: source_leaf.clone(),
+    };
+    // Remove the source first; collapse is recursive inside.
+    let working = remove_leaf_from_tree(Some(tree.clone()), source_leaf)?;
+    if collect_leaves(&working).contains(source_leaf) {
+        return None;
+    }
+    if !collect_leaves(&working).contains(target_leaf) {
+        return None;
+    }
+    let mut node_ids = BTreeSet::new();
+    collect_node_ids(&working, &mut node_ids);
+    // Same-axis insert when the post-removal target parent runs along the
+    // drop axis; otherwise wrap only the target subtree.
+    let parent = direct_parent_of_leaf(&working, target_leaf);
+    if let Some(parent_id) = parent {
+        let (children, parent_axis) = match find_group(&working, &parent_id) {
+            Some((children, axis, _)) => (children, axis),
+            None => return None,
+        };
+        if parent_axis == axis {
+            let index = children.iter().position(|c| c.id() == target_leaf)?;
+            let insertion_index = if before { index } else { index + 1 };
+            if insertion_index > children.len() {
+                return None;
+            }
+            let updated = insert_leaf_into_group(working, &parent_id, insertion_index, mover, 1)?;
+            return Some(DragPlacement {
+                tree: updated,
+                target_group: parent_id,
+                insertion_index,
+                wrap: false,
+                new_group: None,
+            });
+        }
+    }
+    // Perpendicular: wrap only the target subtree in a new 2-child split.
+    let new_id = generate_drag_group_id(source_leaf, base_revision, &node_ids);
+    let wrapper = if before {
+        Node::Group {
+            id: new_id.clone(),
+            axis,
+            children: vec![
+                mover,
+                Node::Leaf {
+                    id: target_leaf.clone(),
+                },
+            ],
+            shares: vec![1, 1],
+        }
+    } else {
+        Node::Group {
+            id: new_id.clone(),
+            axis,
+            children: vec![
+                Node::Leaf {
+                    id: target_leaf.clone(),
+                },
+                mover,
+            ],
+            shares: vec![1, 1],
+        }
+    };
+    if working.id() == target_leaf {
+        return Some(DragPlacement {
+            tree: wrapper,
+            target_group: target_leaf.clone(),
+            insertion_index: 0,
+            wrap: true,
+            new_group: Some(new_id),
+        });
+    }
+    let parent_id = direct_parent_of_leaf(&working, target_leaf)?;
+    let (children, shares) = match find_group(&working, &parent_id) {
+        Some((children, _, _)) => {
+            let shares = find_group_shares(&working, &parent_id)?;
+            (children, shares)
+        }
+        None => return None,
+    };
+    let index = children.iter().position(|c| c.id() == target_leaf)?;
+    let target_share = *shares.get(index)?;
+    let updated = replace_child_at(&working, &parent_id, index, wrapper, target_share)?;
+    Some(DragPlacement {
+        tree: updated,
+        target_group: parent_id,
+        insertion_index: index,
+        wrap: true,
+        new_group: Some(new_id),
+    })
 }
 
 fn project_affected_geometry(
@@ -3956,5 +4838,1632 @@ mod tests {
                 shares: vec![1, 1],
             }
         );
+    }
+
+    // ---- drag placement slice ----
+
+    use crate::contract::{
+        AckOutcome, AdapterAck, DragCapabilities, DragPostObservation, DragSide,
+        LifecyclePostObservation,
+    };
+    use crate::ids::CorrelationId;
+
+    fn domain_two() -> OutputDomain {
+        OutputDomain {
+            id: OutputId("out-2".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 120,
+                h: 80,
+            },
+            gap: 0,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
+    fn corr(value: &str) -> CorrelationId {
+        CorrelationId::parse(value).unwrap_or_else(|| panic!("valid correlation {value}"))
+    }
+
+    fn obs_windows(session: &Session) -> Vec<ObservedWindow> {
+        let mut windows: Vec<ObservedWindow> = session
+            .snapshot()
+            .windows
+            .iter()
+            .map(|link| ObservedWindow {
+                window: link.window.clone(),
+                output: link.output.clone(),
+                workspace: link.workspace.clone(),
+                floating: false,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+            })
+            .collect();
+        windows.extend(session.exception_observed());
+        windows
+    }
+
+    fn obs_for(session: &Session) -> SessionObservation {
+        SessionObservation {
+            observation: Observation::new(
+                owner(),
+                generation(),
+                session.accepted_revision(),
+                1000 + session.accepted_revision(),
+            ),
+            windows: obs_windows(session),
+        }
+    }
+
+    fn admit(session: &mut Session, window: &str, wide: bool) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let mut windows = obs_windows(session);
+        windows.push(ObservedWindow {
+            window: window_id.clone(),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        let bounds = if wide {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50,
+            }
+        } else {
+            Rect {
+                x: 0,
+                y: 0,
+                w: 50,
+                h: 100,
+            }
+        };
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            exceptions: ExceptionFlags::none(),
+            exception_behavior: None,
+            placement_bounds: bounds,
+        };
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows,
+        };
+        let correlation = corr(&format!("corr-admit-{window}"));
+        let plan = session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("admit verify");
+    }
+
+    fn admit_exception(session: &mut Session, window: &str) {
+        let rev = session.accepted_revision();
+        let window_id = WindowId(window.to_owned());
+        let mut windows = obs_windows(session);
+        windows.push(ObservedWindow {
+            window: window_id.clone(),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: true,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        let command = SessionCommand::Admit {
+            window: window_id,
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            exceptions: ExceptionFlags {
+                floating: true,
+                fullscreen: false,
+                maximized: false,
+                sticky: false,
+            },
+            exception_behavior: Some(ExceptionBehavior::Defer),
+            placement_bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50,
+            },
+        };
+        let observation = SessionObservation {
+            observation: Observation::new(owner(), generation(), rev, 100 + rev),
+            windows,
+        };
+        let correlation = corr(&format!("corr-admit-{window}"));
+        session
+            .propose(
+                &command,
+                &observation,
+                &correlation,
+                &LifecycleCapabilities::full(),
+            )
+            .expect("admit propose");
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("admit ack");
+        session
+            .verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), rev, 200 + rev),
+                correlation,
+                true,
+                vec![
+                    crate::contract::LifecyclePrecondition::WindowObserved,
+                    crate::contract::LifecyclePrecondition::DesiredTopologyValid,
+                    crate::contract::LifecyclePrecondition::AdapterMustVerifyPostconditions,
+                ],
+                crate::contract::LifecycleOperation::AdmitDeferred {
+                    window: WindowId(window.to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                },
+            ))
+            .expect("admit verify");
+    }
+
+    /// Two tiled windows: root `H[leaf-win-1 (0-60), leaf-win-2 (60-120)]`,
+    /// focus `win-2`.
+    fn session_two() -> Session {
+        let mut session = Session::new(owner(), generation(), 0, 7, vec![domain()]).expect("new");
+        admit(&mut session, "win-1", true);
+        admit(&mut session, "win-2", true);
+        session
+    }
+
+    /// Three tiled windows: root `H[1 (0-40), 2 (40-80), 3 (80-120)]`, focus
+    /// `win-3`.
+    fn session_three() -> Session {
+        let mut session = session_two();
+        admit(&mut session, "win-3", true);
+        session
+    }
+
+    /// Nested: root `H[1 (0-60 x full), V[2 (y0-40), 3 (y40-80)]]`, focus
+    /// `win-3`.
+    fn session_nested() -> Session {
+        let mut session = session_two();
+        admit(&mut session, "win-3", false);
+        session
+    }
+
+    /// Deep: root `H[1, V[2 (y0-26), 3 (y26-52), 4 (y52-80)]]`, focus `win-4`.
+    fn session_deep() -> Session {
+        let mut session = session_nested();
+        admit(&mut session, "win-4", false);
+        session
+    }
+
+    fn domain_key() -> DomainKey {
+        DomainKey {
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+        }
+    }
+
+    fn leaf(name: &str) -> NodeId {
+        NodeId(name.to_owned())
+    }
+
+    fn leaves_of(session: &Session) -> Vec<NodeId> {
+        let key = domain_key();
+        match session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output == key.output && d.workspace == key.workspace)
+            .and_then(|d| d.tree)
+        {
+            Some(tree) => collect_leaves(&tree),
+            None => Vec::new(),
+        }
+    }
+
+    fn begin_focused(session: &mut Session, window: &str) -> DragCapture {
+        let before = session.snapshot();
+        let capture = session
+            .begin_drag(&WindowId(window.to_owned()), &obs_for(session))
+            .expect("begin");
+        // Begin mutates no authoritative topology and stages no pending.
+        assert_eq!(session.snapshot(), before);
+        assert!(!session.has_pending());
+        assert!(!session.has_pending_desired());
+        assert!(session.has_drag());
+        capture
+    }
+
+    fn drop_planned(session: &mut Session, x: i32, y: i32, correlation: &str) -> SessionDragPlan {
+        let before = session.snapshot();
+        match session
+            .drop_drag(
+                x,
+                y,
+                &obs_for(session),
+                &corr(correlation),
+                &DragCapabilities::full(),
+            )
+            .expect("drop")
+        {
+            DragRelease::Planned(plan) => {
+                // Drop stages pending but commits no topology.
+                assert_eq!(session.snapshot(), before);
+                assert!(session.has_pending());
+                assert!(!session.has_drag());
+                *plan
+            }
+            DragRelease::SnapBack(_) => panic!("expected a drag plan at ({x}, {y})"),
+        }
+    }
+
+    fn commit_drag(session: &mut Session, plan: &SessionDragPlan, correlation: &str) {
+        let rev = plan.dispatch.base_revision;
+        let correlation = corr(correlation);
+        assert_eq!(plan.dispatch.correlation_id, correlation);
+        session
+            .acknowledge(&AdapterAck::new(
+                correlation.clone(),
+                owner(),
+                generation(),
+                rev,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        let commit = session
+            .verify_drag(&DragPostObservation::new(
+                Observation::new(owner(), generation(), rev, 4242),
+                correlation,
+                true,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            ))
+            .expect("verify");
+        assert_eq!(commit.revision, rev + 1);
+        assert_eq!(session.accepted_revision(), rev + 1);
+        assert_eq!(session.snapshot(), plan.desired_snapshot);
+        assert!(!session.has_pending());
+    }
+
+    /// Exactly-once leaves/windows, valid shares, positive projected areas.
+    fn assert_tree_invariants(session: &Session) {
+        let snapshot = session.snapshot();
+        let mut leaf_to_window = BTreeMap::new();
+        for link in &snapshot.windows {
+            assert!(
+                leaf_to_window
+                    .insert(link.leaf.clone(), link.window.clone())
+                    .is_none(),
+                "leaf bound twice"
+            );
+        }
+        for view in &snapshot.domains {
+            let Some(tree) = view.tree.as_ref() else {
+                continue;
+            };
+            let leaves = collect_leaves(tree);
+            let mut seen = BTreeSet::new();
+            for leaf in &leaves {
+                assert!(seen.insert(leaf.clone()), "leaf twice in tree");
+                assert!(
+                    leaf_to_window.contains_key(leaf),
+                    "leaf without exactly one window"
+                );
+            }
+            assert_valid_shares(tree);
+            let domain = session
+                .domains()
+                .iter()
+                .find(|d| d.id == view.output && d.workspace == view.workspace)
+                .expect("known domain");
+            let projected =
+                crate::geometry::project(tree, domain.bounds, domain.gap).expect("projectable");
+            assert_eq!(projected.len(), leaves.len());
+            for leaf in &projected {
+                assert!(leaf.rect.w > 0 && leaf.rect.h > 0, "positive area");
+            }
+        }
+        assert_eq!(
+            leaf_to_window.len(),
+            snapshot.windows.len(),
+            "every window on exactly one leaf"
+        );
+    }
+
+    fn assert_valid_shares(node: &Node) {
+        match node {
+            Node::Leaf { id } => assert!(!id.0.is_empty()),
+            Node::Group {
+                id,
+                children,
+                shares,
+                ..
+            } => {
+                assert!(!id.0.is_empty());
+                assert!(children.len() >= 2);
+                assert_eq!(shares.len(), children.len());
+                assert!(!shares.contains(&0));
+                for child in children {
+                    assert_valid_shares(child);
+                }
+            }
+        }
+    }
+
+    fn contained(inner: &Rect, outer: &Rect) -> bool {
+        inner.x >= outer.x
+            && inner.y >= outer.y
+            && inner.x + inner.w <= outer.x + outer.w
+            && inner.y + inner.h <= outer.y + outer.h
+    }
+
+    fn intersects(a: &Rect, b: &Rect) -> bool {
+        a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    }
+
+    #[test]
+    fn drag_sides_map_to_axis_and_order() {
+        // Two-wide: removing win-2 collapses the root, so a left drop onto
+        // leaf-win-1 wraps the root target (still Horizontal, before).
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        assert_eq!(capture.source_rect.w, 60);
+        let left = session.preview_drag(5, 40).expect("left preview");
+        assert_eq!(left.target_leaf, leaf("leaf-win-1"));
+        assert_eq!(left.side, DragSide::Left);
+        assert_eq!(left.axis, Axis::Horizontal);
+        assert!(left.before);
+        assert!(left.wrap);
+        session.cancel_drag();
+        // Three-wide: leaf-win-1 (0-40) right third [27,40) inserts after.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let right = session.preview_drag(35, 40).expect("right preview");
+        assert_eq!(right.target_leaf, leaf("leaf-win-1"));
+        assert_eq!(right.side, DragSide::Right);
+        assert_eq!(right.axis, Axis::Horizontal);
+        assert!(!right.before);
+        assert!(!right.wrap);
+        session.cancel_drag();
+        // Vertical triple: leaf-win-2 (y0-26) middle column top third orders
+        // before inside the surviving V parent (no wrap).
+        let mut session = session_deep();
+        begin_focused(&mut session, "win-4");
+        let top = session.preview_drag(90, 5).expect("top preview");
+        assert_eq!(top.target_leaf, leaf("leaf-win-2"));
+        assert_eq!(top.side, DragSide::Top);
+        assert_eq!(top.axis, Axis::Vertical);
+        assert!(top.before);
+        assert!(!top.wrap);
+        let bottom = session.preview_drag(90, 20).expect("bottom preview");
+        assert_eq!(bottom.target_leaf, leaf("leaf-win-2"));
+        assert_eq!(bottom.side, DragSide::Bottom);
+        assert_eq!(bottom.axis, Axis::Vertical);
+        assert!(!bottom.before);
+        assert!(!bottom.wrap);
+    }
+
+    #[test]
+    fn drag_same_axis_nary_reorder() {
+        // H[1,2,3] focus win-3 left onto leaf-win-1 -> H[3,1,2].
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let preview = session.preview_drag(5, 40).expect("preview");
+        assert!(!preview.wrap);
+        assert_eq!(preview.insertion_index, 0);
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        assert_eq!(plan.dispatch.operation.target_leaf, leaf("leaf-win-1"));
+        assert_eq!(plan.dispatch.operation.side, DragSide::Left);
+        assert!(!plan.dispatch.operation.wrap);
+        assert_eq!(plan.dispatch.operation.insertion_index, 0);
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-3"), leaf("leaf-win-1"), leaf("leaf-win-2")]
+        );
+        // Focus preserved on the moved window.
+        assert_eq!(
+            session.focus(),
+            (Some(domain_key()), Some(leaf("leaf-win-3")))
+        );
+        assert_tree_invariants(&session);
+    }
+
+    #[test]
+    fn drag_perpendicular_wraps_only_target_subtree() {
+        // H[1,2,3] focus win-3 top onto leaf-win-1: remove 3 -> H[1,2], then
+        // wrap leaf-win-1 in a V[3,1] split; leaf-win-2 untouched.
+        let mut session = session_three();
+        assert_eq!(leaves_of(&session).len(), 3);
+        begin_focused(&mut session, "win-3");
+        // Middle column (x in [13,27)) top third: perpendicular Top wrap.
+        let preview = session.preview_drag(20, 5).expect("preview");
+        assert!(preview.wrap);
+        assert_eq!(preview.axis, Axis::Vertical);
+        assert!(preview.before);
+        let plan = drop_planned(&mut session, 20, 5, "corr-drag-1");
+        let operation = &plan.dispatch.operation;
+        assert!(operation.wrap);
+        let new_group = operation.new_group.clone().expect("fresh group");
+        assert_ne!(new_group, leaf("leaf-win-1"));
+        // Wrapper inherits the target share slot: root stays [1,1].
+        let root = plan
+            .desired_snapshot
+            .domains
+            .clone()
+            .into_iter()
+            .find(|d| d.output.0 == "out-1")
+            .and_then(|d| d.tree)
+            .expect("desired tree");
+        match &root {
+            Node::Group {
+                axis: Axis::Horizontal,
+                children,
+                shares,
+                ..
+            } => {
+                assert_eq!(shares, &vec![1, 1]);
+                assert_eq!(children.len(), 2);
+                assert_eq!(
+                    children[1],
+                    Node::Leaf {
+                        id: leaf("leaf-win-2")
+                    }
+                );
+                match &children[0] {
+                    Node::Group {
+                        id,
+                        axis: Axis::Vertical,
+                        children,
+                        shares,
+                    } => {
+                        assert_eq!(id, &new_group);
+                        assert_eq!(shares, &vec![1, 1]);
+                        assert_eq!(
+                            children,
+                            &vec![
+                                Node::Leaf {
+                                    id: leaf("leaf-win-3")
+                                },
+                                Node::Leaf {
+                                    id: leaf("leaf-win-1")
+                                },
+                            ]
+                        );
+                    }
+                    other => panic!("expected V wrapper, got {other:?}"),
+                }
+            }
+            other => panic!("expected H root, got {other:?}"),
+        }
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        assert_eq!(
+            session.focus(),
+            (Some(domain_key()), Some(leaf("leaf-win-3")))
+        );
+        assert_tree_invariants(&session);
+    }
+
+    #[test]
+    fn drag_deep_nesting_collapse_and_wrap() {
+        // H[1, V[2,3,4]] focus win-4 left onto leaf-win-2 (60-80, y0-26):
+        // remove 4 -> V[2,3], wrap leaf-win-2 in H[4,2] at V index 0.
+        let mut session = session_deep();
+        begin_focused(&mut session, "win-4");
+        let preview = session.preview_drag(65, 13).expect("preview");
+        assert!(preview.wrap);
+        assert_eq!(preview.target_leaf, leaf("leaf-win-2"));
+        assert_eq!(preview.axis, Axis::Horizontal);
+        assert!(preview.before);
+        let plan = drop_planned(&mut session, 65, 13, "corr-drag-1");
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        let root = session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output.0 == "out-1")
+            .and_then(|d| d.tree)
+            .expect("tree");
+        match root {
+            Node::Group { children, .. } => {
+                assert_eq!(children.len(), 2);
+                assert_eq!(
+                    children[0],
+                    Node::Leaf {
+                        id: leaf("leaf-win-1")
+                    }
+                );
+                match &children[1] {
+                    Node::Group {
+                        children, shares, ..
+                    } => {
+                        assert_eq!(shares, &vec![1, 1]);
+                        assert_eq!(children.len(), 2);
+                        // Unaffected leaf-win-3 keeps its slot and share.
+                        assert_eq!(
+                            children[1],
+                            Node::Leaf {
+                                id: leaf("leaf-win-3")
+                            }
+                        );
+                        match &children[0] {
+                            Node::Group {
+                                children, shares, ..
+                            } => {
+                                assert_eq!(shares, &vec![1, 1]);
+                                assert_eq!(
+                                    children,
+                                    &vec![
+                                        Node::Leaf {
+                                            id: leaf("leaf-win-4")
+                                        },
+                                        Node::Leaf {
+                                            id: leaf("leaf-win-2")
+                                        },
+                                    ]
+                                );
+                            }
+                            other => panic!("expected H wrapper, got {other:?}"),
+                        }
+                    }
+                    other => panic!("expected V inner, got {other:?}"),
+                }
+            }
+            other => panic!("expected H root, got {other:?}"),
+        }
+        assert_tree_invariants(&session);
+    }
+
+    #[test]
+    fn drag_source_collapse_promotes_sibling() {
+        // H[1,2] focus win-2 top onto leaf-win-1: remove 2 collapses the root
+        // to leaf-win-1, then the root target wraps in V[2,1].
+        let mut session = session_two();
+        begin_focused(&mut session, "win-2");
+        let plan = drop_planned(&mut session, 30, 5, "corr-drag-1");
+        assert!(plan.dispatch.operation.wrap);
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        let root = session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output.0 == "out-1")
+            .and_then(|d| d.tree)
+            .expect("tree");
+        assert_eq!(
+            root,
+            Node::Group {
+                id: plan.dispatch.operation.new_group.clone().expect("group"),
+                axis: Axis::Vertical,
+                children: vec![
+                    Node::Leaf {
+                        id: leaf("leaf-win-2")
+                    },
+                    Node::Leaf {
+                        id: leaf("leaf-win-1")
+                    },
+                ],
+                shares: vec![1, 1],
+            }
+        );
+        assert_tree_invariants(&session);
+    }
+
+    #[test]
+    fn drag_preview_drop_structural_and_geometry_agreement() {
+        let mut session = session_three();
+        let capture = begin_focused(&mut session, "win-3");
+        let preview = session.preview_drag(5, 40).expect("preview");
+        // Preview exposes the accepted source rect for the snap-back path.
+        assert_eq!(preview.source_rect, capture.source_rect);
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let operation = &plan.dispatch.operation;
+        assert_eq!(preview.target_leaf, operation.target_leaf);
+        assert_eq!(preview.target_window, operation.target_window);
+        assert_eq!(preview.side, operation.side);
+        assert_eq!(preview.axis, operation.axis);
+        assert_eq!(preview.before, operation.before);
+        assert_eq!(preview.wrap, operation.wrap);
+        assert_eq!(preview.target_group, operation.target_group);
+        assert_eq!(preview.insertion_index, operation.insertion_index);
+        // Complete geometry: every tiled window in the domain, positive,
+        // contained, disjoint, domain-scoped.
+        let windows = plan
+            .desired_snapshot
+            .windows
+            .iter()
+            .filter(|l| l.output.0 == "out-1")
+            .count();
+        assert_eq!(plan.desired_geometry.len(), windows);
+        assert_eq!(windows, 3);
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        };
+        for (index, entry) in plan.desired_geometry.iter().enumerate() {
+            assert_eq!(entry.output.0, "out-1");
+            assert_eq!(entry.workspace.0, "ws-1");
+            assert!(entry.rect.w > 0 && entry.rect.h > 0);
+            assert!(contained(&entry.rect, &bounds), "escapes work area");
+            for other in plan.desired_geometry.iter().skip(index + 1) {
+                assert!(!intersects(&entry.rect, &other.rect), "overlap");
+            }
+        }
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        assert_tree_invariants(&session);
+    }
+
+    #[test]
+    fn drag_begin_refusals_fail_closed() {
+        // Unknown window.
+        let mut session = session_two();
+        let before = session.snapshot();
+        assert_eq!(
+            session.begin_drag(&WindowId("win-9".to_owned()), &obs_for(&session)),
+            Err(ProposeError::Refused(RefusalKind::UnknownWindow))
+        );
+        // Non-focused tiled window.
+        assert_eq!(
+            session.begin_drag(&WindowId("win-1".to_owned()), &obs_for(&session)),
+            Err(ProposeError::Refused(RefusalKind::FocusMismatch))
+        );
+        // Malformed id.
+        assert_eq!(
+            session.begin_drag(&WindowId(String::new()), &obs_for(&session)),
+            Err(ProposeError::Refused(RefusalKind::MalformedInput))
+        );
+        // Active drag blocks a second begin.
+        begin_focused(&mut session, "win-2");
+        assert_eq!(
+            session.begin_drag(&WindowId("win-2".to_owned()), &obs_for(&session)),
+            Err(ProposeError::PendingExists)
+        );
+        session.cancel_drag();
+        // Reconciler pending blocks begin.
+        let rev = session.accepted_revision();
+        let mut windows = obs_windows(&session);
+        windows.push(ObservedWindow {
+            window: WindowId("win-3".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        session
+            .propose(
+                &SessionCommand::Admit {
+                    window: WindowId("win-3".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                    exceptions: ExceptionFlags::none(),
+                    exception_behavior: None,
+                    placement_bounds: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 50,
+                    },
+                },
+                &SessionObservation {
+                    observation: Observation::new(owner(), generation(), rev, 1),
+                    windows,
+                },
+                &corr("corr-pending"),
+                &LifecycleCapabilities::full(),
+            )
+            .expect("pending admit");
+        assert_eq!(
+            session.begin_drag(&WindowId("win-2".to_owned()), &obs_for(&session)),
+            Err(ProposeError::PendingExists)
+        );
+        assert_eq!(session.snapshot(), before);
+        assert!(!session.has_drag());
+    }
+
+    #[test]
+    fn drag_begin_refuses_exception_window() {
+        let mut session = session_two();
+        admit_exception(&mut session, "win-x");
+        assert_eq!(
+            session.begin_drag(&WindowId("win-x".to_owned()), &obs_for(&session)),
+            Err(ProposeError::Refused(RefusalKind::NotTiled))
+        );
+        assert!(!session.has_drag());
+    }
+
+    #[test]
+    fn drag_preview_refusals_fail_closed() {
+        let mut session = session_two();
+        // No active drag.
+        assert_eq!(
+            session.preview_drag(10, 10),
+            Err(ProposeError::Refused(RefusalKind::MalformedInput))
+        );
+        let before = session.snapshot();
+        begin_focused(&mut session, "win-2");
+        // Self drop carries no structural meaning.
+        assert_eq!(
+            session.preview_drag(90, 40),
+            Err(ProposeError::Refused(RefusalKind::Unchanged))
+        );
+        // Target center carries no structural meaning.
+        assert_eq!(
+            session.preview_drag(30, 40),
+            Err(ProposeError::Refused(RefusalKind::Unchanged))
+        );
+        // Outside the work area is cross-domain.
+        assert_eq!(
+            session.preview_drag(200, 40),
+            Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch))
+        );
+        assert_eq!(
+            session.preview_drag(-1, 40),
+            Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch))
+        );
+        // Refusals stage nothing and mutate nothing.
+        assert_eq!(session.snapshot(), before);
+        assert!(!session.has_pending());
+        assert!(session.has_drag());
+    }
+
+    #[test]
+    fn drag_noop_insert_refuses_unchanged() {
+        // H[1,2,3] focus win-3 right onto leaf-win-2 re-inserts after it:
+        // remove 3 -> [1,2], insert at 2 -> [1,2,3].
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        assert_eq!(
+            session.preview_drag(75, 40),
+            Err(ProposeError::Refused(RefusalKind::Unchanged))
+        );
+        match session
+            .drop_drag(
+                75,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-1"),
+                &DragCapabilities::full(),
+            )
+            .expect("invalid release snaps back")
+        {
+            DragRelease::SnapBack(snap) => {
+                assert_eq!(snap.source_leaf, leaf("leaf-win-3"));
+            }
+            DragRelease::Planned(_) => panic!("no-op must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+    }
+
+    #[test]
+    fn drag_cancel_and_invalid_release_snap_back() {
+        let mut session = session_two();
+        assert_eq!(session.cancel_drag(), None);
+        let capture = begin_focused(&mut session, "win-2");
+        let snap = session.cancel_drag().expect("snap back");
+        assert_eq!(snap.domain, capture.domain);
+        assert_eq!(snap.source_leaf, capture.source_leaf);
+        assert_eq!(snap.source_window, capture.source_window);
+        assert_eq!(snap.source_rect, capture.source_rect);
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-1"), leaf("leaf-win-2")]
+        );
+        // Invalid releases (self, center) snap back with no reconciler use.
+        begin_focused(&mut session, "win-2");
+        match session
+            .drop_drag(
+                90,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-1"),
+                &DragCapabilities::full(),
+            )
+            .expect("self release")
+        {
+            DragRelease::SnapBack(snap) => assert_eq!(snap.source_rect, capture.source_rect),
+            DragRelease::Planned(_) => panic!("self must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        begin_focused(&mut session, "win-2");
+        match session
+            .drop_drag(
+                30,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-2"),
+                &DragCapabilities::full(),
+            )
+            .expect("center release")
+        {
+            DragRelease::SnapBack(snap) => assert_eq!(snap.source_rect, capture.source_rect),
+            DragRelease::Planned(_) => panic!("center must snap back"),
+        }
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-1"), leaf("leaf-win-2")]
+        );
+    }
+
+    #[test]
+    fn drag_drop_stale_capability_and_pending_refusals() {
+        // Stale observation diverges through the shared slot.
+        let mut session = session_two();
+        begin_focused(&mut session, "win-2");
+        let mut stale = obs_for(&session);
+        stale.observation = Observation::new(owner(), generation(), 9, 9);
+        assert_eq!(
+            session.drop_drag(
+                10,
+                5,
+                &stale,
+                &corr("corr-drag-1"),
+                &DragCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(DivergenceKind::StaleRevision))
+        );
+        assert_eq!(
+            session.status().state,
+            crate::reconcile::StateKind::Divergent
+        );
+        assert!(!session.has_drag());
+        // Missing capability snaps back and clears the capture.
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        let before = session.snapshot();
+        let revision = session.accepted_revision();
+        match session
+            .drop_drag(
+                10,
+                5,
+                &obs_for(&session),
+                &corr("corr-drag-1"),
+                &DragCapabilities::none(),
+            )
+            .expect("unsupported capability snaps back")
+        {
+            DragRelease::SnapBack(snap) => {
+                assert_eq!(snap.source_rect, capture.source_rect);
+            }
+            DragRelease::Planned(_) => panic!("unsupported capability must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        assert_eq!(session.accepted_revision(), revision);
+        // Lifecycle proposals are blocked while a transient drag is active so
+        // they cannot stale the capture.
+        let mut session = session_two();
+        begin_focused(&mut session, "win-2");
+        let rev = session.accepted_revision();
+        let mut windows = obs_windows(&session);
+        windows.push(ObservedWindow {
+            window: WindowId("win-3".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        assert_eq!(
+            session.propose(
+                &SessionCommand::Admit {
+                    window: WindowId("win-3".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                    exceptions: ExceptionFlags::none(),
+                    exception_behavior: None,
+                    placement_bounds: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 50,
+                    },
+                },
+                &SessionObservation {
+                    observation: Observation::new(owner(), generation(), rev, 1),
+                    windows,
+                },
+                &corr("corr-pending"),
+                &LifecycleCapabilities::full(),
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        assert!(session.has_drag());
+        assert!(!session.has_pending());
+    }
+
+    #[test]
+    fn drag_ack_verify_commit_and_divergence() {
+        // Happy path.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        commit_drag(&mut session, &plan, "corr-drag-1");
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-3"), leaf("leaf-win-1"), leaf("leaf-win-2")]
+        );
+        // Refused capability ack diverges.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        assert_eq!(
+            session.acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                plan.dispatch.base_revision,
+                AckOutcome::RefusedCapability,
+            )),
+            Err(crate::reconcile::AckError::Diverged(
+                DivergenceKind::CapabilityRefused
+            ))
+        );
+        assert!(!session.has_pending_desired());
+        // Partial ack diverges.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        assert_eq!(
+            session.acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                plan.dispatch.base_revision,
+                AckOutcome::PartialApplication,
+            )),
+            Err(crate::reconcile::AckError::Diverged(
+                DivergenceKind::PartialApplication
+            ))
+        );
+        // Mismatched verified operation diverges without commit.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let base = plan.dispatch.base_revision;
+        session
+            .acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        let mut bad_operation = plan.dispatch.operation.clone();
+        bad_operation.insertion_index += 1;
+        assert_eq!(
+            session.verify_drag(&DragPostObservation::new(
+                Observation::new(owner(), generation(), base, 9),
+                corr("corr-drag-1"),
+                true,
+                plan.dispatch.preconditions.clone(),
+                bad_operation,
+            )),
+            Err(crate::reconcile::VerifyError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-1"), leaf("leaf-win-2"), leaf("leaf-win-3")]
+        );
+        // Unverified diverges without commit.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let base = plan.dispatch.base_revision;
+        session
+            .acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        assert_eq!(
+            session.verify_drag(&DragPostObservation::new(
+                Observation::new(owner(), generation(), base, 9),
+                corr("corr-drag-1"),
+                false,
+                plan.dispatch.preconditions.clone(),
+                plan.dispatch.operation.clone(),
+            )),
+            Err(crate::reconcile::VerifyError::Diverged(
+                DivergenceKind::PostconditionUnverified
+            ))
+        );
+        // Cross-kind verify while drag pending diverges.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let base = plan.dispatch.base_revision;
+        session
+            .acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        assert_eq!(
+            session.verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), base, 9),
+                corr("corr-drag-1"),
+                true,
+                Vec::new(),
+                crate::contract::LifecycleOperation::RemoveDeferred {
+                    window: WindowId("win-3".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                },
+            )),
+            Err(crate::reconcile::VerifyError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+    }
+
+    #[test]
+    fn drag_deterministic_replay() {
+        let replay = || {
+            let mut session = session_three();
+            begin_focused(&mut session, "win-3");
+            let preview = session.preview_drag(5, 40).expect("preview");
+            let release = session
+                .drop_drag(
+                    5,
+                    40,
+                    &obs_for(&session),
+                    &corr("corr-drag-1"),
+                    &DragCapabilities::full(),
+                )
+                .expect("drop");
+            (preview, release)
+        };
+        let (first_preview, first_release) = replay();
+        let (second_preview, second_release) = replay();
+        assert_eq!(first_preview, second_preview);
+        assert_eq!(first_release, second_release);
+    }
+
+    #[test]
+    fn drag_bounded_invariant_loop() {
+        let mut session =
+            Session::new(owner(), generation(), 0, 7, vec![domain(), domain_two()]).expect("new");
+        admit(&mut session, "win-1", true);
+        admit(&mut session, "win-2", true);
+        admit(&mut session, "win-3", false);
+        let before = session.snapshot();
+        let capture = begin_focused(&mut session, "win-3");
+        let mut ok = 0u32;
+        let mut refused = 0u32;
+        for x in (0..120).step_by(10) {
+            for y in (0..80).step_by(10) {
+                match session.preview_drag(x, y) {
+                    Ok(preview) => {
+                        ok += 1;
+                        assert_eq!(preview.domain, capture.domain);
+                        assert_eq!(preview.source_leaf, capture.source_leaf);
+                        assert_ne!(preview.target_leaf, capture.source_leaf);
+                        assert!(preview.target_rect.w > 0 && preview.target_rect.h > 0);
+                    }
+                    Err(ProposeError::Refused(_)) => refused += 1,
+                    Err(ProposeError::Diverged(reason)) => {
+                        panic!("preview must not diverge: {reason:?}")
+                    }
+                    Err(ProposeError::PendingExists) => panic!("preview holds no slot"),
+                }
+                // No mutation before commit: exactly-once leaves/windows,
+                // valid trees/shares, positive areas, domain isolation.
+                assert_eq!(session.snapshot(), before);
+                assert!(!session.has_pending());
+                assert!(!session.has_pending_desired());
+                assert_tree_invariants(&session);
+                let isolated = session
+                    .snapshot()
+                    .domains
+                    .into_iter()
+                    .find(|d| d.output.0 == "out-2")
+                    .expect("second domain");
+                assert!(isolated.tree.is_none(), "domain isolation");
+            }
+        }
+        assert!(ok > 0, "loop must hit valid edges");
+        assert!(refused > 0, "loop must hit centers/self");
+        session.cancel_drag();
+        assert_eq!(session.snapshot(), before);
+    }
+
+    #[test]
+    fn drag_blocks_all_proposals_while_active() {
+        use crate::contract::{FocusCapabilities, ResizeCapabilities};
+        use crate::directional::{Capabilities, Direction};
+        let mut session = session_three();
+        let before = session.snapshot();
+        begin_focused(&mut session, "win-3");
+        let obs = obs_for(&session);
+        // Lifecycle.
+        let mut windows = obs_windows(&session);
+        windows.push(ObservedWindow {
+            window: WindowId("win-9".to_owned()),
+            output: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        });
+        assert_eq!(
+            session.propose(
+                &SessionCommand::Admit {
+                    window: WindowId("win-9".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                    exceptions: ExceptionFlags::none(),
+                    exception_behavior: None,
+                    placement_bounds: Rect {
+                        x: 0,
+                        y: 0,
+                        w: 100,
+                        h: 50
+                    },
+                },
+                &SessionObservation {
+                    observation: Observation::new(
+                        owner(),
+                        generation(),
+                        session.accepted_revision(),
+                        1
+                    ),
+                    windows,
+                },
+                &corr("corr-block-1"),
+                &LifecycleCapabilities::full(),
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        // Move.
+        assert_eq!(
+            session.propose_move(
+                &domain_key(),
+                &WindowId("win-3".to_owned()),
+                Direction::Left,
+                &obs,
+                &corr("corr-block-2"),
+                &Capabilities::full(),
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        // Focus.
+        assert_eq!(
+            session.propose_focus(
+                &domain_key(),
+                &WindowId("win-3".to_owned()),
+                Direction::Left,
+                &obs,
+                &corr("corr-block-3"),
+                &FocusCapabilities::full(),
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        // Resize.
+        assert_eq!(
+            session.propose_resize(
+                &domain_key(),
+                &WindowId("win-3".to_owned()),
+                Direction::Left,
+                &obs,
+                &corr("corr-block-4"),
+                &ResizeCapabilities::full(),
+            ),
+            Err(ProposeError::PendingExists)
+        );
+        assert!(session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        session.cancel_drag();
+    }
+
+    #[test]
+    fn drag_transient_cleared_on_terminal_paths() {
+        // Adapter loss clears the transient drag together with pending desired.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        assert!(session.has_drag());
+        session.note_adapter_loss();
+        assert!(!session.has_drag());
+        assert!(!session.has_pending_desired());
+        assert_eq!(
+            session.status().state,
+            crate::reconcile::StateKind::Divergent
+        );
+        // Acknowledgement divergence clears pending desired (drag already
+        // cleared by a successful drop).
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        assert!(!session.has_drag());
+        assert!(session.has_pending());
+        assert_eq!(
+            session.acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                plan.dispatch.base_revision,
+                AckOutcome::RefusedCapability,
+            )),
+            Err(crate::reconcile::AckError::Diverged(
+                DivergenceKind::CapabilityRefused
+            ))
+        );
+        assert!(!session.has_drag());
+        assert!(!session.has_pending_desired());
+        // Wrong-kind verification diverges fail-closed and clears staging.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let base = plan.dispatch.base_revision;
+        session
+            .acknowledge(&AdapterAck::new(
+                corr("corr-drag-1"),
+                owner(),
+                generation(),
+                base,
+                AckOutcome::Accepted,
+            ))
+            .expect("ack");
+        assert_eq!(
+            session.verify_lifecycle(&LifecyclePostObservation::new(
+                Observation::new(owner(), generation(), base, 9),
+                corr("corr-drag-1"),
+                true,
+                Vec::new(),
+                crate::contract::LifecycleOperation::RemoveDeferred {
+                    window: WindowId("win-3".to_owned()),
+                    output: OutputId("out-1".to_owned()),
+                    workspace: WorkspaceId("ws-1".to_owned()),
+                },
+            )),
+            Err(crate::reconcile::VerifyError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+        assert!(!session.has_drag());
+        assert!(!session.has_pending_desired());
+    }
+
+    #[test]
+    fn drag_preview_validates_full_capture_and_drop_snaps_back_on_stale() {
+        // Focus drift stales the capture: preview refuses, drop snaps back.
+        let mut session = session_three();
+        let preview_ok = {
+            begin_focused(&mut session, "win-3");
+            session.preview_drag(5, 40).expect("preview")
+        };
+        assert!(preview_ok.proposed_rect.w > 0);
+        session.focused_leaf = Some(leaf("leaf-win-1"));
+        assert_eq!(
+            session.preview_drag(5, 40),
+            Err(ProposeError::Refused(RefusalKind::MalformedTopology))
+        );
+        match session
+            .drop_drag(
+                5,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-1"),
+                &DragCapabilities::full(),
+            )
+            .expect("stale capture snaps back")
+        {
+            DragRelease::SnapBack(_) => {}
+            DragRelease::Planned(_) => panic!("stale must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        // Generation drift stales the capture the same way.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        session.preview_drag(5, 40).expect("preview");
+        session.drag.as_mut().expect("drag").generation =
+            crate::ids::GenerationId::parse("gen-2").expect("valid");
+        assert_eq!(
+            session.preview_drag(5, 40),
+            Err(ProposeError::Refused(RefusalKind::MalformedTopology))
+        );
+        match session
+            .drop_drag(
+                5,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-2"),
+                &DragCapabilities::full(),
+            )
+            .expect("stale generation snaps back")
+        {
+            DragRelease::SnapBack(_) => {}
+            DragRelease::Planned(_) => panic!("stale must snap back"),
+        }
+        assert!(!session.has_drag());
+        // Revision drift stales the capture the same way.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        session.drag.as_mut().expect("drag").revision += 100;
+        assert_eq!(
+            session.preview_drag(5, 40),
+            Err(ProposeError::Refused(RefusalKind::MalformedTopology))
+        );
+        // Exception-set drift stales the capture.
+        let mut session = session_three();
+        begin_focused(&mut session, "win-3");
+        session.exceptions.insert(
+            WindowId("win-x".to_owned()),
+            ExceptionRecord {
+                window: WindowId("win-x".to_owned()),
+                output: OutputId("out-1".to_owned()),
+                workspace: WorkspaceId("ws-1".to_owned()),
+                flags: ExceptionFlags::none(),
+            },
+        );
+        assert_eq!(
+            session.preview_drag(5, 40),
+            Err(ProposeError::Refused(RefusalKind::MalformedTopology))
+        );
+        session.cancel_drag();
+    }
+
+    #[test]
+    fn drag_preview_proposed_rect_matches_final_geometry() {
+        let mut session = session_three();
+        let capture = begin_focused(&mut session, "win-3");
+        let preview = session.preview_drag(5, 40).expect("preview");
+        // The proposed rect is the projected desired source rect, not a claim
+        // that the target current rect alone is the preview.
+        assert!(preview.proposed_rect.w > 0 && preview.proposed_rect.h > 0);
+        assert!(contained(&preview.proposed_rect, &capture.work_area));
+        let plan = drop_planned(&mut session, 5, 40, "corr-drag-1");
+        let Some(final_rect) = plan
+            .desired_geometry
+            .iter()
+            .find(|g| g.leaf == capture.source_leaf)
+            .map(|g| g.rect)
+        else {
+            panic!("final geometry must cover the source");
+        };
+        assert_eq!(preview.proposed_rect, final_rect);
+        assert_eq!(preview.target_leaf, plan.dispatch.operation.target_leaf);
+        assert_eq!(preview.wrap, plan.dispatch.operation.wrap);
+        assert_eq!(
+            preview.insertion_index,
+            plan.dispatch.operation.insertion_index
+        );
+        commit_drag(&mut session, &plan, "corr-drag-1");
+    }
+
+    #[test]
+    fn drag_edge_band_handles_sub_three_pixel_rects() {
+        // 1px wide still deterministically chooses left.
+        let narrow = Rect {
+            x: 10,
+            y: 10,
+            w: 1,
+            h: 10,
+        };
+        assert_eq!(drag_edge_for(&narrow, 10, 15), Some(DragSide::Left));
+        // 2px wide splits left/right with left priority in corners.
+        let two = Rect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 10,
+        };
+        assert_eq!(drag_edge_for(&two, 0, 5), Some(DragSide::Left));
+        assert_eq!(drag_edge_for(&two, 1, 5), Some(DragSide::Right));
+        assert_eq!(drag_edge_for(&two, 0, 0), Some(DragSide::Left));
+        // 1px tall chooses top; 2px tall splits top/bottom.
+        let short = Rect {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 1,
+        };
+        assert_eq!(drag_edge_for(&short, 5, 0), Some(DragSide::Top));
+        let two_tall = Rect {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 2,
+        };
+        assert_eq!(drag_edge_for(&two_tall, 5, 0), Some(DragSide::Top));
+        assert_eq!(drag_edge_for(&two_tall, 5, 1), Some(DragSide::Bottom));
+        // 2x2 corners prioritize left/right.
+        let tiny = Rect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 2,
+        };
+        assert_eq!(drag_edge_for(&tiny, 0, 0), Some(DragSide::Left));
+        assert_eq!(drag_edge_for(&tiny, 1, 1), Some(DragSide::Right));
+        // Every inside point of a tiny rect chooses an edge (never center).
+        for w in [1, 2] {
+            for h in [1, 2] {
+                let rect = Rect { x: 0, y: 0, w, h };
+                for x in 0..w {
+                    for y in 0..h {
+                        assert!(
+                            drag_edge_for(&rect, x, y).is_some(),
+                            "tiny {w}x{h} ({x},{y}) must choose an edge"
+                        );
+                    }
+                }
+            }
+        }
+        // Normal centers still carry no structural meaning.
+        let normal = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 80,
+        };
+        assert_eq!(drag_edge_for(&normal, 60, 40), None);
+    }
+
+    #[test]
+    fn drag_flag_failures_refuse_consistently() {
+        // Flagged source observation at begin refuses without staging.
+        let mut session = session_two();
+        let before = session.snapshot();
+        let mut flagged = obs_for(&session);
+        for entry in flagged.windows.iter_mut() {
+            if entry.window.0 == "win-2" {
+                entry.floating = true;
+            }
+        }
+        assert!(matches!(
+            session.begin_drag(&WindowId("win-2".to_owned()), &flagged),
+            Err(ProposeError::Refused(_))
+        ));
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        // Flagged observation at drop snaps back without diverging and clears
+        // the capture.
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        let before = session.snapshot();
+        let revision = session.accepted_revision();
+        let mut flagged_drop = obs_for(&session);
+        for entry in flagged_drop.windows.iter_mut() {
+            if entry.window.0 == "win-2" {
+                entry.floating = true;
+            }
+        }
+        match session
+            .drop_drag(
+                10,
+                5,
+                &flagged_drop,
+                &corr("corr-drag-1"),
+                &DragCapabilities::full(),
+            )
+            .expect("flagged observation snaps back")
+        {
+            DragRelease::SnapBack(snap) => {
+                assert_eq!(snap.source_rect, capture.source_rect);
+            }
+            DragRelease::Planned(_) => panic!("flagged observation must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        assert_eq!(session.accepted_revision(), revision);
+    }
+
+    #[test]
+    fn drag_malformed_observation_snaps_back() {
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        let before = session.snapshot();
+        let revision = session.accepted_revision();
+        let mut malformed = obs_for(&session);
+        malformed.windows[0].window = WindowId(String::new());
+        match session
+            .drop_drag(
+                10,
+                5,
+                &malformed,
+                &corr("corr-drag-malformed"),
+                &DragCapabilities::full(),
+            )
+            .expect("malformed observation snaps back")
+        {
+            DragRelease::SnapBack(snap) => {
+                assert_eq!(snap.source_rect, capture.source_rect);
+                assert_eq!(snap.source_leaf, capture.source_leaf);
+                assert_eq!(snap.source_window, capture.source_window);
+            }
+            DragRelease::Planned(_) => panic!("malformed observation must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        assert_eq!(session.accepted_revision(), revision);
+    }
+
+    #[test]
+    fn drag_unsupported_capability_snaps_back() {
+        let mut session = session_two();
+        let capture = begin_focused(&mut session, "win-2");
+        let before = session.snapshot();
+        let revision = session.accepted_revision();
+        match session
+            .drop_drag(
+                10,
+                5,
+                &obs_for(&session),
+                &corr("corr-drag-nocap"),
+                &DragCapabilities::none(),
+            )
+            .expect("unsupported capability snaps back")
+        {
+            DragRelease::SnapBack(snap) => {
+                assert_eq!(snap.source_rect, capture.source_rect);
+                assert_eq!(snap.source_leaf, capture.source_leaf);
+                assert_eq!(snap.source_window, capture.source_window);
+            }
+            DragRelease::Planned(_) => panic!("unsupported capability must snap back"),
+        }
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(session.snapshot(), before);
+        assert_eq!(session.accepted_revision(), revision);
     }
 }

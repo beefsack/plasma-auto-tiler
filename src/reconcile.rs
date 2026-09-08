@@ -8,10 +8,13 @@
 //! State transitions:
 //! - `Verified --propose--> PendingUnacked --acknowledge--> PendingAcked
 //!   --verify--> Verified(base + 1)`.
-//! - Movement (`propose`/`verify`) and lifecycle
-//!   (`propose_lifecycle`/`verify_lifecycle`) share at most one pending plan:
-//!   a second proposal of either kind while pending is `PendingExists` without
-//!   divergence; acknowledgement binds either kind by owner/generation/base
+//! - Movement (`propose`/`verify`), lifecycle
+//!   (`propose_lifecycle`/`verify_lifecycle`), focus
+//!   (`propose_focus`/`verify_focus`), resize
+//!   (`propose_resize`/`verify_resize`), and drag
+//!   (`propose_drag`/`verify_drag`) share at most one pending plan:
+//!   a second proposal of any kind while pending is `PendingExists` without
+//!   divergence; acknowledgement binds any kind by owner/generation/base
 //!   revision/correlation; verification must use the matching kind-specific
 //!   verifier.
 //! - Any stale/mismatched/partial/capability-refusal/adapter-loss/unverified
@@ -35,7 +38,8 @@
 //!   fail-closed; arbitrary adapter detail is never stored or echoed.
 
 use crate::contract::{
-    AdapterAck, Dispatch, DivergenceKind, FocusCapabilities, FocusDispatch, FocusOperation,
+    AdapterAck, Dispatch, DivergenceKind, DragCapabilities, DragDispatch, DragOperation, DragPlan,
+    DragPostObservation, DragPrecondition, FocusCapabilities, FocusDispatch, FocusOperation,
     FocusPlanContract, FocusPostObservation, FocusPrecondition, LIFECYCLE_POLICY_VERSION,
     LifecycleCapabilities, LifecycleDispatch, LifecycleOperation, LifecyclePlan,
     LifecyclePostObservation, LifecyclePrecondition, MAX_PRECONDITIONS, Observation,
@@ -210,6 +214,10 @@ enum PendingKind {
     Resize {
         preconditions: Vec<ResizePrecondition>,
         operation: ResizeOperation,
+    },
+    Drag {
+        preconditions: Vec<DragPrecondition>,
+        operation: DragOperation,
     },
 }
 
@@ -620,7 +628,8 @@ impl Reconciler {
 
     /// Propose an already-computed resize plan against a normalized observation.
     ///
-    /// Shares the single pending slot with movement, lifecycle, and focus: at
+    /// Shares the single pending slot with movement, lifecycle, focus, and
+    /// drag: at
     /// most one pending plan of any kind; acknowledgement binds identically,
     /// while verification must use [`Reconciler::verify_resize`] here. Binds
     /// exactly to owner/generation/base revision/correlation plus the resize
@@ -1059,7 +1068,7 @@ impl Reconciler {
     /// [`Reconciler::verify`] for [`ResizePostObservation`]: the reported
     /// verified preconditions/operation must bind exactly to the pending resize
     /// dispatch. Advances verified state by exactly one revision. Calling this
-    /// while a movement, lifecycle, or focus plan is pending (or those
+    /// while a movement, lifecycle, focus, or drag plan is pending (or those
     /// verifiers while a resize plan is pending) diverges as
     /// [`DivergenceKind::PostconditionMismatch`].
     pub fn verify_resize(&mut self, post: &ResizePostObservation) -> Result<Commit, VerifyError> {
@@ -1141,6 +1150,199 @@ impl Reconciler {
         })
     }
 
+    /// Propose an already-computed drag plan against a normalized observation.
+    ///
+    /// Shares the single pending slot with movement, lifecycle, focus, and
+    /// resize: at most one pending plan of any kind; acknowledgement binds
+    /// identically, while verification must use [`Reconciler::verify_drag`]
+    /// here. Binds exactly to owner/generation/base revision/correlation plus
+    /// the drag plan's preconditions and declared drag capabilities; emits a
+    /// transport-neutral [`DragDispatch`].
+    pub fn propose_drag(
+        &mut self,
+        plan: &DragPlan,
+        observation: &Observation,
+        correlation_id: &CorrelationId,
+        capabilities: &DragCapabilities,
+    ) -> Result<DragDispatch, ProposeError> {
+        if let Some(reason) = self.diverged {
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.pending.is_some() {
+            return Err(ProposeError::PendingExists);
+        }
+        if !is_correlation_id(correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !observation.validate() || observation.owner != self.owner {
+            let reason = if observation.owner != self.owner {
+                self.diverge(DivergenceKind::OwnerMismatch)
+            } else if !crate::contract::is_generation_id(observation.generation.as_str()) {
+                self.diverge(DivergenceKind::GenerationMismatch)
+            } else {
+                self.diverge(DivergenceKind::StaleRevision)
+            };
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if observation.revision != self.verified_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if self.verified_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.required_capability != plan.operation.required_capability() {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions != plan.operation.preconditions() {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !capabilities.supports(plan.operation.required_capability()) {
+            let reason = self.diverge(DivergenceKind::CapabilityRefused);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.preconditions.len() > MAX_PRECONDITIONS
+            || !plan
+                .preconditions
+                .contains(&DragPrecondition::AdapterMustVerifyPostconditions)
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if plan.intent.domain_output != plan.operation.domain_output
+            || plan.intent.domain_workspace != plan.operation.domain_workspace
+            || plan.intent.source_leaf != plan.operation.source_leaf
+            || plan.intent.source_window != plan.operation.source_window
+            || plan.intent.target_leaf != plan.operation.target_leaf
+            || plan.intent.target_window != plan.operation.target_window
+            || plan.intent.side != plan.operation.side
+        {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        if !valid_drag_operation(&plan.operation) {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(ProposeError::Diverged(reason));
+        }
+        let mut preconditions = Vec::with_capacity(plan.preconditions.len());
+        preconditions.extend_from_slice(&plan.preconditions);
+        let dispatch = DragDispatch {
+            correlation_id: correlation_id.clone(),
+            owner: self.owner.clone(),
+            generation: self.generation.clone(),
+            base_revision: self.verified_revision,
+            required_capability: plan.required_capability,
+            preconditions: preconditions.clone(),
+            intent: plan.intent.clone(),
+            operation: plan.operation.clone(),
+        };
+        self.pending = Some(Pending {
+            correlation_id: correlation_id.clone(),
+            base_revision: self.verified_revision,
+            acked: false,
+            kind: PendingKind::Drag {
+                preconditions,
+                operation: plan.operation.clone(),
+            },
+        });
+        Ok(dispatch)
+    }
+
+    /// Commit after acknowledgement given a matching fresh drag
+    /// post-observation with explicit native verification. Mirrors
+    /// [`Reconciler::verify`] for [`DragPostObservation`]: the reported
+    /// verified preconditions/operation must bind exactly to the pending drag
+    /// dispatch. Advances verified state by exactly one revision. Calling this
+    /// while a movement, lifecycle, focus, or resize plan is pending (or those
+    /// verifiers while a drag plan is pending) diverges as
+    /// [`DivergenceKind::PostconditionMismatch`].
+    pub fn verify_drag(&mut self, post: &DragPostObservation) -> Result<Commit, VerifyError> {
+        if let Some(reason) = self.diverged {
+            return Err(VerifyError::Diverged(reason));
+        }
+        let Some(pending) = self.pending.clone() else {
+            return Err(VerifyError::NoPending);
+        };
+        if !pending.acked {
+            return Err(VerifyError::NotAcknowledged);
+        }
+        if post.verified_preconditions.len() > MAX_PRECONDITIONS {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_correlation_id(post.correlation_id.as_str()) {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_owner_id(post.observation.owner.as_str()) {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_generation_id(post.observation.generation.as_str()) {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !is_revision(post.observation.revision) {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.correlation_id != pending.correlation_id {
+            let reason = self.diverge(DivergenceKind::CorrelationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.owner != self.owner {
+            let reason = self.diverge(DivergenceKind::OwnerMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.generation != self.generation {
+            let reason = self.diverge(DivergenceKind::GenerationMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.observation.revision != pending.base_revision {
+            let reason = self.diverge(DivergenceKind::StaleRevision);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if !post.verified {
+            let reason = self.diverge(DivergenceKind::PostconditionUnverified);
+            return Err(VerifyError::Diverged(reason));
+        }
+        let PendingKind::Drag {
+            preconditions,
+            operation,
+        } = &pending.kind
+        else {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        };
+        if post.verified_preconditions != *preconditions {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if post.verified_operation != *operation {
+            let reason = self.diverge(DivergenceKind::PostconditionMismatch);
+            return Err(VerifyError::Diverged(reason));
+        }
+        if pending.base_revision >= crate::contract::MAX_REVISION {
+            let reason = self.diverge(DivergenceKind::RevisionExhausted);
+            return Err(VerifyError::Diverged(reason));
+        }
+        self.verified_revision = pending.base_revision + 1;
+        self.verified_fingerprint = post.observation.fingerprint;
+        self.pending = None;
+        Ok(Commit {
+            revision: self.verified_revision,
+            fingerprint: self.verified_fingerprint,
+        })
+    }
+
     /// Explicit adapter-loss signal: enters typed fail-closed divergence with
     /// no further dispatch or mutation.
     pub fn note_adapter_loss(&mut self) -> DivergenceKind {
@@ -1156,6 +1358,67 @@ fn resize_step_for(direction: crate::directional::Direction) -> i32 {
         crate::directional::Direction::Right | crate::directional::Direction::Down => 1,
         crate::directional::Direction::Left | crate::directional::Direction::Up => -1,
     }
+}
+
+/// Topology-free drag operation validity: portable ids are non-empty, source
+/// and target are distinct, `axis`/`before` derive exactly from `side`, and
+/// the wrap form carries a fresh distinct `new_group` id (inserts carry none).
+/// A root target names itself as its own `target_group` under `wrap`; any
+/// other placement names a distinct parent group. Structural bindings against
+/// the live topology are validated by the session layer.
+fn valid_drag_operation(operation: &DragOperation) -> bool {
+    if operation.domain_output.0.is_empty()
+        || operation.domain_workspace.0.is_empty()
+        || operation.source_leaf.0.is_empty()
+        || operation.source_window.0.is_empty()
+        || operation.target_leaf.0.is_empty()
+        || operation.target_window.0.is_empty()
+        || operation.target_group.0.is_empty()
+    {
+        return false;
+    }
+    if operation.source_leaf == operation.target_leaf
+        || operation.source_window == operation.target_window
+    {
+        return false;
+    }
+    if operation.axis != operation.side.axis() || operation.before != operation.side.before() {
+        return false;
+    }
+    if operation.insertion_index > 64 {
+        return false;
+    }
+    if operation.wrap {
+        let Some(new_group) = &operation.new_group else {
+            return false;
+        };
+        if new_group.0.is_empty()
+            || new_group == &operation.source_leaf
+            || new_group == &operation.target_leaf
+            || new_group == &operation.target_group
+        {
+            return false;
+        }
+        // Root targets name themselves with insertion index 0; otherwise the
+        // parent is distinct from both leaves.
+        if operation.target_group == operation.target_leaf {
+            if operation.insertion_index != 0 {
+                return false;
+            }
+        } else if operation.target_group == operation.source_leaf {
+            return false;
+        }
+    } else {
+        if operation.new_group.is_some() {
+            return false;
+        }
+        if operation.target_group == operation.source_leaf
+            || operation.target_group == operation.target_leaf
+        {
+            return false;
+        }
+    }
+    true
 }
 
 fn valid_resize_operation(operation: &ResizeOperation) -> bool {
@@ -2302,5 +2565,480 @@ mod tests {
             .expect("verify");
         assert_eq!(commit.revision, 1);
         assert_eq!(r.verified_revision(), 1);
+    }
+
+    // ---- drag plan validation ----
+
+    fn drag_operation() -> DragOperation {
+        DragOperation {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            source_leaf: NodeId("leaf-win-1".to_owned()),
+            source_window: WindowId("win-1".to_owned()),
+            target_leaf: NodeId("leaf-win-2".to_owned()),
+            target_window: WindowId("win-2".to_owned()),
+            side: crate::contract::DragSide::Right,
+            axis: crate::directional::Axis::Horizontal,
+            before: false,
+            target_group: NodeId("root".to_owned()),
+            insertion_index: 2,
+            wrap: false,
+            new_group: None,
+        }
+    }
+
+    fn drag_intent() -> crate::contract::DragIntent {
+        crate::contract::DragIntent {
+            domain_output: OutputId("out-1".to_owned()),
+            domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+            source_leaf: NodeId("leaf-win-1".to_owned()),
+            source_window: WindowId("win-1".to_owned()),
+            target_leaf: NodeId("leaf-win-2".to_owned()),
+            target_window: WindowId("win-2".to_owned()),
+            side: crate::contract::DragSide::Right,
+        }
+    }
+
+    fn drag_plan() -> DragPlan {
+        DragPlan::for_operation(drag_intent(), drag_operation())
+    }
+
+    fn drag_post(correlation: &str, revision: u64, verified: bool) -> DragPostObservation {
+        let plan = drag_plan();
+        DragPostObservation::new(
+            Observation::new(owner(), generation(), revision, 22),
+            self::correlation(correlation),
+            verified,
+            plan.preconditions.clone(),
+            plan.operation.clone(),
+        )
+    }
+
+    fn acked_drag(r: &mut Reconciler) {
+        r.propose_drag(
+            &drag_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("propose");
+        r.acknowledge(&ack_for("corr-1", 0, AckOutcome::Accepted))
+            .expect("ack");
+    }
+
+    #[test]
+    fn drag_happy_path_commits_exactly_one_revision() {
+        let mut r = reconciler();
+        let source = drag_plan();
+        let dispatch = r
+            .propose_drag(
+                &source,
+                &observation(0),
+                &correlation("corr-1"),
+                &DragCapabilities::full(),
+            )
+            .expect("propose");
+        assert_eq!(dispatch.base_revision, 0);
+        assert_eq!(dispatch.correlation_id.as_str(), "corr-1");
+        assert_eq!(dispatch.intent, source.intent);
+        assert_eq!(dispatch.operation, source.operation);
+        assert_eq!(
+            dispatch.required_capability,
+            crate::contract::DragCapability::PlaceTiled
+        );
+        assert!(
+            dispatch
+                .preconditions
+                .contains(&crate::contract::DragPrecondition::AdapterMustVerifyPostconditions)
+        );
+        assert_eq!(r.status().state, StateKind::PendingUnacked);
+        assert_eq!(
+            r.acknowledge(&ack_for("corr-1", 0, AckOutcome::Accepted)),
+            Ok(AckApplied::Accepted)
+        );
+        let commit = r
+            .verify_drag(&drag_post("corr-1", 0, true))
+            .expect("verify");
+        assert_eq!(commit.revision, 1);
+        assert_eq!(r.verified_revision(), 1);
+        assert_eq!(r.status().state, StateKind::Verified);
+        assert_eq!(
+            r.verify_drag(&drag_post("corr-1", 0, true)),
+            Err(VerifyError::NoPending)
+        );
+    }
+
+    #[test]
+    fn drag_intent_binds_operation_exactly() {
+        for mutate in [
+            "domain_output",
+            "source_leaf",
+            "target_leaf",
+            "target_window",
+            "side",
+        ] {
+            let mut r = reconciler();
+            let mut intent = drag_intent();
+            match mutate {
+                "domain_output" => {
+                    intent.domain_output = OutputId("out-9".to_owned());
+                }
+                "source_leaf" => {
+                    intent.source_leaf = NodeId("leaf-9".to_owned());
+                }
+                "target_leaf" => {
+                    intent.target_leaf = NodeId("leaf-9".to_owned());
+                }
+                "target_window" => {
+                    intent.target_window = WindowId("win-9".to_owned());
+                }
+                "side" => {
+                    intent.side = crate::contract::DragSide::Left;
+                }
+                _ => unreachable!(),
+            }
+            let plan = DragPlan::for_operation(intent, drag_operation());
+            assert_eq!(
+                r.propose_drag(
+                    &plan,
+                    &observation(0),
+                    &correlation("corr-1"),
+                    &DragCapabilities::full()
+                ),
+                Err(ProposeError::Diverged(
+                    DivergenceKind::PostconditionMismatch
+                )),
+                "{mutate}"
+            );
+        }
+    }
+
+    #[test]
+    fn drag_operation_semantics_validated_without_topology() {
+        let cases: Vec<DragOperation> = vec![
+            // Self drop carries no structural meaning.
+            DragOperation {
+                target_leaf: NodeId("leaf-win-1".to_owned()),
+                target_window: WindowId("win-1".to_owned()),
+                ..drag_operation()
+            },
+            // Axis must derive from the side.
+            DragOperation {
+                axis: crate::directional::Axis::Vertical,
+                ..drag_operation()
+            },
+            // Order must derive from the side.
+            DragOperation {
+                before: true,
+                ..drag_operation()
+            },
+            // Insert form carries no fresh group.
+            DragOperation {
+                new_group: Some(NodeId("grp-1".to_owned())),
+                ..drag_operation()
+            },
+            // Wrap form requires a fresh distinct group.
+            DragOperation {
+                wrap: true,
+                new_group: None,
+                ..drag_operation()
+            },
+            DragOperation {
+                wrap: true,
+                new_group: Some(NodeId("leaf-win-1".to_owned())),
+                ..drag_operation()
+            },
+            // Non-root target parent is distinct from both leaves.
+            DragOperation {
+                target_group: NodeId("leaf-win-2".to_owned()),
+                ..drag_operation()
+            },
+        ];
+        for (index, operation) in cases.into_iter().enumerate() {
+            let mut r = reconciler();
+            // Rebuild the intent so only the operation shape is under test.
+            let intent = crate::contract::DragIntent {
+                target_leaf: operation.target_leaf.clone(),
+                target_window: operation.target_window.clone(),
+                ..drag_intent()
+            };
+            let plan = DragPlan::for_operation(intent, operation);
+            assert_eq!(
+                r.propose_drag(
+                    &plan,
+                    &observation(0),
+                    &correlation("corr-1"),
+                    &DragCapabilities::full()
+                ),
+                Err(ProposeError::Diverged(
+                    DivergenceKind::PostconditionMismatch
+                )),
+                "case {index}"
+            );
+        }
+    }
+
+    #[test]
+    fn drag_capability_and_preconditions_bind() {
+        // Missing adapter capability diverges as capability-refused.
+        let mut r = reconciler();
+        assert_eq!(
+            r.propose_drag(
+                &drag_plan(),
+                &observation(0),
+                &correlation("corr-1"),
+                &DragCapabilities::none()
+            ),
+            Err(ProposeError::Diverged(DivergenceKind::CapabilityRefused))
+        );
+        // Missing terminal precondition diverges as mismatch.
+        let mut r = reconciler();
+        let operation = drag_operation();
+        let mut preconditions = operation.preconditions();
+        preconditions.pop();
+        let plan = DragPlan {
+            intent: drag_intent(),
+            operation,
+            required_capability: crate::contract::DragCapability::PlaceTiled,
+            preconditions,
+        };
+        assert_eq!(
+            r.propose_drag(
+                &plan,
+                &observation(0),
+                &correlation("corr-1"),
+                &DragCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+        // Stale observation diverges without dispatch.
+        let mut r = reconciler();
+        assert_eq!(
+            r.propose_drag(
+                &drag_plan(),
+                &observation(7),
+                &correlation("corr-1"),
+                &DragCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(DivergenceKind::StaleRevision))
+        );
+    }
+
+    #[test]
+    fn drag_shares_single_pending_slot_across_kinds() {
+        let mut r = reconciler();
+        r.propose_drag(
+            &drag_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("drag first");
+        for second in ["move", "resize"] {
+            if second == "move" {
+                assert_eq!(
+                    r.propose(
+                        &plan(),
+                        &observation(0),
+                        &correlation("corr-2"),
+                        &Capabilities::full()
+                    ),
+                    Err(ProposeError::PendingExists),
+                    "drag blocks move"
+                );
+            } else {
+                assert_eq!(
+                    r.propose_resize(
+                        &resize_plan(),
+                        &observation(0),
+                        &correlation("corr-2"),
+                        &ResizeCapabilities::full()
+                    ),
+                    Err(ProposeError::PendingExists),
+                    "drag blocks resize"
+                );
+            }
+        }
+        // Focus and lifecycle proposals are blocked the same way.
+        let focus_plan = FocusPlanContract::for_operation(
+            crate::contract::FocusIntent {
+                domain_output: OutputId("out-1".to_owned()),
+                domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+                focused_leaf: NodeId("a".to_owned()),
+                focused_window: WindowId("win-a".to_owned()),
+                direction: Direction::Right,
+            },
+            crate::contract::FocusOperation {
+                domain_output: OutputId("out-1".to_owned()),
+                domain_workspace: crate::directional::WorkspaceId("ws-1".to_owned()),
+                from_leaf: NodeId("a".to_owned()),
+                to_leaf: NodeId("b".to_owned()),
+                from_window: WindowId("win-a".to_owned()),
+                to_window: WindowId("win-b".to_owned()),
+                direction: Direction::Right,
+                route: vec![NodeId("b".to_owned())],
+            },
+        );
+        assert_eq!(
+            r.propose_focus(
+                &focus_plan,
+                &observation(0),
+                &correlation("corr-3"),
+                &FocusCapabilities::full()
+            ),
+            Err(ProposeError::PendingExists),
+            "drag blocks focus"
+        );
+        // And any pending plan blocks a drag proposal.
+        let mut r = reconciler();
+        r.propose(
+            &plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect("move first");
+        assert_eq!(
+            r.propose_drag(
+                &drag_plan(),
+                &observation(0),
+                &correlation("corr-2"),
+                &DragCapabilities::full()
+            ),
+            Err(ProposeError::PendingExists),
+            "move blocks drag"
+        );
+    }
+
+    #[test]
+    fn drag_ack_verify_failure_paths_diverge() {
+        // Verify without acknowledgement.
+        let mut r = reconciler();
+        r.propose_drag(
+            &drag_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("propose");
+        assert_eq!(
+            r.verify_drag(&drag_post("corr-1", 0, true)),
+            Err(VerifyError::NotAcknowledged)
+        );
+        // Non-accepted acknowledgement diverges.
+        let mut r = reconciler();
+        r.propose_drag(
+            &drag_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("propose");
+        assert_eq!(
+            r.acknowledge(&ack_for("corr-1", 0, AckOutcome::PartialApplication)),
+            Err(AckError::Diverged(DivergenceKind::PartialApplication))
+        );
+        // Wrong verified preconditions diverge.
+        let mut r = reconciler();
+        acked_drag(&mut r);
+        let mut bad = drag_post("corr-1", 0, true);
+        bad.verified_preconditions.pop();
+        assert_eq!(
+            r.verify_drag(&bad),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Wrong verified operation diverges.
+        let mut r = reconciler();
+        acked_drag(&mut r);
+        let mut bad = drag_post("corr-1", 0, true);
+        bad.verified_operation.insertion_index += 1;
+        assert_eq!(
+            r.verify_drag(&bad),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Unverified diverges without committing.
+        let mut r = reconciler();
+        acked_drag(&mut r);
+        assert_eq!(
+            r.verify_drag(&drag_post("corr-1", 0, false)),
+            Err(VerifyError::Diverged(
+                DivergenceKind::PostconditionUnverified
+            ))
+        );
+        assert_eq!(r.verified_revision(), 0);
+        // Cross-kind verify while drag pending diverges.
+        let mut r = reconciler();
+        acked_drag(&mut r);
+        assert_eq!(
+            r.verify(&post_for("corr-1", 0, true)),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        assert_eq!(
+            r.verify_resize(&resize_post("corr-1", 0, true)),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+        // Drag verify while movement pending diverges.
+        let mut r = reconciler();
+        r.propose(
+            &plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &Capabilities::full(),
+        )
+        .expect("move");
+        r.acknowledge(&ack_for("corr-1", 0, AckOutcome::Accepted))
+            .expect("ack");
+        assert_eq!(
+            r.verify_drag(&drag_post("corr-1", 0, true)),
+            Err(VerifyError::Diverged(DivergenceKind::PostconditionMismatch))
+        );
+    }
+
+    #[test]
+    fn drag_root_wrap_requires_insertion_index_zero() {
+        // Root wrap names the target leaf as its own group with index 0.
+        let mut ok_operation = drag_operation();
+        ok_operation.wrap = true;
+        ok_operation.target_group = NodeId("leaf-win-2".to_owned());
+        ok_operation.insertion_index = 0;
+        ok_operation.new_group = Some(NodeId("grp-fresh".to_owned()));
+        let ok_intent = crate::contract::DragIntent {
+            target_leaf: ok_operation.target_leaf.clone(),
+            target_window: ok_operation.target_window.clone(),
+            ..drag_intent()
+        };
+        let mut r = reconciler();
+        r.propose_drag(
+            &DragPlan::for_operation(ok_intent, ok_operation),
+            &observation(0),
+            &correlation("corr-1"),
+            &DragCapabilities::full(),
+        )
+        .expect("root wrap with index 0 proposes");
+        // Same shape with a nonzero index is not a valid root wrap.
+        let mut bad_operation = drag_operation();
+        bad_operation.wrap = true;
+        bad_operation.target_group = NodeId("leaf-win-2".to_owned());
+        bad_operation.insertion_index = 1;
+        bad_operation.new_group = Some(NodeId("grp-fresh".to_owned()));
+        let bad_intent = crate::contract::DragIntent {
+            target_leaf: bad_operation.target_leaf.clone(),
+            target_window: bad_operation.target_window.clone(),
+            ..drag_intent()
+        };
+        let mut r = reconciler();
+        assert_eq!(
+            r.propose_drag(
+                &DragPlan::for_operation(bad_intent, bad_operation),
+                &observation(0),
+                &correlation("corr-1"),
+                &DragCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
     }
 }
