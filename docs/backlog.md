@@ -166,10 +166,21 @@ Only meaningful pending or active work is listed.
            The standalone KWin adapter is disabled by default, has no production
            activation/shortcut route, requires explicit exclusive authority,
            invalidates on minimum public signals, writes at most one exact active
-           target, and terminally reports adapter loss. No geometry or Custom Tile
-           mutation exists. Next: structural movement/direct geometry behind the
-           same authority boundary; parked shadow transport/live cleanup remains
-           unchanged |
+            target, and terminally reports adapter loss. No geometry or Custom Tile
+            mutation exists. Static Rust-owned R1-R4 structural movement/direct
+            geometry is now complete behind the same disabled-by-default
+            exclusive authority: strict `DescribeMovement` plans complete
+            topology/focus/geometry through one pending acknowledgement and
+            post-observation transaction, and the standalone KWin adapter uses
+            public sequential `frameGeometry` writes only. It validates exact
+            native scope and desired projection, omits unchanged writes, orders
+            grow-before-shrink with a lexical tie-break, guards own geometry
+            signals, and terminally disables on refusal, divergence, or loss.
+            Normal production routes remain unable to activate it and no Custom
+            Tile fallback runs after ownership. Focused Rust/KWin static
+            contracts pass; no live KWin action occurred. Next: keyboard/pointer
+            split resizing integration behind this authority; parked shadow
+            transport/live cleanup remains unchanged |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

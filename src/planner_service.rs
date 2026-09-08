@@ -6,7 +6,11 @@
 //! `DescribeAdvisoryPlan` (read-only v1 advisory request -> advisory
 //! plan reply with exactly three normalized opaque windows, delegated through
 //! the portable `cosmic_v1` core; no native command/execution fields and no
-//! mutation), and `DescribeShadowProjection` (read-only v1 shadow projection
+//! mutation), `DescribeFocus` (bounded v1 focus transaction over the owned
+//! focus service), and `DescribeMovement` (bounded v1 movement transaction
+//! over the owned movement service, delegating to one `Session`'s `cosmic_v1`
+//! R1-R4 move planning with complete desired geometry/focus), and
+//! `DescribeShadowProjection` (read-only v1 shadow projection
 //! request -> desired rectangles for exactly three opaque windows, delegated
 //! through `AdoptedTrio` + `geometry::project`; no native
 //! command/execution/actuation fields and no mutation). The POC-shaped
@@ -36,6 +40,7 @@ use crate::advisory_contract::{
     evaluate_advisory_json_for_armed_loss,
 };
 use crate::focus_service::{FOCUS_MAX_REPLY_BYTES, FocusService};
+use crate::movement_service::{MOVEMENT_MAX_REPLY_BYTES, MovementService};
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
 use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
 // Linux-only identity boundary; portable core never depends on it.
@@ -52,6 +57,9 @@ pub const SHADOW_METHOD: &str = "DescribeShadowProjection";
 pub const FOCUS_METHOD: &str = "DescribeFocus";
 /// Bounded focus reply cap, mirroring the portable focus service bound.
 pub const FOCUS_MAX_REPLY: usize = FOCUS_MAX_REPLY_BYTES;
+pub const MOVEMENT_METHOD: &str = "DescribeMovement";
+/// Bounded movement reply cap, mirroring the portable movement service bound.
+pub const MOVEMENT_MAX_REPLY: usize = MOVEMENT_MAX_REPLY_BYTES;
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
 const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
@@ -121,6 +129,12 @@ pub struct PlannerEndpoint {
     // exactly one portable focus session (seeded from the first strict
     // request, single pending). No generic IPC; this route only.
     focus_service: Arc<std::sync::Mutex<FocusService>>,
+    // Owned movement transaction service held in process memory only, shared
+    // across endpoint clones so the single manually started service owns
+    // exactly one portable movement session (seeded from the first strict
+    // request, single pending, `cosmic_v1` R1-R4). Separate from the focus
+    // session; no generic IPC, no shared mutable topology.
+    movement_service: Arc<std::sync::Mutex<MovementService>>,
     // Optional bounded advisory-loss arming. `None` is the normal
     // `planner-service` mode (unchanged: every accepted reply returns
     // normally). `Some` arms exactly one bounded correlation id: only an
@@ -139,6 +153,7 @@ impl PlannerEndpoint {
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
+            movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
             advisory_loss_correlation: None,
         }
     }
@@ -156,6 +171,7 @@ impl PlannerEndpoint {
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
             focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
+            movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
             advisory_loss_correlation: Some(armed),
         })
     }
@@ -204,6 +220,20 @@ impl PlannerEndpoint {
     fn evaluate_focus_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
             .focus_service
+            .lock()
+            .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
+        Ok(service.evaluate_json(request))
+    }
+
+    /// Synchronous movement transaction route over the shared owned movement
+    /// service. The caller must hold the single-flight `operation_lock`
+    /// guard and have passed caller verification; this only locks the
+    /// service briefly with no awaits while held. A poisoned service is
+    /// terminal fail-closed. Separate pending from focus; same
+    /// authentication and one-flight rules.
+    fn evaluate_movement_request(&self, request: &str) -> Result<String, PlannerError> {
+        let mut service = self
+            .movement_service
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
         Ok(service.evaluate_json(request))
@@ -1404,6 +1434,46 @@ impl PlannerEndpoint {
         }
         Ok(reply)
     }
+
+    async fn describe_movement(
+        &self,
+        request: String,
+        #[zbus(header)] header: zbus::message::Header<'_>,
+        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
+    ) -> Result<String, PlannerError> {
+        // Movement transaction route alongside the frozen EvaluateMove /
+        // DescribeAdvisoryPlan / DescribeShadowProjection / DescribeFocus
+        // contracts: the exact same bounded non-queuing single-flight,
+        // current-KWin-owner/same-uid/executable pinning with pre/post owner
+        // revalidation, connection-loss, and reply-size checks. No existing
+        // route changes behavior and no generic IPC is introduced. The reply
+        // is a bounded movement plan/ack/verify transaction over the
+        // endpoint-owned in-memory movement service (single portable
+        // session, single pending, `cosmic_v1` R1-R4 with complete desired
+        // geometry/focus).
+        let Some(_guard) = self.operation_lock.try_lock() else {
+            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+        };
+        if emitter.connection().is_closed() {
+            return Err(PlannerError::Unavailable(
+                "planner serving connection was lost".to_owned(),
+            ));
+        }
+        let caller = header.sender().map(ToString::to_string);
+        let Some(caller) = caller.as_deref() else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            return Err(PlannerError::Unauthorized);
+        };
+        let reply = self.evaluate_movement_request(&request)?;
+        if reply.len() > MOVEMENT_MAX_REPLY {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
+    }
 }
 
 fn serving_connection_lost_error() -> zbus::Error {
@@ -1855,6 +1925,131 @@ mod tests {
             &cloned.operation_lock
         ));
         assert!(Arc::ptr_eq(&endpoint.focus_service, &cloned.focus_service));
+        assert!(Arc::ptr_eq(
+            &endpoint.movement_service,
+            &cloned.movement_service
+        ));
+    }
+
+    #[test]
+    fn movement_method_identity_is_exact_and_distinct() {
+        assert_eq!(MOVEMENT_METHOD, "DescribeMovement");
+        assert_ne!(MOVEMENT_METHOD, METHOD);
+        assert_ne!(MOVEMENT_METHOD, ADVISORY_METHOD);
+        assert_ne!(MOVEMENT_METHOD, SHADOW_METHOD);
+        assert_ne!(MOVEMENT_METHOD, FOCUS_METHOD);
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(MOVEMENT_MAX_REPLY, 64 * 1024);
+        assert_eq!(
+            MOVEMENT_MAX_REPLY,
+            crate::movement_service::MOVEMENT_MAX_REPLY_BYTES
+        );
+    }
+
+    #[test]
+    fn movement_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, MOVEMENT_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("{\"v\":1}".to_owned(),))
+            .unwrap();
+        assert_eq!(message.body().signature().to_string(), "s");
+        let body: (String,) = message.body().deserialize().unwrap();
+        assert_eq!(body.0, "{\"v\":1}");
+    }
+
+    fn movement_seed_request(correlation: &str, owner: &str, fingerprint: u64) -> String {
+        serde_json::json!({
+            "v": 1,
+            "action": "request",
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": "gen-1",
+            "revision": 2,
+            "fingerprint": fingerprint,
+            "domain": {"output": "move-output", "workspace": "move-workspace"},
+            "focused_window": "win-b",
+            "direction": "down",
+            "windows": [
+                {"window": "win-a", "output": "move-output", "workspace": "move-workspace"},
+                {"window": "win-b", "output": "move-output", "workspace": "move-workspace"}
+            ],
+            "capabilities": {
+                "swap_neighbor": true, "wrap_perpendicular": true, "wrap_siblings": true,
+                "insert_child": true, "split_group_child": true, "reparent_leaf": true,
+                "cross_output_transfer": true
+            }
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn movement_request_route_seeds_and_plans_bounded() {
+        let endpoint = PlannerEndpoint::new();
+        let fingerprint = crate::movement_service::movement_fingerprint(
+            "move-output",
+            "move-workspace",
+            "win-b",
+            &["win-a".to_owned(), "win-b".to_owned()],
+        );
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_movement_request("{not json}")
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_movement_request(&movement_seed_request("m-1", "owner-1", fingerprint))
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert!(
+            reply["outcome"] == "planned" || reply["outcome"] == "noop",
+            "{reply}"
+        );
+        assert!(reply.to_string().len() <= MOVEMENT_MAX_REPLY);
+        if reply["outcome"] == "planned" {
+            assert!(reply.get("desired_geometry").is_some());
+            assert!(reply.get("desired_focus").is_some());
+            assert!(reply.get("rule").is_some());
+            assert!(reply.get("operation").is_some());
+        }
+        let zeroed = movement_seed_request("m-2", "owner-1", 0);
+        let reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_movement_request(&zeroed)
+                .expect("route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected");
+        // Focus and movement sessions stay independent: a focus request does
+        // not disturb the movement pending/binding and vice versa.
+        let focus_fp = crate::focus_service::focus_fingerprint(
+            "move-output",
+            "move-workspace",
+            "win-b",
+            &["win-a".to_owned(), "win-b".to_owned()],
+        );
+        let focus_req = focus_seed_request("f-9", "owner-9", focus_fp);
+        let focus_reply: serde_json::Value = serde_json::from_str(
+            &endpoint
+                .evaluate_focus_request(&focus_req)
+                .expect("focus route returns a reply string"),
+        )
+        .expect("reply is JSON");
+        assert!(
+            focus_reply["outcome"] == "planned"
+                || focus_reply["outcome"] == "noop"
+                || focus_reply["outcome"] == "rejected"
+                || focus_reply["outcome"] == "diverged"
+        );
     }
 
     #[test]

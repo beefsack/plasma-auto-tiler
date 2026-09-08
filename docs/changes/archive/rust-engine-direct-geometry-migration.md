@@ -98,6 +98,29 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Static Rust-owned R1-R4 KWin movement/direct-geometry adapter slice completed
+  2026-09-09: the authenticated KWin-only `DescribeMovement` route owns one
+  bounded `cosmic_v1` movement `Session`, accepts only strict complete native
+  domain/membership/capability observations, and returns complete R1-R4
+  topology operation, focus, and desired geometry plans. The standalone adapter
+  is disabled by default and unreachable from normal startup, tray, KCM,
+  autostart, and shortcuts. Explicit future activation requires one
+  owner/generation/revision binding and exclusive movement authority for the
+  exact command/domain, with no Custom Tile read, mutation, or fallback after
+  ownership. It revalidates exact native identity, membership, work area,
+  eligibility, focus, and plan preconditions before sequential public
+  `frameGeometry` writes; unchanged targets are omitted and changed rectangles
+  use deterministic grow-before-shrink, lexical-tie ordering. Writes remain
+  non-atomic. Adapter-originated geometry signals are guarded, unrelated native
+  changes invalidate, and incomplete/refused writes, service/owner loss, stale
+  state, or acknowledgement/post-observation mismatch report terminal
+  divergence and disable authority. Durable Rust R1-R4, reconciliation,
+  capability/refusal, and service-loss tests plus focused KWin authority,
+  ordering, signal, projection, and failure tests pass with format, check,
+  focused Clippy, typecheck, and fixture/reconciler coverage. No live KWin work
+  ran and parked Script/runtime ambiguity remains untouched. Next product
+  slice: wire keyboard/pointer split resizing through the same development
+  authority boundary.
 - Static Rust-focus KWin adapter slice completed 2026-09-09: the authenticated
   KWin-only `DescribeFocus` planner route owns one bounded portable `Session`,
   deterministically seeds its normalized current-domain membership in Rust, and

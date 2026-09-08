@@ -6,6 +6,7 @@ pub mod directional;
 pub mod focus_service;
 pub mod geometry;
 pub mod ids;
+pub mod movement_service;
 pub mod planner_contract;
 // Linux-only KWin identity boundary (systemd unit, wrapper files, process
 // identity). Portable advisory/core modules must not depend on it.

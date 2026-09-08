@@ -12,6 +12,7 @@
     "build:poc3-command": "node ../scripts/poc3-build-command.mjs",
     "build:id-probe": "node ../scripts/poc3-build-id-probe.mjs",
     "test:poc3": "rm -rf dist/tests-poc3 && esbuild \"tests/poc3-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-poc3 && node --test \"dist/tests-poc3/**/*.test.js\" && bash ../scripts/poc3-command.test.sh",
+    "test:movement": "rm -rf dist/tests-movement && esbuild \"tests/movement-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-movement && node --test \"dist/tests-movement/**/*.test.js\"",
     "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\" && bash ../scripts/start-test.test.sh"
   },
   "engines": {
