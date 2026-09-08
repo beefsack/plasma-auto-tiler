@@ -8,11 +8,15 @@ Only meaningful pending or active work is listed.
   the actuator and Custom Tiles are legacy-only, never dual structural
   authority. Preserve production behavior through small opt-in/shadow slices.
     Checkpoint, Rust-core stabilization, and static slice 3 implementation are
-    complete. Pending separate authorization: one minimal authenticated
-    read-only host Rust/KWin request/reply plus stale-request and service-loss
-    evidence. The static planner-service route replaces `EvaluatePoc3` with bounded
-    `DescribeAdvisoryPlan` and pins the planner unique D-Bus owner; public KWin
-    scripting cannot attest the initially resolved same-UID service binary.
+    complete. An authorized read-only host preflight stopped before lifecycle:
+    the committed boundary has no reviewed standalone advisory entry, builder, or
+    namespaced loader, while the existing POC route refuses the required loaded
+    production plugin. A reviewed narrow lifecycle procedure is required before
+    one minimal authenticated read-only request/reply plus stale-request and
+    service-loss evidence. The static planner-service route replaces
+    `EvaluatePoc3` with bounded `DescribeAdvisoryPlan` and pins the planner unique
+    D-Bus owner; public KWin scripting cannot attest the initially resolved
+    same-UID service binary.
     The completed POC is archived: manual/visual evidence
   supports bounded three-window projection, focus, structural movement, resize,
   and drag gesture separation only - not production, parity, lifecycle,

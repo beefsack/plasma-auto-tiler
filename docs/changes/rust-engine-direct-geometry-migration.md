@@ -127,6 +127,15 @@ production behavior through incremental opt-in promotion.
   same-UID planner service binary, and no live KWin/Plasma request/reply was
   attempted. The first authenticated read-only host round trip plus stale and
   service-loss evidence remain pending separate authorization.
+- The authorized 2026-09-08 read-only host verification stopped during static
+  preflight before any host baseline, planner service, or KWin script lifecycle
+  action. The committed boundary intentionally has no standalone advisory entry
+  point, bundle builder, or namespaced loader; the existing carrier cannot make
+  the query and the POC route refuses the required loaded production plugin.
+  Focused Rust, standalone KWin-query, and lifecycle shell tests passed. A
+  reviewed, narrowly scoped advisory lifecycle procedure is the remaining gate;
+  no success, stale-refusal, service-loss, native-mutation, or restoration claim
+  exists from this stopped preflight.
 - Checkpoint gate completed 2026-09-08: reviewed portable Rust
   model/contract/reconciliation/trace foundation, generic KWin POC adapters and
   reference tooling/tests, locked fixtures, and related governance/archive
