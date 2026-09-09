@@ -200,10 +200,18 @@ Only meaningful pending or active work is listed.
              focus/movement/keyboard/pointer adapters exclusively, while Rust
              mode starts no legacy controller lifecycle or Custom Tile/pointer
              authority. Pointer and keyboard resize capabilities are distinct.
-              Shortcut delivery follow-up is static-complete: Rust-mode command
-              registration is now independent of legacy lifecycle, with one
-              mode-gated callback authority and no live retest claim. User rebuild, new-session restart, manual Planner start,
-             development-mode selection, and stable-scope focus/move/keyboard/
+               Shortcut delivery follow-up is static-complete: Rust-mode command
+               registration is now independent of legacy lifecycle, with one
+               mode-gated callback authority and no live retest claim. Linux/KWin
+               Planner on-demand delivery is static-complete: the immutable package
+               exposes session D-Bus `SystemdService` metadata and Home Manager
+               owns its matching no-restart user `Type=dbus` unit; selected Rust
+               adapters activate once, owner-pin, and fail closed with no Legacy
+               fallback while `engineAuthorityMode` remains default `legacy`.
+               External consumer integration, rebuild/new-session delivery, D-Bus
+               activation, and the stable-scope manual Rust-mode journey remain
+               pending. User rebuild, new-session restart,
+              development-mode selection, and stable-scope focus/move/keyboard/
              pointer visual jank journey remain pending; add/remove and drag/
              drop remain out of scope. Next: KWin drag-end snap-back and drop
              adapter integration, separate from pointer resize topology; parked

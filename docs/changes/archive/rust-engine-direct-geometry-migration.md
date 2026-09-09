@@ -126,21 +126,33 @@ production behavior through incremental opt-in promotion.
   configuration mutation, rebuild, session restart, or visual/manual evidence
   occurred.
 
-  Manual journey after commit: rebuild and switch the existing Nix consumer
-  configuration that enables `programs.plasma-auto-tiler.enable`, then perform
-  one user session restart in safe `Legacy` mode to clear current transient
-  Script ambiguity. After that restart, run `nix run .# -- planner-service`,
-  then select `Rust (development)` for `The engine authority for focus, move,
-  and resize` in the existing Plasma Auto Tiler Desktop Effects settings and
-  Apply. KCM Apply syncs config then requests KWin reconfigure
+  Linux/KWin on-demand Planner delivery is statically complete, 2026-09-09:
+  Home Manager now owns the immutable session D-Bus descriptor and user
+  `Type=dbus` unit for the existing `planner-service` binary. KWin selected
+  Rust commands activate an absent Planner once, then resolve and pin its
+  unique owner before every Planner route; loss, stale, or activation failure
+  remains terminal with no Legacy fallback. `engineAuthorityMode=legacy`
+  remains the public default. No live systemd/D-Bus/KWin activation, rebuild,
+  session restart, or manual behavior evidence is claimed.
+
+  Manual journey after commit: integrate both the existing NixOS module and
+  the Home Manager module in the consumer configuration, leaving
+  `programs.plasma-auto-tiler.planner.enable` at its default true (or setting
+  it explicitly), then rebuild/switch and perform one user session restart in
+  safe `Legacy` mode to clear current transient Script ambiguity. Do not start
+  Planner manually: select `Rust (development)` for `The engine authority for
+  focus, move, and resize` in the existing Plasma Auto Tiler Desktop Effects
+  settings and Apply, letting the first selected command request D-Bus
+  activation. KCM Apply syncs config then requests KWin reconfigure
   (`org.kde.KWin` `/KWin` `org.kde.KWin` `reconfigure`), so the mode change is
   applied without another restart. In that session, test an already-open,
   stable tiled scope only: directional focus, R1-R4 movement, keyboard split
   resize, and pointer split resize. Observe correctness, end-to-end latency,
   pointer smoothness, neighbour reflow, one-frame gaps/flashes, focus
   retention, and unrelated-window isolation. Do not test add/remove, drag, or
-  drop. Restore `Legacy` in the same settings, Apply (which again syncs config
-  then requests KWin reconfigure), and stop the planner with `Ctrl-C`.
+  drop. Restore `Legacy` in the same settings and Apply (which again syncs
+  config then requests KWin reconfigure); no manual Planner process stop is
+  required.
 
 - Source-parity correction, 2026-09-09: `cosmic_v1` is corrected against
   `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20` production

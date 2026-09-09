@@ -57,6 +57,22 @@ export const POINTER_RESIZE_OBJECT = "/org/plasmaautotiler/Planner";
 export const POINTER_RESIZE_INTERFACE = "org.plasmaautotiler.Planner1";
 export const POINTER_RESIZE_METHOD = "DescribePointerResize";
 
+// Session D-Bus activation transport (one-flight, bounded, no poll/retry).
+// Discovery is GetNameOwner on the well-known Planner name, pinned to one
+// exact unique owner (`:N.M`) before any planner call. When absent, exactly
+// one StartServiceByName(service, 0) phase runs, accepting only result codes
+// 1 (PrimaryOwner) / 2 (AlreadyOwner), followed by exactly one more owner
+// resolution and pin. Flags value 0 is fixed; the production entry appends
+// it as the second native D-Bus argument.
+export const POINTER_RESIZE_DBUS_SERVICE = "org.freedesktop.DBus";
+export const POINTER_RESIZE_DBUS_OBJECT = "/org/freedesktop/DBus";
+export const POINTER_RESIZE_DBUS_INTERFACE = "org.freedesktop.DBus";
+export const POINTER_RESIZE_GET_OWNER_METHOD = "GetNameOwner";
+export const POINTER_RESIZE_START_METHOD = "StartServiceByName";
+export const POINTER_RESIZE_START_FLAGS = 0;
+export const POINTER_RESIZE_START_PRIMARY = 1;
+export const POINTER_RESIZE_START_ALREADY = 2;
+
 export const POINTER_RESIZE_CONTRACT_VERSION = 1;
 export const POINTER_RESIZE_MAX_REQUEST_BYTES = 64 * 1024;
 export const POINTER_RESIZE_MAX_REPLY_BYTES = 64 * 1024;
@@ -191,6 +207,11 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
+}
+
+// Exact D-Bus unique-owner shape (`:N.M`) for the pinned planner endpoint.
+function isUniqueOwner(value: unknown): value is string {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
 }
 
 function isCorrelationId(value: unknown): value is string {
@@ -747,6 +768,14 @@ export class PointerResizeAdapter {
     private flightRevision = 0;
     private lossReported = false;
     private appliedDesired = new Map<string, PointerResizeRect>();
+    // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+    // resolved via GetNameOwner (plus one StartServiceByName phase only when
+    // absent) before any planner call. Null means unpinned; planner calls
+    // never fall back to the well-known name.
+    private pinnedOwner: string | null = null;
+    // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+    // post-start owner, 4 planner dispatched. Single flight, no retry.
+    private activationStep = 0;
 
     constructor(private readonly env: PointerResizeEnv) {}
 
@@ -764,6 +793,13 @@ export class PointerResizeAdapter {
 
     private reportAdapterLost(planned: PlannedPointer | null): void {
         if (planned === null || this.lossReported) {
+            return;
+        }
+        // Pinned-owner only: never fall back to the well-known name. When
+        // unpinned (activation never completed) there is no endpoint to
+        // notify, so stay fail-closed without transport.
+        const target = this.pinnedOwner;
+        if (!isUniqueOwner(target)) {
             return;
         }
         this.lossReported = true;
@@ -787,7 +823,7 @@ export class PointerResizeAdapter {
         }
         try {
             this.env.callDbus(
-                POINTER_RESIZE_SERVICE,
+                target,
                 POINTER_RESIZE_OBJECT,
                 POINTER_RESIZE_INTERFACE,
                 POINTER_RESIZE_METHOD,
@@ -797,6 +833,10 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
         }
+    }
+
+    private plannerService(): string | null {
+        return this.pinnedOwner;
     }
 
     enable(auth: PointerResizeEnableAuth): boolean {
@@ -828,6 +868,8 @@ export class PointerResizeAdapter {
         this.flightRevision = 0;
         this.suppressing = false;
         this.lossReported = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.appliedDesired.clear();
         this.log(`${POINTER_LOG}:ready`);
         return true;
@@ -845,6 +887,8 @@ export class PointerResizeAdapter {
         this.flightDirection = null;
         this.flightRevision = 0;
         this.suppressing = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.appliedDesired.clear();
         this.clearTimer();
         this.log(`${POINTER_LOG}:disabled`);
@@ -1357,6 +1401,8 @@ export class PointerResizeAdapter {
         this.lossReported = false;
         this.appliedDesired.clear();
         this.callbackSeen = false;
+        this.pinnedOwner = null;
+        this.activationStep = 1;
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
@@ -1366,14 +1412,165 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.activationStep = 0;
             this.reject("pointer-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
+        // Phase 1: resolve the well-known Planner name to one exact unique
+        // owner. Absent (any non-`:N.M` reply) falls through to exactly one
+        // StartServiceByName phase; present pins immediately with no service
+        // request. One flight, one bounded timeout, no poll/timer/retry.
         try {
             this.env.callDbus(
+                POINTER_RESIZE_DBUS_SERVICE,
+                POINTER_RESIZE_DBUS_OBJECT,
+                POINTER_RESIZE_DBUS_INTERFACE,
+                POINTER_RESIZE_GET_OWNER_METHOD,
                 POINTER_RESIZE_SERVICE,
+                (reply) => this.onOwnerInitial(reply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.reject("pointer-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerInitial(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+            return;
+        }
+        if (isUniqueOwner(reply)) {
+            this.pinnedOwner = reply;
+            this.activationStep = 4;
+            this.sendPlannerRequest(flight, payload, correlation);
+            return;
+        }
+        // Absent name: exactly one StartServiceByName(service, 0) phase. The
+        // flags value 0 is fixed (POINTER_RESIZE_START_FLAGS); the production
+        // entry appends it as the second native D-Bus argument.
+        this.activationStep = 2;
+        try {
+            this.env.callDbus(
+                POINTER_RESIZE_DBUS_SERVICE,
+                POINTER_RESIZE_DBUS_OBJECT,
+                POINTER_RESIZE_DBUS_INTERFACE,
+                POINTER_RESIZE_START_METHOD,
+                POINTER_RESIZE_SERVICE,
+                (startReply) => this.onStartResult(startReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("pointer-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onStartResult(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+            return;
+        }
+        // Accept only 1 PrimaryOwner / 2 AlreadyOwner; reject
+        // malformed/unknown results fail-closed with no planner call.
+        if (reply !== POINTER_RESIZE_START_PRIMARY && reply !== POINTER_RESIZE_START_ALREADY) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingPlanned = null;
+            this.pendingStep = null;
+            this.flightDirection = null;
+            this.flightRevision = 0;
+            this.reject("pointer-activation-failed");
+            this.disable();
+            return;
+        }
+        // Exactly one bounded post-activation owner resolution, then pin
+        // before any planner call. No retry on failure.
+        this.activationStep = 3;
+        try {
+            this.env.callDbus(
+                POINTER_RESIZE_DBUS_SERVICE,
+                POINTER_RESIZE_DBUS_OBJECT,
+                POINTER_RESIZE_DBUS_INTERFACE,
+                POINTER_RESIZE_GET_OWNER_METHOD,
+                POINTER_RESIZE_SERVICE,
+                (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("pointer-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerAfterStart(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingPlanned = null;
+            this.pendingStep = null;
+            this.flightDirection = null;
+            this.flightRevision = 0;
+            this.reject("pointer-owner-missing");
+            this.disable();
+            return;
+        }
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.sendPlannerRequest(flight, payload, correlation);
+    }
+
+    private sendPlannerRequest(flight: number, payload: string, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+            return;
+        }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("pointer-owner-missing");
+            this.disable();
+            return;
+        }
+        try {
+            this.env.callDbus(
+                target,
                 POINTER_RESIZE_OBJECT,
                 POINTER_RESIZE_INTERFACE,
                 POINTER_RESIZE_METHOD,
@@ -1384,6 +1581,8 @@ export class PointerResizeAdapter {
             void error;
             this.clearTimer();
             this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
             this.reject("pointer-dbus-failed");
             this.disable();
         }
@@ -1409,6 +1608,10 @@ export class PointerResizeAdapter {
 
     private onRequestReply(reply: unknown, flight: number, correlation: string): void {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+            return;
+        }
+        // Planner reply is valid only after activation pinned one owner.
+        if (this.activationStep !== 4 || !isUniqueOwner(this.pinnedOwner)) {
             return;
         }
         this.callbackSeen = true;
@@ -1453,6 +1656,10 @@ export class PointerResizeAdapter {
             this.pendingPlanned = null;
             this.flightDirection = null;
             this.flightRevision = 0;
+            // Idle reset: drop the pin so the next idle step re-resolves
+            // and re-pins. Gesture stays open for further steps.
+            this.pinnedOwner = null;
+            this.activationStep = 0;
             this.log(`${POINTER_LOG}:noop`);
             this.settleFlight();
             return;
@@ -1758,6 +1965,8 @@ export class PointerResizeAdapter {
         this.flightDirection = null;
         this.flightRevision = 0;
         this.suppressing = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.appliedDesired.clear();
         this.reject(token);
         this.disable();
@@ -1765,6 +1974,12 @@ export class PointerResizeAdapter {
 
     private sendAcknowledge(flight: number, planned: PlannedPointer): void {
         void flight;
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.failApply("pointer-owner-missing");
+            return;
+        }
         this.callbackSeen = false;
         this.token += 1;
         const next = this.token;
@@ -1798,7 +2013,7 @@ export class PointerResizeAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                POINTER_RESIZE_SERVICE,
+                target,
                 POINTER_RESIZE_OBJECT,
                 POINTER_RESIZE_INTERFACE,
                 POINTER_RESIZE_METHOD,
@@ -1857,6 +2072,12 @@ export class PointerResizeAdapter {
     }
 
     private sendVerify(planned: PlannedPointer): void {
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.failApply("pointer-owner-missing");
+            return;
+        }
         this.callbackSeen = false;
         this.token += 1;
         const next = this.token;
@@ -1994,7 +2215,7 @@ export class PointerResizeAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                POINTER_RESIZE_SERVICE,
+                target,
                 POINTER_RESIZE_OBJECT,
                 POINTER_RESIZE_INTERFACE,
                 POINTER_RESIZE_METHOD,
@@ -2067,6 +2288,9 @@ export class PointerResizeAdapter {
         }
         this.flightRevision = 0;
         this.appliedDesired.clear();
+        // Idle reset: drop the pin so the next idle step re-resolves.
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.log(`${POINTER_LOG}:applied`);
         if (!this.refreshCapture(this.gesture, planned)) {
             this.pendingStep = null;

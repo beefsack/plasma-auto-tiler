@@ -54,17 +54,47 @@ Historical implementation detail is recoverable in Git history.
   Nix-managed Plasma/KWin package set used for that build.
 - The NixOS module owns the system KPackage/native-effect packages and writes
   only `[Plugins] plasma-auto-tiler-kwinEnabled=true` in its immutable global
-  KWin profile. It does not enable the native border or mutate shortcuts. The
-  Home Manager module owns only the optional immutable tray XDG autostart file
-  and has no activation hook.
+  KWin profile. It does not enable the native border or mutate shortcuts. Home
+  Manager owns user-session delivery: the optional immutable tray XDG autostart
+  file and the on-demand Planner D-Bus/systemd activation metadata. Neither
+  writes user `kwinrc` authority.
 - Flake source filesets are explicit for the KWin script, native effect/KCM,
   and tray package; build trees, generated artifacts, and unrelated repository
   files are excluded.
 - Development iteration uses the packaged baseline plus a namespaced,
   reversible, user-local dogfood override as the smallest selected boundary.
   It must not coexist with a Nix-managed copy of the same KWin plugin IDs, must
-  preserve exact normal-path restoration, and must not mutate system or
-  unrelated state.
+   preserve exact normal-path restoration, and must not mutate system or
+   unrelated state.
+
+## Linux Planner Activation
+
+- Approved 2026-09-09: Linux/KWin delivery packages the existing
+  `plasma-auto-tiler planner-service` as one session D-Bus service named
+  `org.plasmaautotiler.Planner`. Its immutable package installs the exact
+  D-Bus descriptor with `SystemdService=plasma-auto-tiler-planner.service`;
+  Home Manager places that package in the user D-Bus discovery path and owns
+  the matching user `Type=dbus` unit with exact `BusName` and immutable
+  `ExecStart=<store>/bin/plasma-auto-tiler planner-service`. It has no shell,
+  autostart target, durable PID/receipt state, or second Planner process mode.
+- `programs.plasma-auto-tiler.planner.enable` defaults true when this Home
+  Manager module is imported. The service remains inert until D-Bus activation,
+  so the default has no idle Planner process cost and does not change the
+  public `engineAuthorityMode=legacy` default. Set it false to omit both the
+  descriptor package and user unit.
+- The unit uses `Restart=no`: Planner name loss remains terminal and cannot
+  form a systemd restart/rebind loop across a pending KWin transaction. A
+  subsequent idle command may request a fresh D-Bus activation. User-manager
+  session teardown stops the service; D-Bus connection/name loss also ends the
+  Planner without durable recovery state.
+- Selected Rust KWin commands first resolve the Planner name. An absent name
+  makes one bounded `StartServiceByName(..., 0)` request, accepts only
+  `PrimaryOwner` or `AlreadyOwner`, then resolves and pins one unique owner
+  before any planner method. Activation, identity, owner, stale, loss, and
+  timeout failures refuse the selected Rust route with no Legacy fallback; a
+  pending plan never rebinds after a restarted owner. Session activation
+  improves immutable delivery but public KWin scripting still cannot attest the
+  initially resolved same-UID Planner binary.
 
 ## Live KWin/Plasma Boundary
 

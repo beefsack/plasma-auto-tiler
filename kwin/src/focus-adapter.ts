@@ -33,6 +33,22 @@ export const FOCUS_OBJECT = "/org/plasmaautotiler/Planner";
 export const FOCUS_INTERFACE = "org.plasmaautotiler.Planner1";
 export const FOCUS_METHOD = "DescribeFocus";
 
+// Session D-Bus activation transport (one-flight, bounded, no poll/retry).
+// Discovery is GetNameOwner on the well-known Planner name, pinned to one
+// exact unique owner (`:N.M`) before any planner call. When absent, exactly
+// one StartServiceByName(service, 0) phase runs, accepting only result codes
+// 1 (PrimaryOwner) / 2 (AlreadyOwner), followed by exactly one more owner
+// resolution and pin. Flags value 0 is fixed; the production entry appends
+// it as the second native D-Bus argument.
+export const FOCUS_DBUS_SERVICE = "org.freedesktop.DBus";
+export const FOCUS_DBUS_OBJECT = "/org/freedesktop/DBus";
+export const FOCUS_DBUS_INTERFACE = "org.freedesktop.DBus";
+export const FOCUS_GET_OWNER_METHOD = "GetNameOwner";
+export const FOCUS_START_METHOD = "StartServiceByName";
+export const FOCUS_START_FLAGS = 0;
+export const FOCUS_START_PRIMARY = 1;
+export const FOCUS_START_ALREADY = 2;
+
 export const FOCUS_CONTRACT_VERSION = 1;
 export const FOCUS_MAX_REQUEST_BYTES = 64 * 1024;
 export const FOCUS_MAX_REPLY_BYTES = 64 * 1024;
@@ -132,6 +148,11 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
+}
+
+// Exact D-Bus unique-owner shape (`:N.M`) for the pinned planner endpoint.
+function isUniqueOwner(value: unknown): value is string {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
 }
 
 function isCorrelationId(value: unknown): value is string {
@@ -377,6 +398,14 @@ export class FocusAdapter {
     private pendingObserved: FocusObserved | null = null;
     private pendingDirection: FocusDirection | null = null;
     private lossReported = false;
+    // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+    // resolved via GetNameOwner (plus one StartServiceByName phase only when
+    // absent) before any planner call. Null means unpinned; planner calls
+    // never fall back to the well-known name.
+    private pinnedOwner: string | null = null;
+    // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+    // post-start owner, 4 planner dispatched. Single flight, no retry.
+    private activationStep = 0;
 
     constructor(private readonly env: FocusAdapterEnv) {}
 
@@ -401,7 +430,14 @@ export class FocusAdapter {
         // change, no retry, no native write; the noop callback never touches
         // flight state so stray replies cannot race. D-Bus loss makes this
         // impossible by definition and stays fail-closed.
+        // Pinned-owner only: never fall back to the well-known name. When
+        // unpinned (activation never completed) there is no endpoint to
+        // notify, so stay fail-closed without transport.
         if (planned === null || this.lossReported) {
+            return;
+        }
+        const target = this.pinnedOwner;
+        if (!isUniqueOwner(target)) {
             return;
         }
         this.lossReported = true;
@@ -425,7 +461,7 @@ export class FocusAdapter {
         }
         try {
             this.env.callDbus(
-                FOCUS_SERVICE,
+                target,
                 FOCUS_OBJECT,
                 FOCUS_INTERFACE,
                 FOCUS_METHOD,
@@ -435,6 +471,10 @@ export class FocusAdapter {
         } catch (error) {
             void error;
         }
+    }
+
+    private plannerService(): string | null {
+        return this.pinnedOwner;
     }
 
     enable(auth: FocusEnableAuth): boolean {
@@ -489,6 +529,8 @@ export class FocusAdapter {
         this.pendingObserved = null;
         this.pendingDirection = null;
         this.lossReported = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.clearDedup();
         this.log(`${LOG_PREFIX}:ready`);
         return true;
@@ -503,6 +545,8 @@ export class FocusAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.clearDedup();
         this.clearTimer();
         for (const detach of this.detaches) {
@@ -644,6 +688,8 @@ export class FocusAdapter {
         this.pendingDirection = direction;
         this.lossReported = false;
         this.callbackSeen = false;
+        this.pinnedOwner = null;
+        this.activationStep = 1;
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
@@ -653,14 +699,161 @@ export class FocusAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.activationStep = 0;
             this.reject("focus-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
+        // Phase 1: resolve the well-known Planner name to one exact unique
+        // owner. Absent (any non-`:N.M` reply) falls through to exactly one
+        // StartServiceByName phase; present pins immediately with no service
+        // request. One flight, one bounded timeout, no poll/timer/retry.
         try {
             this.env.callDbus(
+                FOCUS_DBUS_SERVICE,
+                FOCUS_DBUS_OBJECT,
+                FOCUS_DBUS_INTERFACE,
+                FOCUS_GET_OWNER_METHOD,
                 FOCUS_SERVICE,
+                (reply) => this.onOwnerInitial(reply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.reject("focus-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerInitial(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+            return;
+        }
+        if (isUniqueOwner(reply)) {
+            this.pinnedOwner = reply;
+            this.activationStep = 4;
+            this.sendPlannerRequest(flight, payload, correlation);
+            return;
+        }
+        // Absent name: exactly one StartServiceByName(service, 0) phase. The
+        // flags value 0 is fixed (FOCUS_START_FLAGS); the production entry
+        // appends it as the second native D-Bus argument.
+        this.activationStep = 2;
+        try {
+            this.env.callDbus(
+                FOCUS_DBUS_SERVICE,
+                FOCUS_DBUS_OBJECT,
+                FOCUS_DBUS_INTERFACE,
+                FOCUS_START_METHOD,
+                FOCUS_SERVICE,
+                (startReply) => this.onStartResult(startReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("focus-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onStartResult(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+            return;
+        }
+        // Accept only 1 PrimaryOwner / 2 AlreadyOwner; reject
+        // malformed/unknown results fail-closed with no planner call.
+        if (reply !== FOCUS_START_PRIMARY && reply !== FOCUS_START_ALREADY) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.reject("focus-activation-failed");
+            this.disable();
+            return;
+        }
+        // Exactly one bounded post-activation owner resolution, then pin
+        // before any planner call. No retry on failure.
+        this.activationStep = 3;
+        try {
+            this.env.callDbus(
+                FOCUS_DBUS_SERVICE,
+                FOCUS_DBUS_OBJECT,
+                FOCUS_DBUS_INTERFACE,
+                FOCUS_GET_OWNER_METHOD,
+                FOCUS_SERVICE,
+                (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("focus-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerAfterStart(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.reject("focus-owner-missing");
+            this.disable();
+            return;
+        }
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.sendPlannerRequest(flight, payload, correlation);
+    }
+
+    private sendPlannerRequest(flight: number, payload: string, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+            return;
+        }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("focus-owner-missing");
+            this.disable();
+            return;
+        }
+        try {
+            this.env.callDbus(
+                target,
                 FOCUS_OBJECT,
                 FOCUS_INTERFACE,
                 FOCUS_METHOD,
@@ -671,6 +864,8 @@ export class FocusAdapter {
             void error;
             this.clearTimer();
             this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -695,6 +890,10 @@ export class FocusAdapter {
 
     private onRequestReply(reply: unknown, flight: number, correlation: string): void {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+            return;
+        }
+        // Planner reply is valid only after activation pinned one owner.
+        if (this.activationStep !== 4 || !isUniqueOwner(this.pinnedOwner)) {
             return;
         }
         this.callbackSeen = true;
@@ -741,6 +940,10 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            // Idle reset: drop the pin so the next idle command re-resolves
+            // and re-pins. Adapter stays enabled (no disable here).
+            this.pinnedOwner = null;
+            this.activationStep = 0;
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -982,6 +1185,17 @@ export class FocusAdapter {
             this.disable();
             return;
         }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.inFlight = false;
+            this.pending = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.reject("focus-owner-missing");
+            this.disable();
+            return;
+        }
         this.callbackSeen = false;
         this.token += 1;
         const next = this.token;
@@ -1025,7 +1239,7 @@ export class FocusAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                FOCUS_SERVICE,
+                target,
                 FOCUS_OBJECT,
                 FOCUS_INTERFACE,
                 FOCUS_METHOD,
@@ -1143,6 +1357,17 @@ export class FocusAdapter {
             this.disable();
             return;
         }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.inFlight = false;
+            this.pending = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.reject("focus-owner-missing");
+            this.disable();
+            return;
+        }
         this.callbackSeen = false;
         this.token += 1;
         const next = this.token;
@@ -1255,7 +1480,7 @@ export class FocusAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                FOCUS_SERVICE,
+                target,
                 FOCUS_OBJECT,
                 FOCUS_INTERFACE,
                 FOCUS_METHOD,
@@ -1336,6 +1561,9 @@ export class FocusAdapter {
             this.disable();
             return;
         }
+        // Idle reset: drop the pin so the next idle command re-resolves.
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.log(`${LOG_PREFIX}:applied`);
     }
 

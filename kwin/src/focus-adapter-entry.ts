@@ -429,6 +429,24 @@ export function startFocusAdapterEntry(
                 return fail();
             }
             callDbus = (service, path, iface, method, payload, callback) => {
+                // Exact session activation: StartServiceByName(service, 0) is
+                // the only two-argument daemon call; the adapter passes the
+                // well-known Planner name as payload with fixed flags 0.
+                if (
+                    service === "org.freedesktop.DBus" &&
+                    method === "StartServiceByName"
+                ) {
+                    (native as (...args: readonly unknown[]) => void)(
+                        service,
+                        path,
+                        iface,
+                        method,
+                        payload,
+                        0,
+                        callback,
+                    );
+                    return;
+                }
                 (native as (...args: readonly unknown[]) => void)(
                     service,
                     path,

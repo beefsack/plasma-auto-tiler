@@ -1,0 +1,4 @@
+[D-BUS Service]
+Name=org.plasmaautotiler.Planner
+Exec=@out@/bin/plasma-auto-tiler planner-service
+SystemdService=plasma-auto-tiler-planner.service

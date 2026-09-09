@@ -5,10 +5,18 @@ import { describe, it } from "node:test";
 
 import {
     RESIZE_CONTRACT_VERSION,
+    RESIZE_DBUS_INTERFACE,
+    RESIZE_DBUS_OBJECT,
+    RESIZE_DBUS_SERVICE,
+    RESIZE_GET_OWNER_METHOD,
     RESIZE_INTERFACE,
     RESIZE_METHOD,
     RESIZE_OBJECT,
     RESIZE_SERVICE,
+    RESIZE_START_ALREADY,
+    RESIZE_START_FLAGS,
+    RESIZE_START_METHOD,
+    RESIZE_START_PRIMARY,
     ResizeAdapter,
     ResizeAdapterEnv,
     ResizeDesired,
@@ -64,7 +72,13 @@ interface WinState {
 }
 
 interface Mocks {
-    readonly dbusCalls: Array<{ payload: string }>;
+    readonly dbusCalls: Array<{
+        service: string;
+        path: string;
+        iface: string;
+        method: string;
+        payload: string;
+    }>;
     readonly callbacks: Array<(reply: unknown) => void>;
     readonly timers: Array<{ callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
@@ -140,8 +154,8 @@ function mockEnvTwoWindow(): Mocks {
         handlers: new Map<string, () => void>(),
     } as unknown as Mocks;
     const env: ResizeAdapterEnv = {
-        callDbus: (_s, _p, _i, _m, payload, callback): void => {
-            state.dbusCalls.push({ payload });
+        callDbus: (service, path, iface, method, payload, callback): void => {
+            state.dbusCalls.push({ service, path, iface, method, payload });
             state.callbacks.push(callback);
         },
         scheduleOnce: (delayMs, callback): (() => void) => {
@@ -200,8 +214,42 @@ function enableAdapter(mocks: Mocks): ResizeAdapter {
 }
 
 function firstPayload(mocks: Mocks): Record<string, unknown> {
-    assert.ok(mocks.dbusCalls.length >= 1);
-    return JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+    const planner = mocks.dbusCalls.find((call) => call.method === RESIZE_METHOD);
+    assert.ok(planner !== undefined);
+    return JSON.parse(planner.payload) as Record<string, unknown>;
+}
+
+const PINNED_OWNER = ":1.42";
+
+// Drives the initial GetNameOwner phase with a present unique owner, so the
+// next D-Bus call is the pinned planner request with no service activation.
+function driveOwnerPresent(mocks: Mocks, owner: string = PINNED_OWNER): void {
+    assert.ok(mocks.callbacks[0] !== undefined);
+    mocks.callbacks[0]?.(owner);
+}
+
+function plannerPayloads(mocks: Mocks): Array<Record<string, unknown>> {
+    return mocks.dbusCalls
+        .filter((call) => call.method === RESIZE_METHOD)
+        .map((call) => JSON.parse(call.payload) as Record<string, unknown>);
+}
+
+function plannerCallbacks(mocks: Mocks): Array<(reply: unknown) => void> {
+    const out: Array<(reply: unknown) => void> = [];
+    mocks.dbusCalls.forEach((call, index) => {
+        if (call.method === RESIZE_METHOD) {
+            out.push(mocks.callbacks[index] as (reply: unknown) => void);
+        }
+    });
+    return out;
+}
+
+// Drives the latest pending GetNameOwner phase (for flights after the first,
+// where callbacks[0] already belongs to an earlier flight).
+function driveLatestOwner(mocks: Mocks, owner: string = PINNED_OWNER): void {
+    const index = mocks.callbacks.length - 1;
+    assert.ok(mocks.callbacks[index] !== undefined);
+    mocks.callbacks[index]?.(owner);
 }
 
 function resizedGeometry(): Array<Record<string, unknown>> {
@@ -275,6 +323,8 @@ describe("resize adapter", () => {
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
         assert.equal(mocks.dbusCalls.length, 1);
+        driveOwnerPresent(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
         const payload = firstPayload(mocks);
         assert.equal(payload["v"], 1);
         assert.equal(payload["action"], "request");
@@ -315,13 +365,14 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
-        const first = mocks.callbacks[0] as (reply: unknown) => void;
-        first(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
+        driveOwnerPresent(mocks);
+        plannerCallbacks(mocks)[0]?.(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
         assert.equal(adapter.isInFlight, false);
         // Same fingerprint+direction+mode repeats with press_index 1, not dedup.
         adapter.requestResize("right", "outwards");
-        assert.equal(mocks.dbusCalls.length, 2);
-        const second = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        driveLatestOwner(mocks, ":1.43");
+        assert.equal(plannerPayloads(mocks).length, 2);
+        const second = plannerPayloads(mocks)[1] as Record<string, unknown>;
         assert.equal(second["mode"], "outwards");
         assert.equal(second["press_index"], 1);
         assert.ok(!mocks.logs.some((line) => line.includes("resize-dedup")));
@@ -331,11 +382,12 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
-        const first = mocks.callbacks[0] as (reply: unknown) => void;
-        first(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
+        driveOwnerPresent(mocks);
+        plannerCallbacks(mocks)[0]?.(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
         adapter.requestResize("right", "inwards");
-        assert.equal(mocks.dbusCalls.length, 2);
-        const second = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        driveLatestOwner(mocks, ":1.43");
+        assert.equal(plannerPayloads(mocks).length, 2);
+        const second = plannerPayloads(mocks)[1] as Record<string, unknown>;
         assert.equal(second["mode"], "inwards");
         assert.equal(second["press_index"], 0);
     });
@@ -361,35 +413,38 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
-        let onReply = mocks.callbacks[0] as (reply: unknown) => void;
-        onReply(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
+        driveOwnerPresent(mocks);
+        plannerCallbacks(mocks)[0]?.(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
         adapter.requestResize("right", "outwards");
-        assert.equal((JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>)["press_index"], 1);
-        onReply = mocks.callbacks[1] as (reply: unknown) => void;
-        onReply(JSON.stringify({ v: 1, correlation_id: (JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>)["correlation_id"], outcome: "noop" }));
+        driveLatestOwner(mocks, ":1.43");
+        assert.equal(plannerPayloads(mocks)[1]?.["press_index"], 1);
+        plannerCallbacks(mocks)[1]?.(JSON.stringify({ v: 1, correlation_id: plannerPayloads(mocks)[1]?.["correlation_id"], outcome: "noop" }));
         // Edge change resets to 0.
         adapter.requestResize("left", "outwards");
-        assert.equal((JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>)["press_index"], 0);
-        onReply = mocks.callbacks[2] as (reply: unknown) => void;
-        onReply(JSON.stringify({ v: 1, correlation_id: (JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>)["correlation_id"], outcome: "noop" }));
+        driveLatestOwner(mocks, ":1.44");
+        assert.equal(plannerPayloads(mocks)[2]?.["press_index"], 0);
+        plannerCallbacks(mocks)[2]?.(JSON.stringify({ v: 1, correlation_id: plannerPayloads(mocks)[2]?.["correlation_id"], outcome: "noop" }));
         // Focused identity change resets to 0.
         mocks.activeId = "win-b";
         adapter.requestResize("left", "outwards");
-        assert.equal((JSON.parse((mocks.dbusCalls[3] as { payload: string }).payload) as Record<string, unknown>)["press_index"], 0);
+        driveLatestOwner(mocks, ":1.45");
+        assert.equal(plannerPayloads(mocks)[3]?.["press_index"], 0);
     });
 
     it("resets repeat on disable", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
-        const onReply = mocks.callbacks[0] as (reply: unknown) => void;
-        onReply(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
+        driveOwnerPresent(mocks);
+        plannerCallbacks(mocks)[0]?.(JSON.stringify({ v: 1, correlation_id: firstPayload(mocks)["correlation_id"], outcome: "noop" }));
         adapter.requestResize("right", "outwards");
-        assert.equal(mocks.dbusCalls.length, 2);
+        driveLatestOwner(mocks, ":1.43");
+        assert.equal(plannerPayloads(mocks).length, 2);
         adapter.disable();
         const adapter2 = enableAdapter(mocks);
         adapter2.requestResize("right", "outwards");
-        const last = JSON.parse((mocks.dbusCalls[mocks.dbusCalls.length - 1] as { payload: string }).payload) as Record<string, unknown>;
+        driveLatestOwner(mocks, ":1.44");
+        const last = plannerPayloads(mocks)[plannerPayloads(mocks).length - 1] as Record<string, unknown>;
         assert.equal(last["press_index"], 0);
     });
 
@@ -397,8 +452,9 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         const operation = resizeOperation("right", "outwards") as Record<string, unknown>;
         delete operation["mode"];
         onRequest(
@@ -438,26 +494,27 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2));
         // Grow-first: win-a (+129600) before win-b (-129600).
         assert.deepEqual(
             mocks.geometryWrites.map((w) => w.id),
             ["win-a", "win-b"],
         );
-        assert.equal(mocks.dbusCalls.length, 2);
-        const ackPayload = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(mocks.dbusCalls.length, 3);
+        const ackPayload = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(ackPayload["action"], "acknowledge");
         assert.equal(ackPayload["outcome"], "accepted");
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, 2));
-        assert.equal(mocks.dbusCalls.length, 3);
-        const verifyPayload = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(mocks.dbusCalls.length, 4);
+        const verifyPayload = JSON.parse((mocks.dbusCalls[3] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(verifyPayload["action"], "verify");
         assert.equal(verifyPayload["verified"], true);
         assert.deepEqual(verifyPayload["verified_geometry"], resizedGeometry());
-        const onVerify = mocks.callbacks[2] as (reply: unknown) => void;
+        const onVerify = mocks.callbacks[3] as (reply: unknown) => void;
         onVerify(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: 3 }));
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
         assert.equal(adapter.isEnabled, true);
@@ -471,8 +528,9 @@ describe("resize adapter", () => {
         mocks.revalidateImpl = () => false;
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2));
         assert.ok(mocks.logs.some((line) => line.includes("resize-stale-revalidate")));
         assert.equal(adapter.isEnabled, false);
@@ -483,12 +541,13 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
         // Queue an unrelated signal before the planned reply arrives.
         const geometryHandler = mocks.handlers.get("geometry");
         void geometryHandler;
         const addedHandler = mocks.handlers.get("added") as () => void;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         addedHandler();
         onRequest(plannedReply(correlation, 2));
         assert.ok(mocks.logs.some((line) => line.includes("resize-signal-invalid")));
@@ -499,8 +558,9 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "planned" }));
         assert.ok(mocks.logs.some((line) => line.includes("resize-precondition-mismatch")));
         assert.equal(mocks.geometryWrites.length, 0);
@@ -511,8 +571,9 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(
             plannedReply(correlation, 2, [
                 ...resizedGeometry(),
@@ -527,8 +588,9 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(
             plannedReply(correlation, 2, [
                 { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1080, h: 1080 } },
@@ -543,8 +605,9 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("up", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "noop" }));
         assert.ok(mocks.logs.some((line) => line.endsWith(":noop")));
         assert.equal(mocks.geometryWrites.length, 0);
@@ -555,15 +618,16 @@ describe("resize adapter", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
         const correlation = firstPayload(mocks)["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2));
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, 2));
         // The ack reply triggers sendVerify synchronously against the fresh
         // exact post-observation; a divergent commit then fails closed.
-        assert.equal(mocks.dbusCalls.length, 3);
-        const onVerify = mocks.callbacks[2] as (reply: unknown) => void;
+        assert.equal(mocks.dbusCalls.length, 4);
+        const onVerify = mocks.callbacks[3] as (reply: unknown) => void;
         onVerify(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged" }));
         assert.ok(mocks.logs.some((line) => line.includes("resize-service-fault")));
         assert.equal(adapter.isEnabled, false);
@@ -681,5 +745,179 @@ describe("resize adapter", () => {
         const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
         assert.ok(authority.includes("resize-adapter-entry"));
         assert.ok(authority.includes("startResizeAdapterEntry"));
+    });
+});
+
+describe("resize adapter session D-Bus activation", () => {
+    it("pins a present owner with no service activation and routes planner calls to the unique name", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(RESIZE_DBUS_SERVICE, "org.freedesktop.DBus");
+        assert.equal(RESIZE_DBUS_OBJECT, "/org/freedesktop/DBus");
+        assert.equal(RESIZE_DBUS_INTERFACE, "org.freedesktop.DBus");
+        assert.equal(RESIZE_GET_OWNER_METHOD, "GetNameOwner");
+        adapter.requestResize("right", "outwards");
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual(
+            [mocks.dbusCalls[0]?.service, mocks.dbusCalls[0]?.method, mocks.dbusCalls[0]?.payload],
+            [RESIZE_DBUS_SERVICE, RESIZE_GET_OWNER_METHOD, RESIZE_SERVICE],
+        );
+        driveOwnerPresent(mocks, ":1.42");
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.equal(mocks.dbusCalls[1]?.service, ":1.42");
+        assert.equal(mocks.dbusCalls[1]?.method, RESIZE_METHOD);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === RESIZE_SERVICE));
+        const correlation = firstPayload(mocks)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation, 2));
+        assert.equal(mocks.dbusCalls[2]?.service, ":1.42");
+        mocks.callbacks[2]?.(ackReply(correlation, 2));
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.42");
+        mocks.callbacks[3]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: 3 }),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes("resize:applied")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === RESIZE_SERVICE));
+    });
+
+    it("activates an absent name with exactly one StartServiceByName(1) then pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(RESIZE_START_METHOD, "StartServiceByName");
+        assert.equal(RESIZE_START_FLAGS, 0);
+        assert.equal(RESIZE_START_PRIMARY, 1);
+        assert.equal(RESIZE_START_ALREADY, 2);
+        adapter.requestResize("right", "outwards");
+        mocks.callbacks[0]?.("");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const start = mocks.dbusCalls[1];
+        assert.deepEqual(
+            [start?.service, start?.method, start?.payload],
+            [RESIZE_DBUS_SERVICE, RESIZE_START_METHOD, RESIZE_SERVICE],
+        );
+        mocks.callbacks[1]?.(RESIZE_START_PRIMARY);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(
+            [mocks.dbusCalls[2]?.service, mocks.dbusCalls[2]?.method],
+            [RESIZE_DBUS_SERVICE, RESIZE_GET_OWNER_METHOD],
+        );
+        mocks.callbacks[2]?.(":1.77");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.77");
+        assert.equal(mocks.dbusCalls[3]?.method, RESIZE_METHOD);
+        assert.equal(mocks.dbusCalls.filter((call) => call.method === RESIZE_START_METHOD).length, 1);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === RESIZE_SERVICE));
+        const correlation = firstPayload(mocks)["correlation_id"] as string;
+        mocks.callbacks[3]?.(plannedReply(correlation, 2));
+        assert.ok(mocks.geometryWrites.length > 0);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("accepts AlreadyOwner(2) as already-running then resolves and pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        mocks.callbacks[0]?.(null);
+        mocks.callbacks[1]?.(RESIZE_START_ALREADY);
+        mocks.callbacks[2]?.(":1.78");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.78");
+        const correlation = firstPayload(mocks)["correlation_id"] as string;
+        mocks.callbacks[3]?.(plannedReply(correlation, 2));
+        assert.ok(mocks.geometryWrites.length > 0);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("rejects malformed or unknown activation results with no planner call and disables", () => {
+        for (const bad of [0, 3, 4, 99, "1", "ok", null, undefined, {}, []]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestResize("right", "outwards");
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(bad);
+            assert.ok(mocks.logs.some((l) => l.includes("resize-activation-failed")));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === RESIZE_METHOD));
+            assert.ok(!mocks.dbusCalls.some((call) => call.service === RESIZE_SERVICE));
+            assert.equal(mocks.dbusCalls.filter((call) => call.method === RESIZE_START_METHOD).length, 1);
+            assert.equal(mocks.dbusCalls.length, 2);
+        }
+    });
+
+    it("fails closed when the post-start owner is missing with no planner call", () => {
+        for (const badOwner of ["", "not-a-unique-name", null, RESIZE_SERVICE]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestResize("right", "outwards");
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(RESIZE_START_PRIMARY);
+            mocks.callbacks[2]?.(badOwner);
+            assert.ok(mocks.logs.some((l) => l.includes("resize-owner-missing")));
+            assert.equal(adapter.isEnabled, false);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === RESIZE_METHOD));
+            assert.equal(mocks.geometryWrites.length, 0);
+        }
+    });
+
+    it("coalesces concurrent commands into one activation attempt with no duplicate service request", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        adapter.requestResize("left", "outwards");
+        assert.ok(mocks.logs.some((l) => l.includes("resize-busy")));
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.("");
+        adapter.requestResize("left", "outwards");
+        assert.ok(mocks.logs.some((l) => l.includes("resize-busy")));
+        assert.equal(mocks.dbusCalls.filter((call) => call.method === RESIZE_START_METHOD).length, 1);
+        assert.equal(mocks.dbusCalls.length, 2);
+    });
+
+    it("times out during activation with no retry and ignores the late reply", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        assert.equal(mocks.timers.length, 1);
+        mocks.timers[0]?.callback();
+        assert.ok(mocks.logs.some((l) => l.includes("resize-timeout-request")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.(":1.42");
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(!mocks.logs.some((l) => l.includes("resize:applied")));
+    });
+
+    it("refuses the Rust command with no Legacy fallback on activation failure", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        mocks.callbacks[0]?.("");
+        mocks.callbacks[1]?.(0);
+        assert.ok(mocks.logs.some((l) => l.includes("resize-activation-failed")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("resize:disabled")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === RESIZE_SERVICE));
+        const src = readFileSync(join(kwinSrcDir(), "resize-adapter.ts"), "utf8");
+        assert.ok(!src.includes("fallback"));
+    });
+
+    it("allows a subsequent idle command to activate again only after state reset", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        mocks.callbacks[0]?.("");
+        mocks.callbacks[1]?.("bogus");
+        assert.equal(adapter.isEnabled, false);
+        const callsAfterFailure = mocks.dbusCalls.length;
+        adapter.requestResize("right", "outwards");
+        assert.ok(mocks.logs.some((l) => l.includes("resize-disabled")));
+        assert.equal(mocks.dbusCalls.length, callsAfterFailure);
+        const ok = adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
+        assert.equal(ok, true);
+        adapter.requestResize("right", "outwards");
+        assert.equal(mocks.dbusCalls.length, callsAfterFailure + 1);
+        assert.equal(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.method, RESIZE_GET_OWNER_METHOD);
     });
 });

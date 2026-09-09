@@ -35,6 +35,11 @@
         ];
       };
 
+      plannerDbusServiceSource = pkgs: pkgs.lib.fileset.toSource {
+        root = ./.;
+        fileset = ./nix/org.plasmaautotiler.Planner.service;
+      };
+
       nativeEffectSource = pkgs: pkgs.lib.fileset.toSource {
         root = ./.;
         fileset = pkgs.lib.fileset.unions [
@@ -139,11 +144,18 @@
           postInstall = ''
             mkdir -p "$out/share/icons/hicolor/scalable/apps"
             cp ${./assets/icons/plasma-auto-tiler.svg} "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+            mkdir -p "$out/share/dbus-1/services"
+            substitute "${plannerDbusServiceSource pkgs}/nix/org.plasmaautotiler.Planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service" --replace-fail "@out@" "$out"
           '';
           doInstallCheck = true;
           installCheckPhase = ''
             runHook preInstallCheck
             test -s "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
+            test -s "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+            grep -Fx "[D-BUS Service]" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+            grep -Fx "Name=org.plasmaautotiler.Planner" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+            grep -Fx "Exec=$out/bin/plasma-auto-tiler planner-service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+            grep -Fx "SystemdService=plasma-auto-tiler-planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
             runHook postInstallCheck
           '';
         };
@@ -194,32 +206,93 @@
               }));
               default = { };
             };
+            options.home.packages = lib.mkOption {
+              type = lib.types.listOf lib.types.package;
+              default = [ ];
+            };
+            options.systemd.user.services = lib.mkOption {
+              type = lib.types.attrsOf (lib.types.submodule {
+                options = {
+                  Unit = lib.mkOption {
+                    type = lib.types.attrs;
+                    default = { };
+                  };
+                  Service = lib.mkOption {
+                    type = lib.types.attrs;
+                    default = { };
+                  };
+                  Install = lib.mkOption {
+                    type = lib.types.attrs;
+                    default = { };
+                  };
+                };
+              });
+              default = { };
+            };
           };
           enabledHome = nixpkgs.lib.evalModules {
             modules = [
               homeModuleOptions
               self.homeManagerModules.default
-              { programs.plasma-auto-tiler.tray.enable = true; }
+              {
+                programs.plasma-auto-tiler.tray.enable = true;
+                programs.plasma-auto-tiler.planner.enable = true;
+              }
             ];
           };
           disabledHome = nixpkgs.lib.evalModules {
             modules = [ homeModuleOptions self.homeManagerModules.default ];
           };
+          plannerDisabledHome = nixpkgs.lib.evalModules {
+            modules = [
+              homeModuleOptions
+              self.homeManagerModules.default
+              { programs.plasma-auto-tiler.planner.enable = false; }
+            ];
+          };
+          customPlanner = pkgs.runCommand "custom-planner-test" { } ''
+            mkdir -p "$out/bin"
+            touch "$out/bin/plasma-auto-tiler"
+            chmod +x "$out/bin/plasma-auto-tiler"
+          '';
+          customPlannerHome = nixpkgs.lib.evalModules {
+            modules = [
+              homeModuleOptions
+              self.homeManagerModules.default
+              {
+                programs.plasma-auto-tiler.planner.enable = true;
+                programs.plasma-auto-tiler.planner.package = customPlanner;
+              }
+            ];
+          };
           activation = enabledNixos.config.environment.etc."xdg/kwinrc".text;
           autostart = enabledHome.config.home.file.".config/autostart/plasma-auto-tiler.desktop".text;
           desktopFile = ".config/autostart/plasma-auto-tiler.desktop";
+          descriptorTemplate = builtins.readFile ./nix/org.plasmaautotiler.Planner.service;
+          expectedTemplate = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=@out@/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
+          expectedDescriptor = "[D-BUS Service]\nName=org.plasmaautotiler.Planner\nExec=${tray}/bin/plasma-auto-tiler planner-service\nSystemdService=plasma-auto-tiler-planner.service\n";
+          plannerUnit = enabledHome.config.systemd.user.services."plasma-auto-tiler-planner";
+          defaultPlannerUnit = disabledHome.config.systemd.user.services."plasma-auto-tiler-planner";
+          customPlannerUnit = customPlannerHome.config.systemd.user.services."plasma-auto-tiler-planner";
         in
         assert activation == "[Plugins]\nplasma-auto-tiler-kwinEnabled=true\n";
         assert !(nixpkgs.lib.hasInfix "plasma-auto-tiler-active-borderEnabled" activation);
+        assert !(nixpkgs.lib.hasInfix "Planner" activation);
+        assert !(nixpkgs.lib.hasInfix "planner" activation);
         assert builtins.elem kwinScript enabledNixos.config.environment.systemPackages;
         assert builtins.elem nativeEffect enabledNixos.config.environment.systemPackages;
+        assert !(builtins.elem tray enabledNixos.config.environment.systemPackages);
         assert !(builtins.hasAttr "xdg/kwinrc" disabledNixos.config.environment.etc);
         assert nixpkgs.lib.hasInfix "Exec=/nix/store/" autostart;
         assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler tray-managed\n" autostart;
         assert !(nixpkgs.lib.hasInfix (toString ./. ) autostart);
+        assert !(nixpkgs.lib.hasInfix "Planner" autostart);
+        assert !(nixpkgs.lib.hasInfix "planner-service" autostart);
         assert builtins.hasAttr desktopFile enabledHome.config.home.file;
         assert !(builtins.hasAttr desktopFile disabledHome.config.home.file);
         assert !(builtins.hasAttr "activation" enabledHome.config.home);
+        assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" enabledHome.config.home.file);
+        assert !(builtins.hasAttr ".config/autostart/plasma-auto-tiler-planner.desktop" disabledHome.config.home.file);
         assert autostart == ''
           [Desktop Entry]
           Type=Application
@@ -231,6 +304,42 @@
           X-KDE-autostart-phase=1
           X-GNOME-Autostart-enabled=true
         '';
+        assert descriptorTemplate == expectedTemplate;
+        assert !(nixpkgs.lib.hasInfix "/nix/store" descriptorTemplate);
+        assert builtins.replaceStrings [ "@out@" ] [ "${tray}" ] descriptorTemplate == expectedDescriptor;
+        assert !(nixpkgs.lib.hasInfix (toString ./.) expectedDescriptor);
+        assert disabledHome.config.programs.plasma-auto-tiler.planner.enable == true;
+        assert enabledHome.config.programs.plasma-auto-tiler.planner.enable == true;
+        assert plannerDisabledHome.config.programs.plasma-auto-tiler.planner.enable == false;
+        assert builtins.hasAttr "plasma-auto-tiler-planner" enabledHome.config.systemd.user.services;
+        assert builtins.hasAttr "plasma-auto-tiler-planner" disabledHome.config.systemd.user.services;
+        assert !(builtins.hasAttr "plasma-auto-tiler-planner" plannerDisabledHome.config.systemd.user.services);
+        assert plannerUnit.Service.Type == "dbus";
+        assert plannerUnit.Service.BusName == "org.plasmaautotiler.Planner";
+        assert plannerUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler planner-service";
+        assert plannerUnit.Service.Restart == "no";
+        assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "Type" ];
+        assert !(builtins.hasAttr "ProtectSystem" plannerUnit.Service);
+        assert !(builtins.hasAttr "ProtectHome" plannerUnit.Service);
+        assert !(builtins.hasAttr "PrivateDevices" plannerUnit.Service);
+        assert !(builtins.hasAttr "PrivateNetwork" plannerUnit.Service);
+        assert !(builtins.hasAttr "ProtectKernelTunables" plannerUnit.Service);
+        assert !(nixpkgs.lib.hasInfix "/bin/sh" plannerUnit.Service.ExecStart);
+        assert !(nixpkgs.lib.hasInfix "sh -c" plannerUnit.Service.ExecStart);
+        assert !(nixpkgs.lib.hasInfix (toString ./.) plannerUnit.Service.ExecStart);
+        assert nixpkgs.lib.hasInfix "/bin/plasma-auto-tiler planner-service" plannerUnit.Service.ExecStart;
+        assert plannerUnit.Unit.Description == "Plasma Auto Tiler Planner (on-demand D-Bus service)";
+        assert plannerUnit.Install == { };
+        assert defaultPlannerUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler planner-service";
+        assert builtins.elem tray enabledHome.config.home.packages;
+        assert builtins.elem tray disabledHome.config.home.packages;
+        assert plannerDisabledHome.config.home.packages == [ ];
+        assert customPlannerUnit.Service.ExecStart == "${customPlanner}/bin/plasma-auto-tiler planner-service";
+        assert builtins.elem customPlanner customPlannerHome.config.home.packages;
+        assert !(builtins.elem tray customPlannerHome.config.home.packages);
+        assert customPlannerUnit.Service.Type == "dbus";
+        assert customPlannerUnit.Service.BusName == "org.plasmaautotiler.Planner";
+        assert customPlannerUnit.Service.Restart == "no";
         {
           module-boundary = pkgs.runCommand "plasma-auto-tiler-module-boundary" { } ''
             touch "$out"

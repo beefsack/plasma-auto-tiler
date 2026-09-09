@@ -40,6 +40,22 @@ export const MOVEMENT_OBJECT = "/org/plasmaautotiler/Planner";
 export const MOVEMENT_INTERFACE = "org.plasmaautotiler.Planner1";
 export const MOVEMENT_METHOD = "DescribeMovement";
 
+// Session D-Bus activation transport (one-flight, bounded, no poll/retry).
+// Discovery is GetNameOwner on the well-known Planner name, pinned to one
+// exact unique owner (`:N.M`) before any planner call. When absent, exactly
+// one StartServiceByName(service, 0) phase runs, accepting only result codes
+// 1 (PrimaryOwner) / 2 (AlreadyOwner), followed by exactly one more owner
+// resolution and pin. Flags value 0 is fixed; the production entry appends
+// it as the second native D-Bus argument.
+export const MOVEMENT_DBUS_SERVICE = "org.freedesktop.DBus";
+export const MOVEMENT_DBUS_OBJECT = "/org/freedesktop/DBus";
+export const MOVEMENT_DBUS_INTERFACE = "org.freedesktop.DBus";
+export const MOVEMENT_GET_OWNER_METHOD = "GetNameOwner";
+export const MOVEMENT_START_METHOD = "StartServiceByName";
+export const MOVEMENT_START_FLAGS = 0;
+export const MOVEMENT_START_PRIMARY = 1;
+export const MOVEMENT_START_ALREADY = 2;
+
 export const MOVEMENT_CONTRACT_VERSION = 1;
 export const MOVEMENT_MAX_REQUEST_BYTES = 64 * 1024;
 export const MOVEMENT_MAX_REPLY_BYTES = 64 * 1024;
@@ -170,6 +186,11 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
+}
+
+// Exact D-Bus unique-owner shape (`:N.M`) for the pinned planner endpoint.
+function isUniqueOwner(value: unknown): value is string {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
 }
 
 function isCorrelationId(value: unknown): value is string {
@@ -879,6 +900,14 @@ export class MovementAdapter {
     private pendingDirection: MovementDirection | null = null;
     private pendingMover: string | null = null;
     private lossReported = false;
+    // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+    // resolved via GetNameOwner (plus one StartServiceByName phase only when
+    // absent) before any planner call. Null means unpinned; planner calls
+    // never fall back to the well-known name.
+    private pinnedOwner: string | null = null;
+    // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+    // post-start owner, 4 planner dispatched. Single flight, no retry.
+    private activationStep = 0;
 
     constructor(private readonly env: MovementAdapterEnv) {}
 
@@ -897,6 +926,13 @@ export class MovementAdapter {
 
     private reportAdapterLost(planned: PlannedMovement | null): void {
         if (planned === null || this.lossReported) {
+            return;
+        }
+        // Pinned-owner only: never fall back to the well-known name. When
+        // unpinned (activation never completed) there is no endpoint to
+        // notify, so stay fail-closed without transport.
+        const target = this.pinnedOwner;
+        if (!isUniqueOwner(target)) {
             return;
         }
         this.lossReported = true;
@@ -920,7 +956,7 @@ export class MovementAdapter {
         }
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
+                target,
                 MOVEMENT_OBJECT,
                 MOVEMENT_INTERFACE,
                 MOVEMENT_METHOD,
@@ -930,6 +966,10 @@ export class MovementAdapter {
         } catch (error) {
             void error;
         }
+    }
+
+    private plannerService(): string | null {
+        return this.pinnedOwner;
     }
 
     enable(auth: MovementEnableAuth): boolean {
@@ -985,6 +1025,8 @@ export class MovementAdapter {
         this.pendingDirection = null;
         this.pendingMover = null;
         this.lossReported = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.clearDedup();
         this.log(`${LOG_PREFIX}:ready`);
         return true;
@@ -1001,6 +1043,8 @@ export class MovementAdapter {
         this.pendingDirection = null;
         this.pendingMover = null;
         this.suppressing = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.clearDedup();
         this.clearTimer();
         for (const detach of this.detaches) {
@@ -1153,6 +1197,8 @@ export class MovementAdapter {
         this.pendingMover = observed.focusedId;
         this.lossReported = false;
         this.callbackSeen = false;
+        this.pinnedOwner = null;
+        this.activationStep = 1;
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
@@ -1162,14 +1208,163 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.activationStep = 0;
             this.reject("movement-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
+        // Phase 1: resolve the well-known Planner name to one exact unique
+        // owner. Absent (any non-`:N.M` reply) falls through to exactly one
+        // StartServiceByName phase; present pins immediately with no service
+        // request. One flight, one bounded timeout, no poll/timer/retry.
         try {
             this.env.callDbus(
+                MOVEMENT_DBUS_SERVICE,
+                MOVEMENT_DBUS_OBJECT,
+                MOVEMENT_DBUS_INTERFACE,
+                MOVEMENT_GET_OWNER_METHOD,
                 MOVEMENT_SERVICE,
+                (reply) => this.onOwnerInitial(reply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.reject("movement-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerInitial(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+            return;
+        }
+        if (isUniqueOwner(reply)) {
+            this.pinnedOwner = reply;
+            this.activationStep = 4;
+            this.sendPlannerRequest(flight, payload, correlation);
+            return;
+        }
+        // Absent name: exactly one StartServiceByName(service, 0) phase. The
+        // flags value 0 is fixed (MOVEMENT_START_FLAGS); the production entry
+        // appends it as the second native D-Bus argument.
+        this.activationStep = 2;
+        try {
+            this.env.callDbus(
+                MOVEMENT_DBUS_SERVICE,
+                MOVEMENT_DBUS_OBJECT,
+                MOVEMENT_DBUS_INTERFACE,
+                MOVEMENT_START_METHOD,
+                MOVEMENT_SERVICE,
+                (startReply) => this.onStartResult(startReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("movement-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onStartResult(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+            return;
+        }
+        // Accept only 1 PrimaryOwner / 2 AlreadyOwner; reject
+        // malformed/unknown results fail-closed with no planner call.
+        if (reply !== MOVEMENT_START_PRIMARY && reply !== MOVEMENT_START_ALREADY) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.pendingMover = null;
+            this.reject("movement-activation-failed");
+            this.disable();
+            return;
+        }
+        // Exactly one bounded post-activation owner resolution, then pin
+        // before any planner call. No retry on failure.
+        this.activationStep = 3;
+        try {
+            this.env.callDbus(
+                MOVEMENT_DBUS_SERVICE,
+                MOVEMENT_DBUS_OBJECT,
+                MOVEMENT_DBUS_INTERFACE,
+                MOVEMENT_GET_OWNER_METHOD,
+                MOVEMENT_SERVICE,
+                (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation),
+            );
+        } catch (error) {
+            void error;
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("movement-dbus-failed");
+            this.disable();
+        }
+    }
+
+    private onOwnerAfterStart(
+        reply: unknown,
+        flight: number,
+        payload: string,
+        correlation: string,
+    ): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+            return;
+        }
+        if (!isUniqueOwner(reply)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.pendingMover = null;
+            this.reject("movement-owner-missing");
+            this.disable();
+            return;
+        }
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.sendPlannerRequest(flight, payload, correlation);
+    }
+
+    private sendPlannerRequest(flight: number, payload: string, correlation: string): void {
+        if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+            return;
+        }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.clearTimer();
+            this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
+            this.reject("movement-owner-missing");
+            this.disable();
+            return;
+        }
+        try {
+            this.env.callDbus(
+                target,
                 MOVEMENT_OBJECT,
                 MOVEMENT_INTERFACE,
                 MOVEMENT_METHOD,
@@ -1180,6 +1375,8 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.inFlight = false;
+            this.activationStep = 0;
+            this.pinnedOwner = null;
             this.reject("movement-dbus-failed");
             this.disable();
         }
@@ -1205,6 +1402,10 @@ export class MovementAdapter {
 
     private onRequestReply(reply: unknown, flight: number, correlation: string): void {
         if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+            return;
+        }
+        // Planner reply is valid only after activation pinned one owner.
+        if (this.activationStep !== 4 || !isUniqueOwner(this.pinnedOwner)) {
             return;
         }
         this.callbackSeen = true;
@@ -1250,6 +1451,10 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            // Idle reset: drop the pin so the next idle command re-resolves
+            // and re-pins. Adapter stays enabled (no disable here).
+            this.pinnedOwner = null;
+            this.activationStep = 0;
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -1728,6 +1933,8 @@ export class MovementAdapter {
         this.pendingDirection = null;
         this.pendingMover = null;
         this.suppressing = false;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.reject(token);
         this.disable();
     }
@@ -1737,6 +1944,12 @@ export class MovementAdapter {
         if (this.invalidated) {
             this.reportAdapterLost(planned);
             this.failApply("movement-signal-invalid");
+            return;
+        }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.failApply("movement-owner-missing");
             return;
         }
         this.callbackSeen = false;
@@ -1772,7 +1985,7 @@ export class MovementAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
+                target,
                 MOVEMENT_OBJECT,
                 MOVEMENT_INTERFACE,
                 MOVEMENT_METHOD,
@@ -1839,6 +2052,12 @@ export class MovementAdapter {
         if (this.invalidated) {
             this.reportAdapterLost(planned);
             this.failApply("movement-signal-invalid");
+            return;
+        }
+        const target = this.plannerService();
+        if (!isUniqueOwner(target)) {
+            this.reportAdapterLost(planned);
+            this.failApply("movement-owner-missing");
             return;
         }
         this.callbackSeen = false;
@@ -1986,7 +2205,7 @@ export class MovementAdapter {
         this.cancelTimer = cancel;
         try {
             this.env.callDbus(
-                MOVEMENT_SERVICE,
+                target,
                 MOVEMENT_OBJECT,
                 MOVEMENT_INTERFACE,
                 MOVEMENT_METHOD,
@@ -2062,6 +2281,9 @@ export class MovementAdapter {
             this.disable();
             return;
         }
+        // Idle reset: drop the pin so the next idle command re-resolves.
+        this.pinnedOwner = null;
+        this.activationStep = 0;
         this.log(`${LOG_PREFIX}:applied`);
     }
 

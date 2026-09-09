@@ -5,10 +5,18 @@ import { describe, it } from "node:test";
 
 import {
     POINTER_RESIZE_CONTRACT_VERSION,
+    POINTER_RESIZE_DBUS_INTERFACE,
+    POINTER_RESIZE_DBUS_OBJECT,
+    POINTER_RESIZE_DBUS_SERVICE,
+    POINTER_RESIZE_GET_OWNER_METHOD,
     POINTER_RESIZE_INTERFACE,
     POINTER_RESIZE_METHOD,
     POINTER_RESIZE_OBJECT,
     POINTER_RESIZE_SERVICE,
+    POINTER_RESIZE_START_ALREADY,
+    POINTER_RESIZE_START_FLAGS,
+    POINTER_RESIZE_START_METHOD,
+    POINTER_RESIZE_START_PRIMARY,
     PointerResizeAdapter,
     PointerResizeEnv,
     PointerResizeObserved,
@@ -267,8 +275,25 @@ function payloadOf(mocks: Mocks, index: number): Record<string, unknown> {
 
 function requestPayloads(mocks: Mocks): Array<Record<string, unknown>> {
     return mocks.dbusCalls
+        .filter((call) => call.method === POINTER_RESIZE_METHOD)
         .map((call) => JSON.parse(call.payload) as Record<string, unknown>)
         .filter((payload) => payload["action"] === "request-pointer");
+}
+
+const PINNED_OWNER = ":1.42";
+
+// Drives the initial GetNameOwner phase with a present unique owner, so the
+// next D-Bus call is the pinned planner request with no service activation.
+function driveOwnerPresent(mocks: Mocks, owner: string = PINNED_OWNER): void {
+    assert.ok(mocks.callbacks[0] !== undefined);
+    mocks.callbacks[0]?.(owner);
+}
+
+// Drives the latest pending GetNameOwner phase (for flights after the first).
+function driveLatestOwner(mocks: Mocks, owner: string = PINNED_OWNER): void {
+    const index = mocks.callbacks.length - 1;
+    assert.ok(mocks.callbacks[index] !== undefined);
+    mocks.callbacks[index]?.(owner);
 }
 
 function stepPayload(rect: PointerResizeRect): Record<string, unknown> {
@@ -463,12 +488,18 @@ describe("pointer resize adapter", () => {
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         assert.equal(adapter.isInFlight, true);
         assert.equal(mocks.dbusCalls.length, 1);
-        const call = mocks.dbusCalls[0] as { service: string; path: string; iface: string; method: string };
-        assert.equal(call.service, POINTER_RESIZE_SERVICE);
+        const ownerCall = mocks.dbusCalls[0] as { service: string; method: string; payload: string };
+        assert.equal(ownerCall.service, POINTER_RESIZE_DBUS_SERVICE);
+        assert.equal(ownerCall.method, POINTER_RESIZE_GET_OWNER_METHOD);
+        assert.equal(ownerCall.payload, POINTER_RESIZE_SERVICE);
+        driveOwnerPresent(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const call = mocks.dbusCalls[1] as { service: string; path: string; iface: string; method: string };
+        assert.equal(call.service, PINNED_OWNER);
         assert.equal(call.path, POINTER_RESIZE_OBJECT);
         assert.equal(call.iface, POINTER_RESIZE_INTERFACE);
         assert.equal(call.method, POINTER_RESIZE_METHOD);
-        const payload = payloadOf(mocks, 0);
+        const payload = payloadOf(mocks, 1);
         assert.equal(payload["v"], 1);
         assert.equal(payload["action"], "request-pointer");
         assert.equal(payload["direction"], "right");
@@ -504,10 +535,11 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        const payload = payloadOf(mocks, 0);
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
         const correlation = payload["correlation_id"] as string;
         const revision = payload["revision"] as number;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         // Shared operation DTO now carries required mode; pointer accepts it
         // while still driving behavior from the proposed boundary only.
         onRequest(plannedReply(correlation, revision, resizedGeometry(1000)));
@@ -519,10 +551,11 @@ describe("pointer resize adapter", () => {
         beginResize(bad, adapter2);
         adapter2.windowStepped(refOf(bad, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(bad, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        const badPayload = payloadOf(bad, 0);
+        driveOwnerPresent(bad);
+        const badPayload = payloadOf(bad, 1);
         const badCorrelation = badPayload["correlation_id"] as string;
         const badRevision = badPayload["revision"] as number;
-        const badOnRequest = bad.callbacks[0] as (reply: unknown) => void;
+        const badOnRequest = bad.callbacks[1] as (reply: unknown) => void;
         const operation = pointerOperation("right", "outwards") as Record<string, unknown>;
         assert.equal(operation["mode"], "outwards");
         delete operation["mode"];
@@ -559,20 +592,22 @@ describe("pointer resize adapter", () => {
         // A stale step after finish cannot open a new flight.
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1010, h: 1080 }));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-stale-step")));
+        assert.equal(requestPayloads(mocks).length, 0);
+        driveOwnerPresent(mocks);
         assert.equal(requestPayloads(mocks).length, 1);
-        driveFullCycle(mocks, 0, 1000);
+        driveFullCycle(mocks, 1, 1000);
         assert.deepEqual(
             mocks.geometryWrites.map((w) => w.id),
             ["win-b"],
         );
         assert.deepEqual(mocks.geometryWrites[0]?.rect, { x: 1000, y: 0, w: 920, h: 1080 });
-        const actions = mocks.dbusCalls.map(
-            (call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"],
-        );
+        const actions = mocks.dbusCalls
+            .filter((call) => call.method === POINTER_RESIZE_METHOD)
+            .map((call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"]);
         assert.deepEqual(actions, ["request-pointer", "acknowledge", "verify"]);
-        const ack = payloadOf(mocks, 1);
+        const ack = payloadOf(mocks, 2);
         assert.equal(ack["outcome"], "accepted");
-        const verify = payloadOf(mocks, 2);
+        const verify = payloadOf(mocks, 3);
         assert.equal(verify["verified"], true);
         assert.deepEqual(verify["verified_geometry"], resizedGeometry(1000));
         const appliedAt = mocks.logs.findIndex((line) => line.endsWith(":applied"));
@@ -588,7 +623,8 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        driveFullCycle(mocks, 0, 1000);
+        driveOwnerPresent(mocks);
+        driveFullCycle(mocks, 1, 1000);
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
         // Latest accepted revision commits; the next gesture binds it.
         adapter.windowFinished(refOf(mocks, "win-a"));
@@ -596,6 +632,7 @@ describe("pointer resize adapter", () => {
         setFlags(mocks, "win-a", false, true);
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 960, h: 1080 });
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 990, h: 1080 }));
+        driveLatestOwner(mocks, ":1.43");
         const second = requestPayloads(mocks)[1] as Record<string, unknown>;
         assert.equal(second["revision"], 3);
     });
@@ -605,11 +642,12 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(mocks);
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        driveOwnerPresent(mocks);
         assert.equal(requestPayloads(mocks).length, 1);
-        assert.equal(payloadOf(mocks, 0)["proposed_boundary"], 1000);
+        assert.equal(payloadOf(mocks, 1)["proposed_boundary"], 1000);
         // Native catches up after the proposal; the pending flight commits.
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        driveFullCycle(mocks, 0, 1000);
+        driveFullCycle(mocks, 1, 1000);
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
         assert.equal(adapter.isEnabled, true);
     });
@@ -619,28 +657,30 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(mocks);
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        driveOwnerPresent(mocks);
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1040, h: 1080 }));
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1080, h: 1080 }));
         assert.equal(requestPayloads(mocks).length, 1);
         assert.ok(mocks.logs.some((line) => line.endsWith(":coalesced")));
-        driveFullCycle(mocks, 0, 1000);
+        driveFullCycle(mocks, 1, 1000);
         // Stale intermediate 1040 is never replayed; latest 1080 follows.
+        driveLatestOwner(mocks, ":1.43");
         const requests = requestPayloads(mocks);
         assert.equal(requests.length, 2);
         assert.equal(requests[1]?.["proposed_boundary"], 1080);
         assert.ok(!requests.some((payload) => payload["proposed_boundary"] === 1040));
         assert.equal(requests[1]?.["revision"], 3);
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1080, h: 1080 });
-        const second = payloadOf(mocks, 3);
+        const second = payloadOf(mocks, 5);
         const correlation = second["correlation_id"] as string;
-        const onRequest = mocks.callbacks[3] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[5] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 3, resizedGeometry(1080)));
-        const onAck = mocks.callbacks[4] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[6] as (reply: unknown) => void;
         onAck(ackReply(correlation, 3));
-        const verify = payloadOf(mocks, 5);
+        const verify = payloadOf(mocks, 7);
         assert.deepEqual(verify["verified_geometry"], resizedGeometry(1080));
-        const onVerify = mocks.callbacks[5] as (reply: unknown) => void;
+        const onVerify = mocks.callbacks[7] as (reply: unknown) => void;
         onVerify(committedReply(correlation, 4));
         assert.equal(mocks.logs.filter((line) => line.endsWith(":applied")).length, 2);
     });
@@ -652,11 +692,12 @@ describe("pointer resize adapter", () => {
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 960, h: 1080 }));
         assert.equal(mocks.dbusCalls.length, 0);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        driveOwnerPresent(mocks);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-dedup")));
         assert.equal(requestPayloads(mocks).length, 1);
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        driveFullCycle(mocks, 0, 1000);
+        driveFullCycle(mocks, 1, 1000);
         adapter.windowFinished(refOf(mocks, "win-a"));
         assert.equal(requestPayloads(mocks).length, 1);
         assert.ok(mocks.logs.some((line) => line.endsWith(":finished")));
@@ -667,6 +708,7 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(mocks);
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        driveOwnerPresent(mocks);
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
         assert.equal(requestPayloads(mocks).length, 1);
         // 1040 is retained while 1000 is in flight.
@@ -676,13 +718,16 @@ describe("pointer resize adapter", () => {
         // retained 1040 so no stale second request occurs.
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-dedup")));
-        driveFullCycle(mocks, 0, 1000);
+        driveFullCycle(mocks, 1, 1000);
         const requests = requestPayloads(mocks);
         assert.equal(requests.length, 1);
         assert.equal(requests[0]?.["proposed_boundary"], 1000);
         assert.ok(!requests.some((payload) => payload["proposed_boundary"] === 1040));
         // No second flight means no second revision or write.
         assert.equal(mocks.dbusCalls.filter((call) => {
+            if (call.method !== POINTER_RESIZE_METHOD) {
+                return false;
+            }
             const action = (JSON.parse(call.payload) as Record<string, unknown>)["action"];
             return action === "request-pointer";
         }).length, 1);
@@ -704,12 +749,13 @@ describe("pointer resize adapter", () => {
             const mocks = mockEnvTwoWindow();
             const adapter = enableAdapter(mocks);
             beginResize(mocks, adapter);
-            adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
-            nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-            const payload = payloadOf(mocks, 0);
-            const correlation = payload["correlation_id"] as string;
-            const revision = payload["revision"] as number;
-            const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
+        const correlation = payload["correlation_id"] as string;
+        const revision = payload["revision"] as number;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
             const badGeometry = [
                 { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1000, h: 1080 } },
                 { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 1000, y: 0, w: 920, h: 1080 } },
@@ -744,7 +790,8 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        driveFullCycle(mocks, 0, 1000);
+        driveOwnerPresent(mocks);
+        driveFullCycle(mocks, 1, 1000);
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
         assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-b"]);
         assert.ok(!mocks.geometryWrites.some((w) => w.id === "win-a"));
@@ -758,13 +805,14 @@ describe("pointer resize adapter", () => {
         beginResize(buggy, adapter2);
         adapter2.windowStepped(refOf(buggy, "win-a"), stepPayload({ x: 0, y: 0, w: 80, h: 1080 }));
         nativeApplySource(buggy, "win-a", { x: 0, y: 0, w: 80, h: 1080 });
-        const payload = payloadOf(buggy, 0);
+        driveOwnerPresent(buggy);
+        const payload = payloadOf(buggy, 1);
         const correlation = payload["correlation_id"] as string;
         const revision = payload["revision"] as number;
-        const onRequest = buggy.callbacks[0] as (reply: unknown) => void;
+        const onRequest = buggy.callbacks[1] as (reply: unknown) => void;
         // Buggy plan: boundary 81 while the proposal and native show 80.
         onRequest(plannedReply(correlation, revision, resizedGeometry(81)));
-        const onAck = buggy.callbacks[1] as (reply: unknown) => void;
+        const onAck = buggy.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, revision));
         assert.ok(buggy.logs.some((line) => line.includes("pointer-post-mismatch")));
         assert.equal(adapter2.isEnabled, false);
@@ -777,17 +825,18 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        const payload = payloadOf(mocks, 0);
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
         const correlation = payload["correlation_id"] as string;
         const revision = payload["revision"] as number;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, revision, resizedGeometry(1000)));
         // Own-neighbour event showing the desired rect is suppressed: the
         // flight survives and the adapter stays enabled.
         adapter.windowGeometryChanged(refOf(mocks, "win-b"));
         assert.equal(adapter.isEnabled, true);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        assert.equal(mocks.dbusCalls.length, 3);
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, revision));
         // Expected native source progression never invalidates.
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1005, h: 1080 });
@@ -809,7 +858,8 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        const payload = payloadOf(mocks, 0);
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
         const correlation = payload["correlation_id"] as string;
         // Planned neighbour geometry already matches live: no writes, yet the
         // flight still acknowledges, verifies, and commits.
@@ -817,14 +867,14 @@ describe("pointer resize adapter", () => {
             { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1000, h: 1080 } },
             { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 960, y: 0, w: 960, h: 1080 } },
         ];
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2, geometry));
         assert.equal(mocks.geometryWrites.length, 0);
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, 2));
-        const verify = payloadOf(mocks, 2);
+        const verify = payloadOf(mocks, 3);
         assert.deepEqual(verify["verified_geometry"], geometry);
-        const onVerify = mocks.callbacks[2] as (reply: unknown) => void;
+        const onVerify = mocks.callbacks[3] as (reply: unknown) => void;
         onVerify(committedReply(correlation, 3));
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
     });
@@ -838,7 +888,8 @@ describe("pointer resize adapter", () => {
         mocks.afterWrite = (): void => {
             adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1200, h: 1080 }));
         };
-        driveFullCycle(mocks, 0, 1000);
+        driveOwnerPresent(mocks);
+        driveFullCycle(mocks, 1, 1000);
         assert.ok(mocks.logs.some((line) => line.endsWith(":applied")));
         assert.equal(adapter.isEnabled, true);
         assert.equal(requestPayloads(mocks).length, 1);
@@ -879,8 +930,9 @@ describe("pointer resize adapter", () => {
             move: false,
             resize: false,
         });
-        const payload = payloadOf(mocks, 0);
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(payload["correlation_id"] as string, 2));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-stale-revalidate")));
         assert.equal(mocks.geometryWrites.length, 0);
@@ -938,8 +990,9 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(mocks);
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
-        const payload = payloadOf(mocks, 0);
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "noop" }));
         assert.ok(mocks.logs.some((line) => line.endsWith(":noop")));
         assert.equal(mocks.geometryWrites.length, 0);
@@ -975,7 +1028,8 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(malformed);
         beginResize(malformed, adapter);
         adapter.windowStepped(refOf(malformed, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
-        const onRequest = malformed.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(malformed);
+        const onRequest = malformed.callbacks[1] as (reply: unknown) => void;
         onRequest(42);
         assert.ok(malformed.logs.some((line) => line.includes("pointer-service-fault")));
         assert.equal(adapter.isEnabled, false);
@@ -985,8 +1039,9 @@ describe("pointer resize adapter", () => {
         adapter2.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         beginResize(refused, adapter2);
         adapter2.windowStepped(refOf(refused, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
-        const payload = payloadOf(refused, 0);
-        const onRequest2 = refused.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(refused);
+        const payload = payloadOf(refused, 1);
+        const onRequest2 = refused.callbacks[1] as (reply: unknown) => void;
         onRequest2(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "rejected" }));
         assert.ok(refused.logs.some((line) => line.includes("pointer-rejected")));
         assert.equal(refused.geometryWrites.length, 0);
@@ -999,16 +1054,17 @@ describe("pointer resize adapter", () => {
         const adapter = enableAdapter(mocks);
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
-        const payload = payloadOf(mocks, 0);
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(payload["correlation_id"] as string, 2));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-partial-apply")));
         assert.equal(adapter.isEnabled, false);
-        const actions = mocks.dbusCalls.map(
-            (call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"],
-        );
+        const actions = mocks.dbusCalls
+            .filter((call) => call.method === POINTER_RESIZE_METHOD)
+            .map((call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"]);
         assert.deepEqual(actions, ["request-pointer", "acknowledge"]);
-        const loss = payloadOf(mocks, 1);
+        const loss = payloadOf(mocks, 2);
         assert.equal(loss["outcome"], "adapter-lost");
     });
 
@@ -1021,14 +1077,15 @@ describe("pointer resize adapter", () => {
         mocks.afterWrite = (): void => {
             nativeApplySource(mocks, "win-b", { x: 1000, y: 0, w: 100, h: 100 });
         };
-        const payload = payloadOf(mocks, 0);
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(payload["correlation_id"] as string, 2));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-signal-invalid")));
         assert.equal(adapter.isEnabled, false);
-        const actions = mocks.dbusCalls.map(
-            (call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"],
-        );
+        const actions = mocks.dbusCalls
+            .filter((call) => call.method === POINTER_RESIZE_METHOD)
+            .map((call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"]);
         assert.deepEqual(actions, ["request-pointer", "acknowledge"]);
     });
 
@@ -1038,19 +1095,20 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         // Native never applies the proposal: post-observation cannot bind.
-        const payload = payloadOf(mocks, 0);
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
         const correlation = payload["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2));
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, 2));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-post-mismatch")));
         assert.equal(adapter.isEnabled, false);
-        const actions = mocks.dbusCalls.map(
-            (call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"],
-        );
+        const actions = mocks.dbusCalls
+            .filter((call) => call.method === POINTER_RESIZE_METHOD)
+            .map((call) => (JSON.parse(call.payload) as Record<string, unknown>)["action"]);
         assert.deepEqual(actions, ["request-pointer", "acknowledge", "acknowledge"]);
-        const loss = payloadOf(mocks, 2);
+        const loss = payloadOf(mocks, 3);
         assert.equal(loss["outcome"], "adapter-lost");
     });
 
@@ -1060,13 +1118,14 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        const payload = payloadOf(mocks, 0);
+        driveOwnerPresent(mocks);
+        const payload = payloadOf(mocks, 1);
         const correlation = payload["correlation_id"] as string;
-        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
         onRequest(plannedReply(correlation, 2));
-        const onAck = mocks.callbacks[1] as (reply: unknown) => void;
+        const onAck = mocks.callbacks[2] as (reply: unknown) => void;
         onAck(ackReply(correlation, 2));
-        const onVerify = mocks.callbacks[2] as (reply: unknown) => void;
+        const onVerify = mocks.callbacks[3] as (reply: unknown) => void;
         onVerify(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "diverged" }));
         assert.ok(mocks.logs.some((line) => line.includes("pointer-service-fault")));
         assert.equal(adapter.isEnabled, false);
@@ -1111,7 +1170,8 @@ describe("pointer resize adapter", () => {
         beginResize(mocks, adapter);
         adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
         nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
-        driveFullCycle(mocks, 0, 1000);
+        driveOwnerPresent(mocks);
+        driveFullCycle(mocks, 1, 1000);
         // One one-shot timer per D-Bus stage, all settled afterwards.
         assert.equal(mocks.timers.length, 3);
         assert.ok(mocks.timers.every((timer) => timer.cancelled));
@@ -1182,6 +1242,168 @@ describe("pointer resize adapter", () => {
         const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
         assert.ok(authority.includes("pointer-resize-adapter-entry"));
         assert.ok(authority.includes("startPointerResizeAdapterEntry"));
+    });
+});
+
+describe("pointer resize adapter session D-Bus activation", () => {
+    it("pins a present owner with no service activation and routes planner calls to the unique name", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(POINTER_RESIZE_DBUS_SERVICE, "org.freedesktop.DBus");
+        assert.equal(POINTER_RESIZE_DBUS_OBJECT, "/org/freedesktop/DBus");
+        assert.equal(POINTER_RESIZE_DBUS_INTERFACE, "org.freedesktop.DBus");
+        assert.equal(POINTER_RESIZE_GET_OWNER_METHOD, "GetNameOwner");
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual(
+            [mocks.dbusCalls[0]?.service, mocks.dbusCalls[0]?.method, mocks.dbusCalls[0]?.payload],
+            [POINTER_RESIZE_DBUS_SERVICE, POINTER_RESIZE_GET_OWNER_METHOD, POINTER_RESIZE_SERVICE],
+        );
+        driveOwnerPresent(mocks, ":1.42");
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.equal(mocks.dbusCalls[1]?.service, ":1.42");
+        assert.equal(mocks.dbusCalls[1]?.method, POINTER_RESIZE_METHOD);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === POINTER_RESIZE_SERVICE));
+        nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        driveFullCycle(mocks, 1, 1000);
+        assert.equal(mocks.dbusCalls[2]?.service, ":1.42");
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.42");
+        assert.ok(mocks.logs.some((l) => l.includes("pointer-resize:applied")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === POINTER_RESIZE_SERVICE));
+    });
+
+    it("activates an absent name with exactly one StartServiceByName(1) then pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(POINTER_RESIZE_START_METHOD, "StartServiceByName");
+        assert.equal(POINTER_RESIZE_START_FLAGS, 0);
+        assert.equal(POINTER_RESIZE_START_PRIMARY, 1);
+        assert.equal(POINTER_RESIZE_START_ALREADY, 2);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        mocks.callbacks[0]?.("");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const start = mocks.dbusCalls[1];
+        assert.deepEqual(
+            [start?.service, start?.method, start?.payload],
+            [POINTER_RESIZE_DBUS_SERVICE, POINTER_RESIZE_START_METHOD, POINTER_RESIZE_SERVICE],
+        );
+        mocks.callbacks[1]?.(POINTER_RESIZE_START_PRIMARY);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(
+            [mocks.dbusCalls[2]?.service, mocks.dbusCalls[2]?.method],
+            [POINTER_RESIZE_DBUS_SERVICE, POINTER_RESIZE_GET_OWNER_METHOD],
+        );
+        mocks.callbacks[2]?.(":1.77");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.77");
+        assert.equal(mocks.dbusCalls[3]?.method, POINTER_RESIZE_METHOD);
+        assert.equal(mocks.dbusCalls.filter((call) => call.method === POINTER_RESIZE_START_METHOD).length, 1);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === POINTER_RESIZE_SERVICE));
+        nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        const payload = payloadOf(mocks, 3);
+        (mocks.callbacks[3] as (reply: unknown) => void)(plannedReply(payload["correlation_id"] as string, payload["revision"] as number));
+        assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-b"]);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("accepts AlreadyOwner(2) as already-running then resolves and pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        mocks.callbacks[0]?.(null);
+        mocks.callbacks[1]?.(POINTER_RESIZE_START_ALREADY);
+        mocks.callbacks[2]?.(":1.78");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.78");
+        nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        const payload = payloadOf(mocks, 3);
+        (mocks.callbacks[3] as (reply: unknown) => void)(plannedReply(payload["correlation_id"] as string, payload["revision"] as number));
+        assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-b"]);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("rejects malformed or unknown activation results with no planner call and disables", () => {
+        for (const bad of [0, 3, 4, 99, "1", "ok", null, undefined, {}, []]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            beginResize(mocks, adapter);
+            adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(bad);
+            assert.ok(mocks.logs.some((l) => l.includes("pointer-activation-failed")));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === POINTER_RESIZE_METHOD));
+            assert.ok(!mocks.dbusCalls.some((call) => call.service === POINTER_RESIZE_SERVICE));
+            assert.equal(mocks.dbusCalls.filter((call) => call.method === POINTER_RESIZE_START_METHOD).length, 1);
+            assert.equal(mocks.dbusCalls.length, 2);
+        }
+    });
+
+    it("fails closed when the post-start owner is missing with no planner call", () => {
+        for (const badOwner of ["", "not-a-unique-name", null, POINTER_RESIZE_SERVICE]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            beginResize(mocks, adapter);
+            adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(POINTER_RESIZE_START_PRIMARY);
+            mocks.callbacks[2]?.(badOwner);
+            assert.ok(mocks.logs.some((l) => l.includes("pointer-owner-missing")));
+            assert.equal(adapter.isEnabled, false);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === POINTER_RESIZE_METHOD));
+            assert.equal(mocks.geometryWrites.length, 0);
+        }
+    });
+
+    it("coalesces steps during activation with no duplicate service request", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        assert.equal(mocks.dbusCalls.length, 1);
+        // A second differing step while activation is pending coalesces.
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1040, h: 1080 }));
+        assert.ok(mocks.logs.some((l) => l.includes("pointer-resize:coalesced")));
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.("");
+        assert.equal(mocks.dbusCalls.filter((call) => call.method === POINTER_RESIZE_START_METHOD).length, 1);
+        assert.equal(mocks.dbusCalls.length, 2);
+    });
+
+    it("times out during activation with no retry and ignores the late reply", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        assert.equal(mocks.timers.length, 1);
+        mocks.timers[0]?.callback();
+        assert.ok(mocks.logs.some((l) => l.includes("pointer-timeout-request")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.(":1.42");
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(!mocks.logs.some((l) => l.includes("pointer-resize:applied")));
+    });
+
+    it("refuses the Rust command with no Legacy fallback on activation failure", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        mocks.callbacks[0]?.("");
+        mocks.callbacks[1]?.(0);
+        assert.ok(mocks.logs.some((l) => l.includes("pointer-activation-failed")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("pointer-resize:disabled")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === POINTER_RESIZE_SERVICE));
+        const src = readFileSync(join(kwinSrcDir(), "pointer-resize-adapter.ts"), "utf8");
+        assert.ok(!src.includes("fallback"));
     });
 });
 
@@ -1294,7 +1516,8 @@ describe("pointer resize entry", () => {
         const desktop = { id: "ws-1" };
         const winA = fakeWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop);
         const winB = fakeWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop);
-        const dbusCalls: Array<{ payload: string }> = [];
+        const dbusCalls: Array<{ service: string; method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
         const fakeWorkspace = {
             activeWindow: winA as unknown,
             windowList: (): unknown[] => [winA, winB],
@@ -1303,9 +1526,9 @@ describe("pointer resize entry", () => {
         };
         const handle = startPointerResizeAdapterEntry({
             workspace: fakeWorkspace,
-            callDbus: (_s, _p, _i, _m, payload, callback): void => {
-                dbusCalls.push({ payload });
-                void callback;
+            callDbus: (service, _p, _i, method, payload, callback): void => {
+                dbusCalls.push({ service, method, payload });
+                callbacks.push(callback);
             },
             scheduleOnce: () => () => {},
             log: () => {},
@@ -1319,8 +1542,15 @@ describe("pointer resize entry", () => {
         // Stepped proposal carries the boundary even though the fake live
         // frame geometry still shows the start rect.
         winA.interactiveMoveResizeStepped.handlers[0]?.({ x: 0, y: 0, width: 1000, height: 1080 });
+        // Activation first resolves the Planner name; reply present so the
+        // planner request follows with no service activation.
         assert.equal(dbusCalls.length, 1);
-        const payload = JSON.parse((dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(dbusCalls[0]?.method, POINTER_RESIZE_GET_OWNER_METHOD);
+        callbacks[0]?.(":1.42");
+        assert.equal(dbusCalls.length, 2);
+        const planner = dbusCalls[1] as { service: string; payload: string };
+        assert.equal(planner.service, ":1.42");
+        const payload = JSON.parse(planner.payload) as Record<string, unknown>;
         assert.equal(payload["action"], "request-pointer");
         assert.equal(payload["proposed_boundary"], 1000);
         handle.stop();
@@ -1373,7 +1603,8 @@ describe("pointer resize entry", () => {
         const desktop = { id: "ws-1" };
         const winA = fakeWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop);
         const winB = fakeWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop);
-        const dbusCalls: Array<{ payload: string }> = [];
+        const dbusCalls: Array<{ service: string; method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
         const fakeWorkspace = {
             activeWindow: winA as unknown,
             windowList: (): unknown[] => [winA, winB],
@@ -1382,9 +1613,9 @@ describe("pointer resize entry", () => {
         };
         const handle = startPointerResizeAdapterEntry({
             workspace: fakeWorkspace,
-            callDbus: (_s, _p, _i, _m, payload, callback): void => {
-                dbusCalls.push({ payload });
-                void callback;
+            callDbus: (service, _p, _i, method, payload, callback): void => {
+                dbusCalls.push({ service, method, payload });
+                callbacks.push(callback);
             },
             scheduleOnce: () => () => {},
             log: () => {},
@@ -1403,13 +1634,16 @@ describe("pointer resize entry", () => {
         assert.equal(dbusCalls.length, 0);
         // Source geometry progression through the public signal stays
         // expected: a subsequent stepped proposal still sends exactly one
-        // request-pointer.
+        // planner request after activation.
         winA.resize = true;
         winA.interactiveMoveResizeStarted.handlers[0]?.();
         winA.moveResizedChanged.handlers[0]?.();
         assert.equal(dbusCalls.length, 0);
         winA.interactiveMoveResizeStepped.handlers[0]?.({ x: 0, y: 0, width: 1000, height: 1080 });
         assert.equal(dbusCalls.length, 1);
+        callbacks[0]?.(":1.42");
+        assert.equal(dbusCalls.length, 2);
+        assert.equal(dbusCalls[1]?.service, ":1.42");
         handle.stop();
         assert.equal(winA.moveResizedChanged.handlers.length, 0);
         assert.equal(winB.moveResizedChanged.handlers.length, 0);

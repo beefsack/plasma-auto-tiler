@@ -5,10 +5,18 @@ import { describe, it } from "node:test";
 
 import {
     MOVEMENT_CONTRACT_VERSION,
+    MOVEMENT_DBUS_INTERFACE,
+    MOVEMENT_DBUS_OBJECT,
+    MOVEMENT_DBUS_SERVICE,
+    MOVEMENT_GET_OWNER_METHOD,
     MOVEMENT_INTERFACE,
     MOVEMENT_METHOD,
     MOVEMENT_OBJECT,
     MOVEMENT_SERVICE,
+    MOVEMENT_START_ALREADY,
+    MOVEMENT_START_FLAGS,
+    MOVEMENT_START_METHOD,
+    MOVEMENT_START_PRIMARY,
     MovementAdapter,
     MovementAdapterEnv,
     MovementDomain,
@@ -64,7 +72,13 @@ interface WinState {
 }
 
 interface Mocks {
-    readonly dbusCalls: Array<{ payload: string }>;
+    readonly dbusCalls: Array<{
+        service: string;
+        path: string;
+        iface: string;
+        method: string;
+        payload: string;
+    }>;
     readonly callbacks: Array<(reply: unknown) => void>;
     readonly timers: Array<{ callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
@@ -163,8 +177,8 @@ function mockEnvTwoWindow(): Mocks {
         handlers: new Map<string, () => void>(),
     } as unknown as Mocks;
     const env: MovementAdapterEnv = {
-        callDbus: (_s, _p, _i, _m, payload, callback): void => {
-            state.dbusCalls.push({ payload });
+        callDbus: (service, path, iface, method, payload, callback): void => {
+            state.dbusCalls.push({ service, path, iface, method, payload });
             state.callbacks.push(callback);
         },
         scheduleOnce: (delayMs, callback): (() => void) => {
@@ -223,8 +237,24 @@ function enableAdapter(mocks: Mocks): MovementAdapter {
 }
 
 function firstPayload(mocks: Mocks): Record<string, unknown> {
-    assert.ok(mocks.dbusCalls.length >= 1);
-    return JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+    const planner = mocks.dbusCalls.find((call) => call.method === MOVEMENT_METHOD);
+    assert.ok(planner !== undefined);
+    return JSON.parse(planner.payload) as Record<string, unknown>;
+}
+
+const PINNED_OWNER = ":1.42";
+
+// Drives the initial GetNameOwner phase with a present unique owner, so the
+// next D-Bus call is the pinned planner request with no service activation.
+function driveOwnerPresent(mocks: Mocks, owner: string = PINNED_OWNER): void {
+    assert.ok(mocks.callbacks[0] !== undefined);
+    mocks.callbacks[0]?.(owner);
+}
+
+function plannerCallIndex(mocks: Mocks): number {
+    const index = mocks.dbusCalls.findIndex((call) => call.method === MOVEMENT_METHOD);
+    assert.ok(index >= 0);
+    return index;
 }
 
 function swappedGeometry(): Array<Record<string, unknown>> {
@@ -332,7 +362,13 @@ function makeEntrySignal(): EntrySignal {
 
 interface EntryWorld {
     readonly surface: Record<string, unknown>;
-    readonly dbusCalls: Array<{ payload: string }>;
+    readonly dbusCalls: Array<{
+        service: string;
+        path: string;
+        iface: string;
+        method: string;
+        payload: string;
+    }>;
     readonly callbacks: Array<(reply: unknown) => void>;
     readonly logs: string[];
 }
@@ -397,8 +433,8 @@ function makeR4EntryWorld(fractionalArea: boolean): EntryWorld {
 function startR4Entry(world: EntryWorld): ReturnType<typeof startMovementAdapterEntry> {
     return startMovementAdapterEntry({
         workspace: world.surface,
-        callDbus: (_s, _p, _i, _m, payload, callback): void => {
-            world.dbusCalls.push({ payload });
+        callDbus: (service, path, iface, method, payload, callback): void => {
+            world.dbusCalls.push({ service, path, iface, method, payload });
             world.callbacks.push(callback);
         },
         scheduleOnce: (): (() => void) => () => {},
@@ -418,10 +454,13 @@ describe("movement entry observation end to end", () => {
         assert.ok(handle !== null);
         handle.request("right");
         assert.equal(world.dbusCalls.length, 1);
-        const payload = JSON.parse((world.dbusCalls[0] as { payload: string }).payload) as Record<
-            string,
-            unknown
-        >;
+        // Activation first resolves the Planner name; reply present so the
+        // planner request follows with no service activation.
+        world.callbacks[0]?.(PINNED_OWNER);
+        assert.equal(world.dbusCalls.length, 2);
+        const planner = world.dbusCalls.find((call) => call.method === MOVEMENT_METHOD);
+        assert.ok(planner !== undefined);
+        const payload = JSON.parse(planner.payload) as Record<string, unknown>;
         assert.equal(payload["direction"], "right");
         const domains = payload["domains"] as Array<Record<string, unknown>>;
         assert.equal(domains.length, 2);
@@ -473,10 +512,11 @@ describe("movement adapter exclusive authority", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
         mocks.authorityImpl = () => false;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-exclusive-conflict")));
         assert.equal(adapter.isEnabled, false);
@@ -490,6 +530,7 @@ describe("movement adapter request binding and revalidation", () => {
         assert.equal(MOVEMENT_SERVICE, "org.plasmaautotiler.Planner");
         assert.equal(MOVEMENT_METHOD, "DescribeMovement");
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         assert.equal(payload["owner"], "owner-1");
         assert.equal(payload["generation"], "gen-1");
@@ -516,6 +557,7 @@ describe("movement adapter request binding and revalidation", () => {
         mocks.activeId = "win-a";
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const domains = payload["domains"] as Array<Record<string, unknown>>;
         assert.equal(domains.length, 2);
@@ -533,8 +575,9 @@ describe("movement adapter request binding and revalidation", () => {
         mocks.revalidateImpl = () => false;
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-stale-revalidate")));
         assert.equal(adapter.isEnabled, false);
@@ -556,19 +599,20 @@ describe("movement adapter R1-R4 plan shapes apply behaviorally", () => {
             const mocks = mockEnvTwoWindow();
             const adapter = enableAdapter(mocks);
             adapter.requestMovement("right");
+            driveOwnerPresent(mocks);
             const payload = firstPayload(mocks);
             const correlation = payload["correlation_id"] as string;
-            mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, kind));
-            assert.equal(mocks.dbusCalls.length, 2);
-            assert.equal(mocks.geometryWrites.length, 2);
-            const ack = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
-            assert.equal(ack["outcome"], "accepted");
-            mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
+            mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, kind));
             assert.equal(mocks.dbusCalls.length, 3);
-            const verify = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
+            assert.equal(mocks.geometryWrites.length, 2);
+            const ack = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
+            assert.equal(ack["outcome"], "accepted");
+            mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+            assert.equal(mocks.dbusCalls.length, 4);
+            const verify = JSON.parse((mocks.dbusCalls[3] as { payload: string }).payload) as Record<string, unknown>;
             assert.equal(verify["action"], "verify");
             assert.equal((verify["verified_geometry"] as Array<Record<string, unknown>>).length, 2);
-            mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
+            mocks.callbacks[3]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
             assert.ok(mocks.logs.some((l) => l.includes("movement:applied")));
             assert.equal(adapter.isEnabled, true);
         });
@@ -587,10 +631,11 @@ describe("movement adapter R1-R4 plan shapes apply behaviorally", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
         // R4 desired need not fill a single domain; overlap-free within target is enough.
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", crossGeometry));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", crossGeometry));
         // CrossOutput geometry above packs out-2 exactly (480+480=960) so no gap error.
         assert.equal(mocks.geometryWrites.length, 2);
     });
@@ -610,10 +655,11 @@ describe("movement adapter R1-R4 plan shapes apply behaviorally", () => {
         // out-2 is right-adjacent to the source, so a plan moving left into
         // it is not current-direction reciprocal and must be refused.
         adapter.requestMovement("left");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         assert.equal(payload["direction"], "left");
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", crossGeometry));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", crossGeometry));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-target-mismatch")));
         assert.equal(adapter.isEnabled, false);
@@ -660,9 +706,10 @@ describe("movement adapter R1-R4 plan shapes apply behaviorally", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", gapped));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", gapped));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-gap-mismatch")));
         assert.equal(adapter.isEnabled, false);
@@ -682,9 +729,10 @@ describe("movement adapter R1-R4 plan shapes apply behaviorally", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", partial));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "CrossOutput", partial));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-target-mismatch")));
         assert.equal(adapter.isEnabled, false);
@@ -709,8 +757,9 @@ describe("movement adapter changed-only and deterministic ordering", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", partialSwap));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", partialSwap));
         assert.equal(mocks.geometryWrites.length, 2);
         assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-b", "win-c"]);
     });
@@ -727,8 +776,9 @@ describe("movement adapter changed-only and deterministic ordering", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", growFirst));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", growFirst));
         assert.equal(mocks.geometryWrites.length, 2);
         assert.equal((mocks.geometryWrites[0] as { id: string }).id, "win-a");
         assert.equal((mocks.geometryWrites[1] as { id: string }).id, "win-b");
@@ -765,9 +815,10 @@ describe("movement adapter changed-only and deterministic ordering", () => {
         ];
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         // Use a valid R2a-shaped operation; geometry cycle is what matters here.
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", cycle));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", cycle));
         assert.equal(mocks.geometryWrites.length, 3);
         assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-a", "win-b", "win-c"]);
     });
@@ -778,8 +829,9 @@ describe("movement adapter noop and refusal", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "noop", kind: "planner-noop", message: "no change" }));
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "noop", kind: "planner-noop", message: "no change" }));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement:noop")));
     });
@@ -788,8 +840,9 @@ describe("movement adapter noop and refusal", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "rejected", kind: "snapshot-invalid", message: "bad" }));
+        mocks.callbacks[1]?.(JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "rejected", kind: "snapshot-invalid", message: "bad" }));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-rejected")));
         assert.equal(adapter.isEnabled, false);
@@ -799,12 +852,13 @@ describe("movement adapter noop and refusal", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
         const bad = JSON.parse(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor")) as Record<string, unknown>;
         const op = { ...(bad["operation"] as Record<string, unknown>) };
         delete op["neighbor"];
-        mocks.callbacks[0]?.(JSON.stringify({ ...bad, operation: op }));
+        mocks.callbacks[1]?.(JSON.stringify({ ...bad, operation: op }));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-precondition-mismatch")));
         assert.equal(adapter.isEnabled, false);
@@ -814,11 +868,12 @@ describe("movement adapter noop and refusal", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
         const bad = JSON.parse(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor")) as Record<string, unknown>;
         (bad as Record<string, unknown>)["extra"] = 1;
-        mocks.callbacks[0]?.(JSON.stringify(bad));
+        mocks.callbacks[1]?.(JSON.stringify(bad));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.equal(adapter.isEnabled, false);
     });
@@ -854,13 +909,14 @@ describe("movement adapter recursion guard and invalidation", () => {
         const adapter = new MovementAdapter(env);
         adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         adapter.requestMovement("right");
-        const payload = JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+        mocks.callbacks[0]?.(PINNED_OWNER);
+        const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 2);
         assert.ok(!mocks.logs.some((l) => l.includes("movement-signal-invalid")));
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[3]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
         assert.ok(mocks.logs.some((l) => l.includes("movement:applied")));
         assert.equal(adapter.isEnabled, true);
     });
@@ -900,16 +956,17 @@ describe("movement adapter recursion guard and invalidation", () => {
         const adapter = new MovementAdapter(env);
         adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         adapter.requestMovement("right");
-        const payload = JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+        mocks.callbacks[0]?.(PINNED_OWNER);
+        const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         // Only the first write lands; active-transaction revalidation
         // catches the unrelated rect before the second write.
         assert.equal(mocks.geometryWrites.length, 1);
         assert.ok(mocks.logs.some((l) => l.includes("movement-signal-invalid")));
         assert.equal(adapter.isEnabled, false);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const loss = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(mocks.dbusCalls.length, 3);
+        const loss = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(loss["outcome"], "adapter-lost");
     });
 
@@ -917,14 +974,15 @@ describe("movement adapter recursion guard and invalidation", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         mocks.handlers.get("added")?.();
         const payload = firstPayload(mocks);
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-signal-invalid")));
         assert.equal(adapter.isEnabled, false);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const loss = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(mocks.dbusCalls.length, 3);
+        const loss = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(loss["outcome"], "adapter-lost");
     });
 
@@ -956,13 +1014,14 @@ describe("movement adapter recursion guard and invalidation", () => {
         const adapter = new MovementAdapter(env);
         adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         adapter.requestMovement("right");
-        const payload = JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+        mocks.callbacks[0]?.(PINNED_OWNER);
+        const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 2);
         assert.ok(!mocks.logs.some((l) => l.includes("movement-signal-invalid")));
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[3]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
         assert.ok(mocks.logs.some((l) => l.includes("movement:applied")));
     });
 });
@@ -983,15 +1042,16 @@ describe("movement adapter focus retention", () => {
         const adapter = new MovementAdapter(env);
         adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         adapter.requestMovement("right");
-        const payload = JSON.parse((mocks.dbusCalls[0] as { payload: string }).payload) as Record<string, unknown>;
+        mocks.callbacks[0]?.(PINNED_OWNER);
+        const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 2);
         // Focus was stolen mid-apply and restored to the moved window.
         assert.ok(mocks.focusWrites >= 1);
         assert.equal(mocks.activeId, "win-a");
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[3]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
         assert.ok(mocks.logs.some((l) => l.includes("movement:applied")));
         assert.equal(adapter.isEnabled, true);
     });
@@ -1000,16 +1060,29 @@ describe("movement adapter focus retention", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
-        assert.equal(mocks.dbusCalls.length, 2);
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        assert.equal(mocks.dbusCalls.length, 3);
         // Focus drifts to the untouched window after native writes.
         mocks.activeId = "win-b";
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
         assert.ok(mocks.logs.some((l) => l.includes("movement-post-mismatch")));
         assert.equal(adapter.isEnabled, false);
-        assert.ok(!mocks.dbusCalls.some((c) => (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify"));
+        assert.ok(
+            !mocks.dbusCalls.some((c) => {
+                if (c.method !== MOVEMENT_METHOD) {
+                    return false;
+                }
+                try {
+                    return (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            }),
+        );
     });
 });
 
@@ -1019,12 +1092,13 @@ describe("movement adapter fail-close loss and divergence", () => {
         mocks.failGeometry = true;
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 0);
-        assert.equal(mocks.dbusCalls.length, 2);
-        const loss = JSON.parse((mocks.dbusCalls[1] as { payload: string }).payload) as Record<string, unknown>;
+        assert.equal(mocks.dbusCalls.length, 3);
+        const loss = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(loss["outcome"], "adapter-lost");
         assert.equal(loss["correlation_id"], correlation);
         assert.ok(mocks.logs.some((l) => l.includes("movement-partial-apply")));
@@ -1035,31 +1109,57 @@ describe("movement adapter fail-close loss and divergence", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
-        assert.equal(mocks.dbusCalls.length, 2);
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        assert.equal(mocks.dbusCalls.length, 3);
         // Corrupt post-observation after native writes but before ack so the
         // verify-time fresh projection mismatches the desired geometry.
         mocks.wins[0]!.rect = { x: 5, y: 5, w: 100, h: 100 };
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
         assert.ok(mocks.logs.some((l) => l.includes("movement-post-mismatch")));
         assert.equal(adapter.isEnabled, false);
-        assert.ok(!mocks.dbusCalls.some((c) => (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify"));
+        assert.ok(
+            !mocks.dbusCalls.some((c) => {
+                if (c.method !== MOVEMENT_METHOD) {
+                    return false;
+                }
+                try {
+                    return (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            }),
+        );
     });
 
     it("fails closed on ack correlation mismatch with loss and no verify", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
-        mocks.callbacks[1]?.(ackReply("other-corr", 0));
-        assert.equal(mocks.dbusCalls.length, 3);
-        const loss = JSON.parse((mocks.dbusCalls[2] as { payload: string }).payload) as Record<string, unknown>;
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[2]?.(ackReply("other-corr", 0));
+        assert.equal(mocks.dbusCalls.length, 4);
+        const loss = JSON.parse((mocks.dbusCalls[3] as { payload: string }).payload) as Record<string, unknown>;
         assert.equal(loss["outcome"], "adapter-lost");
-        assert.ok(!mocks.dbusCalls.some((c) => (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify"));
+        assert.ok(
+            !mocks.dbusCalls.some((c) => {
+                if (c.method !== MOVEMENT_METHOD) {
+                    return false;
+                }
+                try {
+                    return (JSON.parse(c.payload) as Record<string, unknown>)["action"] === "verify";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            }),
+        );
         assert.equal(adapter.isEnabled, false);
     });
 
@@ -1067,7 +1167,8 @@ describe("movement adapter fail-close loss and divergence", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
-        mocks.callbacks[0]?.("not-json");
+        driveOwnerPresent(mocks);
+        mocks.callbacks[1]?.("not-json");
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-service-fault")));
         assert.equal(adapter.isEnabled, false);
@@ -1077,10 +1178,11 @@ describe("movement adapter fail-close loss and divergence", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
         const revision = payload["revision"] as number;
-        mocks.callbacks[0]?.(plannedReply(correlation, revision + 1, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(correlation, revision + 1, "SwapNeighbor"));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-revision-mismatch")));
         assert.equal(adapter.isEnabled, false);
@@ -1091,22 +1193,35 @@ describe("movement adapter fail-close loss and divergence", () => {
         let lossCalls = 0;
         const env: MovementAdapterEnv = {
             ...mocks.env,
-            callDbus: (_s, _p, _i, _m, payload, callback): void => {
-                const parsed = JSON.parse(payload) as Record<string, unknown>;
-                if (parsed["outcome"] === "adapter-lost") {
+            callDbus: (service, path, iface, method, payload, callback): void => {
+                // Daemon owner calls carry the well-known name, never JSON.
+                if (method === MOVEMENT_GET_OWNER_METHOD || method === MOVEMENT_START_METHOD) {
+                    mocks.dbusCalls.push({ service, path, iface, method, payload });
+                    mocks.callbacks.push(callback);
+                    return;
+                }
+                let parsed: Record<string, unknown> | null = null;
+                try {
+                    parsed = JSON.parse(payload) as Record<string, unknown>;
+                } catch (error) {
+                    void error;
+                    parsed = null;
+                }
+                if (parsed !== null && parsed["outcome"] === "adapter-lost") {
                     lossCalls += 1;
                     throw new Error("dbus-lost");
                 }
-                mocks.dbusCalls.push({ payload });
+                mocks.dbusCalls.push({ service, path, iface, method, payload });
                 mocks.callbacks.push(callback);
             },
         };
         const adapter = new MovementAdapter(env);
         adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         mocks.revalidateImpl = () => false;
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
         assert.equal(lossCalls, 1);
         assert.equal(adapter.isEnabled, false);
     });
@@ -1115,12 +1230,13 @@ describe("movement adapter fail-close loss and divergence", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const overlapping = [
             { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 1080 } },
             { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 800, y: 0, w: 1120, h: 1080 } },
         ];
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", overlapping));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", overlapping));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-overlap-mismatch")));
     });
@@ -1129,11 +1245,12 @@ describe("movement adapter fail-close loss and divergence", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const missing = [
             { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1920, h: 1080 } },
         ];
-        mocks.callbacks[0]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", missing));
+        mocks.callbacks[1]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor", missing));
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-target-mismatch")));
     });
@@ -1159,11 +1276,12 @@ describe("movement adapter source hygiene and production isolation", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
         adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
         const payload = firstPayload(mocks);
         const correlation = payload["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
-        mocks.callbacks[1]?.(ackReply(correlation, payload["revision"] as number));
-        mocks.callbacks[2]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+        mocks.callbacks[3]?.(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }));
         for (const line of mocks.logs) {
             assert.ok(!line.includes("win-a"));
             assert.ok(!line.includes("win-b"));
@@ -1247,5 +1365,220 @@ describe("movement adapter source hygiene and production isolation", () => {
         const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
         assert.ok(authority.includes("movement-adapter-entry"));
         assert.ok(authority.includes("startMovementAdapterEntry"));
+    });
+});
+
+describe("movement adapter session D-Bus activation", () => {
+    it("pins a present owner with no service activation and routes planner calls to the unique name", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(MOVEMENT_DBUS_SERVICE, "org.freedesktop.DBus");
+        assert.equal(MOVEMENT_DBUS_OBJECT, "/org/freedesktop/DBus");
+        assert.equal(MOVEMENT_DBUS_INTERFACE, "org.freedesktop.DBus");
+        assert.equal(MOVEMENT_GET_OWNER_METHOD, "GetNameOwner");
+        adapter.requestMovement("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual(
+            [mocks.dbusCalls[0]?.service, mocks.dbusCalls[0]?.method, mocks.dbusCalls[0]?.payload],
+            [MOVEMENT_DBUS_SERVICE, MOVEMENT_GET_OWNER_METHOD, MOVEMENT_SERVICE],
+        );
+        driveOwnerPresent(mocks, ":1.42");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const planner = mocks.dbusCalls[1];
+        assert.equal(planner?.service, ":1.42");
+        assert.equal(planner?.method, MOVEMENT_METHOD);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+        const payload = firstPayload(mocks);
+        const correlation = payload["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation, payload["revision"] as number, "SwapNeighbor"));
+        assert.equal(mocks.geometryWrites.length, 2);
+        // Ack and verify stay pinned to the same unique owner, never the
+        // well-known fallback.
+        assert.equal(mocks.dbusCalls[2]?.service, ":1.42");
+        mocks.callbacks[2]?.(ackReply(correlation, payload["revision"] as number));
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.42");
+        mocks.callbacks[3]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", revision: (payload["revision"] as number) + 1 }),
+        );
+        assert.ok(mocks.logs.some((l) => l.includes("movement:applied")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+    });
+
+    it("activates an absent name with exactly one StartServiceByName(1) then pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        assert.equal(MOVEMENT_START_METHOD, "StartServiceByName");
+        assert.equal(MOVEMENT_START_FLAGS, 0);
+        assert.equal(MOVEMENT_START_PRIMARY, 1);
+        assert.equal(MOVEMENT_START_ALREADY, 2);
+        adapter.requestMovement("right");
+        mocks.callbacks[0]?.("");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const start = mocks.dbusCalls[1];
+        assert.deepEqual(
+            [start?.service, start?.method, start?.payload],
+            [MOVEMENT_DBUS_SERVICE, MOVEMENT_START_METHOD, MOVEMENT_SERVICE],
+        );
+        mocks.callbacks[1]?.(MOVEMENT_START_PRIMARY);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(
+            [mocks.dbusCalls[2]?.service, mocks.dbusCalls[2]?.method],
+            [MOVEMENT_DBUS_SERVICE, MOVEMENT_GET_OWNER_METHOD],
+        );
+        mocks.callbacks[2]?.(":1.77");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.77");
+        assert.equal(mocks.dbusCalls[3]?.method, MOVEMENT_METHOD);
+        const starts = mocks.dbusCalls.filter((call) => call.method === MOVEMENT_START_METHOD);
+        assert.equal(starts.length, 1);
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+        const payload = firstPayload(mocks);
+        mocks.callbacks[3]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
+        assert.equal(mocks.geometryWrites.length, 2);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("accepts AlreadyOwner(2) as already-running then resolves and pins", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        mocks.callbacks[0]?.(null);
+        mocks.callbacks[1]?.(MOVEMENT_START_ALREADY);
+        mocks.callbacks[2]?.(":1.78");
+        assert.equal(mocks.dbusCalls.length, 4);
+        assert.equal(mocks.dbusCalls[3]?.service, ":1.78");
+        const payload = firstPayload(mocks);
+        mocks.callbacks[3]?.(plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"));
+        assert.equal(mocks.geometryWrites.length, 2);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("rejects malformed or unknown activation results with no planner call and disables", () => {
+        for (const bad of [0, 3, 4, 99, "1", "ok", null, undefined, {}, []]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestMovement("right");
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(bad);
+            assert.ok(mocks.logs.some((l) => l.includes("movement-activation-failed")));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === MOVEMENT_METHOD));
+            assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+            // Exactly one service request, no retry or second activation.
+            assert.equal(mocks.dbusCalls.filter((call) => call.method === MOVEMENT_START_METHOD).length, 1);
+            assert.equal(mocks.dbusCalls.length, 2);
+        }
+    });
+
+    it("fails closed when the post-start owner is missing with no planner call", () => {
+        for (const badOwner of ["", "not-a-unique-name", null, MOVEMENT_SERVICE]) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestMovement("right");
+            mocks.callbacks[0]?.("");
+            mocks.callbacks[1]?.(MOVEMENT_START_PRIMARY);
+            mocks.callbacks[2]?.(badOwner);
+            assert.ok(mocks.logs.some((l) => l.includes("movement-owner-missing")));
+            assert.equal(adapter.isEnabled, false);
+            assert.ok(!mocks.dbusCalls.some((call) => call.method === MOVEMENT_METHOD));
+            assert.equal(mocks.geometryWrites.length, 0);
+        }
+    });
+
+    it("coalesces concurrent commands into one activation attempt with no duplicate service request", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        adapter.requestMovement("left");
+        assert.ok(mocks.logs.some((l) => l.includes("movement-busy")));
+        assert.equal(mocks.dbusCalls.length, 1);
+        // Absent path still issues exactly one service request for the one flight.
+        mocks.callbacks[0]?.("");
+        adapter.requestMovement("left");
+        assert.ok(mocks.logs.some((l) => l.includes("movement-busy")));
+        assert.equal(mocks.dbusCalls.filter((call) => call.method === MOVEMENT_START_METHOD).length, 1);
+        assert.equal(mocks.dbusCalls.length, 2);
+    });
+
+    it("times out during activation with no retry and ignores the late reply", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        assert.equal(mocks.timers.length, 1);
+        mocks.timers[0]?.callback();
+        assert.ok(mocks.logs.some((l) => l.includes("movement-timeout-request")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.dbusCalls.length, 1);
+        mocks.callbacks[0]?.(":1.42");
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(!mocks.logs.some((l) => l.includes("movement:applied")));
+    });
+
+    it("treats owner loss during a pending plan as terminal timeout with no rebind after restart", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        mocks.callbacks[0]?.(":1.10");
+        const plannerIndex = plannerCallIndex(mocks);
+        assert.equal(mocks.dbusCalls[plannerIndex]?.service, ":1.10");
+        // Planner never answers (service crash): the bounded timeout fires.
+        mocks.timers[0]?.callback();
+        assert.ok(mocks.logs.some((l) => l.includes("movement-timeout-request")));
+        assert.equal(adapter.isEnabled, false);
+        // Late planned reply for the dead flight never binds or writes.
+        const payload = JSON.parse(mocks.dbusCalls[plannerIndex]?.payload ?? "{}") as Record<string, unknown>;
+        mocks.callbacks[1]?.(
+            plannedReply(payload["correlation_id"] as string, payload["revision"] as number, "SwapNeighbor"),
+        );
+        assert.equal(mocks.geometryWrites.length, 0);
+        // State reset (re-enable) allows a subsequent idle command to
+        // activate again, pinning the new owner without rebinding the old plan.
+        const ok = adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
+        assert.equal(ok, true);
+        const before = mocks.dbusCalls.length;
+        adapter.requestMovement("right");
+        mocks.callbacks[before]?.(":1.11");
+        const fresh = mocks.dbusCalls.find(
+            (call, index) => index >= before && call.method === MOVEMENT_METHOD,
+        );
+        assert.ok(fresh !== undefined);
+        assert.equal(fresh?.service, ":1.11");
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+    });
+
+    it("refuses the Rust command with no Legacy fallback on activation failure", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        mocks.callbacks[0]?.("");
+        mocks.callbacks[1]?.(0);
+        assert.ok(mocks.logs.some((l) => l.includes("movement-activation-failed")));
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.equal(mocks.focusWrites, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("movement:disabled")));
+        assert.ok(!mocks.dbusCalls.some((call) => call.service === MOVEMENT_SERVICE));
+        const src = readFileSync(join(kwinSrcDir(), "movement-adapter.ts"), "utf8");
+        assert.ok(!src.includes("fallback"));
+    });
+
+    it("allows a subsequent idle command to activate again only after state reset", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        mocks.callbacks[0]?.("");
+        mocks.callbacks[1]?.("bogus");
+        assert.equal(adapter.isEnabled, false);
+        const callsAfterFailure = mocks.dbusCalls.length;
+        adapter.requestMovement("right");
+        assert.ok(mocks.logs.some((l) => l.includes("movement-disabled")));
+        assert.equal(mocks.dbusCalls.length, callsAfterFailure);
+        const ok = adapter.enable({ owner: "owner-1", generation: "gen-1", revision: 0 });
+        assert.equal(ok, true);
+        adapter.requestMovement("right");
+        assert.equal(mocks.dbusCalls.length, callsAfterFailure + 1);
+        assert.equal(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.method, MOVEMENT_GET_OWNER_METHOD);
     });
 });
