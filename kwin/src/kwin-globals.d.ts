@@ -317,6 +317,7 @@ interface Workspace {
     clientArea(option: number, output: Output, desktop: VirtualDesktop): Rect;
     // The JavaScript-only QList<Window *> boundary requires runtime decoding.
     windowList(): unknown;
+    readonly windowActivated: Signal1<Window | null>;
     readonly windowAdded: Signal1<Window>;
     readonly windowRemoved: Signal1<Window>;
     readonly screensChanged: Signal;

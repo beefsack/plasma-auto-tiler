@@ -1649,3 +1649,203 @@ describe("pointer resize entry", () => {
         assert.equal(winB.moveResizedChanged.handlers.length, 0);
     });
 });
+
+interface Qv4PointerSignal {
+    readonly fire: (payload?: unknown) => void;
+    readonly count: () => number;
+}
+
+function makeQv4PointerSignal(throwOnConnect = false): Qv4PointerSignal & ((...args: readonly unknown[]) => void) {
+    const handlers = new Set<(payload?: unknown) => void>();
+    const fn = function (): void {};
+    Object.setPrototypeOf(fn, {
+        connect: (handler: (payload?: unknown) => void): void => {
+            if (throwOnConnect) {
+                throw new Error("qv4-connect-failed");
+            }
+            handlers.add(handler);
+        },
+        disconnect: (handler: (payload?: unknown) => void): void => {
+            handlers.delete(handler);
+        },
+    });
+    const callable = fn as unknown as Qv4PointerSignal & ((...args: readonly unknown[]) => void);
+    (callable as unknown as Record<string, unknown>)["fire"] = (payload?: unknown): void => {
+        for (const handler of [...handlers]) {
+            handler(payload);
+        }
+    };
+    (callable as unknown as Record<string, unknown>)["count"] = (): number => handlers.size;
+    return callable;
+}
+
+interface Qv4PointerWindow {
+    [key: string]: unknown;
+    internalId: string;
+    frameGeometry: { x: number; y: number; width: number; height: number };
+    move: boolean;
+    resize: boolean;
+}
+
+function makeQv4PointerWindow(
+    id: string,
+    rect: { x: number; y: number; width: number; height: number },
+    output: object,
+    desktop: object,
+    options: { readonly omitGeometry?: boolean; readonly omitStepped?: boolean; readonly throwOnSteppedConnect?: boolean } = {},
+): { readonly win: Qv4PointerWindow; readonly signals: Record<string, Qv4PointerSignal & ((...args: readonly unknown[]) => void)> } {
+    const signals: Record<string, Qv4PointerSignal & ((...args: readonly unknown[]) => void)> = {
+        interactiveMoveResizeStarted: makeQv4PointerSignal(),
+        interactiveMoveResizeStepped: makeQv4PointerSignal(options.throwOnSteppedConnect),
+        interactiveMoveResizeFinished: makeQv4PointerSignal(),
+        moveResizedChanged: makeQv4PointerSignal(),
+    };
+    const win: Qv4PointerWindow = {
+        internalId: id,
+        output,
+        desktops: [desktop],
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        resizeable: true,
+        move: false,
+        resize: false,
+        frameGeometry: { ...rect },
+        interactiveMoveResizeStarted: signals["interactiveMoveResizeStarted"],
+        interactiveMoveResizeStepped: signals["interactiveMoveResizeStepped"],
+        interactiveMoveResizeFinished: signals["interactiveMoveResizeFinished"],
+        moveResizedChanged: signals["moveResizedChanged"],
+    };
+    if (options.omitGeometry) {
+        delete win["moveResizedChanged"];
+        delete signals["moveResizedChanged"];
+    }
+    if (options.omitStepped) {
+        delete win["interactiveMoveResizeStepped"];
+        delete signals["interactiveMoveResizeStepped"];
+    }
+    return { win, signals };
+}
+
+describe("pointer entry QV4 callable signal startup", () => {
+    it("attaches exact callable interactive signals and detaches idempotently", () => {
+        const output = { name: "out-1" };
+        const desktop = { id: "ws-1" };
+        const a = makeQv4PointerWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop);
+        const b = makeQv4PointerWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop);
+        const logs: string[] = [];
+        for (const signal of [...Object.values(a.signals), ...Object.values(b.signals)]) {
+            assert.equal(typeof signal, "function");
+        }
+        const handle = startPointerResizeAdapterEntry({
+            workspace: {
+                activeWindow: a.win as unknown,
+                windowList: (): unknown[] => [a.win, b.win],
+                currentDesktopForScreen: (): unknown => desktop,
+                clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+            },
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.ok(handle !== null);
+        assert.ok(logs.some((line) => line.endsWith(":ready")));
+        for (const signal of [...Object.values(a.signals), ...Object.values(b.signals)]) {
+            assert.equal(signal.count(), 1);
+        }
+        handle.stop();
+        for (const signal of [...Object.values(a.signals), ...Object.values(b.signals)]) {
+            assert.equal(signal.count(), 0);
+        }
+        handle.stop();
+        for (const signal of [...Object.values(a.signals), ...Object.values(b.signals)]) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+
+    it("keeps optional geometry omission safe while required absence blocks startup", () => {
+        const output = { name: "out-1" };
+        const desktop = { id: "ws-1" };
+        const a = makeQv4PointerWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop, { omitGeometry: true });
+        const b = makeQv4PointerWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop, { omitGeometry: true });
+        const logs: string[] = [];
+        const ok = startPointerResizeAdapterEntry({
+            workspace: {
+                activeWindow: a.win as unknown,
+                windowList: (): unknown[] => [a.win, b.win],
+                currentDesktopForScreen: (): unknown => desktop,
+                clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+            },
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.ok(ok !== null);
+        assert.ok(logs.some((line) => line.endsWith(":ready")));
+        ok.stop();
+        const c = makeQv4PointerWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop, { omitStepped: true });
+        const d = makeQv4PointerWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop, { omitStepped: true });
+        const blockedLogs: string[] = [];
+        const blocked = startPointerResizeAdapterEntry({
+            workspace: {
+                activeWindow: c.win as unknown,
+                windowList: (): unknown[] => [c.win, d.win],
+                currentDesktopForScreen: (): unknown => desktop,
+                clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+            },
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                blockedLogs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.equal(blocked, null);
+        for (const signal of [...Object.values(c.signals), ...Object.values(d.signals)]) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+
+    it("rolls back exactly with no duplicates when a required connect fails", () => {
+        const output = { name: "out-1" };
+        const desktop = { id: "ws-1" };
+        const a = makeQv4PointerWindow("win-a", { x: 0, y: 0, width: 960, height: 1080 }, output, desktop);
+        const b = makeQv4PointerWindow("win-b", { x: 960, y: 0, width: 960, height: 1080 }, output, desktop, { throwOnSteppedConnect: true });
+        const logs: string[] = [];
+        const handle = startPointerResizeAdapterEntry({
+            workspace: {
+                activeWindow: a.win as unknown,
+                windowList: (): unknown[] => [a.win, b.win],
+                currentDesktopForScreen: (): unknown => desktop,
+                clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+            },
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        for (const signal of [...Object.values(a.signals), ...Object.values(b.signals)]) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+});

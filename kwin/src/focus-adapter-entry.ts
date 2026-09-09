@@ -27,6 +27,7 @@
 // tokens.
 
 import { FocusAdapter, FocusObserved } from "./focus-adapter";
+import { connectSignal, readSignal } from "./signal-capability";
 
 export interface FocusEntryOverrides {
     readonly workspace?: unknown;
@@ -493,23 +494,7 @@ export function startFocusAdapterEntry(
         handler: () => void,
     ): (() => void) | null => {
         try {
-            const signal = surface[name] as
-                | { connect: (next: () => void) => void; disconnect: (next: () => void) => void }
-                | undefined;
-            if (typeof signal !== "object" || signal === null) {
-                return null;
-            }
-            if (typeof signal.connect !== "function" || typeof signal.disconnect !== "function") {
-                return null;
-            }
-            signal.connect(handler);
-            return () => {
-                try {
-                    signal.disconnect(handler);
-                } catch (error) {
-                    void error;
-                }
-            };
+            return connectSignal(readSignal(surface, name), handler);
         } catch (error) {
             void error;
             return null;

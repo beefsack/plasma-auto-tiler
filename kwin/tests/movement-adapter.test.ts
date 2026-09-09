@@ -1582,3 +1582,141 @@ describe("movement adapter session D-Bus activation", () => {
         assert.equal(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.method, MOVEMENT_GET_OWNER_METHOD);
     });
 });
+
+interface Qv4Signal {
+    readonly fire: () => void;
+    readonly count: () => number;
+}
+
+function makeQv4Signal(): Qv4Signal & ((...args: readonly unknown[]) => void) {
+    const handlers = new Set<() => void>();
+    const fn = function (): void {};
+    Object.setPrototypeOf(fn, {
+        connect: (handler: () => void): void => {
+            handlers.add(handler);
+        },
+        disconnect: (handler: () => void): void => {
+            handlers.delete(handler);
+        },
+    });
+    const callable = fn as unknown as Qv4Signal & ((...args: readonly unknown[]) => void);
+    (callable as unknown as Record<string, unknown>)["fire"] = (): void => {
+        for (const handler of [...handlers]) {
+            handler();
+        }
+    };
+    (callable as unknown as Record<string, unknown>)["count"] = (): number => handlers.size;
+    return callable;
+}
+
+function makeMovementQv4World(): {
+    readonly surface: Record<string, unknown>;
+    readonly workspaceSignals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)>;
+    readonly geometrySignals: Array<Qv4Signal & ((...args: readonly unknown[]) => void)>;
+} {
+    const output = { name: "out-1" };
+    const desktop = { id: "ws-1" };
+    const geometrySignals: Array<Qv4Signal & ((...args: readonly unknown[]) => void)> = [
+        makeQv4Signal(),
+        makeQv4Signal(),
+    ];
+    const winA: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        resizeable: true,
+        output,
+        desktops: [desktop],
+        internalId: "win-a",
+        frameGeometry: { x: 0, y: 0, width: 960, height: 1080 },
+        moveResizedChanged: geometrySignals[0],
+    };
+    const winB: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        resizeable: true,
+        output,
+        desktops: [desktop],
+        internalId: "win-b",
+        frameGeometry: { x: 960, y: 0, width: 960, height: 1080 },
+        moveResizedChanged: geometrySignals[1],
+    };
+    const workspaceSignals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)> = {
+        windowActivated: makeQv4Signal(),
+        windowAdded: makeQv4Signal(),
+        windowRemoved: makeQv4Signal(),
+        screensChanged: makeQv4Signal(),
+        currentDesktopChanged: makeQv4Signal(),
+    };
+    const surface: Record<string, unknown> = {
+        activeWindow: winA,
+        windowList: (): unknown[] => [winA, winB],
+        screens: [output],
+        currentDesktopForScreen: (): unknown => desktop,
+        clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+        ...workspaceSignals,
+    };
+    return { surface, workspaceSignals, geometrySignals };
+}
+
+describe("movement entry QV4 callable signal startup", () => {
+    it("attaches callable workspace plus per-window geometry signals and detaches exactly", () => {
+        const { surface, workspaceSignals, geometrySignals } = makeMovementQv4World();
+        const logs: string[] = [];
+        for (const signal of [...Object.values(workspaceSignals), ...geometrySignals]) {
+            assert.equal(typeof signal, "function");
+        }
+        const handle = startMovementAdapterEntry({
+            workspace: surface,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveMovementAuthority: () => true,
+        });
+        assert.ok(handle !== null);
+        assert.ok(logs.some((line) => line.endsWith(":ready")));
+        for (const signal of [...Object.values(workspaceSignals), ...geometrySignals]) {
+            assert.equal(signal.count(), 1);
+        }
+        handle.stop();
+        for (const signal of [...Object.values(workspaceSignals), ...geometrySignals]) {
+            assert.equal(signal.count(), 0);
+        }
+        handle.stop();
+        for (const signal of [...Object.values(workspaceSignals), ...geometrySignals]) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+
+    it("fails closed with exact rollback when a required callable signal is missing", () => {
+        const { surface, workspaceSignals, geometrySignals } = makeMovementQv4World();
+        surface["screensChanged"] = {};
+        const logs: string[] = [];
+        const handle = startMovementAdapterEntry({
+            workspace: surface,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveMovementAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        for (const signal of [...Object.values(workspaceSignals), ...geometrySignals]) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+});

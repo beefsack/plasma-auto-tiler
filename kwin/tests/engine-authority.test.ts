@@ -15,6 +15,10 @@ import {
     createEngineAuthority,
     type EngineAuthorityStarts,
 } from "../src/engine-authority";
+import { startFocusAdapterEntry } from "../src/focus-adapter-entry";
+import { startMovementAdapterEntry } from "../src/movement-adapter-entry";
+import { startPointerResizeAdapterEntry } from "../src/pointer-resize-adapter-entry";
+import { startResizeAdapterEntry } from "../src/resize-adapter-entry";
 import { Harness, window } from "./controller-fixtures";
 import { TileController } from "../src/controller";
 
@@ -138,6 +142,116 @@ describe("engine authority mode parsing", () => {
     });
 });
 
+type SharedQv4Signal = ((...args: readonly unknown[]) => void) & {
+    readonly count: () => number;
+    readonly fire: (payload?: unknown) => void;
+};
+
+function makeSharedQv4Signal(): SharedQv4Signal {
+    const handlers = new Set<(payload?: unknown) => void>();
+    const fn = function (): void {};
+    Object.setPrototypeOf(fn, {
+        connect: (handler: (payload?: unknown) => void): void => {
+            handlers.add(handler);
+        },
+        disconnect: (handler: (payload?: unknown) => void): void => {
+            handlers.delete(handler);
+        },
+    });
+    const callable = fn as unknown as SharedQv4Signal;
+    (callable as unknown as Record<string, unknown>)["fire"] = (payload?: unknown): void => {
+        for (const handler of [...handlers]) {
+            handler(payload);
+        }
+    };
+    (callable as unknown as Record<string, unknown>)["count"] = (): number => handlers.size;
+    return callable;
+}
+
+function makeSharedCallableWorld(options: { readonly omitStepped?: boolean } = {}): {
+    readonly workspace: Record<string, unknown>;
+    readonly workspaceSignals: Record<string, SharedQv4Signal>;
+    readonly winASignals: Record<string, SharedQv4Signal>;
+    readonly winBSignals: Record<string, SharedQv4Signal>;
+} {
+    const output = { name: "out-1" };
+    const desktop = { id: "ws-1" };
+    const workspaceSignals: Record<string, SharedQv4Signal> = {
+        windowActivated: makeSharedQv4Signal(),
+        windowAdded: makeSharedQv4Signal(),
+        windowRemoved: makeSharedQv4Signal(),
+        screensChanged: makeSharedQv4Signal(),
+        currentDesktopChanged: makeSharedQv4Signal(),
+    };
+    const winASignals: Record<string, SharedQv4Signal> = {
+        moveResizedChanged: makeSharedQv4Signal(),
+        interactiveMoveResizeStarted: makeSharedQv4Signal(),
+        interactiveMoveResizeStepped: makeSharedQv4Signal(),
+        interactiveMoveResizeFinished: makeSharedQv4Signal(),
+    };
+    const winBSignals: Record<string, SharedQv4Signal> = {
+        moveResizedChanged: makeSharedQv4Signal(),
+        interactiveMoveResizeStarted: makeSharedQv4Signal(),
+        interactiveMoveResizeStepped: makeSharedQv4Signal(),
+        interactiveMoveResizeFinished: makeSharedQv4Signal(),
+    };
+    if (options.omitStepped === true) {
+        delete winASignals["interactiveMoveResizeStepped"];
+        delete winBSignals["interactiveMoveResizeStepped"];
+    }
+    const winA: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        resizeable: true,
+        move: false,
+        resize: false,
+        output,
+        desktops: [desktop],
+        internalId: "win-a",
+        frameGeometry: { x: 0, y: 0, width: 960, height: 1080 },
+        moveResizedChanged: winASignals["moveResizedChanged"],
+        interactiveMoveResizeStarted: winASignals["interactiveMoveResizeStarted"],
+        interactiveMoveResizeFinished: winASignals["interactiveMoveResizeFinished"],
+    };
+    if (winASignals["interactiveMoveResizeStepped"] !== undefined) {
+        winA["interactiveMoveResizeStepped"] = winASignals["interactiveMoveResizeStepped"];
+    }
+    const winB: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        resizeable: true,
+        move: false,
+        resize: false,
+        output,
+        desktops: [desktop],
+        internalId: "win-b",
+        frameGeometry: { x: 960, y: 0, width: 960, height: 1080 },
+        moveResizedChanged: winBSignals["moveResizedChanged"],
+        interactiveMoveResizeStarted: winBSignals["interactiveMoveResizeStarted"],
+        interactiveMoveResizeFinished: winBSignals["interactiveMoveResizeFinished"],
+    };
+    if (winBSignals["interactiveMoveResizeStepped"] !== undefined) {
+        winB["interactiveMoveResizeStepped"] = winBSignals["interactiveMoveResizeStepped"];
+    }
+    const workspace: Record<string, unknown> = {
+        activeWindow: winA,
+        windowList: (): unknown[] => [winA, winB],
+        screens: [output],
+        currentDesktopForScreen: (): unknown => desktop,
+        clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+        ...workspaceSignals,
+    };
+    return { workspace, workspaceSignals, winASignals, winBSignals };
+}
+
 describe("engine authority dispatcher", () => {
     it("binds revision 0 to the initial Rust seed revision (member count)", () => {
         // Adapters auto-bind revision 0 to the normalized observed membership
@@ -242,6 +356,183 @@ describe("engine authority dispatcher", () => {
             assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
             assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
         }
+    });
+
+    it("stops started slices when required pointer startup is absent", () => {
+        const stops: string[] = [];
+        const starts: EngineAuthorityStarts = {
+            startFocus: () => ({ stop: () => { stops.push("focus"); }, request: () => {} }),
+            startMovement: () => ({ stop: () => { stops.push("movement"); }, request: () => {} }),
+            startResize: () => ({ stop: () => { stops.push("resize"); }, request: () => {} }),
+            startPointerResize: () => null,
+        };
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", starts, (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), false);
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.deepEqual([...stops].sort(), ["focus", "movement", "resize"]);
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
+    });
+
+    it("starts all four real entries on one shared callable workspace with exact counts and detaches twice-clean", () => {
+        const { workspace, workspaceSignals, winASignals, winBSignals } = makeSharedCallableWorld();
+        for (const signal of [...Object.values(workspaceSignals), ...Object.values(winASignals), ...Object.values(winBSignals)]) {
+            assert.equal(typeof signal, "function");
+            assert.equal(Object.prototype.hasOwnProperty.call(signal, "connect"), false);
+            assert.equal(Object.prototype.hasOwnProperty.call(signal, "disconnect"), false);
+            const proto = Object.getPrototypeOf(signal) as Record<string, unknown>;
+            assert.equal(typeof proto["connect"], "function");
+            assert.equal(typeof proto["disconnect"], "function");
+        }
+        const entryLogs: string[] = [];
+        const starts: EngineAuthorityStarts = {
+            startFocus: (args) =>
+                startFocusAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        entryLogs.push(message);
+                    },
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveFocusAuthority: args.hasExclusiveFocusAuthority,
+                }),
+            startMovement: (args) =>
+                startMovementAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        entryLogs.push(message);
+                    },
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveMovementAuthority: args.hasExclusiveMovementAuthority,
+                }),
+            startResize: (args) =>
+                startResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        entryLogs.push(message);
+                    },
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveResizeAuthority: args.hasExclusiveResizeAuthority,
+                }),
+            startPointerResize: (args) =>
+                startPointerResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        entryLogs.push(message);
+                    },
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveResizeAuthority: args.hasExclusiveResizeAuthority,
+                }),
+        };
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", starts, (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), true);
+        assert.equal(dispatcher.isRustActive(), true);
+        for (const name of ["windowActivated", "windowAdded", "windowRemoved", "screensChanged", "currentDesktopChanged"]) {
+            assert.equal(workspaceSignals[name]?.count(), 3);
+        }
+        assert.equal(winASignals["moveResizedChanged"]?.count(), 3);
+        assert.equal(winBSignals["moveResizedChanged"]?.count(), 3);
+        for (const name of ["interactiveMoveResizeStarted", "interactiveMoveResizeStepped", "interactiveMoveResizeFinished"]) {
+            assert.equal(winASignals[name]?.count(), 1);
+            assert.equal(winBSignals[name]?.count(), 1);
+        }
+        dispatcher.stop();
+        for (const signal of [...Object.values(workspaceSignals), ...Object.values(winASignals), ...Object.values(winBSignals)]) {
+            assert.equal(signal.count(), 0);
+        }
+        dispatcher.stop();
+        for (const signal of [...Object.values(workspaceSignals), ...Object.values(winASignals), ...Object.values(winBSignals)]) {
+            assert.equal(signal.count(), 0);
+        }
+        void entryLogs;
+    });
+
+    it("fails closed all-or-nothing on the same world when required pointer stepped is missing", () => {
+        const { workspace, workspaceSignals, winASignals, winBSignals } = makeSharedCallableWorld({ omitStepped: true });
+        const starts: EngineAuthorityStarts = {
+            startFocus: (args) =>
+                startFocusAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: () => {},
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveFocusAuthority: args.hasExclusiveFocusAuthority,
+                }),
+            startMovement: (args) =>
+                startMovementAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: () => {},
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveMovementAuthority: args.hasExclusiveMovementAuthority,
+                }),
+            startResize: (args) =>
+                startResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: () => {},
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveResizeAuthority: args.hasExclusiveResizeAuthority,
+                }),
+            startPointerResize: (args) =>
+                startPointerResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: () => {},
+                    owner: args.owner,
+                    generation: args.generation,
+                    revision: args.revision,
+                    hasExclusiveResizeAuthority: args.hasExclusiveResizeAuthority,
+                }),
+        };
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", starts, (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), false);
+        assert.equal(dispatcher.isRustActive(), false);
+        for (const signal of [...Object.values(workspaceSignals), ...Object.values(winASignals), ...Object.values(winBSignals)]) {
+            assert.equal(signal.count(), 0);
+        }
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
+        dispatcher.requestFocus("left");
+        dispatcher.requestMove("left");
+        dispatcher.requestResize("left", "outwards");
+        dispatcher.focusOrResize("left");
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
+        assert.ok(logs.every((line) => !line.includes("drag-attach-summary")));
+        assert.ok(logs.every((line) => !line.includes("startup-handlers-ready")));
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
     });
 
     it("refuses requests while legacy with no legacy fallback call", () => {
@@ -435,6 +726,54 @@ describe("engine authority source contract", () => {
         const entry = readFileSync(join(dir, "entry.ts"), "utf8");
         assert.ok(!entry.includes("adapter-entry"));
         assert.ok(!entry.includes("engine-authority"));
+    });
+
+    it("names exact workspace/window signals with payload-forwarding window-owned pointer gestures and no polling/globals/legacy", () => {
+        const dir = kwinSrcDir();
+        const focus = readFileSync(join(dir, "focus-adapter-entry.ts"), "utf8");
+        const movement = readFileSync(join(dir, "movement-adapter-entry.ts"), "utf8");
+        const resize = readFileSync(join(dir, "resize-adapter-entry.ts"), "utf8");
+        const pointer = readFileSync(join(dir, "pointer-resize-adapter-entry.ts"), "utf8");
+        const capability = readFileSync(join(dir, "signal-capability.ts"), "utf8");
+        for (const body of [focus, movement, resize]) {
+            for (const name of ["windowActivated", "windowAdded", "windowRemoved", "screensChanged", "currentDesktopChanged"]) {
+                assert.ok(body.includes(`"${name}"`), `entry must name workspace signal ${name}`);
+            }
+        }
+        for (const body of [movement, resize, pointer]) {
+            assert.ok(body.includes('"moveResizedChanged"'), "entry must name per-window moveResizedChanged");
+        }
+        for (const name of ["interactiveMoveResizeStarted", "interactiveMoveResizeStepped", "interactiveMoveResizeFinished"]) {
+            assert.ok(pointer.includes(`"${name}"`), `pointer entry must name ${name}`);
+        }
+        assert.ok(pointer.includes('readSignal(ref, "interactiveMoveResizeStarted")'), "pointer started signal owner is the window ref");
+        assert.ok(pointer.includes('readSignal(ref, "interactiveMoveResizeStepped")'), "pointer stepped signal owner is the window ref");
+        assert.ok(pointer.includes('readSignal(ref, "interactiveMoveResizeFinished")'), "pointer finished signal owner is the window ref");
+        assert.ok(pointer.includes('readSignal(ref, "moveResizedChanged")'), "pointer geometry signal owner is the window ref");
+        assert.ok(pointer.includes("onStepped"), "pointer entry must keep the stepped payload callback");
+        assert.ok(pointer.includes("adapter.windowStepped(ref, payload)"), "stepped payload must forward exact native ref plus payload");
+        const globals = readFileSync(join(dir, "kwin-globals.d.ts"), "utf8");
+        assert.ok(globals.includes("interactiveMoveResizeStepped"));
+        assert.ok(globals.includes("Signal1<Rect>"));
+        assert.ok(globals.includes("interface Window"));
+        for (const body of [focus, movement, resize, pointer, capability]) {
+            assert.ok(!body.includes("globalThis"), "no dynamic global discovery");
+            assert.ok(!body.includes("Function("), "no dynamic function construction");
+            assert.ok(!body.includes("setTimeout"), "no polling timers");
+            assert.ok(!body.includes("setInterval"), "no polling timers");
+            assert.ok(!body.includes("pollFor"), "no polling");
+            assert.ok(!body.includes("fallback"), "no fallback");
+            assert.ok(!/legacy/i.test(body), "no Legacy fallback");
+        }
+        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
+        assert.ok(!authority.includes("globalThis"));
+        assert.ok(!authority.includes("Function("));
+        assert.ok(!authority.includes("setTimeout"));
+        assert.ok(!authority.includes("setInterval"));
+        assert.ok(!authority.includes("pollFor"));
+        assert.ok(!authority.includes("fallback"));
+        assert.ok(!authority.includes("drag-attach"));
+        assert.ok(!authority.includes("startup-handlers"));
     });
 
     it("declares the strict packaged setting in schema and UI", () => {

@@ -43,6 +43,7 @@ import {
     PointerResizeObserved,
     pointerResizeFingerprint,
 } from "./pointer-resize-adapter";
+import { connectSignal, isConnectableSignal, readSignal } from "./signal-capability";
 
 export interface PointerResizeEntryOverrides {
     readonly workspace?: unknown;
@@ -480,29 +481,6 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
     }
 }
 
-interface WindowSignal {
-    connect: (next: (payload?: unknown) => void) => void;
-    disconnect: (next: (payload?: unknown) => void) => void;
-}
-
-function readWindowSignal(ref: object, name: string): WindowSignal | null {
-    try {
-        const signal = Reflect.get(ref, name) as
-            | { connect: unknown; disconnect: unknown }
-            | undefined;
-        if (typeof signal !== "object" || signal === null) {
-            return null;
-        }
-        if (typeof signal.connect !== "function" || typeof signal.disconnect !== "function") {
-            return null;
-        }
-        return signal as WindowSignal;
-    } catch (error) {
-        void error;
-        return null;
-    }
-}
-
 // Explicit opt-in activation only; called by no production source. Returns a
 // stop handle on success, null fail-closed after logging one fixed token.
 export function startPointerResizeAdapterEntry(
@@ -663,21 +641,36 @@ export function startPointerResizeAdapterEntry(
         },
     });
     const attached: Array<() => void> = [];
+    const rollbackAttached = (): void => {
+        for (const detach of attached) {
+            try {
+                detach();
+            } catch (ignored) {
+                void ignored;
+            }
+        }
+        attached.length = 0;
+    };
     for (const item of list) {
         if (typeof item !== "object" || item === null) {
             continue;
         }
         const ref = item as object;
-        const started = readWindowSignal(ref, "interactiveMoveResizeStarted");
-        const stepped = readWindowSignal(ref, "interactiveMoveResizeStepped");
-        const finished = readWindowSignal(ref, "interactiveMoveResizeFinished");
-        if (started === null || stepped === null || finished === null) {
+        const startedSurface = readSignal(ref, "interactiveMoveResizeStarted");
+        const steppedSurface = readSignal(ref, "interactiveMoveResizeStepped");
+        const finishedSurface = readSignal(ref, "interactiveMoveResizeFinished");
+        if (
+            !isConnectableSignal(startedSurface) ||
+            !isConnectableSignal(steppedSurface) ||
+            !isConnectableSignal(finishedSurface)
+        ) {
             continue;
         }
         // Public geometry notification for the signal-driven recursion guard.
         // Optional: windows without it still attach the interactive gesture
         // signals, but own-neighbour async suppression is best-effort there.
-        const geometryChanged = readWindowSignal(ref, "moveResizedChanged");
+        const geometrySurface = readSignal(ref, "moveResizedChanged");
+        const geometryOptional = isConnectableSignal(geometrySurface) ? geometrySurface : null;
         const onStarted = (): void => {
             try {
                 adapter.windowStarted(ref);
@@ -706,43 +699,53 @@ export function startPointerResizeAdapterEntry(
                 void error;
             }
         };
+        const currentDetaches: Array<() => void> = [];
+        let requiredFailed = false;
         try {
-            started.connect(onStarted);
-            stepped.connect(onStepped);
-            finished.connect(onFinished);
-            if (geometryChanged !== null) {
-                geometryChanged.connect(onGeometry);
+            const startedDetach = connectSignal(startedSurface, onStarted);
+            if (startedDetach === null) {
+                requiredFailed = true;
+            } else {
+                currentDetaches.push(startedDetach);
+                const steppedDetach = connectSignal(steppedSurface, onStepped);
+                if (steppedDetach === null) {
+                    requiredFailed = true;
+                } else {
+                    currentDetaches.push(steppedDetach);
+                    const finishedDetach = connectSignal(finishedSurface, onFinished);
+                    if (finishedDetach === null) {
+                        requiredFailed = true;
+                    } else {
+                        currentDetaches.push(finishedDetach);
+                    }
+                }
             }
-        } catch (error) {
-            void error;
-            for (const detach of attached) {
+        } catch (ignored) {
+            void ignored;
+            requiredFailed = true;
+        }
+        if (requiredFailed) {
+            for (const detach of currentDetaches) {
                 try {
                     detach();
                 } catch (ignored) {
                     void ignored;
                 }
             }
+            rollbackAttached();
             return fail();
         }
+        if (geometryOptional !== null) {
+            const geometryDetach = connectSignal(geometryOptional, onGeometry);
+            if (geometryDetach !== null) {
+                currentDetaches.push(geometryDetach);
+            }
+        }
+        const snapshot = [...currentDetaches];
         attached.push(() => {
-            try {
-                started.disconnect(onStarted);
-            } catch (error) {
-                void error;
-            }
-            try {
-                stepped.disconnect(onStepped);
-            } catch (error) {
-                void error;
-            }
-            try {
-                finished.disconnect(onFinished);
-            } catch (error) {
-                void error;
-            }
-            if (geometryChanged !== null) {
+            for (const detach of snapshot) {
                 try {
-                    geometryChanged.disconnect(onGeometry);
+                    detach();
                 } catch (error) {
                     void error;
                 }

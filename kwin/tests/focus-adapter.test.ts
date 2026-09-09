@@ -1010,3 +1010,133 @@ describe("focus adapter session D-Bus activation", () => {
         assert.equal(mocks.dbusCalls[mocks.dbusCalls.length - 1]?.method, FOCUS_GET_OWNER_METHOD);
     });
 });
+
+interface Qv4Signal {
+    readonly fire: () => void;
+    readonly count: () => number;
+}
+
+function makeQv4Signal(): Qv4Signal & ((...args: readonly unknown[]) => void) {
+    const handlers = new Set<() => void>();
+    const fn = function (): void {};
+    const proto = {
+        connect: (handler: () => void): void => {
+            handlers.add(handler);
+        },
+        disconnect: (handler: () => void): void => {
+            handlers.delete(handler);
+        },
+    };
+    Object.setPrototypeOf(fn, proto);
+    const callable = fn as unknown as Qv4Signal & ((...args: readonly unknown[]) => void);
+    (callable as unknown as Record<string, unknown>)["fire"] = (): void => {
+        for (const handler of [...handlers]) {
+            handler();
+        }
+    };
+    (callable as unknown as Record<string, unknown>)["count"] = (): number => handlers.size;
+    return callable;
+}
+
+function makeFocusQv4World(): {
+    readonly workspace: Record<string, unknown>;
+    readonly signals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)>;
+    readonly logs: string[];
+} {
+    const output = {};
+    const desktop = {};
+    const winA: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        output,
+        desktops: [desktop],
+        internalId: "win-a",
+    };
+    const winB: Record<string, unknown> = {
+        normalWindow: true,
+        managed: true,
+        minimized: false,
+        fullScreen: false,
+        maximizeMode: 0,
+        onAllDesktops: false,
+        output,
+        desktops: [desktop],
+        internalId: "win-b",
+    };
+    const signals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)> = {
+        windowActivated: makeQv4Signal(),
+        windowAdded: makeQv4Signal(),
+        windowRemoved: makeQv4Signal(),
+        screensChanged: makeQv4Signal(),
+        currentDesktopChanged: makeQv4Signal(),
+    };
+    const logs: string[] = [];
+    const workspace: Record<string, unknown> = {
+        activeWindow: winA,
+        windowList: (): unknown[] => [winA, winB],
+        screens: [output],
+        currentDesktopForScreen: (): unknown => desktop,
+        ...signals,
+    };
+    void logs;
+    return { workspace, signals, logs };
+}
+
+describe("focus entry QV4 callable signal startup", () => {
+    it("attaches callable workspace signals and detaches exactly once", () => {
+        const { workspace, signals } = makeFocusQv4World();
+        const logs: string[] = [];
+        for (const name of Object.keys(signals)) {
+            assert.equal(typeof workspace[name], "function");
+        }
+        const handle = startFocusAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveFocusAuthority: () => true,
+        });
+        assert.ok(handle !== null);
+        assert.ok(logs.some((line) => line.endsWith(":ready")));
+        for (const signal of Object.values(signals)) {
+            assert.equal(signal.count(), 1);
+        }
+        handle.stop();
+        for (const signal of Object.values(signals)) {
+            assert.equal(signal.count(), 0);
+        }
+        handle.stop();
+        for (const signal of Object.values(signals)) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+
+    it("fails closed with exact rollback when a required callable signal is missing", () => {
+        const { workspace, signals } = makeFocusQv4World();
+        workspace["windowActivated"] = {};
+        const logs: string[] = [];
+        const handle = startFocusAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveFocusAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        for (const signal of Object.values(signals)) {
+            assert.equal(signal.count(), 0);
+        }
+    });
+});

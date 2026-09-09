@@ -32,6 +32,7 @@
 // retained on the focused window. All logs are fixed redacted tokens.
 
 import { ResizeAdapter, ResizeObserved, resizeFingerprint } from "./resize-adapter";
+import { connectSignal, readSignal } from "./signal-capability";
 
 export interface ResizeEntryOverrides {
     readonly workspace?: unknown;
@@ -570,23 +571,7 @@ export function startResizeAdapterEntry(
     const surface = liveWorkspace as Record<string, unknown>;
     const sub = (name: string, handler: () => void): (() => void) | null => {
         try {
-            const signal = surface[name] as
-                | { connect: (next: () => void) => void; disconnect: (next: () => void) => void }
-                | undefined;
-            if (typeof signal !== "object" || signal === null) {
-                return null;
-            }
-            if (typeof signal.connect !== "function" || typeof signal.disconnect !== "function") {
-                return null;
-            }
-            signal.connect(handler);
-            return () => {
-                try {
-                    signal.disconnect(handler);
-                } catch (error) {
-                    void error;
-                }
-            };
+            return connectSignal(readSignal(surface, name), handler);
         } catch (error) {
             void error;
             return null;
@@ -614,28 +599,11 @@ export function startResizeAdapterEntry(
                 if (typeof item !== "object" || item === null) {
                     continue;
                 }
-                const signal = (item as Record<string, unknown>)["moveResizedChanged"] as
-                    | { connect: (next: () => void) => void; disconnect: (next: () => void) => void }
-                    | undefined;
-                if (typeof signal !== "object" || signal === null) {
+                const detach = connectSignal(readSignal(item, "moveResizedChanged"), handler);
+                if (detach === null) {
                     continue;
                 }
-                if (typeof signal.connect !== "function" || typeof signal.disconnect !== "function") {
-                    continue;
-                }
-                try {
-                    signal.connect(handler);
-                    detaches.push(() => {
-                        try {
-                            signal.disconnect(handler);
-                        } catch (error) {
-                            void error;
-                        }
-                    });
-                } catch (error) {
-                    void error;
-                    continue;
-                }
+                detaches.push(detach);
             }
             // Fail closed when no native geometry signal could be connected:
             // without at least one live geometry subscription the adapter
