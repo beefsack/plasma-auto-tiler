@@ -226,10 +226,11 @@ describe("native KCM static contract", () => {
         assert.equal(scriptMetadata["X-KDE-ConfigModule"], undefined);
         assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
         assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
-        assert.match(
-            ui,
-            /Engine authority mode changes apply through KCM Apply, which syncs config then requests KWin reconfigure; one user restart clears current transient Script ambiguity\./,
-        );
+        assert.match(ui, /KCM Apply persists config then requests KWin reconfigure, but a changed engine authority requires a user session restart before relying on it\./);
+        assert.match(ui, /Rust is development-only, does not automatically tile or adopt windows, and selected Rust commands require an already stable tiled scope\./);
+        assert.doesNotMatch(ui, /clears current transient Script ambiguity/);
+        assert.doesNotMatch(ui, /engine authority[^.]*apply immediately/i);
+        assert.doesNotMatch(ui, /engine authority[^.]*takes effect immediately/i);
         assert.match(ui, /Other script settings require a script reload or session restart\./);
         assert.doesNotMatch(ui, /Script settings do not hot-apply; reload the script or restart the session\./);
     });

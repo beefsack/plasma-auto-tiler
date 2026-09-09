@@ -95,6 +95,12 @@ Historical implementation detail is recoverable in Git history.
   pending plan never rebinds after a restarted owner. Session activation
   improves immutable delivery but public KWin scripting still cannot attest the
   initially resolved same-UID Planner binary.
+- `engineAuthorityMode=legacy` remains the only automatic-tiling mode. Rust is
+  development-only: it has no add/remove, placement, workspace, drag, or
+  existing-window adoption lifecycle, and selected commands require an already
+  stable tiled scope. KCM Apply persists the selection and queues an
+  unacknowledged KWin reconfigure request, so a user session restart is required
+  before relying on an authority change. Rust never falls back to Legacy.
 
 ## Live KWin/Plasma Boundary
 
