@@ -1516,13 +1516,10 @@ else
   PASS=$((PASS + 1))
 fi
 
-# Fixed project-only rows: literal registerShortcut calls in the controller.
+# Fixed project-only rows: lifecycle catalog rows.
 while IFS=$'\t' read -r action sequence shortcut; do
   if ! grep -Fq "[$action]=\"$sequence\"" "$SCRIPT"; then
     echo "FAIL: lifecycle catalog lacks $action=$sequence" >&2
-    FAIL=$((FAIL + 1))
-  elif grep -Fq "registerShortcut" "$CONTROLLER"; then
-    echo "FAIL: controller still exposes shortcut registration" >&2
     FAIL=$((FAIL + 1))
   else
     PASS=$((PASS + 1))

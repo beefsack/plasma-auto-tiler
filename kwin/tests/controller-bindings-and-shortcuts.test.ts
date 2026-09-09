@@ -420,9 +420,9 @@ describe("TileController binding profile catalog", () => {
 });
 
 describe("TileController startup", () => {
-    it("emits readiness without shortcut registration", () => {
+    it("emits readiness with command shortcut registration", () => {
         const { harness } = setup();
-        assert.equal(countEvent(harness.logs, "shortcut-registered"), 0);
+        assert.equal(countEvent(harness.logs, "shortcut-registered"), 1);
         assert.equal(countEvent(harness.logs, "startup-handlers-ready"), 1);
         for (const entry of harness.logs) {
             assert.equal(entry.startsWith("plasma-auto-tiler:"), true);

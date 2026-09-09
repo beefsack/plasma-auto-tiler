@@ -65,6 +65,13 @@ export interface TestTile {
     remove?: () => boolean;
 }
 
+export interface RegisteredShortcut {
+    readonly name: string;
+    readonly text: string;
+    readonly sequence: string;
+    readonly handler: () => void;
+}
+
 // A queued one-shot event-loop yield, mirroring the callDBus async callback
 // seam: arming enqueues exactly one dispatch that runs once on a later
 // "event-loop turn" (the harness flush).
@@ -224,6 +231,9 @@ export class Harness {
     cursor: unknown = null;
     cursorThrows = false;
     clientArea: unknown = { x: 0, y: 0, width: 100, height: 100 };
+    shortcutResult: boolean | Error = true;
+    readonly shortcutResults: Array<boolean | Error> = [];
+    readonly shortcuts: RegisteredShortcut[] = [];
     readonly configValues = new Map<string, unknown>();
     readonly scheduled: { delayMs: number; callback: () => void; cancelled: boolean }[] = [];
     controller: TileController | undefined;
@@ -244,6 +254,20 @@ export class Harness {
     screensChanged: (() => void) | undefined;
     desktopChanged: ((previous: unknown, current: unknown, output: unknown) => void) | undefined;
     desktopsChanged: (() => void) | undefined;
+    // Exact attach/detach accounting for the legacy workspace signals. The
+    // single-handler fields above preserve existing emit behavior; the counts
+    // prove idempotent attach (no duplicates) and exact disconnect on Rust
+    // switch, which overwriting alone would hide.
+    addedConnects = 0;
+    addedDisconnects = 0;
+    removedConnects = 0;
+    removedDisconnects = 0;
+    screensConnects = 0;
+    screensDisconnects = 0;
+    desktopConnects = 0;
+    desktopDisconnects = 0;
+    desktopsConnects = 0;
+    desktopsDisconnects = 0;
     desktopsList: unknown = [DESKTOP];
     desktopReads = 0;
     screensList: unknown = [OUTPUT];
@@ -299,16 +323,64 @@ export class Harness {
             },
             clientArea: () => this.clientArea,
             onWindowAdded: (handler) => {
+                this.addedConnects += 1;
                 this.added = handler;
+                let disconnected = false;
+                return () => {
+                    if (disconnected) {
+                        return;
+                    }
+                    disconnected = true;
+                    this.addedDisconnects += 1;
+                    if (this.added === handler) {
+                        this.added = undefined;
+                    }
+                };
             },
             onWindowRemoved: (handler) => {
+                this.removedConnects += 1;
                 this.removed = handler;
+                let disconnected = false;
+                return () => {
+                    if (disconnected) {
+                        return;
+                    }
+                    disconnected = true;
+                    this.removedDisconnects += 1;
+                    if (this.removed === handler) {
+                        this.removed = undefined;
+                    }
+                };
             },
             onScreensChanged: (handler) => {
+                this.screensConnects += 1;
                 this.screensChanged = handler;
+                let disconnected = false;
+                return () => {
+                    if (disconnected) {
+                        return;
+                    }
+                    disconnected = true;
+                    this.screensDisconnects += 1;
+                    if (this.screensChanged === handler) {
+                        this.screensChanged = undefined;
+                    }
+                };
             },
             onCurrentDesktopChanged: (handler) => {
+                this.desktopConnects += 1;
                 this.desktopChanged = handler;
+                let disconnected = false;
+                return () => {
+                    if (disconnected) {
+                        return;
+                    }
+                    disconnected = true;
+                    this.desktopDisconnects += 1;
+                    if (this.desktopChanged === handler) {
+                        this.desktopChanged = undefined;
+                    }
+                };
             },
             desktops: () => {
                 this.desktopReads += 1;
@@ -364,10 +436,23 @@ export class Harness {
                 this.currentDesktopValue = desktop;
             },
             onDesktopsChanged: (handler) => {
+                this.desktopsConnects += 1;
                 this.desktopsChanged = handler;
+                let disconnected = false;
+                return () => {
+                    if (disconnected) {
+                        return;
+                    }
+                    disconnected = true;
+                    this.desktopsDisconnects += 1;
+                    if (this.desktopsChanged === handler) {
+                        this.desktopsChanged = undefined;
+                    }
+                };
             },
             watchInteractiveWindow: (target, started, finished, stepped, moveResizedChanged, invalidated) => {
-                this.interactiveWatches.push({ window: target, started, finished, stepped, moveResizedChanged, invalidated });
+                const entry = { window: target, started, finished, stepped, moveResizedChanged, invalidated };
+                this.interactiveWatches.push(entry);
                 const surface = target as unknown as Pick<
                     TestWindow,
                     | "interactiveMoveResizeStarted"
@@ -442,6 +527,10 @@ export class Harness {
                             } catch (error) {
                                 void error;
                             }
+                        }
+                        const index = this.interactiveWatches.indexOf(entry);
+                        if (index >= 0) {
+                            this.interactiveWatches.splice(index, 1);
                         }
                     },
                     ok,
@@ -557,6 +646,21 @@ export class Harness {
             readConfig: (key, defaultValue) => {
                 const stored = this.configValues.get(key);
                 return stored === undefined ? defaultValue : stored;
+            },
+            registerShortcut: (name, text, sequence, handler) => {
+                const queued = this.shortcutResults.shift();
+                const result = queued ?? this.shortcutResult;
+                if (result instanceof Error) {
+                    throw result;
+                }
+                // Failed registration is never recorded as captured: the
+                // controller leaves the ID unrecorded so a later Apply
+                // retries exactly the failed action.
+                if (result === false) {
+                    return false;
+                }
+                this.shortcuts.push({ name, text, sequence, handler });
+                return true;
             },
             log: (message) => {
                 if (this.throwOnLog) {

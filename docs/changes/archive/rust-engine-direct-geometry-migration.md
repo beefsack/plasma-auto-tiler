@@ -98,6 +98,19 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Shortcut delivery correction, 2026-09-09: `rust-development` returned before
+  the legacy controller lifecycle that had registered packaged global shortcuts,
+  so persisted KGlobalAccel rows did not establish a live callback and physical
+  `Meta+Right` could reach the focused application. Packaged command registration
+  is now mode-independent and registers catalog-backed focus, directional move,
+  and keyboard resize commands once; callbacks select exactly one Legacy or Rust
+  authority. Rust Planner/service/stale/divergence loss refuses closed while the
+  accelerator remains captured, with no Legacy fallback. Legacy topology and
+  pointer subscriptions remain separate and detach on a Rust switch. Static
+  typecheck, controller/authority/shortcut, KGlobalAccel, temporary-bundle, and
+  package checks pass; generated output is intentionally unstaged and no live
+  retest is claimed.
+
 - Packaged development authority readiness, 2026-09-09: the normal KWin
   package has one strict `engineAuthorityMode` setting, `legacy` (default) or
   `rust-development`. Missing, malformed, or unknown values remain legacy.

@@ -167,6 +167,7 @@ export interface InteractiveDragController {
     readonly attachExisting: (emitSummary: boolean) => void;
     readonly attach: (window: unknown) => { readonly attempted: number; readonly ok: number; readonly failed: number } | null;
     readonly detach: (window: WindowCapability) => void;
+    readonly detachAll: () => void;
     readonly handleInvalidated: (window: WindowCapability) => void;
     readonly handleStarted: (window: WindowCapability) => void;
     readonly handleFinished: (window: WindowCapability) => void;
@@ -1154,6 +1155,12 @@ export function createInteractiveDragController(
         interactiveWindows.delete(window);
         watch.disconnect();
     };
+    const detachAll = (): void => {
+        for (const window of [...interactiveWindows.keys()]) {
+            detach(window);
+        }
+    };
+
 
     const attachExisting = (emitSummary: boolean): void => {
         const decoded = decodeSequential(capabilities.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
@@ -1293,6 +1300,7 @@ export function createInteractiveDragController(
         hasActive: () => dragState.current !== undefined,
         isLive: trackedDragLive,
         clear,
+        detachAll,
         showDropOutline,
         hideDropOutline,
         markOwedInvariant,

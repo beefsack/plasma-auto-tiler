@@ -91,17 +91,22 @@ import {
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     DEFAULT_DROP_OUTLINE_PREVIEW,
     DEFAULT_ENGINE_AUTHORITY_MODE,
+    DEFAULT_PROFILE,
     DEFAULT_TILING_ALGORITHM,
     DEFAULT_WORKSPACE_MODE,
     DROP_OUTLINE_PREVIEW_CONFIG_KEY,
     ENGINE_AUTHORITY_MODE_CONFIG_KEY,
+    REGISTERED_PROFILE_ACTION_IDS,
+    SHORTCUT_PROFILE_CONFIG_KEY,
     TILING_ALGORITHM_CONFIG_KEY,
     WORKSPACE_MODE_CONFIG_KEY,
+    catalogValidationDiagnostics,
     parseAutomaticSplitTarget,
     parseDropOutlinePreview,
     parseEngineAuthorityMode,
     parseTilingAlgorithm,
     parseWorkspaceMode,
+    selectProfile,
 } from "./controller-config";
 import {
     selectAutomaticSplitTarget,
@@ -191,15 +196,15 @@ export interface ControllerEnvironment {
     readonly windowList: () => unknown;
     readonly cursorPos: () => unknown;
     readonly clientArea: (option: number, output: OutputCapability, desktop: VirtualDesktopCapability) => unknown;
-    readonly onWindowAdded: (handler: (window: unknown) => void) => void;
-    readonly onWindowRemoved: (handler: (window: unknown) => void) => void;
-    readonly onScreensChanged: (handler: () => void) => void;
+    readonly onWindowAdded: (handler: (window: unknown) => void) => () => void;
+    readonly onWindowRemoved: (handler: (window: unknown) => void) => () => void;
+    readonly onScreensChanged: (handler: () => void) => () => void;
     // The workspace `currentDesktopChanged(previous, current, output)` signal.
     // The handler carries all three arguments so the output is preserved across
     // the typed boundary (spec F); it is authoritative for which output switched.
     readonly onCurrentDesktopChanged: (
         handler: (previous: unknown, current: unknown, output: unknown) => void,
-    ) => void;
+    ) => () => void;
     // Dynamic virtual-desktop surface. Every method may throw when the
     // underlying KWin surface is absent or rejects the call; the workspace
     // commands catch and log a specific failure without affecting startup.
@@ -221,7 +226,7 @@ export interface ControllerEnvironment {
         desktop: VirtualDesktopCapability,
         output: OutputCapability,
     ) => void;
-    readonly onDesktopsChanged: (handler: () => void) => void;
+    readonly onDesktopsChanged: (handler: () => void) => () => void;
     readonly watchInteractiveWindow: (
         window: WindowCapability,
         started: () => void,
@@ -260,6 +265,7 @@ export interface ControllerEnvironment {
     readonly yieldOnce: (callback: () => void) => boolean;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly readConfig: (key: string, defaultValue: unknown) => unknown;
+    readonly registerShortcut: (name: string, text: string, sequence: string, handler: () => void) => boolean;
     readonly log: (message: string) => void;
     readonly onControllerCreated?: (controller: TileController) => void;
 }
@@ -525,6 +531,9 @@ export class TileController {
     // The output argument of the most recent `currentDesktopChanged` event
     // (spec F), preserved through the typed boundary. Session-only; the Unit 05
     // per-output scope re-resolution consumes it.
+    private readonly registeredShortcutIds = new Set<string>();
+    private legacyDisconnects: Array<() => void> = [];
+    private legacyLifecycleActive = false;
     private recentDesktopChangeOutput: OutputCapability | null = null;
     // Per-output-local mode (spec D1, Unit 05): outputKey -> ordered local
     // desktop id list. Logical workspace n on output X resolves to the nth id of
@@ -1052,6 +1061,7 @@ export class TileController {
     start(): void {
         this.gate.run(() => {
             // Strict packaged `engineAuthorityMode`: empty/missing is legacy;
+            this.registerCommandShortcuts();
             // unknown/malformed is legacy with a fixed diagnostic. Never
             // enables Rust implicitly. Parsed before any legacy
             // subscription/lifecycle so rust-development never retains legacy
@@ -1071,18 +1081,29 @@ export class TileController {
             this.engineAuthorityMode = authority.mode;
             if (authority.mode === "rust-development") {
                 const dispatcher = createPackagedEngineAuthority(authority.mode, (event) => this.diagnostic(event));
+                this.detachLegacyLifecycle();
+                const previous = this.engineAuthority;
                 this.engineAuthority = dispatcher;
+                if (previous !== null && previous !== dispatcher) {
+                    try {
+                        previous.stop();
+                    } catch (error) {
+                        void error;
+                    }
+                }
                 dispatcher.start();
                 return;
             }
+            const previous = this.engineAuthority;
             this.engineAuthority = null;
-            this.environment.onWindowAdded((window) => this.handleWindowAdded(window));
-            this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
-            this.environment.onScreensChanged(() => this.handleScreensChanged());
-            this.environment.onCurrentDesktopChanged((previous, current, output) =>
-                this.handleCurrentDesktopChanged(previous, current, output),
-            );
-            this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
+            if (previous !== null) {
+                try {
+                    previous.stop();
+                } catch (error) {
+                    void error;
+                }
+            }
+            this.attachLegacyLifecycle();
             // Deterministic session output keys from the current screens, so
             // every mode sees a key for each output before any event fires.
             this.rebuildOutputKeys();
@@ -1148,13 +1169,60 @@ export class TileController {
         return;
     }
 
+    private registerCommandShortcuts(): void {
+        const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
+        let registeredNew = 0;
+        for (const row of selected.profile.rows) {
+            if (row.classification === "deferred" || row.classification === "component-requirement" ||
+                !COMMAND_SHORTCUT_ACTION_IDS.has(row.actionId) || !REGISTERED_PROFILE_ACTION_IDS.has(row.actionId) ||
+                this.registeredShortcutIds.has(row.shortcutId)) continue;
+            const direction = row.actionId.endsWith("left") || row.actionId.endsWith("left-arrow") ? "left" :
+                row.actionId.endsWith("down") || row.actionId.endsWith("down-arrow") ? "down" :
+                row.actionId.endsWith("up") || row.actionId.endsWith("up-arrow") ? "up" : "right";
+            const callback = row.actionId.startsWith("focus-") ? () => this.focusOrResize(direction) :
+                row.actionId.startsWith("move-") ? () => this.moveActiveWindow(direction) :
+                row.actionId === "resize-mode-outwards" ? () => this.enterOrExitResizeMode("outwards") :
+                row.actionId === "resize-mode-inwards" ? () => this.enterOrExitResizeMode("inwards") :
+                row.actionId.startsWith("resize-expand-") ? () => this.resizeActiveWindow(direction, "outwards") :
+                row.actionId.startsWith("resize-contract-") ? () => this.resizeActiveWindow(direction, "inwards") : undefined;
+            if (callback === undefined) continue;
+            let registered = false;
+            try { registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback); } catch (error) { void error; }
+            if (registered) { this.registeredShortcutIds.add(row.shortcutId); registeredNew += 1; }
+            else this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
+        }
+        if (registeredNew > 0) this.diagnostic("shortcut-registered");
+    }
+
+    private attachLegacyLifecycle(): void {
+        if (this.legacyLifecycleActive) return;
+        this.legacyDisconnects = [
+            this.environment.onWindowAdded((window) => this.handleWindowAdded(window)),
+            this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window)),
+            this.environment.onScreensChanged(() => this.handleScreensChanged()),
+            this.environment.onCurrentDesktopChanged((previous, current, output) => this.handleCurrentDesktopChanged(previous, current, output)),
+            this.environment.onDesktopsChanged(() => this.handleDesktopsChanged()),
+        ];
+        this.legacyLifecycleActive = true;
+    }
+
+    private detachLegacyLifecycle(): void {
+        for (const disconnect of this.legacyDisconnects) {
+            try { disconnect(); } catch (error) { void error; }
+        }
+        this.legacyDisconnects = [];
+        this.legacyLifecycleActive = false;
+        try { this.interactiveDrag.detachAll(); } catch (error) { void error; }
+    }
+
     moveActiveWindow(direction: Direction): void {
         // Exclusive authority: in rust-development the dispatcher owns R1-R4
         // move via the movement adapter. No legacy fallback on refusal.
         if (this.useRustAuthority()) {
             const dispatcher = this.engineAuthority;
             this.gate.run(
-                () => dispatcher?.requestMove(direction as AuthorityDirection),
+                () => { if (dispatcher === null) { this.diagnostic("engine-authority-rust-refused"); return; }
+                    dispatcher.requestMove(direction as AuthorityDirection); },
                 (reason) => this.disabled(reason),
             );
             return;
@@ -1170,7 +1238,8 @@ export class TileController {
         if (this.useRustAuthority()) {
             const dispatcher = this.engineAuthority;
             this.gate.run(
-                () => dispatcher?.focusOrResize(direction as AuthorityDirection),
+                () => { if (dispatcher === null) { this.diagnostic("engine-authority-rust-refused"); return; }
+                    dispatcher.focusOrResize(direction as AuthorityDirection); },
                 (reason) => this.disabled(reason),
             );
             return;
@@ -1184,7 +1253,8 @@ export class TileController {
         if (this.useRustAuthority()) {
             const dispatcher = this.engineAuthority;
             this.gate.run(
-                () => dispatcher?.enterOrExitRustResizeMode(mode),
+                () => { if (dispatcher === null) { this.diagnostic("engine-authority-rust-refused"); return; }
+                    dispatcher.enterOrExitRustResizeMode(mode); },
                 (reason) => this.disabled(reason),
             );
             return;
@@ -1215,7 +1285,8 @@ export class TileController {
         if (this.useRustAuthority()) {
             const dispatcher = this.engineAuthority;
             this.gate.run(
-                () => dispatcher?.requestResize(direction as AuthorityDirection, mode),
+                () => { if (dispatcher === null) { this.diagnostic("engine-authority-rust-refused"); return; }
+                    dispatcher.requestResize(direction as AuthorityDirection, mode); },
                 (reason) => this.disabled(reason),
             );
             return;
@@ -5031,3 +5102,14 @@ export class TileController {
         return occupied;
     }
 }
+export const COMMAND_SHORTCUT_ACTION_IDS: ReadonlySet<string> = Object.freeze(
+    new Set<string>([
+        "focus-left", "focus-down", "focus-up", "focus-right",
+        "focus-left-arrow", "focus-down-arrow", "focus-up-arrow", "focus-right-arrow",
+        "move-left", "move-down", "move-up", "move-right",
+        "move-left-arrow", "move-down-arrow", "move-up-arrow", "move-right-arrow",
+        "resize-mode-outwards", "resize-mode-inwards",
+        "resize-expand-left", "resize-expand-down", "resize-expand-up", "resize-expand-right",
+        "resize-contract-left", "resize-contract-down", "resize-contract-up", "resize-contract-right",
+    ]),
+);

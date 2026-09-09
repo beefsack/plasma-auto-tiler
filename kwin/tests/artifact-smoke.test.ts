@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
@@ -36,16 +38,21 @@ function collectSourceFiles(dir: string): string[] {
 
 interface KWinStubResult {
     readonly context: ReturnType<typeof createContext>;
+    readonly registeredShortcuts: ReadonlyArray<readonly [string, string, string, () => void]>;
     readonly diagnostics: readonly string[];
     readonly counts: { workspaceConnects: number; windowConnects: number };
 }
 
 // Minimal KWin ambient surface for the shipped IIFE: the top-level entry
-// constructs TileController and runs start(), which subscribes to four
-// workspace signals and attaches drag handling to every existing in-scope
-// window. One window with the six per-window signals is supplied so the real
-// per-signal attach path emits its ok/summary diagnostics.
+// constructs TileController and runs start(), which registers the packaged
+// command shortcuts, subscribes to four workspace signals, and attaches drag
+// handling to every existing in-scope window. One window with the six
+// per-window signals is supplied so the real per-signal attach path emits
+// its ok/summary diagnostics. The stub records each shortcut registration so
+// the test can prove the top-level entry point genuinely executed rather
+// than silently no-oping.
 function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult {
+    const registeredShortcuts: Array<[string, string, string, () => void]> = [];
     const diagnostics: string[] = [];
     const counts = { workspaceConnects: 0, windowConnects: 0 };
 
@@ -113,14 +120,23 @@ function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult
 
     const context = createContext({
         workspace: {
-            activeWindow: () => null,
+            activeWindow: null,
             windowList: () => [window],
             currentDesktopForScreen: () => ({ id: "desktop-1" }),
             screens: [output],
+            desktops: [{ id: "desktop-1" }],
+            activeScreen: output,
+            currentDesktop: { id: "desktop-1" },
+            rootTile: () => null,
+            clientArea: () => geometry,
             windowAdded: workspaceSignal(),
             windowRemoved: workspaceSignal(),
             screensChanged: workspaceSignal(),
             currentDesktopChanged: workspaceSignal(),
+        },
+        registerShortcut: (name: string, text: string, sequence: string, handler: () => void) => {
+            registeredShortcuts.push([name, text, sequence, handler]);
+            return true;
         },
         readConfig: () => undefined,
         callDBus: () => {},
@@ -128,13 +144,12 @@ function makeKWinStub(options: { throwingGetter?: string } = {}): KWinStubResult
         console: { ...console, log: (message: string) => diagnostics.push(message) },
     });
 
-    return { context, diagnostics, counts };
+    return { context, registeredShortcuts, diagnostics, counts };
 }
 
 describe("shipped artifact smoke execution", () => {
     it("executes the built contents/code/main.js top-level entry through a KWin stub", () => {
         const bundle = readFileSync(SHIPPED_BUNDLE, "utf8");
-        assert.doesNotMatch(bundle, /\bregisterShortcut\b/);
         const stub = makeKWinStub();
         try {
             runInContext(bundle, stub.context, { filename: SHIPPED_BUNDLE });
@@ -149,6 +164,68 @@ describe("shipped artifact smoke execution", () => {
         assert.ok(stub.diagnostics.includes("plasma-auto-tiler:drag-attach-ok:interactiveMoveResizeStepped"));
         assert.ok(stub.diagnostics.includes("plasma-auto-tiler:drag-attach-ok:interactiveMoveResizeFinished"));
         assert.ok(stub.diagnostics.includes("plasma-auto-tiler:drag-attach-ok:moveResizedChanged"));
+        assert.ok(!stub.diagnostics.some((entry) => entry.startsWith("plasma-auto-tiler:drag-attach-failed")));
+    });
+
+    it("registers and dispatches packaged shortcuts from a fresh temp bundle", () => {
+        const outDir = mkdtempSync(join(tmpdir(), "pat-bundle-"));
+        const outFile = join(outDir, "main.js");
+        execFileSync("npx", ["esbuild", "src/entry.ts", "--bundle", "--format=iife", "--target=es2017", `--outfile=${outFile}`], {
+            cwd: process.cwd(),
+            stdio: "pipe",
+        });
+        const bundle = readFileSync(outFile, "utf8");
+        assert.match(bundle, /\bregisterShortcut\b/);
+        const stub = makeKWinStub();
+        try {
+            runInContext(bundle, stub.context, { filename: outFile });
+        } catch (error) {
+            assert.fail(`evaluating temp bundle threw ${String(error)}`);
+        }
+        assert.equal(stub.counts.workspaceConnects, 4);
+        assert.equal(stub.counts.windowConnects, 7);
+        const names = stub.registeredShortcuts.map(([name]) => name);
+        assert.ok(names.includes("plasma-auto-tiler-focus-right"));
+        assert.ok(names.includes("plasma-auto-tiler-move-right"));
+        assert.ok(names.includes("plasma-auto-tiler-resize-mode-outwards"));
+        const cosmic = new Map(
+            stub.registeredShortcuts.map(([name, , sequence]) => [name, sequence] as const),
+        );
+        assert.equal(cosmic.get("plasma-auto-tiler-focus-right"), "Meta+L");
+        assert.equal(cosmic.get("plasma-auto-tiler-resize-mode-outwards"), "Meta+R");
+        // Behavioral dispatch: captured handlers must be live callbacks that
+        // route through the controller command path, not inert name rows.
+        const handlers = new Map(
+            stub.registeredShortcuts.map(([name, , , handler]) => [name, handler] as const),
+        );
+        for (const name of [
+            "plasma-auto-tiler-focus-right",
+            "plasma-auto-tiler-move-right",
+            "plasma-auto-tiler-resize-mode-outwards",
+        ]) {
+            const handler = handlers.get(name);
+            assert.equal(typeof handler, "function", name);
+        }
+        const diagnosticsBefore = stub.diagnostics.length;
+        handlers.get("plasma-auto-tiler-focus-right")?.();
+        handlers.get("plasma-auto-tiler-move-right")?.();
+        handlers.get("plasma-auto-tiler-resize-mode-outwards")?.();
+        const routed = stub.diagnostics.slice(diagnosticsBefore);
+        assert.ok(
+            routed.some((entry) => entry.includes("focus-invoked")),
+            "focus callback must dispatch through focus-invoked",
+        );
+        assert.ok(
+            routed.some((entry) => entry.includes("move-invoked")),
+            "move callback must dispatch through move-invoked",
+        );
+        assert.ok(
+            routed.some((entry) => entry.includes("resize-mode-entered:outwards")),
+            "resize-mode callback must dispatch through resize-mode-entered",
+        );
+        assert.ok(stub.diagnostics.includes("plasma-auto-tiler:shortcut-registered"));
+        assert.ok(stub.diagnostics.includes(STARTUP_HANDLERS_READY_DIAGNOSTIC));
+        assert.ok(stub.diagnostics.includes(DRAG_ATTACH_SUMMARY_DIAGNOSTIC));
         assert.ok(!stub.diagnostics.some((entry) => entry.startsWith("plasma-auto-tiler:drag-attach-failed")));
     });
 

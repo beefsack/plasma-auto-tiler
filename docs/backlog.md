@@ -200,7 +200,9 @@ Only meaningful pending or active work is listed.
              focus/movement/keyboard/pointer adapters exclusively, while Rust
              mode starts no legacy controller lifecycle or Custom Tile/pointer
              authority. Pointer and keyboard resize capabilities are distinct.
-             User rebuild, new-session restart, manual Planner start,
+              Shortcut delivery follow-up is static-complete: Rust-mode command
+              registration is now independent of legacy lifecycle, with one
+              mode-gated callback authority and no live retest claim. User rebuild, new-session restart, manual Planner start,
              development-mode selection, and stable-scope focus/move/keyboard/
              pointer visual jank journey remain pending; add/remove and drag/
              drop remain out of scope. Next: KWin drag-end snap-back and drop

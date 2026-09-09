@@ -90,14 +90,27 @@ const controller = new TileController({
         const signal = workspace.desktopsChanged;
         if (signal === undefined) {
             console.log("plasma-auto-tiler:workspace-surface-missing:desktopsChanged");
-            return;
+            return () => {};
         }
         signal.connect(handler);
+        return () => signal.disconnect(handler);
     },
-    onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
-    onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
-    onScreensChanged: (handler) => workspace.screensChanged.connect(handler),
-    onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
+    onWindowAdded: (handler) => {
+        workspace.windowAdded.connect(handler);
+        return () => workspace.windowAdded.disconnect(handler);
+    },
+    onWindowRemoved: (handler) => {
+        workspace.windowRemoved.connect(handler);
+        return () => workspace.windowRemoved.disconnect(handler);
+    },
+    onScreensChanged: (handler) => {
+        workspace.screensChanged.connect(handler);
+        return () => workspace.screensChanged.disconnect(handler);
+    },
+    onCurrentDesktopChanged: (handler) => {
+        workspace.currentDesktopChanged.connect(handler);
+        return () => workspace.currentDesktopChanged.disconnect(handler);
+    },
     watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
         const surface = window as unknown as Window;
         const connected: Array<() => void> = [];
@@ -346,6 +359,7 @@ const controller = new TileController({
         };
     },
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
+    registerShortcut,
     log: (message) => console.log(message),
 }, (enabled) => trayPublisher?.notifyEnabledChanged(enabled));
 
