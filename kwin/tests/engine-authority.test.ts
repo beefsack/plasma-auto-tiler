@@ -950,3 +950,107 @@ describe("engine authority lazy one-shot retry", () => {
         assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
     });
 });
+
+describe("engine authority keyboard delivery diagnostic", () => {
+    function commandLines(logs: readonly string[]): string[] {
+        return logs.filter((line) => line.includes("engine-authority-rust-command:"));
+    }
+
+    it("emits one fixed action-identifying token per routed command with no duplicates", () => {
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", fakeStarts({ requests }), (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), true);
+        logs.length = 0;
+        dispatcher.requestFocus("left");
+        dispatcher.requestMove("right");
+        dispatcher.requestResize("up", "outwards");
+        dispatcher.enterOrExitRustResizeMode("inwards");
+        assert.deepEqual(commandLines(logs), [
+            "plasma-auto-tiler:engine-authority-rust-command:focus:left",
+            "plasma-auto-tiler:engine-authority-rust-command:move:right",
+            "plasma-auto-tiler:engine-authority-rust-command:resize:up:outwards",
+            "plasma-auto-tiler:engine-authority-rust-command:resize-mode:inwards",
+        ]);
+        assert.deepEqual(
+            requests.map((entry) => [entry.slice, ...entry.args]),
+            [
+                ["focus", "left"],
+                ["movement", "right"],
+                ["resize", "up", "outwards"],
+            ],
+        );
+        // focusOrResize delegates to exactly one leaf, so one physical press
+        // logs exactly one delivery token (fresh dispatcher with no armed
+        // resize mode, hence the focus leaf).
+        const soloRequests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const soloLogs: string[] = [];
+        const solo = createEngineAuthority("rust-development", fakeStarts({ requests: soloRequests }), (message) => {
+            soloLogs.push(message);
+        });
+        assert.equal(solo.start(), true);
+        solo.focusOrResize("down");
+        assert.deepEqual(commandLines(soloLogs), [
+            "plasma-auto-tiler:engine-authority-rust-command:focus:down",
+        ]);
+        assert.deepEqual(
+            soloRequests.map((entry) => [entry.slice, ...entry.args]),
+            [["focus", "down"]],
+        );
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+    });
+
+    it("proves delivery before the first-command retry outcome and stays idempotent", () => {
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", fakeStarts({ requests }), (message) => {
+            logs.push(message);
+        });
+        // No explicit start(): the first keyboard command is the retry route.
+        dispatcher.requestFocus("left");
+        assert.equal(dispatcher.isRustActive(), true);
+        assert.deepEqual(
+            requests.map((entry) => [entry.slice, ...entry.args]),
+            [["focus", "left"]],
+        );
+        const delivery = logs.findIndex((line) =>
+            line.includes("engine-authority-rust-command:focus:left"),
+        );
+        const ready = logs.findIndex((line) => line.includes("engine-authority-rust-ready"));
+        assert.ok(delivery >= 0, "delivery token must be present");
+        assert.ok(ready >= 0, "retry outcome must be present");
+        assert.ok(delivery < ready, "delivery must precede the retry outcome");
+        dispatcher.requestMove("right");
+        assert.deepEqual(
+            requests.map((entry) => [entry.slice, ...entry.args]),
+            [
+                ["focus", "left"],
+                ["movement", "right"],
+            ],
+        );
+        assert.equal(
+            logs.filter((line) => line.includes("engine-authority-rust-ready")).length,
+            1,
+            "no duplicate retry after activation",
+        );
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-command:move:right")));
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+    });
+
+    it("stays silent in legacy mode while still refusing", () => {
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("legacy", fakeStarts({ requests }), (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), false);
+        dispatcher.requestFocus("left");
+        dispatcher.requestMove("left");
+        dispatcher.focusOrResize("left");
+        assert.equal(requests.length, 0);
+        assert.deepEqual(commandLines(logs), []);
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
+    });
+});

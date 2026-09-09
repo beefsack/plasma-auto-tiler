@@ -42,12 +42,16 @@ movement, and pointer-resize scope without implying lifecycle automation.
   warnings`, 21 focused Rust tests, KWin typecheck, and 235 isolated KWin
   adapter tests. No live KWin action, package build, or generated-output change
   occurred during final verification.
-- Current-login PID-filtered KWin evidence showed the deployed af63a6f bundle
-  had callable-QV4 signal support but attached before an eligible scope was
-  available, then never retried. Rust-authority requests now make one
-  fail-closed, authority-gated reattach attempt through the existing adapters
-  and exact-three bootstrap. Isolated KWin/package and shared-Rust runtime
-  verification passed without changing generated artifacts or live KWin state.
+- Current-login PID-filtered KWin evidence showed deployed e771e8e loaded in
+  `rust-development`, with shortcuts registered, but all Rust entries rejected
+  their boot-time scope observation and the dispatcher reported unavailable.
+  The one-shot reattach path is reachable through the Rust dispatcher and
+  remains fail-closed.
+- The command entry now emits one fixed, non-sensitive Rust action token before
+  that reattach attempt. A physical Meta+Arrow can therefore distinguish a
+  missing callback from a failed retry without broad tracing. Typecheck, 413
+  focused KWin tests, full Rust tests, cargo fmt, and a temporary ES2017 package
+  bundle passed. Generated artifacts and live KWin state were not changed.
 
 ## Outcome
 
@@ -55,10 +59,10 @@ Static production wiring is complete. Rust mode remains opt-in with Legacy as
 the default and refuses without invoking Legacy. New-window lifecycle,
 add/remove/collapse, drag/drop, settings, persistence, and default promotion
 remain out of scope. A boot-time empty-scope loss has one first-command retry,
-not an add/remove lifecycle, polling path, or fallback.
+not an add/remove lifecycle, polling path, or fallback. The bounded command
+diagnostic separates shortcut delivery from retry failure.
 
 ## Next Action
 
-Rebuild, start a new session, and run the one exact-three Rust-mode focus,
-movement, and pointer-resize manual smoke; keyboard manual testing remains
-excluded for the Krohnkite collision.
+Rebuild and reboot, then press one Meta+Arrow with exactly three eligible
+windows and inspect the current-boot KWin token sequence.

@@ -78,6 +78,32 @@ export function packagedEngineAuthorityStarts(): EngineAuthorityStarts {
     };
 }
 
+// Bounded command identity for the keyboard delivery diagnostic: only the
+// four cardinal directions and the two resize modes are ever named, so the
+// token vocabulary stays fixed and carries no window or scope contents.
+const COMMAND_DIRECTIONS: readonly AuthorityDirection[] = Object.freeze([
+    "left",
+    "right",
+    "up",
+    "down",
+]);
+
+function normalizeCommandDirection(value: unknown): AuthorityDirection | "unknown" {
+    for (const direction of COMMAND_DIRECTIONS) {
+        if (value === direction) {
+            return direction;
+        }
+    }
+    return "unknown";
+}
+
+function normalizeCommandResizeMode(value: unknown): AuthorityResizeMode | "unknown" {
+    if (value === "outwards" || value === "inwards") {
+        return value;
+    }
+    return "unknown";
+}
+
 export class EngineAuthorityDispatcher {
     private focusHandle: FocusEntryHandle | null = null;
     private movementHandle: MovementEntryHandle | null = null;
@@ -235,6 +261,25 @@ export class EngineAuthorityDispatcher {
         return this.start();
     }
 
+    // Delivery diagnostic for the keyboard shortcut callback route: one
+    // fixed token per routed Rust command identifying the slice and the
+    // bounded direction/mode. Emitted at dispatcher entry before the one-shot
+    // retry outcome, so a single Meta+Arrow attempt proves callback delivery
+    // even when the retry stays fail-closed. Rust-development only; the
+    // legacy mode never emits. Fixed vocabulary only, no window contents.
+    // focusOrResize delegates to requestFocus/requestResize and stays silent
+    // itself so each physical press logs exactly once.
+    private commandReceived(kind: "focus" | "move" | "resize" | "resize-mode", detail: string): void {
+        if (this.mode !== "rust-development") {
+            return;
+        }
+        try {
+            this.log(`plasma-auto-tiler:engine-authority-rust-command:${kind}:${detail}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
     stop(): void {
         const focus = this.focusHandle;
         const movement = this.movementHandle;
@@ -256,6 +301,7 @@ export class EngineAuthorityDispatcher {
     }
 
     requestFocus(direction: AuthorityDirection): void {
+        this.commandReceived("focus", normalizeCommandDirection(direction));
         this.ensureStarted();
         if (!this.isRustActive() || this.focusHandle === null) {
             try {
@@ -273,6 +319,7 @@ export class EngineAuthorityDispatcher {
     }
 
     requestMove(direction: AuthorityDirection): void {
+        this.commandReceived("move", normalizeCommandDirection(direction));
         this.ensureStarted();
         if (!this.isRustActive() || this.movementHandle === null) {
             try {
@@ -290,6 +337,10 @@ export class EngineAuthorityDispatcher {
     }
 
     requestResize(direction: AuthorityDirection, resizeMode: AuthorityResizeMode): void {
+        this.commandReceived(
+            "resize",
+            `${normalizeCommandDirection(direction)}:${normalizeCommandResizeMode(resizeMode)}`,
+        );
         this.ensureStarted();
         if (!this.isRustActive() || this.resizeHandle === null) {
             try {
@@ -307,6 +358,7 @@ export class EngineAuthorityDispatcher {
     }
 
     enterOrExitRustResizeMode(resizeMode: AuthorityResizeMode): void {
+        this.commandReceived("resize-mode", normalizeCommandResizeMode(resizeMode));
         this.ensureStarted();
         if (!this.isRustActive()) {
             try {
