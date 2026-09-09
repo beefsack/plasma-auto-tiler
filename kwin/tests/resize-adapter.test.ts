@@ -288,7 +288,7 @@ describe("resize adapter", () => {
         assert.equal(payload["direction"], "right");
         assert.equal(payload["mode"], "outwards");
         assert.equal(payload["press_index"], 0);
-        assert.deepEqual(payload["capabilities"], { keyboard_resize: true });
+        assert.deepEqual(payload["capabilities"], { keyboard_resize: true, pointer_resize: false });
         assert.deepEqual(payload["windows"], [
             { window: "win-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 960, h: 1080 } },
             { window: "win-b", output: "out-1", workspace: "ws-1", rect: { x: 960, y: 0, w: 960, h: 1080 } },
@@ -630,12 +630,15 @@ describe("resize adapter", () => {
         assert.ok(!entry.includes("pollFor"));
     });
 
-    it("production startup cannot activate the adapter", () => {
+    it("production startup activates the adapter only through the mode-gated dispatcher", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("resize-adapter"));
         assert.ok(!entry.includes("ResizeAdapter"));
         assert.ok(!entry.includes("startResizeAdapterEntry"));
         assert.ok(!entry.includes("DescribeResize"));
+        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("resize-adapter-entry"));
+        assert.ok(authority.includes("startResizeAdapterEntry"));
     });
 
     it("explicit entry requires exclusive authority and fails closed", () => {
@@ -663,7 +666,7 @@ describe("resize adapter", () => {
         assert.equal(handle, null);
     });
 
-    it("no controller route references the resize slice", () => {
+    it("routes the resize slice only through the mode-gated dispatcher", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
             const body = readFileSync(join(dir, name), "utf8");
@@ -672,5 +675,11 @@ describe("resize adapter", () => {
             assert.ok(!body.includes("DescribeResize"));
             assert.ok(!body.includes("startResizeAdapterEntry"));
         }
+        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
+        assert.ok(controller.includes("engine-authority"));
+        assert.ok(controller.includes("isRustAuthorityActive"));
+        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("resize-adapter-entry"));
+        assert.ok(authority.includes("startResizeAdapterEntry"));
     });
 });

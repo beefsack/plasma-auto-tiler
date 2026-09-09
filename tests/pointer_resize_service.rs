@@ -173,7 +173,7 @@ fn pointer_request(
     direction: &str,
     boundary: i32,
     windows: &[&str],
-    keyboard_resize: bool,
+    pointer_resize: bool,
 ) -> String {
     let members: Vec<serde_json::Value> = windows
         .iter()
@@ -202,7 +202,7 @@ fn pointer_request(
         "focused_window": focused, "direction": direction,
         "proposed_boundary": boundary,
         "windows": members,
-        "capabilities": {"keyboard_resize": keyboard_resize},
+        "capabilities": {"keyboard_resize": false, "pointer_resize": pointer_resize},
     })
     .to_string()
 }
@@ -224,7 +224,7 @@ fn pointer_happy_path_plans_acks_and_commits() {
         true,
     )));
     assert_eq!(planned["outcome"], "planned", "{planned}");
-    assert_eq!(planned["capability"], "keyboard-resize");
+    assert_eq!(planned["capability"], "pointer-resize");
     assert_eq!(planned["operation"]["kind"], "ResizeSplitShare");
     // Rust derived shares; callers never supply them. 390 is exactly
     // projectable as [389,409]; geometry places the boundary exactly at 390.
@@ -527,7 +527,7 @@ fn pointer_tampered_verify_diverges_and_keyboard_wire_unchanged() {
                 {"window": "win-b", "output": "out-1", "workspace": "ws-1",
                  "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
             ],
-            "capabilities": {"keyboard_resize": true},
+            "capabilities": {"keyboard_resize": true, "pointer_resize": false},
         })
         .to_string(),
     )
@@ -655,7 +655,7 @@ fn dbus_routes_are_action_fenced_without_cross_mutation() {
             {"window": "win-b", "output": "out-1", "workspace": "ws-1",
              "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
         ],
-        "capabilities": {"keyboard_resize": true},
+        "capabilities": {"keyboard_resize": true, "pointer_resize": false},
     })
     .to_string();
     let cross_kbd = reply(&service.evaluate_pointer_json(&keyboard_request));
@@ -805,7 +805,7 @@ fn keyboard_request_for(
             {"window": "win-b", "output": "out-1", "workspace": "ws-1",
              "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
         ],
-        "capabilities": {"keyboard_resize": true},
+        "capabilities": {"keyboard_resize": true, "pointer_resize": false},
     })
     .to_string()
 }

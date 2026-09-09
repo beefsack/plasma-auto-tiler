@@ -236,7 +236,7 @@ fn request_json_with_geometry(
         "mode": "outwards",
         "press_index": 0,
         "windows": members,
-        "capabilities": {"keyboard_resize": keyboard_resize},
+        "capabilities": {"keyboard_resize": keyboard_resize, "pointer_resize": false},
     })
     .to_string()
 }

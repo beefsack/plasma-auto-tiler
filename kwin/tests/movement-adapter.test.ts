@@ -1209,12 +1209,15 @@ describe("movement adapter source hygiene and production isolation", () => {
         assert.ok(!entry.includes("pollFor"));
     });
 
-    it("production startup cannot activate the adapter", () => {
+    it("production startup activates the adapter only through the mode-gated dispatcher", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("movement-adapter"));
         assert.ok(!entry.includes("MovementAdapter"));
         assert.ok(!entry.includes("startMovementAdapterEntry"));
         assert.ok(!entry.includes("DescribeMovement"));
+        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("movement-adapter-entry"));
+        assert.ok(authority.includes("startMovementAdapterEntry"));
     });
 
     it("explicit entry requires exclusive authority and fails closed", () => {
@@ -1229,7 +1232,7 @@ describe("movement adapter source hygiene and production isolation", () => {
         assert.equal(handle, null);
     });
 
-    it("no controller route references the movement slice", () => {
+    it("routes the movement slice only through the mode-gated dispatcher", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
             const body = readFileSync(join(dir, name), "utf8");
@@ -1238,5 +1241,11 @@ describe("movement adapter source hygiene and production isolation", () => {
             assert.ok(!body.includes("DescribeMovement"));
             assert.ok(!body.includes("startMovementAdapterEntry"));
         }
+        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
+        assert.ok(controller.includes("engine-authority"));
+        assert.ok(controller.includes("isRustAuthorityActive"));
+        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("movement-adapter-entry"));
+        assert.ok(authority.includes("startMovementAdapterEntry"));
     });
 });

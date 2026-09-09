@@ -127,6 +127,8 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-active-border-kcm-config-test dbus)
     add_test(NAME native-effect-kcm-hotapply
         COMMAND plasma-auto-tiler-active-border-kcm-config-test hotapply)
+    add_test(NAME native-effect-kcm-engine-authority
+        COMMAND plasma-auto-tiler-active-border-kcm-config-test authority)
     add_test(NAME native-effect-kcm-border
         COMMAND plasma-auto-tiler-active-border-kcm-config-test border)
     add_test(NAME native-effect-kcm-config-reload
@@ -137,6 +139,7 @@ if(BUILD_TESTING)
         native-effect-kcm-config-missing
         native-effect-kcm-dbus
         native-effect-kcm-hotapply
+        native-effect-kcm-engine-authority
         native-effect-kcm-border
         native-effect-kcm-config-reload
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"

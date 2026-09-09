@@ -98,6 +98,37 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Packaged development authority readiness, 2026-09-09: the normal KWin
+  package has one strict `engineAuthorityMode` setting, `legacy` (default) or
+  `rust-development`. Missing, malformed, or unknown values remain legacy.
+  Legacy startup and callbacks are unchanged. Rust development mode starts only
+  the existing focus, R1-R4 movement, keyboard resize, and pointer resize
+  adapters with one owner/generation and revision-0 seed binding; it starts no
+  legacy controller lifecycle, Custom Tile, or pointer subscription. Each
+  target callback and gesture therefore has one authority. Adapter, Planner,
+  identity, stale, divergence, or service failure refuses Rust without a
+  legacy fallback. The portable contract now distinguishes `PointerResize`
+  from `KeyboardResize`; the routes advertise and require them independently.
+  Static Rust/KWin/package contracts pass. No live KWin work, service start,
+  configuration mutation, rebuild, session restart, or visual/manual evidence
+  occurred.
+
+  Manual journey after commit: rebuild and switch the existing Nix consumer
+  configuration that enables `programs.plasma-auto-tiler.enable`, then perform
+  one user session restart in safe `Legacy` mode to clear current transient
+  Script ambiguity. After that restart, run `nix run .# -- planner-service`,
+  then select `Rust (development)` for `The engine authority for focus, move,
+  and resize` in the existing Plasma Auto Tiler Desktop Effects settings and
+  Apply. KCM Apply syncs config then requests KWin reconfigure
+  (`org.kde.KWin` `/KWin` `org.kde.KWin` `reconfigure`), so the mode change is
+  applied without another restart. In that session, test an already-open,
+  stable tiled scope only: directional focus, R1-R4 movement, keyboard split
+  resize, and pointer split resize. Observe correctness, end-to-end latency,
+  pointer smoothness, neighbour reflow, one-frame gaps/flashes, focus
+  retention, and unrelated-window isolation. Do not test add/remove, drag, or
+  drop. Restore `Legacy` in the same settings, Apply (which again syncs config
+  then requests KWin reconfigure), and stop the planner with `Ctrl-C`.
+
 - Source-parity correction, 2026-09-09: `cosmic_v1` is corrected against
   `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20` production
   `map_to_tree`, `Data::{new_group,add_window,remove_window}`, resize, and

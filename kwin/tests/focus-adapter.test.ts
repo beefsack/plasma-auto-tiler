@@ -432,11 +432,14 @@ describe("focus adapter source hygiene and production isolation", () => {
         }
     });
 
-    it("production startup cannot activate the adapter", () => {
+    it("production startup activates the adapter only through the mode-gated dispatcher", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("focus-adapter"));
         assert.ok(!entry.includes("FocusAdapter"));
         assert.ok(!entry.includes("startFocusAdapterEntry"));
+        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("focus-adapter-entry"));
+        assert.ok(authority.includes("startFocusAdapterEntry"));
     });
 
     it("explicit entry requires exclusive authority and fails closed", () => {
@@ -451,7 +454,7 @@ describe("focus adapter source hygiene and production isolation", () => {
         assert.equal(handle, null);
     });
 
-    it("no controller route references the focus slice", () => {
+    it("routes the focus slice only through the mode-gated dispatcher", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
             const body = readFileSync(join(dir, name), "utf8");
@@ -460,6 +463,12 @@ describe("focus adapter source hygiene and production isolation", () => {
             assert.ok(!body.includes("DescribeFocus"));
             assert.ok(!body.includes("startFocusAdapterEntry"));
         }
+        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
+        assert.ok(controller.includes("engine-authority"));
+        assert.ok(controller.includes("isRustAuthorityActive"));
+        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("focus-adapter-entry"));
+        assert.ok(authority.includes("startFocusAdapterEntry"));
     });
 });
 

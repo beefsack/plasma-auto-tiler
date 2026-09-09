@@ -43,13 +43,23 @@
     <item row="3" column="1">
      <widget class="QComboBox" name="kcfg_shortcutProfile"/>
     </item>
-    <item row="4" column="0" colspan="2">
-     <widget class="QCheckBox" name="kcfg_dropOutlinePreview">
-      <property name="text">
-       <string>Show a destination outline while dragging a tiled window</string>
-      </property>
-     </widget>
-    </item>
+     <item row="4" column="0" colspan="2">
+      <widget class="QCheckBox" name="kcfg_dropOutlinePreview">
+       <property name="text">
+        <string>Show a destination outline while dragging a tiled window</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="0">
+      <widget class="QLabel" name="label_engineAuthorityMode">
+       <property name="text">
+        <string>The engine authority for focus, move, and resize</string>
+       </property>
+      </widget>
+     </item>
+     <item row="5" column="1">
+      <widget class="QComboBox" name="kcfg_engineAuthorityMode"/>
+     </item>
    </layout>
  </widget>
  <resources/>

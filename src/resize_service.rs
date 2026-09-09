@@ -1,4 +1,4 @@
-//! Bounded static keyboard resize transaction service (product-shaped, static only).
+//! Bounded static keyboard/pointer resize transaction service (product-shaped, static only).
 //!
 //! Narrow JSON request/action protocol over the portable [`crate::session`]
 //! resize plan (`Session::propose_resize` split-share) and [`crate::reconcile`]
@@ -336,6 +336,7 @@ struct ObservedDto {
 #[serde(deny_unknown_fields)]
 struct CapabilitiesDto {
     keyboard_resize: bool,
+    pointer_resize: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -585,7 +586,7 @@ struct MismatchedVerify {
     operation: crate::contract::ResizeOperation,
 }
 
-/// Bounded static keyboard resize transaction service over an owned [`Session`].
+/// Bounded static keyboard/pointer resize transaction service over an owned [`Session`].
 ///
 /// Owns/creates the single portable [`Session`] from the first strict
 /// normalized `request` (Rust-only deterministic admission order over the
@@ -1399,6 +1400,7 @@ impl ResizeService {
         };
         let caps = ResizeCapabilities {
             keyboard_resize: request.capabilities.keyboard_resize,
+            pointer_resize: request.capabilities.pointer_resize,
         };
         let Some(mode) = parse_mode(&request.mode) else {
             return rejected(
@@ -1584,7 +1586,7 @@ impl ResizeService {
                 }
             }
         }
-        if !request.capabilities.keyboard_resize {
+        if !request.capabilities.pointer_resize {
             return rejected(
                 request.correlation_id.clone(),
                 "unsupported-capability",
@@ -1780,6 +1782,7 @@ impl ResizeService {
         };
         let caps = ResizeCapabilities {
             keyboard_resize: request.capabilities.keyboard_resize,
+            pointer_resize: request.capabilities.pointer_resize,
         };
         match session.propose_pointer_resize(
             &domain,
@@ -1823,7 +1826,7 @@ impl ResizeService {
                     message: None,
                     base_revision: Some(plan.dispatch.base_revision),
                     revision: None,
-                    capability: Some("keyboard-resize"),
+                    capability: Some("pointer-resize"),
                     preconditions: Some(preconditions),
                     operation: Some(operation),
                     desired_geometry: Some(desired_geometry),

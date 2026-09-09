@@ -194,10 +194,19 @@ Only meaningful pending or active work is listed.
              Rust derives exact projectable boundary shares from proposed
              geometry, and KWin coalesces one latest step, writes changed
              neighbours only, and commits through fresh observation. Static
-             Rust/KWin contracts pass with no live work. Next: KWin drag-end
-             snap-back and drop adapter integration, separate from pointer
-              resize topology; parked shadow transport/live cleanup remains
-              unchanged. Source-parity correction is statically complete:
+             Rust/KWin contracts pass with no live work. Packaged manual-test
+             authority readiness is static-complete: strict default-legacy
+             `engineAuthorityMode` selects the existing Planner-backed Rust
+             focus/movement/keyboard/pointer adapters exclusively, while Rust
+             mode starts no legacy controller lifecycle or Custom Tile/pointer
+             authority. Pointer and keyboard resize capabilities are distinct.
+             User rebuild, new-session restart, manual Planner start,
+             development-mode selection, and stable-scope focus/move/keyboard/
+             pointer visual jank journey remain pending; add/remove and drag/
+             drop remain out of scope. Next: KWin drag-end snap-back and drop
+             adapter integration, separate from pointer resize topology; parked
+             shadow transport/live cleanup remains unchanged. Source-parity
+             correction is statically complete:
               `cosmic_v1` now executes audited `cosmic-comp`
               `81cd5fdbaa41c3973369ae85bccf829137836e20` admission-axis,
               proportional-share, keyboard/pointer pixel resize, and drag-zone

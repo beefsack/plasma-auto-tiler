@@ -27,6 +27,7 @@ const SCRIPT_SETTINGS = {
     workspaceMode: { type: "Enum", defaultValue: "per-output-local" },
     shortcutProfile: { type: "Enum", defaultValue: "cosmic" },
     dropOutlinePreview: { type: "Bool", defaultValue: "false" },
+    engineAuthorityMode: { type: "Enum", defaultValue: "legacy" },
 } as const;
 
 function schemaEntries(): Record<string, { type: string; defaultValue: string }> {
@@ -77,7 +78,7 @@ describe("native KCM static contract", () => {
         assert.ok(cmake.includes("-P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake"));
     });
 
-    it("keeps the five script keys and defaults identical between schema and native KCM", () => {
+    it("keeps the six script keys and defaults identical between schema and native KCM", () => {
         assert.deepEqual(schemaEntries(), SCRIPT_SETTINGS);
         assert.match(kcfg, /<group name="Effect-plasma-auto-tiler-active-border">/);
 
@@ -99,6 +100,7 @@ describe("native KCM static contract", () => {
         assert.match(module, /automaticSplitTargetCombo->findData\(QStringLiteral\("dwindle"\)\)/);
         assert.match(module, /workspaceModeCombo->findData\(QStringLiteral\("per-output-local"\)\)/);
         assert.match(module, /shortcutProfileCombo->findData\(QStringLiteral\("cosmic"\)\)/);
+        assert.match(module, /engineAuthorityModeCombo->findData\(QStringLiteral\("legacy"\)\)/);
         assert.match(module, /dropOutlinePreviewCheckBox->setChecked\(false\)/);
     });
 
@@ -154,6 +156,37 @@ describe("native KCM static contract", () => {
         assert.match(effect, /addRepaintFull\(\)/);
     });
 
+    it("requests KWin reconfigure exactly once for engine authority mode changes", () => {
+        assert.match(module, /QString ActiveBorderConfigModule::scriptService\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::scriptPath\(\)[\s\S]*?QStringLiteral\("\/KWin"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::scriptInterface\(\)[\s\S]*?QStringLiteral\("org\.kde\.KWin"\)/);
+        assert.match(module, /QString ActiveBorderConfigModule::scriptMethod\(\)[\s\S]*?QStringLiteral\("reconfigure"\)/);
+        assert.doesNotMatch(module, /scriptInterface\(\)[\s\S]{0,200}?org\.kde\.kwin\.Effects/);
+        assert.match(module, /QDBusInterface interface\(scriptService\(\), scriptPath\(\), scriptInterface\(\)/);
+        assert.match(module, /if \(!interface\.isValid\(\)\)/);
+        assert.match(module, /sessionBus\(\)\.send\([\s\S]*?QDBusMessage::createMethodCall\(scriptService\(\), scriptPath\(\), scriptInterface\(\), scriptMethod\(\)\)/);
+        assert.match(module, /requestScriptReconfigure\(\)/);
+        assert.match(module, /const bool engineAuthorityChanged = !m_loadedScriptValues\.isEmpty\(\)/);
+        assert.match(
+            module,
+            /current\.value\(QStringLiteral\("engineAuthorityMode"\)\) != m_loadedScriptValues\.value\(QStringLiteral\("engineAuthorityMode"\)\)/,
+        );
+        assert.match(module, /if \(engineAuthorityChanged\)[\s\S]*?m_scriptReconfigurePending = true/);
+        assert.match(module, /if \(m_scriptReconfigurePending\)[\s\S]*?if \(requestScriptReconfigure\(\)\)/);
+        assert.match(
+            module,
+            /if \(m_scriptReconfigurePending\)[\s\S]*?m_scriptReconfigurePending = false[\s\S]*?markAsChanged\(\)/,
+        );
+        assert.match(module, /Q_NOREPLY/);
+        const scriptCallSites = module.match(/if \(requestScriptReconfigure\(\)\)/g) ?? [];
+        assert.equal(scriptCallSites.length, 1);
+        const syncIndex = module.indexOf("group.sync();");
+        const scriptRequestIndex = module.indexOf("if (requestScriptReconfigure())");
+        assert.ok(syncIndex >= 0 && scriptRequestIndex > syncIndex);
+        const effectRequestIndex = module.indexOf("if (requestEffectReconfigure())");
+        assert.ok(effectRequestIndex >= 0 && effectRequestIndex < scriptRequestIndex);
+    });
+
     it("tracks manually managed script controls without rewriting untouched keys", () => {
         assert.match(module, /unmanagedWidgetChangeState\(/);
         assert.match(module, /unmanagedWidgetDefaultState\(/);
@@ -172,6 +205,7 @@ describe("native KCM static contract", () => {
             ["label_automaticSplitTarget", "automaticSplitTargetCombo"],
             ["label_workspaceMode", "workspaceModeCombo"],
             ["label_shortcutProfile", "shortcutProfileCombo"],
+            ["label_engineAuthorityMode", "engineAuthorityModeCombo"],
             ["label_BorderColor", "kcfg_BorderColor"],
             ["label_BorderWidth", "kcfg_BorderWidth"],
             ["label_BorderRadius", "kcfg_BorderRadius"],
@@ -192,6 +226,11 @@ describe("native KCM static contract", () => {
         assert.equal(scriptMetadata["X-KDE-ConfigModule"], undefined);
         assert.doesNotMatch(read("metadata.json"), /kcm_kwin4_genericscripted/);
         assert.ok(nativeMetadata["X-KDE-ConfigModule"]);
-        assert.match(ui, /Script settings do not hot-apply; reload the script or restart the session\./);
+        assert.match(
+            ui,
+            /Engine authority mode changes apply through KCM Apply, which syncs config then requests KWin reconfigure; one user restart clears current transient Script ambiguity\./,
+        );
+        assert.match(ui, /Other script settings require a script reload or session restart\./);
+        assert.doesNotMatch(ui, /Script settings do not hot-apply; reload the script or restart the session\./);
     });
 });

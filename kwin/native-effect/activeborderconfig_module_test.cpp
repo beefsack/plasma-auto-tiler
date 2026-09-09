@@ -10,6 +10,7 @@
 #include <QCheckBox>
 #include <QClipboard>
 #include <QColor>
+#include <QComboBox>
 #include <QDBusMessage>
 #include <QDoubleSpinBox>
 #include <QMimeData>
@@ -41,6 +42,11 @@ KConfigGroup scriptGroup()
 QCheckBox *scriptCheckBox(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QCheckBox *>(QStringLiteral("dropOutlinePreviewCheckBox"));
+}
+
+QComboBox *engineAuthorityModeCombo(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QComboBox *>(QStringLiteral("engineAuthorityModeCombo"));
 }
 
 KConfigGroup borderGroup()
@@ -106,6 +112,14 @@ void reconfigureRequestFailsWithoutKwin()
     CHECK(KWin::ActiveBorderConfigModule::isEffectReconfigureFailed(unknownInterface));
 }
 
+void scriptReconfigureTargetIsExact()
+{
+    CHECK(KWin::ActiveBorderConfigModule::scriptService() == QStringLiteral("org.kde.KWin"));
+    CHECK(KWin::ActiveBorderConfigModule::scriptPath() == QStringLiteral("/KWin"));
+    CHECK(KWin::ActiveBorderConfigModule::scriptInterface() == QStringLiteral("org.kde.KWin"));
+    CHECK(KWin::ActiveBorderConfigModule::scriptMethod() == QStringLiteral("reconfigure"));
+}
+
 class FailingReconfigureModule : public KWin::ActiveBorderConfigModule
 {
 public:
@@ -138,6 +152,68 @@ public:
     int calls = 0;
     bool succeed = false;
 };
+
+class CountingScriptReconfigureModule : public KWin::ActiveBorderConfigModule
+{
+public:
+    using KWin::ActiveBorderConfigModule::ActiveBorderConfigModule;
+    bool requestEffectReconfigure() override
+    {
+        return true;
+    }
+    bool requestScriptReconfigure() override
+    {
+        ++calls;
+        return succeed;
+    }
+    int calls = 0;
+    bool succeed = true;
+};
+
+void engineAuthorityApplyReconfiguresOncePerTransition()
+{
+    CountingScriptReconfigureModule module(nullptr, KPluginMetaData());
+    module.load();
+    QComboBox *mode = engineAuthorityModeCombo(module);
+    CHECK(mode != nullptr);
+    if (!mode) {
+        return;
+    }
+    module.save();
+    CHECK(module.calls == 0);
+
+    mode->setCurrentIndex(mode->findData(QStringLiteral("rust-development")));
+    module.save();
+    CHECK(module.calls == 1);
+    CHECK(scriptGroup().readEntry(QStringLiteral("engineAuthorityMode"), QString()) == QStringLiteral("rust-development"));
+    module.save();
+    CHECK(module.calls == 1);
+
+    mode->setCurrentIndex(mode->findData(QStringLiteral("legacy")));
+    module.save();
+    CHECK(module.calls == 2);
+    CHECK(scriptGroup().readEntry(QStringLiteral("engineAuthorityMode"), QString()) == QStringLiteral("legacy"));
+}
+
+void failedEngineAuthorityApplyRetries()
+{
+    CountingScriptReconfigureModule module(nullptr, KPluginMetaData());
+    module.succeed = false;
+    module.load();
+    QComboBox *mode = engineAuthorityModeCombo(module);
+    CHECK(mode != nullptr);
+    if (!mode) {
+        return;
+    }
+    mode->setCurrentIndex(mode->findData(QStringLiteral("rust-development")));
+    module.save();
+    CHECK(module.calls == 1);
+    CHECK(module.needsSave());
+    module.succeed = true;
+    module.save();
+    CHECK(module.calls == 2);
+    CHECK(!module.needsSave());
+}
 
 void failedHotApplyKeepsNeedsSave()
 {
@@ -523,7 +599,7 @@ int main(int argc, char **argv)
     app.clipboard()->setMimeData(new QMimeData);
 
     if (argc != 2) {
-        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|border|config\n", argv[0]);
+        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|authority|border|config\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -538,11 +614,15 @@ int main(int argc, char **argv)
         dbusTargetIsExact();
         dbusErrorClassification();
         reconfigureRequestFailsWithoutKwin();
+        scriptReconfigureTargetIsExact();
     } else if (scenario == QStringLiteral("hotapply")) {
         cleanSaveClearsNeedsSave();
         failedHotApplyKeepsNeedsSave();
         successfulHotApplyClearsNeedsSave();
         failedHotApplyRetriesOnSecondSaveWithoutEdit();
+    } else if (scenario == QStringLiteral("authority")) {
+        engineAuthorityApplyReconfiguresOncePerTransition();
+        failedEngineAuthorityApplyRetries();
     } else if (scenario == QStringLiteral("border")) {
         useThemeColorMissingKeyDefaultsToChecked();
         borderSerializationRoundtrip();

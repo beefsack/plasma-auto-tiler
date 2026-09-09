@@ -742,12 +742,16 @@ impl FocusPostObservation {
 /// Adapter-facing resize capability required to realize a split-share
 /// resize plan. Separate from movement [`Capability`], lifecycle
 /// [`LifecycleCapability`], and focus [`FocusCapability`] so frozen movement
-/// behavior is never misused for resize. COSMIC fixed 360/240 minima live
-/// under [`crate::cosmic_v1`] and the normalized projector supplies physical
-/// geometry; no separate native capability exists.
+/// behavior is never misused for resize. Keyboard (`DescribeResize`) and
+/// pointer (`DescribePointerResize`) routes require their own explicit
+/// capability so platforms can advertise either independently. COSMIC fixed
+/// 360/240 minima live under [`crate::cosmic_v1`] and the normalized
+/// projector supplies physical geometry; no separate native capability
+/// exists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ResizeCapability {
     KeyboardResize,
+    PointerResize,
 }
 
 impl ResizeCapability {
@@ -756,6 +760,7 @@ impl ResizeCapability {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::KeyboardResize => "keyboard-resize",
+            Self::PointerResize => "pointer-resize",
         }
     }
 }
@@ -764,6 +769,7 @@ impl ResizeCapability {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResizeCapabilities {
     pub keyboard_resize: bool,
+    pub pointer_resize: bool,
 }
 
 impl ResizeCapabilities {
@@ -772,6 +778,7 @@ impl ResizeCapabilities {
     pub const fn full() -> Self {
         Self {
             keyboard_resize: true,
+            pointer_resize: true,
         }
     }
 
@@ -780,6 +787,7 @@ impl ResizeCapabilities {
     pub const fn none() -> Self {
         Self {
             keyboard_resize: false,
+            pointer_resize: false,
         }
     }
 
@@ -788,6 +796,7 @@ impl ResizeCapabilities {
     pub const fn supports(&self, capability: ResizeCapability) -> bool {
         match capability {
             ResizeCapability::KeyboardResize => self.keyboard_resize,
+            ResizeCapability::PointerResize => self.pointer_resize,
         }
     }
 }
@@ -869,7 +878,10 @@ pub struct ResizeOperation {
 }
 
 impl ResizeOperation {
-    /// Adapter-facing capability required before emission.
+    /// Adapter-facing capability required before emission on the keyboard
+    /// route. The pointer route carries the same operation shape but binds
+    /// [`ResizeCapability::PointerResize`] explicitly at the session and
+    /// reconciler boundary.
     #[must_use]
     pub const fn required_capability(&self) -> ResizeCapability {
         ResizeCapability::KeyboardResize

@@ -1,6 +1,30 @@
 import { compareLeaves, type Direction, type Leaf } from "./logic";
 import { PRESET_KINDS, type PresetKind } from "./preset-catalog";
 
+export type EngineAuthorityMode = "legacy" | "rust-development";
+export const DEFAULT_ENGINE_AUTHORITY_MODE: EngineAuthorityMode = "legacy";
+export const ENGINE_AUTHORITY_MODE_CONFIG_KEY = "engineAuthorityMode";
+export const ENGINE_AUTHORITY_MODES: readonly EngineAuthorityMode[] = Object.freeze([
+    "legacy",
+    "rust-development",
+]);
+
+export function parseEngineAuthorityMode(value: unknown): {
+    readonly mode: EngineAuthorityMode;
+    readonly diagnostics: readonly string[];
+} {
+    if (typeof value === "string" && (ENGINE_AUTHORITY_MODES as readonly string[]).includes(value)) {
+        return { mode: value as EngineAuthorityMode, diagnostics: Object.freeze([]) };
+    }
+    if (value === undefined || value === null || value === "") {
+        return { mode: DEFAULT_ENGINE_AUTHORITY_MODE, diagnostics: Object.freeze([]) };
+    }
+    return {
+        mode: DEFAULT_ENGINE_AUTHORITY_MODE,
+        diagnostics: Object.freeze(["engine-authority-mode-invalid:fallback-legacy"]),
+    };
+}
+
 export type ProfileKey = "cosmic" | "hyprland" | "bspwm";
 export type RowClassification =
     | "exact"

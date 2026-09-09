@@ -832,7 +832,7 @@ fn exact_ack_verify_commit_versus_divergence() {
     // Operation shape matches the shared keyboard reconciliation boundary.
     assert_eq!(
         plan.dispatch.required_capability,
-        plasma_auto_tiler::contract::ResizeCapability::KeyboardResize
+        plasma_auto_tiler::contract::ResizeCapability::PointerResize
     );
     s.acknowledge(&AdapterAck::new(
         correlation("v-1"),
@@ -1002,7 +1002,7 @@ fn pointer_two_sided_correction_preserved() {
         .expect("pointer plans");
     assert_eq!(
         plan.dispatch.required_capability,
-        plasma_auto_tiler::contract::ResizeCapability::KeyboardResize
+        plasma_auto_tiler::contract::ResizeCapability::PointerResize
     );
     assert!(!plan.resize_plan.operation.new_shares.contains(&0));
     assert_ne!(

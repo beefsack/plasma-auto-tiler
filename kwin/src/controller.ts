@@ -90,13 +90,16 @@ import {
     DEFAULT_AUTOMATIC_SPLIT_TARGET,
     AUTOMATIC_SPLIT_TARGET_CONFIG_KEY,
     DEFAULT_DROP_OUTLINE_PREVIEW,
+    DEFAULT_ENGINE_AUTHORITY_MODE,
     DEFAULT_TILING_ALGORITHM,
     DEFAULT_WORKSPACE_MODE,
     DROP_OUTLINE_PREVIEW_CONFIG_KEY,
+    ENGINE_AUTHORITY_MODE_CONFIG_KEY,
     TILING_ALGORITHM_CONFIG_KEY,
     WORKSPACE_MODE_CONFIG_KEY,
     parseAutomaticSplitTarget,
     parseDropOutlinePreview,
+    parseEngineAuthorityMode,
     parseTilingAlgorithm,
     parseWorkspaceMode,
 } from "./controller-config";
@@ -105,6 +108,7 @@ import {
     type AutomaticSplitCandidate,
     type AutomaticSplitSelectionContext,
     type AutomaticSplitTarget,
+    type EngineAuthorityMode,
     type TilingAlgorithm,
     type WorkspaceMode,
 } from "./controller-config";
@@ -144,6 +148,11 @@ import {
     createWorkspaceDomain,
     type WorkspaceDomain,
 } from "./controller-workspace-domain";
+import {
+    createPackagedEngineAuthority,
+    type AuthorityDirection,
+    type EngineAuthorityDispatcher,
+} from "./engine-authority";
 export type { CurrentScope, SelectedOverlay } from "./controller-reflow-observers";
 
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
@@ -502,6 +511,11 @@ export class TileController {
     private automaticSplitTarget: AutomaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
     // Parsed but intentionally unused until the drag destination outline unit.
     private dropOutlinePreview = DEFAULT_DROP_OUTLINE_PREVIEW;
+    // Strict packaged engine-authority mode. Empty/missing is legacy;
+    // unknown/malformed is legacy with a fixed diagnostic. Never enables Rust
+    // implicitly. Parsed once at startup; drives the exclusive dispatcher.
+    private engineAuthorityMode: EngineAuthorityMode = DEFAULT_ENGINE_AUTHORITY_MODE;
+    private engineAuthority: EngineAuthorityDispatcher | null = null;
     // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
     // at startup and on screensChanged; never persisted. A stale or unknown
     // output wrapper is reported once per session tuple.
@@ -878,6 +892,28 @@ export class TileController {
         return this.dropOutlinePreview;
     }
 
+    // Strict packaged engine-authority mode snapshot. Read-only; set once at
+    // startup from engineAuthorityMode. Default is legacy.
+    engineAuthorityModeSnapshot(): EngineAuthorityMode {
+        return this.engineAuthorityMode;
+    }
+
+    // Whether the exclusive Rust dispatcher is the single authority for the
+    // four target paths (focus, move, keyboard resize, pointer resize).
+    // False in legacy and whenever the Rust path is unavailable; callers
+    // must never fall back to legacy for a refused Rust request.
+    isRustAuthorityActive(): boolean {
+        return this.engineAuthority?.isRustActive() === true;
+    }
+
+    // Mode-gated routing: true whenever the packaged mode selects
+    // rust-development, even when the Rust path failed to start. Target
+    // commands and the legacy pointer subscription use this (not the
+    // availability above) so adapter loss refuses instead of invoking legacy.
+    private useRustAuthority(): boolean {
+        return this.engineAuthorityMode === "rust-development";
+    }
+
     // Deterministic session output key for the given output (spec E), or
     // undefined before any rebuild observed it. Session-only; never persisted.
     outputKeyFor(output: OutputCapability): string | undefined {
@@ -1015,6 +1051,31 @@ export class TileController {
 
     start(): void {
         this.gate.run(() => {
+            // Strict packaged `engineAuthorityMode`: empty/missing is legacy;
+            // unknown/malformed is legacy with a fixed diagnostic. Never
+            // enables Rust implicitly. Parsed before any legacy
+            // subscription/lifecycle so rust-development never retains legacy
+            // window/screen/desktop subscriptions, cleanup/adoption/engage,
+            // or interactive attach. In rust-development the exclusive
+            // dispatcher below becomes the single authority for the four
+            // target paths; any start loss leaves it refused, never legacy.
+            // No add/remove subscription is deliberately fail-closed for this
+            // earliest stable-scope journey (add/remove out of scope); no
+            // lifecycle automation is implemented here.
+            const authority = parseEngineAuthorityMode(
+                this.environment.readConfig(ENGINE_AUTHORITY_MODE_CONFIG_KEY, DEFAULT_ENGINE_AUTHORITY_MODE),
+            );
+            for (const diagnostic of authority.diagnostics) {
+                this.diagnostic(diagnostic);
+            }
+            this.engineAuthorityMode = authority.mode;
+            if (authority.mode === "rust-development") {
+                const dispatcher = createPackagedEngineAuthority(authority.mode, (event) => this.diagnostic(event));
+                this.engineAuthority = dispatcher;
+                dispatcher.start();
+                return;
+            }
+            this.engineAuthority = null;
             this.environment.onWindowAdded((window) => this.handleWindowAdded(window));
             this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
             this.environment.onScreensChanged(() => this.handleScreensChanged());
@@ -1088,15 +1149,46 @@ export class TileController {
     }
 
     moveActiveWindow(direction: Direction): void {
+        // Exclusive authority: in rust-development the dispatcher owns R1-R4
+        // move via the movement adapter. No legacy fallback on refusal.
+        if (this.useRustAuthority()) {
+            const dispatcher = this.engineAuthority;
+            this.gate.run(
+                () => dispatcher?.requestMove(direction as AuthorityDirection),
+                (reason) => this.disabled(reason),
+            );
+            return;
+        }
         this.gate.run(() => this.directionalMovementStrategy.move(direction), (reason) => this.disabled(reason));
         return;
     }
 
     focusOrResize(direction: Direction): void {
+        // Exclusive authority: in rust-development the dispatcher owns focus
+        // (and rust resize steps when its resize mode is armed). No legacy
+        // fallback on refusal; the Rust path never reads legacy topology.
+        if (this.useRustAuthority()) {
+            const dispatcher = this.engineAuthority;
+            this.gate.run(
+                () => dispatcher?.focusOrResize(direction as AuthorityDirection),
+                (reason) => this.disabled(reason),
+            );
+            return;
+        }
         this.gate.run(() => this.inputActions.focusOrResize(direction), (reason) => this.disabled(reason));
     }
 
     enterOrExitResizeMode(mode: "outwards" | "inwards"): void {
+        // Exclusive authority: in rust-development the dispatcher owns the
+        // resize-mode arm state. No legacy fallback on refusal.
+        if (this.useRustAuthority()) {
+            const dispatcher = this.engineAuthority;
+            this.gate.run(
+                () => dispatcher?.enterOrExitRustResizeMode(mode),
+                (reason) => this.disabled(reason),
+            );
+            return;
+        }
         this.gate.run(() => this.inputActions.enterOrExitResizeMode(mode), (reason) => this.disabled(reason));
     }
 
@@ -1118,6 +1210,16 @@ export class TileController {
     // the result before `resize-completed` is claimed; there is no window
     // geometry write, no structural call, and no dual-write rollback path.
     public resizeActiveWindow(direction: Direction, mode: "outwards" | "inwards"): void {
+        // Exclusive authority: in rust-development the dispatcher owns
+        // keyboard resize via the resize adapter. No legacy fallback.
+        if (this.useRustAuthority()) {
+            const dispatcher = this.engineAuthority;
+            this.gate.run(
+                () => dispatcher?.requestResize(direction as AuthorityDirection, mode),
+                (reason) => this.disabled(reason),
+            );
+            return;
+        }
         this.gate.run(() => this.inputActions.resizeActiveWindow(direction, mode), (reason) => this.disabled(reason));
         return;
     }

@@ -37,6 +37,7 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">/);
+        assert.match(schema, /<entry name="engineAuthorityMode" type="Enum">/);
     });
 
     it("declares the startup defaults in the KConfigXT schema", () => {
@@ -45,6 +46,7 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<default>per-output-local<\/default>/);
         assert.match(schema, /<default>cosmic<\/default>/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">[\s\S]*?<default>false<\/default>/);
+        assert.match(schema, /<entry name="engineAuthorityMode" type="Enum">[\s\S]*?<default>legacy<\/default>/);
         for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
             assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
         }
@@ -57,12 +59,15 @@ describe("production bundle compatibility", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm"]) {
             assert.match(schema, new RegExp(`<choice name="${profile}" value="${profile}"\\/>`));
         }
+        for (const authority of ["legacy", "rust-development"]) {
+            assert.match(schema, new RegExp(`<choice name="${authority}" value="${authority}"\\/>`));
+        }
     });
 
     it("declares the standard KCM UI with kcfg-bound controls", () => {
         const ui = readFileSync("contents/ui/config.ui", "utf8");
         assert.match(ui, /<widget class="QWidget"/);
-        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile"]) {
+        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile", "engineAuthorityMode"]) {
             assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
         }
         assert.match(ui, /<widget class="QCheckBox" name="kcfg_dropOutlinePreview">/);

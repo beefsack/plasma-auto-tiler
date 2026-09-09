@@ -2302,7 +2302,7 @@ impl Session {
         {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
         }
-        if !capabilities.supports(crate::contract::ResizeCapability::KeyboardResize) {
+        if !capabilities.supports(crate::contract::ResizeCapability::PointerResize) {
             return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
         }
         // Normalized coordinate must land inside the domain work-area extent
@@ -2445,7 +2445,15 @@ impl Session {
             old_shares: target.old_shares.clone(),
             new_shares: new_shares.clone(),
         };
-        let plan = ResizePlan::for_operation(intent, operation);
+        // Pointer route binds `PointerResize` explicitly: the shared operation
+        // shape reports `KeyboardResize` via `required_capability()`, so the
+        // plan is constructed directly instead of via `for_operation`.
+        let plan = ResizePlan {
+            intent,
+            operation: operation.clone(),
+            required_capability: crate::contract::ResizeCapability::PointerResize,
+            preconditions: operation.preconditions(),
+        };
         let dispatch = match self.reconciler.propose_pointer_resize(
             &plan,
             &session_observation.observation,

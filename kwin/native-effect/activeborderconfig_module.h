@@ -29,6 +29,11 @@ public:
     static QString effectName();
     static bool isEffectReconfigureFailed(const QDBusMessage &reply);
     virtual bool requestEffectReconfigure();
+    static QString scriptService();
+    static QString scriptPath();
+    static QString scriptInterface();
+    static QString scriptMethod();
+    virtual bool requestScriptReconfigure();
 
     void setShortcutStores(ShortcutStore *store, JournalStore *journal);
     void setShortcutConfirmHandler(std::function<bool(const QString &, const QString &)> handler);
@@ -59,6 +64,7 @@ private:
     QVariantMap m_loadedScriptValues;
     bool m_loadedDropOutlinePreviewRawValid = true;
     bool m_effectReconfigurePending = false;
+    bool m_scriptReconfigurePending = false;
     ShortcutStore *m_shortcutStore = nullptr;
     JournalStore *m_shortcutJournal = nullptr;
     bool m_ownsShortcutStores = false;

@@ -889,7 +889,7 @@ export class ResizeAdapter {
                 mode,
                 press_index: pressIndex,
                 windows,
-                capabilities: { keyboard_resize: true },
+                capabilities: { keyboard_resize: true, pointer_resize: false },
             });
         } catch (error) {
             void error;

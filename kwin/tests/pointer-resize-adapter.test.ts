@@ -318,7 +318,7 @@ function plannedReply(
         correlation_id: correlation,
         outcome: "planned",
         base_revision: baseRevision,
-        capability: "keyboard-resize",
+        capability: "pointer-resize",
         preconditions: [
             "focused-leaf-occupied-by-focused-window",
             "target-boundary-valid",
@@ -481,7 +481,7 @@ describe("pointer resize adapter", () => {
         // (src/resize_service.rs), never on this wire.
         assert.ok(!("press_index" in payload));
         assert.ok(!("mode" in payload));
-        assert.deepEqual(payload["capabilities"], { keyboard_resize: true });
+        assert.deepEqual(payload["capabilities"], { keyboard_resize: false, pointer_resize: true });
         assert.equal(payload["focused_window"], "win-a");
         assert.equal(payload["revision"], 2);
         assert.equal(
@@ -532,7 +532,7 @@ describe("pointer resize adapter", () => {
                 correlation_id: badCorrelation,
                 outcome: "planned",
                 base_revision: badRevision,
-                capability: "keyboard-resize",
+                capability: "pointer-resize",
                 preconditions: [
                     "focused-leaf-occupied-by-focused-window",
                     "target-boundary-valid",
@@ -719,7 +719,7 @@ describe("pointer resize adapter", () => {
                 correlation_id: correlation,
                 outcome: "planned",
                 base_revision: revision,
-                capability: "keyboard-resize",
+                capability: "pointer-resize",
                 preconditions: [
                     "focused-leaf-occupied-by-focused-window",
                     "target-boundary-valid",
@@ -1156,15 +1156,18 @@ describe("pointer resize adapter", () => {
         assert.ok(src.includes('from "./geometry-order"'));
     });
 
-    it("production startup cannot activate the pointer adapter", () => {
+    it("production startup activates the pointer adapter only through the mode-gated dispatcher", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("pointer-resize-adapter"));
         assert.ok(!entry.includes("PointerResizeAdapter"));
         assert.ok(!entry.includes("startPointerResizeAdapterEntry"));
         assert.ok(!entry.includes("DescribePointerResize"));
+        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("pointer-resize-adapter-entry"));
+        assert.ok(authority.includes("startPointerResizeAdapterEntry"));
     });
 
-    it("no controller route references the pointer slice", () => {
+    it("routes the pointer slice only through the mode-gated dispatcher", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
             const body = readFileSync(join(dir, name), "utf8");
@@ -1173,6 +1176,12 @@ describe("pointer resize adapter", () => {
             assert.ok(!body.includes("DescribePointerResize"));
             assert.ok(!body.includes("startPointerResizeAdapterEntry"));
         }
+        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
+        assert.ok(controller.includes("engine-authority"));
+        assert.ok(controller.includes("isRustAuthorityActive"));
+        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
+        assert.ok(authority.includes("pointer-resize-adapter-entry"));
+        assert.ok(authority.includes("startPointerResizeAdapterEntry"));
     });
 });
 

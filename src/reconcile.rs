@@ -634,7 +634,9 @@ impl Reconciler {
     /// while verification must use [`Reconciler::verify_resize`] here. Binds
     /// exactly to owner/generation/base revision/correlation plus the resize
     /// plan's preconditions and declared resize capabilities; emits a
-    /// transport-neutral [`ResizeDispatch`].
+    /// transport-neutral [`ResizeDispatch`]. The keyboard route requires
+    /// [`crate::contract::ResizeCapability::KeyboardResize`] independently of
+    /// the pointer route.
     pub fn propose_resize(
         &mut self,
         plan: &ResizePlan,
@@ -674,7 +676,9 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::RevisionExhausted);
             return Err(ProposeError::Diverged(reason));
         }
-        if plan.required_capability != plan.operation.required_capability() {
+        if plan.required_capability != crate::contract::ResizeCapability::KeyboardResize
+            || plan.required_capability != plan.operation.required_capability()
+        {
             let reason = self.diverge(DivergenceKind::CapabilityRefused);
             return Err(ProposeError::Diverged(reason));
         }
@@ -682,7 +686,7 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
-        if !capabilities.supports(plan.operation.required_capability()) {
+        if !capabilities.supports(crate::contract::ResizeCapability::KeyboardResize) {
             let reason = self.diverge(DivergenceKind::CapabilityRefused);
             return Err(ProposeError::Diverged(reason));
         }
@@ -737,7 +741,9 @@ impl Reconciler {
     /// Shares the single pending slot with every other kind; acknowledgement
     /// binds identically and verification reuses [`Reconciler::verify_resize`].
     /// Binds exactly to owner/generation/base revision/correlation plus the
-    /// resize plan's preconditions and declared resize capabilities. Unlike
+    /// resize plan's preconditions and declared resize capabilities, requiring
+    /// [`crate::contract::ResizeCapability::PointerResize`] independently of
+    /// the keyboard route. Unlike
     /// [`Reconciler::propose_resize`], the share transfer is not required to
     /// carry keyboard mode semantics: [`valid_fixed_share_operation`]
     /// accepts any adjacent-only redistribution preserving positivity with
@@ -781,7 +787,7 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::RevisionExhausted);
             return Err(ProposeError::Diverged(reason));
         }
-        if plan.required_capability != plan.operation.required_capability() {
+        if plan.required_capability != crate::contract::ResizeCapability::PointerResize {
             let reason = self.diverge(DivergenceKind::CapabilityRefused);
             return Err(ProposeError::Diverged(reason));
         }
@@ -789,7 +795,7 @@ impl Reconciler {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
-        if !capabilities.supports(plan.operation.required_capability()) {
+        if !capabilities.supports(crate::contract::ResizeCapability::PointerResize) {
             let reason = self.diverge(DivergenceKind::CapabilityRefused);
             return Err(ProposeError::Diverged(reason));
         }

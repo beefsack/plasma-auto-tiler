@@ -356,7 +356,7 @@ export function derivePointerEdge(
 }
 
 const POINTER_KIND = "ResizeSplitShare";
-const POINTER_CAPABILITY = "keyboard-resize";
+const POINTER_CAPABILITY = "pointer-resize";
 const POINTER_PRECONDITIONS: readonly string[] = Object.freeze([
     "focused-leaf-occupied-by-focused-window",
     "target-boundary-valid",
@@ -1329,7 +1329,7 @@ export class PointerResizeAdapter {
                 direction,
                 proposed_boundary: boundary,
                 windows,
-                capabilities: { keyboard_resize: true },
+                capabilities: { keyboard_resize: false, pointer_resize: true },
             });
         } catch (error) {
             void error;
