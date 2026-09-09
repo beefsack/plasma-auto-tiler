@@ -699,6 +699,7 @@ impl Reconciler {
             || plan.intent.focused_leaf != plan.operation.focused_leaf
             || plan.intent.focused_window != plan.operation.focused_window
             || plan.intent.direction != plan.operation.direction
+            || plan.intent.mode != plan.operation.mode
         {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
@@ -738,9 +739,9 @@ impl Reconciler {
     /// Binds exactly to owner/generation/base revision/correlation plus the
     /// resize plan's preconditions and declared resize capabilities. Unlike
     /// [`Reconciler::propose_resize`], the share transfer is not required to
-    /// equal the keyboard 1/16 step: [`valid_pointer_resize_operation`]
+    /// carry keyboard mode semantics: [`valid_fixed_share_operation`]
     /// accepts any adjacent-only redistribution preserving positivity with
-    /// an optional exact whole-group x16 ratio-preserving normalization.
+    /// an optional exact whole-group ratio-preserving integer scaling.
     pub fn propose_pointer_resize(
         &mut self,
         plan: &ResizePlan,
@@ -805,11 +806,12 @@ impl Reconciler {
             || plan.intent.focused_leaf != plan.operation.focused_leaf
             || plan.intent.focused_window != plan.operation.focused_window
             || plan.intent.direction != plan.operation.direction
+            || plan.intent.mode != plan.operation.mode
         {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
-        if !valid_pointer_resize_operation(&plan.operation) {
+        if !valid_fixed_share_operation(&plan.operation) {
             let reason = self.diverge(DivergenceKind::PostconditionMismatch);
             return Err(ProposeError::Diverged(reason));
         }
@@ -1469,9 +1471,11 @@ fn resize_step_for(direction: crate::directional::Direction) -> i32 {
 /// Topology-free drag operation validity: portable ids are non-empty, source
 /// and target are distinct, `axis`/`before` derive exactly from `side`, and
 /// the wrap form carries a fresh distinct `new_group` id (inserts carry none).
-/// A root target names itself as its own `target_group` under `wrap`; any
-/// other placement names a distinct parent group. Structural bindings against
-/// the live topology are validated by the session layer.
+/// A root target names itself as its own `target_group` under `wrap`; group
+/// same-axis N-ary inserts name the target group itself (target_group ==
+/// target_leaf, wrap false, source GroupEdge/Interior); any other placement
+/// names a distinct parent group. Structural bindings against the live
+/// topology are validated by the session layer.
 fn valid_drag_operation(operation: &DragOperation) -> bool {
     if operation.domain_output.0.is_empty()
         || operation.domain_workspace.0.is_empty()
@@ -1488,7 +1492,12 @@ fn valid_drag_operation(operation: &DragOperation) -> bool {
     {
         return false;
     }
-    if operation.axis != operation.side.axis() || operation.before != operation.side.before() {
+    let (Some(side_axis), Some(side_before)) = (operation.side.axis(), operation.side.before())
+    else {
+        // Center stack fact never validates as an operation.
+        return false;
+    };
+    if operation.axis != side_axis || operation.before != side_before {
         return false;
     }
     if operation.insertion_index > 64 {
@@ -1518,9 +1527,10 @@ fn valid_drag_operation(operation: &DragOperation) -> bool {
         if operation.new_group.is_some() {
             return false;
         }
-        if operation.target_group == operation.source_leaf
-            || operation.target_group == operation.target_leaf
-        {
+        // Window same-axis inserts name a distinct parent; group same-axis
+        // N-ary inserts name the target group itself (target_group ==
+        // target_leaf). Only the source leaf is forbidden here.
+        if operation.target_group == operation.source_leaf {
             return false;
         }
     }
@@ -1528,65 +1538,74 @@ fn valid_drag_operation(operation: &DragOperation) -> bool {
 }
 
 fn valid_resize_operation(operation: &ResizeOperation) -> bool {
-    if operation.domain_output.0.is_empty()
-        || operation.domain_workspace.0.is_empty()
-        || operation.focused_leaf.0.is_empty()
-        || operation.focused_window.0.is_empty()
-        || operation.target_group.0.is_empty()
-        || operation.focused_child.0.is_empty()
-        || operation.neighbor_child.0.is_empty()
+    // Explicit keyboard reconciliation boundary: the fixed-share relation
+    // below plus keyboard mode semantics. Source COSMIC keyboard shares are
+    // pixel-derived and intentionally not the 1/16 project step, so this
+    // never uses `directional::expected_resize_shares`. The one-sided
+    // keyboard clamp (`cosmic_v1::clamp_keyboard_shrink_pair`) is enforced at
+    // derivation in the session layer; reconciliation validates the resulting
+    // fixed share/semantic operation (adjacent pair moves, non-pair shares
+    // scale exactly, focused share moves in the mode direction) before it may
+    // commit.
+    valid_fixed_share_operation(operation) && valid_keyboard_resize_mode(operation)
+}
+
+/// Keyboard-specific semantic validation: focus share movement direction must
+/// match mode after the exact whole-group scale used by the neutral
+/// fixed-share relation. `Inwards` must shrink focused, `Outwards` must grow
+/// focused. Scale derives safely from old/new totals; any overflow fails
+/// false.
+fn valid_keyboard_resize_mode(operation: &ResizeOperation) -> bool {
+    if operation.old_shares.len() != operation.new_shares.len()
+        || operation.focused_index >= operation.old_shares.len()
     {
         return false;
     }
-    if operation.focused_child == operation.neighbor_child {
+    let mut old_total: u64 = 0;
+    for share in &operation.old_shares {
+        match old_total.checked_add(*share) {
+            Some(next) => old_total = next,
+            None => return false,
+        }
+    }
+    let mut new_total: u64 = 0;
+    for share in &operation.new_shares {
+        match new_total.checked_add(*share) {
+            Some(next) => new_total = next,
+            None => return false,
+        }
+    }
+    if old_total == 0 || new_total == 0 || !new_total.is_multiple_of(old_total) {
         return false;
     }
-    if operation.old_shares.len() < 2
-        || operation.old_shares.len() > 64
-        || operation.new_shares.len() != operation.old_shares.len()
-    {
+    let scale = new_total / old_total;
+    if scale == 0 {
         return false;
     }
-    if operation.focused_index >= operation.old_shares.len()
-        || operation.neighbor_index >= operation.old_shares.len()
-        || operation.focused_index == operation.neighbor_index
-    {
-        return false;
+    match old_total.checked_mul(scale) {
+        Some(expected) if expected == new_total => {}
+        _ => return false,
     }
-    if (operation.focused_index as i32 - operation.neighbor_index as i32).abs() != 1 {
-        return false;
-    }
-    if operation.neighbor_index as i32 - operation.focused_index as i32
-        != resize_step_for(operation.direction)
-    {
-        return false;
-    }
-    if operation.old_shares.contains(&0) || operation.new_shares.contains(&0) {
-        return false;
-    }
-    if operation.old_shares == operation.new_shares {
-        return false;
-    }
-    match crate::directional::expected_resize_shares(
-        &operation.old_shares,
-        operation.focused_index,
-        operation.neighbor_index,
-    ) {
-        Some(expected) => expected == operation.new_shares,
-        None => false,
+    let scaled = match operation.old_shares[operation.focused_index].checked_mul(scale) {
+        Some(value) => value,
+        None => return false,
+    };
+    let new_focused = operation.new_shares[operation.focused_index];
+    match operation.mode {
+        crate::contract::ResizeMode::Inwards => new_focused < scaled,
+        crate::contract::ResizeMode::Outwards => new_focused > scaled,
     }
 }
 
-/// Pointer split-share operation validity: same identity/shape/direction
-/// binding as [`valid_resize_operation`], but the share transfer is any
-/// adjacent-only redistribution preserving positivity, with an optional
-/// exact whole-group ratio-preserving normalization (`new = K * old` for
+/// Neutral fixed-share operation validity: identity/shape/direction binding
+/// plus any adjacent-only redistribution preserving positivity, with an
+/// optional exact whole-group ratio-preserving integer scaling (`new = K * old` for
 /// non-pair shares and `new_pair_total = K * old_pair_total`, mirroring the
-/// keyboard x16 principle at any exact integer factor for pixel precision).
+/// exact integer-factor principle at any exact integer factor for pixel precision).
 /// Non-adjacent shares must match exactly after the same integer scaling;
 /// the adjacent pair total must be conserved after scaling and the pair must
 /// actually move.
-fn valid_pointer_resize_operation(operation: &ResizeOperation) -> bool {
+fn valid_fixed_share_operation(operation: &ResizeOperation) -> bool {
     if operation.domain_output.0.is_empty()
         || operation.domain_workspace.0.is_empty()
         || operation.focused_leaf.0.is_empty()
@@ -1650,7 +1669,7 @@ fn valid_pointer_resize_operation(operation: &ResizeOperation) -> bool {
     // Exact integer scaling factor `K >= 1` shared by the whole group:
     // `new[i] = K * old[i]` off-pair and `new_pair = K * old_pair`, with the
     // pair actually moving. `K = 1` is the unscaled case; `K = 16` is the
-    // keyboard-consistent normalization; larger `K` supplies pixel precision.
+    // pixel precision.
     let old_pair = match operation.old_shares[fi].checked_add(operation.old_shares[ni]) {
         Some(pair) if pair != 0 => pair,
         _ => return false,
@@ -2480,6 +2499,7 @@ mod tests {
             focused_leaf: NodeId("leaf-win-2".to_owned()),
             focused_window: WindowId("win-2".to_owned()),
             direction: Direction::Left,
+            mode: crate::contract::ResizeMode::Outwards,
             target_group: NodeId("root".to_owned()),
             focused_child: NodeId("leaf-win-2".to_owned()),
             neighbor_child: NodeId("leaf-win-1".to_owned()),
@@ -2497,6 +2517,7 @@ mod tests {
             focused_leaf: NodeId("leaf-win-2".to_owned()),
             focused_window: WindowId("win-2".to_owned()),
             direction: Direction::Left,
+            mode: crate::contract::ResizeMode::Outwards,
         }
     }
 
@@ -2535,6 +2556,7 @@ mod tests {
             "focused_leaf",
             "focused_window",
             "direction",
+            "mode",
         ] {
             let mut r = reconciler();
             let mut intent = resize_intent();
@@ -2554,6 +2576,9 @@ mod tests {
                 }
                 "direction" => {
                     intent.direction = Direction::Right;
+                }
+                "mode" => {
+                    intent.mode = crate::contract::ResizeMode::Inwards;
                 }
                 _ => unreachable!(),
             }
@@ -2648,7 +2673,7 @@ mod tests {
     #[test]
     fn resize_operation_semantics_validated_without_topology() {
         // Each mutation keeps ids well-formed but breaks adjacency
-        // orientation, index validity, or the exact share step.
+        // orientation, index validity, or the exact share transfer.
         let cases: Vec<ResizeOperation> = vec![
             // Non-adjacent indices.
             ResizeOperation {
@@ -2667,9 +2692,9 @@ mod tests {
                 new_shares: vec![1, 1],
                 ..resize_operation()
             },
-            // Inexact step.
+            // Pair total breaks exact integer scaling (31 vs old pair 2).
             ResizeOperation {
-                new_shares: vec![15, 17],
+                new_shares: vec![14, 17],
                 ..resize_operation()
             },
             // Zero share.
@@ -2699,6 +2724,76 @@ mod tests {
                 "case {index}"
             );
         }
+    }
+
+    #[test]
+    fn keyboard_pixel_shares_validate_on_dedicated_path() {
+        // Dedicated keyboard path accepts COSMIC pixel redistribution
+        // ([1,1] -> [15,17]: pair 2 -> 32 at K=16 with movement) that the
+        // legacy 1/16 step would reject as inexact, while still rejecting a
+        // broken scaling ([14,17] pair 31). Pointer accepts the same
+        // pixel shape via the shared neutral relation without mode semantics.
+        let mut r = reconciler();
+        let ok = ResizeOperation {
+            new_shares: vec![15, 17],
+            ..resize_operation()
+        };
+        let plan = ResizePlan::for_operation(resize_intent(), ok);
+        r.propose_resize(
+            &plan,
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("keyboard pixel shares accept");
+        let mut r2 = reconciler();
+        let bad = ResizeOperation {
+            new_shares: vec![14, 17],
+            ..resize_operation()
+        };
+        let bad_plan = ResizePlan::for_operation(resize_intent(), bad);
+        assert_eq!(
+            r2.propose_resize(
+                &bad_plan,
+                &observation(0),
+                &correlation("corr-1"),
+                &ResizeCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
+    }
+
+    #[test]
+    fn keyboard_mode_direction_validated_on_dedicated_path() {
+        // Otherwise-valid operation with flipped mode diverges; the valid
+        // keyboard operation stays accepted. Pointer validation is unchanged.
+        let mut r = reconciler();
+        r.propose_resize(
+            &resize_plan(),
+            &observation(0),
+            &correlation("corr-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("valid keyboard operation accepted");
+        let mut flipped_operation = resize_operation();
+        flipped_operation.mode = crate::contract::ResizeMode::Inwards;
+        let mut flipped_intent = resize_intent();
+        flipped_intent.mode = crate::contract::ResizeMode::Inwards;
+        let flipped_plan = ResizePlan::for_operation(flipped_intent, flipped_operation);
+        let mut r2 = reconciler();
+        assert_eq!(
+            r2.propose_resize(
+                &flipped_plan,
+                &observation(0),
+                &correlation("corr-1"),
+                &ResizeCapabilities::full()
+            ),
+            Err(ProposeError::Diverged(
+                DivergenceKind::PostconditionMismatch
+            ))
+        );
     }
 
     #[test]
@@ -3007,9 +3102,11 @@ mod tests {
                 new_group: Some(NodeId("leaf-win-1".to_owned())),
                 ..drag_operation()
             },
-            // Non-root target parent is distinct from both leaves.
+            // Non-root window target parent is distinct from the source leaf;
+            // group same-axis N-ary inserts name the target group itself, so
+            // the source leaf remains the forbidden parent here.
             DragOperation {
-                target_group: NodeId("leaf-win-2".to_owned()),
+                target_group: NodeId("leaf-win-1".to_owned()),
                 ..drag_operation()
             },
         ];

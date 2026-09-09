@@ -53,7 +53,7 @@ export interface ResizeEntryOverrides {
 
 export interface ResizeEntryHandle {
     readonly stop: () => void;
-    readonly request: (direction: unknown) => void;
+    readonly request: (direction: unknown, mode: unknown) => void;
 }
 
 const ENTRY_LOG = "plasma-auto-tiler:resize-entry";
@@ -734,9 +734,9 @@ export function startResizeAdapterEntry(
                 void error;
             }
         },
-        request: (direction) => {
+        request: (direction, mode) => {
             try {
-                adapter.requestResize(direction);
+                adapter.requestResize(direction, mode);
             } catch (error) {
                 void error;
             }

@@ -44,6 +44,9 @@ fn key(output: &str, workspace: &str) -> DomainKey {
         workspace: WorkspaceId(workspace.to_owned()),
     }
 }
+/// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC
+/// admission rule selects axis from target geometry (wide splits portable Horizontal),
+/// so horizontal needs a wide target and vice versa.
 fn placement(horiz: bool) -> Rect {
     if horiz {
         Rect {

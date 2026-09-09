@@ -5,7 +5,10 @@
 //! acknowledge + verify commit with complete exact geometry/focus, mismatch /
 //! divergence, adapter loss, and domain isolation. No live compositor state.
 
-use plasma_auto_tiler::contract::{AckOutcome, AdapterAck, LifecycleCapabilities, Observation};
+use plasma_auto_tiler::contract::{
+    AckOutcome, AdapterAck, FocusCapabilities, FocusPostObservation, LifecycleCapabilities,
+    Observation, PostObservation,
+};
 use plasma_auto_tiler::directional::{
     Capabilities, Direction, Node, NodeId, OutputId, WindowId, WorkspaceId,
 };
@@ -79,6 +82,9 @@ fn r4_session() -> Session {
     )
     .expect("r4 session")
 }
+/// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC
+/// admission rule selects axis from target geometry (wide splits portable Horizontal),
+/// so horizontal needs a wide target and vice versa.
 fn placement(horiz: bool) -> Rect {
     if horiz {
         Rect {
@@ -198,6 +204,82 @@ fn focused_window(session: &Session, domain: &DomainKey) -> String {
         .window
         .0
         .clone()
+}
+fn move_commit(
+    session: &mut Session,
+    domain: &DomainKey,
+    window: &str,
+    direction: Direction,
+    corr: &str,
+) {
+    let obs = complete_obs(session, vec![]);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_move(
+            domain,
+            &WindowId(window.to_owned()),
+            direction,
+            &obs,
+            &correlation(corr),
+            &Capabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("move {corr} {direction:?}: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_move(&PostObservation::new(
+            Observation::new(owner(), generation(), base, 900 + base),
+            correlation(corr),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .expect("commit");
+}
+fn focus_commit(
+    session: &mut Session,
+    domain: &DomainKey,
+    window: &str,
+    direction: Direction,
+    corr: &str,
+) {
+    let obs = complete_obs(session, vec![]);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_focus(
+            domain,
+            &WindowId(window.to_owned()),
+            direction,
+            &obs,
+            &correlation(corr),
+            &FocusCapabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("focus {corr} {direction:?}: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_focus(&FocusPostObservation::new(
+            Observation::new(owner(), generation(), base, 950 + base),
+            correlation(corr),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .expect("commit");
 }
 fn full_caps() -> serde_json::Value {
     serde_json::json!({
@@ -489,7 +571,13 @@ fn r2b_insert_plans_after_r1() {
         ))
         .expect("commit");
     }
-    let (_svc, _reply, v) = plan_through_service(s, &k, "up", "m-r2b-1");
+    // Binary admission wraps the focused leaf, so the R1 mover still faces a
+    // leaf sibling (R2a). Refocus to win-1 whose directional neighbor is a
+    // group, then Right is R2b insertion.
+    let w = focused_window(&s, &k);
+    focus_commit(&mut s, &k, &w, Direction::Left, "m-pre-focus-1");
+    assert_eq!(focused_window(&s, &k), "win-1");
+    let (_svc, _reply, v) = plan_through_service(s, &k, "right", "m-r2b-1");
     assert_eq!(v.get("rule").and_then(|r| r.as_str()), Some("R2b"));
     assert_geometry_complete(&v);
 }
@@ -501,7 +589,19 @@ fn r2c_wrap_plans() {
         admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
     }
     let k = key("out-1", "ws-1");
-    let (_svc, _reply, v) = plan_through_service(s, &k, "left", "m-r2c-1");
+    // Binary admission nests each entrant, so the admitted focus faces a leaf
+    // sibling (R2a). Walk focus to win-1, grow the inner group to 3 children
+    // via an R2b insertion, then Right from win-1 is R2c.
+    let w = focused_window(&s, &k);
+    focus_commit(&mut s, &k, &w, Direction::Left, "m-r2c-focus-1");
+    let w = focused_window(&s, &k);
+    focus_commit(&mut s, &k, &w, Direction::Left, "m-r2c-focus-2");
+    let w = focused_window(&s, &k);
+    focus_commit(&mut s, &k, &w, Direction::Left, "m-r2c-focus-3");
+    assert_eq!(focused_window(&s, &k), "win-1");
+    move_commit(&mut s, &k, "win-1", Direction::Right, "m-r2c-pre-1");
+    assert_eq!(focused_window(&s, &k), "win-1");
+    let (_svc, _reply, v) = plan_through_service(s, &k, "right", "m-r2c-1");
     assert_eq!(v.get("rule").and_then(|r| r.as_str()), Some("R2c"));
     assert_geometry_complete(&v);
 }

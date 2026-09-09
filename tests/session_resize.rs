@@ -44,10 +44,13 @@ fn single_session() -> Session {
         generation(),
         0,
         7,
-        vec![domain("out-1", "ws-1", 200, 200, 0)],
+        vec![domain("out-1", "ws-1", 800, 600, 0)],
     )
     .expect("session")
 }
+/// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC
+/// admission rule selects axis from target geometry (wide splits portable Horizontal),
+/// so horizontal needs a wide target and vice versa.
 fn placement(horiz: bool) -> Rect {
     if horiz {
         Rect {
@@ -203,6 +206,48 @@ fn focus_commit(
         ))
         .expect("verify focus");
 }
+fn move_commit_focused(
+    session: &mut Session,
+    domain: &DomainKey,
+    direction: Direction,
+    corr: &str,
+) {
+    let w = focused_window(session, domain);
+    let obs = complete_obs(session, vec![]);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_move(
+            domain,
+            &w,
+            direction,
+            &obs,
+            &correlation(corr),
+            &plasma_auto_tiler::directional::Capabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("move {direction:?}: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_move(&plasma_auto_tiler::contract::PostObservation::new(
+            Observation::new(owner(), generation(), base, 300 + base),
+            correlation(corr),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .expect("move commit");
+}
+fn focus_commit_step(session: &mut Session, domain: &DomainKey, direction: Direction, corr: &str) {
+    let w = focused_window(session, domain);
+    focus_commit(session, domain, &w, direction, corr);
+}
 fn resize_commit(
     session: &mut Session,
     domain: &DomainKey,
@@ -217,6 +262,8 @@ fn resize_commit(
             domain,
             window,
             direction,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation(corr),
             &ResizeCapabilities::full(),
@@ -311,12 +358,12 @@ fn horizontal_both_directions() {
     admit_commit(&mut s, "win-1", true, "c-1");
     admit_commit(&mut s, "win-2", true, "c-2");
     let k = key("out-1", "ws-1");
-    // Focus is win-2 (right). Left grows win-2: [1,1] -> scaled [16,16] delta 2 -> [14,18].
+    // Focus is win-2 (right). Edge Left with Outwards grows win-2: [1,1] -> [387,411] (12px).
     let w2 = focused_window(&s, &k);
     assert_eq!(w2.0, "win-2");
     let plan = resize_commit(&mut s, &k, &w2, Direction::Left, "r-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![14, 18]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![387, 411]);
     assert_eq!(plan.desired_focus_leaf.0, "leaf-win-2");
     assert_resize_geometry(&plan);
     // Now focus win-1 via focus Left, then resize Right grows win-1.
@@ -329,10 +376,10 @@ fn horizontal_both_directions() {
     );
     let w1 = focused_window(&s, &k);
     assert_eq!(w1.0, "win-1");
-    // Current shares [14,18]; pair total 32 divisible -> delta 2 -> [16,16].
+    // Current shares [387,411]; Right with Outwards grows win-1 back toward equal.
     let plan2 = resize_commit(&mut s, &k, &w1, Direction::Right, "r-2");
-    assert_eq!(plan2.resize_plan.operation.old_shares, vec![14, 18]);
-    assert_eq!(plan2.resize_plan.operation.new_shares, vec![16, 16]);
+    assert_eq!(plan2.resize_plan.operation.old_shares, vec![387, 411]);
+    assert_eq!(plan2.resize_plan.operation.new_shares, vec![399, 399]);
     assert_resize_geometry(&plan2);
 }
 
@@ -345,7 +392,7 @@ fn vertical_both_directions() {
     let w2 = focused_window(&s, &k);
     let plan = resize_commit(&mut s, &k, &w2, Direction::Up, "r-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![14, 18]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![287, 311]);
     assert_resize_geometry(&plan);
     focus_commit(
         &mut s,
@@ -356,7 +403,7 @@ fn vertical_both_directions() {
     );
     let w1 = focused_window(&s, &k);
     let plan2 = resize_commit(&mut s, &k, &w1, Direction::Down, "r-2");
-    assert_eq!(plan2.resize_plan.operation.new_shares, vec![16, 16]);
+    assert_eq!(plan2.resize_plan.operation.new_shares, vec![299, 299]);
     assert_resize_geometry(&plan2);
 }
 
@@ -380,9 +427,9 @@ fn nested_ancestor_resolution_outward() {
     let w = focused_window(&s, &k);
     assert_eq!(w.0, "win-2");
     let plan = resize_commit(&mut s, &k, &w, Direction::Left, "r-1");
-    // Outer group [win-1, inner] [1,1] -> [14,18]; inner shares unchanged.
+    // Outer group [win-1, inner] [1,1] -> [389,409]; inner shares unchanged.
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![14, 18]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![387, 411]);
     assert_eq!(plan.desired_focus_leaf.0, "leaf-win-2");
     let snap = s.snapshot();
     let root = snap.domains[0].tree.clone().expect("tree");
@@ -394,7 +441,7 @@ fn nested_ancestor_resolution_outward() {
             ..
         } => {
             assert_eq!(*axis, plasma_auto_tiler::directional::Axis::Horizontal);
-            assert_eq!(*shares, vec![14, 18]);
+            assert_eq!(*shares, vec![387, 411]);
             assert_eq!(children.len(), 2);
             match &children[1] {
                 Node::Group { shares, .. } => assert_eq!(*shares, vec![1, 1], "inner untouched"),
@@ -408,11 +455,31 @@ fn nested_ancestor_resolution_outward() {
 
 #[test]
 fn nary_pair_only_with_unaffected_subtree_and_order() {
-    let mut s = single_session();
+    // Four-wide needs COSMIC-scale pairs: 1600px so the 400px children form
+    // an 800px pair above the 720px pair minimum.
+    let mut s = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![domain("out-1", "ws-1", 1600, 600, 0)],
+    )
+    .expect("session");
     for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
         admit_commit(&mut s, &format!("win-{}", i + 1), true, c);
     }
     let k = key("out-1", "ws-1");
+    // Automatic admission always binary-wraps, so repeated admissions yield
+    // nested binary groups. Flatten to the intended ordered 4-child N-ary
+    // topology via public movement/focus commits (N-ary remains for
+    // movement representation only), keeping exact window/focus links.
+    move_commit_focused(&mut s, &k, Direction::Right, "m-1");
+    focus_commit_step(&mut s, &k, Direction::Left, "f-1");
+    focus_commit_step(&mut s, &k, Direction::Left, "f-2");
+    move_commit_focused(&mut s, &k, Direction::Left, "m-2");
+    focus_commit_step(&mut s, &k, Direction::Right, "f-3");
+    move_commit_focused(&mut s, &k, Direction::Left, "m-3");
+    focus_commit_step(&mut s, &k, Direction::Right, "f-4");
     // H[1,1,1,1] focus win-4 (last). Resize Left touches pair [win-3,win-4].
     let w4 = focused_window(&s, &k);
     assert_eq!(w4.0, "win-4");
@@ -425,9 +492,13 @@ fn nary_pair_only_with_unaffected_subtree_and_order() {
         out
     };
     let plan = resize_commit(&mut s, &k, &w4, Direction::Left, "r-1");
-    // Pair total 2 -> scaled whole group x16: [16,16,16,16] -> pair delta 2.
+    // Only the adjacent pair redistributes (plus exact ratio-preserving
+    // whole-group normalization for pixel precision).
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1, 1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![16, 16, 14, 18]);
+    assert_eq!(
+        plan.resize_plan.operation.new_shares,
+        vec![399, 399, 387, 411]
+    );
     // Order unchanged.
     let mut after = vec![];
     collect_leaves(
@@ -435,7 +506,7 @@ fn nary_pair_only_with_unaffected_subtree_and_order() {
         &mut after,
     );
     assert_eq!(before_leaves, after);
-    assert_eq!(root_shares(&s), vec![16, 16, 14, 18]);
+    assert_eq!(root_shares(&s), vec![399, 399, 387, 411]);
     assert_resize_geometry(&plan);
 }
 
@@ -458,6 +529,8 @@ fn edge_refusals_are_unchanged() {
                 &k,
                 &w1,
                 dir,
+                plasma_auto_tiler::contract::ResizeMode::Outwards,
+                0,
                 &obs,
                 &correlation("e-1"),
                 &ResizeCapabilities::full()
@@ -475,6 +548,8 @@ fn edge_refusals_are_unchanged() {
             &k,
             &w2,
             Direction::Right,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("e-2"),
             &ResizeCapabilities::full()
@@ -486,24 +561,27 @@ fn edge_refusals_are_unchanged() {
 
 #[test]
 fn normalization_and_clamp_to_exhaustion() {
-    // Pure primitive checks.
+    // COSMIC policy checks through the versioned seam (no 1/16 project step).
+    use plasma_auto_tiler::cosmic_v1;
+    use plasma_auto_tiler::directional::Axis;
+    assert_eq!(cosmic_v1::keyboard_step_px(0), 12);
+    assert_eq!(cosmic_v1::keyboard_step_px(1), 14);
+    assert_eq!(cosmic_v1::keyboard_step_px(4), 20);
+    assert!(!cosmic_v1::pair_admits_resize(719, 600, Axis::Horizontal));
+    assert!(cosmic_v1::pair_admits_resize(720, 600, Axis::Horizontal));
+    assert!(!cosmic_v1::pair_admits_resize(800, 479, Axis::Vertical));
+    assert!(cosmic_v1::pair_admits_resize(800, 480, Axis::Vertical));
     assert_eq!(
-        plasma_auto_tiler::directional::expected_resize_shares(&[1, 1], 1, 0),
-        Some(vec![14, 18])
+        cosmic_v1::clamp_pair_split(800, 10, Axis::Horizontal),
+        Some((360, 440))
     );
     assert_eq!(
-        plasma_auto_tiler::directional::expected_resize_shares(&[16, 16], 1, 0),
-        Some(vec![14, 18])
+        cosmic_v1::clamp_pair_split(800, 790, Axis::Horizontal),
+        Some((440, 360))
     );
-    // Donor at one with divisible total cannot move.
     assert_eq!(
-        plasma_auto_tiler::directional::expected_resize_shares(&[15, 1], 0, 1),
+        cosmic_v1::clamp_pair_split(719, 360, Axis::Horizontal),
         None
-    );
-    // Clamp: [100,1] scaled [1600,16] delta would be 101 > donor 16, clamps to 15.
-    assert_eq!(
-        plasma_auto_tiler::directional::expected_resize_shares(&[100, 1], 0, 1),
-        Some(vec![1615, 1])
     );
     // Session loop: repeatedly grow win-2 left until donor exhausts to Unchanged.
     let mut s = single_session();
@@ -521,6 +599,8 @@ fn normalization_and_clamp_to_exhaustion() {
             &k,
             &w,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation(&corr),
             &ResizeCapabilities::full(),
@@ -554,8 +634,11 @@ fn normalization_and_clamp_to_exhaustion() {
             panic!("donor never exhausted");
         }
     }
-    // Donor exhausted at [1,N].
-    assert_eq!(root_shares(&s)[0], 1);
+    // Donor clamped at the COSMIC child minimum: the left child keeps 360px
+    // and further Left proposals refuse as Unchanged.
+    assert!(corr_n > 1, "at least one step must plan");
+    let shares = root_shares(&s);
+    assert!(shares[0] < shares[1], "left child shrank: {shares:?}");
     assert!(!s.has_pending());
 }
 
@@ -573,6 +656,8 @@ fn focus_retained_and_plan_carries_semantics() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("sem-1"),
             &ResizeCapabilities::full(),
@@ -598,7 +683,7 @@ fn focus_retained_and_plan_carries_semantics() {
         plan.dispatch.operation.target_group
     );
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![14, 18]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![387, 411]);
     assert_eq!(plan.resize_plan.intent.direction, Direction::Left);
     assert_eq!(plan.resize_plan.intent.focused_window, w2);
     assert_resize_geometry(&plan);
@@ -638,6 +723,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &bad_domain,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("x-1"),
             &ResizeCapabilities::full()
@@ -650,6 +737,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &WindowId("win-9".to_owned()),
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("x-2"),
             &ResizeCapabilities::full()
@@ -662,6 +751,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &WindowId("win-1".to_owned()),
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("x-3"),
             &ResizeCapabilities::full()
@@ -674,6 +765,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("x-4"),
             &ResizeCapabilities::none()
@@ -689,6 +782,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &stale,
             &correlation("x-5"),
             &ResizeCapabilities::full()
@@ -706,6 +801,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
         &pk,
         &pw,
         Direction::Left,
+        plasma_auto_tiler::contract::ResizeMode::Outwards,
+        0,
         &pobs,
         &correlation("pend-1"),
         &ResizeCapabilities::full(),
@@ -717,6 +814,8 @@ fn refusal_matrix_unknown_mismatch_capability_stale_pending() {
             &pk,
             &pw,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &pobs,
             &correlation("pend-2"),
             &ResizeCapabilities::full()
@@ -739,6 +838,8 @@ fn exact_ack_verify_and_cross_kind_mismatch_diverges() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("v-1"),
             &ResizeCapabilities::full(),
@@ -771,11 +872,19 @@ fn exact_ack_verify_and_cross_kind_mismatch_diverges() {
 
 #[test]
 fn cross_kind_verify_diverges() {
-    let mut s = single_session();
-    admit_commit(&mut s, "win-1", true, "c-1");
-    admit_commit(&mut s, "win-2", true, "c-2");
+    // Three-wide needs COSMIC-scale pairs (1600px) for a pending resize.
+    let mut s = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![domain("out-1", "ws-1", 1600, 600, 0)],
+    )
+    .expect("session");
     // Admit a third window so a focus move exists, then hold a resize pending
     // and verify with a focus post-observation.
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
     admit_commit(&mut s, "win-3", true, "c-3");
     let k = key("out-1", "ws-1");
     let w3 = focused_window(&s, &k);
@@ -790,6 +899,8 @@ fn cross_kind_verify_diverges() {
             &k,
             &w2,
             Direction::Right,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("x-1"),
             &ResizeCapabilities::full(),
@@ -849,6 +960,8 @@ fn deterministic_replay() {
             &ka,
             &wa,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obsa,
             &correlation("rep-1"),
             &ResizeCapabilities::full(),
@@ -859,6 +972,8 @@ fn deterministic_replay() {
             &kb,
             &wb,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obsb,
             &correlation("rep-1"),
             &ResizeCapabilities::full(),
@@ -891,11 +1006,17 @@ fn deterministic_replay() {
 
 #[test]
 fn bounded_property_matrix() {
-    // Varied shares (via repeated resizes), work areas, gaps, directions.
-    // Checks: positive dimensions, span/gap conservation, share validity,
-    // reversible paired directions when no clamping involved.
-    let bounds_cases: Vec<(i32, i32, i32)> =
-        vec![(200, 200, 0), (120, 80, 2), (64, 64, 1), (97, 53, 4)];
+    // Varied shares (via repeated resizes), COSMIC-scale work areas, gaps,
+    // directions. Checks: positive dimensions, span/gap conservation, share
+    // validity, pair-sum conservation. Sub-minimum pairs refuse as Unchanged.
+    let bounds_cases: Vec<(i32, i32, i32)> = vec![
+        (800, 600, 0),
+        (1440, 900, 2),
+        (1600, 600, 4),
+        (800, 900, 8),
+        // Below the COSMIC pair minima: every proposal refuses as Unchanged.
+        (200, 200, 0),
+    ];
     let dir_cases: Vec<(bool, Vec<Direction>)> = vec![
         (true, vec![Direction::Left, Direction::Right]),
         (false, vec![Direction::Up, Direction::Down]),
@@ -962,6 +1083,8 @@ fn bounded_property_matrix() {
                     &k,
                     &fw,
                     dir,
+                    plasma_auto_tiler::contract::ResizeMode::Outwards,
+                    0,
                     &obs,
                     &correlation(&corr),
                     &ResizeCapabilities::full(),
@@ -1024,24 +1147,28 @@ fn bounded_property_matrix() {
                     assert_eq!(min_y, dom.bounds.y);
                     assert_eq!(max_e, dom.bounds.y + dom.bounds.h);
                 }
-                // Reversibility when no clamping: paired opposite resize inverts.
+                // COSMIC pixel check: the adjacent pair total is conserved
+                // exactly (after whole-group ratio-preserving normalization)
+                // and every share stays positive.
                 let old = plan.resize_plan.operation.old_shares.clone();
                 let new = plan.resize_plan.operation.new_shares.clone();
-                let pair_total_old: u64 = old.iter().sum();
-                let scaled = !pair_total_old.is_multiple_of(16);
-                // Clamp involved if donor after scaling <= delta; detect via pure fn round-trip.
                 let fi = plan.resize_plan.operation.focused_index;
                 let ni = plan.resize_plan.operation.neighbor_index;
-                if let Some(back) =
-                    plasma_auto_tiler::directional::expected_resize_shares(&new, fi, ni)
-                {
-                    // Reverse direction swaps donor/recipient roles? Paired
-                    // opposite direction from same focus uses mirrored indices:
-                    // focused stays, neighbor flips side only when symmetric.
-                    // Here we check at least that forward step conserved pair sum
-                    // after normalization and back step exists with valid shares.
-                    assert!(!back.contains(&0));
-                    let _ = scaled;
+                let old_pair = old[fi] + old[ni];
+                let new_pair = new[fi] + new[ni];
+                assert!(new_pair > 0 && old_pair > 0);
+                // Whole-group scale factor witnessed off-pair (or pair ratio
+                // for two-child groups) must be exact.
+                let n = old.len();
+                let has_non_pair = (0..n).any(|i| i != fi && i != ni);
+                if has_non_pair {
+                    let witness = (0..n).find(|i| *i != fi && *i != ni).expect("witness");
+                    assert!(new[witness] % old[witness] == 0);
+                    let scale = new[witness] / old[witness];
+                    assert!(scale >= 1);
+                    assert_eq!(new_pair, old_pair * scale);
+                } else {
+                    assert!(new_pair % old_pair == 0);
                 }
                 // Commit to keep session usable for next direction.
                 let base = s.accepted_revision();
@@ -1072,8 +1199,8 @@ fn reversible_paired_directions_without_clamp() {
     admit_commit(&mut s, "win-1", true, "c-1");
     admit_commit(&mut s, "win-2", true, "c-2");
     let k = key("out-1", "ws-1");
-    // Reach a no-scaling state: [1,1] -> Left from win-2 gives [14,18],
-    // then Right from win-1 gives [16,16] (pair total divisible, no scaling).
+    // Reach the pixel steady state: [1,1] -> Left from win-2 gives [389,409]
+    // (400px halves, 12px step), then Right from win-1 gives proportional shares.
     let w2 = focused_window(&s, &k);
     resize_commit(&mut s, &k, &w2, Direction::Left, "fwd-0");
     focus_commit(
@@ -1086,9 +1213,9 @@ fn reversible_paired_directions_without_clamp() {
     let w1 = focused_window(&s, &k);
     assert_eq!(w1.0, "win-1");
     resize_commit(&mut s, &k, &w1, Direction::Right, "fwd-00");
-    assert_eq!(root_shares(&s), vec![16, 16]);
-    // Now reversible without clamp: Left from win-2 -> [14,18], then Right
-    // from win-1 inverts exactly back to [16,16].
+    assert_eq!(root_shares(&s), vec![399, 399]);
+    // Now reversible without clamp: Left from win-2 -> [389,409], then Right
+    // from win-1 inverts exactly back to [399,399].
     focus_commit(
         &mut s,
         &k,
@@ -1099,8 +1226,8 @@ fn reversible_paired_directions_without_clamp() {
     let w2b = focused_window(&s, &k);
     assert_eq!(w2b.0, "win-2");
     let fwd = resize_commit(&mut s, &k, &w2b, Direction::Left, "fwd-1");
-    assert_eq!(fwd.resize_plan.operation.old_shares, vec![16, 16]);
-    assert_eq!(fwd.resize_plan.operation.new_shares, vec![14, 18]);
+    assert_eq!(fwd.resize_plan.operation.old_shares, vec![399, 399]);
+    assert_eq!(fwd.resize_plan.operation.new_shares, vec![387, 411]);
     focus_commit(
         &mut s,
         &k,
@@ -1110,9 +1237,9 @@ fn reversible_paired_directions_without_clamp() {
     );
     let w1b = focused_window(&s, &k);
     let back = resize_commit(&mut s, &k, &w1b, Direction::Right, "back-1");
-    assert_eq!(back.resize_plan.operation.old_shares, vec![14, 18]);
-    assert_eq!(back.resize_plan.operation.new_shares, vec![16, 16]);
-    assert_eq!(root_shares(&s), vec![16, 16]);
+    assert_eq!(back.resize_plan.operation.old_shares, vec![387, 411]);
+    assert_eq!(back.resize_plan.operation.new_shares, vec![399, 399]);
+    assert_eq!(root_shares(&s), vec![399, 399]);
 }
 
 #[test]
@@ -1129,6 +1256,8 @@ fn capability_missing_at_edge_is_unsupported_not_unchanged() {
             &k,
             &w1,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("cap-edge-1"),
             &ResizeCapabilities::none()
@@ -1143,6 +1272,8 @@ fn capability_missing_at_edge_is_unsupported_not_unchanged() {
             &k,
             &w1,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("cap-edge-2"),
             &ResizeCapabilities::full()
@@ -1150,6 +1281,48 @@ fn capability_missing_at_edge_is_unsupported_not_unchanged() {
         Err(ProposeError::Refused(RefusalKind::Unchanged))
     );
     assert!(!s.has_pending());
+}
+
+#[test]
+fn cosmic_fixed_minima_govern_without_separate_capability() {
+    // COSMIC fixed 360/240 minima live under cosmic_v1 with normalized
+    // projection supplying physical geometry; no separate native capability
+    // exists. Missing keyboard-resize still refuses as unsupported.
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    let k = key("out-1", "ws-1");
+    let w2 = focused_window(&s, &k);
+    let obs = complete_obs(&s, vec![]);
+    assert_eq!(
+        s.propose_resize(
+            &k,
+            &w2,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &obs,
+            &correlation("cap-native-1"),
+            &ResizeCapabilities::none()
+        ),
+        Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
+    );
+    assert!(!s.has_pending());
+    assert!(!s.has_pending_desired());
+    // Full capabilities plan on the same state under fixed minima.
+    let plan = s
+        .propose_resize(
+            &k,
+            &w2,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &obs,
+            &correlation("cap-native-2"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("plan under fixed minima");
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![387, 411]);
 }
 
 #[test]
@@ -1173,6 +1346,8 @@ fn flagged_observation_refuses_fail_closed() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("flag-1"),
             &ResizeCapabilities::full()
@@ -1242,6 +1417,8 @@ fn flagged_observation_refuses_fail_closed() {
             &tk,
             &WindowId("win-9".to_owned()),
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &tkobs,
             &correlation("flag-2"),
             &ResizeCapabilities::full()
@@ -1266,6 +1443,8 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &partial,
             &correlation("obs-partial"),
             &ResizeCapabilities::full()
@@ -1281,6 +1460,8 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &cross,
             &correlation("obs-cross"),
             &ResizeCapabilities::full()
@@ -1296,6 +1477,8 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &malformed,
             &correlation("obs-malformed"),
             &ResizeCapabilities::full()
@@ -1311,6 +1494,8 @@ fn partial_cross_domain_malformed_observations_refuse() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &dup,
             &correlation("obs-dup"),
             &ResizeCapabilities::full()
@@ -1354,7 +1539,7 @@ fn vertical_gap_conservation() {
         generation(),
         0,
         7,
-        vec![domain("out-1", "ws-1", 200, 200, 4)],
+        vec![domain("out-1", "ws-1", 800, 600, 4)],
     )
     .expect("session");
     admit_commit(&mut s, "win-1", false, "c-1");
@@ -1367,6 +1552,8 @@ fn vertical_gap_conservation() {
             &k,
             &w2,
             Direction::Up,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("vgap-1"),
             &ResizeCapabilities::full(),
@@ -1407,50 +1594,28 @@ fn vertical_gap_conservation() {
 
 #[test]
 fn divisible_step_inverts_exactly_via_primitive() {
-    use plasma_auto_tiler::directional::expected_resize_shares;
-    // Divisible, non-clamped: [16,16] Left from index 1 -> [14,18]; the
-    // paired opposite direction from index 0 inverts exactly.
-    let fwd = expected_resize_shares(&[16, 16], 1, 0).expect("forward");
-    assert_eq!(fwd, vec![14, 18]);
-    let back = expected_resize_shares(&fwd, 0, 1).expect("back");
-    assert_eq!(back, vec![16, 16]);
-    // Deterministic pure share-step matrix: varied positive divisible
-    // (all multiples of 16, so every adjacent pair total is divisible and
-    // unscaled) non-clamped (every donor exceeds its pair delta) N-ary
-    // vectors, every adjacent pair in both orientations. Each forward step
-    // must invert exactly under paired opposite focused/neighbor indices
-    // with positive conserved shares.
-    let vectors: Vec<Vec<u64>> = vec![
-        vec![16, 16],
-        vec![32, 32],
-        vec![16, 16, 16],
-        vec![32, 16, 32],
-        vec![16, 32, 16, 32],
-        vec![48, 16, 32, 16],
-        vec![32, 32, 32, 32, 32],
-    ];
-    for shares in &vectors {
-        let total: u64 = shares.iter().sum();
-        assert!(shares.iter().all(|s| *s > 0));
-        for k in 0..shares.len() - 1 {
-            for (fi, ni) in [(k, k + 1), (k + 1, k)] {
-                let pair_total = shares[fi] + shares[ni];
-                // Pair total is divisible, so no x16 rounding boundary.
-                assert_eq!(pair_total % 16, 0, "divisible {shares:?} ({fi},{ni})");
-                let delta = pair_total / 16;
-                // Donor exceeds the transfer, so no clamp boundary.
-                assert!(shares[ni] > delta, "non-clamped {shares:?} ({fi},{ni})");
-                let fwd = expected_resize_shares(shares, fi, ni)
-                    .unwrap_or_else(|| panic!("forward {shares:?} ({fi},{ni})"));
-                assert!(fwd.iter().all(|s| *s > 0), "positive {shares:?}");
-                assert_eq!(fwd.iter().sum::<u64>(), total, "conserved {shares:?}");
-                let back = expected_resize_shares(&fwd, ni, fi)
-                    .unwrap_or_else(|| panic!("back {fwd:?} ({ni},{fi})"));
-                assert_eq!(back, *shares, "exact inversion {shares:?} ({fi},{ni})");
-                assert_eq!(back.iter().sum::<u64>(), total);
-            }
-        }
-    }
+    // COSMIC pixel steady state on the vertical axis inverts exactly through
+    // the session: Up from win-2 gives [287,311] (300px halves, 12px step),
+    // then Down from win-1 returns [299,299], and the cycle repeats.
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", false, "c-1");
+    admit_commit(&mut s, "win-2", false, "c-2");
+    let k = key("out-1", "ws-1");
+    let w2 = focused_window(&s, &k);
+    let fwd = resize_commit(&mut s, &k, &w2, Direction::Up, "v-fwd");
+    assert_eq!(fwd.resize_plan.operation.old_shares, vec![1, 1]);
+    assert_eq!(fwd.resize_plan.operation.new_shares, vec![287, 311]);
+    focus_commit(&mut s, &k, &w2, Direction::Up, "v-f");
+    let w1 = focused_window(&s, &k);
+    let back = resize_commit(&mut s, &k, &w1, Direction::Down, "v-back");
+    assert_eq!(back.resize_plan.operation.old_shares, vec![287, 311]);
+    assert_eq!(back.resize_plan.operation.new_shares, vec![299, 299]);
+    assert_eq!(root_shares(&s), vec![299, 299]);
+    // A second cycle inverts through the same steady states.
+    focus_commit(&mut s, &k, &w1, Direction::Down, "v-f2");
+    let w2b = focused_window(&s, &k);
+    let fwd2 = resize_commit(&mut s, &k, &w2b, Direction::Up, "v-fwd2");
+    assert_eq!(fwd2.resize_plan.operation.new_shares, vec![287, 311]);
 }
 
 #[test]
@@ -1469,6 +1634,8 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
             &k,
             &w2,
             Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
             &obs,
             &correlation("div-1"),
             &ResizeCapabilities::full(),
@@ -1512,6 +1679,8 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
         &tk,
         &tw,
         Direction::Left,
+        plasma_auto_tiler::contract::ResizeMode::Outwards,
+        0,
         &tobs,
         &correlation("div-2"),
         &ResizeCapabilities::full(),
@@ -1531,4 +1700,313 @@ fn pending_desired_clears_on_resize_terminal_divergence() {
         ))
     );
     assert!(!t.has_pending_desired());
+}
+
+#[test]
+fn keyboard_inwards_shrinks_focused_outwards_grows() {
+    use plasma_auto_tiler::contract::ResizeMode;
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    let k = key("out-1", "ws-1");
+    let w2 = focused_window(&s, &k);
+    assert_eq!(w2.0, "win-2");
+    // Outwards (grow focused right via Left edge) moves left boundary left.
+    let obs = complete_obs(&s, vec![]);
+    let out_plan = s
+        .propose_resize(
+            &k,
+            &w2,
+            Direction::Left,
+            ResizeMode::Outwards,
+            0,
+            &obs,
+            &correlation("inout-out"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("outwards plans");
+    assert_eq!(out_plan.resize_plan.operation.new_shares, vec![387, 411]);
+    assert_eq!(out_plan.resize_plan.intent.mode, ResizeMode::Outwards);
+    // Inwards (shrink focused) moves the same edge the opposite way.
+    let in_plan = {
+        let mut tmp = single_session();
+        admit_commit(&mut tmp, "win-1", true, "c-i1");
+        admit_commit(&mut tmp, "win-2", true, "c-i2");
+        let tk = key("out-1", "ws-1");
+        let tw = focused_window(&tmp, &tk);
+        let tobs = complete_obs(&tmp, vec![]);
+        tmp.propose_resize(
+            &tk,
+            &tw,
+            Direction::Left,
+            ResizeMode::Inwards,
+            0,
+            &tobs,
+            &correlation("inout-in"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("inwards plans")
+    };
+    // Inwards on the right child increases the left share (mirror of outwards).
+    assert_eq!(in_plan.resize_plan.operation.old_shares, vec![1, 1]);
+    assert_eq!(in_plan.resize_plan.intent.mode, ResizeMode::Inwards);
+    let out_left = out_plan.resize_plan.operation.new_shares[0];
+    let in_left = in_plan.resize_plan.operation.new_shares[0];
+    assert!(
+        out_left < 399 && in_left > 399,
+        "out {out_left} in {in_left}"
+    );
+}
+
+#[test]
+fn pair_threshold_uses_direct_sum_not_union_with_gap() {
+    // Direct pair sums gate the resize, never union including gap (resize.rs
+    // 291-317, tiling 2582-2600). Width 727 gap 8 => sizes 359+360=719 refuse
+    // (union 727 would admit if misused); wider admits. Height 487 gap 8 =>
+    // 239+240=479 refuse; taller admits.
+    fn session_with(w: i32, h: i32, gap: i32) -> Session {
+        Session::new(
+            owner(),
+            generation(),
+            0,
+            7,
+            vec![domain("out-1", "ws-1", w, h, gap)],
+        )
+        .expect("session")
+    }
+    fn admit_wide(session: &mut Session, window: &str, corr: &str) {
+        admit_commit(session, window, true, corr);
+    }
+    // Horizontal 719 refuse.
+    let mut s = session_with(727, 600, 8);
+    admit_wide(&mut s, "win-1", "g-1");
+    admit_wide(&mut s, "win-2", "g-2");
+    let k = key("out-1", "ws-1");
+    let w = focused_window(&s, &k);
+    let obs = complete_obs(&s, vec![]);
+    assert_eq!(
+        s.propose_resize(
+            &k,
+            &w,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &obs,
+            &correlation("gap-719"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(ProposeError::Refused(RefusalKind::Unchanged))
+    );
+    // Horizontal admit with gap (direct sum 792, union 800): plans.
+    let mut s2 = session_with(800, 600, 8);
+    admit_wide(&mut s2, "win-1", "g-1");
+    admit_wide(&mut s2, "win-2", "g-2");
+    let k2 = key("out-1", "ws-1");
+    let w2 = focused_window(&s2, &k2);
+    let obs2 = complete_obs(&s2, vec![]);
+    assert!(
+        s2.propose_resize(
+            &k2,
+            &w2,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &obs2,
+            &correlation("gap-720"),
+            &ResizeCapabilities::full(),
+        )
+        .is_ok()
+    );
+    // Vertical 479 refuse, 480 admit (gap 8).
+    let mut v = session_with(800, 487, 8);
+    admit_commit(&mut v, "win-1", false, "v-1");
+    admit_commit(&mut v, "win-2", false, "v-2");
+    let vk = key("out-1", "ws-1");
+    let vw = focused_window(&v, &vk);
+    let vobs = complete_obs(&v, vec![]);
+    assert_eq!(
+        v.propose_resize(
+            &vk,
+            &vw,
+            Direction::Up,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &vobs,
+            &correlation("gap-479"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(ProposeError::Refused(RefusalKind::Unchanged))
+    );
+    let mut v2 = session_with(800, 600, 8);
+    admit_commit(&mut v2, "win-1", false, "v-1");
+    admit_commit(&mut v2, "win-2", false, "v-2");
+    let vk2 = key("out-1", "ws-1");
+    let vw2 = focused_window(&v2, &vk2);
+    let vobs2 = complete_obs(&v2, vec![]);
+    assert!(
+        v2.propose_resize(
+            &vk2,
+            &vw2,
+            Direction::Up,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &vobs2,
+            &correlation("gap-480"),
+            &ResizeCapabilities::full(),
+        )
+        .is_ok()
+    );
+}
+
+#[test]
+fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
+    // One-sided source clamp differs from pointer two-sided when the grow
+    // side sits below the child minimum: keyboard keeps grow at 232, pointer
+    // would correct to 360/360.
+    use plasma_auto_tiler::cosmic_v1;
+    use plasma_auto_tiler::directional::Axis;
+    assert_eq!(
+        cosmic_v1::clamp_keyboard_shrink_pair(500, 220, 12, Axis::Horizontal),
+        Some((488, 232))
+    );
+    assert_eq!(
+        cosmic_v1::clamp_pair_split(720, 488, Axis::Horizontal),
+        Some((360, 360))
+    );
+    // Session keyboard carries mode/direction semantics and commits through
+    // the dedicated propose_resize path (one pending + exact ack/verify).
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    let k = key("out-1", "ws-1");
+    let w2 = focused_window(&s, &k);
+    let obs = complete_obs(&s, vec![]);
+    let plan = s
+        .propose_resize(
+            &k,
+            &w2,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Inwards,
+            0,
+            &obs,
+            &correlation("kbd-1"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("keyboard inwards plans");
+    assert_eq!(
+        plan.resize_plan.intent.mode,
+        plasma_auto_tiler::contract::ResizeMode::Inwards
+    );
+    assert_eq!(
+        plan.dispatch.operation.mode,
+        plasma_auto_tiler::contract::ResizeMode::Inwards
+    );
+    // Inwards on the right child shrinks focused: the focused desired
+    // width is smaller than the accepted width (share integers scale for
+    // pixel precision, so compare geometry, not raw shares).
+    let accepted = complete_obs(&s, vec![]);
+    let _ = accepted;
+    let focused_leaf = plan.resize_plan.operation.focused_child.clone();
+    let before_w = {
+        // Project accepted tree via session snapshot geometry helper: use the
+        // desired geometry of a no-op? Instead compare Inwards vs Outwards.
+        let mut t = single_session();
+        admit_commit(&mut t, "win-1", true, "c-1");
+        admit_commit(&mut t, "win-2", true, "c-2");
+        let tk = key("out-1", "ws-1");
+        let tw = focused_window(&t, &tk);
+        let tobs = complete_obs(&t, vec![]);
+        let out = t
+            .propose_resize(
+                &tk,
+                &tw,
+                Direction::Left,
+                plasma_auto_tiler::contract::ResizeMode::Outwards,
+                0,
+                &tobs,
+                &correlation("kbd-out"),
+                &ResizeCapabilities::full(),
+            )
+            .expect("outwards plans");
+        let inw_focused_w = plan
+            .desired_geometry
+            .iter()
+            .find(|g| g.leaf == focused_leaf)
+            .expect("inwards geometry")
+            .rect
+            .w;
+        let out_focused_w = out
+            .desired_geometry
+            .iter()
+            .find(|g| g.leaf == out.resize_plan.operation.focused_child)
+            .expect("outwards geometry")
+            .rect
+            .w;
+        assert!(
+            inw_focused_w < out_focused_w,
+            "inwards {inw_focused_w} must shrink vs outwards {out_focused_w}"
+        );
+        inw_focused_w
+    };
+    let _ = before_w;
+    let base = s.accepted_revision();
+    s.acknowledge(&AdapterAck::new(
+        correlation("kbd-1"),
+        owner(),
+        generation(),
+        base,
+        AckOutcome::Accepted,
+    ))
+    .expect("ack");
+    s.verify_resize(&ResizePostObservation::new(
+        Observation::new(owner(), generation(), base, 910 + base),
+        correlation("kbd-1"),
+        true,
+        plan.dispatch.preconditions.clone(),
+        plan.dispatch.operation.clone(),
+    ))
+    .expect("verify");
+    // Reconciliation rejects an invalid keyboard fixed-share operation
+    // (broken integer scaling) on the dedicated path.
+    use plasma_auto_tiler::contract::{ResizeIntent, ResizeOperation};
+    use plasma_auto_tiler::directional::{NodeId, OutputId, WindowId, WorkspaceId};
+    use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
+    use plasma_auto_tiler::reconcile::Reconciler;
+    let owner = OwnerId::parse("owner-1").expect("owner");
+    let generation = GenerationId::parse("gen-1").expect("gen");
+    let mut r = Reconciler::new(owner.clone(), generation.clone(), 0, 11).expect("reconciler");
+    let intent = ResizeIntent {
+        domain_output: OutputId("out-1".to_owned()),
+        domain_workspace: WorkspaceId("ws-1".to_owned()),
+        focused_leaf: NodeId("leaf-win-2".to_owned()),
+        focused_window: WindowId("win-2".to_owned()),
+        direction: Direction::Left,
+        mode: plasma_auto_tiler::contract::ResizeMode::Outwards,
+    };
+    let bad_op = ResizeOperation {
+        domain_output: intent.domain_output.clone(),
+        domain_workspace: intent.domain_workspace.clone(),
+        focused_leaf: intent.focused_leaf.clone(),
+        focused_window: intent.focused_window.clone(),
+        direction: Direction::Left,
+        mode: plasma_auto_tiler::contract::ResizeMode::Outwards,
+        target_group: NodeId("root".to_owned()),
+        focused_child: NodeId("leaf-win-2".to_owned()),
+        neighbor_child: NodeId("leaf-win-1".to_owned()),
+        focused_index: 1,
+        neighbor_index: 0,
+        old_shares: vec![1, 1],
+        new_shares: vec![14, 17],
+    };
+    let bad_plan = plasma_auto_tiler::contract::ResizePlan::for_operation(intent, bad_op);
+    let obs = plasma_auto_tiler::contract::Observation::new(owner, generation, 0, 11);
+    assert!(matches!(
+        r.propose_resize(
+            &bad_plan,
+            &obs,
+            &CorrelationId::parse("corr-1").expect("corr"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(plasma_auto_tiler::reconcile::ProposeError::Diverged(_))
+    ));
 }

@@ -292,7 +292,7 @@ fn sibling_insert_after_focus_when_axes_match() {
         placement(120, 80),
         "corr-1",
     );
-    // Second admit nests the root leaf (no parent): group H [leaf-1, leaf-2].
+    // Second admit wraps the focused root leaf old/new: group H [leaf-1, leaf-2].
     admit_and_commit(
         &mut session,
         "win-2",
@@ -301,7 +301,23 @@ fn sibling_insert_after_focus_when_axes_match() {
         placement(120, 80),
         "corr-2",
     );
-    // Third admit with horizontal placement matches parent axis: sibling after focus.
+    match &session.snapshot().domains[0].tree {
+        Some(Node::Group {
+            axis,
+            children,
+            shares,
+            ..
+        }) => {
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(*shares, vec![1, 1]);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            assert_eq!(children[1].id().0, "leaf-win-2");
+        }
+        other => panic!("expected focused-root binary wrapper, got {other:?}"),
+    }
+    // Third admit with horizontal placement matches parent axis but must not
+    // append: automatic admission wraps the focused leaf old/new.
     let plan = admit_and_commit(
         &mut session,
         "win-3",
@@ -320,8 +336,34 @@ fn sibling_insert_after_focus_when_axes_match() {
     );
     let snapshot = session.snapshot();
     match &snapshot.domains[0].tree {
-        Some(Node::Group { shares, .. }) => assert_eq!(*shares, vec![1, 1, 1]),
-        other => panic!("expected 3-child group, got {other:?}"),
+        Some(Node::Group {
+            axis,
+            children,
+            shares,
+            ..
+        }) => {
+            // Rejects same-axis N-ary append: root stays binary.
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(*shares, vec![1, 1]);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            match &children[1] {
+                Node::Group {
+                    axis,
+                    children,
+                    shares,
+                    ..
+                } => {
+                    assert_eq!(*axis, Axis::Horizontal);
+                    assert_eq!(*shares, vec![1, 1]);
+                    assert_eq!(children.len(), 2);
+                    assert_eq!(children[0].id().0, "leaf-win-2");
+                    assert_eq!(children[1].id().0, "leaf-win-3");
+                }
+                other => panic!("expected focused binary wrapper old/new, got {other:?}"),
+            }
+        }
+        other => panic!("expected binary root wrapper, got {other:?}"),
     }
     let (_, focus) = session.focus();
     assert_eq!(focus, Some(NodeId("leaf-win-3".to_owned())));
@@ -350,8 +392,74 @@ fn sibling_insert_after_focus_when_axes_match() {
 }
 
 #[test]
+fn no_focus_root_wraps_entire_root() {
+    let mut session = two_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "corr-1",
+    );
+    // Move global focus to the other domain so out-1/ws-1 has no eligible focus.
+    admit_and_commit(
+        &mut session,
+        "win-2",
+        "out-2",
+        "ws-2",
+        placement(120, 80),
+        "corr-2",
+    );
+    // No eligible focus in out-1/ws-1 but a root leaf exists: wrap the entire
+    // root old/new, never append.
+    admit_and_commit(
+        &mut session,
+        "win-3",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "corr-3",
+    );
+    assert_eq!(
+        leaves_of(&session, "out-1", "ws-1"),
+        vec!["leaf-win-1".to_string(), "leaf-win-3".to_string()]
+    );
+    let snapshot = session.snapshot();
+    let view = snapshot
+        .domains
+        .iter()
+        .find(|d| d.output.0 == "out-1" && d.workspace.0 == "ws-1")
+        .expect("domain");
+    match &view.tree {
+        Some(Node::Group {
+            axis,
+            children,
+            shares,
+            ..
+        }) => {
+            assert_eq!(*axis, Axis::Horizontal);
+            assert_eq!(*shares, vec![1, 1]);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            assert_eq!(children[1].id().0, "leaf-win-3");
+        }
+        other => panic!("expected no-focus root binary wrapper old/new, got {other:?}"),
+    }
+    // Untouched domain stays isolated and focus follows the new leaf.
+    assert_eq!(
+        leaves_of(&session, "out-2", "ws-2"),
+        vec!["leaf-win-2".to_string()]
+    );
+    let (_, focus) = session.focus();
+    assert_eq!(focus, Some(NodeId("leaf-win-3".to_owned())));
+}
+
+#[test]
 fn nesting_when_axes_differ_uses_input_orientation() {
     let mut session = single_domain_session();
+    // Wide targets select portable Horizontal splits under the COSMIC
+    // admission rule (source Vertical splits width).
     admit_and_commit(
         &mut session,
         "win-1",
@@ -368,7 +476,8 @@ fn nesting_when_axes_differ_uses_input_orientation() {
         placement(120, 80),
         "corr-2",
     );
-    // Root is now Horizontal; admit with vertical bounds nests focused leaf.
+    // Root is now Horizontal; admit with tall (vertical-selecting) bounds
+    // nests focused leaf.
     admit_and_commit(
         &mut session,
         "win-3",
@@ -412,7 +521,7 @@ fn nesting_when_axes_differ_uses_input_orientation() {
 }
 
 #[test]
-fn horizontal_selected_on_tie() {
+fn vertical_selected_on_tie() {
     let mut session = single_domain_session();
     admit_and_commit(
         &mut session,
@@ -432,8 +541,8 @@ fn horizontal_selected_on_tie() {
     );
     let snapshot = session.snapshot();
     match &snapshot.domains[0].tree {
-        Some(Node::Group { axis, .. }) => assert_eq!(*axis, Axis::Horizontal),
-        other => panic!("tie must select horizontal, got {other:?}"),
+        Some(Node::Group { axis, .. }) => assert_eq!(*axis, Axis::Vertical),
+        other => panic!("tie must select vertical, got {other:?}"),
     }
 }
 
@@ -961,8 +1070,8 @@ fn deterministic_replay() {
 
 #[test]
 fn tiny_bounds_projection_fails_closed() {
-    // Narrow domain with horizontal splits: width 2 cannot host three
-    // positive horizontal segments.
+    // Narrow domain with portable Horizontal splits (wide placements): width 2
+    // cannot host three positive horizontal segments.
     let mut session = Session::new(
         owner(),
         generation(),
@@ -987,7 +1096,7 @@ fn tiny_bounds_projection_fails_closed() {
         placement(10, 2),
         "corr-2",
     );
-    // Three horizontal leaves cannot fit positive segments in width 2.
+    // Three portable Horizontal leaves cannot fit positive segments in width 2.
     let obs = complete_observation(&session, vec![tiled_observed("win-3", "out-1", "ws-1")]);
     assert_eq!(
         session
@@ -1552,4 +1661,78 @@ fn portable_session_module_prohibits_platform_imports() {
         SESSION.contains("transport-independent") || SESSION.contains("transport-neutral"),
         "session.rs should document its transport-independent boundary"
     );
+}
+
+#[test]
+fn uneven_proportional_insertion_and_removal_preserve_ratios() {
+    use plasma_auto_tiler::cosmic_v1::{
+        proportional_insertion_shares, proportional_removal_shares,
+    };
+    // Uneven survivors preserve ratios on admission: [389, 409] + entrant.
+    let inserted = proportional_insertion_shares(&[389, 409], 2).expect("insert");
+    assert_eq!(inserted, vec![389, 409, 399]);
+    assert_eq!(inserted[0] * 409, inserted[1] * 389);
+    // Removal redistributes proportionally before collapse: drop entrant.
+    let removed = proportional_removal_shares(&inserted, 2).expect("remove");
+    assert_eq!(removed, vec![389, 409]);
+    // Session-level: automatic admission never uses N-ary same-axis append.
+    // Admit three wide windows: the third wraps the focused leaf old/new in
+    // an ordered binary group with the admission axis and [1, 1] shares.
+    let mut session = single_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "c-1",
+    );
+    admit_and_commit(
+        &mut session,
+        "win-2",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "c-2",
+    );
+    admit_and_commit(
+        &mut session,
+        "win-3",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "c-3",
+    );
+    let snapshot = session.snapshot();
+    let tree = snapshot.domains[0].tree.clone().expect("tree");
+    match tree {
+        Node::Group {
+            axis,
+            children,
+            shares,
+            ..
+        } => {
+            // Rejects flat [1, 1, 1] append: binary root plus focused wrapper.
+            assert_eq!(axis, Axis::Horizontal);
+            assert_eq!(shares, vec![1, 1]);
+            assert_eq!(children.len(), 2);
+            assert_eq!(children[0].id().0, "leaf-win-1");
+            match &children[1] {
+                Node::Group {
+                    axis,
+                    children,
+                    shares,
+                    ..
+                } => {
+                    assert_eq!(*axis, Axis::Horizontal);
+                    assert_eq!(*shares, vec![1, 1]);
+                    assert_eq!(children.len(), 2);
+                    assert_eq!(children[0].id().0, "leaf-win-2");
+                    assert_eq!(children[1].id().0, "leaf-win-3");
+                }
+                other => panic!("expected focused binary wrapper, got {other:?}"),
+            }
+        }
+        other => panic!("expected group, got {other:?}"),
+    }
 }

@@ -89,6 +89,9 @@ fn r4_session() -> Session {
     )
     .expect("r4 session")
 }
+/// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC
+/// admission rule selects axis from target geometry (wide splits portable Horizontal),
+/// so horizontal needs a wide target and vice versa.
 fn placement(horiz: bool) -> Rect {
     if horiz {
         Rect {
@@ -442,7 +445,8 @@ fn r2a_swap_neighbor() {
 
 #[test]
 fn r2a_uneven_outer_preserved_and_window_share_binding() {
-    // H[1,2,3,4] -> R2c wrap [3,4] gives uneven outer [1,1,2]; inner R2a swap
+    // Binary admission nests entrants; walk focus to win-1, R2b to 3-wide,
+    // then R2c wrap [1,2] gives uneven outer [2,1]; inner R2a swap
     // must preserve outer shares and swap window-share binding (no resize).
     // Source evidence: sizing S1/S2 (entrant 1/n, survivors scale) governs
     // entry; swap is reorder with no entry/removal, so windows retain shares.
@@ -452,7 +456,18 @@ fn r2a_uneven_outer_preserved_and_window_share_binding() {
         admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
     }
     let k = key("out-1", "ws-1");
-    let r2c = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
+    for corr in ["f-1", "f-2", "f-3"] {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+    }
+    let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
+    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    let r2c = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
     assert_eq!(r2c.dispatch.rule, plasma_auto_tiler::directional::Rule::R2c);
     let snap = s.snapshot();
     let root = snap.domains[0].tree.clone().expect("tree");
@@ -462,11 +477,11 @@ fn r2a_uneven_outer_preserved_and_window_share_binding() {
         } => (shares.clone(), children.len()),
         _ => panic!("root group"),
     };
-    assert_eq!(outer_len, 3);
-    assert_eq!(outer_shares.iter().sum::<u64>(), 4);
-    assert_eq!(outer_shares[2], 2);
-    // Inner R2a swap [3,4] -> [4,3]; outer uneven must be untouched.
-    let r2a = move_commit_focused(&mut s, &k, Direction::Left, "m-2", &Capabilities::full());
+    assert_eq!(outer_len, 2);
+    assert_eq!(outer_shares.iter().sum::<u64>(), 3);
+    assert_eq!(outer_shares, vec![2, 1]);
+    // Inner R2a swap [1,2] -> [2,1]; outer uneven must be untouched.
+    let r2a = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
     assert_eq!(r2a.dispatch.rule, plasma_auto_tiler::directional::Rule::R2a);
     let snap2 = s.snapshot();
     let root2 = snap2.domains[0].tree.clone().expect("tree");
@@ -475,14 +490,14 @@ fn r2a_uneven_outer_preserved_and_window_share_binding() {
             shares, children, ..
         } => {
             assert_eq!(*shares, outer_shares, "uneven outer preserved on R2a");
-            assert_eq!(children.len(), 3);
-            match &children[2] {
+            assert_eq!(children.len(), 2);
+            match &children[0] {
                 Node::Group {
                     children, shares, ..
                 } => {
                     assert_eq!(*shares, vec![1, 1]);
-                    assert_eq!(children[0].id().0, "leaf-win-4");
-                    assert_eq!(children[1].id().0, "leaf-win-3");
+                    assert_eq!(children[0].id().0, "leaf-win-2");
+                    assert_eq!(children[1].id().0, "leaf-win-1");
                 }
                 other => panic!("wrapper {other:?}"),
             }
@@ -501,7 +516,17 @@ fn r2b_insert_midpoint_after_r1() {
     let k = key("out-1", "ws-1");
     let r1 = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
     assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
-    let r2b = move_commit_focused(&mut s, &k, Direction::Up, "m-2", &Capabilities::full());
+    // Binary admission + R1 leaves H[win-1,V[win-2,win-3]]; win-1 faces a
+    // perpendicular 2-child group, so Right from win-1 is Midpoint.
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-1",
+        &FocusCapabilities::full(),
+    );
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
     assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
     match &r2b.dispatch.operation {
         plasma_auto_tiler::directional::MoveOperation::InsertIntoGroup { insertion, .. } => {
@@ -512,7 +537,7 @@ fn r2b_insert_midpoint_after_r1() {
         }
         other => panic!("expected insert-into-group, got {other:?}"),
     }
-    assert_eq!(r2b.desired_focus_leaf.0, "leaf-win-3");
+    assert_eq!(r2b.desired_focus_leaf.0, "leaf-win-1");
     assert_geometry_complete(&r2b, &s);
 }
 
@@ -524,9 +549,33 @@ fn r2b_split_odd_target() {
     admit_commit(&mut s, "win-3", "out-1", "ws-1", true, "c-3");
     admit_commit(&mut s, "win-4", "out-1", "ws-1", true, "c-4");
     let k = key("out-1", "ws-1");
-    let r1 = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
+    // Binary admission nests entrants; R1 Up on win-4 creates a 2-child
+    // vertical group, focus to win-2, Midpoint grows it to 3, then Right
+    // from win-1 splits the odd target.
+    let r1 = move_commit_focused(&mut s, &k, Direction::Up, "m-1", &Capabilities::full());
     assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
-    let r2b = move_commit_focused(&mut s, &k, Direction::Up, "m-2", &Capabilities::full());
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-1",
+        &FocusCapabilities::full(),
+    );
+    assert_eq!(focused_window(&s, &k).0, "win-2");
+    let r2b_mid = move_commit_focused(&mut s, &k, Direction::Right, "m-mid", &Capabilities::full());
+    assert_eq!(
+        r2b_mid.dispatch.rule,
+        plasma_auto_tiler::directional::Rule::R2b
+    );
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-2",
+        &FocusCapabilities::full(),
+    );
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
     assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
     match &r2b.dispatch.operation {
         plasma_auto_tiler::directional::MoveOperation::SplitGroupChild {
@@ -535,12 +584,12 @@ fn r2b_split_odd_target() {
             target_child_index,
             ..
         } => {
-            assert_eq!(*axis, plasma_auto_tiler::directional::Axis::Vertical);
+            assert_eq!(*axis, plasma_auto_tiler::directional::Axis::Horizontal);
             assert_eq!(*target_child_index, 1);
-            // Up is step -1, so the mover splits First (near side).
+            // Right is step +1, so the mover splits Second (far side).
             assert_eq!(
                 *focused_side,
-                plasma_auto_tiler::directional::FocusedSide::First
+                plasma_auto_tiler::directional::FocusedSide::Second
             );
         }
         other => panic!("expected split-group-child, got {other:?}"),
@@ -550,15 +599,15 @@ fn r2b_split_odd_target() {
 
 #[test]
 fn r2b_near_edge_parallel_target() {
-    // H[1,2,3] -> R2c wrap [2,3] = H[1,[2,3]]; focus-navigate 3->2->1, then
-    // 1 Right inserts NearEdge at 0 into the parallel target (S1-17/S3-08).
+    // Binary admission already yields H[1,[2,3]]-shaped nesting:
+    // H[win-1,[win-2,win-3]] with focus win-3. Navigate focus to win-1,
+    // then 1 Right inserts NearEdge at 0 into the parallel target (S1-17/S3-08).
     let mut s = single_session();
     admit_commit(&mut s, "win-1", "out-1", "ws-1", true, "c-1");
     admit_commit(&mut s, "win-2", "out-1", "ws-1", true, "c-2");
     admit_commit(&mut s, "win-3", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
-    let _ = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
-    // Focus is win-3 in [2,3]; navigate to win-2 then win-1.
+    // Focus is win-3; navigate to win-2 then win-1.
     let _ = focus_commit_focused(
         &mut s,
         &k,
@@ -605,12 +654,28 @@ fn r2c_wrap_neighbor_nary() {
         admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
     }
     let k = key("out-1", "ws-1");
-    let plan = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
+    // Binary admission nests each entrant, so the admitted focus faces a leaf
+    // sibling (R2a). Walk focus to win-1, grow the inner group to 3 children
+    // via an R2b insertion, then Right from win-1 is R2c.
+    for (i, corr) in ["f-1", "f-2", "f-3"].iter().enumerate() {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+        let _ = i;
+    }
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let _ = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
+    assert_eq!(focused_window(&s, &k).0, "win-1");
+    let plan = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
     assert_eq!(
         plan.dispatch.rule,
         plasma_auto_tiler::directional::Rule::R2c
     );
-    assert_eq!(plan.desired_focus_leaf.0, "leaf-win-4");
+    assert_eq!(plan.desired_focus_leaf.0, "leaf-win-1");
     assert_geometry_complete(&plan, &s);
     let snap = s.snapshot();
     let tree = snap.domains[0].tree.clone().expect("tree");
@@ -618,16 +683,17 @@ fn r2c_wrap_neighbor_nary() {
         Node::Group {
             children, shares, ..
         } => {
-            assert_eq!(children.len(), 3);
-            assert_eq!(shares.iter().sum::<u64>(), 4);
-            match &children[2] {
+            assert_eq!(children.len(), 2);
+            assert_eq!(shares.iter().sum::<u64>(), 3);
+            assert_eq!(shares, vec![2, 1]);
+            match &children[0] {
                 Node::Group {
                     children, shares, ..
                 } => {
                     assert_eq!(children.len(), 2);
                     assert_eq!(*shares, vec![1, 1]);
-                    assert_eq!(children[0].id().0, "leaf-win-3");
-                    assert_eq!(children[1].id().0, "leaf-win-4");
+                    assert_eq!(children[0].id().0, "leaf-win-1");
+                    assert_eq!(children[1].id().0, "leaf-win-2");
                 }
                 other => panic!("expected wrapper, got {other:?}"),
             }
@@ -641,10 +707,13 @@ fn r3_escape_with_r1_continuation() {
     let mut s = single_session();
     admit_commit(&mut s, "win-1", "out-1", "ws-1", true, "c-1");
     admit_commit(&mut s, "win-2", "out-1", "ws-1", true, "c-2");
-    admit_commit(&mut s, "win-3", "out-1", "ws-1", false, "c-3");
-    admit_commit(&mut s, "win-4", "out-1", "ws-1", false, "c-4");
+    admit_commit(&mut s, "win-3", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
-    let plan = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
+    // Binary admission gives H[win-1,[win-2,win-3]]; R1 Down wraps the
+    // focused pair perpendicular, then Down escapes with R1 continuation.
+    let r1 = move_commit_focused(&mut s, &k, Direction::Down, "m-1", &Capabilities::full());
+    assert_eq!(r1.dispatch.rule, plasma_auto_tiler::directional::Rule::R1);
+    let plan = move_commit_focused(&mut s, &k, Direction::Down, "m-2", &Capabilities::full());
     assert_eq!(plan.dispatch.rule, plasma_auto_tiler::directional::Rule::R3);
     match &plan.dispatch.operation {
         plasma_auto_tiler::directional::MoveOperation::EscapeParent { continuation, .. } => {
@@ -665,9 +734,22 @@ fn r3_escape_same_axis() {
         admit_commit(&mut s, &format!("win-{}", i + 1), "out-1", "ws-1", true, c);
     }
     let k = key("out-1", "ws-1");
-    let r2c = move_commit_focused(&mut s, &k, Direction::Left, "m-1", &Capabilities::full());
+    // Binary admission nests entrants; walk focus to win-1, grow to 3 via
+    // R2b, wrap [win-1,win-2] via R2c, then Left escapes same-axis.
+    for corr in ["f-1", "f-2", "f-3"] {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+    }
+    let r2b = move_commit_focused(&mut s, &k, Direction::Right, "m-pre", &Capabilities::full());
+    assert_eq!(r2b.dispatch.rule, plasma_auto_tiler::directional::Rule::R2b);
+    let r2c = move_commit_focused(&mut s, &k, Direction::Right, "m-1", &Capabilities::full());
     assert_eq!(r2c.dispatch.rule, plasma_auto_tiler::directional::Rule::R2c);
-    let r3 = move_commit_focused(&mut s, &k, Direction::Right, "m-2", &Capabilities::full());
+    let r3 = move_commit_focused(&mut s, &k, Direction::Left, "m-2", &Capabilities::full());
     assert_eq!(r3.dispatch.rule, plasma_auto_tiler::directional::Rule::R3);
     match &r3.dispatch.operation {
         plasma_auto_tiler::directional::MoveOperation::EscapeParent {
@@ -1141,6 +1223,23 @@ fn per_capability_representative_routes() {
         admit_commit(&mut s, &format!("w{i}"), "out-1", "ws-1", true, c);
     }
     let k = key("out-1", "ws-1");
+    // Binary admission faces R2a; walk to w0 and grow to 3 via R2b so Right is R2c.
+    for corr in ["f-cap-1", "f-cap-2", "f-cap-3"] {
+        let _ = focus_commit_focused(
+            &mut s,
+            &k,
+            Direction::Left,
+            corr,
+            &FocusCapabilities::full(),
+        );
+    }
+    let _ = move_commit_focused(
+        &mut s,
+        &k,
+        Direction::Right,
+        "m-cap-pre",
+        &Capabilities::full(),
+    );
     let w = focused_window(&s, &k);
     let obs = complete_obs(&s, vec![]);
     let mut no_wrap_sib = Capabilities::full();
@@ -1149,7 +1248,7 @@ fn per_capability_representative_routes() {
         s.propose_move(
             &k,
             &w,
-            Direction::Left,
+            Direction::Right,
             &obs,
             &correlation("cap-3"),
             &no_wrap_sib
@@ -1163,16 +1262,25 @@ fn per_capability_representative_routes() {
     admit_commit(&mut s, "c", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
     let _ = move_commit_focused(&mut s, &k, Direction::Down, "m-cap", &Capabilities::full());
+    // Binary admission + R1 leaves H[a,V[b,c]]; a faces a perpendicular
+    // 2-child group, so Right from a is Midpoint R2b.
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-cap",
+        &FocusCapabilities::full(),
+    );
     let w = focused_window(&s, &k);
     let obs = complete_obs(&s, vec![]);
     let mut no_insert = Capabilities::full();
     no_insert.insert_child = false;
-    // After R1, Up is R2b (insert or split depending on parity); force check
+    // After R1, Right from a is R2b (insert or split depending on parity); force check
     // that disabling both R2b caps refuses, and at least one refuses.
     let r_insert = s.propose_move(
         &k,
         &w,
-        Direction::Up,
+        Direction::Right,
         &obs,
         &correlation("cap-4"),
         &no_insert,
@@ -1188,7 +1296,30 @@ fn per_capability_representative_routes() {
     admit_commit(&mut s, "c", "out-1", "ws-1", true, "c-3");
     admit_commit(&mut s, "d", "out-1", "ws-1", true, "c-4");
     let k = key("out-1", "ws-1");
-    let _ = move_commit_focused(&mut s, &k, Direction::Down, "m-cap2", &Capabilities::full());
+    // Binary admission nests; R1 Up on d, focus to b, Midpoint grows the
+    // vertical group to 3, focus to a, then Right splits the odd target.
+    let _ = move_commit_focused(&mut s, &k, Direction::Up, "m-cap2", &Capabilities::full());
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-cap2",
+        &FocusCapabilities::full(),
+    );
+    let _ = move_commit_focused(
+        &mut s,
+        &k,
+        Direction::Right,
+        "m-cap2b",
+        &Capabilities::full(),
+    );
+    let _ = focus_commit_focused(
+        &mut s,
+        &k,
+        Direction::Left,
+        "f-cap2b",
+        &FocusCapabilities::full(),
+    );
     let w = focused_window(&s, &k);
     let obs = complete_obs(&s, vec![]);
     let mut no_split = Capabilities::full();
@@ -1197,7 +1328,7 @@ fn per_capability_representative_routes() {
         s.propose_move(
             &k,
             &w,
-            Direction::Up,
+            Direction::Right,
             &obs,
             &correlation("cap-5"),
             &no_split
@@ -1208,9 +1339,10 @@ fn per_capability_representative_routes() {
     let mut s = single_session();
     admit_commit(&mut s, "a", "out-1", "ws-1", true, "c-1");
     admit_commit(&mut s, "b", "out-1", "ws-1", true, "c-2");
-    admit_commit(&mut s, "c", "out-1", "ws-1", false, "c-3");
-    admit_commit(&mut s, "d", "out-1", "ws-1", false, "c-4");
+    admit_commit(&mut s, "c", "out-1", "ws-1", true, "c-3");
     let k = key("out-1", "ws-1");
+    // Binary admission + R1 leaves H[a,V[b,c]]; Down from c escapes with R1 continuation.
+    let _ = move_commit_focused(&mut s, &k, Direction::Down, "m-cap3", &Capabilities::full());
     let w = focused_window(&s, &k);
     let obs = complete_obs(&s, vec![]);
     let mut no_reparent = Capabilities::full();

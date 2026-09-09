@@ -238,6 +238,10 @@ function isDirection(value: unknown): value is PointerResizeDirection {
     return value === "left" || value === "right" || value === "up" || value === "down";
 }
 
+function isPointerMode(value: unknown): value is string {
+    return value === "inwards" || value === "outwards";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -366,6 +370,7 @@ const POINTER_OPERATION_KEYS: readonly string[] = Object.freeze([
     "focused_leaf",
     "focused_window",
     "direction",
+    "mode",
     "target_group",
     "focused_child",
     "neighbor_child",
@@ -426,6 +431,12 @@ function validateOperationShape(operation: unknown): boolean {
         return false;
     }
     if (!isDirection(operation["direction"])) {
+        return false;
+    }
+    // Shared operation DTO now carries required mode (inwards|outwards).
+    // Pointer behavior itself stays boundary-driven and never invents a
+    // keyboard step: no press_index, no mode-driven shares.
+    if (!isPointerMode(operation["mode"])) {
         return false;
     }
     if (!isNonNegativeInt(operation["focused_index"]) || !isNonNegativeInt(operation["neighbor_index"])) {
@@ -1288,6 +1299,13 @@ export class PointerResizeAdapter {
         );
         let payload = "";
         try {
+            // Pointer wire carries no keyboard mode/press_index: Rust
+            // PointerRequestDto (src/resize_service.rs) defines no mode field
+            // with deny_unknown_fields, evaluate_pointer_request never parses
+            // mode, and session.propose_pointer_resize derives from direction
+            // plus proposed_boundary only. The neutral/unused mode "outwards"
+            // plus press_index 0 live only in Rust's internal seeding
+            // RequestDto, never on this wire, so no keyboard step is invented.
             payload = JSON.stringify({
                 v: POINTER_RESIZE_CONTRACT_VERSION,
                 action: "request-pointer",

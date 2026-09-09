@@ -124,7 +124,10 @@ fn rect_contained(inner: Rect, outer: Rect) -> bool {
 
 /// Deterministic seed placement derived from the supplied work area (never a
 /// hardcoded work area): a small rect anchored at the work-area origin,
-/// clamped to the supplied bounds so admission never invents geometry.
+/// clamped to the supplied bounds so admission never invents geometry. Wide
+/// so the COSMIC admission rule (`cosmic_v1::admission_axis`: wide splits
+/// portable Horizontal) yields horizontal sibling splits for seeded
+/// multi-window domains.
 fn derived_seed_placement(bounds: Rect) -> Rect {
     Rect {
         x: bounds.x,
@@ -203,6 +206,18 @@ fn get_usize(obj: &serde_json::Map<String, serde_json::Value>, key: &str) -> Opt
     obj.get(key)?.as_u64()?.try_into().ok()
 }
 
+fn mode_str(value: crate::contract::ResizeMode) -> &'static str {
+    value.as_str()
+}
+
+fn parse_mode(value: &str) -> Option<crate::contract::ResizeMode> {
+    match value {
+        "inwards" => Some(crate::contract::ResizeMode::Inwards),
+        "outwards" => Some(crate::contract::ResizeMode::Outwards),
+        _ => None,
+    }
+}
+
 fn operation_to_value(op: &crate::contract::ResizeOperation) -> serde_json::Value {
     serde_json::json!({
         "kind": "ResizeSplitShare",
@@ -211,6 +226,7 @@ fn operation_to_value(op: &crate::contract::ResizeOperation) -> serde_json::Valu
         "focused_leaf": op.focused_leaf.0,
         "focused_window": op.focused_window.0,
         "direction": direction_str(op.direction),
+        "mode": mode_str(op.mode),
         "target_group": op.target_group.0,
         "focused_child": op.focused_child.0,
         "neighbor_child": op.neighbor_child.0,
@@ -247,6 +263,7 @@ fn parse_operation(value: &serde_json::Value) -> Option<crate::contract::ResizeO
         "focused_leaf",
         "focused_window",
         "direction",
+        "mode",
         "target_group",
         "focused_child",
         "neighbor_child",
@@ -280,6 +297,7 @@ fn parse_operation(value: &serde_json::Value) -> Option<crate::contract::ResizeO
         focused_leaf: NodeId(opaque("focused_leaf")?),
         focused_window: WindowId(opaque("focused_window")?),
         direction: parse_direction(obj.get("direction")?.as_str()?)?,
+        mode: parse_mode(obj.get("mode")?.as_str()?)?,
         target_group: NodeId(opaque("target_group")?),
         focused_child: NodeId(opaque("focused_child")?),
         neighbor_child: NodeId(opaque("neighbor_child")?),
@@ -332,7 +350,14 @@ struct RequestDto {
     fingerprint: u64,
     domain: DomainDto,
     focused_window: String,
+    /// Cardinal edge selecting the neighbor side (left/right/up/down).
     direction: String,
+    /// Source resize direction mode (inwards shrinks focused, outwards grows).
+    mode: String,
+    /// Explicit portable key-repeat state for the COSMIC keyboard step
+    /// schedule (0 is the initial press, 12px). All three are required;
+    /// absent fields reject as malformed with no compatibility default.
+    press_index: u32,
     windows: Vec<ObservedDto>,
     capabilities: CapabilitiesDto,
 }
@@ -1375,10 +1400,19 @@ impl ResizeService {
         let caps = ResizeCapabilities {
             keyboard_resize: request.capabilities.keyboard_resize,
         };
+        let Some(mode) = parse_mode(&request.mode) else {
+            return rejected(
+                request.correlation_id.clone(),
+                "direction-invalid",
+                MSG_DIRECTION,
+            );
+        };
         match session.propose_resize(
             &domain,
             &window,
             direction,
+            mode,
+            request.press_index,
             &observation,
             &correlation,
             &caps,
@@ -1518,15 +1552,9 @@ impl ResizeService {
                 MSG_DIRECTION,
             );
         };
-        if request.proposed_boundary < -crate::session::POINTER_RESIZE_COORD_BOUND
-            || request.proposed_boundary > crate::session::POINTER_RESIZE_COORD_BOUND
-        {
-            return rejected(
-                request.correlation_id.clone(),
-                "snapshot-invalid",
-                MSG_OBSERVATION,
-            );
-        }
+        // Absolute boundary sanity is enforced against the domain work-area
+        // extent by the session layer (fail-closed malformed input); no
+        // project coordinate bound lives here.
         if request.windows.is_empty() || request.windows.len() > RESIZE_MAX_WINDOWS {
             return rejected(
                 request.correlation_id.clone(),
@@ -1667,6 +1695,8 @@ impl ResizeService {
                 domain: request.domain.clone(),
                 focused_window: request.focused_window.clone(),
                 direction: request.direction.clone(),
+                mode: "outwards".to_owned(),
+                press_index: 0,
                 windows: request.windows.clone(),
                 capabilities: request.capabilities.clone(),
             };

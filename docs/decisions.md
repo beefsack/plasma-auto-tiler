@@ -199,14 +199,27 @@ Historical implementation detail is recoverable in Git history.
   and post-observation reconciliation boundary as movement. Logical domains are
   keyed by the opaque `(output, workspace)` pair, so one logical output may
   retain independent workspace trees without inventing native workspace
-  semantics. Source-evidenced existing policy remains ordered N-ary nested
-  split structure only. Initial-root creation, focused sibling insertion,
-  input-bounds orientation (horizontal on a tie), unit-share admission,
-  recursive collapse, and deterministic focus fallback are project-selected
-  lifecycle behavior, not a COSMIC parity claim. Floating, fullscreen,
-  maximized, and sticky flags are retained as explicit observed exceptions;
-  only explicit deferred tracking/removal is selected here, while tiled
-  exception behavior remains fail-closed and deferred to its native slice.
+  semantics. Corrected source-evidenced `cosmic_v1` semantics, authorized
+  2026-09-09: `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
+  `map_to_tree`, `Data::{new_group,add_window,remove_window}`, resize, and drag
+  paths govern focused-cell binary admission, physical-axis selection, equal
+  new splits, proportional ordered-N-ary share adaptation, physical-pixel
+  resize, and drag zones. The prior input-bounds tie, unit-share, `1/16`,
+  32px/16,384 pointer-bound, and edge-only-center-snap-back shortcuts are not
+  retained. The portable split-tree representation fails closed for COSMIC
+  center stack drops because stacks are unselected and compositor-owned; it
+  names that source fact without emitting a false structural plan. Recursive
+  collapse is source-evidenced; deterministic post-removal focus and no-focus
+  root placement remain explicitly project fallbacks because the audited source
+  does not establish them. Floating, fullscreen, maximized, and sticky flags
+  remain explicit observed exceptions; only deferred tracking/removal is
+  selected while tiled exception behavior remains fail-closed and deferred.
+- Durable policy-mode direction, authorized 2026-09-09: selected policy modes
+  target strong source-evidenced behavioral parity. `cosmic_v1` may deviate
+  only for an explicit, reviewable infeasible platform capability; a missing
+  capability fails closed. Future Hyprland and other behavior belongs in a
+  separate versioned policy mode sharing the portable engine, not in an
+  unnamed generic fallback or a platform adapter.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
@@ -229,12 +242,17 @@ Historical implementation detail is recoverable in Git history.
 - Replace the temporary outline interaction with a minimal COSMIC-like,
   deterministic nested-placement affordance. It is a placement affordance, not
   opacity or dimming behavior.
-- Portable drag placement is edge-only: left/right create horizontal
-  before/after placement and top/bottom create vertical before/after placement.
-  A center release has no structural meaning and snaps back. Same-axis target
-  parents use ordered N-ary sibling insertion; perpendicular placement wraps
-  only the target subtree in the smallest ordered split. This remains split-tree
-  structure only, never tabs, stacks, shared tiles, or compositor groups.
+- Portable drag placement source-classifies COSMIC group edges, group interiors,
+  and window zones. Group edges are 32px normally and 80px only for the exact
+  prior portable `(group, edge)` hover; stale/different-edge hover is normal.
+  Same-axis group edges use source-adapted ordered N-ary first/last insertion,
+  perpendicular edges wrap the group, and group interiors insert after the
+  source predecessor. Window left/right create horizontal before/after placement
+  and top/bottom create vertical before/after placement. The COSMIC
+  middle-third center is a stack drop, not a no-op; because stacks remain
+  unselected/compositor-owned, the portable split-tree policy refuses it closed
+  without a plan. This remains split-tree structure only, never tabs, stacks,
+  shared tiles, or compositor groups.
 
 ## Tray
 

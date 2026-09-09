@@ -10,12 +10,13 @@
 use plasma_auto_tiler::contract::{
     AckOutcome, AdapterAck, DivergenceKind, Observation, ResizeCapabilities, ResizePostObservation,
 };
+use plasma_auto_tiler::cosmic_v1;
 use plasma_auto_tiler::directional::{Axis, Direction, Node, OutputId, WindowId, WorkspaceId};
 use plasma_auto_tiler::geometry::Rect;
 use plasma_auto_tiler::ids::{CorrelationId, GenerationId, OwnerId};
 use plasma_auto_tiler::session::{
-    DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, POINTER_RESIZE_MIN_SEGMENT,
-    ProposeError, RefusalKind, Session, SessionCommand,
+    DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
+    SessionCommand,
 };
 use std::collections::BTreeMap;
 
@@ -43,7 +44,7 @@ fn single_session() -> Session {
         generation(),
         0,
         7,
-        vec![domain("out-1", "ws-1", 200, 200, 0)],
+        vec![domain("out-1", "ws-1", 800, 600, 0)],
     )
     .expect("session")
 }
@@ -91,6 +92,9 @@ fn tiled(window: &str) -> ObservedWindow {
         sticky: false,
     }
 }
+/// Axis-intent placement: `horiz` requests a horizontal split. The COSMIC
+/// admission rule selects axis from target geometry (wide splits portable Horizontal),
+/// so horizontal needs a wide target and vice versa.
 fn placement(horiz: bool) -> Rect {
     if horiz {
         Rect {
@@ -162,6 +166,74 @@ fn focused_window(session: &Session, domain: &DomainKey) -> WindowId {
         .window
         .clone()
 }
+fn move_commit_focused(session: &mut Session, direction: Direction, corr: &str) {
+    let k = key("out-1", "ws-1");
+    let w = focused_window(session, &k);
+    let obs = complete_obs(session);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_move(
+            &k,
+            &w,
+            direction,
+            &obs,
+            &correlation(corr),
+            &plasma_auto_tiler::directional::Capabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("move {direction:?}: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_move(&plasma_auto_tiler::contract::PostObservation::new(
+            Observation::new(owner(), generation(), base, 300 + base),
+            correlation(corr),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .expect("move commit");
+}
+fn focus_commit_step(session: &mut Session, direction: Direction, corr: &str) {
+    let k = key("out-1", "ws-1");
+    let w = focused_window(session, &k);
+    let obs = complete_obs(session);
+    let base = session.accepted_revision();
+    let plan = session
+        .propose_focus(
+            &k,
+            &w,
+            direction,
+            &obs,
+            &correlation(corr),
+            &plasma_auto_tiler::contract::FocusCapabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("focus {direction:?}: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    session
+        .verify_focus(&plasma_auto_tiler::contract::FocusPostObservation::new(
+            Observation::new(owner(), generation(), base, 400 + base),
+            correlation(corr),
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .expect("focus commit");
+}
 fn pointer_commit(
     session: &mut Session,
     domain: &DomainKey,
@@ -223,12 +295,12 @@ fn horizontal_derivation_grows_focused_and_preserves_focus() {
     let w2 = focused_window(&s, &k);
     assert_eq!(w2.0, "win-2");
     let before_focus = s.focus();
-    // Layout [1,1] over 200px: boundary at 100. Propose 80 with exact
-    // pixel-projectable shares [79,119] (total 198 = avail - n), projecting
-    // the pair boundary exactly to 80.
-    let plan = pointer_commit(&mut s, &k, &w2, Direction::Left, 80, "p-1");
+    // Layout [1,1] over 800px: boundary at 400. Propose 390 with exact
+    // pixel-projectable shares [389,409], projecting the pair boundary
+    // exactly to 390.
+    let plan = pointer_commit(&mut s, &k, &w2, Direction::Left, 390, "p-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![79, 119]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![389, 409]);
     assert_eq!(plan.resize_plan.operation.focused_index, 1);
     assert_eq!(plan.resize_plan.operation.neighbor_index, 0);
     assert_eq!(
@@ -254,7 +326,7 @@ fn horizontal_derivation_grows_focused_and_preserves_focus() {
         .iter()
         .find(|g| &g.leaf == left_id)
         .expect("left geometry");
-    assert_eq!(left_rect.rect.x + left_rect.rect.w, 80);
+    assert_eq!(left_rect.rect.x + left_rect.rect.w, 390);
 }
 
 #[test]
@@ -264,10 +336,10 @@ fn vertical_derivation() {
     admit_commit(&mut s, "win-2", false, "c-2");
     let k = key("out-1", "ws-1");
     let w2 = focused_window(&s, &k);
-    // Vertical split over 200px: propose y=81 grows bottom (focused) to 119.
-    let plan = pointer_commit(&mut s, &k, &w2, Direction::Up, 81, "p-1");
+    // Vertical split over 600px: propose y=290 grows bottom (focused) to 310.
+    let plan = pointer_commit(&mut s, &k, &w2, Direction::Up, 290, "p-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![13, 19]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![289, 309]);
     assert_eq!(plan.resize_plan.intent.direction, Direction::Up);
 }
 
@@ -312,10 +384,10 @@ fn nested_outer_boundary_with_inner_untouched() {
     let w = focused_window(&s, &k);
     assert_eq!(w.0, "win-2");
     // Direction Left skips inner vertical group, targets outer H [1,1].
-    // Exact boundary 80 projects to [79,119].
-    let plan = pointer_commit(&mut s, &k, &w, Direction::Left, 80, "p-1");
+    // Exact boundary 390 projects to [389,409].
+    let plan = pointer_commit(&mut s, &k, &w, Direction::Left, 390, "p-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![79, 119]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![389, 409]);
     let root = s.snapshot().domains[0].tree.clone().expect("tree");
     match &root {
         Node::Group {
@@ -325,7 +397,7 @@ fn nested_outer_boundary_with_inner_untouched() {
             ..
         } => {
             assert_eq!(*axis, Axis::Horizontal);
-            assert_eq!(*shares, vec![79, 119]);
+            assert_eq!(*shares, vec![389, 409]);
             assert_eq!(children.len(), 2);
             match &children[1] {
                 Node::Group { shares, .. } => assert_eq!(*shares, vec![1, 1]),
@@ -338,10 +410,30 @@ fn nested_outer_boundary_with_inner_untouched() {
 
 #[test]
 fn nary_only_adjacent_pair_redistributed() {
-    let mut s = single_session();
+    // Four-wide needs COSMIC-scale pairs: 1600px so the 400px children form
+    // an 800px pair above the 720px pair minimum.
+    let mut s = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![domain("out-1", "ws-1", 1600, 600, 0)],
+    )
+    .expect("session");
     for (i, c) in ["c-1", "c-2", "c-3", "c-4"].iter().enumerate() {
         admit_commit(&mut s, &format!("win-{}", i + 1), true, c);
     }
+    // Automatic admission always binary-wraps, so repeated admissions yield
+    // nested binary groups. Flatten to the intended ordered 4-child N-ary
+    // topology via public movement/focus commits (N-ary remains for
+    // movement representation only), keeping exact window/focus links.
+    move_commit_focused(&mut s, Direction::Right, "m-1");
+    focus_commit_step(&mut s, Direction::Left, "f-1");
+    focus_commit_step(&mut s, Direction::Left, "f-2");
+    move_commit_focused(&mut s, Direction::Left, "m-2");
+    focus_commit_step(&mut s, Direction::Right, "f-3");
+    move_commit_focused(&mut s, Direction::Left, "m-3");
+    focus_commit_step(&mut s, Direction::Right, "f-4");
     let k = key("out-1", "ws-1");
     let w4 = focused_window(&s, &k);
     assert_eq!(w4.0, "win-4");
@@ -350,11 +442,14 @@ fn nary_only_adjacent_pair_redistributed() {
         &s.snapshot().domains[0].tree.clone().expect("tree"),
         &mut before,
     );
-    // 4x50px strips; pair [win-3,win-4] starts at 100, avail 100.
-    // Propose 140: left=40, focused(right)=60 -> scaled 32: 19/13.
-    let plan = pointer_commit(&mut s, &k, &w4, Direction::Left, 140, "p-1");
+    // 4x400px strips; pair [win-3,win-4] starts at 800, avail 800.
+    // Propose 1190: left=390 -> exact ratio-preserving normalization.
+    let plan = pointer_commit(&mut s, &k, &w4, Direction::Left, 1190, "p-1");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1, 1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![16, 16, 13, 19]);
+    assert_eq!(
+        plan.resize_plan.operation.new_shares,
+        vec![399, 399, 389, 409]
+    );
     assert_eq!(plan.resize_plan.operation.focused_index, 3);
     assert_eq!(plan.resize_plan.operation.neighbor_index, 2);
     let mut after = vec![];
@@ -363,9 +458,9 @@ fn nary_only_adjacent_pair_redistributed() {
         &mut after,
     );
     assert_eq!(before, after, "order preserved");
-    // Non-pair shares scale ratio-preserving x16; pair redistributed.
-    assert_eq!(plan.resize_plan.operation.new_shares[0], 16);
-    assert_eq!(plan.resize_plan.operation.new_shares[1], 16);
+    // Non-pair shares scale ratio-preserving; pair redistributed.
+    assert_eq!(plan.resize_plan.operation.new_shares[0], 399);
+    assert_eq!(plan.resize_plan.operation.new_shares[1], 399);
     assert!(plan.resize_plan.operation.new_shares.iter().all(|v| *v > 0));
 }
 
@@ -376,11 +471,11 @@ fn clamp_plans_at_minimum_and_outside_domain_is_malformed() {
     admit_commit(&mut s, "win-2", true, "c-2");
     let k = key("out-1", "ws-1");
     let w2 = focused_window(&s, &k);
-    // Far-left edge clamps to MIN (32) with exact shares [31,167], projecting
-    // the pair boundary exactly to 32.
+    // Far-left edge clamps to the COSMIC child minimum (360) with exact
+    // shares [359,439], projecting the pair boundary exactly to 360.
     let plan = pointer_commit(&mut s, &k, &w2, Direction::Left, 0, "p-clamp");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![31, 167]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![359, 439]);
     let left_id =
         if plan.resize_plan.operation.focused_index < plan.resize_plan.operation.neighbor_index {
             &plan.resize_plan.operation.focused_child
@@ -392,16 +487,16 @@ fn clamp_plans_at_minimum_and_outside_domain_is_malformed() {
         .iter()
         .find(|g| &g.leaf == left_id)
         .expect("left geometry");
-    assert_eq!(left_rect.rect.x + left_rect.rect.w, 32);
+    assert_eq!(left_rect.rect.x + left_rect.rect.w, 360);
     // Exact boundary 80 still plans on a fresh session.
     let mut s2 = single_session();
     admit_commit(&mut s2, "win-1", true, "c-1");
     admit_commit(&mut s2, "win-2", true, "c-2");
     let k2 = key("out-1", "ws-1");
     let w2b = focused_window(&s2, &k2);
-    let plan = pointer_commit(&mut s2, &k2, &w2b, Direction::Left, 80, "p-clamp-exact");
+    let plan = pointer_commit(&mut s2, &k2, &w2b, Direction::Left, 390, "p-clamp-exact");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![79, 119]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![389, 409]);
 
     // Fresh session: outside the domain work area is malformed.
     let mut t = single_session();
@@ -415,7 +510,7 @@ fn clamp_plans_at_minimum_and_outside_domain_is_malformed() {
             &tk,
             &tw,
             Direction::Left,
-            500,
+            900,
             &obs,
             &correlation("p-bad"),
             &ResizeCapabilities::full()
@@ -423,7 +518,7 @@ fn clamp_plans_at_minimum_and_outside_domain_is_malformed() {
         Err(ProposeError::Refused(RefusalKind::MalformedInput))
     );
     assert!(!t.has_pending());
-    // Beyond the portable coordinate bound is also malformed.
+    // Far outside the work area is also malformed (no project bound).
     assert_eq!(
         t.propose_pointer_resize(
             &tk,
@@ -440,7 +535,8 @@ fn clamp_plans_at_minimum_and_outside_domain_is_malformed() {
 
 #[test]
 fn minimum_exhausted_and_single_leaf_refuse_unchanged() {
-    // Tiny pair region: 40px wide, MIN 32 each -> no feasible split.
+    // Sub-minimum pair region: 40px wide under the 720px COSMIC pair
+    // minimum -> no feasible split.
     let mut s = Session::new(
         owner(),
         generation(),
@@ -495,13 +591,16 @@ fn projectability_geometry_covers_and_spans_minimum() {
     admit_commit(&mut s, "win-2", true, "c-2");
     let k = key("out-1", "ws-1");
     let w2 = focused_window(&s, &k);
-    // 75 is exactly projectable ([12,20] via x16); 80 uses exact [79,119].
-    let plan = pointer_commit(&mut s, &k, &w2, Direction::Left, 75, "p-1");
+    // 390 is exactly projectable ([389,409]); the pair boundary lands on 390.
+    let plan = pointer_commit(&mut s, &k, &w2, Direction::Left, 390, "p-1");
     assert_eq!(plan.desired_geometry.len(), 2);
     for g in &plan.desired_geometry {
         assert!(g.rect.w > 0 && g.rect.h > 0);
-        // Direct leaves keep the portable minimum along the resize axis.
-        assert!(g.rect.w >= POINTER_RESIZE_MIN_SEGMENT, "span {g:?}");
+        // Direct leaves keep the COSMIC axis child minimum along the axis.
+        assert!(
+            i64::from(g.rect.w) >= cosmic_v1::child_min_for_axis(Axis::Horizontal),
+            "span {g:?}"
+        );
     }
     let min_x = plan
         .desired_geometry
@@ -516,7 +615,7 @@ fn projectability_geometry_covers_and_spans_minimum() {
         .max()
         .unwrap();
     assert_eq!(min_x, 0);
-    assert_eq!(max_e, 200);
+    assert_eq!(max_e, 800);
 }
 
 #[test]
@@ -538,7 +637,7 @@ fn repeated_proposals_are_deterministic() {
             &ka,
             &wa,
             Direction::Left,
-            75,
+            390,
             &obsa,
             &correlation("rep-1"),
             &ResizeCapabilities::full(),
@@ -549,7 +648,7 @@ fn repeated_proposals_are_deterministic() {
             &kb,
             &wb,
             Direction::Left,
-            75,
+            390,
             &obsb,
             &correlation("rep-1"),
             &ResizeCapabilities::full(),
@@ -566,7 +665,7 @@ fn repeated_proposals_are_deterministic() {
             &kc,
             &wc,
             Direction::Left,
-            75,
+            390,
             &obsc,
             &correlation("rep-1"),
             &ResizeCapabilities::full(),
@@ -591,7 +690,7 @@ fn capability_pending_stale_failures() {
             &k,
             &w2,
             Direction::Left,
-            81,
+            391,
             &obs,
             &correlation("x-cap"),
             &ResizeCapabilities::none()
@@ -599,6 +698,28 @@ fn capability_pending_stale_failures() {
         Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
     );
     assert!(!s.has_pending());
+    // COSMIC fixed minima need no separate capability; keyboard-declared full
+    // capabilities plan on equivalent fresh state.
+    {
+        let mut tmp = single_session();
+        admit_commit(&mut tmp, "win-1", true, "c-t1");
+        admit_commit(&mut tmp, "win-2", true, "c-t2");
+        let tk = key("out-1", "ws-1");
+        let tw = focused_window(&tmp, &tk);
+        let tobs = complete_obs(&tmp);
+        assert!(
+            tmp.propose_pointer_resize(
+                &tk,
+                &tw,
+                Direction::Left,
+                391,
+                &tobs,
+                &correlation("x-cap-native"),
+                &ResizeCapabilities::full()
+            )
+            .is_ok()
+        );
+    }
     let mut stale = obs.clone();
     stale.observation.revision += 1;
     assert_eq!(
@@ -606,7 +727,7 @@ fn capability_pending_stale_failures() {
             &k,
             &w2,
             Direction::Left,
-            81,
+            391,
             &stale,
             &correlation("x-stale"),
             &ResizeCapabilities::full()
@@ -624,7 +745,7 @@ fn capability_pending_stale_failures() {
         &pk,
         &pw,
         Direction::Left,
-        81,
+        391,
         &pobs,
         &correlation("pend-1"),
         &ResizeCapabilities::full(),
@@ -636,7 +757,7 @@ fn capability_pending_stale_failures() {
             &pk,
             &pw,
             Direction::Left,
-            81,
+            391,
             &pobs,
             &correlation("pend-2"),
             &ResizeCapabilities::full()
@@ -655,7 +776,7 @@ fn capability_pending_stale_failures() {
             &key("out-9", "ws-1"),
             &qw,
             Direction::Left,
-            81,
+            391,
             &qobs,
             &correlation("x-dom"),
             &ResizeCapabilities::full()
@@ -667,7 +788,7 @@ fn capability_pending_stale_failures() {
             &qk,
             &WindowId("win-9".to_owned()),
             Direction::Left,
-            81,
+            391,
             &qobs,
             &correlation("x-win"),
             &ResizeCapabilities::full()
@@ -679,7 +800,7 @@ fn capability_pending_stale_failures() {
             &qk,
             &WindowId("win-1".to_owned()),
             Direction::Left,
-            81,
+            391,
             &qobs,
             &correlation("x-focus"),
             &ResizeCapabilities::full()
@@ -702,7 +823,7 @@ fn exact_ack_verify_commit_versus_divergence() {
             &k,
             &w2,
             Direction::Left,
-            81,
+            391,
             &obs,
             &correlation("v-1"),
             &ResizeCapabilities::full(),
@@ -752,7 +873,7 @@ fn exact_ack_verify_commit_versus_divergence() {
             &tk,
             &tw,
             Direction::Left,
-            81,
+            391,
             &tobs,
             &correlation("v-2"),
             &ResizeCapabilities::full(),
@@ -796,9 +917,9 @@ fn ordinary_boundary_plans_and_projects_exactly() {
     let tk = key("out-1", "ws-1");
     let tw = focused_window(&t, &tk);
     let before = t.focus();
-    let plan = pointer_commit(&mut t, &tk, &tw, Direction::Left, 80, "p-exact");
+    let plan = pointer_commit(&mut t, &tk, &tw, Direction::Left, 390, "p-exact");
     assert_eq!(plan.resize_plan.operation.old_shares, vec![1, 1]);
-    assert_eq!(plan.resize_plan.operation.new_shares, vec![79, 119]);
+    assert_eq!(plan.resize_plan.operation.new_shares, vec![389, 409]);
     assert_eq!(t.focus(), before);
     // Complete projected geometry places the pair boundary exactly at 80:
     // left leaf ends at 80, right leaf starts at 80 (gap 0).
@@ -829,15 +950,63 @@ fn ordinary_boundary_plans_and_projects_exactly() {
         .iter()
         .find(|g| &g.leaf == left_id)
         .expect("left geometry");
-    assert_eq!(left_rect.rect.x + left_rect.rect.w, 80);
+    assert_eq!(left_rect.rect.x + left_rect.rect.w, 390);
     assert!(left_end.is_some() && right_start.is_some());
 
-    // Proposal 81 still plans exactly with [13,19] on a fresh session.
+    // Proposal 391 still plans exactly with [390,408] on a fresh session.
     let mut u = single_session();
     admit_commit(&mut u, "win-1", true, "c-1");
     admit_commit(&mut u, "win-2", true, "c-2");
     let uk = key("out-1", "ws-1");
     let uw = focused_window(&u, &uk);
-    let plan81 = pointer_commit(&mut u, &uk, &uw, Direction::Left, 81, "p-exact-81");
-    assert_eq!(plan81.resize_plan.operation.new_shares, vec![13, 19]);
+    let plan81 = pointer_commit(&mut u, &uk, &uw, Direction::Left, 391, "p-exact-81");
+    assert_eq!(plan81.resize_plan.operation.new_shares, vec![390, 408]);
+}
+
+#[test]
+fn pointer_two_sided_correction_preserved() {
+    // Pointer path clamps two-sided to the COSMIC child minima, unlike the
+    // keyboard one-sided shrink clamp.
+    use plasma_auto_tiler::cosmic_v1;
+    use plasma_auto_tiler::directional::Axis;
+    assert_eq!(
+        cosmic_v1::clamp_pair_split(800, 10, Axis::Horizontal),
+        Some((360, 440))
+    );
+    assert_eq!(
+        cosmic_v1::clamp_pair_split(800, 790, Axis::Horizontal),
+        Some((440, 360))
+    );
+    assert_eq!(
+        cosmic_v1::clamp_keyboard_shrink_pair(500, 220, 12, Axis::Horizontal),
+        Some((488, 232))
+    );
+    // Session pointer proposal still plans through the dedicated pointer
+    // dispatch with two-sided semantics and exact boundary projection.
+    let mut s = single_session();
+    admit_commit(&mut s, "win-1", true, "c-1");
+    admit_commit(&mut s, "win-2", true, "c-2");
+    let k = key("out-1", "ws-1");
+    let w = focused_window(&s, &k);
+    let obs = complete_obs(&s);
+    let plan = s
+        .propose_pointer_resize(
+            &k,
+            &w,
+            Direction::Left,
+            390,
+            &obs,
+            &correlation("ptr-2s"),
+            &ResizeCapabilities::full(),
+        )
+        .expect("pointer plans");
+    assert_eq!(
+        plan.dispatch.required_capability,
+        plasma_auto_tiler::contract::ResizeCapability::KeyboardResize
+    );
+    assert!(!plan.resize_plan.operation.new_shares.contains(&0));
+    assert_ne!(
+        plan.resize_plan.operation.new_shares,
+        plan.resize_plan.operation.old_shares
+    );
 }

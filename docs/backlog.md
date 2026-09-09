@@ -196,8 +196,20 @@ Only meaningful pending or active work is listed.
              neighbours only, and commits through fresh observation. Static
              Rust/KWin contracts pass with no live work. Next: KWin drag-end
              snap-back and drop adapter integration, separate from pointer
-             resize topology; parked shadow transport/live cleanup remains
-             unchanged |
+              resize topology; parked shadow transport/live cleanup remains
+              unchanged. Source-parity correction is statically complete:
+              `cosmic_v1` now executes audited `cosmic-comp`
+              `81cd5fdbaa41c3973369ae85bccf829137836e20` admission-axis,
+              proportional-share, keyboard/pointer pixel resize, and drag-zone
+              rules through explicit policy functions and Rust/KWin adapter
+              contracts. The project `1/16` resize, unit-share insertion,
+              arbitrary pointer bounds, and center-snap-back semantics are
+              removed. Remaining named parity gaps are compositor-native center
+              stack drops (portable split tree refuses closed), source-unproven
+              removal/no-focus focus fallback, binary-source-to-N-ary share
+               adaptation with integer projection rounding. Group edge/interior
+               classification and placement are wired through portable Session
+               drag preview/drop; KWin drag-end delivery remains separate. |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including

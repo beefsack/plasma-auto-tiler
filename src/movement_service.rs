@@ -110,6 +110,10 @@ const SEED_BOUNDS: Rect = Rect {
     w: 1920,
     h: 1080,
 };
+/// Fixed deterministic fallback placement for request seeding (no JS
+/// topology, no native fields). Wide so the COSMIC admission rule
+/// (`cosmic_v1::admission_axis`: wide splits portable Horizontal) yields
+/// horizontal sibling splits for seeded multi-window domains.
 const SEED_PLACEMENT: Rect = Rect {
     x: 0,
     y: 0,

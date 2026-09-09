@@ -98,6 +98,19 @@ production behavior through incremental opt-in promotion.
 
 ## Current Outcome
 
+- Source-parity correction, 2026-09-09: `cosmic_v1` is corrected against
+  `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20` production
+  `map_to_tree`, `Data::{new_group,add_window,remove_window}`, resize, and
+  drag paths. Rust now names the physical-axis mapping, binary-to-ordered-N-ary
+  proportional share adaptation, keyboard `12,14,16,18,20` pixel schedule,
+  `720/480` pair gates, `360/240` clamps, exact group/window zone priority,
+  and center-stack fact under `cosmic_v1`; Session only orchestrates. The
+  disabled KWin keyboard/pointer resize adapters carry the strict matching
+  mode/repeat/result contract. COSMIC center stacks remain unavailable because
+  portable topology deliberately excludes compositor stacks, so center refuses
+  closed with no plan; source does not establish the portable removal/no-focus
+  focus fallback. Rust and focused KWin static tests pass; no live KWin work
+  or runtime residue access occurred.
 - Static Rust-owned KWin signal-driven pointer split-share resize/direct
   geometry is complete behind the same disabled-by-default exclusive authority:
   public per-Window `interactiveMoveResizeStarted`,

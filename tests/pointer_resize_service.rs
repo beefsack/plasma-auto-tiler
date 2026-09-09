@@ -31,8 +31,8 @@ fn domain() -> OutputDomain {
         bounds: Rect {
             x: 0,
             y: 0,
-            w: 200,
-            h: 200,
+            w: 800,
+            h: 600,
         },
         gap: 0,
         adjacent: BTreeMap::new(),
@@ -90,6 +90,7 @@ fn admit_commit(session: &mut Session, window: &str, corr: &str) {
         workspace: WorkspaceId("ws-1".to_owned()),
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
+        // Wide target selects a horizontal split under the COSMIC admission rule.
         placement_bounds: Rect {
             x: 0,
             y: 0,
@@ -179,16 +180,16 @@ fn pointer_request(
         .enumerate()
         .map(|(index, name)| {
             let n = windows.len().max(1) as i32;
-            let strip = 200 / n;
+            let strip = 800 / n;
             let x = strip * index as i32;
             let ww = if index + 1 == windows.len() {
-                200 - x
+                800 - x
             } else {
                 strip
             };
             serde_json::json!({
                 "window": name, "output": "out-1", "workspace": "ws-1",
-                "rect": {"x": x, "y": 0, "w": ww, "h": 200},
+                "rect": {"x": x, "y": 0, "w": ww, "h": 600},
             })
         })
         .collect();
@@ -197,7 +198,7 @@ fn pointer_request(
         "owner": "owner-1", "generation": "gen-1",
         "revision": revision, "fingerprint": fingerprint,
         "domain": {"output": "out-1", "workspace": "ws-1",
-            "bounds": {"x": 0, "y": 0, "w": 200, "h": 200}, "gap": 0},
+            "bounds": {"x": 0, "y": 0, "w": 800, "h": 600}, "gap": 0},
         "focused_window": focused, "direction": direction,
         "proposed_boundary": boundary,
         "windows": members,
@@ -218,22 +219,22 @@ fn pointer_happy_path_plans_acks_and_commits() {
         fingerprint,
         &focused,
         "left",
-        80,
+        390,
         &["win-a", "win-b"],
         true,
     )));
     assert_eq!(planned["outcome"], "planned", "{planned}");
     assert_eq!(planned["capability"], "keyboard-resize");
     assert_eq!(planned["operation"]["kind"], "ResizeSplitShare");
-    // Rust derived shares; callers never supply them. 80 is exactly
-    // projectable as [79,119]; geometry places the boundary exactly at 80.
+    // Rust derived shares; callers never supply them. 390 is exactly
+    // projectable as [389,409]; geometry places the boundary exactly at 390.
     assert_eq!(
         planned["operation"]["old_shares"],
         serde_json::json!([1, 1])
     );
     assert_eq!(
         planned["operation"]["new_shares"],
-        serde_json::json!([79, 119])
+        serde_json::json!([389, 409])
     );
     let geometry = planned["desired_geometry"].as_array().expect("geometry");
     assert_eq!(geometry.len(), 2);
@@ -246,7 +247,7 @@ fn pointer_happy_path_plans_acks_and_commits() {
             left_end = Some(end);
         }
     }
-    assert_eq!(left_end, Some(80));
+    assert_eq!(left_end, Some(390));
     let operation = planned["operation"].clone();
     let geometry = planned["desired_geometry"].clone();
     let focus = planned["desired_focus"].clone();
@@ -289,8 +290,9 @@ fn pointer_happy_path_plans_acks_and_commits() {
 #[test]
 fn pointer_clamp_plans_and_outside_domain_is_rejected() {
     let (mut service, focused, revision, fingerprint) = two_window_service();
-    // Far-left boundary clamps to MIN (32) with exact shares [31,167];
-    // geometry places the boundary exactly at 32. Exact 80 still plans.
+    // Far-left boundary clamps to the COSMIC child minimum (360) with
+    // exact shares [359,439]; geometry places the boundary exactly at 360.
+    // Exact 390 still plans.
     let clamped = reply(&service.evaluate_json(&pointer_request(
         "ptr-clamp",
         revision,
@@ -304,7 +306,7 @@ fn pointer_clamp_plans_and_outside_domain_is_rejected() {
     assert_eq!(clamped["outcome"], "planned", "{clamped}");
     assert_eq!(
         clamped["operation"]["new_shares"],
-        serde_json::json!([31, 167])
+        serde_json::json!([359, 439])
     );
     let geometry = clamped["desired_geometry"].as_array().expect("geometry");
     let mut left_end: Option<i64> = None;
@@ -316,7 +318,7 @@ fn pointer_clamp_plans_and_outside_domain_is_rejected() {
             left_end = Some(end);
         }
     }
-    assert_eq!(left_end, Some(32));
+    assert_eq!(left_end, Some(360));
     let (mut service_exact, focused_e, revision_e, fingerprint_e) = two_window_service();
     let exact = reply(&service_exact.evaluate_json(&pointer_request(
         "ptr-clamp-exact",
@@ -324,14 +326,14 @@ fn pointer_clamp_plans_and_outside_domain_is_rejected() {
         fingerprint_e,
         &focused_e,
         "left",
-        80,
+        390,
         &["win-a", "win-b"],
         true,
     )));
     assert_eq!(exact["outcome"], "planned", "{exact}");
     assert_eq!(
         exact["operation"]["new_shares"],
-        serde_json::json!([79, 119])
+        serde_json::json!([389, 409])
     );
 
     // Outside the carried work area is rejected without divergence.
@@ -342,7 +344,7 @@ fn pointer_clamp_plans_and_outside_domain_is_rejected() {
         fingerprint2,
         &focused2,
         "left",
-        500,
+        900,
         &["win-a", "win-b"],
         true,
     )));
@@ -382,7 +384,7 @@ fn pointer_determinism_same_boundary_same_plan() {
         fingerprint,
         &focused,
         "left",
-        75,
+        390,
         &["win-a", "win-b"],
         true,
     )));
@@ -392,7 +394,7 @@ fn pointer_determinism_same_boundary_same_plan() {
         fingerprint,
         &focused,
         "left",
-        75,
+        390,
         &["win-a", "win-b"],
         true,
     )));
@@ -410,7 +412,7 @@ fn pointer_capability_pending_stale_failures() {
         fingerprint,
         &focused,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         false,
     )));
@@ -424,7 +426,7 @@ fn pointer_capability_pending_stale_failures() {
         fp2,
         &focused2,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -438,7 +440,7 @@ fn pointer_capability_pending_stale_failures() {
         fingerprint3,
         &focused3,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -449,7 +451,7 @@ fn pointer_capability_pending_stale_failures() {
         fingerprint3,
         &focused3,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -466,7 +468,7 @@ fn pointer_tampered_verify_diverges_and_keyboard_wire_unchanged() {
         fingerprint,
         &focused,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -517,13 +519,13 @@ fn pointer_tampered_verify_diverges_and_keyboard_wire_unchanged() {
             "owner": "owner-1", "generation": "gen-1",
             "revision": krev, "fingerprint": kfp,
             "domain": {"output": "out-1", "workspace": "ws-1",
-                "bounds": {"x": 0, "y": 0, "w": 200, "h": 200}, "gap": 0},
+                "bounds": {"x": 0, "y": 0, "w": 800, "h": 600}, "gap": 0},
             "focused_window": kfocused, "direction": "left",
             "windows": [
                 {"window": "win-a", "output": "out-1", "workspace": "ws-1",
-                 "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+                 "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
                 {"window": "win-b", "output": "out-1", "workspace": "ws-1",
-                 "rect": {"x": 100, "y": 0, "w": 100, "h": 200}},
+                 "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
             ],
             "capabilities": {"keyboard_resize": true},
         })
@@ -538,9 +540,9 @@ fn pointer_tampered_verify_diverges_and_keyboard_wire_unchanged() {
 
 #[test]
 fn pointer_ordinary_boundary_plans_and_binds_post() {
-    // 200px domain, [1,1] split at 100. Proposal 80 plans exactly with
-    // [79,119], and the complete projected geometry places the boundary at
-    // 80, so a post-observation where the native-owned source shows 80 binds
+    // 800px domain, [1,1] split at 400. Proposal 390 plans exactly with
+    // [389,409], and the complete projected geometry places the boundary at
+    // 390, so a post-observation where the native-owned source shows 390 binds
     // and commits (the service never writes the source itself).
     let (mut exact, efocused, erevision, efingerprint) = two_window_service();
     let planned = reply(&exact.evaluate_json(&pointer_request(
@@ -549,14 +551,14 @@ fn pointer_ordinary_boundary_plans_and_binds_post() {
         efingerprint,
         &efocused,
         "left",
-        80,
+        390,
         &["win-a", "win-b"],
         true,
     )));
     assert_eq!(planned["outcome"], "planned", "{planned}");
     assert_eq!(
         planned["operation"]["new_shares"],
-        serde_json::json!([79, 119])
+        serde_json::json!([389, 409])
     );
     // Complete projected geometry boundary is exactly 80: left leaf ends at
     // 80. Determine the left leaf rect (smaller x of the pair).
@@ -573,8 +575,8 @@ fn pointer_ordinary_boundary_plans_and_binds_post() {
             left_end = Some(end);
         }
     }
-    // Both leaves span 0..200, so ends are {80, 200}; minimum is 80.
-    assert_eq!(left_end, Some(80));
+    // Both leaves span 0..800, so ends are {390, 800}; minimum is 390.
+    assert_eq!(left_end, Some(390));
     // Acknowledge and verify with the exact geometry commits: the source
     // rect in the verify payload is the native-owned proposal (80 split),
     // never written by Rust.
@@ -632,7 +634,7 @@ fn dbus_routes_are_action_fenced_without_cross_mutation() {
         fingerprint,
         &focused,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -645,13 +647,13 @@ fn dbus_routes_are_action_fenced_without_cross_mutation() {
         "owner": "owner-1", "generation": "gen-1",
         "revision": revision, "fingerprint": fingerprint,
         "domain": {"output": "out-1", "workspace": "ws-1",
-            "bounds": {"x": 0, "y": 0, "w": 200, "h": 200}, "gap": 0},
+            "bounds": {"x": 0, "y": 0, "w": 800, "h": 600}, "gap": 0},
         "focused_window": focused, "direction": "left",
         "windows": [
             {"window": "win-a", "output": "out-1", "workspace": "ws-1",
-             "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+             "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
             {"window": "win-b", "output": "out-1", "workspace": "ws-1",
-             "rect": {"x": 100, "y": 0, "w": 100, "h": 200}},
+             "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
         ],
         "capabilities": {"keyboard_resize": true},
     })
@@ -667,7 +669,7 @@ fn dbus_routes_are_action_fenced_without_cross_mutation() {
         fingerprint,
         &focused,
         "left",
-        81,
+        391,
         &["win-a", "win-b"],
         true,
     )));
@@ -794,13 +796,14 @@ fn keyboard_request_for(
         "owner": "owner-1", "generation": "gen-1",
         "revision": revision, "fingerprint": fingerprint,
         "domain": {"output": "out-1", "workspace": "ws-1",
-            "bounds": {"x": 0, "y": 0, "w": 200, "h": 200}, "gap": 0},
-        "focused_window": focused, "direction": "left",
+            "bounds": {"x": 0, "y": 0, "w": 800, "h": 600}, "gap": 0},
+        "focused_window": focused, "direction": "left", "mode": "outwards",
+        "press_index": 0,
         "windows": [
             {"window": "win-a", "output": "out-1", "workspace": "ws-1",
-             "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+             "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
             {"window": "win-b", "output": "out-1", "workspace": "ws-1",
-             "rect": {"x": 100, "y": 0, "w": 100, "h": 200}},
+             "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
         ],
         "capabilities": {"keyboard_resize": true},
     })

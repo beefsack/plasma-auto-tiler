@@ -288,7 +288,7 @@ function resizedGeometry(boundary = 1000): Array<Record<string, unknown>> {
     ];
 }
 
-function pointerOperation(direction = "right"): Record<string, unknown> {
+function pointerOperation(direction = "right", mode = "outwards"): Record<string, unknown> {
     return {
         kind: "ResizeSplitShare",
         domain_output: "out-1",
@@ -296,6 +296,7 @@ function pointerOperation(direction = "right"): Record<string, unknown> {
         focused_leaf: "leaf-a",
         focused_window: "win-a",
         direction,
+        mode,
         target_group: "group-1",
         focused_child: "leaf-a",
         neighbor_child: "leaf-b",
@@ -474,6 +475,12 @@ describe("pointer resize adapter", () => {
         assert.equal(payload["proposed_boundary"], 1000);
         assert.ok(!("old_shares" in payload));
         assert.ok(!("new_shares" in payload));
+        // Pointer behavior is boundary-driven: it must not invent a keyboard
+        // step. No press_index is carried; the neutral/unused mode "outwards"
+        // plus press_index 0 live only in Rust's internal seeding RequestDto
+        // (src/resize_service.rs), never on this wire.
+        assert.ok(!("press_index" in payload));
+        assert.ok(!("mode" in payload));
         assert.deepEqual(payload["capabilities"], { keyboard_resize: true });
         assert.equal(payload["focused_window"], "win-a");
         assert.equal(payload["revision"], 2);
@@ -489,6 +496,57 @@ describe("pointer resize adapter", () => {
         });
         // The native-driven source is never written by the adapter.
         assert.equal(mocks.geometryWrites.length, 0);
+    });
+
+    it("requires mode in the shared planned operation payload", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        beginResize(mocks, adapter);
+        adapter.windowStepped(refOf(mocks, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        nativeApplySource(mocks, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        const payload = payloadOf(mocks, 0);
+        const correlation = payload["correlation_id"] as string;
+        const revision = payload["revision"] as number;
+        const onRequest = mocks.callbacks[0] as (reply: unknown) => void;
+        // Shared operation DTO now carries required mode; pointer accepts it
+        // while still driving behavior from the proposed boundary only.
+        onRequest(plannedReply(correlation, revision, resizedGeometry(1000)));
+        assert.deepEqual(mocks.geometryWrites.map((w) => w.id), ["win-b"]);
+        assert.equal(adapter.isEnabled, true);
+        // Missing mode in the operation rejects before any neighbour write.
+        const bad = mockEnvTwoWindow();
+        const adapter2 = enableAdapter(bad);
+        beginResize(bad, adapter2);
+        adapter2.windowStepped(refOf(bad, "win-a"), stepPayload({ x: 0, y: 0, w: 1000, h: 1080 }));
+        nativeApplySource(bad, "win-a", { x: 0, y: 0, w: 1000, h: 1080 });
+        const badPayload = payloadOf(bad, 0);
+        const badCorrelation = badPayload["correlation_id"] as string;
+        const badRevision = badPayload["revision"] as number;
+        const badOnRequest = bad.callbacks[0] as (reply: unknown) => void;
+        const operation = pointerOperation("right", "outwards") as Record<string, unknown>;
+        assert.equal(operation["mode"], "outwards");
+        delete operation["mode"];
+        badOnRequest(
+            JSON.stringify({
+                v: POINTER_RESIZE_CONTRACT_VERSION,
+                correlation_id: badCorrelation,
+                outcome: "planned",
+                base_revision: badRevision,
+                capability: "keyboard-resize",
+                preconditions: [
+                    "focused-leaf-occupied-by-focused-window",
+                    "target-boundary-valid",
+                    "resize-targets-same-domain",
+                    "adapter-must-verify-postconditions",
+                ],
+                operation,
+                desired_geometry: resizedGeometry(1000),
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-a" },
+            }),
+        );
+        assert.ok(bad.logs.some((line) => line.includes("pointer-precondition-mismatch")));
+        assert.equal(bad.geometryWrites.length, 0);
+        assert.equal(adapter2.isEnabled, false);
     });
 
     it("orders start, step, finish with a single final commit", () => {

@@ -24,30 +24,40 @@
 //!   no second acknowledgement state machine exists here.
 //!
 //! Placement policy (explicit `cosmic_v1` lifecycle policy, deterministic,
-//! no source COSMIC parity claim):
+//! source-evidenced where COSMIC establishes behavior):
 //! - Versioned [`crate::contract::LIFECYCLE_POLICY_VERSION`] (`cosmic_v1`);
 //!   plans/dispatch carry the binding and the reconciler rejects mismatches.
 //!   Frozen R1-R4 movement APIs/fixtures are unaffected.
-//! - The first tiled admitted window in an empty logical domain becomes a root
-//!   leaf.
-//! - A subsequent normal tiled window inserts as a sibling after the focused
-//!   eligible leaf in its parent when the parent axis matches the input
-//!   placement orientation; otherwise the focused leaf and the new leaf nest
-//!   beneath a generated group with the input orientation and equal `[1, 1]`
-//!   shares. Sibling insertion preserves existing shares and inserts share `1`
-//!   for the entrant. The new leaf is focused.
+//! - Admission axis is owned by [`crate::cosmic_v1::admission_axis`]:
+//!   target geometry width strictly greater than height selects portable
+//!   [`Axis::Horizontal`] (splits width, source `Orientation::Vertical`),
+//!   otherwise [`Axis::Vertical`] (vertical on tie).
+//!   The first tiled admitted window in an empty logical domain becomes a root
+//!   leaf; automatic admission always wraps the focused eligible leaf in an
+//!   ordered binary group old/new carrying the admission axis and
+//!   [`crate::cosmic_v1::new_group_shares`] (source `TilingLayout::new_group`
+//!   2898-2936 via `map_to_tree` 548-617). Same-axis N-ary parent append never
+//!   applies to admission; N-ary groups remain for movement/drag only. The new
+//!   leaf is focused (deterministic project fallback; COSMIC does not
+//!   establish admission focus).
 //! - Input placement orientation is carried explicitly as logical `bounds`
-//!   (`w >= h` selects [`Axis::Horizontal`], else [`Axis::Vertical`];
-//!   horizontal on tie).
-//! - When no eligible focus exists in the target domain, appending after the
-//!   last root child (group root) or nesting the single root leaf is
-//!   project-selected fallback, not source COSMIC parity.
+//!   (target geometry for the split, output geometry for the no-focus root
+//!   case under the same rule).
+//! - When no eligible focus exists in the target domain but a tree exists,
+//!   the entire root is wrapped old/new under the same admission axis/shares;
+//!   focus fallback only, not source COSMIC parity.
 //! - Removal retains empty logical domains (trees become
 //!   `None`), removes empty groups, and collapses single-child groups
-//!   recursively. Unaffected subtree identity/order and shares are preserved
+//!   recursively (survivor promotion mirrors `unmap_internal` structurally;
+//!   focus selection below is deterministic project fallback, not COSMIC:
+//!   `unmap_internal` does not establish next/previous/first focus).
+//!   Shares use [`crate::cosmic_v1::proportional_removal_shares`] before
+//!   collapse (portable N-ary adaptation of `remove_window` 255-283).
+//!   Unaffected subtree identity/order and shares are preserved
 //!   (a collapsed child inherits its collapsed parent slot). Focus moves to the
 //!   next sibling leaf, then the previous, then the first remaining leaf,
-//!   deterministically; non-focused removals preserve focus.
+//!   deterministically (project fallback, explicitly outside cosmic_v1
+//!   evidence); non-focused removals preserve focus.
 //! - Floating/fullscreen/maximized/sticky exception flags are explicit. An
 //!   admission carrying any set flag without an explicit
 //!   [`ExceptionBehavior`] fails closed instead of silently tiling. An
@@ -76,8 +86,8 @@ use crate::contract::{
     DragPostObservation, DragSide, FocusCapabilities, FocusDispatch, FocusIntent, FocusOperation,
     FocusPlanContract, FocusPostObservation, LifecycleCapabilities, LifecycleDispatch,
     LifecycleIntent, LifecycleOperation, LifecyclePlan, LifecyclePostObservation, Observation,
-    PostObservation, ResizeCapabilities, ResizeDispatch, ResizeIntent, ResizeOperation, ResizePlan,
-    ResizePostObservation, is_revision,
+    PostObservation, ResizeCapabilities, ResizeDispatch, ResizeIntent, ResizeMode, ResizeOperation,
+    ResizePlan, ResizePostObservation, is_revision,
 };
 use crate::directional::{
     Axis, Capabilities, Direction, FocusPlan, MoveOperation, MovePlan, Node, NodeId, OutputId,
@@ -91,13 +101,6 @@ use crate::reconcile::{AckApplied, AckError, Commit, Reconciler, StatusView, Ver
 pub const MAX_OBSERVED_WINDOWS: usize = 64;
 /// Logical domain bound.
 pub const MAX_DOMAINS: usize = 16;
-/// Portable pointer split-share minimum adjacent segment along the resize
-/// axis (device units). Pair regions narrower than twice this minimum have
-/// no feasible pointer boundary.
-pub const POINTER_RESIZE_MIN_SEGMENT: i32 = 32;
-/// Portable pointer boundary coordinate bound (device units, absolute
-/// domain-space coordinate along the matching axis).
-pub const POINTER_RESIZE_COORD_BOUND: i32 = 16384;
 
 /// Logical output domain: separate output/workspace scope with explicit
 /// portable bounds and gap for the deterministic projector, plus configured
@@ -462,11 +465,13 @@ pub struct SessionResizePlan {
 /// Authoritative drag plan: reconciler identity-bound portable
 /// [`DragDispatch`] (semantic drag operation/preconditions/capability/intent
 /// plus owner/generation/correlation/base revision) plus the deterministic
-/// contract [`DragPlan`], desired topology/snapshot (source removed, collapsed,
-/// then inserted/wrapped), preserved focus on the moved window, and complete
-/// desired rectangles for every tiled window in the affected domain. No native
+/// contract [`DragPlan`], desired topology/snapshot (edge drops: source
+/// removed, collapsed, then inserted/wrapped; center never plans
+/// topology rendered natively by the compositor), preserved focus on the moved
+/// window, and complete desired rectangles for every tiled window in the
+/// affected domain. No native
 /// commands. The drag commits only via acknowledge-then-[`Session::verify_drag`];
-/// self/center/invalid releases snap back with no plan and no pending. Focus is
+/// self/invalid releases snap back with no plan and no pending. Focus is
 /// preserved on the moved window. Immutable and complete.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionDragPlan {
@@ -560,7 +565,11 @@ struct PendingDesired {
 /// revision/generation, the full topology/membership/focus at capture time,
 /// and the projected source/work-area geometry preconditions. Holds no
 /// reconciler pending slot; cleared by drop, cancel, commit-divergence paths,
-/// or acknowledgement-divergence.
+/// or acknowledgement-divergence. The smallest portable prior hover
+/// (`cosmic_v1::PriorGroupEdge`: last emitted group-edge identity, or `None`
+/// when the last hover was not a group edge) lives here only and drives the
+/// sticky 80px/32px group-edge depths; it updates after each resolved
+/// preview/drop target and never participates in stale-capture equality.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct DragState {
     domain: DomainKey,
@@ -575,6 +584,7 @@ struct DragState {
     focused_leaf: Option<NodeId>,
     source_rect: Rect,
     work_area: Rect,
+    prior: Option<crate::cosmic_v1::PriorGroupEdge>,
 }
 
 /// Durable authoritative session. See module docs for the transaction model.
@@ -1871,33 +1881,51 @@ impl Session {
         }
     }
 
-    /// Propose portable keyboard split-share resize for the selected exact
+    /// Propose COSMIC keyboard pixel resize for the selected exact
     /// opaque `(domain, window)` pair.
     ///
     /// The supplied opaque [`WindowId`] must equal the authoritative logical
     /// focused tiled window in exactly `domain`; mismatch, unknown windows,
-    /// or exception windows refuse without pending. The pure
-    /// [`crate::directional::plan_resize_step`] nearest matching-axis ancestor
-    /// boundary is resolved, the deterministic 1/16 share-step transfer is
-    /// computed, and the normalized shares are applied through the reusable
-    /// [`crate::directional::apply_resize_shares`] primitive (future
-    /// pointer-resize submits normalized boundary/share operations through the
-    /// same primitive). Only the two selected adjacent shares change (plus an
-    /// exact x16 ratio-preserving normalization of the whole selected group
-    /// when the pair total is not divisible by 16); descendants/topology/order
-    /// are unchanged and focus is retained exactly.
+    /// or exception windows refuse without pending. Source selection
+    /// (`tiling/mod.rs` 2514-2600): the nearest matching-edge-axis ancestor
+    /// wins, `direction` is the cardinal edge determining the neighbor side
+    /// and `mode` is the source `ResizeDirection` (`Inwards` shrinks the
+    /// focused node, `Outwards` grows it). The [`crate::cosmic_v1`] keyboard
+    /// step schedule moves the shared boundary by
+    /// [`crate::cosmic_v1::keyboard_step_px`](`press_index`) physical pixels
+    /// (12px first operation, then 14, 16, 18, 20), source pair/child minima
+    /// ([`crate::cosmic_v1::pair_admits_resize`],
+    /// [`crate::cosmic_v1::clamp_keyboard_shrink_pair`]) gate and clamp the
+    /// move one-sided on direct pair sums `sizes[i] + sizes[i + 1]` (never union
+    /// including gap), and the resulting pixel sizes are converted to exact
+    /// projector-representable integer shares applied through the reusable
+    /// [`crate::directional::apply_resize_shares`] primitive. Only the two
+    /// selected adjacent shares change ratios (plus an exact
+    /// ratio-preserving whole-group integer scaling when pixel precision
+    /// requires it); descendants/topology/order are unchanged and focus is
+    /// retained exactly. The session orchestrates; all COSMIC semantics live
+    /// in [`crate::cosmic_v1`].
+    ///
+    /// `press_index` is the explicit portable key-repeat state: 0 is the
+    /// initial press (12px), each subsequent held repeat increments by one.
+    /// The adapter must supply `direction` (edge), `mode`, and `press_index`;
+    /// none default.
     ///
     /// Complete geometry for every tiled window in the affected domain must
     /// project before any pending is staged; unprojectable/minimum-geometry
-    /// failures refuse without pending. Missing boundaries refuse as
-    /// [`RefusalKind::Unchanged`] with no plan and no pending. Stale,
-    /// incomplete, malformed, pending, or unsupported-resize-capability inputs
-    /// refuse or diverge fail-closed.
+    /// failures refuse without pending. Source no-op pairs (direct sum under
+    /// the axis pair minimum) and exhausted/clamped-unchanged boundaries
+    /// refuse as [`RefusalKind::Unchanged`] with no plan and no pending.
+    /// Stale, incomplete, malformed, pending, or unsupported-resize-capability
+    /// inputs refuse or diverge fail-closed.
+    #[allow(clippy::too_many_arguments)]
     pub fn propose_resize(
         &mut self,
         domain: &DomainKey,
         window: &WindowId,
         direction: Direction,
+        mode: ResizeMode,
+        press_index: u32,
         session_observation: &SessionObservation,
         correlation_id: &CorrelationId,
         capabilities: &ResizeCapabilities,
@@ -1981,20 +2009,44 @@ impl Session {
         if !capabilities.supports(crate::contract::ResizeCapability::KeyboardResize) {
             return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
         }
+        let Some(own_domain) = self.domains.iter().find(|d| &d.key() == domain).cloned() else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
         let Some(tree) = self.trees.get(domain).cloned().flatten() else {
             return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
         };
-        let step = match crate::cosmic_v1::plan_resize_step(&tree, &focused_leaf, direction) {
-            Ok(step) => step,
-            Err(crate::cosmic_v1::ResizePlanError::NoBoundary) => {
+        // Accepted projected geometry is the normalized current geometry for
+        // the COSMIC pixel policy.
+        let accepted_geometry =
+            project_output_geometry(Some(&own_domain), Some(&tree), &self.windows, domain)
+                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(
+            &accepted_geometry,
+            &self.windows,
+            std::slice::from_ref(domain),
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let step_px = crate::cosmic_v1::keyboard_step_px(press_index);
+        let Some(derived) = derive_keyboard_pixel_shares(
+            &tree,
+            &focused_leaf,
+            direction,
+            mode,
+            step_px,
+            &own_domain,
+            &accepted_geometry,
+        ) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        let (target, new_shares) = match derived {
+            PixelDerived::Unchanged => {
                 return Err(ProposeError::Refused(RefusalKind::Unchanged));
             }
-            Err(crate::cosmic_v1::ResizePlanError::Malformed) => {
-                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-            }
+            PixelDerived::Planned { target, new_shares } => (target, new_shares),
         };
         let Some(updated_tree) =
-            crate::cosmic_v1::apply_resize_shares(&tree, &step.target_group, &step.new_shares)
+            crate::directional::apply_resize_shares(&tree, &target.group_id, &new_shares)
         else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
@@ -2027,12 +2079,24 @@ impl Session {
         ) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
+        // Minimum-size projectability on the COSMIC axis minima (keyboard
+        // one-sided: only the shrink side keeps the child minimum).
+        if !keyboard_minimum_holds(
+            &desired_geometry,
+            &target,
+            domain,
+            Axis::for_direction(direction),
+            mode,
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
         let intent = ResizeIntent {
             domain_output: domain.output.clone(),
             domain_workspace: domain.workspace.clone(),
             focused_leaf: focused_leaf.clone(),
             focused_window: focused_window.clone(),
             direction,
+            mode,
         };
         let operation = ResizeOperation {
             domain_output: domain.output.clone(),
@@ -2040,15 +2104,21 @@ impl Session {
             focused_leaf: focused_leaf.clone(),
             focused_window: focused_window.clone(),
             direction,
-            target_group: step.target_group.clone(),
-            focused_child: step.focused_child.clone(),
-            neighbor_child: step.neighbor_child.clone(),
-            focused_index: step.focused_index,
-            neighbor_index: step.neighbor_index,
-            old_shares: step.old_shares.clone(),
-            new_shares: step.new_shares.clone(),
+            mode,
+            target_group: target.group_id.clone(),
+            focused_child: target.focused_child.clone(),
+            neighbor_child: target.neighbor_child.clone(),
+            focused_index: target.focused_index,
+            neighbor_index: target.neighbor_index,
+            old_shares: target.old_shares.clone(),
+            new_shares: new_shares.clone(),
         };
         let plan = ResizePlan::for_operation(intent, operation);
+        // Dedicated keyboard dispatch/reconcile path (one pending slot plus
+        // exact ack/post verification shared with pointer via `verify_resize`).
+        // Never routes through `propose_pointer_resize`: the one-sided
+        // keyboard derivation above and the fixed share/semantic keyboard
+        // operation validate here before commit.
         let dispatch = match self.reconciler.propose_resize(
             &plan,
             &session_observation.observation,
@@ -2112,14 +2182,14 @@ impl Session {
         }
     }
 
-    /// Propose portable pointer split-share resize for the selected exact
+    /// Propose COSMIC pointer pixel resize for the selected exact
     /// opaque `(domain, window)` pair.
     ///
     /// Rust derives the target matching-axis split boundary and the two
     /// adjacent shares itself; the caller never supplies shares. Inputs are
     /// the captured focused tiled source/domain, the intentional `direction`
     /// selecting which adjacent boundary of the focused leaf moves, and the
-    /// normalized absolute `proposed_boundary` coordinate in domain work-area
+    /// absolute `proposed_boundary` coordinate in domain work-area
     /// space along the matching axis (`x` for horizontal, `y` for vertical).
     /// Structural preconditions are the complete session observation plus
     /// the accepted topology/membership/focus/capability binding, exactly
@@ -2128,13 +2198,16 @@ impl Session {
     /// Derivation: nearest matching-axis ancestor with a direct neighbor in
     /// `direction` (keyboard ancestor rule, outward on exhausted pairs);
     /// the proposed coordinate is mapped to desired adjacent pixel extents
-    /// inside that pair region, clamped to
-    /// [`POINTER_RESIZE_MIN_SEGMENT`], then converted to exact
+    /// inside that pair region, gated by the source pair minimum and clamped
+    /// two-sided to the source child minima
+    /// ([`crate::cosmic_v1::pair_admits_resize`],
+    /// [`crate::cosmic_v1::clamp_pair_split`]), then converted to exact
     /// pixel-projectable integer shares (only the two adjacent shares change
     /// ratios, plus an exact ratio-preserving normalization of the rest of
     /// the selected group when precision requires it; topology/order/
-    /// descendants unchanged, focus retained). KWin/JS share math is never
-    /// trusted: computed shares pass through the shared
+    /// descendants unchanged, focus retained). The session orchestrates; all
+    /// COSMIC semantics live in [`crate::cosmic_v1`]. KWin/JS share math is
+    /// never trusted: computed shares pass through the shared
     /// [`crate::directional::apply_resize_shares`] primitive and the full
     /// projector before any pending is staged.
     ///
@@ -2142,8 +2215,8 @@ impl Session {
     /// inputs refuse or diverge like keyboard; proposed coordinates outside
     /// the domain work-area extent refuse as [`RefusalKind::MalformedInput`];
     /// unprojectable results refuse as [`RefusalKind::MalformedTopology`];
-    /// missing or minimum-exhausted boundaries refuse as
-    /// [`RefusalKind::Unchanged`] with no plan and no pending. Commits only
+    /// source no-op pairs, exhausted minima, and clamped-unchanged boundaries
+    /// refuse as [`RefusalKind::Unchanged`] with no plan and no pending. Commits only
     /// via acknowledge-then-[`Session::verify_resize`], sharing the keyboard
     /// reconciliation boundary and operation shape.
     #[allow(clippy::too_many_arguments)]
@@ -2173,10 +2246,6 @@ impl Session {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         if window.0.is_empty() {
-            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
-        }
-        if !(-POINTER_RESIZE_COORD_BOUND..=POINTER_RESIZE_COORD_BOUND).contains(&proposed_boundary)
-        {
             return Err(ProposeError::Refused(RefusalKind::MalformedInput));
         }
         if session_observation.windows.len() > MAX_OBSERVED_WINDOWS
@@ -2277,7 +2346,7 @@ impl Session {
         ) else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
-        let (target, new_shares, effective_boundary) = match pointer {
+        let (target, new_shares, effective_boundary, mode) = match pointer {
             PointerDerived::Unchanged => {
                 return Err(ProposeError::Refused(RefusalKind::Unchanged));
             }
@@ -2285,7 +2354,8 @@ impl Session {
                 target,
                 new_shares,
                 effective_boundary,
-            } => (target, new_shares, effective_boundary),
+                mode,
+            } => (target, new_shares, effective_boundary, mode),
         };
         let Some(updated_tree) =
             crate::directional::apply_resize_shares(&tree, &target.group_id, &new_shares)
@@ -2358,6 +2428,7 @@ impl Session {
             focused_leaf: focused_leaf.clone(),
             focused_window: focused_window.clone(),
             direction,
+            mode,
         };
         let operation = ResizeOperation {
             domain_output: domain.output.clone(),
@@ -2365,6 +2436,7 @@ impl Session {
             focused_leaf: focused_leaf.clone(),
             focused_window: focused_window.clone(),
             direction,
+            mode,
             target_group: target.group_id.clone(),
             focused_child: target.focused_child.clone(),
             neighbor_child: target.neighbor_child.clone(),
@@ -2558,6 +2630,7 @@ impl Session {
             focused_leaf: self.focused_leaf.clone(),
             source_rect,
             work_area: domain.bounds,
+            prior: None,
         });
         Ok(DragCapture {
             domain: key,
@@ -2569,84 +2642,102 @@ impl Session {
         })
     }
 
-    /// Pure non-mutating drag preview for the active capture at logical pointer
-    /// coordinates `(x, y)`.
+    /// Drag preview for the active capture at logical pointer coordinates
+    /// `(x, y)`.
     ///
-    /// Core owns point-to-leaf resolution and bounded edge/center normalization
-    /// from the domain work area and the projected target rectangles: the
-    /// pointer must land inside the source domain work area on a projected
-    /// leaf, and inside that leaf the outer thirds normalize to
-    /// left/right/top/bottom edges (left/right take priority in corners) while
-    /// the middle carries no structural meaning and refuses as
-    /// [`RefusalKind::Unchanged`]. Self drops refuse the same way;
-    /// out-of-area or gap points refuse as
-    /// [`RefusalKind::CrossDomainMismatch`]. Reads only; stages nothing and
-    /// touches no reconciler state. Exposes portable opaque ids, rects, and
-    /// axis/order/relation only.
-    pub fn preview_drag(&self, x: i32, y: i32) -> Result<DragPreview, ProposeError> {
+    /// Uses the shared portable resolver identically to [`Session::drop_drag`]:
+    /// group nodes classify via source `classify_group_point` with the stored
+    /// portable prior hover (sticky 80/32; smallest `PriorGroupEdge` in
+    /// `DragState` only), leaf nodes via source `classify_window_point`.
+    /// GroupEdge resolves same-axis N-ary first/last or perpendicular wrapping;
+    /// GroupInterior resolves the source predecessor plus `min(len, idx+1)`;
+    /// window edges retain source split semantics; center (stack fact) fails
+    /// as explicit unsupported with no preview. Self refuses as Unchanged;
+    /// out-of-area refuses as CrossDomainMismatch. On a resolved target the
+    /// stored prior updates (GroupEdge sets it, all other targets clear it);
+    /// stale captures refuse as MalformedTopology. Stages nothing and touches
+    /// no reconciler state.
+    pub fn preview_drag(&mut self, x: i32, y: i32) -> Result<DragPreview, ProposeError> {
         if let Some(reason) = self.reconciler.divergence() {
             return Err(ProposeError::Diverged(reason));
         }
-        let Some(capture) = self.drag.as_ref() else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
-        };
         if !self.validate_current_topology() {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        if capture.revision != self.accepted_revision()
-            || capture.generation != self.generation
-            || self.trees != capture.trees
-            || self.windows != capture.windows
-            || self.exceptions != capture.exceptions
-            || self.focused_domain != capture.focused_domain
-            || self.focused_leaf != capture.focused_leaf
-        {
+        let capture_snapshot = self
+            .drag
+            .clone()
+            .ok_or(ProposeError::Refused(RefusalKind::MalformedInput))?;
+        if drag_capture_stale(self, &capture_snapshot) {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
-        let resolved = self.resolve_drag_point(capture, x, y)?;
-        let Some(current) = self.trees.get(&capture.domain).cloned().flatten() else {
+        let Some(current) = self.trees.get(&capture_snapshot.domain).cloned().flatten() else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
-        let Some(placement) = apply_drag_placement(
+        let Some(domain) = self
+            .domains
+            .iter()
+            .find(|d| d.key() == capture_snapshot.domain)
+            .cloned()
+        else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        let resolved = match resolve_drag_shared(
             &current,
-            &capture.source_leaf,
-            &resolved.target_leaf,
-            resolved.side,
-            capture.revision,
-        ) else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            &domain,
+            &self.windows,
+            &self.exceptions,
+            &capture_snapshot,
+            x,
+            y,
+        ) {
+            Ok(resolved) => resolved,
+            Err(ProposeError::Refused(kind)) => {
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.prior = None;
+                }
+                return Err(ProposeError::Refused(kind));
+            }
+            Err(other) => return Err(other),
         };
+        if let Some(drag) = self.drag.as_mut() {
+            drag.prior = resolved.next_prior.clone();
+        }
+        let placement = resolved.placement;
         if placement.tree == current {
             return Err(ProposeError::Refused(RefusalKind::Unchanged));
         }
         let mut desired_trees = self.trees.clone();
-        desired_trees.insert(capture.domain.clone(), Some(placement.tree.clone()));
+        desired_trees.insert(
+            capture_snapshot.domain.clone(),
+            Some(placement.tree.clone()),
+        );
         let desired_geometry = project_affected_geometry(
             &self.domains,
             &desired_trees,
             &self.windows,
-            std::slice::from_ref(&capture.domain),
+            std::slice::from_ref(&capture_snapshot.domain),
         )
         .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
         let Some(proposed_rect) = desired_geometry
             .iter()
-            .find(|g| g.leaf == capture.source_leaf)
+            .find(|g| g.leaf == capture_snapshot.source_leaf)
             .map(|g| g.rect)
         else {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         };
         Ok(DragPreview {
-            domain: capture.domain.clone(),
-            source_leaf: capture.source_leaf.clone(),
-            source_window: capture.source_window.clone(),
-            source_rect: capture.source_rect,
+            domain: capture_snapshot.domain.clone(),
+            source_leaf: capture_snapshot.source_leaf.clone(),
+            source_window: capture_snapshot.source_window.clone(),
+            source_rect: capture_snapshot.source_rect,
             target_leaf: resolved.target_leaf,
             target_window: resolved.target_window,
             target_rect: resolved.target_rect,
             proposed_rect,
             side: resolved.side,
-            axis: resolved.side.axis(),
-            before: resolved.side.before(),
+            axis: resolved.axis,
+            before: resolved.before,
             wrap: placement.wrap,
             target_group: placement.target_group,
             insertion_index: placement.insertion_index,
@@ -2655,24 +2746,31 @@ impl Session {
 
     /// Release the active drag at logical pointer coordinates `(x, y)`.
     ///
-    /// Recomputes the same deterministic result as [`Session::preview_drag`],
+    /// Recomputes the same deterministic result as [`Session::preview_drag`]
+    /// through the shared resolver (group rects/child starts, sticky prior
+    /// hover, GroupEdge first/last or wrapping, GroupInterior predecessor
+    /// plus `min(len, idx+1)`, window split semantics, center unsupported),
     /// then freshly validates the begin capture plus the supplied observation
     /// (source/target/domain/membership/projected geometry/revision) and the
     /// required drag capability through the shared one-pending reconciler slot
     /// before emitting a complete structural/focus/geometry [`SessionDragPlan`]
-    /// (focus preserved on the moved window). No topology commits until the
+    /// (focus preserved on the moved window). Edge drops need
+    /// [`crate::contract::DragCapability::PlaceTiled`]; center (source stack
+    /// fact) fails closed as [`RefusalKind::UnsupportedCapability`] with no
+    /// plan and no commit. No topology commits until the
     /// existing acknowledgement plus a matching drag post-observation complete
     /// via [`Session::verify_drag`]; refusal, partial, mismatch, or loss paths
-    /// diverge fail-closed through shared reconciler semantics. Self, center,
-    /// out-of-area, gap, and no-op releases are invalid: they clear only the
+    /// diverge fail-closed through shared reconciler semantics. Self,
+    /// out-of-area, and no-op releases are invalid: they clear only the
     /// transient drag state and return a portable no-structure snap-back with
     /// the accepted source rect, without touching the reconciler. Once an
     /// active capture is loaded with no competing pending plan, every other
     /// non-divergent invalid-release validation failure (malformed, partial,
     /// or cross-domain observed shape; invalid capture, topology, or geometry;
-    /// unsupported drag capability) also clears only the transient drag and
+    /// unsupported edge-drop capability) also clears only the transient drag and
     /// returns a snap-back; terminal reconciler owner, generation, revision,
-    /// correlation, and capability divergences stay terminal errors.
+    /// correlation, and capability divergences stay terminal errors. The stored
+    /// prior updates after a resolved target before the terminal clear.
     pub fn drop_drag(
         &mut self,
         x: i32,
@@ -2720,25 +2818,43 @@ impl Session {
         }
         // The begin capture still binds the live session: no revision,
         // generation, topology, membership, or focus drift is accepted between
-        // begin and drop. Stale captures snap back so no permanently unusable
-        // capture remains.
-        if capture.revision != self.accepted_revision()
-            || capture.generation != self.generation
-            || self.trees != capture.trees
-            || self.windows != capture.windows
-            || self.exceptions != capture.exceptions
-            || self.focused_domain != capture.focused_domain
-            || self.focused_leaf != capture.focused_leaf
-        {
+        // begin and drop (prior hover excluded: it evolves across previews).
+        // Stale captures snap back so no permanently unusable capture remains.
+        if drag_capture_stale(self, &capture) {
             return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
         }
-        if !capabilities.supports(crate::contract::DragCapability::PlaceTiled) {
+        // Shared resolution identical to preview; refused points snap back,
+        // center fails as unsupported with no plan.
+        let Some(current) = self.trees.get(&capture.domain).cloned().flatten() else {
             return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
-        }
-        // Invalid releases snap back with the accepted source rect and no
-        // reconciler use; only the transient drag state clears.
-        let resolved = match self.resolve_drag_point(&capture, x, y) {
-            Ok(resolved) => resolved,
+        };
+        let Some(domain) = self
+            .domains
+            .iter()
+            .find(|d| d.key() == capture.domain)
+            .cloned()
+        else {
+            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
+        };
+        let resolved = match resolve_drag_shared(
+            &current,
+            &domain,
+            &self.windows,
+            &self.exceptions,
+            &capture,
+            x,
+            y,
+        ) {
+            Ok(resolved) => {
+                if let Some(drag) = self.drag.as_mut() {
+                    drag.prior = resolved.next_prior.clone();
+                }
+                resolved
+            }
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability)) => {
+                self.drag = None;
+                return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+            }
             Err(ProposeError::Refused(_)) => {
                 return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
             }
@@ -2749,18 +2865,10 @@ impl Session {
             }
             Err(other) => return Err(other),
         };
-        let Some(current) = self.trees.get(&capture.domain).cloned().flatten() else {
+        if !capabilities.supports(crate::contract::DragCapability::PlaceTiled) {
             return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
-        };
-        let Some(placement) = apply_drag_placement(
-            &current,
-            &capture.source_leaf,
-            &resolved.target_leaf,
-            resolved.side,
-            capture.revision,
-        ) else {
-            return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
-        };
+        }
+        let placement = resolved.placement;
         if placement.tree == current {
             return Ok(DragRelease::SnapBack(self.clear_drag_snap_back(&capture)));
         }
@@ -2811,8 +2919,8 @@ impl Session {
             target_leaf: resolved.target_leaf.clone(),
             target_window: resolved.target_window.clone(),
             side: resolved.side,
-            axis: resolved.side.axis(),
-            before: resolved.side.before(),
+            axis: resolved.axis,
+            before: resolved.before,
             target_group: placement.target_group.clone(),
             insertion_index: placement.insertion_index,
             wrap: placement.wrap,
@@ -2889,74 +2997,6 @@ impl Session {
             source_window: capture.source_window.clone(),
             source_rect: rect,
         }
-    }
-
-    /// Resolve a drag pointer to its target leaf, window, rectangle, and edge.
-    /// Fails closed: outside the captured work area or on no projected leaf is
-    /// [`RefusalKind::CrossDomainMismatch`]; the source leaf itself or a target
-    /// center with no structural meaning is [`RefusalKind::Unchanged`].
-    fn resolve_drag_point(
-        &self,
-        capture: &DragState,
-        x: i32,
-        y: i32,
-    ) -> Result<ResolvedDragPoint, ProposeError> {
-        let area = capture.work_area;
-        if x < area.x
-            || y < area.y
-            || x.checked_sub(area.x).is_none_or(|dx| dx >= area.w)
-            || y.checked_sub(area.y).is_none_or(|dy| dy >= area.h)
-        {
-            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
-        }
-        let Some(domain) = self.domains.iter().find(|d| d.key() == capture.domain) else {
-            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
-        };
-        let tree = self.trees.get(&capture.domain).cloned().flatten();
-        let Some(tree) = tree else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        };
-        let projected = crate::geometry::project(&tree, domain.bounds, domain.gap)
-            .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
-        let Some(hit) = projected
-            .iter()
-            .find(|leaf| contains_point(&leaf.rect, x, y))
-        else {
-            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
-        };
-        if hit.leaf == capture.source_leaf {
-            return Err(ProposeError::Refused(RefusalKind::Unchanged));
-        }
-        let Some(side) = drag_edge_for(&hit.rect, x, y) else {
-            return Err(ProposeError::Refused(RefusalKind::Unchanged));
-        };
-        let Some(link) = self.windows.get(&capture.source_window) else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        };
-        if link.leaf != capture.source_leaf {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        }
-        let target_window = self
-            .windows
-            .values()
-            .find(|l| {
-                l.leaf == hit.leaf
-                    && l.output == capture.domain.output
-                    && l.workspace == capture.domain.workspace
-            })
-            .map(|l| l.window.clone());
-        let Some(target_window) = target_window else {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        };
-        if self.exceptions.contains_key(&target_window) {
-            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
-        }
-        Ok(ResolvedDragPoint {
-            target_leaf: hit.leaf.clone(),
-            target_window,
-            target_rect: hit.rect,
-            side,
-        })
     }
 
     /// Record an explicit adapter acknowledgement (shared binding for movement,
@@ -3151,43 +3191,32 @@ fn group_children_len(tree: &Node, id: &NodeId) -> Option<usize> {
     }
 }
 
-fn insert_leaf_into_group(
-    tree: Node,
-    group_id: &NodeId,
-    index: usize,
-    leaf: Node,
-    share: u64,
-) -> Option<Node> {
+fn insert_leaf_into_group(tree: Node, group_id: &NodeId, index: usize, leaf: Node) -> Option<Node> {
     match tree {
         Node::Leaf { .. } => None,
         Node::Group {
             id,
             axis,
             mut children,
-            mut shares,
+            shares,
         } => {
             if &id == group_id {
                 if index > children.len() {
                     return None;
                 }
+                let new_shares = crate::cosmic_v1::proportional_insertion_shares(&shares, index)?;
                 children.insert(index, leaf);
-                shares.insert(index, share);
                 return Some(Node::Group {
                     id,
                     axis,
                     children,
-                    shares,
+                    shares: new_shares,
                 });
             }
             for (pos, child) in children.iter().enumerate() {
                 if child.id() == group_id || subtree_contains_id(child, group_id) {
-                    let updated = insert_leaf_into_group(
-                        child.clone(),
-                        group_id,
-                        index,
-                        leaf.clone(),
-                        share,
-                    )?;
+                    let updated =
+                        insert_leaf_into_group(child.clone(), group_id, index, leaf.clone())?;
                     children[pos] = updated;
                     return Some(Node::Group {
                         id,
@@ -3356,14 +3385,14 @@ fn apply_move_operation(
                     id: new_id,
                     axis: *axis,
                     children: vec![mover_leaf_node, remainder],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 }
             } else {
                 Node::Group {
                     id: new_id,
                     axis: *axis,
                     children: vec![remainder, mover_leaf_node],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 }
             };
             let new_tree = replace_node_by_id(tree, container, new_group)?;
@@ -3488,14 +3517,14 @@ fn apply_move_operation(
                     id: new_id,
                     axis: *axis,
                     children: vec![w_node, s_node],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 }
             } else {
                 Node::Group {
                     id: new_id,
                     axis: *axis,
                     children: vec![s_node, w_node],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 }
             };
             new_children.insert(first, wrapper);
@@ -3587,13 +3616,8 @@ fn apply_move_operation(
             if *insertion_index > post_children.len() {
                 return None;
             }
-            let updated = insert_leaf_into_group(
-                working,
-                target_group,
-                *insertion_index,
-                mover_leaf_node,
-                1,
-            )?;
+            let updated =
+                insert_leaf_into_group(working, target_group, *insertion_index, mover_leaf_node)?;
             desired_trees.insert(source.clone(), Some(updated));
             Some((
                 desired_trees,
@@ -3679,13 +3703,13 @@ fn apply_move_operation(
                     id: new_id,
                     axis: *axis,
                     children: vec![mover_leaf_node, victim],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 },
                 FocusedSide::Second => Node::Group {
                     id: new_id,
                     axis: *axis,
                     children: vec![victim, mover_leaf_node],
-                    shares: vec![1, 1],
+                    shares: crate::cosmic_v1::new_group_shares().to_vec(),
                 },
             };
             let updated = replace_child_at(
@@ -3776,7 +3800,7 @@ fn apply_move_operation(
                     if index > post_len {
                         return None;
                     }
-                    working = insert_leaf_into_group(working, parent, index, mover_leaf_node, 1)?;
+                    working = insert_leaf_into_group(working, parent, index, mover_leaf_node)?;
                 }
                 EscapeContinuation::R1 => {
                     // Perpendicular receiving parent: wrap the parent with the
@@ -3794,14 +3818,14 @@ fn apply_move_operation(
                             id: new_id,
                             axis,
                             children: vec![mover_leaf_node, parent_subtree],
-                            shares: vec![1, 1],
+                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
                         }
                     } else {
                         Node::Group {
                             id: new_id,
                             axis,
                             children: vec![parent_subtree, mover_leaf_node],
-                            shares: vec![1, 1],
+                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
                         }
                     };
                     working = replace_node_by_id(working, parent, wrapped)?;
@@ -3884,14 +3908,14 @@ fn apply_move_operation(
                             id: new_id,
                             axis,
                             children: vec![mover_leaf_node, existing],
-                            shares: vec![1, 1],
+                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
                         }
                     } else {
                         Node::Group {
                             id: new_id,
                             axis,
                             children: vec![existing, mover_leaf_node],
-                            shares: vec![1, 1],
+                            shares: crate::cosmic_v1::new_group_shares().to_vec(),
                         }
                     };
                     desired_trees.insert(target_key.clone(), Some(combined));
@@ -4195,12 +4219,21 @@ fn swap_direct_children(tree: Node, container: &NodeId, a: &NodeId, b: &NodeId) 
     }
 }
 
-/// Resolved drag pointer: target leaf/window/rect plus the normalized edge.
-struct ResolvedDragPoint {
+/// Shared drag resolution outcome (preview and drop agree): the portable
+/// target identities/rect, the edge (window edges and group edges carry the
+/// source edge; group interior carries the canonical group-axis edge
+/// Left/Top with the interior `insertion_index` distinguishing it from the
+/// first/last edge slots), the derived axis/order, the placement, and the
+/// next portable prior hover (Some only for a resolved GroupEdge).
+struct SharedDragResolved {
     target_leaf: NodeId,
     target_window: WindowId,
     target_rect: Rect,
     side: DragSide,
+    axis: Axis,
+    before: bool,
+    placement: DragPlacement,
+    next_prior: Option<crate::cosmic_v1::PriorGroupEdge>,
 }
 
 /// Deterministic drag placement: the new domain tree plus the resolved
@@ -4220,36 +4253,244 @@ fn contains_point(rect: &Rect, x: i32, y: i32) -> bool {
         && y.checked_sub(rect.y).is_some_and(|dy| dy < rect.h)
 }
 
-/// Bounded edge normalization inside a projected target rectangle: the outer
-/// thirds order along an edge (left/right take priority in corners); the
-/// middle carries no structural meaning (`None`). Integer math only. The edge
-/// band is at least one pixel so projected rectangles narrower or shorter
-/// than 3px still deterministically choose an edge instead of collapsing to
-/// center.
+/// COSMIC window-drop classification inside a projected target rectangle.
+/// Delegates to [`crate::cosmic_v1::classify_window_point`]: the middle third
+/// (rounded thirds) is the center stack source fact
+/// (`Some(DragSide::Center)`), any other location selects an edge by strict
+/// normalized half-distance (ties choose vertical), and points outside yield
+/// `None`. The session orchestrates; all COSMIC zone semantics live in
+/// [`crate::cosmic_v1`]. Center never plans (unsupported stack behavior).
 fn drag_edge_for(rect: &Rect, x: i32, y: i32) -> Option<DragSide> {
-    if rect.w <= 0 || rect.h <= 0 {
-        return None;
+    crate::cosmic_v1::classify_window_point(rect, x, y)
+}
+
+/// Stale-capture check excluding the evolving prior hover: revision,
+/// generation, topology, membership, and focus must match live session state.
+fn drag_capture_stale(session: &Session, capture: &DragState) -> bool {
+    capture.revision != session.accepted_revision()
+        || capture.generation != session.generation
+        || session.trees != capture.trees
+        || session.windows != capture.windows
+        || session.exceptions != capture.exceptions
+        || session.focused_domain != capture.focused_domain
+        || session.focused_leaf != capture.focused_leaf
+}
+
+/// Shared portable drag resolver used identically by preview and drop.
+///
+/// Projects group rects (union of descendant leaves) and ordered child starts
+/// without native data, walks to the deepest containing node (group or leaf),
+/// then classifies: group nodes via source `classify_group_point` with the
+/// portable prior hover (sticky 80/32), leaf nodes via source
+/// `classify_window_point`. GroupEdge resolves same-axis N-ary first/last or
+/// perpendicular group wrapping; GroupInterior resolves the source
+/// predecessor plus `min(len, idx + 1)`; window edges retain source split
+/// semantics; center (window stack fact) returns Unsupported with no plan.
+/// Self hits return Unchanged; out-of-area returns CrossDomainMismatch.
+fn resolve_drag_shared(
+    tree: &Node,
+    domain: &OutputDomain,
+    windows: &BTreeMap<WindowId, WindowLink>,
+    exceptions: &BTreeMap<WindowId, ExceptionRecord>,
+    capture: &DragState,
+    x: i32,
+    y: i32,
+) -> Result<SharedDragResolved, ProposeError> {
+    let area = capture.work_area;
+    if x < area.x
+        || y < area.y
+        || x.checked_sub(area.x).is_none_or(|dx| dx >= area.w)
+        || y.checked_sub(area.y).is_none_or(|dy| dy >= area.h)
+    {
+        return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
     }
-    let dx = x.checked_sub(rect.x)?;
-    let dy = y.checked_sub(rect.y)?;
-    if dx < 0 || dy < 0 || dx >= rect.w || dy >= rect.h {
-        return None;
+    let projected = crate::geometry::project(tree, domain.bounds, domain.gap)
+        .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+    let mut leaf_rects: BTreeMap<NodeId, Rect> = BTreeMap::new();
+    for leaf in &projected {
+        leaf_rects.insert(leaf.leaf.clone(), leaf.rect);
     }
-    let band_w = (rect.w / 3).max(1).min(rect.w);
-    let band_h = (rect.h / 3).max(1).min(rect.h);
-    if dx < band_w {
-        return Some(DragSide::Left);
+    let layouts = drag_group_layouts(tree, &leaf_rects);
+    let layout_by_id: BTreeMap<&NodeId, &GroupLayout> =
+        layouts.iter().map(|l| (&l.id, l)).collect();
+    // Deepest-node group resolution (source update_pointer_position descent):
+    // group targets resolve only for group-only (gap) points so window edges
+    // retain source split semantics; group edge/interior classification uses
+    // the stored portable prior hover.
+    // Deepest containing node walk (mirrors update_pointer_position descent
+    // through child geometries containing the pointer) for window vs interior.
+    let mut current_id = tree.id().clone();
+    loop {
+        let Some(node) = find_subtree(tree, &current_id) else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        match node {
+            Node::Leaf { .. } => break,
+            Node::Group { children, .. } => {
+                let mut next: Option<NodeId> = None;
+                for child in children {
+                    let contains = match child {
+                        Node::Leaf { id } => {
+                            leaf_rects.get(id).is_some_and(|r| contains_point(r, x, y))
+                        }
+                        Node::Group { id, .. } => layout_by_id
+                            .get(id)
+                            .is_some_and(|l| contains_point(&l.rect, x, y)),
+                    };
+                    if contains {
+                        next = Some(child.id().clone());
+                        break;
+                    }
+                }
+                match next {
+                    Some(id) => current_id = id,
+                    None => break,
+                }
+            }
+        }
     }
-    if dx >= rect.w - band_w {
-        return Some(DragSide::Right);
+    let Some(target_node) = find_subtree(tree, &current_id) else {
+        return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+    };
+    match target_node {
+        Node::Group { .. } => {
+            // Group-only (gap) point: sticky source edge first, else interior.
+            let layout = layout_by_id
+                .get(&current_id)
+                .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            if let Some(edge) = crate::cosmic_v1::classify_group_point(
+                &layout.rect,
+                &layout.id,
+                x,
+                y,
+                capture.prior.as_ref(),
+            ) {
+                let rep = group_rep_window(
+                    tree,
+                    &layout.id,
+                    windows,
+                    &capture.source_window,
+                    &capture.domain,
+                )
+                .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+                if exceptions.contains_key(&rep) {
+                    return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+                }
+                let (Some(axis), Some(before)) = (edge.axis(), edge.before()) else {
+                    return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+                };
+                let placement = apply_group_edge_placement(
+                    tree,
+                    &capture.source_leaf,
+                    &layout.id,
+                    edge,
+                    capture.revision,
+                )
+                .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+                return Ok(SharedDragResolved {
+                    target_leaf: layout.id.clone(),
+                    target_window: rep,
+                    target_rect: layout.rect,
+                    side: edge,
+                    axis,
+                    before,
+                    placement,
+                    next_prior: Some(crate::cosmic_v1::PriorGroupEdge {
+                        group: layout.id.clone(),
+                        edge,
+                    }),
+                });
+            }
+            // GroupInterior: source predecessor plus min(len, idx+1) at drop.
+            let offset = match layout.axis {
+                Axis::Horizontal => i64::from(x),
+                Axis::Vertical => i64::from(y),
+            };
+            let predecessor =
+                crate::cosmic_v1::insertion_index_for_offset(&layout.child_starts, offset);
+            let rep = group_rep_window(
+                tree,
+                &layout.id,
+                windows,
+                &capture.source_window,
+                &capture.domain,
+            )
+            .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            if exceptions.contains_key(&rep) {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            }
+            let placement = apply_group_interior_placement(
+                tree,
+                &capture.source_leaf,
+                &layout.id,
+                predecessor,
+                capture.revision,
+            )
+            .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            // Canonical interior edge carries the group axis (Left/Top);
+            // the interior insertion_index distinguishes it from edge slots.
+            let side = match layout.axis {
+                Axis::Horizontal => DragSide::Left,
+                Axis::Vertical => DragSide::Top,
+            };
+            let (Some(axis), Some(before)) = (side.axis(), side.before()) else {
+                return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+            };
+            Ok(SharedDragResolved {
+                target_leaf: layout.id.clone(),
+                target_window: rep,
+                target_rect: layout.rect,
+                side,
+                axis,
+                before,
+                placement,
+                next_prior: None,
+            })
+        }
+        Node::Leaf { id } => {
+            if id == &capture.source_leaf {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            let rect = leaf_rects
+                .get(id)
+                .copied()
+                .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            let Some(side) = drag_edge_for(&rect, x, y) else {
+                return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            };
+            if side.is_stack() {
+                return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+            }
+            let target_window = windows
+                .values()
+                .find(|l| {
+                    l.leaf == *id
+                        && l.output == capture.domain.output
+                        && l.workspace == capture.domain.workspace
+                })
+                .map(|l| l.window.clone())
+                .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            if exceptions.contains_key(&target_window) {
+                return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+            }
+            let (Some(axis), Some(before)) = (side.axis(), side.before()) else {
+                return Err(ProposeError::Refused(RefusalKind::UnsupportedCapability));
+            };
+            let placement =
+                apply_drag_placement(tree, &capture.source_leaf, id, side, capture.revision)
+                    .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+            Ok(SharedDragResolved {
+                target_leaf: id.clone(),
+                target_window,
+                target_rect: rect,
+                side,
+                axis,
+                before,
+                placement,
+                next_prior: None,
+            })
+        }
     }
-    if dy < band_h {
-        return Some(DragSide::Top);
-    }
-    if dy >= rect.h - band_h {
-        return Some(DragSide::Bottom);
-    }
-    None
 }
 
 fn generate_drag_group_id(
@@ -4271,16 +4512,18 @@ fn generate_drag_group_id(
     }
 }
 
-/// Deterministically place `source_leaf` onto `target_leaf`'s `side`.
+/// Deterministically place `source_leaf` onto `target_leaf`'s edge `side`
+/// (edges only; center never reaches here).
 ///
 /// Removes the source first (recursively collapsing emptied/single-child
-/// groups), then either inserts it as an ordered N-ary sibling in the target
-/// parent when that parent runs along the drop axis, or wraps only the target
-/// subtree in a new smallest 2-child split ordered before/after by side.
-/// Unaffected subtree order/identity/shares are preserved: inserts carry share
-/// `1`, wraps carry `[1, 1]` with the wrapper inheriting the target share slot.
-/// Returns `None` when the target cannot resolve; callers compare against the
-/// input tree to refuse no-op placements as unchanged.
+/// groups with proportional shares), then either inserts it as an ordered
+/// N-ary sibling via proportional shares in the target parent when that
+/// parent runs along the drop axis, or wraps only the target subtree in a new
+/// smallest 2-child split ordered before/after by side. Unaffected subtree
+/// order/identity/shares are preserved; wraps carry `[1, 1]` with the wrapper
+/// inheriting the target share slot. Returns `None` when the target cannot
+/// resolve or `side` is center; callers compare against the input tree to
+/// refuse no-op placements as unchanged.
 fn apply_drag_placement(
     tree: &Node,
     source_leaf: &NodeId,
@@ -4291,8 +4534,9 @@ fn apply_drag_placement(
     if source_leaf == target_leaf {
         return None;
     }
-    let axis = side.axis();
-    let before = side.before();
+    let (Some(axis), Some(before)) = (side.axis(), side.before()) else {
+        return None;
+    };
     let mover = Node::Leaf {
         id: source_leaf.clone(),
     };
@@ -4320,7 +4564,7 @@ fn apply_drag_placement(
             if insertion_index > children.len() {
                 return None;
             }
-            let updated = insert_leaf_into_group(working, &parent_id, insertion_index, mover, 1)?;
+            let updated = insert_leaf_into_group(working, &parent_id, insertion_index, mover)?;
             return Some(DragPlacement {
                 tree: updated,
                 target_group: parent_id,
@@ -4331,7 +4575,10 @@ fn apply_drag_placement(
         }
     }
     // Perpendicular: wrap only the target subtree in a new 2-child split.
+    // New-group shares come from the cosmic_v1 policy (equal-halves source
+    // behavior adapted to N-ary integer shares).
     let new_id = generate_drag_group_id(source_leaf, base_revision, &node_ids);
+    let new_shares = crate::cosmic_v1::new_group_shares().to_vec();
     let wrapper = if before {
         Node::Group {
             id: new_id.clone(),
@@ -4342,7 +4589,7 @@ fn apply_drag_placement(
                     id: target_leaf.clone(),
                 },
             ],
-            shares: vec![1, 1],
+            shares: new_shares,
         }
     } else {
         Node::Group {
@@ -4354,7 +4601,7 @@ fn apply_drag_placement(
                 },
                 mover,
             ],
-            shares: vec![1, 1],
+            shares: crate::cosmic_v1::new_group_shares().to_vec(),
         }
     };
     if working.id() == target_leaf {
@@ -4383,6 +4630,240 @@ fn apply_drag_placement(
         insertion_index: index,
         wrap: true,
         new_group: Some(new_id),
+    })
+}
+
+/// Portable group layout derived without native data: the group bounding rect
+/// (union of descendant projected leaves, including interior gaps) plus the
+/// ordered child start edges along the group axis (absolute, ascending, one
+/// per child, each the minimum origin among that child's descendant leaves).
+struct GroupLayout {
+    id: NodeId,
+    axis: Axis,
+    rect: Rect,
+    child_starts: Vec<i64>,
+}
+
+fn drag_group_layouts(tree: &Node, leaf_rects: &BTreeMap<NodeId, Rect>) -> Vec<GroupLayout> {
+    let mut out = Vec::new();
+    collect_group_layouts(tree, leaf_rects, &mut out);
+    out
+}
+
+fn collect_group_layouts(
+    node: &Node,
+    leaf_rects: &BTreeMap<NodeId, Rect>,
+    out: &mut Vec<GroupLayout>,
+) {
+    if let Node::Group {
+        id, axis, children, ..
+    } = node
+    {
+        let mut leaves: Vec<NodeId> = Vec::new();
+        collect_leaves_into(node, &mut leaves);
+        let mut min_x: Option<i64> = None;
+        let mut min_y: Option<i64> = None;
+        let mut max_x: Option<i64> = None;
+        let mut max_y: Option<i64> = None;
+        for leaf in &leaves {
+            let Some(rect) = leaf_rects.get(leaf) else {
+                continue;
+            };
+            let x0 = i64::from(rect.x);
+            let y0 = i64::from(rect.y);
+            let x1 = x0 + i64::from(rect.w);
+            let y1 = y0 + i64::from(rect.h);
+            min_x = Some(min_x.map_or(x0, |m| m.min(x0)));
+            min_y = Some(min_y.map_or(y0, |m| m.min(y0)));
+            max_x = Some(max_x.map_or(x1, |m| m.max(x1)));
+            max_y = Some(max_y.map_or(y1, |m| m.max(y1)));
+        }
+        if let (Some(x0), Some(y0), Some(x1), Some(y1)) = (min_x, min_y, max_x, max_y) {
+            let rect = Rect {
+                x: i32::try_from(x0).unwrap_or(i32::MIN),
+                y: i32::try_from(y0).unwrap_or(i32::MIN),
+                w: i32::try_from(x1 - x0).unwrap_or(0),
+                h: i32::try_from(y1 - y0).unwrap_or(0),
+            };
+            let mut child_starts = Vec::with_capacity(children.len());
+            for child in children {
+                let mut c_leaves = Vec::new();
+                collect_leaves_into(child, &mut c_leaves);
+                let mut start: Option<i64> = None;
+                for leaf in &c_leaves {
+                    let Some(r) = leaf_rects.get(leaf) else {
+                        continue;
+                    };
+                    let s = match axis {
+                        Axis::Horizontal => i64::from(r.x),
+                        Axis::Vertical => i64::from(r.y),
+                    };
+                    start = Some(start.map_or(s, |m| m.min(s)));
+                }
+                child_starts.push(start.unwrap_or(0));
+            }
+            out.push(GroupLayout {
+                id: id.clone(),
+                axis: *axis,
+                rect,
+                child_starts,
+            });
+        }
+        for child in children {
+            collect_group_layouts(child, leaf_rects, out);
+        }
+    }
+}
+
+/// Representative member window for a group target (first non-source leaf
+/// window in traversal order). Keeps `DragOperation.target_window`
+/// non-empty and distinct from the source without native data.
+fn group_rep_window(
+    tree: &Node,
+    group: &NodeId,
+    windows: &BTreeMap<WindowId, WindowLink>,
+    source_window: &WindowId,
+    domain: &DomainKey,
+) -> Option<WindowId> {
+    let node = find_subtree(tree, group)?;
+    let leaves = collect_leaves(node);
+    for leaf in leaves {
+        let Some(link) = windows.values().find(|l| {
+            l.leaf == leaf && l.output == domain.output && l.workspace == domain.workspace
+        }) else {
+            continue;
+        };
+        if &link.window != source_window {
+            return Some(link.window.clone());
+        }
+    }
+    None
+}
+
+/// Source `drop_window` GroupEdge placement (2666-2824): same-axis N-ary
+/// first/last insertion via proportional shares, perpendicular wrapping of
+/// the whole group in a new smallest 2-child split ordered by side.
+fn apply_group_edge_placement(
+    tree: &Node,
+    source_leaf: &NodeId,
+    group_id: &NodeId,
+    side: DragSide,
+    base_revision: u64,
+) -> Option<DragPlacement> {
+    let (Some(axis), Some(before)) = (side.axis(), side.before()) else {
+        return None;
+    };
+    if source_leaf == group_id {
+        return None;
+    }
+    let mover = Node::Leaf {
+        id: source_leaf.clone(),
+    };
+    let working = remove_leaf_from_tree(Some(tree.clone()), source_leaf)?;
+    if collect_leaves(&working).contains(source_leaf) {
+        return None;
+    }
+    let (children, shares, gid, group_axis) = find_group_full(&working, group_id)?;
+    debug_assert_eq!(&gid, group_id);
+    if children.is_empty() {
+        return None;
+    }
+    let _ = shares;
+    let mut node_ids = BTreeSet::new();
+    collect_node_ids(&working, &mut node_ids);
+    if group_axis == axis {
+        let insertion_index = if before { 0 } else { children.len() };
+        let updated = insert_leaf_into_group(working, group_id, insertion_index, mover)?;
+        return Some(DragPlacement {
+            tree: updated,
+            target_group: group_id.clone(),
+            insertion_index,
+            wrap: false,
+            new_group: None,
+        });
+    }
+    // Perpendicular: wrap the whole group, preserving its slot/share.
+    let new_id = generate_drag_group_id(source_leaf, base_revision, &node_ids);
+    let new_shares = crate::cosmic_v1::new_group_shares().to_vec();
+    let group_node = find_subtree(&working, group_id)?.clone();
+    let wrapper = if before {
+        Node::Group {
+            id: new_id.clone(),
+            axis,
+            children: vec![mover, group_node],
+            shares: new_shares,
+        }
+    } else {
+        Node::Group {
+            id: new_id.clone(),
+            axis,
+            children: vec![group_node, mover],
+            shares: crate::cosmic_v1::new_group_shares().to_vec(),
+        }
+    };
+    if working.id() == group_id {
+        return Some(DragPlacement {
+            tree: wrapper,
+            target_group: group_id.clone(),
+            insertion_index: 0,
+            wrap: true,
+            new_group: Some(new_id),
+        });
+    }
+    let parent_id = parent_of_group(&working, group_id)?;
+    let (siblings, parent_shares) = match find_group(&working, &parent_id) {
+        Some((children, _, _)) => {
+            let shares = find_group_shares(&working, &parent_id)?;
+            (children, shares)
+        }
+        None => return None,
+    };
+    let index = siblings.iter().position(|c| c.id() == group_id)?;
+    let target_share = *parent_shares.get(index)?;
+    let updated = replace_child_at(&working, &parent_id, index, wrapper, target_share)?;
+    Some(DragPlacement {
+        tree: updated,
+        target_group: parent_id,
+        insertion_index: index,
+        wrap: true,
+        new_group: Some(new_id),
+    })
+}
+
+/// Source `drop_window` GroupInterior placement (2725-2730): insert at
+/// `min(len, idx + 1)` where `idx` is the source predecessor from
+/// `insertion_index_for_offset` and `len` is the post-removal group length.
+fn apply_group_interior_placement(
+    tree: &Node,
+    source_leaf: &NodeId,
+    group_id: &NodeId,
+    predecessor: usize,
+    base_revision: u64,
+) -> Option<DragPlacement> {
+    if source_leaf == group_id {
+        return None;
+    }
+    let mover = Node::Leaf {
+        id: source_leaf.clone(),
+    };
+    let working = remove_leaf_from_tree(Some(tree.clone()), source_leaf)?;
+    if collect_leaves(&working).contains(source_leaf) {
+        return None;
+    }
+    let (children, _, _, _) = find_group_full(&working, group_id)?;
+    let len = children.len();
+    let insertion_index = len.min(predecessor.saturating_add(1));
+    if insertion_index > len {
+        return None;
+    }
+    let _ = base_revision;
+    let updated = insert_leaf_into_group(working, group_id, insertion_index, mover)?;
+    Some(DragPlacement {
+        tree: updated,
+        target_group: group_id.clone(),
+        insertion_index,
+        wrap: false,
+        new_group: None,
     })
 }
 
@@ -4541,13 +5022,12 @@ fn valid_observed_shapes(observed: &[ObservedWindow]) -> bool {
     true
 }
 
-/// Horizontal when `w >= h`, else vertical (horizontal on tie).
+/// COSMIC admission axis for a target geometry. Delegates to
+/// [`crate::cosmic_v1::admission_axis`]: width strictly greater than height
+/// selects portable [`Axis::Horizontal`] (splits width), otherwise
+/// [`Axis::Vertical`] (vertical on tie).
 fn orientation_from_bounds(bounds: &Rect) -> Axis {
-    if bounds.w >= bounds.h {
-        Axis::Horizontal
-    } else {
-        Axis::Vertical
-    }
+    crate::cosmic_v1::admission_axis_for_rect(bounds)
 }
 
 fn collect_node_ids(node: &Node, out: &mut BTreeSet<NodeId>) {
@@ -4629,6 +5109,7 @@ enum PointerDerived {
         target: PointerTarget,
         new_shares: Vec<u64>,
         effective_boundary: i32,
+        mode: ResizeMode,
     },
 }
 
@@ -4766,6 +5247,257 @@ fn collect_pointer_group_leaves(node: &Node, group: &NodeId, out: &mut Vec<NodeI
     }
 }
 
+/// COSMIC pixel-share derivation outcome shared by keyboard and pointer
+/// resize. `None` from the drivers means malformed/unrepresentable (caller
+/// maps to `MalformedTopology`); `Unchanged` means no feasible boundary or a
+/// no-op proposing the current boundary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum PixelDerived {
+    Unchanged,
+    Planned {
+        target: PointerTarget,
+        new_shares: Vec<u64>,
+    },
+}
+
+/// Exact pixel-projectable normalization for a clamped left-child size.
+///
+/// The projector allocates `floor(D * share / total) + 1` to every non-last
+/// child with `D = avail - n` and `avail` the pixel sum. For the left child
+/// at `lo` (always non-last) the desired size `clamped_left` needs
+/// `floor(D * a / total') = clamped_left - 1` with `total' = K * old_total`
+/// and `a + b = K * old_pair_total`. Non-pair shares scale by the same `K`
+/// (exact ratio preservation); only the adjacent pair is redistributed.
+/// `total' >= D` guarantees an integer `a`, so `K = ceil(D / old_total)`
+/// always works. The smallest feasible scale wins (`1`, then the guaranteed
+/// factor); no project share-step normalization lives on the COSMIC path. `None` means unrepresentable at any scale.
+fn pixel_shares_for_clamped(
+    shares: &[u64],
+    lo: usize,
+    clamped_left: i64,
+    distributable: i64,
+    old_total: u64,
+    old_pair: u64,
+) -> Option<Vec<u64>> {
+    if distributable <= 0 || old_total == 0 || old_pair == 0 || clamped_left <= 0 {
+        return None;
+    }
+    let distributable_u = u128::from(distributable as u64);
+    let old_total_u = u128::from(old_total);
+    let required_k = distributable_u
+        .div_ceil(old_total_u)
+        .min(u128::from(u64::MAX)) as u64;
+    let mut candidates = [1u64, required_k];
+    candidates.sort_unstable();
+    let left_u = u128::from(clamped_left as u64);
+    let q = left_u - 1;
+    for scale in candidates.into_iter().filter(|k| *k >= 1) {
+        if scale == 0 {
+            continue;
+        }
+        let scaled_total = shares
+            .iter()
+            .try_fold(0u64, |acc, s| acc.checked_add(s.checked_mul(scale)?))?;
+        let scaled_pair = old_pair.checked_mul(scale)?;
+        if scaled_total == 0 || scaled_pair == 0 {
+            continue;
+        }
+        let mut scaled_ok = true;
+        for (index, share) in shares.iter().enumerate() {
+            if index == lo || index == lo + 1 {
+                continue;
+            }
+            if share.checked_mul(scale).is_none() {
+                scaled_ok = false;
+                break;
+            }
+        }
+        if !scaled_ok {
+            continue;
+        }
+        let total_prime = u128::from(scaled_total);
+        let pair_prime = u128::from(scaled_pair);
+        // `floor(D * a / total') = q` <=> `a in [q*total'/D, ((q+1)*total' - 1)/D]`.
+        let lower = (q * total_prime).div_ceil(distributable_u);
+        let upper = ((q + 1) * total_prime - 1) / distributable_u;
+        if lower > upper {
+            continue;
+        }
+        let lower = lower.max(1);
+        let upper = upper.min(pair_prime - 1);
+        if lower > upper {
+            continue;
+        }
+        let left_new_u64: u64 = lower.try_into().ok()?;
+        let right_new_u64 = scaled_pair.checked_sub(left_new_u64)?;
+        if right_new_u64 < 1 {
+            continue;
+        }
+        let scaled_lo = shares[lo].checked_mul(scale)?;
+        if left_new_u64 == scaled_lo {
+            continue;
+        }
+        let mut new_shares = Vec::with_capacity(shares.len());
+        for (index, share) in shares.iter().enumerate() {
+            let value = if index == lo {
+                left_new_u64
+            } else if index == lo + 1 {
+                right_new_u64
+            } else {
+                share.checked_mul(scale)?
+            };
+            if value == 0 {
+                return None;
+            }
+            new_shares.push(value);
+        }
+        return Some(new_shares);
+    }
+    None
+}
+
+/// Derive COSMIC keyboard pixel shares from a repeat-step move.
+///
+/// Walks matching-axis ancestors nearest outward; the first ancestor whose
+/// pair region admits the source pair minimum and whose COSMIC-clamped move
+/// changes the boundary wins. Source `tiling/mod.rs` 2576-2600: `direction`
+/// (`ResizeDirection`) selects shrink/grow (`Inwards` shrinks the focused
+/// node, `Outwards` grows it), `edges` (the cardinal edge) selects the
+/// neighbor side, and only the shrink side is clamped one-sided to the axis
+/// child minimum via [`crate::cosmic_v1::clamp_keyboard_shrink_pair`] (the
+/// grow side takes exactly the amount actually removed). `None` means
+/// malformed/unrepresentable; `Unchanged` means no feasible boundary or a
+/// clamped no-op at every candidate level.
+fn derive_keyboard_pixel_shares(
+    tree: &Node,
+    focused_leaf: &NodeId,
+    edge: Direction,
+    mode: ResizeMode,
+    step_px: i32,
+    _domain: &OutputDomain,
+    geometry: &[DesiredGeometry],
+) -> Option<PixelDerived> {
+    if focused_leaf.0.is_empty() || step_px <= 0 {
+        return None;
+    }
+    let wanted = Axis::for_direction(edge);
+    let step: i32 = match edge {
+        Direction::Right | Direction::Down => 1,
+        Direction::Left | Direction::Up => -1,
+    };
+    let mut levels = Vec::new();
+    if !pointer_path(tree, focused_leaf, &mut levels) {
+        return Some(PixelDerived::Unchanged);
+    }
+    let mut feasible_exhausted = false;
+    for level in &levels {
+        if level.axis != wanted {
+            continue;
+        }
+        let neighbor = level.child_index as i32 + step;
+        if neighbor < 0 || (neighbor as usize) >= level.children.len() {
+            continue;
+        }
+        let neighbor_index = neighbor as usize;
+        let focused_index = level.child_index;
+        if level.shares.len() != level.children.len()
+            || focused_index >= level.shares.len()
+            || neighbor_index >= level.shares.len()
+            || level.shares.contains(&0)
+        {
+            return None;
+        }
+        let lo = focused_index.min(neighbor_index);
+        if focused_index.abs_diff(neighbor_index) != 1 {
+            return None;
+        }
+        let mut sizes: Vec<i64> = Vec::with_capacity(level.children.len());
+        for child in &level.children {
+            sizes.push(pointer_child_extent(tree, child, wanted, geometry)?);
+            if sizes.last().is_some_and(|s| *s <= 0) {
+                return None;
+            }
+        }
+        let pair_sum = sizes[focused_index].checked_add(sizes[neighbor_index])?;
+        if !crate::cosmic_v1::pair_admits_resize(pair_sum, pair_sum, wanted) {
+            // Source no-op pair on direct sums sizes[i] + sizes[i+1]:
+            // skip outward, never plan through it.
+            feasible_exhausted = true;
+            continue;
+        }
+        let focused_size = sizes[focused_index];
+        let neighbor_size = sizes[neighbor_index];
+        let (shrink, grow) = if mode == ResizeMode::Inwards {
+            (focused_size, neighbor_size)
+        } else {
+            (neighbor_size, focused_size)
+        };
+        let Some((new_shrink, new_grow)) =
+            crate::cosmic_v1::clamp_keyboard_shrink_pair(shrink, grow, i64::from(step_px), wanted)
+        else {
+            feasible_exhausted = true;
+            continue;
+        };
+        if new_shrink == shrink && new_grow == grow {
+            feasible_exhausted = true;
+            continue;
+        }
+        let focused_is_left = focused_index == lo;
+        let clamped_left = if focused_is_left {
+            if mode == ResizeMode::Inwards {
+                new_shrink
+            } else {
+                new_grow
+            }
+        } else if mode == ResizeMode::Inwards {
+            new_grow
+        } else {
+            new_shrink
+        };
+        let current_left = sizes[lo];
+        if clamped_left == current_left {
+            feasible_exhausted = true;
+            continue;
+        }
+        let mut avail_total: i64 = 0;
+        for size in &sizes {
+            avail_total = avail_total.checked_add(*size)?;
+        }
+        let distributable = avail_total.checked_sub(sizes.len() as i64)?;
+        let mut old_total: u64 = 0;
+        for share in &level.shares {
+            old_total = old_total.checked_add(*share)?;
+        }
+        let old_pair = level.shares[focused_index].checked_add(level.shares[neighbor_index])?;
+        let Some(new_shares) = pixel_shares_for_clamped(
+            &level.shares,
+            lo,
+            clamped_left,
+            distributable,
+            old_total,
+            old_pair,
+        ) else {
+            feasible_exhausted = true;
+            continue;
+        };
+        return Some(PixelDerived::Planned {
+            target: PointerTarget {
+                group_id: level.group_id.clone(),
+                focused_index,
+                neighbor_index,
+                focused_child: level.children[focused_index].clone(),
+                neighbor_child: level.children[neighbor_index].clone(),
+                old_shares: level.shares.clone(),
+            },
+            new_shares,
+        });
+    }
+    if feasible_exhausted {
+        return Some(PixelDerived::Unchanged);
+    }
+    Some(PixelDerived::Unchanged)
+}
+
 /// Derive pointer shares from the normalized boundary coordinate.
 ///
 /// Walks matching-axis ancestors nearest outward; the first ancestor whose
@@ -4832,7 +5564,9 @@ fn derive_pointer_shares(
             }
         }
         let pair_avail = sizes[focused_index].checked_add(sizes[neighbor_index])?;
-        if pair_avail < i64::from(POINTER_RESIZE_MIN_SEGMENT) * 2 {
+        // COSMIC pair gate on direct sums sizes[i] + sizes[i+1] (never union
+        // including gap): source no-op pairs refuse outward, never planned.
+        if !crate::cosmic_v1::pair_admits_resize(pair_avail, pair_avail, wanted) {
             feasible_exhausted = true;
             continue;
         }
@@ -4845,165 +5579,57 @@ fn derive_pointer_shares(
         let pair_start = group_origin.checked_add(prefix)?;
         // Desired left-child size from the proposed boundary treated as the
         // left child's end edge; the right child takes the remainder.
+        // Clamping is two-sided per the COSMIC child minima.
         let left_desired = i64::from(proposed_boundary).checked_sub(pair_start)?;
-        let min = i64::from(POINTER_RESIZE_MIN_SEGMENT);
-        let clamped_left = left_desired.clamp(min, pair_avail - min);
-        if clamped_left < min || pair_avail - clamped_left < min {
-            feasible_exhausted = true;
-            continue;
-        }
+        let clamped_left =
+            match crate::cosmic_v1::clamp_pair_split(pair_avail, left_desired, wanted) {
+                Some((first, _)) => first,
+                None => {
+                    feasible_exhausted = true;
+                    continue;
+                }
+            };
         if clamped_left == sizes[lo] {
             // Proposing the current boundary at this level: noop here, try
             // outward before refusing.
             feasible_exhausted = true;
             continue;
         }
-        // Exact pixel-projectable normalization: the projector allocates
-        // `floor(D * share / total) + 1` to every non-last child with
-        // `D = avail - n` and `avail = sum sizes`. For the left child at `lo`
-        // (always non-last) the desired size `L` needs
-        // `floor(D * a / total') = L - 1` with `total' = K * old_total` and
-        // `a + b = K * old_pair_total`. Non-pair shares scale by the same `K`
-        // (exact ratio preservation); only the adjacent pair is redistributed.
-        // `total' >= D` guarantees an integer `a`, so
-        // `K = ceil(D / old_total)` always works. Try no scaling, then the
-        // keyboard-consistent x16, then the guaranteed factor, smallest first.
+        // Exact pixel-projectable normalization shared with keyboard resize
+        // (no project share-step on the COSMIC path).
         let mut avail_total: i64 = 0;
         for size in &sizes {
             avail_total = avail_total.checked_add(*size)?;
         }
-        let n_i64 = sizes.len() as i64;
-        let distributable = avail_total.checked_sub(n_i64)?;
-        if distributable <= 0 {
-            return None;
-        }
+        let distributable = avail_total.checked_sub(sizes.len() as i64)?;
         let mut old_total: u64 = 0;
         for share in &level.shares {
             old_total = old_total.checked_add(*share)?;
         }
-        if old_total == 0 {
-            return None;
-        }
         let old_pair = level.shares[focused_index].checked_add(level.shares[neighbor_index])?;
-        if old_pair == 0 {
-            return None;
-        }
-        let distributable_u = u128::from(distributable as u64);
-        let old_total_u = u128::from(old_total);
-        let required_k = distributable_u
-            .div_ceil(old_total_u)
-            .min(u128::from(u64::MAX));
-        let required_k = required_k as u64;
-        let mut candidates = vec![
-            1u64,
-            crate::directional::RESIZE_STEP_DENOMINATOR,
-            required_k,
-        ];
-        candidates.sort_unstable();
-        candidates.dedup();
-        candidates.retain(|k| *k >= 1);
-        let left_u = u128::from(clamped_left as u64);
-        let q = left_u - 1;
-        let mut planned: Option<Vec<u64>> = None;
-        for scale in candidates {
-            if scale == 0 {
-                continue;
-            }
-            let scaled_total = match old_total.checked_mul(scale) {
-                Some(v) => v,
-                None => continue,
-            };
-            let scaled_pair = match old_pair.checked_mul(scale) {
-                Some(v) => v,
-                None => continue,
-            };
-            if scaled_total == 0 || scaled_pair == 0 {
-                continue;
-            }
-            let mut scaled_ok = true;
-            for (index, share) in level.shares.iter().enumerate() {
-                if index == lo || index == lo + 1 {
-                    continue;
-                }
-                if share.checked_mul(scale).is_none() {
-                    scaled_ok = false;
-                    break;
-                }
-            }
-            if !scaled_ok {
-                continue;
-            }
-            let total_prime = u128::from(scaled_total);
-            let pair_prime = u128::from(scaled_pair);
-            // `floor(D * a / total') = q` <=> `q <= D*a/total' < q+1`
-            // <=> `a in [q*total'/D, ((q+1)*total' - 1)/D]`.
-            let lower = (q * total_prime).div_ceil(distributable_u);
-            let upper = ((q + 1) * total_prime - 1) / distributable_u;
-            if lower > upper {
-                continue;
-            }
-            let lower = lower.max(1);
-            let upper = upper.min(pair_prime - 1);
-            if lower > upper {
-                continue;
-            }
-            let left_new = lower;
-            if left_new == 0 || left_new >= pair_prime {
-                continue;
-            }
-            let left_new_u64: u64 = match left_new.try_into() {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-            let right_new_u64 = match scaled_pair.checked_sub(left_new_u64) {
-                Some(v) if v >= 1 => v,
-                _ => continue,
-            };
-            let scaled_lo = match level.shares[lo].checked_mul(scale) {
-                Some(v) => v,
-                None => continue,
-            };
-            if left_new_u64 == scaled_lo {
-                // Same representation: proposing current boundary for this
-                // scale; try a larger scale before going outward.
-                continue;
-            }
-            let mut new_shares = Vec::with_capacity(level.shares.len());
-            let mut ok = true;
-            for (index, share) in level.shares.iter().enumerate() {
-                let value = if index == lo {
-                    left_new_u64
-                } else if index == lo + 1 {
-                    right_new_u64
-                } else {
-                    match share.checked_mul(scale) {
-                        Some(v) => v,
-                        None => {
-                            ok = false;
-                            break;
-                        }
-                    }
-                };
-                if value == 0 {
-                    ok = false;
-                    break;
-                }
-                new_shares.push(value);
-            }
-            if !ok {
-                continue;
-            }
-            if new_shares.contains(&0) {
-                return None;
-            }
-            planned = Some(new_shares);
-            break;
-        }
-        let Some(new_shares) = planned else {
+        let Some(new_shares) = pixel_shares_for_clamped(
+            &level.shares,
+            lo,
+            clamped_left,
+            distributable,
+            old_total,
+            old_pair,
+        ) else {
             feasible_exhausted = true;
             continue;
         };
         let effective_boundary = i32::try_from(pair_start.checked_add(clamped_left)?).ok()?;
+        let focused_is_left = focused_index == lo;
+        let focused_grows = if focused_is_left {
+            clamped_left > sizes[lo]
+        } else {
+            clamped_left < sizes[lo]
+        };
+        let mode = if focused_grows {
+            ResizeMode::Outwards
+        } else {
+            ResizeMode::Inwards
+        };
         let target = PointerTarget {
             group_id: level.group_id.clone(),
             focused_index,
@@ -5016,6 +5642,7 @@ fn derive_pointer_shares(
             target,
             new_shares,
             effective_boundary,
+            mode,
         });
     }
     if feasible_exhausted {
@@ -5025,10 +5652,10 @@ fn derive_pointer_shares(
 }
 
 /// Minimum-size projectability on the desired geometry: the two resized
-/// adjacent children each keep at least the portable minimum along the
-/// target axis when they are direct leaves, and every desired leaf stays
-/// positive. Subgroup children were already clamped pre-share, so only
-/// direct-leaf spans are rechecked here.
+/// adjacent children each keep at least the COSMIC axis child minimum
+/// ([`crate::cosmic_v1::child_min_for_axis`]) when they are direct leaves,
+/// and every desired leaf stays positive. Subgroup children were already
+/// clamped pre-share, so only direct-leaf spans are rechecked here.
 fn pointer_minimum_holds(
     geometry: &[DesiredGeometry],
     target: &PointerTarget,
@@ -5046,15 +5673,57 @@ fn pointer_minimum_holds(
         }
         by_leaf.insert(&entry.leaf, entry);
     }
+    let min = crate::cosmic_v1::child_min_for_axis(axis);
     for child in [&target.focused_child, &target.neighbor_child] {
         if let Some(entry) = by_leaf.get(child) {
             let span = match axis {
                 Axis::Horizontal => i64::from(entry.rect.w),
                 Axis::Vertical => i64::from(entry.rect.h),
             };
-            if span < i64::from(POINTER_RESIZE_MIN_SEGMENT) {
+            if span < min {
                 return false;
             }
+        }
+    }
+    true
+}
+
+/// Keyboard one-sided minimum: only the shrink side (focused on Inwards,
+/// neighbor on Outwards) keeps the COSMIC child minimum when it is a direct
+/// leaf; the grow side takes exactly the removed amount even below minimum.
+/// Subgroup children were clamped pre-share, so only direct-leaf spans are
+/// rechecked here. Positivity is enforced by geometry coverage.
+fn keyboard_minimum_holds(
+    geometry: &[DesiredGeometry],
+    target: &PointerTarget,
+    domain: &DomainKey,
+    axis: Axis,
+    mode: ResizeMode,
+) -> bool {
+    use std::collections::BTreeMap;
+    let mut by_leaf: BTreeMap<&NodeId, &DesiredGeometry> = BTreeMap::new();
+    for entry in geometry {
+        if entry.output != domain.output || entry.workspace != domain.workspace {
+            continue;
+        }
+        if entry.rect.w <= 0 || entry.rect.h <= 0 {
+            return false;
+        }
+        by_leaf.insert(&entry.leaf, entry);
+    }
+    let min = crate::cosmic_v1::child_min_for_axis(axis);
+    let shrink_child = if mode == ResizeMode::Inwards {
+        &target.focused_child
+    } else {
+        &target.neighbor_child
+    };
+    if let Some(entry) = by_leaf.get(shrink_child) {
+        let span = match axis {
+            Axis::Horizontal => i64::from(entry.rect.w),
+            Axis::Vertical => i64::from(entry.rect.h),
+        };
+        if span < min {
+            return false;
         }
     }
     true
@@ -5117,79 +5786,6 @@ fn find_node_by_id<'a>(node: &'a Node, id: &NodeId) -> Option<&'a Node> {
     }
 }
 
-fn find_parent_axis_and_index(node: &Node, leaf: &NodeId) -> Option<(Axis, usize)> {
-    match node {
-        Node::Leaf { .. } => None,
-        Node::Group { axis, children, .. } => {
-            for (index, child) in children.iter().enumerate() {
-                match child {
-                    Node::Leaf { id } if id == leaf => return Some((*axis, index)),
-                    _ => {
-                        if let Some(found) = find_parent_axis_and_index(child, leaf) {
-                            return Some(found);
-                        }
-                    }
-                }
-            }
-            None
-        }
-    }
-}
-
-fn insert_into_parent_after(
-    node: Node,
-    focused: &NodeId,
-    new_leaf: Node,
-    new_share: u64,
-) -> Option<Node> {
-    match node {
-        Node::Leaf { .. } => None,
-        Node::Group {
-            id,
-            axis,
-            children,
-            shares,
-        } => {
-            for (index, child) in children.iter().enumerate() {
-                if child.id() == focused {
-                    let mut new_children = children.clone();
-                    let mut new_shares = shares.clone();
-                    new_children.insert(index + 1, new_leaf.clone());
-                    new_shares.insert(index + 1, new_share);
-                    return Some(Node::Group {
-                        id,
-                        axis,
-                        children: new_children,
-                        shares: new_shares,
-                    });
-                }
-            }
-            // Recurse without mutating on miss: clone the matching subtree and
-            // replace only on recursive success, so a miss leaves the input
-            // tree intact for the caller.
-            for (index, child) in children.iter().enumerate() {
-                if subtree_contains(child, focused) {
-                    let updated = insert_into_parent_after(
-                        child.clone(),
-                        focused,
-                        new_leaf.clone(),
-                        new_share,
-                    )?;
-                    let mut new_children = children.clone();
-                    new_children[index] = updated;
-                    return Some(Node::Group {
-                        id,
-                        axis,
-                        children: new_children,
-                        shares: shares.clone(),
-                    });
-                }
-            }
-            None
-        }
-    }
-}
-
 fn subtree_contains(node: &Node, leaf: &NodeId) -> bool {
     if node.id() == leaf {
         return true;
@@ -5212,7 +5808,7 @@ fn nest_focused_with_new(
             id: group_id,
             axis,
             children: vec![Node::Leaf { id }, new_leaf],
-            shares: vec![1, 1],
+            shares: crate::cosmic_v1::new_group_shares().to_vec(),
         }),
         Node::Leaf { .. } => None,
         Node::Group {
@@ -5259,51 +5855,28 @@ fn insert_tiled(
         return Some(new_leaf);
     };
     let Some(focused) = focused else {
-        // No eligible focus in this output: append after the last root child
-        // when rooted at a group, else nest the single root leaf.
-        match tree {
-            Node::Leaf { id } => {
-                let group_id = generate_group_id(window, base_revision, existing_ids);
-                existing_ids.insert(group_id.clone());
-                return Some(Node::Group {
-                    id: group_id,
-                    axis: orientation,
-                    children: vec![Node::Leaf { id }, new_leaf],
-                    shares: vec![1, 1],
-                });
-            }
-            Node::Group {
-                id,
-                axis,
-                mut children,
-                mut shares,
-            } => {
-                children.push(new_leaf);
-                shares.push(1);
-                return Some(Node::Group {
-                    id,
-                    axis,
-                    children,
-                    shares,
-                });
-            }
-        }
-    };
-    // Focused is the root leaf itself.
-    if tree.id() == focused && matches!(tree, Node::Leaf { .. }) {
+        // No eligible focus in this domain (deterministic project fallback
+        // for focus only, not source COSMIC parity): wrap the entire existing
+        // root old/new under a new binary group carrying the admission axis
+        // and [`crate::cosmic_v1::new_group_shares`].
         let group_id = generate_group_id(window, base_revision, existing_ids);
         existing_ids.insert(group_id.clone());
-        return nest_focused_with_new(tree, focused, new_leaf, group_id, orientation);
-    }
-    let parent_matches = find_parent_axis_and_index(&tree, focused).map(|(a, _)| a == orientation);
-    match parent_matches {
-        Some(true) => insert_into_parent_after(tree, focused, new_leaf, 1),
-        _ => {
-            let group_id = generate_group_id(window, base_revision, existing_ids);
-            existing_ids.insert(group_id.clone());
-            nest_focused_with_new(tree, focused, new_leaf, group_id, orientation)
-        }
-    }
+        return Some(Node::Group {
+            id: group_id,
+            axis: orientation,
+            children: vec![tree, new_leaf],
+            shares: crate::cosmic_v1::new_group_shares().to_vec(),
+        });
+    };
+    // Automatic admission always wraps the focused target leaf in an ordered
+    // binary group old/new (source `TilingLayout::new_group` 2898-2936 via
+    // `map_to_tree` 548-617): the wrapper takes the old leaf slot with the
+    // admission axis and [`crate::cosmic_v1::new_group_shares`]. Same-axis
+    // N-ary parent append never applies here; N-ary groups remain for
+    // movement/drag representation only.
+    let group_id = generate_group_id(window, base_revision, existing_ids);
+    existing_ids.insert(group_id.clone());
+    nest_focused_with_new(tree, focused, new_leaf, group_id, orientation)
 }
 
 fn remove_leaf_from_tree(tree: Option<Node>, leaf: &NodeId) -> Option<Node> {
@@ -5326,32 +5899,73 @@ fn remove_node(node: Node, leaf: &NodeId) -> Option<Node> {
             children,
             shares,
         } => {
+            let original_len = children.len();
+            let original_shares = shares.clone();
             let mut new_children = Vec::with_capacity(children.len());
-            let mut new_shares = Vec::with_capacity(shares.len());
-            for (child, share) in children.into_iter().zip(shares) {
-                if child.id() == leaf && matches!(child, Node::Leaf { .. }) {
+            let mut removed_index: Option<usize> = None;
+            for (index, child) in children.into_iter().enumerate() {
+                if removed_index.is_none()
+                    && child.id() == leaf
+                    && matches!(child, Node::Leaf { .. })
+                {
+                    removed_index = Some(index);
                     continue;
                 }
                 match remove_node(child, leaf) {
                     Some(updated) => {
+                        // If the child subtree changed shape but kept its id,
+                        // keep the slot share; emptied subtrees drop below.
+                        // Detect change by comparing ids? The recursive call
+                        // returns an updated node only when the leaf was
+                        // inside; unchanged subtrees return an equal node.
+                        // We track removal only when a slot disappears.
                         new_children.push(updated);
-                        new_shares.push(share);
                     }
                     None => {
-                        // Subtree emptied: drop this slot entirely. This only
-                        // happens when a nested single leaf matched.
+                        // Subtree emptied: drop this slot entirely.
+                        if removed_index.is_none() {
+                            removed_index = Some(index);
+                        } else {
+                            // More than one slot vanished: fail closed.
+                            return None;
+                        }
                     }
                 }
             }
-            match new_children.len() {
-                0 => None,
-                1 => Some(new_children.into_iter().next().expect("one child")),
-                _ => Some(Node::Group {
+            // No removal in this subtree: return unchanged group.
+            let Some(removed) = removed_index else {
+                // Rebuild to check: if lengths match, nothing was removed.
+                // We consumed children; reconstruct from new_children only when
+                // no removal happened (lengths equal). Since we pushed every
+                // child, lengths equal means no-op.
+                if new_children.len() != original_len {
+                    return None;
+                }
+                return Some(Node::Group {
                     id,
                     axis,
                     children: new_children,
-                    shares: new_shares,
-                }),
+                    shares: original_shares,
+                });
+            };
+            let _ = removed;
+            match new_children.len() {
+                0 => None,
+                1 => Some(new_children.into_iter().next().expect("one child")),
+                _ => {
+                    let new_shares =
+                        crate::cosmic_v1::proportional_removal_shares(&original_shares, removed)?;
+                    // Defensive: helper length must match survivors.
+                    if new_shares.len() != new_children.len() {
+                        return None;
+                    }
+                    Some(Node::Group {
+                        id,
+                        axis,
+                        children: new_children,
+                        shares: new_shares,
+                    })
+                }
             }
         }
     }
@@ -5575,7 +6189,18 @@ mod tests {
     }
 
     #[test]
-    fn orientation_prefers_horizontal_on_tie() {
+    fn orientation_follows_cosmic_admission_axis() {
+        // Source map_to_tree wide => source Vertical splits width => portable
+        // Horizontal splits width (geometry.rs); tall/tie => portable Vertical.
+        assert_eq!(
+            orientation_from_bounds(&Rect {
+                x: 0,
+                y: 0,
+                w: 100,
+                h: 50
+            }),
+            Axis::Horizontal
+        );
         assert_eq!(
             orientation_from_bounds(&Rect {
                 x: 0,
@@ -5583,7 +6208,7 @@ mod tests {
                 w: 100,
                 h: 100
             }),
-            Axis::Horizontal
+            Axis::Vertical
         );
         assert_eq!(
             orientation_from_bounds(&Rect {
@@ -5708,7 +6333,11 @@ mod tests {
         }
     }
 
-    fn admit(session: &mut Session, window: &str, wide: bool) {
+    /// Admit helper: `horizontal` names the desired portable split axis. The
+    /// target geometry selects it through the source rule
+    /// ([`crate::cosmic_v1::admission_axis`]: wide targets split portable
+    /// Horizontal), so a horizontal split needs a wide target and vice versa.
+    fn admit(session: &mut Session, window: &str, horizontal: bool) {
         let rev = session.accepted_revision();
         let window_id = WindowId(window.to_owned());
         let mut windows = obs_windows(session);
@@ -5721,7 +6350,7 @@ mod tests {
             maximized: false,
             sticky: false,
         });
-        let bounds = if wide {
+        let bounds = if horizontal {
             Rect {
                 x: 0,
                 y: 0,
@@ -6060,18 +6689,18 @@ mod tests {
         assert!(left.before);
         assert!(left.wrap);
         session.cancel_drag();
-        // Three-wide: leaf-win-1 (0-40) right third [27,40) inserts after.
+        // Nested three: leaf-win-1 (0-60) right edge zone inserts after.
         let mut session = session_three();
         begin_focused(&mut session, "win-3");
-        let right = session.preview_drag(35, 40).expect("right preview");
+        let right = session.preview_drag(55, 40).expect("right preview");
         assert_eq!(right.target_leaf, leaf("leaf-win-1"));
         assert_eq!(right.side, DragSide::Right);
         assert_eq!(right.axis, Axis::Horizontal);
         assert!(!right.before);
         assert!(!right.wrap);
         session.cancel_drag();
-        // Vertical triple: leaf-win-2 (y0-26) middle column top third orders
-        // before inside the surviving V parent (no wrap).
+        // Vertical nested: leaf-win-2 bottom edge zone orders
+        // after inside the surviving V parent (no wrap).
         let mut session = session_deep();
         begin_focused(&mut session, "win-4");
         let top = session.preview_drag(90, 5).expect("top preview");
@@ -6080,7 +6709,7 @@ mod tests {
         assert_eq!(top.axis, Axis::Vertical);
         assert!(top.before);
         assert!(!top.wrap);
-        let bottom = session.preview_drag(90, 20).expect("bottom preview");
+        let bottom = session.preview_drag(90, 35).expect("bottom preview");
         assert_eq!(bottom.target_leaf, leaf("leaf-win-2"));
         assert_eq!(bottom.side, DragSide::Bottom);
         assert_eq!(bottom.axis, Axis::Vertical);
@@ -6435,10 +7064,11 @@ mod tests {
             session.preview_drag(90, 40),
             Err(ProposeError::Refused(RefusalKind::Unchanged))
         );
-        // Target center carries no structural meaning.
+        // Target center is the source stack fact with no portable topology:
+        // preview fails closed as explicit unsupported stack behavior.
         assert_eq!(
             session.preview_drag(30, 40),
-            Err(ProposeError::Refused(RefusalKind::Unchanged))
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
         // Outside the work area is cross-domain.
         assert_eq!(
@@ -6457,31 +7087,36 @@ mod tests {
 
     #[test]
     fn drag_noop_insert_refuses_unchanged() {
-        // H[1,2,3] focus win-3 right onto leaf-win-2 re-inserts after it:
-        // remove 3 -> [1,2], insert at 2 -> [1,2,3].
+        // (75, 40) is source-classified Center on leaf-win-2 (middle thirds):
+        // portable topology has no stacks, so preview and release fail closed
+        // as explicit unsupported stack behavior with no plan.
         let mut session = session_three();
+        let before = session.snapshot();
         begin_focused(&mut session, "win-3");
         assert_eq!(
             session.preview_drag(75, 40),
-            Err(ProposeError::Refused(RefusalKind::Unchanged))
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
         );
-        match session
-            .drop_drag(
+        // Preview stages nothing and keeps the transient drag.
+        assert_eq!(session.snapshot(), before);
+        assert!(!session.has_pending());
+        assert!(!session.has_pending_desired());
+        assert!(session.has_drag());
+        assert_eq!(
+            session.drop_drag(
                 75,
                 40,
                 &obs_for(&session),
                 &corr("corr-drag-1"),
                 &DragCapabilities::full(),
-            )
-            .expect("invalid release snaps back")
-        {
-            DragRelease::SnapBack(snap) => {
-                assert_eq!(snap.source_leaf, leaf("leaf-win-3"));
-            }
-            DragRelease::Planned(_) => panic!("no-op must snap back"),
-        }
+            ),
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
+        );
+        // Center refusal plans no topology and stages no pending.
+        assert_eq!(session.snapshot(), before);
         assert!(!session.has_drag());
         assert!(!session.has_pending());
+        assert!(!session.has_pending_desired());
     }
 
     #[test]
@@ -6500,7 +7135,7 @@ mod tests {
             leaves_of(&session),
             vec![leaf("leaf-win-1"), leaf("leaf-win-2")]
         );
-        // Invalid releases (self, center) snap back with no reconciler use.
+        // Invalid self releases snap back with no reconciler use.
         begin_focused(&mut session, "win-2");
         match session
             .drop_drag(
@@ -6517,20 +7152,40 @@ mod tests {
         }
         assert!(!session.has_drag());
         assert!(!session.has_pending());
+        // Center (source stack fact, portable topology excludes stacks) fails
+        // closed as explicit unsupported stack behavior with no DragPlan and
+        // no topology/focus commit, even with full capabilities.
         begin_focused(&mut session, "win-2");
-        match session
-            .drop_drag(
+        assert_eq!(
+            session.drop_drag(
                 30,
                 40,
                 &obs_for(&session),
                 &corr("corr-drag-2"),
                 &DragCapabilities::full(),
-            )
-            .expect("center release")
-        {
-            DragRelease::SnapBack(snap) => assert_eq!(snap.source_rect, capture.source_rect),
-            DragRelease::Planned(_) => panic!("center must snap back"),
-        }
+            ),
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
+        );
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
+        assert_eq!(
+            leaves_of(&session),
+            vec![leaf("leaf-win-1"), leaf("leaf-win-2")]
+        );
+        // Center refusal이에 clears the transient drag; a second center
+        // release without a fresh capture is malformed.
+        assert_eq!(
+            session.drop_drag(
+                30,
+                40,
+                &obs_for(&session),
+                &corr("corr-drag-3"),
+                &DragCapabilities::full(),
+            ),
+            Err(ProposeError::Refused(RefusalKind::MalformedInput))
+        );
+        assert!(!session.has_drag());
+        assert!(!session.has_pending());
         assert_eq!(
             leaves_of(&session),
             vec![leaf("leaf-win-1"), leaf("leaf-win-2")]
@@ -6825,8 +7480,8 @@ mod tests {
                 assert!(isolated.tree.is_none(), "domain isolation");
             }
         }
-        assert!(ok > 0, "loop must hit valid edges");
-        assert!(refused > 0, "loop must hit centers/self");
+        assert!(ok > 0, "loop must hit valid edges and stack centers");
+        assert!(refused > 0, "loop must hit self/gap/out-of-area");
         session.cancel_drag();
         assert_eq!(session.snapshot(), before);
     }
@@ -6909,6 +7564,8 @@ mod tests {
                 &domain_key(),
                 &WindowId("win-3".to_owned()),
                 Direction::Left,
+                crate::contract::ResizeMode::Outwards,
+                0,
                 &obs,
                 &corr("corr-block-4"),
                 &ResizeCapabilities::full(),
@@ -7098,72 +7755,47 @@ mod tests {
     }
 
     #[test]
-    fn drag_edge_band_handles_sub_three_pixel_rects() {
-        // 1px wide still deterministically chooses left.
+    fn drag_cosmic_window_zones_stack_center_and_edge_by_half_distance() {
+        // COSMIC window zones via cosmic_v1: rounded thirds stack; other
+        // locations select horizontal only on strict less (ties vertical).
+        // Outside the rect yields None.
+        let normal = Rect {
+            x: 0,
+            y: 0,
+            w: 120,
+            h: 90,
+        };
+        assert_eq!(drag_edge_for(&normal, 60, 45), Some(DragSide::Center));
+        assert_eq!(drag_edge_for(&normal, 5, 45), Some(DragSide::Left));
+        assert_eq!(drag_edge_for(&normal, 115, 45), Some(DragSide::Right));
+        assert_eq!(drag_edge_for(&normal, 60, 4), Some(DragSide::Top));
+        assert_eq!(drag_edge_for(&normal, 60, 86), Some(DragSide::Bottom));
+        assert_eq!(drag_edge_for(&normal, 200, 45), None);
+        // Rounded thirds: 1px width has third 0 so the full width is middle;
+        // 2px has third 1 with an empty middle, so edges win (ties vertical).
         let narrow = Rect {
             x: 10,
             y: 10,
             w: 1,
             h: 10,
         };
-        assert_eq!(drag_edge_for(&narrow, 10, 15), Some(DragSide::Left));
-        // 2px wide splits left/right with left priority in corners.
-        let two = Rect {
-            x: 0,
-            y: 0,
-            w: 2,
-            h: 10,
-        };
-        assert_eq!(drag_edge_for(&two, 0, 5), Some(DragSide::Left));
-        assert_eq!(drag_edge_for(&two, 1, 5), Some(DragSide::Right));
-        assert_eq!(drag_edge_for(&two, 0, 0), Some(DragSide::Left));
-        // 1px tall chooses top; 2px tall splits top/bottom.
-        let short = Rect {
-            x: 0,
-            y: 0,
-            w: 10,
-            h: 1,
-        };
-        assert_eq!(drag_edge_for(&short, 5, 0), Some(DragSide::Top));
-        let two_tall = Rect {
-            x: 0,
-            y: 0,
-            w: 10,
-            h: 2,
-        };
-        assert_eq!(drag_edge_for(&two_tall, 5, 0), Some(DragSide::Top));
-        assert_eq!(drag_edge_for(&two_tall, 5, 1), Some(DragSide::Bottom));
-        // 2x2 corners prioritize left/right.
+        assert_eq!(drag_edge_for(&narrow, 10, 15), Some(DragSide::Center));
         let tiny = Rect {
             x: 0,
             y: 0,
             w: 2,
             h: 2,
         };
-        assert_eq!(drag_edge_for(&tiny, 0, 0), Some(DragSide::Left));
-        assert_eq!(drag_edge_for(&tiny, 1, 1), Some(DragSide::Right));
-        // Every inside point of a tiny rect chooses an edge (never center).
-        for w in [1, 2] {
-            for h in [1, 2] {
-                let rect = Rect { x: 0, y: 0, w, h };
-                for x in 0..w {
-                    for y in 0..h {
-                        assert!(
-                            drag_edge_for(&rect, x, y).is_some(),
-                            "tiny {w}x{h} ({x},{y}) must choose an edge"
-                        );
-                    }
-                }
-            }
-        }
-        // Normal centers still carry no structural meaning.
-        let normal = Rect {
+        assert_eq!(drag_edge_for(&tiny, 0, 0), Some(DragSide::Top));
+        assert_eq!(drag_edge_for(&tiny, 1, 1), Some(DragSide::Top));
+        // Degenerate rects classify to nothing.
+        let flat = Rect {
             x: 0,
             y: 0,
-            w: 120,
-            h: 80,
+            w: 0,
+            h: 10,
         };
-        assert_eq!(drag_edge_for(&normal, 60, 40), None);
+        assert_eq!(drag_edge_for(&flat, 0, 5), None);
     }
 
     #[test]
@@ -7275,5 +7907,420 @@ mod tests {
         assert!(!session.has_pending());
         assert_eq!(session.snapshot(), before);
         assert_eq!(session.accepted_revision(), revision);
+    }
+
+    fn gap_domain() -> OutputDomain {
+        OutputDomain {
+            id: OutputId("out-1".to_owned()),
+            workspace: WorkspaceId("ws-1".to_owned()),
+            bounds: Rect {
+                x: 0,
+                y: 0,
+                w: 800,
+                h: 600,
+            },
+            gap: 8,
+            adjacent: BTreeMap::new(),
+        }
+    }
+
+    fn gap_session_two() -> Session {
+        let mut session =
+            Session::new(owner(), generation(), 0, 7, vec![gap_domain()]).expect("new");
+        admit(&mut session, "win-1", true);
+        admit(&mut session, "win-2", true);
+        session
+    }
+
+    fn gap_session_nested() -> Session {
+        // Root H[win-1, V[win-2, win-3]] with gaps; focus win-1 for an
+        // outside-group source. Admit win-3 vertical to nest under win-2.
+        let mut session =
+            Session::new(owner(), generation(), 0, 7, vec![gap_domain()]).expect("new");
+        admit(&mut session, "win-1", true);
+        admit(&mut session, "win-2", true);
+        // Focus is win-2; admit win-3 tall to nest V[win-2, win-3].
+        admit(&mut session, "win-3", false);
+        // Refocus to win-1 as the outside source via focus moves.
+        let key = domain_key();
+        // Focus win-1 by moving focus left twice (deterministic project
+        // fallback may vary; instead drive focus through movement commits).
+        // Simpler: directly set authoritative focus in-test (same module).
+        let leaf_win1 = session
+            .windows
+            .iter()
+            .find(|(_, l)| l.window == WindowId("win-1".to_owned()))
+            .map(|(_, l)| l.leaf.clone())
+            .expect("win-1 leaf");
+        session.focused_domain = Some(key);
+        session.focused_leaf = Some(leaf_win1);
+        session
+    }
+
+    fn leaf_rects_of(session: &Session) -> Vec<(NodeId, Rect)> {
+        let key = domain_key();
+        let tree = session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output == key.output && d.workspace == key.workspace)
+            .and_then(|d| d.tree)
+            .expect("tree");
+        let domain = gap_domain();
+        crate::geometry::project(&tree, domain.bounds, domain.gap)
+            .expect("project")
+            .into_iter()
+            .map(|l| (l.leaf, l.rect))
+            .collect()
+    }
+
+    fn inner_v_layout(session: &Session) -> (GroupLayout, BTreeMap<NodeId, Rect>) {
+        let key = domain_key();
+        let tree = session
+            .snapshot()
+            .domains
+            .into_iter()
+            .find(|d| d.output == key.output && d.workspace == key.workspace)
+            .and_then(|d| d.tree)
+            .expect("tree");
+        let domain = gap_domain();
+        let projected =
+            crate::geometry::project(&tree, domain.bounds, domain.gap).expect("project");
+        let mut leaf_map = BTreeMap::new();
+        for l in &projected {
+            leaf_map.insert(l.leaf.clone(), l.rect);
+        }
+        let layouts = drag_group_layouts(&tree, &leaf_map);
+        let inner = layouts
+            .iter()
+            .find(|l| l.axis == Axis::Vertical)
+            .expect("inner V group");
+        // Clone minimal data (GroupLayout is private; return via tuple of owned values).
+        (
+            GroupLayout {
+                id: inner.id.clone(),
+                axis: inner.axis,
+                rect: inner.rect,
+                child_starts: inner.child_starts.clone(),
+            },
+            leaf_map,
+        )
+    }
+
+    #[test]
+    fn drag_group_interior_predecessor_agreement_and_invariants() {
+        // Nested H[win-1, V[win-2, win-3]] with source win-1 outside the inner
+        // V group: inner horizontal gap row at mid-height, away from edge
+        // strips, is GroupInterior with source predecessor + min(len, idx+1).
+        let mut session = gap_session_nested();
+        assert_eq!(leaves_of(&session).len(), 3);
+        let before_focus = session.focus();
+        let (inner, leaf_map) = inner_v_layout(&session);
+        let cx = inner.rect.x + inner.rect.w / 2;
+        let mut gy_opt = None;
+        for y in inner.rect.y..inner.rect.y + inner.rect.h {
+            if !leaf_map.values().any(|r| contains_point(r, cx, y)) {
+                // Outside 32px top/bottom strips => interior.
+                if y - inner.rect.y >= 32 && inner.rect.y + inner.rect.h - y > 32 {
+                    gy_opt = Some(y);
+                    break;
+                }
+            }
+        }
+        let gy = gy_opt.expect("inner interior gap point");
+        let gx = cx;
+        let _capture = begin_focused(&mut session, "win-1");
+        let preview = session
+            .preview_drag(gx, gy)
+            .expect("group interior preview");
+        assert_eq!(preview.axis, Axis::Vertical);
+        assert!(!preview.wrap);
+        assert_eq!(preview.target_leaf, inner.id);
+        // Predecessor from ordered child starts plus min(len, idx+1).
+        let predecessor =
+            crate::cosmic_v1::insertion_index_for_offset(&inner.child_starts, i64::from(gy));
+        // Post-removal inner len stays 2 (source outside), so slot is min(2, pred+1).
+        assert_eq!(preview.insertion_index, 2.min(predecessor + 1));
+        let plan = drop_planned(&mut session, gx, gy, "corr-group-interior");
+        assert_eq!(preview.target_leaf, plan.dispatch.operation.target_leaf);
+        assert_eq!(preview.target_group, plan.dispatch.operation.target_group);
+        assert_eq!(
+            preview.insertion_index,
+            plan.dispatch.operation.insertion_index
+        );
+        assert_eq!(preview.wrap, plan.dispatch.operation.wrap);
+        assert_eq!(
+            (
+                Some(plan.desired_focus_domain.clone()),
+                Some(plan.desired_focus_leaf.clone())
+            ),
+            before_focus
+        );
+        for domain in &plan.desired_snapshot.domains {
+            if let Some(tree) = &domain.tree {
+                let mut seen = BTreeSet::new();
+                assert!(validate_node_shares(tree, &mut seen));
+            }
+        }
+        assert!(geometry_covers_affected(
+            &plan.desired_geometry,
+            &session.windows,
+            std::slice::from_ref(&domain_key()),
+        ));
+        commit_drag(&mut session, &plan, "corr-group-interior");
+        assert_eq!(session.focus(), before_focus);
+    }
+
+    #[test]
+    fn drag_group_edge_perpendicular_wraps_and_sticky_prior() {
+        // Inner V group: left-strip (32px) gap-row point is GroupEdge Left
+        // (axis Horizontal, perpendicular to inner Vertical) and wraps.
+        let mut session = gap_session_nested();
+        let (inner, leaf_map) = inner_v_layout(&session);
+        let cx = inner.rect.x + inner.rect.w / 2;
+        let mut gy_opt = None;
+        for y in inner.rect.y..inner.rect.y + inner.rect.h {
+            if !leaf_map.values().any(|r| contains_point(r, cx, y)) {
+                gy_opt = Some(y);
+                break;
+            }
+        }
+        let gy = gy_opt.expect("inner gap row");
+        let gx = inner.rect.x + 5;
+        assert!(
+            !leaf_map.values().any(|r| contains_point(r, gx, gy)),
+            "left-strip gap point must be group-only"
+        );
+        let _capture = begin_focused(&mut session, "win-1");
+        let preview = session.preview_drag(gx, gy).expect("group edge preview");
+        assert_eq!(preview.side, DragSide::Left);
+        assert_eq!(preview.axis, Axis::Horizontal);
+        assert!(preview.wrap);
+        assert_eq!(preview.target_leaf, inner.id);
+        // Sticky prior: the same gap row 50px right of the left edge is
+        // outside the normal 32px strip but the prior is a different edge
+        // now (Left), so a top-strip check is not applicable; instead verify
+        // the prior persists by re-hitting the same edge further along the row.
+        let sticky = session
+            .preview_drag(gx, gy + 2)
+            .expect("sticky edge preview");
+        assert_eq!(sticky.side, DragSide::Left);
+        assert_eq!(sticky.target_leaf, preview.target_leaf);
+        let plan = drop_planned(&mut session, gx, gy + 2, "corr-group-edge");
+        assert_eq!(sticky.target_leaf, plan.dispatch.operation.target_leaf);
+        assert_eq!(sticky.wrap, plan.dispatch.operation.wrap);
+        assert_eq!(
+            sticky.insertion_index,
+            plan.dispatch.operation.insertion_index
+        );
+        commit_drag(&mut session, &plan, "corr-group-edge");
+    }
+
+    #[test]
+    fn drag_group_edge_same_axis_nary_first_last_placement() {
+        // Direct placement: N-ary H group [a,b,c], mover outside. Left inserts
+        // first, Right inserts last, via proportional shares.
+        let group = Node::Group {
+            id: NodeId("g".to_owned()),
+            axis: Axis::Horizontal,
+            children: vec![
+                Node::Leaf {
+                    id: NodeId("a".to_owned()),
+                },
+                Node::Leaf {
+                    id: NodeId("b".to_owned()),
+                },
+                Node::Leaf {
+                    id: NodeId("c".to_owned()),
+                },
+            ],
+            shares: vec![1, 1, 1],
+        };
+        let tree = Node::Group {
+            id: NodeId("root".to_owned()),
+            axis: Axis::Vertical,
+            children: vec![
+                group,
+                Node::Leaf {
+                    id: NodeId("m".to_owned()),
+                },
+            ],
+            shares: vec![1, 1],
+        };
+        let left = apply_group_edge_placement(
+            &tree,
+            &NodeId("m".to_owned()),
+            &NodeId("g".to_owned()),
+            DragSide::Left,
+            9,
+        )
+        .expect("left placement");
+        assert!(!left.wrap);
+        assert_eq!(left.target_group, NodeId("g".to_owned()));
+        assert_eq!(left.insertion_index, 0);
+        assert!(left.new_group.is_none());
+        let right = apply_group_edge_placement(
+            &tree,
+            &NodeId("m".to_owned()),
+            &NodeId("g".to_owned()),
+            DragSide::Right,
+            9,
+        )
+        .expect("right placement");
+        assert!(!right.wrap);
+        assert_eq!(right.target_group, NodeId("g".to_owned()));
+        assert_eq!(right.insertion_index, 3);
+        // Perpendicular Top wraps the whole group.
+        let top = apply_group_edge_placement(
+            &tree,
+            &NodeId("m".to_owned()),
+            &NodeId("g".to_owned()),
+            DragSide::Top,
+            9,
+        )
+        .expect("top placement");
+        assert!(top.wrap);
+        assert!(top.new_group.is_some());
+        // Interior predecessor 0 gives min(3,1)=1 after removing an outside
+        // mover (len stays 3).
+        let interior = apply_group_interior_placement(
+            &tree,
+            &NodeId("m".to_owned()),
+            &NodeId("g".to_owned()),
+            0,
+            9,
+        )
+        .expect("interior placement");
+        assert!(!interior.wrap);
+        assert_eq!(interior.target_group, NodeId("g".to_owned()));
+        assert_eq!(interior.insertion_index, 1);
+    }
+
+    #[test]
+    fn drag_group_stale_capture_rejects_and_center_unsupported() {
+        let mut session = gap_session_two();
+        let _capture = begin_focused(&mut session, "win-2");
+        // Stale focus drift fails closed: preview refuses, drop snaps back.
+        session.focused_leaf = Some(NodeId("leaf-win-1".to_owned()));
+        assert_eq!(
+            session.preview_drag(400, 300),
+            Err(ProposeError::Refused(RefusalKind::MalformedTopology))
+        );
+        match session
+            .drop_drag(
+                400,
+                300,
+                &obs_for(&session),
+                &corr("corr-stale"),
+                &DragCapabilities::full(),
+            )
+            .expect("stale snaps back")
+        {
+            DragRelease::SnapBack(_) => {}
+            DragRelease::Planned(_) => panic!("stale must snap back"),
+        }
+        assert!(!session.has_drag());
+        // Fresh capture: window center is explicit unsupported with no plan.
+        let mut session = gap_session_two();
+        let _capture = begin_focused(&mut session, "win-2");
+        let rects = leaf_rects_of(&session);
+        let (_, first) = rects.first().expect("leaf");
+        let cx = first.x + first.w / 2;
+        let cy = first.y + first.h / 2;
+        // Center of win-1 (non-source) names the stack fact.
+        assert_eq!(
+            session.preview_drag(cx, cy),
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
+        );
+        assert!(!session.has_pending());
+        assert!(session.has_drag());
+        session.cancel_drag();
+    }
+
+    #[test]
+    fn drag_failed_center_preview_clears_group_edge_stickiness() {
+        let mut session = gap_session_nested();
+        let before = session.snapshot();
+        let revision = session.accepted_revision();
+        let (inner, leaf_map) = inner_v_layout(&session);
+        let cx = inner.rect.x + inner.rect.w / 2;
+        let mut gy_opt = None;
+        for y in inner.rect.y..inner.rect.y + inner.rect.h {
+            if !leaf_map.values().any(|r| contains_point(r, cx, y))
+                && y - inner.rect.y >= 32
+                && inner.rect.y + inner.rect.h - y > 32
+            {
+                gy_opt = Some(y);
+                break;
+            }
+        }
+        let gy = gy_opt.expect("inner interior gap point");
+        let gx = inner.rect.x + 5;
+        assert!(
+            !leaf_map.values().any(|r| contains_point(r, gx, gy)),
+            "left-strip gap point must be group-only"
+        );
+        let _capture = begin_focused(&mut session, "win-1");
+        let edge = session.preview_drag(gx, gy).expect("group edge preview");
+        assert_eq!(edge.side, DragSide::Left);
+        assert_eq!(edge.target_leaf, inner.id);
+        let rects = leaf_rects_of(&session);
+        let source_leaf = session
+            .windows
+            .iter()
+            .find(|(_, l)| l.window == WindowId("win-1".to_owned()))
+            .map(|(_, l)| l.leaf.clone())
+            .expect("win-1 leaf");
+        let (_, target_rect) = rects
+            .iter()
+            .find(|(id, _)| *id != source_leaf)
+            .expect("non-source leaf");
+        let center_x = target_rect.x + target_rect.w / 2;
+        let center_y = target_rect.y + target_rect.h / 2;
+        assert_eq!(
+            session.preview_drag(center_x, center_y),
+            Err(ProposeError::Refused(RefusalKind::UnsupportedCapability))
+        );
+        let sticky_x = inner.rect.x + 50;
+        assert!(
+            contains_point(&inner.rect, sticky_x, gy),
+            "sticky probe must stay inside the group"
+        );
+        assert!(
+            !leaf_map.values().any(|r| contains_point(r, sticky_x, gy)),
+            "sticky probe must be group-only"
+        );
+        assert_eq!(
+            crate::cosmic_v1::classify_group_point(
+                &inner.rect,
+                &inner.id,
+                sticky_x,
+                gy,
+                Some(&crate::cosmic_v1::PriorGroupEdge {
+                    group: inner.id.clone(),
+                    edge: DragSide::Left,
+                }),
+            ),
+            Some(DragSide::Left)
+        );
+        assert_ne!(
+            crate::cosmic_v1::classify_group_point(&inner.rect, &inner.id, sticky_x, gy, None),
+            Some(DragSide::Left)
+        );
+        match session.preview_drag(sticky_x, gy) {
+            Ok(preview) => assert_ne!(
+                preview.side,
+                DragSide::Left,
+                "cleared prior must not resolve via sticky 80"
+            ),
+            Err(ProposeError::Refused(_)) => {}
+            Err(other) => panic!("unexpected preview result: {other:?}"),
+        }
+        assert_eq!(session.snapshot(), before);
+        assert!(!session.has_pending());
+        assert!(!session.has_pending_desired());
+        assert!(session.has_drag());
+        assert_eq!(session.accepted_revision(), revision);
+        session.cancel_drag();
     }
 }

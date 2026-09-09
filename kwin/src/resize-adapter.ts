@@ -59,6 +59,7 @@ import { orderGeometryWrites } from "./geometry-order";
 const LOG_PREFIX = "plasma-auto-tiler:resize";
 
 export type ResizeDirection = "left" | "right" | "up" | "down";
+export type ResizeMode = "inwards" | "outwards";
 export type ResizeSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
 
 export interface ResizeRect {
@@ -212,6 +213,10 @@ function isDirection(value: unknown): value is ResizeDirection {
     return value === "left" || value === "right" || value === "up" || value === "down";
 }
 
+function isResizeMode(value: unknown): value is ResizeMode {
+    return value === "inwards" || value === "outwards";
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -272,6 +277,7 @@ const RESIZE_OPERATION_KEYS: readonly string[] = Object.freeze([
     "focused_leaf",
     "focused_window",
     "direction",
+    "mode",
     "target_group",
     "focused_child",
     "neighbor_child",
@@ -332,6 +338,9 @@ function validateOperationShape(operation: unknown): boolean {
         return false;
     }
     if (!isDirection(operation["direction"])) {
+        return false;
+    }
+    if (!isResizeMode(operation["mode"])) {
         return false;
     }
     if (!isNonNegativeInt(operation["focused_index"]) || !isNonNegativeInt(operation["neighbor_index"])) {
@@ -604,9 +613,16 @@ export class ResizeAdapter {
     private seq = 0;
     private lastFingerprint = "";
     private lastDirection = "";
+    private lastMode = "";
+    private lastPressIndex = -1;
+    private repeatFocused: string | null = null;
+    private repeatDirection: ResizeDirection | null = null;
+    private repeatMode: ResizeMode | null = null;
+    private repeatNext = 0;
     private pending: PlannedResize | null = null;
     private pendingObserved: ResizeObserved | null = null;
     private pendingDirection: ResizeDirection | null = null;
+    private pendingMode: ResizeMode | null = null;
     private pendingFocused: string | null = null;
     private lossReported = false;
 
@@ -623,6 +639,12 @@ export class ResizeAdapter {
     private clearDedup(): void {
         this.lastFingerprint = "";
         this.lastDirection = "";
+        this.lastMode = "";
+        this.lastPressIndex = -1;
+        this.repeatFocused = null;
+        this.repeatDirection = null;
+        this.repeatMode = null;
+        this.repeatNext = 0;
     }
 
     private reportAdapterLost(planned: PlannedResize | null): void {
@@ -713,6 +735,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pendingMode = null;
         this.pendingFocused = null;
         this.lossReported = false;
         this.clearDedup();
@@ -729,6 +752,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pendingMode = null;
         this.pendingFocused = null;
         this.suppressing = false;
         this.clearDedup();
@@ -744,7 +768,7 @@ export class ResizeAdapter {
         this.log(`${LOG_PREFIX}:disabled`);
     }
 
-    requestResize(direction: unknown): void {
+    requestResize(direction: unknown, mode: unknown): void {
         if (!this.enabled) {
             this.reject("resize-disabled");
             return;
@@ -754,6 +778,11 @@ export class ResizeAdapter {
             return;
         }
         if (!isDirection(direction)) {
+            this.reject("resize-invalid-intent");
+            return;
+        }
+        // No compatibility default: missing/invalid mode rejects before D-Bus.
+        if (!isResizeMode(mode)) {
             this.reject("resize-invalid-intent");
             return;
         }
@@ -782,7 +811,25 @@ export class ResizeAdapter {
             return;
         }
         const current = observed as ResizeObserved;
-        if (current.fingerprint === this.lastFingerprint && direction === this.lastDirection) {
+        // Explicit portable key-repeat state per uninterrupted same
+        // (focused window, edge, mode) stream: 0 is the initial press, then
+        // incrementing. Resets when identity/edge/mode changes.
+        let pressIndex = 0;
+        if (
+            this.repeatFocused === current.focusedId &&
+            this.repeatDirection === direction &&
+            this.repeatMode === mode
+        ) {
+            pressIndex = this.repeatNext;
+        }
+        // Dedup binds mode and repeat index so held-key repeats transmit
+        // rather than incorrectly deduping on fingerprint+direction alone.
+        if (
+            current.fingerprint === this.lastFingerprint &&
+            direction === this.lastDirection &&
+            mode === this.lastMode &&
+            pressIndex === this.lastPressIndex
+        ) {
             this.reject("resize-dedup");
             return;
         }
@@ -839,6 +886,8 @@ export class ResizeAdapter {
                 },
                 focused_window: current.focusedId,
                 direction,
+                mode,
+                press_index: pressIndex,
                 windows,
                 capabilities: { keyboard_resize: true },
             });
@@ -853,7 +902,13 @@ export class ResizeAdapter {
         }
         this.lastFingerprint = current.fingerprint;
         this.lastDirection = direction;
-        this.startFlight(payload, correlation, direction, current);
+        this.lastMode = mode;
+        this.lastPressIndex = pressIndex;
+        this.repeatFocused = current.focusedId;
+        this.repeatDirection = direction;
+        this.repeatMode = mode;
+        this.repeatNext = pressIndex + 1;
+        this.startFlight(payload, correlation, direction, mode, current);
     }
 
     private onSignal(kind: ResizeSignal): void {
@@ -861,12 +916,15 @@ export class ResizeAdapter {
             return;
         }
         this.invalidated = true;
+        // An invalidating signal breaks the uninterrupted repeat stream.
+        this.clearDedup();
     }
 
     private startFlight(
         payload: string,
         correlation: string,
         direction: ResizeDirection,
+        mode: ResizeMode,
         observed: ResizeObserved,
     ): void {
         this.inFlight = true;
@@ -875,6 +933,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = observed;
         this.pendingDirection = direction;
+        this.pendingMode = mode;
         this.pendingFocused = observed.focusedId;
         this.lossReported = false;
         this.callbackSeen = false;
@@ -923,6 +982,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pendingMode = null;
         this.pendingFocused = null;
         this.reject(`resize-timeout-${stage}`);
         this.disable();
@@ -974,6 +1034,7 @@ export class ResizeAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.pendingMode = null;
             this.pendingFocused = null;
             this.log(`${LOG_PREFIX}:noop`);
             return;
@@ -983,6 +1044,7 @@ export class ResizeAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.pendingMode = null;
             this.pendingFocused = null;
             this.reject("resize-rejected");
             this.disable();
@@ -993,6 +1055,7 @@ export class ResizeAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.pendingMode = null;
             this.pendingFocused = null;
             this.reject("resize-diverged");
             this.disable();
@@ -1010,6 +1073,7 @@ export class ResizeAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.pendingMode = null;
             this.pendingFocused = null;
             this.reject("resize-precondition-mismatch");
             this.disable();
@@ -1020,6 +1084,7 @@ export class ResizeAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.pendingMode = null;
             this.pendingFocused = null;
             this.reject("resize-revision-mismatch");
             this.disable();
@@ -1035,6 +1100,7 @@ export class ResizeAdapter {
                 this.pending = null;
                 this.pendingObserved = null;
                 this.pendingDirection = null;
+                this.pendingMode = null;
                 this.pendingFocused = null;
                 this.reject("resize-precondition-mismatch");
                 this.disable();
@@ -1046,6 +1112,7 @@ export class ResizeAdapter {
                     this.pending = null;
                     this.pendingObserved = null;
                     this.pendingDirection = null;
+                    this.pendingMode = null;
                     this.pendingFocused = null;
                     this.reject("resize-precondition-mismatch");
                     this.disable();
@@ -1056,6 +1123,7 @@ export class ResizeAdapter {
                     this.pending = null;
                     this.pendingObserved = null;
                     this.pendingDirection = null;
+                    this.pendingMode = null;
                     this.pendingFocused = null;
                     this.reject("resize-precondition-mismatch");
                     this.disable();
@@ -1071,6 +1139,7 @@ export class ResizeAdapter {
                 this.pending = null;
                 this.pendingObserved = null;
                 this.pendingDirection = null;
+                this.pendingMode = null;
                 this.pendingFocused = null;
                 this.reject("resize-precondition-mismatch");
                 this.disable();
@@ -1085,22 +1154,25 @@ export class ResizeAdapter {
         const planned = this.pending;
         const captured = this.pendingObserved;
         const wantedDirection = this.pendingDirection;
+        const wantedMode = this.pendingMode;
         const focused = this.pendingFocused;
         if (
             planned === null ||
             captured === null ||
             focused === null ||
-            wantedDirection === null
+            wantedDirection === null ||
+            wantedMode === null
         ) {
             this.reportAdapterLost(planned);
             this.failApply("resize-target-mismatch");
             return;
         }
-        // The planned operation must name the focused window and direction.
+        // The planned operation must name the focused window, direction, and mode.
         const operation = planned.operation;
         if (
             operation["focused_window"] !== focused ||
             operation["direction"] !== wantedDirection ||
+            operation["mode"] !== wantedMode ||
             operation["domain_output"] !== captured.domainOutput ||
             operation["domain_workspace"] !== captured.domainWorkspace
         ) {
@@ -1348,6 +1420,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pendingMode = null;
         this.pendingFocused = null;
         this.suppressing = false;
         this.reject(token);
@@ -1633,6 +1706,7 @@ export class ResizeAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        this.pendingMode = null;
         this.pendingFocused = null;
         this.suppressing = false;
         if (this.invalidated) {

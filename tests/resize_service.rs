@@ -32,8 +32,8 @@ fn domain() -> OutputDomain {
         bounds: Rect {
             x: 0,
             y: 0,
-            w: 200,
-            h: 200,
+            w: 800,
+            h: 600,
         },
         gap: 0,
         adjacent: BTreeMap::new(),
@@ -85,6 +85,7 @@ fn admit_commit(session: &mut Session, window: &str, corr: &str) {
         workspace: WorkspaceId("ws-1".to_owned()),
         exceptions: ExceptionFlags::none(),
         exception_behavior: None,
+        // Wide target selects a horizontal split under the COSMIC admission rule.
         placement_bounds: Rect {
             x: 0,
             y: 0,
@@ -178,8 +179,8 @@ fn request_json(
         keyboard_resize,
         0,
         0,
-        200,
-        200,
+        800,
+        600,
         0,
     )
 }
@@ -232,6 +233,8 @@ fn request_json_with_geometry(
             "bounds": {"x": bx, "y": by, "w": bw, "h": bh}, "gap": gap},
         "focused_window": focused,
         "direction": direction,
+        "mode": "outwards",
+        "press_index": 0,
         "windows": members,
         "capabilities": {"keyboard_resize": keyboard_resize},
     })
@@ -437,9 +440,9 @@ fn cross_domain_window_is_rejected() {
     .expect("json");
     raw["windows"] = serde_json::json!([
         {"window": "win-a", "output": "out-1", "workspace": "ws-1",
-         "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+         "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
         {"window": "win-b", "output": "out-9", "workspace": "ws-1",
-         "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+         "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
     ]);
     let out = reply(&service.evaluate_json(&raw.to_string()));
     assert_eq!(out["outcome"], "rejected");
@@ -832,9 +835,9 @@ fn verify_without_local_pending_diverges_terminally() {
                 },
                 "verified_geometry": [
                     {"window": "win-a", "leaf": "leaf-a", "output": "out-1",
-                     "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 100, "h": 200}},
+                     "workspace": "ws-1", "rect": {"x": 0, "y": 0, "w": 400, "h": 600}},
                     {"window": "win-b", "leaf": "leaf-b", "output": "out-1",
-                     "workspace": "ws-1", "rect": {"x": 100, "y": 0, "w": 100, "h": 200}},
+                     "workspace": "ws-1", "rect": {"x": 400, "y": 0, "w": 400, "h": 600}},
                 ],
                 "verified_focus": {
                     "domain_output": "out-1", "domain_workspace": "ws-1", "leaf": "leaf-a",
@@ -854,4 +857,39 @@ fn service_starts_unseeded_without_pending() {
     assert!(!service.is_seeded());
     assert!(!service.is_diverged());
     assert_eq!(service.accepted_revision(), 0);
+}
+
+#[test]
+fn missing_mode_and_legacy_native_payload_reject_without_default() {
+    let (mut service, focused, revision, fingerprint) = two_window_service();
+    // Missing required mode/press_index rejects as malformed (no compat default).
+    let mut raw: serde_json::Value = serde_json::from_str(&request_json(
+        "req-missing",
+        revision,
+        fingerprint,
+        &focused,
+        "left",
+        &["win-a", "win-b"],
+        true,
+    ))
+    .expect("json");
+    raw.as_object_mut().expect("obj").remove("mode");
+    let out = reply(&service.evaluate_json(&raw.to_string()));
+    assert_eq!(out["outcome"], "rejected");
+    // Legacy native_min_size field is unknown (removed capability, no compat).
+    let mut legacy: serde_json::Value = serde_json::from_str(&request_json(
+        "req-legacy",
+        revision,
+        fingerprint,
+        &focused,
+        "left",
+        &["win-a", "win-b"],
+        true,
+    ))
+    .expect("json");
+    legacy["capabilities"]["native_min_size"] = serde_json::json!(true);
+    let lout = reply(&service.evaluate_json(&legacy.to_string()));
+    assert_eq!(lout["outcome"], "rejected");
+    assert_eq!(lout["kind"], "unknown-field");
+    assert!(!service.is_diverged());
 }
