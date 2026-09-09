@@ -208,14 +208,17 @@ Only meaningful pending or active work is listed.
                owns its matching no-restart user `Type=dbus` unit; selected Rust
                adapters activate once, owner-pin, and fail closed with no Legacy
                fallback while `engineAuthorityMode` remains default `legacy`.
-               External consumer integration, rebuild/new-session delivery, D-Bus
-               activation, and the stable-scope manual Rust-mode journey remain
-               pending. User rebuild, new-session restart,
-              development-mode selection, and stable-scope focus/move/keyboard/
-             pointer visual jank journey remain pending; add/remove and drag/
-             drop remain out of scope. Next: KWin drag-end snap-back and drop
-             adapter integration, separate from pointer resize topology; parked
-             shadow transport/live cleanup remains unchanged. Source-parity
+                Packaged exact-three Rust-mode wiring is now static-complete: one
+                Planner-owned Session serves the public focus, movement, keyboard
+                resize, and pointer-resize routes after a strict public-state
+                bootstrap to `H[A,V[B,C]]`. The bootstrap and all operation plans
+                retain direct-geometry acknowledgement and post-observation
+                fencing, and Rust refusal never invokes Legacy. The remaining gate
+                is a user rebuild/new-session followed by one exact-three manual
+                focus/move/keyboard/pointer visual-jank smoke; add/remove,
+                collapse, drag/drop, settings, persistence, and default promotion
+                remain out of scope. Parked shadow transport/live cleanup remains
+                unchanged. Source-parity
              correction is statically complete:
               `cosmic_v1` now executes audited `cosmic-comp`
               `81cd5fdbaa41c3973369ae85bccf829137836e20` admission-axis,

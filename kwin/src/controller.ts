@@ -1080,9 +1080,25 @@ export class TileController {
             }
             this.engineAuthorityMode = authority.mode;
             if (authority.mode === "rust-development") {
-                const dispatcher = createPackagedEngineAuthority(authority.mode, (event) => this.diagnostic(event));
                 this.detachLegacyLifecycle();
                 const previous = this.engineAuthority;
+                // Continuity across recreation: adopt the previous
+                // in-memory revision so sequential commands keep binding the
+                // single retained Rust session revision. No persistence,
+                // settings, or global side channel; a stale value simply
+                // diverges fail-closed via the normal public contract and
+                // never falls back to legacy.
+                let adopted: number | undefined = undefined;
+                try {
+                    const snapshot = previous?.revisionSnapshot?.();
+                    if (typeof snapshot === "number" && Number.isInteger(snapshot) && snapshot >= 0) {
+                        adopted = snapshot;
+                    }
+                } catch (error) {
+                    void error;
+                    adopted = undefined;
+                }
+                const dispatcher = createPackagedEngineAuthority(authority.mode, (event) => this.diagnostic(event), adopted);
                 this.engineAuthority = dispatcher;
                 if (previous !== null && previous !== dispatcher) {
                     try {

@@ -6,11 +6,15 @@
 //
 // rust-development: exactly one dispatcher path starts the four adapter
 // entries (focus, movement, keyboard resize, pointer resize) with one exact
-// owner/generation/revision binding and function-form exclusive authority
-// predicates. The entries use the normal Planner D-Bus discovery already
-// built into the adapters; no policy is implemented here. Any start,
-// service, identity, stale, or diverged loss leaves the Rust path
-// disabled/refused and never invokes legacy.
+// owner/generation binding and one shared revision holder, plus function-form
+// exclusive authority predicates. All four slices advance the same holder so
+// sequential commands bind the single Rust session revision. After activation
+// the dispatcher invokes the resize slice's one-shot exact-three adoption,
+// which seeds through the normal public plan contract for exactly three
+// eligible windows and skips fail-closed otherwise. The entries use the
+// normal Planner D-Bus discovery already built into the adapters; no policy
+// is implemented here. Any start, service, identity, stale, or diverged loss
+// leaves the Rust path disabled/refused and never invokes legacy.
 
 import { startFocusAdapterEntry, type FocusEntryHandle } from "./focus-adapter-entry";
 import { startMovementAdapterEntry, type MovementEntryHandle } from "./movement-adapter-entry";
@@ -22,6 +26,19 @@ export const ENGINE_AUTHORITY_OWNER = "plasma-auto-tiler";
 export const ENGINE_AUTHORITY_GENERATION = "packaged-rust-1";
 export const ENGINE_AUTHORITY_REVISION = 0;
 
+// Shared one-session revision binding: one holder object is passed to all
+// four slices so sequential commands across slices advance the same counter
+// and bind the single Rust revision. Adapters read and write through it;
+// the holder starts at ENGINE_AUTHORITY_REVISION so the first request still
+// carries the Rust post-seed base.
+export interface EngineAuthorityRevision {
+    current: number;
+}
+
+export function createEngineAuthorityRevision(): EngineAuthorityRevision {
+    return { current: ENGINE_AUTHORITY_REVISION };
+}
+
 export type AuthorityDirection = "left" | "right" | "up" | "down";
 export type AuthorityResizeMode = "outwards" | "inwards";
 
@@ -29,25 +46,25 @@ export interface EngineAuthorityStarts {
     readonly startFocus: (args: {
         readonly owner: string;
         readonly generation: string;
-        readonly revision: number;
+        readonly revision: EngineAuthorityRevision;
         readonly hasExclusiveFocusAuthority: () => boolean;
     }) => FocusEntryHandle | null;
     readonly startMovement: (args: {
         readonly owner: string;
         readonly generation: string;
-        readonly revision: number;
+        readonly revision: EngineAuthorityRevision;
         readonly hasExclusiveMovementAuthority: () => boolean;
     }) => MovementEntryHandle | null;
     readonly startResize: (args: {
         readonly owner: string;
         readonly generation: string;
-        readonly revision: number;
+        readonly revision: EngineAuthorityRevision;
         readonly hasExclusiveResizeAuthority: () => boolean;
     }) => ResizeEntryHandle | null;
     readonly startPointerResize: (args: {
         readonly owner: string;
         readonly generation: string;
-        readonly revision: number;
+        readonly revision: EngineAuthorityRevision;
         readonly hasExclusiveResizeAuthority: () => boolean;
     }) => PointerResizeEntryHandle | null;
 }
@@ -68,12 +85,37 @@ export class EngineAuthorityDispatcher {
     private pointerHandle: PointerResizeEntryHandle | null = null;
     private rustAvailable = false;
     private rustResizeMode: AuthorityResizeMode | null = null;
+    private readonly revisionBinding: EngineAuthorityRevision;
 
     constructor(
         private readonly mode: EngineAuthorityMode,
         private readonly starts: EngineAuthorityStarts,
         private readonly log: (message: string) => void,
-    ) {}
+        initialRevision?: number,
+    ) {
+        // Continuity across dispatcher recreation (e.g. controller reload):
+        // adopt the previous in-memory revision when it is a valid revision,
+        // else start fresh at ENGINE_AUTHORITY_REVISION so the first request
+        // can still seed through the normal public exact-three contract.
+        // No persistence, settings, or global side channel; stale values
+        // simply diverge fail-closed on the service. Never touches legacy.
+        if (
+            typeof initialRevision === "number" &&
+            Number.isInteger(initialRevision) &&
+            initialRevision >= 0 &&
+            initialRevision <= 1000000
+        ) {
+            this.revisionBinding = { current: initialRevision };
+        } else {
+            this.revisionBinding = createEngineAuthorityRevision();
+        }
+    }
+
+    // In-memory revision handover for recreation: the controller may adopt
+    // this snapshot when constructing a replacement dispatcher. No I/O.
+    revisionSnapshot(): number {
+        return this.revisionBinding.current;
+    }
 
     hasExclusiveRustAuthority = (): boolean => this.isRustActive();
 
@@ -88,7 +130,7 @@ export class EngineAuthorityDispatcher {
         const binding = {
             owner: ENGINE_AUTHORITY_OWNER,
             generation: ENGINE_AUTHORITY_GENERATION,
-            revision: ENGINE_AUTHORITY_REVISION,
+            revision: this.revisionBinding,
         };
         const authority = this.hasExclusiveRustAuthority;
         let focus: FocusEntryHandle | null = null;
@@ -147,6 +189,15 @@ export class EngineAuthorityDispatcher {
         this.rustAvailable = true;
         try {
             this.log("plasma-auto-tiler:engine-authority-rust-ready");
+        } catch (error) {
+            void error;
+        }
+        // One-shot exact-three adoption through the normal resize flight.
+        // Best effort: any failure stays armed for the first user command,
+        // which seeds through the same public contract. Never refuses here
+        // and never touches legacy.
+        try {
+            this.resizeHandle.tryBootstrapTrio?.();
         } catch (error) {
             void error;
         }
@@ -270,13 +321,15 @@ export function createEngineAuthority(
     mode: EngineAuthorityMode,
     starts: EngineAuthorityStarts,
     log: (message: string) => void,
+    initialRevision?: number,
 ): EngineAuthorityDispatcher {
-    return new EngineAuthorityDispatcher(mode, starts, log);
+    return new EngineAuthorityDispatcher(mode, starts, log, initialRevision);
 }
 
 export function createPackagedEngineAuthority(
     mode: EngineAuthorityMode,
     log: (message: string) => void,
+    initialRevision?: number,
 ): EngineAuthorityDispatcher {
-    return new EngineAuthorityDispatcher(mode, packagedEngineAuthorityStarts(), log);
+    return new EngineAuthorityDispatcher(mode, packagedEngineAuthorityStarts(), log, initialRevision);
 }

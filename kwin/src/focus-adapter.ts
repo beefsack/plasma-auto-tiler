@@ -383,6 +383,32 @@ export class FocusAdapter {
     private owner = "";
     private generation = "";
     private revision = 0;
+    // Shared one-session revision binding: when the authority passes a
+    // holder object, all four slices read and advance the same counter so
+    // sequential commands across slices bind the single Rust revision. A
+    // plain number keeps the previous per-adapter behavior.
+    private revisionBinding: { current: number } | null = null;
+
+    private isSharedRevisionBinding(value: unknown): value is { current: number } {
+        if (typeof value !== "object" || value === null) {
+            return false;
+        }
+        return typeof (value as Record<string, unknown>)["current"] === "number";
+    }
+
+    private readRevision(): number {
+        if (this.revisionBinding !== null) {
+            return this.revisionBinding.current;
+        }
+        return this.revision;
+    }
+
+    private writeRevision(value: number): void {
+        this.revision = value;
+        if (this.revisionBinding !== null) {
+            this.revisionBinding.current = value;
+        }
+    }
     private inFlight = false;
     private token = 0;
     private activeToken = 0;
@@ -490,7 +516,12 @@ export class FocusAdapter {
             return false;
         }
         const revision = auth.revision === undefined ? 0 : auth.revision;
-        if (!isRevision(revision)) {
+        if (this.isSharedRevisionBinding(revision)) {
+            if (!isRevision(revision.current)) {
+                this.reject("focus-invalid-auth");
+                return false;
+            }
+        } else if (!isRevision(revision)) {
             this.reject("focus-invalid-auth");
             return false;
         }
@@ -520,7 +551,13 @@ export class FocusAdapter {
         this.detaches = attached;
         this.owner = auth.owner as string;
         this.generation = auth.generation as string;
-        this.revision = revision as number;
+        if (this.isSharedRevisionBinding(revision)) {
+            this.revisionBinding = revision;
+            this.writeRevision(revision.current);
+        } else {
+            this.revisionBinding = null;
+            this.revision = revision as number;
+        }
         this.enabled = true;
         this.invalidated = false;
         this.writes = 0;
@@ -602,7 +639,7 @@ export class FocusAdapter {
             this.reject("focus-dedup");
             return;
         }
-        if (this.revision < 0 || this.revision > FOCUS_MAX_REVISION) {
+        if (this.readRevision() < 0 || this.readRevision() > FOCUS_MAX_REVISION) {
             this.reject("focus-stale-revision");
             this.disable();
             return;
@@ -629,10 +666,20 @@ export class FocusAdapter {
         // size N (the Rust post-seed base); later revisions bind exactly.
         // An explicit non-zero revision is sent verbatim so an incompatible
         // value still diverges fail-closed on the service.
-        let requestRevision = this.revision;
+        let requestRevision = this.readRevision();
         if (requestRevision === 0) {
             requestRevision = sortedIds.length;
-            this.revision = requestRevision;
+            // Shared trio holder must never be poisoned by a non-seed
+            // revision: only the exact-three seed revision may be stored.
+            // The wire still carries N so Rust rejects fail-closed;
+            // standalone per-adapter revision keeps the previous N binding.
+            if (this.revisionBinding !== null) {
+                if (sortedIds.length === 3) {
+                    this.writeRevision(requestRevision);
+                }
+            } else {
+                this.writeRevision(requestRevision);
+            }
         }
         const fingerprint = focusFingerprint(
             current.domainOutput,
@@ -982,7 +1029,7 @@ export class FocusAdapter {
             this.disable();
             return;
         }
-        if (planned.baseRevision !== this.revision) {
+        if (planned.baseRevision !== this.readRevision()) {
             this.inFlight = false;
             this.pending = null;
             this.pendingObserved = null;
@@ -1553,8 +1600,8 @@ export class FocusAdapter {
             return;
         }
         const revision = parsed["revision"];
-        if (typeof revision === "number" && Number.isInteger(revision) && revision === this.revision + 1) {
-            this.revision = revision;
+        if (typeof revision === "number" && Number.isInteger(revision) && revision === this.readRevision() + 1) {
+            this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
             this.reject("focus-revision-mismatch");

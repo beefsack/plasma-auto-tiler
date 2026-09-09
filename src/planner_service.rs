@@ -6,16 +6,17 @@
 //! `DescribeAdvisoryPlan` (read-only v1 advisory request -> advisory
 //! plan reply with exactly three normalized opaque windows, delegated through
 //! the portable `cosmic_v1` core; no native command/execution fields and no
-//! mutation), `DescribeFocus` (bounded v1 focus transaction over the owned
-//! focus service), and `DescribeMovement` (bounded v1 movement transaction
-//! over the owned movement service, delegating to one `Session`'s `cosmic_v1`
-//! R1-R4 move planning with complete desired geometry/focus), and
-//! `DescribeResize` (bounded v1 keyboard resize transaction over the owned
-//! resize service, delegating to one `Session`'s `propose_resize` split-share
-//! planning with complete adjacent/share/projected geometry and retained
-//! focus), `DescribePointerResize` (bounded v1 pointer split-share resize
-//! transaction over the same owned resize service, delegating to one
-//! `Session`'s `propose_pointer_resize` with a Rust-derived boundary/shares
+//! mutation), `DescribeFocus` (bounded v1 focus transaction over the shared
+//! trio service), and `DescribeMovement` (bounded v1 movement transaction
+//! over the same shared trio service, delegating to the one session's
+//! `cosmic_v1` R1-R4 move planning with complete desired geometry/focus),
+//! and `DescribeResize` (bounded v1 keyboard resize transaction over the
+//! same shared trio service, delegating to the one session's
+//! `propose_resize` split-share planning with complete
+//! adjacent/share/projected geometry and retained focus),
+//! `DescribePointerResize` (bounded v1 pointer split-share resize
+//! transaction over the same shared trio service, delegating to the one
+//! session's `propose_pointer_resize` with a Rust-derived boundary/shares
 //! from a normalized boundary coordinate; same ack/verify boundary, keyboard
 //! wire behavior unchanged), and
 //! `DescribeShadowProjection` (read-only v1 shadow projection
@@ -47,10 +48,11 @@ use crate::advisory_contract::{
     ADVISORY_MAX_REPLY_BYTES, ADVISORY_MAX_REVISION, AdvisorySession,
     evaluate_advisory_json_for_armed_loss,
 };
-use crate::focus_service::{FOCUS_MAX_REPLY_BYTES, FocusService};
-use crate::movement_service::{MOVEMENT_MAX_REPLY_BYTES, MovementService};
+use crate::focus_service::FOCUS_MAX_REPLY_BYTES;
+use crate::manual_runtime::ManualTrioService;
+use crate::movement_service::MOVEMENT_MAX_REPLY_BYTES;
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
-use crate::resize_service::{RESIZE_MAX_REPLY_BYTES, ResizeService};
+use crate::resize_service::RESIZE_MAX_REPLY_BYTES;
 use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
 // Linux-only identity boundary; portable core never depends on it.
 #[cfg(target_os = "linux")]
@@ -139,24 +141,15 @@ pub struct PlannerEndpoint {
     // strictly increasing revisions with fresh correlations, so
     // signal-driven recomputations can proceed. Never shared with advisory.
     shadow_session: Arc<std::sync::Mutex<ShadowSession>>,
-    // Owned focus transaction service held in process memory only, shared
-    // across endpoint clones so the single manually started service owns
-    // exactly one portable focus session (seeded from the first strict
-    // request, single pending). No generic IPC; this route only.
-    focus_service: Arc<std::sync::Mutex<FocusService>>,
-    // Owned movement transaction service held in process memory only, shared
-    // across endpoint clones so the single manually started service owns
-    // exactly one portable movement session (seeded from the first strict
-    // request, single pending, `cosmic_v1` R1-R4). Separate from the focus
-    // session; no generic IPC, no shared mutable topology.
-    movement_service: Arc<std::sync::Mutex<MovementService>>,
-    // Owned resize transaction service held in process memory only, shared
-    // across endpoint clones so the single manually started service owns
-    // exactly one portable resize session (seeded from the first strict
-    // request, single pending, `Session::propose_resize` split-share).
-    // Separate from the focus and movement sessions; no generic IPC, no
-    // shared mutable topology.
-    resize_service: Arc<std::sync::Mutex<ResizeService>>,
+    // One shared authoritative exact-three transaction service held in
+    // process memory only, shared across endpoint clones so the single
+    // manually started service owns exactly one portable session (seeded
+    // once from the first strict resize-route request carrying real
+    // work-area bounds/gap plus contained per-window rects, single
+    // pending). Focus, movement, keyboard resize, and pointer resize
+    // transact over this one session; no generic IPC, no shared mutable
+    // topology beyond it.
+    trio: Arc<std::sync::Mutex<ManualTrioService>>,
     // Optional bounded advisory-loss arming. `None` is the normal
     // `planner-service` mode (unchanged: every accepted reply returns
     // normally). `Some` arms exactly one bounded correlation id: only an
@@ -174,9 +167,7 @@ impl PlannerEndpoint {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
-            focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
-            movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
-            resize_service: Arc::new(std::sync::Mutex::new(ResizeService::new())),
+            trio: Arc::new(std::sync::Mutex::new(ManualTrioService::new())),
             advisory_loss_correlation: None,
         }
     }
@@ -193,9 +184,7 @@ impl PlannerEndpoint {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
             advisory_session: Arc::new(std::sync::Mutex::new(AdvisorySession::new())),
             shadow_session: Arc::new(std::sync::Mutex::new(ShadowSession::new())),
-            focus_service: Arc::new(std::sync::Mutex::new(FocusService::new())),
-            movement_service: Arc::new(std::sync::Mutex::new(MovementService::new())),
-            resize_service: Arc::new(std::sync::Mutex::new(ResizeService::new())),
+            trio: Arc::new(std::sync::Mutex::new(ManualTrioService::new())),
             advisory_loss_correlation: Some(armed),
         })
     }
@@ -204,6 +193,20 @@ impl PlannerEndpoint {
     #[must_use]
     pub fn advisory_loss_correlation(&self) -> Option<&str> {
         self.advisory_loss_correlation.as_deref()
+    }
+
+    /// Whether the shared exact-three scope is established (seeded once
+    /// from the first strict resize-route request over the public wire
+    /// contract; single-shot, no reseed).
+    #[must_use]
+    pub fn is_trio_established(&self) -> bool {
+        self.trio.lock().is_ok_and(|held| held.is_established())
+    }
+
+    /// Accepted revision of the shared trio session (0 while unseeded).
+    #[must_use]
+    pub fn trio_revision(&self) -> u64 {
+        self.trio.lock().map_or(0, |held| held.accepted_revision())
     }
 
     /// Synchronous read-only advisory request route over the shared session
@@ -236,61 +239,59 @@ impl PlannerEndpoint {
         Ok(evaluate_shadow_json(&mut session, request))
     }
 
-    /// Synchronous focus transaction route over the shared owned focus
-    /// service. The caller must hold the single-flight `operation_lock`
-    /// guard and have passed caller verification; this only locks the
-    /// service briefly with no awaits while held. A poisoned service is
-    /// terminal fail-closed.
+    /// Synchronous focus transaction route over the shared trio service.
+    /// The caller must hold the single-flight `operation_lock` guard and
+    /// have passed caller verification; this only locks the service briefly
+    /// with no awaits while held. A poisoned service is terminal
+    /// fail-closed. Rejects while the trio is unseeded (focus carries no
+    /// geometry and can never seed).
     fn evaluate_focus_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
-            .focus_service
+            .trio
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
-        Ok(service.evaluate_json(request))
+        Ok(service.evaluate_focus_json(request))
     }
 
-    /// Synchronous movement transaction route over the shared owned movement
-    /// service. The caller must hold the single-flight `operation_lock`
-    /// guard and have passed caller verification; this only locks the
-    /// service briefly with no awaits while held. A poisoned service is
-    /// terminal fail-closed. Separate pending from focus; same
-    /// authentication and one-flight rules.
+    /// Synchronous movement transaction route over the shared trio service.
+    /// Same single-flight/poison rules as the focus route; the one shared
+    /// pending slot is owned by the trio session. Rejects while the trio is
+    /// unseeded (movement carries no per-window geometry and can never
+    /// seed).
     fn evaluate_movement_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
-            .movement_service
+            .trio
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
-        Ok(service.evaluate_json(request))
+        Ok(service.evaluate_movement_json(request))
     }
 
-    /// Synchronous resize transaction route over the shared owned resize
-    /// service. The caller must hold the single-flight `operation_lock`
-    /// guard and have passed caller verification; this only locks the
-    /// service briefly with no awaits while held. A poisoned service is
-    /// terminal fail-closed. Separate pending from focus and movement; same
-    /// authentication and one-flight rules. Action-fenced: keyboard
-    /// `request` plus shared ack/verify/loss only; `request-pointer` is
-    /// rejected without mutation and pointer-owned pending is never touched.
+    /// Synchronous resize transaction route over the shared trio service.
+    /// Same single-flight/poison rules as the focus route. Action-fenced:
+    /// keyboard `request` plus shared ack/verify/loss only; `request-pointer`
+    /// is rejected without mutation and pointer-owned pending is never
+    /// touched. A strict request also seeds the trio when unseeded.
     fn evaluate_resize_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
-            .resize_service
+            .trio
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
         Ok(service.evaluate_keyboard_json(request))
     }
 
-    /// Synchronous pointer-resize transaction route over the same shared
-    /// owned resize service (distinct D-Bus method so keyboard wire behavior
-    /// is unchanged). Same single-flight/poison rules as
+    /// Synchronous pointer-resize transaction route over the shared trio
+    /// service (distinct D-Bus method so keyboard wire behavior is
+    /// unchanged). Same single-flight/poison rules as
     /// [`Self::evaluate_resize_request`]; the JSON `action` must be
     /// `request-pointer` with a normalized `proposed_boundary`, while
     /// `acknowledge`/`verify`/`note-loss` bind only to the same pointer
     /// request cycle. Keyboard `request` and keyboard-owned pending cycles
     /// are rejected without mutation, preserving sequential pointer
-    /// ack/verify and keyboard behavior.
+    /// ack/verify and keyboard behavior. A strict request also seeds the
+    /// trio when unseeded.
     fn evaluate_pointer_resize_request(&self, request: &str) -> Result<String, PlannerError> {
         let mut service = self
-            .resize_service
+            .trio
             .lock()
             .map_err(|_| PlannerError::Unavailable("planner session state was lost".to_owned()))?;
         Ok(service.evaluate_pointer_json(request))
@@ -2064,15 +2065,7 @@ mod tests {
             &endpoint.operation_lock,
             &cloned.operation_lock
         ));
-        assert!(Arc::ptr_eq(&endpoint.focus_service, &cloned.focus_service));
-        assert!(Arc::ptr_eq(
-            &endpoint.movement_service,
-            &cloned.movement_service
-        ));
-        assert!(Arc::ptr_eq(
-            &endpoint.resize_service,
-            &cloned.resize_service
-        ));
+        assert!(Arc::ptr_eq(&endpoint.trio, &cloned.trio));
     }
 
     #[test]
@@ -2134,8 +2127,13 @@ mod tests {
     }
 
     #[test]
-    fn movement_request_route_seeds_and_plans_bounded() {
+    fn movement_route_rejects_until_trio_seeded() {
+        // Movement carries no per-window geometry and can never seed the
+        // shared trio: malformed input and strict requests alike fail
+        // closed while unseeded, with no session state.
         let endpoint = PlannerEndpoint::new();
+        assert!(!endpoint.is_trio_established());
+        assert_eq!(endpoint.trio_revision(), 0);
         let fingerprint = crate::movement_service::movement_fingerprint(
             "move-output",
             "move-workspace",
@@ -2149,52 +2147,55 @@ mod tests {
         )
         .expect("reply is JSON");
         assert_eq!(reply["outcome"], "rejected");
+        // Two windows can never be the exact-three scope.
         let reply: serde_json::Value = serde_json::from_str(
             &endpoint
                 .evaluate_movement_request(&movement_seed_request("m-1", "owner-1", fingerprint))
                 .expect("route returns a reply string"),
         )
         .expect("reply is JSON");
-        assert!(
-            reply["outcome"] == "planned" || reply["outcome"] == "noop",
-            "{reply}"
+        assert_eq!(reply["outcome"], "rejected");
+        assert!(!endpoint.is_trio_established());
+        // A strict three-window movement request still cannot seed: the
+        // route carries no work-area geometry.
+        let trio_fp = crate::focus_service::focus_fingerprint(
+            "move-output",
+            "move-workspace",
+            "win-c",
+            &["win-a".to_owned(), "win-b".to_owned(), "win-c".to_owned()],
         );
-        assert!(reply.to_string().len() <= MOVEMENT_MAX_REPLY);
-        if reply["outcome"] == "planned" {
-            assert!(reply.get("desired_geometry").is_some());
-            assert!(reply.get("desired_focus").is_some());
-            assert!(reply.get("rule").is_some());
-            assert!(reply.get("operation").is_some());
-        }
-        let zeroed = movement_seed_request("m-2", "owner-1", 0);
+        let trio_req = serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": "m-2",
+            "owner": "owner-1", "generation": "gen-1", "revision": 3,
+            "fingerprint": trio_fp,
+            "domain": {"output": "move-output", "workspace": "move-workspace"},
+            "focused_window": "win-c", "direction": "down",
+            "windows": [
+                {"window": "win-a", "output": "move-output", "workspace": "move-workspace"},
+                {"window": "win-b", "output": "move-output", "workspace": "move-workspace"},
+                {"window": "win-c", "output": "move-output", "workspace": "move-workspace"}
+            ],
+            "capabilities": {
+                "swap_neighbor": true, "wrap_perpendicular": true, "wrap_siblings": true,
+                "insert_child": true, "split_group_child": true, "reparent_leaf": true,
+                "cross_output_transfer": true
+            },
+            "domains": [{
+                "output": "move-output", "workspace": "move-workspace",
+                "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+                "gap": 8, "adjacent": {}
+            }]
+        })
+        .to_string();
         let reply: serde_json::Value = serde_json::from_str(
             &endpoint
-                .evaluate_movement_request(&zeroed)
+                .evaluate_movement_request(&trio_req)
                 .expect("route returns a reply string"),
         )
         .expect("reply is JSON");
         assert_eq!(reply["outcome"], "rejected");
-        // Focus and movement sessions stay independent: a focus request does
-        // not disturb the movement pending/binding and vice versa.
-        let focus_fp = crate::focus_service::focus_fingerprint(
-            "move-output",
-            "move-workspace",
-            "win-b",
-            &["win-a".to_owned(), "win-b".to_owned()],
-        );
-        let focus_req = focus_seed_request("f-9", "owner-9", focus_fp);
-        let focus_reply: serde_json::Value = serde_json::from_str(
-            &endpoint
-                .evaluate_focus_request(&focus_req)
-                .expect("focus route returns a reply string"),
-        )
-        .expect("reply is JSON");
-        assert!(
-            focus_reply["outcome"] == "planned"
-                || focus_reply["outcome"] == "noop"
-                || focus_reply["outcome"] == "rejected"
-                || focus_reply["outcome"] == "diverged"
-        );
+        assert!(!endpoint.is_trio_established());
+        assert_eq!(endpoint.trio_revision(), 0);
     }
 
     #[test]
@@ -2294,7 +2295,7 @@ mod tests {
     }
 
     #[test]
-    fn focus_request_route_seeds_and_plans_bounded() {
+    fn focus_route_rejects_until_trio_seeded() {
         let endpoint = PlannerEndpoint::new();
         let fingerprint = crate::focus_service::focus_fingerprint(
             "focus-output",
@@ -2310,18 +2311,16 @@ mod tests {
         )
         .expect("reply is JSON");
         assert_eq!(reply["outcome"], "rejected");
-        // First strict request seeds the owned session and plans.
+        // A strict focus request can never seed the trio (no geometry):
+        // rejected with no session state.
         let reply: serde_json::Value = serde_json::from_str(
             &endpoint
                 .evaluate_focus_request(&focus_seed_request("f-1", "owner-1", fingerprint))
                 .expect("route returns a reply string"),
         )
         .expect("reply is JSON");
-        assert!(
-            reply["outcome"] == "planned" || reply["outcome"] == "noop",
-            "{reply}"
-        );
-        assert!(reply.to_string().len() <= FOCUS_MAX_REPLY);
+        assert_eq!(reply["outcome"], "rejected");
+        assert!(!endpoint.is_trio_established());
         // Literal-zero fingerprint is rejected (exact deterministic binding).
         let zeroed = focus_seed_request("f-2", "owner-1", 0);
         let reply: serde_json::Value = serde_json::from_str(
@@ -3546,5 +3545,465 @@ nested_exe_ino={ino}\n",
         );
         assert!(loss_marker_for_advisory_reply(&big).is_none());
         assert!(loss_marker_for_armed_reply(&big, "c-1").is_none());
+    }
+
+    fn trio_fp(focused: &str) -> u64 {
+        crate::focus_service::focus_fingerprint(
+            "out-1",
+            "ws-1",
+            focused,
+            &["win-a".to_owned(), "win-b".to_owned(), "win-c".to_owned()],
+        )
+    }
+
+    fn trio_resize_windows_json() -> serde_json::Value {
+        serde_json::json!([
+            {"window": "win-a", "output": "out-1", "workspace": "ws-1",
+                "rect": {"x": 0, "y": 0, "w": 800, "h": 600}},
+            {"window": "win-b", "output": "out-1", "workspace": "ws-1",
+                "rect": {"x": 100, "y": 100, "w": 640, "h": 400}},
+            {"window": "win-c", "output": "out-1", "workspace": "ws-1",
+                "rect": {"x": 200, "y": 200, "w": 400, "h": 640}}
+        ])
+    }
+
+    fn trio_plain_windows_json() -> serde_json::Value {
+        serde_json::json!([
+            {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+            {"window": "win-b", "output": "out-1", "workspace": "ws-1"},
+            {"window": "win-c", "output": "out-1", "workspace": "ws-1"}
+        ])
+    }
+
+    fn trio_resize_request_json(
+        correlation: &str,
+        focused: &str,
+        direction: &str,
+        mode: &str,
+        press: u32,
+        revision: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": revision,
+            "fingerprint": trio_fp(focused),
+            "domain": {"output": "out-1", "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080}, "gap": 8},
+            "focused_window": focused, "direction": direction, "mode": mode,
+            "press_index": press, "windows": trio_resize_windows_json(),
+            "capabilities": {"keyboard_resize": true, "pointer_resize": false}
+        })
+        .to_string()
+    }
+
+    fn trio_pointer_request_json(
+        correlation: &str,
+        focused: &str,
+        direction: &str,
+        boundary: i32,
+        revision: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "request-pointer", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": revision,
+            "fingerprint": trio_fp(focused),
+            "domain": {"output": "out-1", "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080}, "gap": 8},
+            "focused_window": focused, "direction": direction,
+            "proposed_boundary": boundary, "windows": trio_resize_windows_json(),
+            "capabilities": {"keyboard_resize": false, "pointer_resize": true}
+        })
+        .to_string()
+    }
+
+    fn trio_focus_request_json(
+        correlation: &str,
+        focused: &str,
+        direction: &str,
+        revision: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": revision,
+            "fingerprint": trio_fp(focused),
+            "domain": {"output": "out-1", "workspace": "ws-1"},
+            "focused_window": focused, "direction": direction,
+            "windows": trio_plain_windows_json(),
+            "capabilities": {"directional_focus": true}
+        })
+        .to_string()
+    }
+
+    fn trio_movement_request_json(
+        correlation: &str,
+        focused: &str,
+        direction: &str,
+        revision: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": revision,
+            "fingerprint": trio_fp(focused),
+            "domain": {"output": "out-1", "workspace": "ws-1"},
+            "focused_window": focused, "direction": direction,
+            "windows": trio_plain_windows_json(),
+            "capabilities": {
+                "swap_neighbor": true, "wrap_perpendicular": true, "wrap_siblings": true,
+                "insert_child": true, "split_group_child": true, "reparent_leaf": true,
+                "cross_output_transfer": true
+            },
+            "domains": [{
+                "output": "out-1", "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1920, "h": 1080},
+                "gap": 8, "adjacent": {}
+            }]
+        })
+        .to_string()
+    }
+
+    fn trio_ack_json(correlation: &str, base: u64) -> String {
+        serde_json::json!({
+            "v": 1, "action": "acknowledge", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1",
+            "base_revision": base, "outcome": "accepted"
+        })
+        .to_string()
+    }
+
+    fn trio_resize_verify_json(
+        plan: &serde_json::Value,
+        correlation: &str,
+        focused: &str,
+        base: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "verify", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": base,
+            "fingerprint": trio_fp(focused), "verified": true,
+            "verified_preconditions": plan["preconditions"],
+            "verified_operation": plan["operation"],
+            "verified_geometry": plan["desired_geometry"],
+            "verified_focus": plan["desired_focus"]
+        })
+        .to_string()
+    }
+
+    fn trio_focus_verify_json(
+        plan: &serde_json::Value,
+        correlation: &str,
+        to_window: &str,
+        base: u64,
+    ) -> String {
+        serde_json::json!({
+            "v": 1, "action": "verify", "correlation_id": correlation,
+            "owner": "owner-1", "generation": "gen-1", "revision": base,
+            "fingerprint": trio_fp(to_window), "verified": true,
+            "verified_preconditions": plan["preconditions"],
+            "verified_operation": plan["operation"]
+        })
+        .to_string()
+    }
+
+    fn trio_reply(text: &str) -> serde_json::Value {
+        serde_json::from_str(text).expect("reply is JSON")
+    }
+
+    fn trio_rect_for(geometry: &serde_json::Value, window: &str) -> (i32, i32, i32, i32) {
+        let entry = geometry
+            .as_array()
+            .expect("geometry is an array")
+            .iter()
+            .find(|entry| entry["window"] == window)
+            .expect("window present in geometry");
+        (
+            entry["rect"]["x"].as_i64().expect("x") as i32,
+            entry["rect"]["y"].as_i64().expect("y") as i32,
+            entry["rect"]["w"].as_i64().expect("w") as i32,
+            entry["rect"]["h"].as_i64().expect("h") as i32,
+        )
+    }
+
+    fn trio_boundary_above_c(geometry: &serde_json::Value) -> i32 {
+        let (_, y, _, h) = trio_rect_for(geometry, "win-c");
+        y + h + 24
+    }
+
+    #[test]
+    fn trio_shared_session_serves_all_four_routes_over_the_wire() {
+        let endpoint = PlannerEndpoint::new();
+        assert!(!endpoint.is_trio_established());
+        assert_eq!(endpoint.trio_revision(), 0);
+
+        // Focus carries no geometry and can never seed: rejected fail-closed
+        // with no session state.
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_focus_request(&trio_focus_request_json("trio-f0", "win-c", "up", 3))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "rejected");
+        assert!(!endpoint.is_trio_established());
+
+        // A strict keyboard resize request seeds the trio and plans in one
+        // flight over the shared session.
+        let seed_plan = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_request_json(
+                    "trio-k1", "win-c", "up", "inwards", 0, 3,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(seed_plan["outcome"], "planned", "{seed_plan}");
+        assert_eq!(seed_plan["base_revision"], 3);
+        assert_eq!(seed_plan["capability"], "keyboard-resize");
+        assert_eq!(seed_plan["operation"]["kind"], "ResizeSplitShare");
+        assert!(seed_plan["operation"]["direction"] == "up");
+        // Deterministic COSMIC H[A,V[B,C]] projection over the real bounds.
+        let (ax, ay, aw, ah) = trio_rect_for(&seed_plan["desired_geometry"], "win-a");
+        let (bx, by, bw, bh) = trio_rect_for(&seed_plan["desired_geometry"], "win-b");
+        let (cx, cy, cw, ch) = trio_rect_for(&seed_plan["desired_geometry"], "win-c");
+        assert!(ax < bx && ax < cx);
+        assert_eq!(bx, cx);
+        assert_eq!(bw, cw);
+        assert!(by < cy);
+        assert_eq!((ay, ah), (0, 1080));
+        for (x, y, w, h) in [(ax, ay, aw, ah), (bx, by, bw, bh), (cx, cy, cw, ch)] {
+            assert!(x >= 0 && y >= 0 && w > 0 && h > 0);
+            assert!(x + w <= 1920 && y + h <= 1080);
+        }
+        assert!(endpoint.is_trio_established());
+        assert_eq!(endpoint.trio_revision(), 3);
+
+        // Acknowledge and verify commit the seed flight on the shared session.
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_ack_json("trio-k1", 3))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_verify_json(
+                    &seed_plan, "trio-k1", "win-c", 3,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 4);
+        assert_eq!(endpoint.trio_revision(), 4);
+
+        // Focus C up pins B over the same shared session.
+        let focus_plan = trio_reply(
+            &endpoint
+                .evaluate_focus_request(&trio_focus_request_json("trio-f1", "win-c", "up", 4))
+                .expect("reply"),
+        );
+        assert_eq!(focus_plan["outcome"], "planned", "{focus_plan}");
+        assert_eq!(focus_plan["to_window"], "win-b");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_focus_request(&trio_ack_json("trio-f1", 4))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_focus_request(&trio_focus_verify_json(&focus_plan, "trio-f1", "win-b", 4))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 5);
+        assert_eq!(endpoint.trio_revision(), 5);
+
+        // Movement B down swaps with C (R2a) over the same shared session.
+        let move_plan = trio_reply(
+            &endpoint
+                .evaluate_movement_request(&trio_movement_request_json(
+                    "trio-m1", "win-b", "down", 5,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(move_plan["outcome"], "planned", "{move_plan}");
+        assert_eq!(move_plan["rule"], "R2a");
+        assert!(move_plan.get("desired_geometry").is_some());
+        assert!(move_plan.get("desired_focus").is_some());
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_movement_request(&trio_ack_json("trio-m1", 5))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_movement_request(&trio_resize_verify_json(
+                    &move_plan, "trio-m1", "win-b", 5,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 6);
+        assert_eq!(endpoint.trio_revision(), 6);
+
+        // Keyboard resize B up inwards over the same shared session.
+        let resize_plan = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_request_json(
+                    "trio-k2", "win-b", "up", "inwards", 0, 6,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(resize_plan["outcome"], "planned", "{resize_plan}");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_ack_json("trio-k2", 6))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_verify_json(
+                    &resize_plan,
+                    "trio-k2",
+                    "win-b",
+                    6,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 7);
+        assert_eq!(endpoint.trio_revision(), 7);
+
+        // Pointer resize B up over the same shared session, with the
+        // deterministic exact boundary from the accepted projection.
+        let boundary = trio_boundary_above_c(&resize_plan["desired_geometry"]);
+        let pointer_plan = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_pointer_request_json(
+                    "trio-p1", "win-b", "up", boundary, 7,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(pointer_plan["outcome"], "planned", "{pointer_plan}");
+        assert_eq!(pointer_plan["capability"], "pointer-resize");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_ack_json("trio-p1", 7))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_resize_verify_json(
+                    &pointer_plan,
+                    "trio-p1",
+                    "win-b",
+                    7,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 8);
+        assert_eq!(endpoint.trio_revision(), 8);
+
+        // A pointer-owned pending plan is fenced from the keyboard route: a
+        // cross-route acknowledge is rejected without mutation, and the
+        // pointer cycle still acknowledges and commits afterwards.
+        let boundary = trio_boundary_above_c(&pointer_plan["desired_geometry"]);
+        let fenced_plan = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_pointer_request_json(
+                    "trio-p2", "win-b", "up", boundary, 8,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(fenced_plan["outcome"], "planned", "{fenced_plan}");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_ack_json("trio-p2", 8))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "rejected");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_ack_json("trio-p2", 8))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_pointer_resize_request(&trio_resize_verify_json(
+                    &fenced_plan,
+                    "trio-p2",
+                    "win-b",
+                    8,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["revision"], 9);
+        assert_eq!(endpoint.trio_revision(), 9);
+    }
+
+    #[test]
+    fn trio_routes_share_one_pending_slot() {
+        let endpoint = PlannerEndpoint::new();
+        // Seed once through the keyboard resize route; the seed flight stays
+        // pending on the one shared session.
+        let seed_plan = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_request_json(
+                    "trio-share-k1",
+                    "win-c",
+                    "up",
+                    "inwards",
+                    0,
+                    3,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(seed_plan["outcome"], "planned");
+        assert!(endpoint.is_trio_established());
+        // A movement request at the same revision reaches the shared single
+        // pending slot and diverges instead of planning a second concurrent
+        // flight on another session.
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_movement_request(&trio_movement_request_json(
+                    "trio-share-m1",
+                    "win-c",
+                    "down",
+                    3,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "diverged", "{reply}");
+        assert_eq!(reply["kind"], "pending-exists");
+        // Same for focus: one shared session, one pending slot.
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_focus_request(&trio_focus_request_json("trio-share-f1", "win-c", "up", 3))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "diverged", "{reply}");
+        assert_eq!(reply["kind"], "pending-exists");
+        // The original keyboard cycle still owns the slot and commits.
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_ack_json("trio-share-k1", 3))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "acknowledged");
+        let reply = trio_reply(
+            &endpoint
+                .evaluate_resize_request(&trio_resize_verify_json(
+                    &seed_plan,
+                    "trio-share-k1",
+                    "win-c",
+                    3,
+                ))
+                .expect("reply"),
+        );
+        assert_eq!(reply["outcome"], "committed");
+        assert_eq!(reply["revision"], 4);
+        assert_eq!(endpoint.trio_revision(), 4);
     }
 }

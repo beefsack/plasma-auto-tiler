@@ -262,7 +262,7 @@ describe("engine authority dispatcher", () => {
         assert.equal(ENGINE_AUTHORITY_REVISION, 0);
     });
 
-    it("starts all four slices with one exact owner, generation, and revision binding", () => {
+    it("starts all four slices with one exact owner, generation, and shared revision binding", () => {
         const calls: Array<{ readonly slice: string; readonly owner: unknown; readonly generation: unknown; readonly revision: unknown; readonly authorityType: string }> = [];
         const logs: string[] = [];
         const dispatcher = createEngineAuthority("rust-development", fakeStarts({ calls }), (message) => {
@@ -277,8 +277,14 @@ describe("engine authority dispatcher", () => {
         for (const call of calls) {
             assert.equal(call.owner, ENGINE_AUTHORITY_OWNER);
             assert.equal(call.generation, ENGINE_AUTHORITY_GENERATION);
-            assert.equal(call.revision, ENGINE_AUTHORITY_REVISION);
+            assert.ok(typeof call.revision === "object" && call.revision !== null);
+            assert.equal((call.revision as { current: unknown }).current, ENGINE_AUTHORITY_REVISION);
             assert.equal(call.authorityType, "function");
+        }
+        // One shared holder across all four slices: sequential commands bind
+        // the single Rust session revision.
+        for (const call of calls) {
+            assert.equal(call.revision, calls[0]?.revision);
         }
         assert.ok(logs.some((line) => line.includes("engine-authority-rust-ready")));
     });
@@ -533,6 +539,28 @@ describe("engine authority dispatcher", () => {
         assert.ok(logs.every((line) => !line.includes("drag-attach-summary")));
         assert.ok(logs.every((line) => !line.includes("startup-handlers-ready")));
         assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+    });
+
+    it("invokes the resize one-shot adoption after activation and never in legacy", () => {
+        const adoptions: string[] = [];
+        const starts: EngineAuthorityStarts = {
+            startFocus: () => ({ stop: () => {}, request: () => {} }),
+            startMovement: () => ({ stop: () => {}, request: () => {} }),
+            startResize: () => ({
+                stop: () => {},
+                request: () => {},
+                tryBootstrapTrio: () => {
+                    adoptions.push("resize");
+                },
+            }),
+            startPointerResize: () => ({ stop: () => {} }),
+        };
+        const rust = createEngineAuthority("rust-development", starts, () => {});
+        assert.equal(rust.start(), true);
+        assert.deepEqual(adoptions, ["resize"]);
+        const legacy = createEngineAuthority("legacy", starts, () => {});
+        assert.equal(legacy.start(), false);
+        assert.deepEqual(adoptions, ["resize"]);
     });
 
     it("refuses requests while legacy with no legacy fallback call", () => {

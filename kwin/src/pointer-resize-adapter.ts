@@ -754,6 +754,32 @@ export class PointerResizeAdapter {
     private owner = "";
     private generation = "";
     private revision = 0;
+    // Shared one-session revision binding: when the authority passes a
+    // holder object, all four slices read and advance the same counter so
+    // sequential commands across slices bind the single Rust revision. A
+    // plain number keeps the previous per-adapter behavior.
+    private revisionBinding: { current: number } | null = null;
+
+    private isSharedRevisionBinding(value: unknown): value is { current: number } {
+        if (typeof value !== "object" || value === null) {
+            return false;
+        }
+        return typeof (value as Record<string, unknown>)["current"] === "number";
+    }
+
+    private readRevision(): number {
+        if (this.revisionBinding !== null) {
+            return this.revisionBinding.current;
+        }
+        return this.revision;
+    }
+
+    private writeRevision(value: number): void {
+        this.revision = value;
+        if (this.revisionBinding !== null) {
+            this.revisionBinding.current = value;
+        }
+    }
     private gesture: PointerGesture | null = null;
     private inFlight = false;
     private token = 0;
@@ -852,13 +878,24 @@ export class PointerResizeAdapter {
             return false;
         }
         const revision = auth.revision === undefined ? 0 : auth.revision;
-        if (!isRevision(revision)) {
+        if (this.isSharedRevisionBinding(revision)) {
+            if (!isRevision(revision.current)) {
+                this.reject("pointer-invalid-auth");
+                return false;
+            }
+        } else if (!isRevision(revision)) {
             this.reject("pointer-invalid-auth");
             return false;
         }
         this.owner = auth.owner as string;
         this.generation = auth.generation as string;
-        this.revision = revision as number;
+        if (this.isSharedRevisionBinding(revision)) {
+            this.revisionBinding = revision;
+            this.writeRevision(revision.current);
+        } else {
+            this.revisionBinding = null;
+            this.revision = revision as number;
+        }
         this.enabled = true;
         this.gesture = null;
         this.inFlight = false;
@@ -1330,10 +1367,20 @@ export class PointerResizeAdapter {
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
         }));
         const sortedIds = observed.windows.map((entry) => entry.id).sort();
-        let requestRevision = this.revision;
+        let requestRevision = this.readRevision();
         if (requestRevision === 0) {
             requestRevision = sortedIds.length;
-            this.revision = requestRevision;
+            // Shared trio holder must never be poisoned by a non-seed
+            // revision: only the exact-three seed revision may be stored.
+            // The wire still carries N so Rust rejects fail-closed;
+            // standalone per-adapter revision keeps the previous N binding.
+            if (this.revisionBinding !== null) {
+                if (sortedIds.length === 3) {
+                    this.writeRevision(requestRevision);
+                }
+            } else {
+                this.writeRevision(requestRevision);
+            }
         }
         const fingerprint = pointerResizeFingerprint(
             observed.domainOutput,
@@ -2279,7 +2326,7 @@ export class PointerResizeAdapter {
             Number.isInteger(revision) &&
             revision === this.flightRevision + 1
         ) {
-            this.revision = revision;
+            this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
             this.reject("pointer-revision-mismatch");

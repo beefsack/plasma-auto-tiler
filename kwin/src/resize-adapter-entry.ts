@@ -55,12 +55,79 @@ export interface ResizeEntryOverrides {
 export interface ResizeEntryHandle {
     readonly stop: () => void;
     readonly request: (direction: unknown, mode: unknown) => void;
+    // One-shot exact-three adoption, invoked by the authority dispatcher
+    // after all four slices are active. Observes public state only and, for
+    // exactly three eligible windows, aligns the deterministic focus target
+    // natively and issues one canonical keyboard resize through the normal
+    // adapter flight so seeding plus projection flow through the public
+    // plan, direct geometry, acknowledgement, and post-observation contract.
+    // Fail closed: anything ineligible or stale skips silently.
+    readonly tryBootstrapTrio?: () => void;
 }
 
 const ENTRY_LOG = "plasma-auto-tiler:resize-entry";
 const ENTRY_READY = `${ENTRY_LOG}:ready`;
 const ENTRY_REJECT = `${ENTRY_LOG}:reject:resize-entry-invalid`;
 const ENTRY_SIGNAL_REJECT = `${ENTRY_LOG}:reject:resize-entry-signal-failed`;
+const ENTRY_BOOTSTRAP = `${ENTRY_LOG}:bootstrap-trio`;
+
+// Fresh shared-revision holder: exactly `{ current: 0 }`, meaning no slice
+// has transacted yet and the Rust trio is unseeded. Anything else (a number,
+// undefined, or an advanced holder) skips adoption.
+function isFreshRevisionHolder(value: unknown): value is { current: number } {
+    if (typeof value !== "object" || value === null) {
+        return false;
+    }
+    return (value as Record<string, unknown>)["current"] === 0;
+}
+
+function rectContained(
+    inner: { x: number; y: number; w: number; h: number },
+    outer: { x: number; y: number; w: number; h: number },
+): boolean {
+    return (
+        inner.x >= outer.x &&
+        inner.y >= outer.y &&
+        inner.x + inner.w <= outer.x + outer.w &&
+        inner.y + inner.h <= outer.y + outer.h
+    );
+}
+
+// Exact-three adoption target from a live observation: exactly three
+// eligible windows in the single active domain with real contained rects,
+// where the sorted middle window is wide and the sorted last window is
+// tall-or-tie. The wide/tall rule mirrors the portable COSMIC admission
+// axis (wide splits Horizontal, otherwise Vertical) so the Rust seed binds
+// the deterministic H[A,V[B,C]] shape; anything else fails closed.
+function trioBootstrapTarget(observed: ResizeObserved): { ref: object } | null {
+    try {
+        if (observed.windows.length !== 3) {
+            return null;
+        }
+        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const first = sorted[0] as ResizeObserved["windows"][number];
+        const middle = sorted[1] as ResizeObserved["windows"][number];
+        const last = sorted[2] as ResizeObserved["windows"][number];
+        if (first === undefined || middle === undefined || last === undefined) {
+            return null;
+        }
+        if (!(middle.rect.w > middle.rect.h)) {
+            return null;
+        }
+        if (!(last.rect.w <= last.rect.h)) {
+            return null;
+        }
+        for (const entry of sorted) {
+            if (!rectContained(entry.rect, observed.domainBounds)) {
+                return null;
+            }
+        }
+        return { ref: last.ref };
+    } catch (error) {
+        void error;
+        return null;
+    }
+}
 
 const MAX_LIST = 1024;
 const MAX_DESKTOPS = 32;
@@ -712,6 +779,44 @@ export function startResizeAdapterEntry(
     } catch (error) {
         void error;
     }
+    const tryBootstrapTrio = (): void => {
+        try {
+            // Single-shot adoption: only a fresh shared holder may seed, so
+            // an established or foreign revision never re-seeds.
+            if (!isFreshRevisionHolder(overrides.revision)) {
+                return;
+            }
+            const observed = observeNative(liveWorkspace);
+            if (observed === null) {
+                return;
+            }
+            const target = trioBootstrapTarget(observed);
+            if (target === null) {
+                return;
+            }
+            // Deterministic focus alignment through public state: the Rust
+            // seed always focuses the sorted-last window, so the canonical
+            // intent below must start there. Native activation only; the
+            // projection itself flows through the adapter flight.
+            try {
+                const surface = liveWorkspace as { activeWindow: unknown };
+                if (surface.activeWindow !== target.ref) {
+                    surface.activeWindow = target.ref;
+                }
+            } catch (error) {
+                void error;
+                return;
+            }
+            adapter.requestResize("up", "inwards");
+            try {
+                log(ENTRY_BOOTSTRAP);
+            } catch (error) {
+                void error;
+            }
+        } catch (error) {
+            void error;
+        }
+    };
     return {
         stop: () => {
             try {
@@ -727,5 +832,6 @@ export function startResizeAdapterEntry(
                 void error;
             }
         },
+        tryBootstrapTrio,
     };
 }

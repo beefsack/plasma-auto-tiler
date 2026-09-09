@@ -623,6 +623,32 @@ export class ResizeAdapter {
     private owner = "";
     private generation = "";
     private revision = 0;
+    // Shared one-session revision binding: when the authority passes a
+    // holder object, all four slices read and advance the same counter so
+    // sequential commands across slices bind the single Rust revision. A
+    // plain number keeps the previous per-adapter behavior.
+    private revisionBinding: { current: number } | null = null;
+
+    private isSharedRevisionBinding(value: unknown): value is { current: number } {
+        if (typeof value !== "object" || value === null) {
+            return false;
+        }
+        return typeof (value as Record<string, unknown>)["current"] === "number";
+    }
+
+    private readRevision(): number {
+        if (this.revisionBinding !== null) {
+            return this.revisionBinding.current;
+        }
+        return this.revision;
+    }
+
+    private writeRevision(value: number): void {
+        this.revision = value;
+        if (this.revisionBinding !== null) {
+            this.revisionBinding.current = value;
+        }
+    }
     private inFlight = false;
     private token = 0;
     private activeToken = 0;
@@ -737,7 +763,12 @@ export class ResizeAdapter {
             return false;
         }
         const revision = auth.revision === undefined ? 0 : auth.revision;
-        if (!isRevision(revision)) {
+        if (this.isSharedRevisionBinding(revision)) {
+            if (!isRevision(revision.current)) {
+                this.reject("resize-invalid-auth");
+                return false;
+            }
+        } else if (!isRevision(revision)) {
             this.reject("resize-invalid-auth");
             return false;
         }
@@ -767,7 +798,13 @@ export class ResizeAdapter {
         this.detaches = attached;
         this.owner = auth.owner as string;
         this.generation = auth.generation as string;
-        this.revision = revision as number;
+        if (this.isSharedRevisionBinding(revision)) {
+            this.revisionBinding = revision;
+            this.writeRevision(revision.current);
+        } else {
+            this.revisionBinding = null;
+            this.revision = revision as number;
+        }
         this.enabled = true;
         this.invalidated = false;
         this.suppressing = false;
@@ -896,10 +933,20 @@ export class ResizeAdapter {
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
         }));
         const sortedIds = current.windows.map((entry) => entry.id).sort();
-        let requestRevision = this.revision;
+        let requestRevision = this.readRevision();
         if (requestRevision === 0) {
             requestRevision = sortedIds.length;
-            this.revision = requestRevision;
+            // Shared trio holder must never be poisoned by a non-seed
+            // revision: only the exact-three seed revision may be stored.
+            // The wire still carries N so Rust rejects fail-closed;
+            // standalone per-adapter revision keeps the previous N binding.
+            if (this.revisionBinding !== null) {
+                if (sortedIds.length === 3) {
+                    this.writeRevision(requestRevision);
+                }
+            } else {
+                this.writeRevision(requestRevision);
+            }
         }
         const fingerprint = resizeFingerprint(
             current.domainOutput,
@@ -1286,7 +1333,7 @@ export class ResizeAdapter {
             this.disable();
             return;
         }
-        if (planned.baseRevision !== this.revision) {
+        if (planned.baseRevision !== this.readRevision()) {
             this.inFlight = false;
             this.pending = null;
             this.pendingObserved = null;
@@ -1971,8 +2018,8 @@ export class ResizeAdapter {
             return;
         }
         const revision = parsed["revision"];
-        if (typeof revision === "number" && Number.isInteger(revision) && revision === this.revision + 1) {
-            this.revision = revision;
+        if (typeof revision === "number" && Number.isInteger(revision) && revision === this.readRevision() + 1) {
+            this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
             this.reject("resize-revision-mismatch");
