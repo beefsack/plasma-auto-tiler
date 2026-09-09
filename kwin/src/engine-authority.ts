@@ -86,6 +86,12 @@ export class EngineAuthorityDispatcher {
     private rustAvailable = false;
     private rustResizeMode: AuthorityResizeMode | null = null;
     private readonly revisionBinding: EngineAuthorityRevision;
+    // One-shot lazy retry: a boot-time empty/ineligible-scope start loss stays
+    // fail-closed until the first authority-gated production command, which
+    // makes exactly one fresh all-or-nothing start() through the same shared
+    // revision binding and exact-three bootstrap. Never polled, never per
+    // signal, never legacy.
+    private lazyRetryUsed = false;
 
     constructor(
         private readonly mode: EngineAuthorityMode,
@@ -126,6 +132,11 @@ export class EngineAuthorityDispatcher {
     start(): boolean {
         if (this.mode !== "rust-development") {
             return false;
+        }
+        // Idempotent: an active authority never re-attaches, so repeated
+        // commands after a successful (re)try cannot duplicate callbacks.
+        if (this.isRustActive()) {
+            return true;
         }
         const binding = {
             owner: ENGINE_AUTHORITY_OWNER,
@@ -204,6 +215,26 @@ export class EngineAuthorityDispatcher {
         return true;
     }
 
+    // Authority-gated lazy one-shot retry. Invoked on the first actual
+    // rust-authority request after a boot-time start loss so production
+    // validates the exact-three eligible scope at command time through the
+    // existing adapters/bootstrap. Exactly one fresh all-or-nothing start();
+    // active authorities and consumed retries never re-attach. Fail-closed
+    // with no legacy route.
+    ensureStarted(): boolean {
+        if (this.mode !== "rust-development") {
+            return false;
+        }
+        if (this.isRustActive()) {
+            return true;
+        }
+        if (this.lazyRetryUsed) {
+            return false;
+        }
+        this.lazyRetryUsed = true;
+        return this.start();
+    }
+
     stop(): void {
         const focus = this.focusHandle;
         const movement = this.movementHandle;
@@ -225,6 +256,7 @@ export class EngineAuthorityDispatcher {
     }
 
     requestFocus(direction: AuthorityDirection): void {
+        this.ensureStarted();
         if (!this.isRustActive() || this.focusHandle === null) {
             try {
                 this.log("plasma-auto-tiler:engine-authority-rust-refused");
@@ -241,6 +273,7 @@ export class EngineAuthorityDispatcher {
     }
 
     requestMove(direction: AuthorityDirection): void {
+        this.ensureStarted();
         if (!this.isRustActive() || this.movementHandle === null) {
             try {
                 this.log("plasma-auto-tiler:engine-authority-rust-refused");
@@ -257,6 +290,7 @@ export class EngineAuthorityDispatcher {
     }
 
     requestResize(direction: AuthorityDirection, resizeMode: AuthorityResizeMode): void {
+        this.ensureStarted();
         if (!this.isRustActive() || this.resizeHandle === null) {
             try {
                 this.log("plasma-auto-tiler:engine-authority-rust-refused");
@@ -273,6 +307,7 @@ export class EngineAuthorityDispatcher {
     }
 
     enterOrExitRustResizeMode(resizeMode: AuthorityResizeMode): void {
+        this.ensureStarted();
         if (!this.isRustActive()) {
             try {
                 this.log("plasma-auto-tiler:engine-authority-rust-refused");

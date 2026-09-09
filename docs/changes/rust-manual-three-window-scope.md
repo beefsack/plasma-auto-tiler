@@ -42,15 +42,23 @@ movement, and pointer-resize scope without implying lifecycle automation.
   warnings`, 21 focused Rust tests, KWin typecheck, and 235 isolated KWin
   adapter tests. No live KWin action, package build, or generated-output change
   occurred during final verification.
+- Current-login PID-filtered KWin evidence showed the deployed af63a6f bundle
+  had callable-QV4 signal support but attached before an eligible scope was
+  available, then never retried. Rust-authority requests now make one
+  fail-closed, authority-gated reattach attempt through the existing adapters
+  and exact-three bootstrap. Isolated KWin/package and shared-Rust runtime
+  verification passed without changing generated artifacts or live KWin state.
 
 ## Outcome
 
 Static production wiring is complete. Rust mode remains opt-in with Legacy as
 the default and refuses without invoking Legacy. New-window lifecycle,
 add/remove/collapse, drag/drop, settings, persistence, and default promotion
-remain out of scope.
+remain out of scope. A boot-time empty-scope loss has one first-command retry,
+not an add/remove lifecycle, polling path, or fallback.
 
 ## Next Action
 
-After the user rebuilds and starts a new session, run the one exact-three
-Rust-mode focus, movement, keyboard-resize, and pointer-resize manual smoke.
+Rebuild, start a new session, and run the one exact-three Rust-mode focus,
+movement, and pointer-resize manual smoke; keyboard manual testing remains
+excluded for the Krohnkite collision.

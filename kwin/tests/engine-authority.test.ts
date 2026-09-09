@@ -814,3 +814,139 @@ describe("engine authority source contract", () => {
         assert.match(ui, /name="kcfg_engineAuthorityMode"/);
     });
 });
+
+describe("engine authority lazy one-shot retry", () => {
+    function flakyStarts(options: {
+        readonly calls: Array<{ readonly slice: string; readonly revision: unknown }>;
+        readonly requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }>;
+        readonly stops: string[];
+        readonly adoptions: string[];
+        readonly failFirstFocus: boolean;
+    }): EngineAuthorityStarts {
+        let attempts = 0;
+        const attemptOf = (): number => Math.floor(options.calls.length / 4);
+        void attempts;
+        return {
+            startFocus: (args) => {
+                options.calls.push({ slice: "focus", revision: args.revision });
+                if (options.failFirstFocus && attemptOf() === 0) {
+                    return null;
+                }
+                return {
+                    stop: () => {
+                        options.stops.push("focus");
+                    },
+                    request: (direction: unknown) => {
+                        options.requests.push({ slice: "focus", args: [direction] });
+                    },
+                };
+            },
+            startMovement: (args) => {
+                options.calls.push({ slice: "movement", revision: args.revision });
+                return {
+                    stop: () => {
+                        options.stops.push("movement");
+                    },
+                    request: (direction: unknown) => {
+                        options.requests.push({ slice: "movement", args: [direction] });
+                    },
+                };
+            },
+            startResize: (args) => {
+                options.calls.push({ slice: "resize", revision: args.revision });
+                return {
+                    stop: () => {
+                        options.stops.push("resize");
+                    },
+                    request: (direction: unknown, mode: unknown) => {
+                        options.requests.push({ slice: "resize", args: [direction, mode] });
+                    },
+                    tryBootstrapTrio: () => {
+                        options.adoptions.push("resize");
+                    },
+                };
+            },
+            startPointerResize: (args) => {
+                options.calls.push({ slice: "pointer", revision: args.revision });
+                return {
+                    stop: () => {
+                        options.stops.push("pointer");
+                    },
+                };
+            },
+        };
+    }
+
+    it("retries exactly once on the first command after boot failure, then stays idempotent", () => {
+        const calls: Array<{ readonly slice: string; readonly revision: unknown }> = [];
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const stops: string[] = [];
+        const adoptions: string[] = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority(
+            "rust-development",
+            flakyStarts({ calls, requests, stops, adoptions, failFirstFocus: true }),
+            (message) => {
+                logs.push(message);
+            },
+        );
+        assert.equal(dispatcher.start(), false);
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(calls.length, 4);
+        assert.deepEqual(adoptions, []);
+        dispatcher.requestFocus("left");
+        assert.equal(dispatcher.isRustActive(), true);
+        assert.equal(calls.length, 8);
+        assert.deepEqual(adoptions, ["resize"]);
+        assert.deepEqual(
+            requests.map((entry) => [entry.slice, ...entry.args]),
+            [["focus", "left"]],
+        );
+        for (const call of calls) {
+            assert.equal(call.revision, calls[0]?.revision);
+        }
+        dispatcher.requestMove("right");
+        dispatcher.requestResize("up", "outwards");
+        dispatcher.focusOrResize("down");
+        assert.equal(calls.length, 8);
+        assert.deepEqual(adoptions, ["resize"]);
+        assert.deepEqual(
+            requests.map((entry) => [entry.slice, ...entry.args]),
+            [
+                ["focus", "left"],
+                ["movement", "right"],
+                ["resize", "up", "outwards"],
+                ["focus", "down"],
+            ],
+        );
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-ready")));
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+    });
+
+    it("cleans partial attachment on failed retry and refuses without further retries", () => {
+        const calls: Array<{ readonly slice: string; readonly owner: unknown; readonly generation: unknown; readonly revision: unknown; readonly authorityType: string }> = [];
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", fakeStarts({ fail: "movement", calls, requests }), (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), false);
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(calls.length, 4);
+        dispatcher.requestMove("left");
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(calls.length, 8);
+        assert.equal(requests.length, 0);
+        dispatcher.requestFocus("left");
+        dispatcher.requestMove("left");
+        dispatcher.requestResize("left", "outwards");
+        dispatcher.focusOrResize("left");
+        assert.equal(calls.length, 8);
+        assert.equal(requests.length, 0);
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+    });
+});
