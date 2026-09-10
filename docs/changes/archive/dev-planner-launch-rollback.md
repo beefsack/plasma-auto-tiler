@@ -53,7 +53,12 @@ when `dev-on` fails after disabling it.
 - `bash scripts/start-test.test.sh` passed: 399 checks, 0 failures.
 - `just --fmt --check`, `just --list`, and `just --dry-run` for all recipes
   passed.
+- Authorized live verification passed: `dev-on` recorded Planner PID `19408`
+  and script ID `0`; `dev-status` confirmed name ownership by the worktree
+  executable, loaded script, receipt, and inactive unit. `reload` replaced it
+  with PID `19616`; the final `dev-status` confirmed ownership and recorded
+  state moved to PID `19616` while script ID `0` remained loaded.
 
 ## Next Action
 
-- Commit and push the implementation, then run the authorized live sequence.
+- None.
