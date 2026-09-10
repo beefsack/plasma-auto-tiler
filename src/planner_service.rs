@@ -26,18 +26,17 @@
 //! `EvaluatePoc3` route is removed.
 //!
 //! Boundary rules: no Rust-to-KWin calls (only `org.freedesktop.DBus`
-//! owner/credential queries for caller verification), no persistence, no tray
-//! coupling, no autostart, no native mutation. Bounded single-flight endpoint
-//! handling via a non-queuing async-lock try-acquire held across verify and
-//! evaluate. Name acquisition uses `DoNotQueue`; name loss is terminal.
-//! Approved KWin binaries are read size-bounded before allocation and the
-//! stable snapshot is cached fail-closed (restart to pick up upgrades).
+//! credential queries for same-UID caller verification), no persistence, no
+//! tray coupling, no autostart, no native mutation. Bounded single-flight
+//! endpoint handling via a non-queuing async-lock try-acquire held across
+//! verify and evaluate. Name acquisition uses `DoNotQueue`; name loss is
+//! terminal. Caller authorization is exactly one fail-closed same-UID check:
+//! the caller unique name's Unix UID must equal the Planner geteuid.
 
 use std::fs::File;
 use std::io::Read;
-use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 
 use zbus::blocking::{Connection, MessageIterator};
 use zbus::fdo::{RequestNameFlags, RequestNameReply};
@@ -54,10 +53,6 @@ use crate::movement_service::MOVEMENT_MAX_REPLY_BYTES;
 use crate::planner_contract::{MAX_REPLY_BYTES, evaluate_json};
 use crate::resize_service::RESIZE_MAX_REPLY_BYTES;
 use crate::shadow_projection::{SHADOW_MAX_REPLY_BYTES, ShadowSession, evaluate_shadow_json};
-// Linux-only identity boundary; portable core never depends on it.
-#[cfg(target_os = "linux")]
-use crate::planner_kwin_identity as kwin_identity;
-use crate::tray_lifecycle::{ProcProcessControl, ProcessControl, ProcessIdentity};
 
 pub const SERVICE: &str = "org.plasmaautotiler.Planner";
 pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
@@ -79,26 +74,65 @@ pub const POINTER_RESIZE_METHOD: &str = "DescribePointerResize";
 pub const POINTER_RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
 pub const KWIN_SERVICE: &str = "org.kde.KWin";
 
-const APPROVED_KWIN_ENTRYPOINTS: &[&str] = &[
-    "/run/current-system/sw/bin/kwin_wayland",
-    "/run/current-system/sw/bin/kwin_wayland_wrapper",
-    "/run/current-system/sw/bin/kwin_x11",
-    "/usr/bin/kwin_wayland",
-    "/usr/bin/kwin_wayland_wrapper",
-    "/usr/bin/kwin_x11",
-];
+/// Bounded fixed in-band unauthorized rejection for exactly four routes:
+/// `DescribeFocus`, `DescribeMovement`, `DescribeResize`, and
+/// `DescribePointerResize`. Never parses or echoes request data; those four
+/// routes return exactly this body as `Ok`, never as `PlannerError`.
+/// `EvaluateMove`, `DescribeAdvisoryPlan`, and `DescribeShadowProjection`
+/// keep the D-Bus `PlannerError::Unauthorized` behavior.
+pub const UNAUTHORIZED_REPLY: &str =
+    "{\"v\":1,\"outcome\":\"rejected\",\"kind\":\"unauthorized\",\"message\":\"unauthorized\"}";
+/// Bound for the fixed unauthorized rejection (well under every reply cap).
+pub const MAX_UNAUTHORIZED_REPLY_BYTES: usize = 256;
 
-/// Size bound checked before any content allocation for approved binaries.
-const MAX_APPROVED_BINARY_BYTES: u64 = 16 * 1024 * 1024;
+/// Fixed unauthorized rejection body for the four in-band routes.
+#[must_use]
+pub fn unauthorized_rejection() -> String {
+    UNAUTHORIZED_REPLY.to_owned()
+}
+
+/// Pure unauthorized-channel decision. Returns true iff `method` is one of
+/// the exactly four in-band routes (`DescribeFocus`, `DescribeMovement`,
+/// `DescribeResize`, `DescribePointerResize`); `EvaluateMove`,
+/// `DescribeAdvisoryPlan`, and `DescribeShadowProjection` use the D-Bus
+/// `PlannerError::Unauthorized` channel instead.
+#[must_use]
+pub fn unauthorized_uses_inband_rejection(method: &str) -> bool {
+    matches!(
+        method,
+        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD
+    )
+}
+
+/// Production unauthorized-channel helper. Takes the route method identifier
+/// and returns exactly what the authorization-failure branch must return:
+/// the fixed in-band unauthorized JSON as `Ok` for exactly `DescribeFocus`,
+/// `DescribeMovement`, `DescribeResize`, `DescribePointerResize`; D-Bus
+/// `Err(PlannerError::Unauthorized)` for exactly `EvaluateMove`,
+/// `DescribeAdvisoryPlan`, `DescribeShadowProjection` (and fail-closed for
+/// any other method).
+pub fn unauthorized_response(method: &str) -> Result<String, PlannerError> {
+    match method {
+        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD => {
+            Ok(unauthorized_rejection())
+        }
+        METHOD | ADVISORY_METHOD | SHADOW_METHOD => Err(PlannerError::Unauthorized),
+        _ => Err(PlannerError::Unauthorized),
+    }
+}
+
+/// Pure same-UID decision. Accepts iff `caller_uid` is present and equals
+/// `expected_uid`; missing or differing UIDs reject fail-closed.
+#[must_use]
+pub fn caller_uid_authorized(caller_uid: Option<u32>, expected_uid: u32) -> bool {
+    matches!(caller_uid, Some(uid) if uid == expected_uid)
+}
 
 /// Exact nested-KWin manifest binding. Compatible with the launcher manifest
-/// validated by `scripts/nested-kwin-manifest.sh` (schema v2): the planner
-/// only trusts the launcher-recorded nested PID + canonical executable +
-/// SHA-256 + device/inode + start tick snapshot taken from an explicit
-/// operator-supplied manifest file, and revalidates the live caller via D-Bus
-/// credentials + independent `/proc` identity on every call. No
-/// caller-supplied path/PID material is accepted and the host allowlist below
-/// is never consulted or broadened by this mode. Partial identity fields are
+/// validated by `scripts/nested-kwin-manifest.sh` (schema v2): the private
+/// bus address/workdir binding is validated from an explicit
+/// operator-supplied manifest file. Per-call caller verification is the same
+/// fail-closed same-UID check as production. Partial identity fields are
 /// rejected; v1 manifests are rejected as schema mismatch.
 const NESTED_MANIFEST_SCHEMA: &str = "nested-kwin-manifest-v2";
 const NESTED_KWIN_EXPECTED_VERSION: &str = "6.7.4";
@@ -106,26 +140,11 @@ const MAX_NESTED_MANIFEST_BYTES: u64 = 64 * 1024;
 const MAX_NESTED_MANIFEST_LINES: usize = 128;
 const MAX_NESTED_VALUE_BYTES: usize = 4096;
 
-static APPROVED_KWIN_CACHE: OnceLock<Vec<ApprovedKwinIdentity>> = OnceLock::new();
-
 #[derive(Debug, zbus::DBusError, PartialEq, Eq)]
 #[zbus(prefix = "org.plasmaautotiler.Planner1")]
 pub enum PlannerError {
     Unauthorized,
     Unavailable(String),
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct ApprovedKwinIdentity {
-    canonical_path: PathBuf,
-    executable: crate::tray_lifecycle::ProcessExecutableIdentity,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
-struct CallerIdentity {
-    process_id: u32,
-    process: ProcessIdentity,
-    approved: ApprovedKwinIdentity,
 }
 
 #[derive(Clone, Debug)]
@@ -301,83 +320,6 @@ impl PlannerEndpoint {
 impl Default for PlannerEndpoint {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-fn valid_caller_identity(identity: &CallerIdentity) -> bool {
-    identity.process_id != 0
-        && identity.process.start_tick != 0
-        && matches_approved_identity(&identity.process, &identity.approved)
-        && !identity.process.executable.content.is_empty()
-}
-
-fn matches_approved_identity(process: &ProcessIdentity, approved: &ApprovedKwinIdentity) -> bool {
-    process.resolved_executable_path == approved.canonical_path
-        && process.executable == approved.executable
-}
-
-fn read_approved_identity(canonical_path: PathBuf) -> Option<ApprovedKwinIdentity> {
-    let file = File::open(&canonical_path).ok()?;
-    let metadata = file.metadata().ok()?;
-    if !metadata.is_file() || metadata.mode() & 0o111 == 0 {
-        return None;
-    }
-    let len = metadata.len();
-    if len == 0 || len > MAX_APPROVED_BINARY_BYTES {
-        return None;
-    }
-    let mut content = Vec::new();
-    file.take(MAX_APPROVED_BINARY_BYTES + 1)
-        .read_to_end(&mut content)
-        .ok()?;
-    if content.is_empty() || content.len() as u64 > MAX_APPROVED_BINARY_BYTES {
-        return None;
-    }
-    Some(ApprovedKwinIdentity {
-        canonical_path,
-        executable: crate::tray_lifecycle::ProcessExecutableIdentity {
-            dev: metadata.dev(),
-            ino: metadata.ino(),
-            content,
-        },
-    })
-}
-
-fn resolve_approved_kwin_identities_uncached() -> Vec<ApprovedKwinIdentity> {
-    APPROVED_KWIN_ENTRYPOINTS
-        .iter()
-        .filter_map(|entrypoint| {
-            let canonical_path = std::fs::canonicalize(entrypoint).ok()?;
-            read_approved_identity(canonical_path)
-        })
-        .collect()
-}
-
-/// Cached stable approved identities. Fail-closed: a KWin upgrade that
-/// changes the on-disk binary no longer matches the cache, so callers are
-/// rejected until the service restarts and re-snapshots.
-fn approved_kwin_identities() -> Vec<ApprovedKwinIdentity> {
-    APPROVED_KWIN_CACHE
-        .get_or_init(resolve_approved_kwin_identities_uncached)
-        .clone()
-}
-
-fn resolve_approved_kwin_identities() -> Vec<ApprovedKwinIdentity> {
-    approved_kwin_identities()
-}
-
-fn authorized_caller(
-    kwin_owner: Option<&str>,
-    caller: Option<&str>,
-    identity: &CallerIdentity,
-) -> bool {
-    match (kwin_owner, caller) {
-        (Some(owner), Some(caller)) => {
-            owner == caller
-                && zbus::names::UniqueName::try_from(owner).is_ok()
-                && valid_caller_identity(identity)
-        }
-        _ => false,
     }
 }
 
@@ -919,474 +861,31 @@ fn load_nested_manifest(manifest_path: &Path) -> Result<NestedManifest, String> 
     Ok(manifest)
 }
 
-fn nested_exe_sha256_hex(content: &[u8]) -> String {
-    use sha2::{Digest, Sha256};
-    let digest = Sha256::digest(content);
-    let mut out = String::with_capacity(64);
-    for byte in digest {
-        out.push(char::from_digit((byte >> 4) as u32, 16).unwrap_or('0'));
-        out.push(char::from_digit((byte & 0x0f) as u32, 16).unwrap_or('0'));
-    }
-    out
-}
-
-fn nested_live_sha_matches(manifest_sha: &str, content: &[u8]) -> bool {
-    !content.is_empty() && nested_exe_sha256_hex(content).eq_ignore_ascii_case(manifest_sha)
-}
-
-/// Live `/proc` identity must exactly match the launcher-recorded snapshot:
-/// canonical path plus SHA-256 plus device/inode plus start tick. Any PID
-/// reuse (start-tick mismatch), canonical/exe mismatch, deleted suffix, hash
-/// or device/inode mismatch, or empty executable content fails closed.
-fn nested_live_identity_matches(manifest: &NestedManifest, live: &ProcessIdentity) -> bool {
-    let live_path = live.resolved_executable_path.to_string_lossy();
-    if nested_exe_deleted(&live_path) {
+/// Fail-closed same-UID caller verification shared by production and
+/// nested routes. Converts `caller` to a unique D-Bus name, queries
+/// `org.freedesktop.DBus.GetConnectionUnixUser` for the caller UID through
+/// the existing `DBusProxy`, and accepts iff that UID equals the Planner
+/// geteuid. Any name conversion, proxy, UID lookup, or mismatch failure
+/// rejects.
+async fn verify_same_uid_caller(connection: &zbus::Connection, caller: &str) -> bool {
+    let Ok(unique_name) = zbus::names::UniqueName::try_from(caller) else {
         return false;
-    }
-    live.start_tick != 0
-        && live.start_tick == manifest.nested_starttick
-        && live.resolved_executable_path == manifest.nested_exe_canonical
-        && live.resolved_executable_path == manifest.kwin_bin_canonical
-        && live.executable.dev == manifest.nested_exe_dev
-        && live.executable.ino == manifest.nested_exe_ino
-        && live.executable.dev == manifest.kwin_bin_dev
-        && live.executable.ino == manifest.kwin_bin_ino
-        && !live.executable.content.is_empty()
-        && nested_live_sha_matches(&manifest.nested_exe_sha256, &live.executable.content)
-        && nested_live_sha_matches(&manifest.kwin_bin_sha256, &live.executable.content)
+    };
+    let Ok(dbus) = zbus::fdo::DBusProxy::new(connection).await else {
+        return false;
+    };
+    let Ok(caller_uid) = dbus.get_connection_unix_user(unique_name.into()).await else {
+        return false;
+    };
+    caller_uid_authorized(Some(caller_uid), rustix::process::geteuid().as_raw())
 }
 
-/// Pure nested caller binding. The only trusted PID/exe/tick material is the
-/// explicit manifest snapshot plus the independently re-read live `/proc`
-/// identity; `caller_pid` must come from D-Bus credentials, never from a
-/// caller-supplied message body. The host allowlist is intentionally not
-/// consulted here.
-fn authorized_nested_caller(
-    kwin_owner: Option<&str>,
-    caller: Option<&str>,
-    caller_pid: u32,
-    manifest: &NestedManifest,
-    live: &ProcessIdentity,
-) -> bool {
-    match (kwin_owner, caller) {
-        (Some(owner), Some(caller)) => {
-            owner == caller
-                && zbus::names::UniqueName::try_from(owner).is_ok()
-                && caller_pid != 0
-                && caller_pid == manifest.nested_pid
-                && nested_live_identity_matches(manifest, live)
-        }
-        _ => false,
-    }
+async fn verify_nested_caller(connection: &zbus::Connection, caller: &str) -> bool {
+    verify_same_uid_caller(connection, caller).await
 }
 
-async fn verify_nested_caller(
-    connection: &zbus::Connection,
-    caller: &str,
-    manifest: &NestedManifest,
-    proc_root: &Path,
-) -> Option<ProcessIdentity> {
-    let unique_name = zbus::names::UniqueName::try_from(caller).ok()?;
-    let dbus = zbus::fdo::DBusProxy::new(connection).await.ok()?;
-    let owner = dbus
-        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
-        .await
-        .ok()?;
-    if owner.as_str() != caller {
-        return None;
-    }
-    let credentials = dbus
-        .get_connection_credentials(unique_name.into())
-        .await
-        .ok()?;
-    if credentials.unix_user_id() != Some(rustix::process::geteuid().as_raw()) {
-        return None;
-    }
-    // Credential PID only: never accept caller-supplied path/PID material.
-    let caller_pid = credentials.process_id()?;
-    if caller_pid != manifest.nested_pid {
-        return None;
-    }
-    let process = ProcProcessControl {
-        proc_root: proc_root.to_path_buf(),
-    };
-    // Independent `/proc` revalidation of executable identity + start tick.
-    let live = process.identity(caller_pid).ok().flatten()?;
-    if !authorized_nested_caller(
-        Some(owner.as_str()),
-        Some(caller),
-        caller_pid,
-        manifest,
-        &live,
-    ) {
-        return None;
-    }
-    let current_owner = dbus
-        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
-        .await
-        .ok()?;
-    if current_owner.as_str() != caller {
-        return None;
-    }
-    Some(live)
-}
-
-async fn verify_planner_caller(
-    connection: &zbus::Connection,
-    caller: &str,
-) -> Option<CallerIdentity> {
-    let unique_name = zbus::names::UniqueName::try_from(caller).ok()?;
-    let dbus = zbus::fdo::DBusProxy::new(connection).await.ok()?;
-    let owner = dbus
-        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
-        .await
-        .ok()?;
-    if owner.as_str() != caller {
-        return None;
-    }
-    let credentials = dbus
-        .get_connection_credentials(unique_name.into())
-        .await
-        .ok()?;
-    if credentials.unix_user_id() != Some(rustix::process::geteuid().as_raw()) {
-        return None;
-    }
-    let process_id = credentials.process_id()?;
-    let owner_uid = credentials.unix_user_id()?;
-    let proc_root = Path::new("/proc").to_path_buf();
-    let process = ProcProcessControl {
-        proc_root: proc_root.clone(),
-    };
-    let process_identity = match process.identity(process_id) {
-        Ok(Some(identity)) => identity,
-        // Absent owner: no fallback. Deleted/malformed exe: no fallback.
-        Ok(None) => return None,
-        // Unreadable `/proc/<owner pid>/exe` only: approved Linux
-        // direct-parent fallback. Any other I/O error fails closed with no
-        // fallback. Non-Linux builds have no fallback and fail closed.
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {
-            #[cfg(target_os = "linux")]
-            {
-                return verify_direct_parent_fallback(
-                    &dbus,
-                    owner.as_str(),
-                    caller,
-                    process_id,
-                    owner_uid,
-                )
-                .await;
-            }
-            #[cfg(not(target_os = "linux"))]
-            {
-                let _ = (&dbus, owner.as_str(), caller, process_id, owner_uid, error);
-                return None;
-            }
-        }
-        Err(_) => return None,
-    };
-    // Primary boot binding: the exact live boot ID must be observable and
-    // well-formed alongside the readable exe pin. Non-Linux fails closed.
-    #[cfg(target_os = "linux")]
-    if kwin_identity::read_boot_id(Path::new("/proc")).is_err() {
-        return None;
-    }
-    #[cfg(not(target_os = "linux"))]
-    return None;
-    let approved = resolve_approved_kwin_identities()
-        .into_iter()
-        .find(|approved| matches_approved_identity(&process_identity, approved))?;
-    let identity = CallerIdentity {
-        process_id,
-        process: process_identity,
-        approved,
-    };
-    if !authorized_caller(Some(owner.as_str()), Some(caller), &identity) {
-        return None;
-    }
-    let current_owner = dbus
-        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
-        .await
-        .ok()?;
-    if current_owner.as_str() != caller {
-        return None;
-    }
-    Some(identity)
-}
-
-/// Approved Linux/KWin direct-parent fallback (Linux only). Entered only when
-/// `/proc/<owner pid>/exe` is unreadable with permission-denied; every other
-/// owner exe state (readable, missing, deleted, malformed) never reaches
-/// here and fails closed in the primary path. Requires the exact current
-/// unique owner, same UID, exact owner PID/tick/boot with pre/post
-/// revalidation, owner PPid exactly equal to the user
-/// `plasma-kwin_wayland.service` MainPID (one direct level only), exact unit
-/// identity, approved root-owned immutable Nix-store `ExecStart` wrapper
-/// identity with the full raw `ExecStart` bound pre/post, and exact MainPID
-/// tick. A readable MainPID exe must agree with the wrapped pin; an
-/// unreadable MainPID exe skips only that pin. End revalidation re-reads
-/// current D-Bus owner credentials PID/UID, owner exe still
-/// `PermissionDenied`, the full systemd unit including MainPID and complete
-/// `ExecStart`, owner tick plus parent, main tick, boot, wrapper pair, and
-/// main exe state.
-#[cfg(target_os = "linux")]
-async fn verify_direct_parent_fallback(
-    dbus: &zbus::fdo::DBusProxy<'_>,
-    owner: &str,
-    caller: &str,
-    owner_pid: u32,
-    owner_uid: u32,
-) -> Option<CallerIdentity> {
-    use crate::planner_kwin_identity::{
-        DirectParentInput, ExeState, KWIN_ACTIVE_STATE, KWIN_BUS_NAME, KWIN_SUB_STATE, KWIN_UNIT,
-        KWIN_UNIT_TYPE, approve_wrapper_pair, classify_io_error, is_approved_wrapper_execstart,
-        is_safe_abs, is_unique_owner, parse_execstart_value, read_boot_id, read_proc_ppid,
-        read_proc_tick, read_systemd_unit,
-    };
-
-    fn classify_main_exe(
-        result: std::io::Result<Option<ProcessIdentity>>,
-        pair: &crate::planner_kwin_identity::WrapperPair,
-    ) -> ExeState {
-        match result {
-            Ok(Some(live)) => {
-                if live.resolved_executable_path == pair.wrapped_canon
-                    && live.executable.dev == pair.wrapped_dev
-                    && live.executable.ino == pair.wrapped_ino
-                    && live.executable.content == pair.wrapped_content
-                    && !live.executable.content.is_empty()
-                {
-                    ExeState::Matches
-                } else {
-                    ExeState::Mismatch
-                }
-            }
-            Ok(None) => ExeState::Missing,
-            Err(error) => classify_io_error(&error),
-        }
-    }
-
-    if !is_unique_owner(owner) || !is_unique_owner(caller) || owner != caller {
-        return None;
-    }
-    if owner_pid == 0 || owner_uid != rustix::process::geteuid().as_raw() {
-        return None;
-    }
-    let proc_root = Path::new("/proc").to_path_buf();
-    let owner_tick = read_proc_tick(owner_pid, &proc_root).ok()?;
-    if owner_tick == 0 {
-        return None;
-    }
-    let owner_ppid = read_proc_ppid(owner_pid, &proc_root).ok()?;
-    let boot = read_boot_id(&proc_root).ok()?;
-    let unit = read_systemd_unit().ok()?;
-    if unit.unit != KWIN_UNIT
-        || unit.active != KWIN_ACTIVE_STATE
-        || unit.sub != KWIN_SUB_STATE
-        || unit.unit_type != KWIN_UNIT_TYPE
-        || unit.bus_name != KWIN_BUS_NAME
-    {
-        return None;
-    }
-    if !is_safe_abs(&unit.fragment) {
-        return None;
-    }
-    if !unit.source.is_empty() && !is_safe_abs(&unit.source) {
-        return None;
-    }
-    if owner_ppid != unit.main_pid || owner_pid == unit.main_pid {
-        return None;
-    }
-    let exec_path = parse_execstart_value(&unit.execstart_raw)?;
-    if !is_approved_wrapper_execstart(&exec_path) {
-        return None;
-    }
-    let pair = approve_wrapper_pair(&exec_path)?;
-    let main_tick = read_proc_tick(unit.main_pid, &proc_root).ok()?;
-    if main_tick == 0 {
-        return None;
-    }
-    let process = ProcProcessControl {
-        proc_root: proc_root.clone(),
-    };
-    let main_exe = classify_main_exe(process.identity(unit.main_pid), &pair);
-    let expected_uid = rustix::process::geteuid().as_raw();
-    let pre = DirectParentInput {
-        owner,
-        caller,
-        owner_pid,
-        owner_pid_end: owner_pid,
-        owner_uid,
-        owner_uid_end: owner_uid,
-        expected_uid,
-        owner_tick,
-        owner_tick_end: owner_tick,
-        owner_ppid,
-        owner_ppid_end: owner_ppid,
-        main_pid: unit.main_pid,
-        main_pid_end: unit.main_pid,
-        main_tick,
-        main_tick_end: main_tick,
-        boot_id: &boot,
-        boot_id_end: &boot,
-        unit: &unit.unit,
-        unit_end: &unit.unit,
-        active: &unit.active,
-        active_end: &unit.active,
-        sub: &unit.sub,
-        sub_end: &unit.sub,
-        unit_type: &unit.unit_type,
-        unit_type_end: &unit.unit_type,
-        bus_name: &unit.bus_name,
-        bus_name_end: &unit.bus_name,
-        execstart_raw: &unit.execstart_raw,
-        execstart_raw_end: &unit.execstart_raw,
-        execstart_path: &exec_path,
-        execstart_path_end: &exec_path,
-        owner_exe: ExeState::Unreadable,
-        owner_exe_end: ExeState::Unreadable,
-        main_exe,
-        main_exe_end: main_exe,
-    };
-    if !crate::planner_kwin_identity::accept_direct_parent(&pre) {
-        return None;
-    }
-    // Comprehensive end revalidation. Every live binding is re-read and must
-    // be stable: current D-Bus owner credentials PID/UID, owner exe still
-    // `PermissionDenied` (readable/missing/deleted/malformed all reject),
-    // full systemd unit including MainPID and complete raw `ExecStart`
-    // unchanged, owner tick plus parent, main tick, boot, wrapper pair, and
-    // main exe state.
-    let current_owner = dbus
-        .get_name_owner(KWIN_SERVICE.try_into().expect("valid KWin service name"))
-        .await
-        .ok()?;
-    if current_owner.as_str() != caller || current_owner.as_str() != owner {
-        return None;
-    }
-    let unique_name = zbus::names::UniqueName::try_from(caller).ok()?;
-    let credentials = dbus
-        .get_connection_credentials(unique_name.into())
-        .await
-        .ok()?;
-    let owner_pid_end = credentials.process_id()?;
-    let owner_uid_end = credentials.unix_user_id()?;
-    if owner_pid_end != owner_pid || owner_uid_end != owner_uid {
-        return None;
-    }
-    // Owner exe must still be unreadable with permission-denied. Any other
-    // outcome (readable identity, absent, or any other error kind) rejects
-    // with no fallback.
-    match process.identity(owner_pid) {
-        Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => {}
-        _ => return None,
-    }
-    let owner_tick_end = read_proc_tick(owner_pid, &proc_root).ok()?;
-    let owner_ppid_end = read_proc_ppid(owner_pid, &proc_root).ok()?;
-    let unit_end = read_systemd_unit().ok()?;
-    if unit_end.unit != unit.unit
-        || unit_end.active != unit.active
-        || unit_end.sub != unit.sub
-        || unit_end.main_pid != unit.main_pid
-        || unit_end.unit_type != unit.unit_type
-        || unit_end.bus_name != unit.bus_name
-        || unit_end.execstart_raw != unit.execstart_raw
-        || unit_end.fragment != unit.fragment
-        || unit_end.source != unit.source
-    {
-        return None;
-    }
-    let exec_path_end = parse_execstart_value(&unit_end.execstart_raw)?;
-    if exec_path_end != exec_path {
-        return None;
-    }
-    let main_tick_end = read_proc_tick(unit.main_pid, &proc_root).ok()?;
-    let boot_end = read_boot_id(&proc_root).ok()?;
-    if owner_tick_end != owner_tick
-        || owner_ppid_end != owner_ppid
-        || main_tick_end != main_tick
-        || boot_end != boot
-    {
-        return None;
-    }
-    let pair_end = approve_wrapper_pair(&exec_path)?;
-    if pair_end != pair {
-        return None;
-    }
-    // Re-approve from the re-read raw path as well so a swapped raw that
-    // parses identically cannot bypass the pair pin.
-    let pair_from_reread = approve_wrapper_pair(&exec_path_end)?;
-    if pair_from_reread != pair {
-        return None;
-    }
-    let main_exe_end = classify_main_exe(process.identity(unit.main_pid), &pair);
-    if main_exe_end != main_exe {
-        return None;
-    }
-    let post = DirectParentInput {
-        owner,
-        caller,
-        owner_pid,
-        owner_pid_end,
-        owner_uid,
-        owner_uid_end,
-        expected_uid,
-        owner_tick,
-        owner_tick_end,
-        owner_ppid,
-        owner_ppid_end,
-        main_pid: unit.main_pid,
-        main_pid_end: unit_end.main_pid,
-        main_tick,
-        main_tick_end,
-        boot_id: &boot,
-        boot_id_end: &boot_end,
-        unit: &unit.unit,
-        unit_end: &unit_end.unit,
-        active: &unit.active,
-        active_end: &unit_end.active,
-        sub: &unit.sub,
-        sub_end: &unit_end.sub,
-        unit_type: &unit.unit_type,
-        unit_type_end: &unit_end.unit_type,
-        bus_name: &unit.bus_name,
-        bus_name_end: &unit_end.bus_name,
-        execstart_raw: &unit.execstart_raw,
-        execstart_raw_end: &unit_end.execstart_raw,
-        execstart_path: &exec_path,
-        execstart_path_end: &exec_path_end,
-        owner_exe: ExeState::Unreadable,
-        owner_exe_end: ExeState::Unreadable,
-        main_exe,
-        main_exe_end,
-    };
-    if !crate::planner_kwin_identity::accept_direct_parent(&post) {
-        return None;
-    }
-    // Synthetic attestation bound to the approved wrapped pin. The owner exe
-    // itself was unreadable; trust comes from the direct-parent/unit/wrapper
-    // pins above, and this identity passes the unchanged `authorized_caller`
-    // gate exactly like a primary match.
-    let approved = ApprovedKwinIdentity {
-        canonical_path: pair.wrapped_canon.clone(),
-        executable: crate::tray_lifecycle::ProcessExecutableIdentity {
-            dev: pair.wrapped_dev,
-            ino: pair.wrapped_ino,
-            content: pair.wrapped_content.clone(),
-        },
-    };
-    let identity = CallerIdentity {
-        process_id: owner_pid,
-        process: ProcessIdentity {
-            start_tick: owner_tick,
-            resolved_executable_path: pair.wrapped_canon,
-            executable: approved.executable.clone(),
-        },
-        approved,
-    };
-    if !authorized_caller(Some(owner), Some(caller), &identity) {
-        return None;
-    }
-    Some(identity)
+async fn verify_planner_caller(connection: &zbus::Connection, caller: &str) -> bool {
+    verify_same_uid_caller(connection, caller).await
 }
 
 #[zbus::interface(name = "org.plasmaautotiler.Planner1")]
@@ -1398,7 +897,7 @@ impl PlannerEndpoint {
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
         // True bounded single-flight: non-queuing acquire held across the
-        // credential/proc/filesystem verify and the pure evaluate, so
+        // same-UID verify and the pure evaluate, so
         // unauthorized callers cannot cause unbounded concurrent checks.
         // Diagnostics are emitted only after the guard is released (see
         // `emit_route_*` contract), so logging never holds the lock.
@@ -1429,16 +928,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Move,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(METHOD);
         };
         let reply = evaluate_json(&request);
         if reply.len() > MAX_REPLY_BYTES {
@@ -1464,8 +963,7 @@ impl PlannerEndpoint {
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
         // Read-only advisory route replacing the POC-shaped EvaluatePoc3: the
-        // exact same bounded single-flight, current-KWin-owner/same-uid/
-        // executable pinning with pre/post owner revalidation, request/reply
+        // exact same bounded single-flight, same-UID verification, request/reply
         // bounds, and terminal service-loss semantics as EvaluateMove. The
         // existing EvaluateMove contract is frozen. The reply is a
         // deterministic advisory plan with no native command/execution fields
@@ -1498,16 +996,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(ADVISORY_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Advisory,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(ADVISORY_METHOD);
         };
         let reply = match self.evaluate_advisory_request(&request) {
             Ok(reply) => reply,
@@ -1565,8 +1063,7 @@ impl PlannerEndpoint {
     ) -> Result<String, PlannerError> {
         // Read-only shadow projection route alongside the frozen
         // EvaluateMove / DescribeAdvisoryPlan contracts: the exact same
-        // bounded single-flight, current-KWin-owner/same-uid/executable
-        // pinning with pre/post owner revalidation, request/reply bounds,
+        // bounded single-flight, same-UID verification, request/reply bounds,
         // and terminal service-loss semantics. Neither existing method
         // changes behavior. The reply carries complete desired rectangles
         // for exactly three opaque windows with no native
@@ -1600,16 +1097,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(SHADOW_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Shadow,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(SHADOW_METHOD);
         };
         let reply = match self.evaluate_shadow_request(&request) {
             Ok(reply) => reply,
@@ -1647,8 +1144,7 @@ impl PlannerEndpoint {
     ) -> Result<String, PlannerError> {
         // Focus transaction route alongside the frozen EvaluateMove /
         // DescribeAdvisoryPlan / DescribeShadowProjection contracts: the
-        // exact same bounded non-queuing single-flight, current-KWin-owner/
-        // same-uid/executable pinning with pre/post owner revalidation,
+        // exact same bounded non-queuing single-flight, same-UID verification,
         // connection-loss, and reply-size checks. No existing route changes
         // behavior and no generic IPC is introduced. The reply is a bounded
         // focus plan/ack/verify transaction over the endpoint-owned
@@ -1682,16 +1178,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(FOCUS_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Focus,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(FOCUS_METHOD);
         };
         let reply = match self.evaluate_focus_request(&request) {
             Ok(reply) => reply,
@@ -1735,8 +1231,7 @@ impl PlannerEndpoint {
         // Movement transaction route alongside the frozen EvaluateMove /
         // DescribeAdvisoryPlan / DescribeShadowProjection / DescribeFocus
         // contracts: the exact same bounded non-queuing single-flight,
-        // current-KWin-owner/same-uid/executable pinning with pre/post owner
-        // revalidation, connection-loss, and reply-size checks. No existing
+        // same-UID verification, connection-loss, and reply-size checks. No existing
         // route changes behavior and no generic IPC is introduced. The reply
         // is a bounded movement plan/ack/verify transaction over the
         // endpoint-owned in-memory movement service (single portable
@@ -1770,16 +1265,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(MOVEMENT_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Movement,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(MOVEMENT_METHOD);
         };
         let reply = match self.evaluate_movement_request(&request) {
             Ok(reply) => reply,
@@ -1823,8 +1318,7 @@ impl PlannerEndpoint {
         // Keyboard resize transaction route alongside the frozen EvaluateMove /
         // DescribeAdvisoryPlan / DescribeShadowProjection / DescribeFocus /
         // DescribeMovement contracts: the exact same bounded non-queuing
-        // single-flight, current-KWin-owner/same-uid/executable pinning with
-        // pre/post owner revalidation, connection-loss, and reply-size
+        // single-flight, same-UID verification, connection-loss, and reply-size
         // checks. No existing route changes behavior and no generic IPC is
         // introduced. Action-fenced to keyboard `request` plus shared
         // ack/verify/loss only; pointer actions never mutate this route.
@@ -1862,16 +1356,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(RESIZE_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Resize,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(RESIZE_METHOD);
         };
         let reply = match self.evaluate_resize_request(&request) {
             Ok(reply) => reply,
@@ -1916,8 +1410,7 @@ impl PlannerEndpoint {
     ) -> Result<String, PlannerError> {
         // Pointer split-share resize route alongside the frozen keyboard
         // `DescribeResize` contract: the exact same bounded non-queuing
-        // single-flight, current-KWin-owner/same-uid/executable pinning with
-        // pre/post owner revalidation, connection-loss, and reply-size
+        // single-flight, same-UID verification, connection-loss, and reply-size
         // checks over the same endpoint-owned in-memory resize service
         // (single portable session, single pending). Keyboard wire behavior
         // is unchanged.
@@ -1955,16 +1448,16 @@ impl PlannerEndpoint {
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(POINTER_RESIZE_METHOD);
         };
-        let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+        if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Pointer,
                 &request,
                 crate::route_diag::Refusal::Unauthorized,
             );
-            return Err(PlannerError::Unauthorized);
+            return unauthorized_response(POINTER_RESIZE_METHOD);
         };
         let reply = match self.evaluate_pointer_resize_request(&request) {
             Ok(reply) => reply,
@@ -2122,23 +1615,18 @@ fn serve(endpoint: PlannerEndpoint) -> zbus::Result<()> {
 }
 
 /// Distinct nested-mode endpoint. Same D-Bus contract as the production
-/// endpoint, but caller verification is bound to the explicit validated
-/// nested manifest snapshot (launcher-recorded PID + executable + start
-/// tick) with independent `/proc` revalidation on every call. The host
-/// allowlist is never consulted here.
+/// endpoint, with the same fail-closed same-UID caller verification. The
+/// explicit validated manifest still gates the private-bus setup in
+/// `run_nested`; no per-call PID/`/proc` attestation remains.
 #[derive(Clone, Debug)]
 struct NestedPlannerEndpoint {
     inner: PlannerEndpoint,
-    manifest: NestedManifest,
-    proc_root: PathBuf,
 }
 
 impl NestedPlannerEndpoint {
-    fn new(manifest: NestedManifest) -> Self {
+    fn new() -> Self {
         Self {
             inner: PlannerEndpoint::new(),
-            manifest,
-            proc_root: Path::new("/proc").to_path_buf(),
         }
     }
 }
@@ -2151,8 +1639,8 @@ impl NestedPlannerEndpoint {
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
-        // Nested-mode EvaluateMove: same contract as production, bound to the
-        // explicit manifest snapshot. Diagnostics after guard release only.
+        // Nested-mode EvaluateMove: same contract as production with the same
+        // same-UID verification. Diagnostics after guard release only.
         let Some(_guard) = self.inner.operation_lock.try_lock() else {
             emit_route_refusal(
                 crate::route_diag::Route::Move,
@@ -2182,14 +1670,7 @@ impl NestedPlannerEndpoint {
             );
             return Err(PlannerError::Unauthorized);
         };
-        let Some(_identity) = verify_nested_caller(
-            emitter.connection(),
-            caller,
-            &self.manifest,
-            &self.proc_root,
-        )
-        .await
-        else {
+        if !verify_nested_caller(emitter.connection(), caller).await {
             drop(_guard);
             emit_route_refusal(
                 crate::route_diag::Route::Move,
@@ -2237,7 +1718,7 @@ pub fn run_nested(manifest_path: &Path) -> zbus::Result<()> {
         .map_err(|error| zbus::Error::Failure(format!("nested manifest rejected: {error}")))?;
     let bus_address = manifest.bus_address.clone();
     let (connection, monitor) = nested_private_connections(&bus_address)?;
-    let endpoint = NestedPlannerEndpoint::new(manifest);
+    let endpoint = NestedPlannerEndpoint::new();
     connection.object_server().at(OBJECT, endpoint)?;
     request_planner_name(&connection)?;
     // One build-identity startup record after successful start; no locks held.
@@ -2448,35 +1929,94 @@ mod tests {
     }
 
     #[test]
-    fn caller_binding_requires_current_unique_kwin_owner() {
-        let approved = ApprovedKwinIdentity {
-            canonical_path: PathBuf::from("/nix/store/host-kwin/bin/kwin_wayland"),
-            executable: crate::tray_lifecycle::ProcessExecutableIdentity {
-                dev: 1,
-                ino: 1,
-                content: b"host-kwin".to_vec(),
-            },
-        };
-        let identity = CallerIdentity {
-            process_id: 1,
-            process: ProcessIdentity {
-                start_tick: 1,
-                resolved_executable_path: approved.canonical_path.clone(),
-                executable: approved.executable.clone(),
-            },
-            approved,
-        };
-        assert!(authorized_caller(Some(":1.1"), Some(":1.1"), &identity));
-        assert!(!authorized_caller(Some(":1.1"), Some(":1.2"), &identity));
-        assert!(!authorized_caller(None, Some(":1.1"), &identity));
-        assert!(!authorized_caller(
-            Some("not-a-unique-name"),
-            Some("not-a-unique-name"),
-            &identity
+    fn same_uid_accepts() {
+        let expected = rustix::process::geteuid().as_raw();
+        assert!(caller_uid_authorized(Some(expected), expected));
+    }
+
+    #[test]
+    fn differing_uid_rejects() {
+        let expected = rustix::process::geteuid().as_raw();
+        let differing = expected.wrapping_add(1);
+        assert_ne!(differing, expected);
+        assert!(!caller_uid_authorized(Some(differing), expected));
+        assert!(!caller_uid_authorized(
+            Some(expected.wrapping_add(1000)),
+            expected
         ));
-        let mut bad = identity.clone();
-        bad.process.executable.content.clear();
-        assert!(!authorized_caller(Some(":1.1"), Some(":1.1"), &bad));
+    }
+
+    #[test]
+    fn unavailable_uid_rejects() {
+        let expected = rustix::process::geteuid().as_raw();
+        assert!(!caller_uid_authorized(None, expected));
+    }
+
+    #[test]
+    fn unauthorized_reply_is_bounded_fixed_inband_ok() {
+        let first = unauthorized_rejection();
+        let second = unauthorized_rejection();
+        assert_eq!(first, second);
+        assert_eq!(first, UNAUTHORIZED_REPLY);
+        assert!(first.len() <= MAX_UNAUTHORIZED_REPLY_BYTES);
+        assert!(first.len() <= MAX_REPLY_BYTES);
+        assert!(first.len() <= FOCUS_MAX_REPLY);
+        assert!(first.len() <= MOVEMENT_MAX_REPLY);
+        assert!(first.len() <= RESIZE_MAX_REPLY);
+        assert!(first.len() <= POINTER_RESIZE_MAX_REPLY);
+        let parsed: serde_json::Value =
+            serde_json::from_str(&first).expect("unauthorized reply is valid JSON");
+        assert_eq!(parsed["outcome"], "rejected");
+        assert_eq!(parsed["kind"], "unauthorized");
+        // Fixed body never echoes caller input.
+        assert!(!first.contains("evil-correlation"));
+        // Represents Ok rather than PlannerError.
+        let as_result: Result<String, PlannerError> = Ok(unauthorized_rejection());
+        assert!(as_result.is_ok());
+        assert_ne!(
+            as_result.unwrap(),
+            String::new(),
+            "unauthorized body is non-empty fixed JSON"
+        );
+    }
+
+    #[test]
+    fn unauthorized_channel_is_inband_for_exactly_four_routes() {
+        // The four transaction routes return the fixed in-band JSON body via
+        // the actual production helper.
+        for method in [
+            FOCUS_METHOD,
+            MOVEMENT_METHOD,
+            RESIZE_METHOD,
+            POINTER_RESIZE_METHOD,
+        ] {
+            assert!(
+                unauthorized_uses_inband_rejection(method),
+                "{method} must use the in-band unauthorized rejection"
+            );
+            let body = unauthorized_response(method)
+                .unwrap_or_else(|_| panic!("{method} must return in-band Ok"));
+            assert_eq!(body, UNAUTHORIZED_REPLY, "{method} in-band body is fixed");
+            let parsed: serde_json::Value =
+                serde_json::from_str(&body).expect("in-band body is valid JSON");
+            assert_eq!(parsed["v"], 1);
+            assert_eq!(parsed["outcome"], "rejected");
+            assert_eq!(parsed["kind"], "unauthorized");
+            assert_eq!(parsed["message"], "unauthorized");
+        }
+        // EvaluateMove, DescribeAdvisoryPlan, DescribeShadowProjection keep
+        // the D-Bus PlannerError::Unauthorized channel via the same helper.
+        for method in [METHOD, ADVISORY_METHOD, SHADOW_METHOD] {
+            assert!(
+                !unauthorized_uses_inband_rejection(method),
+                "{method} must use PlannerError::Unauthorized"
+            );
+            assert_eq!(
+                unauthorized_response(method),
+                Err(PlannerError::Unauthorized),
+                "{method} must return D-Bus unauthorized"
+            );
+        }
     }
 
     #[test]
@@ -3048,72 +2588,6 @@ mod tests {
     }
 
     #[test]
-    fn approved_binary_read_is_size_bounded_before_allocation() {
-        assert_eq!(MAX_APPROVED_BINARY_BYTES, 16 * 1024 * 1024);
-        let dir = std::env::temp_dir();
-        let stamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let path = dir.join(format!(
-            "planner-approved-test-{}-{stamp}",
-            std::process::id()
-        ));
-        {
-            use std::io::Write;
-            use std::os::unix::fs::PermissionsExt;
-            let mut file = File::create(&path).unwrap();
-            file.write_all(b"fake-kwin").unwrap();
-            file.set_permissions(std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-        }
-        let identity = read_approved_identity(path.clone()).expect("bounded binary reads");
-        assert_eq!(identity.canonical_path, path);
-        assert_eq!(identity.executable.content, b"fake-kwin");
-        std::fs::remove_file(&path).ok();
-
-        let empty_path = dir.join(format!(
-            "planner-approved-empty-{}-{stamp}",
-            std::process::id()
-        ));
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let file = File::create(&empty_path).unwrap();
-            file.set_permissions(std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-        }
-        assert!(read_approved_identity(empty_path.clone()).is_none());
-        std::fs::remove_file(&empty_path).ok();
-
-        let huge_path = dir.join(format!(
-            "planner-approved-huge-{}-{stamp}",
-            std::process::id()
-        ));
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let file = File::create(&huge_path).unwrap();
-            file.set_permissions(std::fs::Permissions::from_mode(0o755))
-                .unwrap();
-            file.set_len(MAX_APPROVED_BINARY_BYTES + 1).unwrap();
-        }
-        assert!(
-            read_approved_identity(huge_path.clone()).is_none(),
-            "oversized binary must be rejected by size bound before allocation"
-        );
-        std::fs::remove_file(&huge_path).ok();
-    }
-
-    #[test]
-    fn approved_cache_reuses_stable_snapshot() {
-        let first = approved_kwin_identities();
-        let second = approved_kwin_identities();
-        assert_eq!(first, second);
-        let uncached = resolve_approved_kwin_identities_uncached();
-        assert!(uncached.len() <= APPROVED_KWIN_ENTRYPOINTS.len());
-        assert_eq!(resolve_approved_kwin_identities(), first);
-    }
-
-    #[test]
     fn connection_loss_and_monitor_end_are_errors() {
         let serving = serving_connection_lost_error();
         assert!(serving.to_string().contains("serving connection was lost"));
@@ -3182,23 +2656,6 @@ nested_exe_ino={ino}\n",
             dev = NESTED_TEST_DEV,
             ino = NESTED_TEST_INO,
         )
-    }
-
-    fn nested_test_manifest(workdir: &str) -> NestedManifest {
-        let kwin = format!("{workdir}/kwin-6.7.4/bin/kwin_wayland");
-        parse_nested_manifest(&nested_test_manifest_text(workdir, &kwin)).unwrap()
-    }
-
-    fn nested_test_live(manifest: &NestedManifest) -> ProcessIdentity {
-        ProcessIdentity {
-            start_tick: manifest.nested_starttick,
-            resolved_executable_path: manifest.nested_exe_canonical.clone(),
-            executable: crate::tray_lifecycle::ProcessExecutableIdentity {
-                dev: manifest.nested_exe_dev,
-                ino: manifest.nested_exe_ino,
-                content: b"nested-kwin".to_vec(),
-            },
-        }
     }
 
     #[test]
@@ -3289,76 +2746,7 @@ nested_exe_ino={ino}\n",
     }
 
     #[test]
-    fn nested_caller_binding_requires_exact_pid_and_start_tick() {
-        let manifest = nested_test_manifest("/tmp/nested-test-workdir");
-        let live = nested_test_live(&manifest);
-        assert!(authorized_nested_caller(
-            Some(":1.10"),
-            Some(":1.10"),
-            manifest.nested_pid,
-            &manifest,
-            &live
-        ));
-        // Owner mismatch.
-        assert!(!authorized_nested_caller(
-            Some(":1.10"),
-            Some(":1.11"),
-            manifest.nested_pid,
-            &manifest,
-            &live
-        ));
-        // Non-unique owner.
-        assert!(!authorized_nested_caller(
-            Some("not-a-unique-name"),
-            Some("not-a-unique-name"),
-            manifest.nested_pid,
-            &manifest,
-            &live
-        ));
-        // Credential PID must equal the launcher-recorded PID; caller bodies
-        // carry no trusted PID material (no such parameter exists).
-        assert!(!authorized_nested_caller(
-            Some(":1.10"),
-            Some(":1.10"),
-            manifest.nested_pid + 1,
-            &manifest,
-            &live
-        ));
-        // PID reuse: live start tick differs from the manifest snapshot.
-        let mut reused = live.clone();
-        reused.start_tick = manifest.nested_starttick + 1;
-        assert!(!nested_live_identity_matches(&manifest, &reused));
-        assert!(!authorized_nested_caller(
-            Some(":1.10"),
-            Some(":1.10"),
-            manifest.nested_pid,
-            &manifest,
-            &reused
-        ));
-        // Zero tick fails closed.
-        let mut zero = live.clone();
-        zero.start_tick = 0;
-        assert!(!nested_live_identity_matches(&manifest, &zero));
-    }
-
-    #[test]
     fn nested_manifest_rejects_executable_mismatch() {
-        let manifest = nested_test_manifest("/tmp/nested-test-workdir");
-        let live = nested_test_live(&manifest);
-        let mut evil = live.clone();
-        evil.resolved_executable_path = PathBuf::from("/tmp/evil-kwin");
-        assert!(!nested_live_identity_matches(&manifest, &evil));
-        assert!(!authorized_nested_caller(
-            Some(":1.10"),
-            Some(":1.10"),
-            manifest.nested_pid,
-            &manifest,
-            &evil
-        ));
-        // Empty executable content fails closed.
-        let mut empty = live.clone();
-        empty.executable.content.clear();
-        assert!(!nested_live_identity_matches(&manifest, &empty));
         // Manifest-level nested canonical != kwin canonical rejected at parse.
         let workdir = "/tmp/nested-test-workdir";
         let text =
@@ -3384,13 +2772,6 @@ nested_exe_ino={ino}\n",
                 .unwrap_err()
                 .contains("deleted")
         );
-        // Live hash/device/inode mismatch fails closed.
-        let mut bad_hash = live.clone();
-        bad_hash.executable.content = b"tampered".to_vec();
-        assert!(!nested_live_identity_matches(&manifest, &bad_hash));
-        let mut bad_dev = live.clone();
-        bad_dev.executable.dev += 1;
-        assert!(!nested_live_identity_matches(&manifest, &bad_dev));
     }
 
     #[test]
@@ -3424,7 +2805,7 @@ nested_exe_ino={ino}\n",
     }
 
     #[test]
-    fn nested_manifest_rejects_host_bus_reuse_and_preserves_host_allowlist() {
+    fn nested_manifest_rejects_host_bus_reuse() {
         let workdir = "/tmp/nested-test-workdir";
         let kwin = format!("{workdir}/kwin-6.7.4/bin/kwin_wayland");
         let valid = nested_test_manifest_text(workdir, &kwin);
@@ -3464,41 +2845,6 @@ nested_exe_ino={ino}\n",
             parse_nested_manifest(&host_wd)
                 .unwrap_err()
                 .contains("host runtime")
-        );
-        // Host allowlist is not broadened: the nested test binary is not an
-        // approved host entrypoint and the host verifier rejects it.
-        assert!(!APPROVED_KWIN_ENTRYPOINTS.iter().any(|entry| kwin == *entry));
-        assert_eq!(
-            APPROVED_KWIN_ENTRYPOINTS,
-            &[
-                "/run/current-system/sw/bin/kwin_wayland",
-                "/run/current-system/sw/bin/kwin_wayland_wrapper",
-                "/run/current-system/sw/bin/kwin_x11",
-                "/usr/bin/kwin_wayland",
-                "/usr/bin/kwin_wayland_wrapper",
-                "/usr/bin/kwin_x11",
-            ]
-        );
-        let manifest = nested_test_manifest(workdir);
-        let live = nested_test_live(&manifest);
-        let host_identity = CallerIdentity {
-            process_id: manifest.nested_pid,
-            process: live,
-            approved: ApprovedKwinIdentity {
-                canonical_path: PathBuf::from("/nix/store/host-kwin/bin/kwin_wayland"),
-                executable: crate::tray_lifecycle::ProcessExecutableIdentity {
-                    dev: 1,
-                    ino: 1,
-                    content: b"host-kwin".to_vec(),
-                },
-            },
-        };
-        // The nested binary does not match the host-approved snapshot, so the
-        // production host path stays unauthorized for it.
-        assert!(
-            !matches_approved_identity(&host_identity.process, &host_identity.approved)
-                || host_identity.process.resolved_executable_path
-                    != host_identity.approved.canonical_path
         );
     }
 
@@ -3730,15 +3076,6 @@ nested_exe_ino={ino}\n",
                 .unwrap_err()
                 .contains("sha256")
         );
-    }
-
-    #[test]
-    fn nested_live_rejects_deleted_exe_suffix() {
-        let manifest = nested_test_manifest("/tmp/nested-test-workdir");
-        let mut live = nested_test_live(&manifest);
-        live.resolved_executable_path =
-            PathBuf::from("/tmp/nested-test-workdir/kwin-6.7.4/bin/kwin_wayland (deleted)");
-        assert!(!nested_live_identity_matches(&manifest, &live));
     }
 
     #[test]

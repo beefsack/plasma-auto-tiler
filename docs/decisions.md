@@ -93,8 +93,19 @@ Historical implementation detail is recoverable in Git history.
   before any planner method. Activation, identity, owner, stale, loss, and
   timeout failures refuse the selected Rust route with no Legacy fallback; a
   pending plan never rebinds after a restarted owner. Session activation
-  improves immutable delivery but public KWin scripting still cannot attest the
-  initially resolved same-UID Planner binary.
+   improves immutable delivery but public KWin scripting still cannot attest the
+   initially resolved same-UID Planner binary.
+- Planner caller authorization is a single fail-closed session-bus check:
+  `org.freedesktop.DBus.GetConnectionUnixUser` for the caller's unique name
+  must equal the Planner process UID. A malformed name, failed lookup, unknown
+  UID, or differing UID rejects. Process executable/PID/start-tick/boot,
+  systemd MainPID/parentage, wrapper-pair, cgroup, KWin-owner, and pre/post
+  revalidation do not participate in caller authorization.
+- On authorization failure, `DescribeFocus`, `DescribeMovement`,
+  `DescribeResize`, and `DescribePointerResize` return the fixed bounded
+  in-band JSON rejection `outcome:"rejected", kind:"unauthorized"` so KWin
+  records `result=rejected`. `EvaluateMove`, `DescribeAdvisoryPlan`, and
+  `DescribeShadowProjection` retain their D-Bus error behavior.
 - `engineAuthorityMode=legacy` remains the only automatic-tiling mode. Rust is
   development-only: it has no add/remove, placement, workspace, drag, or
   existing-window adoption lifecycle, and selected commands require an already
@@ -366,11 +377,11 @@ Historical implementation detail is recoverable in Git history.
   advisory reply. It selects neither a generic cross-platform IPC abstraction
   nor a permanent topology for other platform adapters. The KWin client
   resolves the planner well-known name then targets the pinned unique owner;
-  the Rust service verifies the D-Bus sender is the current KWin unique owner,
-  same-UID credential, and approved executable identity before and after the
-  request. Public KWin scripting exposes no service credential API, so this
-  cannot prove the initially resolved same-UID planner service binary against
-  a hostile same-UID owner. The reviewed standalone advisory entry, builder,
+  the Rust service verifies only that the D-Bus sender's unique name has the
+  Planner's Unix UID, failing closed if the UID cannot be obtained or differs.
+  Public KWin scripting exposes no service credential API, so this cannot
+  prove the initially resolved same-UID planner service binary against a
+  hostile same-UID owner. The reviewed standalone advisory entry, builder,
   and namespaced loader may coexist with the loaded production plugin only
   because their checked route has no topology authority, actuation, shortcuts,
   Custom Tile, controller, or production-startup path. The first host read-only
@@ -388,12 +399,6 @@ Historical implementation detail is recoverable in Git history.
   Windows/macOS runtime or packaging model. The core does not promise uniform
   workspace, group, atomicity, or geometry semantics where public platform APIs
    cannot provide them; unsupported capability paths fail closed.
-- Authorized 2026-09-08: Linux/systemd/KWin/D-Bus caller identity is a
-  platform-service concern, not portable engine data. The KWin planner may use
-  the exact unreadable-`/proc/exe` direct-parent fallback only with current
-  owner/PID/tick/boot, direct `plasma-kwin_wayland.service` MainPID parentage,
-  root-owned immutable Nix-store `ExecStart` wrapper-pair binding, and full
-  pre/post revalidation; any readable executable disagreement fails closed.
 - Durable validation prioritizes product-shaped Rust unit/integration/property
   coverage and focused adapter contracts. Do not add lifecycle automation just
   for assertion count; use the reviewed bounded host sequencer where useful,

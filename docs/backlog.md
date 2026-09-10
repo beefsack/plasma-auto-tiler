@@ -74,10 +74,11 @@ Only meaningful pending or active work is listed.
        no extra/ineligible host-window condition. The current static path now
        sends only normalized exact-three observations; Rust deterministically
        adopts explicit ordered `H[A,V[B,C]]` `cosmic_v1` state and remains its
-       sole structural authority. The Planner now applies the approved
-       unreadable-executable direct-parent KWin identity fallback as a
-       Linux/KWin service boundary, including owner/PID/tick/boot, direct
-       MainPID parentage, immutable wrapper-pair, and pre/post revalidation.
+        sole structural authority. The Planner caller boundary is now the
+        fail-closed same-UID session-bus check: the sender unique name's
+        `GetConnectionUnixUser` result must equal the Planner UID; no
+        executable, PID/tick/boot, systemd, wrapper-pair, cgroup, KWin-owner,
+        or revalidation forensics participate.
        KWin, Planner/advisory absence,
        generated-output absence, production-plugin continuity, and config hash/
        mtime matched exactly after each attempt; no native window, focus,
@@ -220,8 +221,11 @@ Only meaningful pending or active work is listed.
                 is a user rebuild/new-session followed by one exact-three manual
                 focus/move/keyboard/pointer visual-jank smoke; add/remove,
                 collapse, drag/drop, settings, persistence, and default promotion
-                remain out of scope. Parked shadow transport/live cleanup remains
-                unchanged. Source-parity
+                 remain out of scope. Parked shadow transport/live cleanup remains
+                 unchanged. Deferred KWin bundle work must parse and emit the
+                 bounded `kind:"unauthorized"` rejection for those four Rust
+                 routes; it is blocked on a user-authorized script reload.
+                 Source-parity
              correction is statically complete:
               `cosmic_v1` now executes audited `cosmic-comp`
               `81cd5fdbaa41c3973369ae85bccf829137836e20` admission-axis,
