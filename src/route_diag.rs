@@ -318,12 +318,31 @@ fn sanitize_corr_opt(value: Option<&str>) -> Option<&str> {
     }
 }
 
-/// One bounded lifecycle line for tray/background/bridge/planner events:
-/// `plasma-auto-tiler:route-diag:lifecycle:comp=...:event=...:gen=...[:rev=N][:corr=...][:result=...]`.
-/// Pure and best effort: validated generation (or `invalid`), bounded
-/// revision only when supplied and in bounds, validated correlation echo
-/// only when supplied, fixed result only when supplied. Never captions,
-/// owners, PIDs, paths, geometry, or raw payload bytes.
+/// Bounded N.N.N version for startup identity lines.
+#[must_use]
+pub fn is_valid_package_version(value: &str) -> bool {
+    if value.is_empty() || value.len() > 16 {
+        return false;
+    }
+    let mut parts = 0u8;
+    for part in value.split('.') {
+        if part.is_empty() || part.len() > 4 || !part.bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        parts += 1;
+    }
+    parts == 3
+}
+
+fn sanitize_version_opt(value: Option<&str>) -> Option<&str> {
+    match value {
+        Some(text) if is_valid_package_version(text) => Some(text),
+        Some(_) => Some("invalid"),
+        None => None,
+    }
+}
+
+/// Bounded lifecycle line with optional version for startup identity records.
 #[must_use]
 pub fn describe_lifecycle(
     comp: LifecycleComp,
@@ -333,12 +352,29 @@ pub fn describe_lifecycle(
     corr: Option<&str>,
     result: Option<LifecycleResult>,
 ) -> String {
+    describe_lifecycle_with_version(comp, event, generation, rev, corr, result, None)
+}
+
+/// Lifecycle line with explicit version for startup identity records.
+#[must_use]
+pub fn describe_lifecycle_with_version(
+    comp: LifecycleComp,
+    event: LifecycleEvent,
+    generation: Option<&str>,
+    rev: Option<u64>,
+    corr: Option<&str>,
+    result: Option<LifecycleResult>,
+    version: Option<&str>,
+) -> String {
     let mut line = format!(
         "{ROUTE_DIAG_PREFIX}:lifecycle:comp={}:event={}:gen={}",
         comp.as_str(),
         event.as_str(),
         sanitize_gen_opt(generation)
     );
+    if let Some(version) = sanitize_version_opt(version) {
+        line.push_str(&format!(":version={version}"));
+    }
     if let Some(rev) = rev
         && rev <= LIFECYCLE_MAX_REVISION
     {

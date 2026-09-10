@@ -1,6 +1,7 @@
 import { TileController } from "./controller";
 import { prepareManagedRoot } from "./managed-root";
 import { TrayPublisher } from "./tray-publisher";
+import { startupLine as buildIdentityStartupLine } from "./build-identity";
 
 declare const CONTROLLER_NONCE: string;
 declare const CONTROLLER_BUILD_ID: string;
@@ -408,5 +409,11 @@ if (
     console.log(
         `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`,
     );
+}
+// One build-identity startup record; best effort only.
+try {
+    console.log(buildIdentityStartupLine());
+} catch (error) {
+    void error;
 }
 trayPublisher.start();

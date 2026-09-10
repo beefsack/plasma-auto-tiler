@@ -196,11 +196,18 @@ function resolveLexicalWorkspace(): unknown {
     return null;
 }
 
-function toExactInt(value: unknown): number | null {
-    if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+function toQuantizedInt(value: unknown): number | null {
+    // KWin 6.7.4 exposes QRectF geometry at fractional scale (e.g. 1.25).
+    // Quantize at the observation boundary; the Rust wire contract stays
+    // integer. Non-finite inputs still reject fail-closed.
+    if (typeof value !== "number" || !Number.isFinite(value)) {
         return null;
     }
-    return value;
+    const rounded = Math.round(value);
+    if (!Number.isSafeInteger(rounded)) {
+        return null;
+    }
+    return rounded;
 }
 
 function isWorkAreaRect(rect: { x: number; y: number; w: number; h: number }): boolean {
@@ -274,12 +281,12 @@ function readFrameRect(ref: object): { x: number; y: number; w: number; h: numbe
         return null;
     }
     const record = geometry as Record<string, unknown>;
-    const x = toExactInt(record["x"]);
-    const y = toExactInt(record["y"]);
+    const x = toQuantizedInt(record["x"]);
+    const y = toQuantizedInt(record["y"]);
     const widthRaw = record["width"] !== undefined ? record["width"] : record["w"];
     const heightRaw = record["height"] !== undefined ? record["height"] : record["h"];
-    const w = toExactInt(widthRaw);
-    const h = toExactInt(heightRaw);
+    const w = toQuantizedInt(widthRaw);
+    const h = toQuantizedInt(heightRaw);
     if (x === null || y === null || w === null || h === null) {
         return null;
     }
@@ -394,12 +401,12 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
                 return null;
             }
             const areaRecord = area as Record<string, unknown>;
-            const bx = toExactInt(areaRecord["x"]);
-            const by = toExactInt(areaRecord["y"]);
+            const bx = toQuantizedInt(areaRecord["x"]);
+            const by = toQuantizedInt(areaRecord["y"]);
             const bwRaw = areaRecord["width"] !== undefined ? areaRecord["width"] : areaRecord["w"];
             const bhRaw = areaRecord["height"] !== undefined ? areaRecord["height"] : areaRecord["h"];
-            const bw = toExactInt(bwRaw);
-            const bh = toExactInt(bhRaw);
+            const bw = toQuantizedInt(bwRaw);
+            const bh = toQuantizedInt(bhRaw);
             if (bx === null || by === null || bw === null || bh === null) {
                 return null;
             }

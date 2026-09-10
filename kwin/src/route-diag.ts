@@ -112,12 +112,45 @@ export function sanitizeGen(value: unknown): string {
     return value;
 }
 
+// Bounded N.N.N version for startup identity lines.
+export function isPackageVersion(value: unknown): boolean {
+    if (typeof value !== "string" || value.length === 0 || value.length > 16) {
+        return false;
+    }
+    const parts = value.split(".");
+    if (parts.length !== 3) {
+        return false;
+    }
+    for (const part of parts) {
+        if (part.length === 0 || part.length > 4) {
+            return false;
+        }
+        for (let index = 0; index < part.length; index += 1) {
+            const code = part.charCodeAt(index);
+            if (code < 48 || code > 57) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+export function sanitizeVersion(value: unknown): string {
+    if (typeof value === "string" && isPackageVersion(value)) {
+        return value;
+    }
+    return "invalid";
+}
+
 function sanitizeField(key: string, value: unknown): string {
     if (key === "corr") {
         return sanitizeCorr(value);
     }
     if (key === "gen") {
         return sanitizeGen(value);
+    }
+    if (key === "version") {
+        return sanitizeVersion(value);
     }
     if (key === "rev" || key === "seq" || key === "count" || key === "windows" || key === "slices") {
         return isCount(value) ? String(value) : "unknown";
@@ -170,25 +203,23 @@ export function formatRouteDiag(
     return parts.join(":");
 }
 
-// Bounded tray/bridge/planner lifecycle line:
-// `plasma-auto-tiler:route-diag:lifecycle:comp=<tray|bridge|planner>:event=<closed>:gen=<validated-gen>[:rev=N][:result=...]`
-// Closed events mirror the actually emitted Rust/KWin branches: tray
-// started/enabled-changed/stopped/owner-changed, bridge published/send-failed,
-// and planner seeded. Best effort only; never identities, geometry, or
-// payload bytes. Unknown or malformed inputs render as fixed tokens and never
-// echo input bytes beyond a validated opaque generation.
+// Bounded lifecycle line with optional version for startup identity records.
 export function formatLifecycleDiag(
     comp: unknown,
     event: unknown,
     gen: unknown,
     rev?: unknown,
     result?: unknown,
+    version?: unknown,
 ): string {
     const fields: Array<readonly [string, unknown]> = [
         ["comp", comp],
         ["event", event],
         ["gen", gen],
     ];
+    if (version !== undefined) {
+        fields.push(["version", version]);
+    }
     if (rev !== undefined) {
         fields.push(["rev", rev]);
     }

@@ -13,6 +13,14 @@
 # Usage:
 #   route-diag-follow.sh [--follow] [--corr <token>] [--gen <token>] [--no-pointer]
 #
+# Build identity (stale-build check): one bridge startup line
+# (`...:lifecycle:comp=bridge:event=started:gen=<id>:version=0.1.0:result=ok`)
+# and one planner line (`...:comp=planner:event=started:gen=<id>:version=0.1.0:result=ok`),
+# where <id> is self.rev or local-dev. Compare with --gen <id>; mismatch means
+# mixed builds. Installed build-id files (KWin contents, tray
+# share/plasma-auto-tiler) carry package=/version=/source= lines; source=
+# equals the gen= token that build emits.
+#
 # Options:
 #   --follow       stream new lines (journalctl -f); default prints a snapshot
 #   --corr TOKEN   keep only lines containing the validated correlation token

@@ -1,5 +1,6 @@
 pub mod advisory_contract;
 pub mod advisory_trio;
+pub mod build_identity;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;

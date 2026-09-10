@@ -477,11 +477,31 @@ describe("movement entry observation end to end", () => {
         handle.stop();
     });
 
-    it("rejects fractional work-area geometry fail-closed with no request", () => {
+    it("quantizes fractional QRectF work-area geometry with integer wire bounds", () => {
         const world = makeR4EntryWorld(true);
         const handle = startR4Entry(world);
-        assert.equal(handle, null);
-        assert.equal(world.dbusCalls.length, 0);
+        assert.ok(handle !== null);
+        handle.request("right");
+        assert.equal(world.dbusCalls.length, 1);
+        world.callbacks[0]?.(PINNED_OWNER);
+        assert.equal(world.dbusCalls.length, 2);
+        const planner = world.dbusCalls.find((call) => call.method === MOVEMENT_METHOD);
+        assert.ok(planner !== undefined);
+        const payload = JSON.parse(planner.payload) as Record<string, unknown>;
+        const domains = payload["domains"] as Array<Record<string, unknown>>;
+        const byOutput = new Map<string, Record<string, unknown>>();
+        for (const domain of domains) {
+            byOutput.set(domain["output"] as string, domain);
+        }
+        // 960.5 quantizes to 961; integer Rust wire contract preserved.
+        assert.deepEqual(byOutput.get("out-2")?.["bounds"], { x: 960, y: 0, w: 961, h: 1080 });
+        for (const domain of domains) {
+            const bounds = domain["bounds"] as Record<string, unknown>;
+            for (const key of ["x", "y", "w", "h"]) {
+                assert.equal(Number.isInteger(bounds[key]), true);
+            }
+        }
+        handle.stop();
     });
 });
 

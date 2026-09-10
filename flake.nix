@@ -111,26 +111,47 @@
         };
 
       mkKwinScript =
-        { pkgs }:
+        { pkgs
+        , sourceRev ? "local-dev"
+        }:
         pkgs.buildNpmPackage {
           pname = "plasma-auto-tiler-kwin";
           version = "0.1.0";
           src = kwinScriptSource pkgs;
           sourceRoot = "source/kwin";
           npmDepsHash = "sha256-IWhNnM3IfAVLFQBOC+l9XssLOcIUcGCEa4RHv6BZ3cM=";
-          npmBuildScript = "build";
+          # Installed build only; ordinary npm build stays define-free.
+          npmBuildScript = "build:installed";
+          # Shared compile-time identity: self.rev or local-dev.
+          env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
 
           installPhase = ''
             runHook preInstall
             installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
             mkdir -p "$installRoot"
             cp -a metadata.json contents "$installRoot/"
+            # Static build-id marker, no paths.
+            printf '%s\n' "package=plasma-auto-tiler-kwin" "version=0.1.0" "source=${sourceRev}" > "$installRoot/build-id"
             runHook postInstall
+          '';
+
+          doInstallCheck = true;
+          installCheckPhase = ''
+            runHook preInstallCheck
+            installRoot="$out/share/kwin/scripts/plasma-auto-tiler-kwin"
+            grep -Fx "package=plasma-auto-tiler-kwin" "$installRoot/build-id"
+            grep -Fx "version=0.1.0" "$installRoot/build-id"
+            grep -Fx "source=${sourceRev}" "$installRoot/build-id"
+            grep -Fq '"${sourceRev}"' "$installRoot/contents/code/main.js"
+            grep -Fq 'formatLifecycleDiag("bridge", "started"' "$installRoot/contents/code/main.js"
+            runHook postInstallCheck
           '';
         };
 
       mkTray =
-        { pkgs }:
+        { pkgs
+        , sourceRev ? "local-dev"
+        }:
         pkgs.rustPlatform.buildRustPackage {
           pname = "plasma-auto-tiler";
           version = "0.1.0";
@@ -140,6 +161,8 @@
           dontWrapQtApps = true;
           env.PLASMA_AUTO_TILER_KCMSHELL6 =
             "${pkgs.kdePackages.kcmutils}/bin/kcmshell6";
+          # Shared compile-time identity: self.rev or local-dev.
+          env.PLASMA_AUTO_TILER_SOURCE_REV = sourceRev;
           preCheck = ''
             export HOME="$NIX_BUILD_TOP"
           '';
@@ -148,6 +171,9 @@
             cp ${./assets/icons/plasma-auto-tiler.svg} "$out/share/icons/hicolor/scalable/apps/plasma-auto-tiler.svg"
             mkdir -p "$out/share/dbus-1/services"
             substitute "${plannerDbusServiceSource pkgs}/nix/org.plasmaautotiler.Planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service" --replace-fail "@out@" "$out"
+            # Static build-id marker, no paths.
+            mkdir -p "$out/share/plasma-auto-tiler"
+            printf '%s\n' "package=plasma-auto-tiler" "version=0.1.0" "source=${sourceRev}" > "$out/share/plasma-auto-tiler/build-id"
           '';
           doInstallCheck = true;
           installCheckPhase = ''
@@ -158,6 +184,11 @@
             grep -Fx "Name=org.plasmaautotiler.Planner" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
             grep -Fx "Exec=$out/bin/plasma-auto-tiler planner-service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
             grep -Fx "SystemdService=plasma-auto-tiler-planner.service" "$out/share/dbus-1/services/org.plasmaautotiler.Planner.service"
+            grep -Fx "package=plasma-auto-tiler" "$out/share/plasma-auto-tiler/build-id"
+            grep -Fx "version=0.1.0" "$out/share/plasma-auto-tiler/build-id"
+            grep -Fx "source=${sourceRev}" "$out/share/plasma-auto-tiler/build-id"
+            grep -Fq ":version=" "$out/bin/plasma-auto-tiler"
+            grep -Fq "${sourceRev}" "$out/bin/plasma-auto-tiler"
             runHook postInstallCheck
           '';
         };
@@ -170,22 +201,34 @@
       nixosModules.default = { config, lib, pkgs, ... }:
         import ./nixos-module.nix {
           inherit config lib pkgs;
-          kwinScript = self.lib.mkKwinScript { inherit pkgs; };
+          kwinScript = self.lib.mkKwinScript {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
           nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
         };
 
       homeManagerModules.default = { config, lib, pkgs, ... }:
         import ./home-manager-module.nix {
           inherit config lib pkgs;
-          trayPackage = self.lib.mkTray { inherit pkgs; };
+          trayPackage = self.lib.mkTray {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
         };
 
       checks = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          kwinScript = self.lib.mkKwinScript { inherit pkgs; };
+          kwinScript = self.lib.mkKwinScript {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
           nativeEffect = self.lib.mkNativeEffect { inherit pkgs; };
-          tray = self.lib.mkTray { inherit pkgs; };
+          tray = self.lib.mkTray {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
           enabledNixos = nixpkgs.lib.nixosSystem {
             inherit system;
             modules = [
@@ -351,8 +394,14 @@
       packages = forAllSystems (system:
         let
           pkgs = import nixpkgs { inherit system; };
-          kwinScript = mkKwinScript { inherit pkgs; };
-          tray = mkTray { inherit pkgs; };
+          kwinScript = mkKwinScript {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
+          tray = mkTray {
+            inherit pkgs;
+            sourceRev = self.rev or "local-dev";
+          };
         in
         {
           default = tray;

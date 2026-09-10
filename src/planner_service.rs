@@ -410,6 +410,11 @@ fn emit_route_reply(route: crate::route_diag::Route, request: &str, reply: &str)
     }
 }
 
+/// Single build-identity startup emission; caller holds no locks.
+fn emit_build_identity_startup() {
+    eprintln!("{}", crate::build_identity::startup_line());
+}
+
 /// Best-effort Planner trio-seeded lifecycle emission after the lock is
 /// released. Generation/correlation come from already-computed request/reply
 /// values only; bounded revision only when in bounds.
@@ -2085,6 +2090,8 @@ fn serve(endpoint: PlannerEndpoint) -> zbus::Result<()> {
     let connection = Connection::session()?;
     connection.object_server().at(OBJECT, endpoint)?;
     request_planner_name(&connection)?;
+    // One build-identity startup record after successful start; no locks held.
+    emit_build_identity_startup();
     let our_unique = connection.unique_name().map(|name| name.to_string());
 
     let monitor = Connection::session()?;
@@ -2233,6 +2240,8 @@ pub fn run_nested(manifest_path: &Path) -> zbus::Result<()> {
     let endpoint = NestedPlannerEndpoint::new(manifest);
     connection.object_server().at(OBJECT, endpoint)?;
     request_planner_name(&connection)?;
+    // One build-identity startup record after successful start; no locks held.
+    emit_build_identity_startup();
     let our_unique = connection.unique_name().map(|name| name.to_string());
 
     let owner_changes = monitor_owner_changes(&monitor)?;
