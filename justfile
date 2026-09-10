@@ -51,6 +51,69 @@ dev-on:
       [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       printf '%s\n' "${fields[19]}"
     }
+    planner_verify_worktree() {
+      local pid="$1" exe candidate_start
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      [[ -d "/proc/$pid" ]] || return 1
+      exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+      [[ -n "$exe" && "$exe" == "$BIN" ]] || return 1
+      case "$exe" in */nix/store/*) return 1 ;; esac
+      tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "planner-service" || return 1
+      candidate_start="$(planner_start_identity "$pid")" || return 1
+      [[ "$candidate_start" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\n' "$candidate_start"
+    }
+    planner_dbus_owner_pid() {
+      local owner_reply owner_name owner_pid
+      owner_reply="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null)" || return 1
+      owner_name="$(echo "$owner_reply" | awk '{print $NF}' | tr -d '\"')"
+      [[ -n "$owner_name" ]] || return 1
+      owner_pid="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner_name" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
+      [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+      printf '%s\n' "$owner_pid"
+    }
+    ROLLBACK_ARMED=0
+    ROLLBACK_RECEIPT_DIR=""
+    VERIFIED_PID=""
+    VERIFIED_EXE=""
+    VERIFIED_START=""
+    LOADED_OK=0
+    RECEIPT=""
+    RECEIPT_DIR=""
+    SCRIPT_ID=""
+    dev_on_rollback() {
+      local orig_rc="${1:-1}"
+      set +e
+      if [[ "$LOADED_OK" -eq 1 ]]; then
+        if [[ "$SCRIPT_ID" =~ ^[0-9]+$ && "$SCRIPT_ID" -le 2147483647 && -n "$RECEIPT" && -f "$RECEIPT" && ! -L "$RECEIPT" ]]; then
+          CONTROLLER_OWNERSHIP_FILE="$RECEIPT" bash "$REPO_ROOT/scripts/start-test.sh" stop "$SCRIPT_ID" >/dev/null 2>&1 || echo "error: rollback: start-test.sh stop $SCRIPT_ID failed; worktree script may still be loaded (receipt $RECEIPT)" >&2
+        else
+          echo "error: rollback: worktree script was loaded but script ID/receipt is not valid for exact unload (script_id '${SCRIPT_ID:-unknown}', receipt '${RECEIPT:-unknown}'); manual cleanup may be required" >&2
+        fi
+      fi
+      if [[ -n "$VERIFIED_PID" ]]; then
+        REVERIFY_START=""
+        REVERIFY_START="$(planner_verify_worktree "$VERIFIED_PID" 2>/dev/null || true)"
+        if [[ -n "$REVERIFY_START" && "$REVERIFY_START" == "$VERIFIED_START" ]]; then
+          kill "$VERIFIED_PID" 2>/dev/null || echo "error: rollback: could not terminate verified worktree planner pid $VERIFIED_PID" >&2
+        else
+          echo "error: rollback: verified planner identity changed for pid $VERIFIED_PID; refusing to kill ambiguously" >&2
+        fi
+      fi
+      bash "$REPO_ROOT/scripts/dogfood-install.sh" enable >/dev/null 2>&1 || echo "error: rollback: dogfood-install.sh enable failed; packaged script may still be disabled" >&2
+      if [[ -n "$ROLLBACK_RECEIPT_DIR" ]]; then
+        case "$ROLLBACK_RECEIPT_DIR" in
+          "$RUNTIME_DIR"/plasma-auto-tiler-controller.*)
+            rm -rf -- "$ROLLBACK_RECEIPT_DIR" 2>/dev/null || echo "error: rollback: could not remove own receipt dir $ROLLBACK_RECEIPT_DIR" >&2
+            ;;
+          *) echo "error: rollback: refusing to remove unexpected receipt dir $ROLLBACK_RECEIPT_DIR" >&2 ;;
+        esac
+      fi
+      rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log" 2>/dev/null || echo "error: rollback: could not remove dev state files in $STATE_DIR" >&2
+      rmdir -- "$STATE_DIR" 2>/dev/null || true
+      return "$orig_rc"
+    }
+    trap 'trap_rc=$?; if [[ "${ROLLBACK_ARMED:-0}" -eq 1 ]]; then dev_on_rollback "$trap_rc"; trap_rc=$?; fi; exit "$trap_rc"' EXIT
     # Already-up guard: recorded PID alive with matching worktree exe and a
     # live receipt means dev mode is up. Report and make no changes.
     if [[ -f "$PID_FILE" && -f "$RECEIPT_PTR" ]]; then
@@ -89,6 +152,7 @@ dev-on:
     fi
     # 1. Disable the packaged KWin script (host tools, no devenv wrapper).
     bash "$REPO_ROOT/scripts/dogfood-install.sh" disable
+    ROLLBACK_ARMED=1
     # 2. Verify isScriptLoaded is false; reconfiguration settles asynchronously.
     IS_LOADED_OUT="$(busctl --user --json=short call org.kde.KWin /Scripting org.kde.kwin.Scripting isScriptLoaded s "$PLUGIN_ID")" || { echo "error: isScriptLoaded call failed" >&2; exit 1; }
     if ! echo "$IS_LOADED_OUT" | jq -e '((keys | sort) == ["data","type"]) and (.type == "b") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "boolean")' >/dev/null 2>&1; then
@@ -119,67 +183,65 @@ dev-on:
     fi
     # 5. Derive the per-run receipt path dynamically under $XDG_RUNTIME_DIR.
     RECEIPT_DIR="$(mktemp -d "$RUNTIME_DIR/plasma-auto-tiler-controller.XXXXXX")" || { echo "error: could not create controller receipt dir" >&2; exit 1; }
+    ROLLBACK_RECEIPT_DIR="$RECEIPT_DIR"
     chmod 700 "$RECEIPT_DIR" || { rmdir -- "$RECEIPT_DIR"; echo "error: could not secure controller receipt dir" >&2; exit 1; }
     RECEIPT="$RECEIPT_DIR/ownership"
     if [[ -e "$RECEIPT" || -L "$RECEIPT" ]]; then
       echo "error: controller receipt path already exists: $RECEIPT" >&2
       exit 1
     fi
-    # 6. Launch exactly the worktree Planner, detached.
+    # 6. Launch exactly the worktree Planner, detached. $! is a hint only and
+    # never authoritative: setsid may fork when it is a process-group leader,
+    # so identity is derived from the D-Bus owner instead.
     PLANNER_LOG="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
     setsid nohup "$BIN" planner-service >"$PLANNER_LOG" 2>&1 </dev/null &
-    PLANNER_PID=$!
-    if ! kill -0 "$PLANNER_PID" 2>/dev/null; then
-      echo "error: worktree Planner failed to start (pid $PLANNER_PID); see $PLANNER_LOG" >&2
-      exit 1
-    fi
-    PLANNER_EXE="$(readlink "/proc/$PLANNER_PID/exe" 2>/dev/null || true)"
-    if [[ "$PLANNER_EXE" != "$BIN" ]]; then
-      echo "error: planner pid $PLANNER_PID exe is '$PLANNER_EXE', expected '$BIN'; killing it" >&2
-      kill "$PLANNER_PID" 2>/dev/null || true
-      exit 1
-    fi
-    case "$PLANNER_EXE" in */nix/store/*) echo "error: planner resolved through /nix/store ($PLANNER_EXE); refusing" >&2; kill "$PLANNER_PID" 2>/dev/null || true; exit 1 ;; esac
-    PLANNER_START="$(planner_start_identity "$PLANNER_PID")" || { echo "error: could not capture planner start identity for pid $PLANNER_PID; killing it" >&2; kill "$PLANNER_PID" 2>/dev/null || true; exit 1; }
-    # Prove the new Planner owns the D-Bus name (bounded wait).
+    LAUNCH_PID=$!
+    VERIFIED_PID=""
+    VERIFIED_EXE=""
+    VERIFIED_START=""
     PROVED=0
     for _ in $(seq 1 50); do
-      if OWNER_REPLY="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null)"; then
-        OWNER_NAME="$(echo "$OWNER_REPLY" | awk '{print $NF}' | tr -d '\"')"
-        OWNER_PID="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$OWNER_NAME" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
-        if [[ "$OWNER_PID" == "$PLANNER_PID" ]]; then PROVED=1; break; fi
-        echo "error: $PLANNER_BUS owned by unexpected pid $OWNER_PID (expected $PLANNER_PID); killing worktree Planner" >&2
-        kill "$PLANNER_PID" 2>/dev/null || true
-        exit 1
+      if OWNER_PID="$(planner_dbus_owner_pid 2>/dev/null)"; then
+        if CAND_START="$(planner_verify_worktree "$OWNER_PID" 2>/dev/null)"; then
+          VERIFIED_PID="$OWNER_PID"
+          VERIFIED_EXE="$BIN"
+          VERIFIED_START="$CAND_START"
+          PROVED=1
+          break
+        else
+          echo "error: $PLANNER_BUS owned by unexpected pid $OWNER_PID (exe/cmdline/start did not verify as worktree $BIN planner-service); refusing (launch hint was ${LAUNCH_PID:-unknown}); rollback will re-enable the packaged script without touching that PID" >&2
+          exit 1
+        fi
       fi
       sleep 0.2
     done
     if [[ "$PROVED" -ne 1 ]]; then
-      echo "error: $PLANNER_BUS was not owned by planner pid $PLANNER_PID within the bounded window; killing it" >&2
-      kill "$PLANNER_PID" 2>/dev/null || true
+      echo "error: $PLANNER_BUS was not owned by a verified worktree Planner within the bounded window (launch hint ${LAUNCH_PID:-unknown}); see $PLANNER_LOG" >&2
       exit 1
     fi
-    busctl --user status "$PLANNER_BUS" || { echo "error: busctl status for $PLANNER_BUS failed" >&2; kill "$PLANNER_PID" 2>/dev/null || true; exit 1; }
+    busctl --user status "$PLANNER_BUS" || { echo "error: busctl status for $PLANNER_BUS failed" >&2; exit 1; }
     # 7. Load the worktree KWin bundle. start-test.sh owns the duplicate
     # plugin guard; do not reimplement it here.
     CONTROLLER_OWNERSHIP_FILE="$RECEIPT" bash "$REPO_ROOT/scripts/start-test.sh" start || {
-      echo "error: start-test.sh start failed; terminating worktree Planner pid $PLANNER_PID" >&2
-      kill "$PLANNER_PID" 2>/dev/null || true
+      echo "error: start-test.sh start failed (verified planner ${VERIFIED_PID:-unknown} will be terminated by rollback); see $PLANNER_LOG" >&2
       exit 1
     }
+    LOADED_OK=1
     # 8. Print Planner PID plus script ID read from the controller receipt.
     SCRIPT_ID="$(jq -r '.script_id // empty' "$RECEIPT" 2>/dev/null || true)"
     if [[ ! "$SCRIPT_ID" =~ ^[0-9]+$ ]] || [[ "$SCRIPT_ID" -gt 2147483647 ]]; then
       echo "error: controller receipt has no valid script_id: $RECEIPT" >&2
       exit 1
     fi
-    mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR"
-    printf '%s\n' "$PLANNER_PID" > "$STATE_DIR/planner-pid"
-    printf '%s\n' "$PLANNER_EXE" > "$STATE_DIR/planner-exe"
-    printf '%s\n' "$PLANNER_START" > "$START_FILE"
-    printf '%s\n' "$RECEIPT" > "$STATE_DIR/controller-receipt-path"
-    printf '%s\n' "$PLANNER_LOG" > "$STATE_DIR/planner-log"
-    echo "dev-on: planner pid $PLANNER_PID, script id $SCRIPT_ID"
+    mkdir -p "$STATE_DIR" && chmod 700 "$STATE_DIR" || { echo "error: could not create state dir $STATE_DIR" >&2; exit 1; }
+    printf '%s\n' "$VERIFIED_PID" > "$STATE_DIR/planner-pid" || { echo "error: could not record planner pid" >&2; exit 1; }
+    printf '%s\n' "$VERIFIED_EXE" > "$STATE_DIR/planner-exe" || { echo "error: could not record planner exe" >&2; exit 1; }
+    printf '%s\n' "$VERIFIED_START" > "$START_FILE" || { echo "error: could not record planner start identity" >&2; exit 1; }
+    printf '%s\n' "$RECEIPT" > "$STATE_DIR/controller-receipt-path" || { echo "error: could not record controller receipt path" >&2; exit 1; }
+    printf '%s\n' "$PLANNER_LOG" > "$STATE_DIR/planner-log" || { echo "error: could not record planner log path" >&2; exit 1; }
+    ROLLBACK_ARMED=0
+    trap - EXIT
+    echo "dev-on: planner pid $VERIFIED_PID, script id $SCRIPT_ID"
     echo "planner log: $PLANNER_LOG"
     echo "receipt: $RECEIPT"
 
@@ -208,6 +270,27 @@ reload:
       [[ "${#fields[@]}" -ge 20 && "${fields[0]:-}" =~ ^[A-Za-z]$ ]] || return 1
       [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       printf '%s\n' "${fields[19]}"
+    }
+    planner_verify_worktree() {
+      local pid="$1" exe candidate_start
+      [[ "$pid" =~ ^[0-9]+$ ]] || return 1
+      [[ -d "/proc/$pid" ]] || return 1
+      exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+      [[ -n "$exe" && "$exe" == "$BIN" ]] || return 1
+      case "$exe" in */nix/store/*) return 1 ;; esac
+      tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "planner-service" || return 1
+      candidate_start="$(planner_start_identity "$pid")" || return 1
+      [[ "$candidate_start" =~ ^[1-9][0-9]*$ ]] || return 1
+      printf '%s\n' "$candidate_start"
+    }
+    planner_dbus_owner_pid() {
+      local owner_reply owner_name owner_pid
+      owner_reply="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null)" || return 1
+      owner_name="$(echo "$owner_reply" | awk '{print $NF}' | tr -d '\"')"
+      [[ -n "$owner_name" ]] || return 1
+      owner_pid="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$owner_name" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
+      [[ "$owner_pid" =~ ^[0-9]+$ ]] || return 1
+      printf '%s\n' "$owner_pid"
     }
     [[ -f "$PID_FILE" ]] || { echo "error: no recorded planner pid ($PID_FILE missing); is dev mode on?" >&2; exit 1; }
     [[ -f "$EXE_FILE" ]] || { echo "error: no recorded planner exe ($EXE_FILE missing)" >&2; exit 1; }
@@ -254,38 +337,51 @@ reload:
     fi
     PLANNER_LOG="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)" || { echo "error: could not create planner log" >&2; exit 1; }
     setsid nohup "$BIN" planner-service >"$PLANNER_LOG" 2>&1 </dev/null &
-    NEW_PID=$!
-    if ! kill -0 "$NEW_PID" 2>/dev/null; then
-      echo "error: replacement Planner failed to start; see $PLANNER_LOG" >&2
-      exit 1
-    fi
-    NEW_EXE="$(readlink "/proc/$NEW_PID/exe" 2>/dev/null || true)"
-    if [[ "$NEW_EXE" != "$BIN" ]]; then
-      echo "error: replacement pid $NEW_PID exe is '$NEW_EXE', expected '$BIN'; killing it" >&2
-      kill "$NEW_PID" 2>/dev/null || true
-      exit 1
-    fi
-    case "$NEW_EXE" in */nix/store/*) echo "error: replacement planner resolved through /nix/store ($NEW_EXE); refusing" >&2; kill "$NEW_PID" 2>/dev/null || true; exit 1 ;; esac
-    NEW_START="$(planner_start_identity "$NEW_PID")" || { echo "error: could not capture replacement planner start identity; killing it" >&2; kill "$NEW_PID" 2>/dev/null || true; exit 1; }
+    LAUNCH_PID=$!
+    NEW_PID=""
+    NEW_EXE=""
+    NEW_START=""
     PROVED=0
     for _ in $(seq 1 50); do
-      if OWNER_REPLY="$(busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s "$PLANNER_BUS" 2>/dev/null)"; then
-        OWNER_NAME="$(echo "$OWNER_REPLY" | awk '{print $NF}' | tr -d '\"')"
-        OWNER_PID="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$OWNER_NAME" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
-        if [[ "$OWNER_PID" == "$NEW_PID" ]]; then PROVED=1; break; fi
+      if OWNER_PID="$(planner_dbus_owner_pid 2>/dev/null)"; then
+        if CAND_START="$(planner_verify_worktree "$OWNER_PID" 2>/dev/null)"; then
+          NEW_PID="$OWNER_PID"
+          NEW_EXE="$BIN"
+          NEW_START="$CAND_START"
+          PROVED=1
+          break
+        else
+          echo "error: $PLANNER_BUS owned by unexpected pid $OWNER_PID (exe/cmdline/start did not verify as worktree $BIN planner-service); refusing (launch hint was ${LAUNCH_PID:-unknown}); not touching that PID" >&2
+          exit 1
+        fi
       fi
       sleep 0.2
     done
     if [[ "$PROVED" -ne 1 ]]; then
-      echo "error: replacement planner pid $NEW_PID did not own $PLANNER_BUS in time; killing it" >&2
-      kill "$NEW_PID" 2>/dev/null || true
+      echo "error: replacement Planner did not own $PLANNER_BUS within the bounded window (launch hint ${LAUNCH_PID:-unknown}); see $PLANNER_LOG; not touching any unverified PID" >&2
       exit 1
     fi
-    printf '%s\n' "$NEW_PID" > "$PID_FILE"
-    printf '%s\n' "$NEW_EXE" > "$EXE_FILE"
-    printf '%s\n' "$NEW_START" > "$START_FILE"
-    printf '%s\n' "$PLANNER_LOG" > "$STATE_DIR/planner-log"
-    echo "reload: old pid $OLD_PID replaced by $NEW_PID"
+    kill_verified_replacement() {
+      local reverify
+      reverify="$(planner_verify_worktree "$NEW_PID" 2>/dev/null || true)"
+      if [[ -n "$reverify" && "$reverify" == "$NEW_START" ]]; then
+        kill "$NEW_PID" 2>/dev/null || true
+      else
+        echo "error: replacement planner identity changed for pid $NEW_PID; refusing to kill ambiguously" >&2
+      fi
+    }
+    reload_fail() {
+      echo "error: $*" >&2
+      if [[ -n "${NEW_PID:-}" && -n "${NEW_START:-}" ]]; then
+        kill_verified_replacement
+      fi
+      exit 1
+    }
+    printf '%s\n' "$NEW_PID" > "$PID_FILE" || reload_fail "could not record replacement planner pid"
+    printf '%s\n' "$NEW_EXE" > "$EXE_FILE" || reload_fail "could not record replacement planner exe"
+    printf '%s\n' "$NEW_START" > "$START_FILE" || reload_fail "could not record replacement planner start identity"
+    printf '%s\n' "$PLANNER_LOG" > "$STATE_DIR/planner-log" || reload_fail "could not record replacement planner log path"
+    echo "reload: old pid $OLD_PID replaced by $NEW_PID (launch hint was ${LAUNCH_PID:-unknown})"
 
 # Unload the exact controller script, stop only the recorded Planner, re-enable packaged script.
 dev-off:

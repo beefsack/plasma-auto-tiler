@@ -15,15 +15,36 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   `false`, requires `org.plasmaautotiler.Planner` to be unowned (it does not
   stop units for you), builds, launches exactly
   `target/debug/plasma-auto-tiler planner-service` detached with
-  `setsid nohup ... </dev/null &`, proves its PID/exe and D-Bus name owner,
-  then runs `scripts/start-test.sh start` with a dynamically derived
-  `CONTROLLER_OWNERSHIP_FILE` under `$XDG_RUNTIME_DIR` and prints the Planner
-  PID plus the script ID read from the controller receipt. If dev mode is
-  already up it reports that and makes no changes. `start-test.sh` keeps its
-  duplicate plugin guard.
+  `setsid nohup ... </dev/null &`, then proves identity from D-Bus rather
+  than `$!`. `$!` is a launch hint only and never authoritative (setsid may
+  fork when it is a process-group leader). After a bounded wait the owner
+  PID is derived from `GetNameOwner` plus `GetConnectionUnixProcessID` and
+  accepted only when `/proc/<pid>/exe` is exactly the worktree `$BIN`, is
+  not under `/nix/store`, cmdline contains `planner-service`, and the
+  `/proc/<pid>/stat` start identity is captured. That verified PID/exe/start
+  is recorded. On failure only an already positively verified worktree
+  planner is terminated, never an unverified PID or intermediate bash.
+  `dev-on` then runs `scripts/start-test.sh start` with a dynamically
+  derived `CONTROLLER_OWNERSHIP_FILE` under `$XDG_RUNTIME_DIR` and prints the
+  verified Planner PID plus the script ID read from the controller receipt.
+  Every failure after the packaged script was disabled runs fail-closed
+  transactional rollback: terminate only the positively verified worktree
+  planner (re-verified first), unload the KWin script only if this run
+  successfully loaded it, re-enable the packaged script, remove only its own
+  created receipt dir, and remove its state pointers/dir. Rollback never
+  unloads a script it did not load and never touches a planner it did not
+  positively verify; each failed rollback step prints a precise loud error.
+  Success disarms rollback. If dev mode is already up it reports that and
+  makes no changes. `start-test.sh` keeps its duplicate plugin guard.
 - `reload` rebuilds and safely swaps only the recorded worktree Planner. It
   never reloads or unloads the KWin script and requires the recorded
-  PID/exe and current process state.
+  PID/exe and current process state. The replacement is launched detached
+  with `setsid nohup ... &` where `$!` is a hint only; the new PID is
+  derived from the D-Bus owner (`GetNameOwner` plus
+  `GetConnectionUnixProcessID`) under the same bounded wait and accepted
+  only with exact worktree exe, no `/nix/store`, `planner-service` cmdline,
+  and captured start identity. On failure only an already positively
+  verified replacement is terminated, never an unverified PID.
 - `dev-off` reads the script ID from the dynamically found controller
   receipt, passes both receipt (`CONTROLLER_OWNERSHIP_FILE`) and ID to
   `start-test.sh stop`, terminates only the recorded worktree Planner PID
@@ -54,8 +75,12 @@ busctl --user call org.freedesktop.DBus /org/freedesktop/DBus \
 devenv shell --impure -- cargo build
 PLANNER_OUT="$(mktemp /tmp/plasma-auto-tiler-planner-dev.XXXXXX.log)"
 setsid nohup "$PWD/target/debug/plasma-auto-tiler" planner-service >"$PLANNER_OUT" 2>&1 </dev/null &
-PLANNER_PID=$!
-readlink -f "/proc/$PLANNER_PID/exe"
+# $! is a launch hint only, never authoritative (setsid may fork). Derive the
+# owner PID from D-Bus and verify it before trusting it.
+busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetNameOwner s org.plasmaautotiler.Planner
+busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "<owner-name-from-above>"
+readlink "/proc/<owner-pid>/exe"
+tr '\0' ' ' < "/proc/<owner-pid>/cmdline"
 busctl --user status org.plasmaautotiler.Planner
 devenv shell --impure -- bash scripts/start-test.sh start
 ```
@@ -68,8 +93,11 @@ devenv shell --impure -- bash scripts/start-test.sh start
    PID and parent. Do not mask units: the D-Bus descriptor `Exec=` fallback can
    still activate the installed Planner.
 4. Build and start only `target/debug/plasma-auto-tiler planner-service` from
-   this worktree. Record its PID and output; `busctl` and `/proc/<pid>/exe` must
-   identify that PID and worktree path.
+   this worktree. Record its output; derive the Planner PID from the D-Bus
+   owner (`GetNameOwner` plus `GetConnectionUnixProcessID`), never from `$!`,
+   and require `/proc/<pid>/exe` to be exactly that worktree path (never
+   `/nix/store`), cmdline to contain `planner-service`, and the start
+   identity to be captured.
 5. `start-test.sh start` loads worktree KWin bundle. Retain its exact ID and receipt.
 
 ### Verify
