@@ -225,6 +225,10 @@ Only meaningful pending or active work is listed.
                  unchanged. Deferred KWin bundle work must parse and emit the
                  bounded `kind:"unauthorized"` rejection for those four Rust
                  routes; it is blocked on a user-authorized script reload.
+                  The deferred `just` recipes wrapping the worktree dev-on,
+                  Planner-only reload, and dev-off loop are complete; they
+                  dynamically retain the controller receipt and exact Planner
+                  process identity, while live validation remains user-owned.
                  Source-parity
              correction is statically complete:
               `cosmic_v1` now executes audited `cosmic-comp`

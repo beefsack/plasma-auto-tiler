@@ -8,6 +8,7 @@
   packages = with pkgs; [
     cmake
     clang-tools
+    just
     ninja
     pkg-config
     python3
