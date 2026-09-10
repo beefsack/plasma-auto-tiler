@@ -4768,6 +4768,20 @@
     }
     return value;
   }
+  function sanitizeWid(value) {
+    if (typeof value !== "string" || value.length !== 8) {
+      return "00000000";
+    }
+    for (let index = 0; index < 8; index += 1) {
+      const code = value.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lower = code >= 97 && code <= 102;
+      if (!(digit || lower)) {
+        return "00000000";
+      }
+    }
+    return value;
+  }
   function sanitizeGen(value) {
     if (typeof value !== "string" || !isGenerationToken(value)) {
       return "invalid";
@@ -4804,6 +4818,9 @@
   function sanitizeField(key, value) {
     if (key === "corr") {
       return sanitizeCorr(value);
+    }
+    if (key === "wid") {
+      return sanitizeWid(value);
     }
     if (key === "gen") {
       return sanitizeGen(value);
@@ -14780,6 +14797,86 @@
   function rectContained4(inner, outer) {
     return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
   }
+  function trioOrientationCategory(w, h) {
+    if (w > h) {
+      return "landscape";
+    }
+    if (w < h) {
+      return "portrait";
+    }
+    return "square";
+  }
+  function trioSlotSatisfies(slot, w, h) {
+    if (slot === 1) {
+      return w > h;
+    }
+    if (slot === 2) {
+      return w <= h;
+    }
+    return true;
+  }
+  function truncIdHash(id) {
+    let hash = 2166136261;
+    for (let index = 0; index < id.length; index += 1) {
+      hash ^= id.charCodeAt(index);
+      hash = Math.imul(hash, 16777619) >>> 0;
+    }
+    let hex = hash.toString(16);
+    while (hex.length < 8) {
+      hex = `0${hex}`;
+    }
+    return hex;
+  }
+  function logTrioWindowDiags(log, observed) {
+    try {
+      if (observed.windows.length !== 3) {
+        return;
+      }
+      const sorted = [...observed.windows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      for (let slot = 0; slot < 3; slot += 1) {
+        const entry = sorted[slot];
+        if (entry === void 0) {
+          continue;
+        }
+        let w = void 0;
+        let h = void 0;
+        try {
+          w = entry.rect.w;
+          h = entry.rect.h;
+        } catch (error) {
+          void error;
+          continue;
+        }
+        if (typeof w !== "number" || typeof h !== "number") {
+          continue;
+        }
+        const kind = trioOrientationCategory(w, h);
+        const pass = trioSlotSatisfies(slot, w, h);
+        let wid = "00000000";
+        try {
+          wid = truncIdHash(entry.id);
+        } catch (error) {
+          void error;
+          continue;
+        }
+        const detail = slot === 0 ? "trio-slot-0" : slot === 1 ? "trio-slot-1" : "trio-slot-2";
+        try {
+          log(
+            formatRouteDiag("scope", [
+              ["detail", detail],
+              ["kind", kind],
+              ["result", pass ? "pass" : "fail"],
+              ["wid", wid]
+            ])
+          );
+        } catch (error) {
+          void error;
+        }
+      }
+    } catch (error) {
+      void error;
+    }
+  }
   function trioBootstrapSkipReason(observed) {
     try {
       if (observed.windows.length !== 3) {
@@ -15549,6 +15646,7 @@
           } catch (error) {
             void error;
           }
+          logTrioWindowDiags(log, observed);
           return;
         }
         try {
@@ -15576,6 +15674,7 @@
         } catch (error) {
           void error;
         }
+        logTrioWindowDiags(log, observed);
       } catch (error) {
         void error;
       }

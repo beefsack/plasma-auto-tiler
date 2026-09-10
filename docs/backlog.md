@@ -251,7 +251,13 @@ Only meaningful pending or active work is listed.
   [change](changes/custom-tile-runtime.md)
 - P2 | product-scope decision pending user | The packaged Rust-authority routes
   deliberately require exactly three eligible windows; changing the
-  three-window gate needs an explicit product decision.
+   three-window gate needs an explicit product decision.
+- P2 | pending user decision | Assess a retryable Rust bootstrap adoption after
+  startup: define its trigger, preserve one-shot transaction fencing, and accept
+  repeated scope observation/logging plus changed startup behavior.
+- P2 | pending user decision | Assess whether lexical opaque-ID bootstrap
+  sorting is load-bearing or replaceable with a stable observable physical order;
+  any ordering change alters the seeded `H[A,V[B,C]]` window-to-leaf mapping.
 - P2 | archived POC2 transport reference; superseded by the P1 migration gate |
    baseline/restoration gate passed exactly, then one POC2 planner/probe slice
    loaded, ran, and cleaned up but logged only `planner-shadow-probe-ready`; a

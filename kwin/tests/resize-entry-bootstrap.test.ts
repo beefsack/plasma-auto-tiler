@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import { resizeFingerprint } from "../src/resize-adapter";
 import { startResizeAdapterEntry } from "../src/resize-adapter-entry";
+import { formatRouteDiag } from "../src/route-diag";
 
 interface Rect {
     readonly x: number;
@@ -254,5 +255,207 @@ describe("resize entry exact-three bootstrap", () => {
             assert.equal(calls.length, 0);
             handle.stop();
         }
+    });
+
+    it("emits one bounded per-window diagnostic per sorted candidate on middle-not-wide", () => {
+        const { workspace, byId } = makeTrioWorld({ rectB: { x: 100, y: 100, w: 400, h: 640 } });
+        const captionSentinel = "SecretCaption-SENTINEL-9f3a-middle";
+        const titleSentinel = "SecretTitle-SENTINEL-9f3a-middle";
+        const classSentinel = "SecretClass-SENTINEL-9f3a-middle";
+        for (const id of ["win-a", "win-b", "win-c"]) {
+            byId[id]["caption"] = `${captionSentinel}-${id}`;
+            byId[id]["title"] = `${titleSentinel}-${id}`;
+            byId[id]["resourceClass"] = `${classSentinel}-${id}`;
+        }
+        const calls: DbusCall[] = [];
+        const logs: string[] = [];
+        const holder = { current: 0 };
+        const handle = startWithCapture(workspace, holder, calls, logs);
+        assert.ok(handle !== null);
+        handle.tryBootstrapTrio?.();
+        assert.equal(calls.length, 0);
+        assert.equal(holder.current, 0);
+        const summary = logs.find((line) => line.includes(":scope:"));
+        assert.ok(summary?.includes("reason=middle-not-wide"), summary);
+        const perWindow = logs.filter((line) => line.includes("detail=trio-slot-"));
+        assert.equal(perWindow.length, 3);
+        const bySlot: Record<string, string> = {};
+        for (const line of perWindow) {
+            assert.match(
+                line,
+                /^plasma-auto-tiler:route-diag:scope:detail=trio-slot-[012]:kind=(landscape|portrait|square):result=(pass|fail):wid=[0-9a-f]{8}$/,
+            );
+            assert.ok(line.includes("wid="), line);
+            assert.ok(!line.includes("corr="), line);
+            for (const slot of ["trio-slot-0", "trio-slot-1", "trio-slot-2"]) {
+                if (line.includes(`detail=${slot}`)) {
+                    assert.ok(bySlot[slot] === undefined, `duplicate ${slot}`);
+                    bySlot[slot] = line;
+                }
+            }
+        }
+        assert.ok(bySlot["trio-slot-0"]?.includes("kind=landscape"), bySlot["trio-slot-0"]);
+        assert.ok(bySlot["trio-slot-0"]?.includes("result=pass"), bySlot["trio-slot-0"]);
+        assert.ok(bySlot["trio-slot-1"]?.includes("kind=portrait"), bySlot["trio-slot-1"]);
+        assert.ok(bySlot["trio-slot-1"]?.includes("result=fail"), bySlot["trio-slot-1"]);
+        assert.ok(bySlot["trio-slot-2"]?.includes("kind=portrait"), bySlot["trio-slot-2"]);
+        assert.ok(bySlot["trio-slot-2"]?.includes("result=pass"), bySlot["trio-slot-2"]);
+        const wids = perWindow.map((line) => line.split("wid=")[1] as string);
+        assert.ok(new Set(wids).size === 3, `hashes must distinguish windows: ${wids}`);
+        for (const wid of wids) {
+            assert.match(wid, /^[0-9a-f]{8}$/);
+        }
+        // Malformed identities fail closed to a fixed token, never echoed.
+        assert.ok(
+            formatRouteDiag("scope", [["wid", "BAD!!"]]).includes("wid=00000000"),
+        );
+        assert.ok(
+            formatRouteDiag("scope", [["wid", "ABCDEF12"]]).includes("wid=00000000"),
+        );
+        for (const line of perWindow) {
+            assert.ok(!line.includes("win-a") && !line.includes("win-b") && !line.includes("win-c"), line);
+            assert.ok(!line.includes(captionSentinel) && !line.includes(titleSentinel) && !line.includes(classSentinel), line);
+        }
+        const joined = logs.join("\n");
+        assert.ok(!joined.includes("win-a") && !joined.includes("win-b") && !joined.includes("win-c"));
+        assert.ok(!joined.includes(captionSentinel) && !joined.includes(titleSentinel) && !joined.includes(classSentinel));
+        handle.stop();
+    });
+
+    it("emits one bounded per-window diagnostic per sorted candidate on last-not-tall", () => {
+        const { workspace, byId } = makeTrioWorld({ rectC: { x: 200, y: 200, w: 640, h: 400 } });
+        const captionSentinel = "SecretCaption-SENTINEL-51c7-last";
+        for (const id of ["win-a", "win-b", "win-c"]) {
+            byId[id]["caption"] = `${captionSentinel}-${id}`;
+        }
+        const calls: DbusCall[] = [];
+        const logs: string[] = [];
+        const holder = { current: 0 };
+        const handle = startWithCapture(workspace, holder, calls, logs);
+        assert.ok(handle !== null);
+        handle.tryBootstrapTrio?.();
+        assert.equal(calls.length, 0);
+        assert.equal(holder.current, 0);
+        const summary = logs.find((line) => line.includes(":scope:"));
+        assert.ok(summary?.includes("reason=last-not-tall"), summary);
+        const perWindow = logs.filter((line) => line.includes("detail=trio-slot-"));
+        assert.equal(perWindow.length, 3);
+        const bySlot: Record<string, string> = {};
+        for (const line of perWindow) {
+            assert.match(
+                line,
+                /^plasma-auto-tiler:route-diag:scope:detail=trio-slot-[012]:kind=(landscape|portrait|square):result=(pass|fail):wid=[0-9a-f]{8}$/,
+            );
+            assert.ok(line.includes("wid="), line);
+            assert.ok(!line.includes("corr="), line);
+            for (const slot of ["trio-slot-0", "trio-slot-1", "trio-slot-2"]) {
+                if (line.includes(`detail=${slot}`)) {
+                    assert.ok(bySlot[slot] === undefined, `duplicate ${slot}`);
+                    bySlot[slot] = line;
+                }
+            }
+        }
+        assert.ok(bySlot["trio-slot-0"]?.includes("kind=landscape"), bySlot["trio-slot-0"]);
+        assert.ok(bySlot["trio-slot-0"]?.includes("result=pass"), bySlot["trio-slot-0"]);
+        assert.ok(bySlot["trio-slot-1"]?.includes("kind=landscape"), bySlot["trio-slot-1"]);
+        assert.ok(bySlot["trio-slot-1"]?.includes("result=pass"), bySlot["trio-slot-1"]);
+        assert.ok(bySlot["trio-slot-2"]?.includes("kind=landscape"), bySlot["trio-slot-2"]);
+        assert.ok(bySlot["trio-slot-2"]?.includes("result=fail"), bySlot["trio-slot-2"]);
+        for (const line of perWindow) {
+            assert.ok(!line.includes("win-a") && !line.includes("win-b") && !line.includes("win-c"), line);
+            assert.ok(!line.includes(captionSentinel), line);
+            assert.ok(!line.includes("640") || line.includes("wid="), line);
+        }
+        const joined = logs.join("\n");
+        assert.ok(!joined.includes("win-a") && !joined.includes("win-b") && !joined.includes("win-c"));
+        assert.ok(!joined.includes(captionSentinel));
+        // Raw geometry pairs must never appear as structured values.
+        assert.ok(!joined.includes("width=640") && !joined.includes("height=400"));
+        handle.stop();
+    });
+
+    it("covers the square orientation token without leaking geometry", () => {
+        const { workspace } = makeTrioWorld({ rectB: { x: 100, y: 100, w: 500, h: 500 } });
+        const calls: DbusCall[] = [];
+        const logs: string[] = [];
+        const holder = { current: 0 };
+        const handle = startWithCapture(workspace, holder, calls, logs);
+        assert.ok(handle !== null);
+        handle.tryBootstrapTrio?.();
+        assert.equal(calls.length, 0);
+        const summary = logs.find((line) => line.includes(":scope:"));
+        assert.ok(summary?.includes("reason=middle-not-wide"), summary);
+        const perWindow = logs.filter((line) => line.includes("detail=trio-slot-"));
+        assert.equal(perWindow.length, 3);
+        const slot1 = perWindow.find((line) => line.includes("detail=trio-slot-1"));
+        assert.ok(slot1?.includes("kind=square"), slot1);
+        assert.ok(slot1?.includes("result=fail"), slot1);
+        const slot2 = perWindow.find((line) => line.includes("detail=trio-slot-2"));
+        assert.ok(slot2?.includes("kind=portrait"), slot2);
+        assert.ok(slot2?.includes("result=pass"), slot2);
+        handle.stop();
+    });
+
+    it("emits per-window diagnostics without relying on Qt wrapper simplification", () => {
+        const output = { name: "out-1" };
+        const desktop = { id: "ws-1" };
+        const winA = makeWindow("win-a", { x: 0, y: 0, w: 800, h: 600 }, output, desktop);
+        const winB = makeWindow("win-b", { x: 100, y: 100, w: 400, h: 640 }, output, desktop);
+        const winC = makeWindow("win-c", { x: 200, y: 200, w: 400, h: 640 }, output, desktop);
+        // Qt-style list object (length plus indexed properties), not an Array.
+        const qtList = { length: 3, "0": winA, "1": winB, "2": winC };
+        // Distinct active wrapper: same normalized internalId as win-a but a
+        // different object identity, proving id-sort matching is used.
+        const activeClone: Record<string, unknown> = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            resizeable: true,
+            output: { name: "out-1" },
+            desktops: [desktop],
+            internalId: "win-a",
+            frameGeometry: { x: 0, y: 0, width: 800, height: 600 },
+            moveResizedChanged: makeSignal(),
+        };
+        assert.notEqual(activeClone, winA);
+        const workspace: Record<string, unknown> = {
+            activeWindow: activeClone,
+            windowList: (): unknown => qtList,
+            screens: [output],
+            currentDesktopForScreen: (): unknown => desktop,
+            clientArea: (): unknown => ({ x: 0, y: 0, width: 1920, height: 1080 }),
+            windowActivated: makeSignal(),
+            windowAdded: makeSignal(),
+            windowRemoved: makeSignal(),
+            screensChanged: makeSignal(),
+            currentDesktopChanged: makeSignal(),
+        };
+        const calls: DbusCall[] = [];
+        const logs: string[] = [];
+        const holder = { current: 0 };
+        const handle = startWithCapture(workspace, holder, calls, logs);
+        assert.ok(handle !== null);
+        handle.tryBootstrapTrio?.();
+        assert.equal(calls.length, 0);
+        assert.equal(holder.current, 0);
+        const summary = logs.find(
+            (line) => line.includes("route-diag:scope") && line.includes("reason=middle-not-wide"),
+        );
+        assert.ok(summary !== undefined, logs.join("\n"));
+        const perWindow = logs.filter((line) => line.includes("detail=trio-slot-"));
+        assert.equal(perWindow.length, 3);
+        for (const line of perWindow) {
+            assert.match(
+                line,
+                /^plasma-auto-tiler:route-diag:scope:detail=trio-slot-[012]:kind=(landscape|portrait|square):result=(pass|fail):wid=[0-9a-f]{8}$/,
+            );
+            assert.ok(line.includes("wid="), line);
+            assert.ok(!line.includes("corr="), line);
+            assert.ok(!line.includes("win-a") && !line.includes("win-b") && !line.includes("win-c"), line);
+        }
+        handle.stop();
     });
 });

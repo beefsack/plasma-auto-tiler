@@ -105,6 +105,25 @@ export function sanitizeCorr(value: unknown): string {
     return value;
 }
 
+// Per-window opaque identity hash for bootstrap trio diagnostics: exactly
+// eight lowercase hex chars (FNV-1a 32-bit, see truncIdHash). Never a
+// correlation token; `corr` stays reserved for adapter request correlation.
+// Fail closed to `00000000` so malformed values stay fixed width/charset.
+export function sanitizeWid(value: unknown): string {
+    if (typeof value !== "string" || value.length !== 8) {
+        return "00000000";
+    }
+    for (let index = 0; index < 8; index += 1) {
+        const code = value.charCodeAt(index);
+        const digit = code >= 48 && code <= 57;
+        const lower = code >= 97 && code <= 102;
+        if (!(digit || lower)) {
+            return "00000000";
+        }
+    }
+    return value;
+}
+
 export function sanitizeGen(value: unknown): string {
     if (typeof value !== "string" || !isGenerationToken(value)) {
         return "invalid";
@@ -145,6 +164,9 @@ export function sanitizeVersion(value: unknown): string {
 function sanitizeField(key: string, value: unknown): string {
     if (key === "corr") {
         return sanitizeCorr(value);
+    }
+    if (key === "wid") {
+        return sanitizeWid(value);
     }
     if (key === "gen") {
         return sanitizeGen(value);

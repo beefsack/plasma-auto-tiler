@@ -97,6 +97,108 @@ function rectContained(
 
 // Skip category for the exact-three adoption, mirroring
 // trioBootstrapTarget below. Count only, never identities or geometry.
+function trioOrientationCategory(w: number, h: number): string {
+    if (w > h) {
+        return "landscape";
+    }
+    if (w < h) {
+        return "portrait";
+    }
+    return "square";
+}
+
+// Slot predicate mirror of trioBootstrapTarget: slot 0 has no orientation
+// gate (always pass), slot 1 requires wide (w > h), slot 2 requires
+// tall-or-square (w <= h). Preserves every predicate exactly.
+function trioSlotSatisfies(slot: number, w: number, h: number): boolean {
+    if (slot === 1) {
+        return w > h;
+    }
+    if (slot === 2) {
+        return w <= h;
+    }
+    return true;
+}
+
+// Stable truncated non-crypto hash of the normalized opaque ID (FNV-1a
+// 32-bit, fixed 8-char lowercase hex). Fixed length, opaque charset, no
+// raw ID bytes, no title/caption/geometry/user data. Chosen over raw
+// resourceClass: resourceClass is the xdg app_id, explicitly forbidden by
+// the route-diag bounded-token convention (never app ids), while this hash
+// stays opaque yet lets a person correlate the physical window across
+// repeated lines via slot order plus orientation. No crypto dependency.
+function truncIdHash(id: string): string {
+    let hash = 0x811c9dc5;
+    for (let index = 0; index < id.length; index += 1) {
+        hash ^= id.charCodeAt(index);
+        hash = Math.imul(hash, 0x01000193) >>> 0;
+    }
+    let hex = hash.toString(16);
+    while (hex.length < 8) {
+        hex = `0${hex}`;
+    }
+    return hex;
+}
+
+// Bounded per-window breakdown for an exact-three attempt: one
+// formatRouteDiag scope line per sorted candidate (slot 0|1|2,
+// landscape|portrait|square, pass|fail, 8-hex opaque identity). Derived
+// tokens only; never title/caption/raw geometry/user data/raw ID. Same
+// lexical sort as trioBootstrapTarget. Emitted after the existing scope
+// skip/adopt summary so the established scope contract is preserved.
+function logTrioWindowDiags(
+    log: (message: string) => void,
+    observed: ResizeObserved,
+): void {
+    try {
+        if (observed.windows.length !== 3) {
+            return;
+        }
+        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        for (let slot = 0; slot < 3; slot += 1) {
+            const entry = sorted[slot];
+            if (entry === undefined) {
+                continue;
+            }
+            let w: unknown = undefined;
+            let h: unknown = undefined;
+            try {
+                w = entry.rect.w;
+                h = entry.rect.h;
+            } catch (error) {
+                void error;
+                continue;
+            }
+            if (typeof w !== "number" || typeof h !== "number") {
+                continue;
+            }
+            const kind = trioOrientationCategory(w, h);
+            const pass = trioSlotSatisfies(slot, w, h);
+            let wid = "00000000";
+            try {
+                wid = truncIdHash(entry.id);
+            } catch (error) {
+                void error;
+                continue;
+            }
+            const detail = slot === 0 ? "trio-slot-0" : slot === 1 ? "trio-slot-1" : "trio-slot-2";
+            try {
+                log(
+                    formatRouteDiag("scope", [
+                        ["detail", detail],
+                        ["kind", kind],
+                        ["result", pass ? "pass" : "fail"],
+                        ["wid", wid],
+                    ]),
+                );
+            } catch (error) {
+                void error;
+            }
+        }
+    } catch (error) {
+        void error;
+    }
+}
 function trioBootstrapSkipReason(observed: ResizeObserved): string {
     try {
         if (observed.windows.length !== 3) {
@@ -918,7 +1020,9 @@ export function startResizeAdapterEntry(
             const target = trioBootstrapTarget(observed);
             if (target === null) {
                 // Exact-three scope validation: window count only plus the
-                // fixed skip category. Never identities or geometry.
+                // fixed skip category. Never identities or geometry. The
+                // per-window breakdown below runs after the summary so the
+                // established first-scope-line contract is preserved.
                 try {
                     log(
                         formatRouteDiag("scope", [
@@ -930,6 +1034,7 @@ export function startResizeAdapterEntry(
                 } catch (error) {
                     void error;
                 }
+                logTrioWindowDiags(log, observed);
                 return;
             }
             // Deterministic focus alignment through public state: the Rust
@@ -961,6 +1066,7 @@ export function startResizeAdapterEntry(
             } catch (error) {
                 void error;
             }
+            logTrioWindowDiags(log, observed);
         } catch (error) {
             void error;
         }
