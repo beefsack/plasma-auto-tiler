@@ -43,3 +43,7 @@ pointer-resize routes self-explaining with a bounded diagnostic token.
   transaction failure on these routes remains reasonless.
 - `cargo fmt --check`, `cargo test --lib` (423 passed), and
   `cargo clippy --lib -- -D warnings` passed.
+- Authorized `just reload` stopped before mutation because the existing dev
+  Planner executable was marked deleted. `just dev-status` confirmed the
+  existing Planner still owns the D-Bus name and the worktree KWin script
+  remains loaded; no Planner hot-swap occurred.
