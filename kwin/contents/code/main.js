@@ -1,5 +1,25 @@
 "use strict";
 (() => {
+  var __defProp = Object.defineProperty;
+  var __defProps = Object.defineProperties;
+  var __getOwnPropDescs = Object.getOwnPropertyDescriptors;
+  var __getOwnPropSymbols = Object.getOwnPropertySymbols;
+  var __hasOwnProp = Object.prototype.hasOwnProperty;
+  var __propIsEnum = Object.prototype.propertyIsEnumerable;
+  var __defNormalProp = (obj, key, value) => key in obj ? __defProp(obj, key, { enumerable: true, configurable: true, writable: true, value }) : obj[key] = value;
+  var __spreadValues = (a, b) => {
+    for (var prop in b || (b = {}))
+      if (__hasOwnProp.call(b, prop))
+        __defNormalProp(a, prop, b[prop]);
+    if (__getOwnPropSymbols)
+      for (var prop of __getOwnPropSymbols(b)) {
+        if (__propIsEnum.call(b, prop))
+          __defNormalProp(a, prop, b[prop]);
+      }
+    return a;
+  };
+  var __spreadProps = (a, b) => __defProps(a, __getOwnPropDescs(b));
+
   // src/boundary.ts
   var MAX_SEQUENTIAL_LENGTH = 1024;
   var CUSTOM_TILE_PADDING = 8;
@@ -1406,10 +1426,30 @@
   }
 
   // src/controller-config.ts
+  var DEFAULT_ENGINE_AUTHORITY_MODE = "legacy";
+  var ENGINE_AUTHORITY_MODE_CONFIG_KEY = "engineAuthorityMode";
+  var ENGINE_AUTHORITY_MODES = Object.freeze([
+    "legacy",
+    "rust-development"
+  ]);
+  function parseEngineAuthorityMode(value) {
+    if (typeof value === "string" && ENGINE_AUTHORITY_MODES.includes(value)) {
+      return { mode: value, diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { mode: DEFAULT_ENGINE_AUTHORITY_MODE, diagnostics: Object.freeze([]) };
+    }
+    return {
+      mode: DEFAULT_ENGINE_AUTHORITY_MODE,
+      diagnostics: Object.freeze(["engine-authority-mode-invalid:fallback-legacy"])
+    };
+  }
   var UNRESOLVABLE_CLASSIFICATIONS = Object.freeze([
     "deferred",
     "component-requirement"
   ]);
+  var DEFAULT_PROFILE = "cosmic";
+  var SHORTCUT_PROFILE_CONFIG_KEY = "shortcutProfile";
   var PROFILE_KEYS = Object.freeze(["cosmic", "hyprland", "bspwm"]);
   var DEFAULT_WORKSPACE_MODE = "per-output-local";
   var WORKSPACE_MODE_CONFIG_KEY = "workspaceMode";
@@ -1716,6 +1756,15 @@
   var REGISTERED_PROFILE_ACTION_IDS = Object.freeze(
     new Set(registeredProfileActionIdList())
   );
+  function selectProfile(value) {
+    if (typeof value === "string" && PROFILE_KEYS.includes(value)) {
+      return { profile: PROFILE_CATALOGS[value], diagnostics: Object.freeze([]) };
+    }
+    if (value === void 0 || value === null || value === "") {
+      return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze([]) };
+    }
+    return { profile: PROFILE_CATALOGS.cosmic, diagnostics: Object.freeze(["profile-invalid:fallback-cosmic"]) };
+  }
 
   // src/topology-reset.ts
   function validSnapshot(snapshot, root) {
@@ -4229,6 +4278,11 @@
       interactiveWindows.delete(window);
       watch.disconnect();
     };
+    const detachAll = () => {
+      for (const window of [...interactiveWindows.keys()]) {
+        detach(window);
+      }
+    };
     const attachExisting = (emitSummary) => {
       const decoded = decodeSequential(capabilities.windowList(), isWindow, MAX_SEQUENTIAL_LENGTH);
       if (!decoded.ok) {
@@ -4335,6 +4389,7 @@
       hasActive: () => dragState.current !== void 0,
       isLive: trackedDragLive,
       clear,
+      detachAll,
       showDropOutline,
       hideDropOutline,
       markOwedInvariant,
@@ -4648,6 +4703,11155 @@
     };
   }
 
+  // src/route-diag.ts
+  var ROUTE_DIAG_PREFIX = "plasma-auto-tiler:route-diag";
+  var STAGES = Object.freeze([
+    "cmd",
+    "attach",
+    "retry",
+    "scope",
+    "req",
+    "owner",
+    "result",
+    "ack",
+    "verify",
+    "outcome",
+    "ptr",
+    "lifecycle"
+  ]);
+  var MAX_TOKEN_LEN = 128;
+  function isOpaqueToken(value) {
+    if (value.length === 0 || value.length > MAX_TOKEN_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isGenerationToken(value) {
+    if (value.length === 0 || value.length > 64) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isSafeCategory(value) {
+    if (value.length === 0 || value.length > 32) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45 || code === 95;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isCount(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 1e6;
+  }
+  function sanitizeCorr(value) {
+    if (typeof value !== "string" || !isOpaqueToken(value)) {
+      return "invalid";
+    }
+    return value;
+  }
+  function sanitizeGen(value) {
+    if (typeof value !== "string" || !isGenerationToken(value)) {
+      return "invalid";
+    }
+    return value;
+  }
+  function isPackageVersion(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > 16) {
+      return false;
+    }
+    const parts = value.split(".");
+    if (parts.length !== 3) {
+      return false;
+    }
+    for (const part of parts) {
+      if (part.length === 0 || part.length > 4) {
+        return false;
+      }
+      for (let index = 0; index < part.length; index += 1) {
+        const code = part.charCodeAt(index);
+        if (code < 48 || code > 57) {
+          return false;
+        }
+      }
+    }
+    return true;
+  }
+  function sanitizeVersion(value) {
+    if (typeof value === "string" && isPackageVersion(value)) {
+      return value;
+    }
+    return "invalid";
+  }
+  function sanitizeField(key, value) {
+    if (key === "corr") {
+      return sanitizeCorr(value);
+    }
+    if (key === "gen") {
+      return sanitizeGen(value);
+    }
+    if (key === "version") {
+      return sanitizeVersion(value);
+    }
+    if (key === "rev" || key === "seq" || key === "count" || key === "windows" || key === "slices") {
+      return isCount(value) ? String(value) : "unknown";
+    }
+    if (key === "comp") {
+      return value === "tray" || value === "bridge" || value === "planner" ? value : "unknown";
+    }
+    if (key === "event") {
+      return typeof value === "string" && (value === "started" || value === "published" || value === "owner-changed" || value === "enabled-changed" || value === "seeded" || value === "stopped" || value === "send-failed") ? value : "unknown";
+    }
+    if (key === "kind" || key === "detail" || key === "mode" || key === "decision" || key === "result" || key === "reason" || key === "transition" || key === "route" || key === "action" || key === "failed") {
+      return typeof value === "string" && isSafeCategory(value) ? value : "unknown";
+    }
+    return "unknown";
+  }
+  function formatRouteDiag(stage, fields) {
+    const safeStage = STAGES.indexOf(stage) >= 0 ? stage : "unknown";
+    const parts = [`${ROUTE_DIAG_PREFIX}:${safeStage}`];
+    const capped = fields.slice(0, 6);
+    for (const [key, value] of capped) {
+      parts.push(`${key}=${sanitizeField(key, value)}`);
+    }
+    return parts.join(":");
+  }
+  function formatLifecycleDiag(comp, event, gen, rev, result, version) {
+    const fields = [
+      ["comp", comp],
+      ["event", event],
+      ["gen", gen]
+    ];
+    if (version !== void 0) {
+      fields.push(["version", version]);
+    }
+    if (rev !== void 0) {
+      fields.push(["rev", rev]);
+    }
+    if (result !== void 0) {
+      fields.push(["result", result]);
+    }
+    return formatRouteDiag("lifecycle", fields);
+  }
+  var PointerCoalescer = class {
+    constructor() {
+      this.coalesced = 0;
+      this.marked = false;
+    }
+    // Returns true when the caller should emit its one `coalesced` marker
+    // (first suppressed step of this flight episode); later steps only bump
+    // the count.
+    noteCoalesced() {
+      this.coalesced += 1;
+      if (!this.marked) {
+        this.marked = true;
+        return true;
+      }
+      return false;
+    }
+    count() {
+      return this.coalesced;
+    }
+    // Bounded summary line for flight settle; resets for the next episode.
+    // Returns null when nothing was coalesced.
+    flushSummary() {
+      if (this.coalesced === 0) {
+        return null;
+      }
+      const line = formatRouteDiag("ptr", [
+        ["transition", "coalesced"],
+        ["count", this.coalesced]
+      ]);
+      this.coalesced = 0;
+      this.marked = false;
+      return line;
+    }
+    reset() {
+      this.coalesced = 0;
+      this.marked = false;
+    }
+  };
+
+  // src/focus-adapter.ts
+  var FOCUS_SERVICE = "org.plasmaautotiler.Planner";
+  var FOCUS_OBJECT = "/org/plasmaautotiler/Planner";
+  var FOCUS_INTERFACE = "org.plasmaautotiler.Planner1";
+  var FOCUS_METHOD = "DescribeFocus";
+  var FOCUS_DBUS_SERVICE = "org.freedesktop.DBus";
+  var FOCUS_DBUS_OBJECT = "/org/freedesktop/DBus";
+  var FOCUS_DBUS_INTERFACE = "org.freedesktop.DBus";
+  var FOCUS_GET_OWNER_METHOD = "GetNameOwner";
+  var FOCUS_START_METHOD = "StartServiceByName";
+  var FOCUS_START_PRIMARY = 1;
+  var FOCUS_START_ALREADY = 2;
+  var FOCUS_CONTRACT_VERSION = 1;
+  var FOCUS_MAX_REQUEST_BYTES = 64 * 1024;
+  var FOCUS_MAX_REPLY_BYTES = 64 * 1024;
+  var FOCUS_TIMEOUT_MS = 2e3;
+  var FOCUS_MAX_CORRELATION_LEN = 128;
+  var FOCUS_MAX_OWNER_LEN = 128;
+  var FOCUS_MAX_GENERATION_LEN = 64;
+  var FOCUS_MAX_REVISION = 1e6;
+  var FOCUS_MAX_ID_LEN = 128;
+  var FOCUS_MAX_WINDOWS = 64;
+  var FOCUS_MAX_ROUTE = 64;
+  var FOCUS_MAX_SEQ = 1e6;
+  function focusFingerprint(domainOutput, domainWorkspace, focusedId, sortedIds) {
+    let hash = 2166136261;
+    const feed = (text) => {
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index) & 255;
+        hash = Math.imul(hash, 16777619);
+      }
+    };
+    feed(domainOutput);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(domainWorkspace);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(focusedId);
+    for (const id of sortedIds) {
+      hash ^= 31;
+      hash = Math.imul(hash, 16777619);
+      feed(id);
+    }
+    return hash >>> 0;
+  }
+  var LOG_PREFIX = "plasma-auto-tiler:focus";
+  function isOpaqueId(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > FOCUS_MAX_ID_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUniqueOwner(value) {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
+  }
+  function isCorrelationId(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= FOCUS_MAX_CORRELATION_LEN && isOpaqueId(value);
+  }
+  function isOwnerId(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= FOCUS_MAX_OWNER_LEN && isOpaqueId(value);
+  }
+  function isGeneration(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > FOCUS_MAX_GENERATION_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isRevision(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= FOCUS_MAX_REVISION;
+  }
+  function isDirection(value) {
+    return value === "left" || value === "right" || value === "up" || value === "down";
+  }
+  function isRecord2(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  var KNOWN_PRECONDITIONS = Object.freeze([
+    "focused-leaf-occupied-by-focused-window",
+    "target-leaf-occupied",
+    "focus-targets-same-domain",
+    "adapter-must-verify-postconditions"
+  ]);
+  function isExactPreconditions(value) {
+    if (!Array.isArray(value) || value.length !== KNOWN_PRECONDITIONS.length) {
+      return false;
+    }
+    for (let index = 0; index < KNOWN_PRECONDITIONS.length; index += 1) {
+      if (value[index] !== KNOWN_PRECONDITIONS[index]) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function validatePlanned(reply, correlationId) {
+    if (!isRecord2(reply)) {
+      return null;
+    }
+    if (reply["v"] !== FOCUS_CONTRACT_VERSION) {
+      return null;
+    }
+    if (reply["correlation_id"] !== correlationId) {
+      return null;
+    }
+    if (reply["outcome"] !== "planned") {
+      return null;
+    }
+    const capability = reply["capability"];
+    const preconditions = reply["preconditions"];
+    const operation = reply["operation"];
+    const toWindow = reply["to_window"];
+    if (capability !== "directional-focus") {
+      return null;
+    }
+    if (!isExactPreconditions(preconditions)) {
+      return null;
+    }
+    if (!isRecord2(operation)) {
+      return null;
+    }
+    const fields = [
+      "domain_output",
+      "domain_workspace",
+      "from_leaf",
+      "to_leaf",
+      "from_window",
+      "to_window",
+      "direction"
+    ];
+    for (const field of fields) {
+      if (!isOpaqueId(operation[field])) {
+        return null;
+      }
+    }
+    if (!isDirection(operation["direction"])) {
+      return null;
+    }
+    const route = operation["route"];
+    if (!Array.isArray(route) || route.length === 0 || route.length > FOCUS_MAX_ROUTE) {
+      return null;
+    }
+    for (const entry of route) {
+      if (!isOpaqueId(entry)) {
+        return null;
+      }
+    }
+    const baseRevision = reply["base_revision"];
+    if (!isRevision(baseRevision)) {
+      return null;
+    }
+    if (!isOpaqueId(toWindow)) {
+      return null;
+    }
+    if (toWindow !== operation["to_window"]) {
+      return null;
+    }
+    return {
+      correlationId,
+      baseRevision,
+      capability,
+      preconditions: Object.freeze([...preconditions]),
+      operation: {
+        domainOutput: operation["domain_output"],
+        domainWorkspace: operation["domain_workspace"],
+        fromLeaf: operation["from_leaf"],
+        toLeaf: operation["to_leaf"],
+        fromWindow: operation["from_window"],
+        toWindow: operation["to_window"],
+        direction: operation["direction"],
+        route: Object.freeze([...route])
+      },
+      toWindow
+    };
+  }
+  function validateObserved(observed) {
+    if (observed === null || typeof observed !== "object") {
+      return false;
+    }
+    if (!isOpaqueId(observed.domainOutput) || !isOpaqueId(observed.domainWorkspace)) {
+      return false;
+    }
+    if (!isOpaqueId(observed.focusedId)) {
+      return false;
+    }
+    if (!Array.isArray(observed.windows)) {
+      return false;
+    }
+    const windows = observed.windows;
+    if (windows.length === 0 || windows.length > FOCUS_MAX_WINDOWS) {
+      return false;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    let focusedFound = false;
+    for (const entry of windows) {
+      if (typeof entry !== "object" || entry === null) {
+        return false;
+      }
+      const candidate = entry;
+      if (!isOpaqueId(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
+        return false;
+      }
+      if (seen.has(candidate.id)) {
+        return false;
+      }
+      seen.add(candidate.id);
+      if (candidate.id === observed.focusedId) {
+        focusedFound = true;
+      }
+    }
+    if (!focusedFound) {
+      return false;
+    }
+    if (typeof observed.fingerprint !== "string" || observed.fingerprint.length === 0) {
+      return false;
+    }
+    if (typeof observed.revalidate !== "function") {
+      return false;
+    }
+    return true;
+  }
+  var FocusAdapter = class {
+    constructor(env) {
+      this.env = env;
+      this.enabled = false;
+      this.owner = "";
+      this.generation = "";
+      this.revision = 0;
+      // Shared one-session revision binding: when the authority passes a
+      // holder object, all four slices read and advance the same counter so
+      // sequential commands across slices bind the single Rust revision. A
+      // plain number keeps the previous per-adapter behavior.
+      this.revisionBinding = null;
+      this.inFlight = false;
+      this.token = 0;
+      this.activeToken = 0;
+      this.callbackSeen = false;
+      this.cancelTimer = null;
+      this.detaches = [];
+      this.invalidated = false;
+      this.writes = 0;
+      this.seq = 0;
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.lossReported = false;
+      // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+      // resolved via GetNameOwner (plus one StartServiceByName phase only when
+      // absent) before any planner call. Null means unpinned; planner calls
+      // never fall back to the well-known name.
+      this.pinnedOwner = null;
+      // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+      // post-start owner, 4 planner dispatched. Single flight, no retry.
+      this.activationStep = 0;
+    }
+    isSharedRevisionBinding(value) {
+      if (typeof value !== "object" || value === null) {
+        return false;
+      }
+      return typeof value["current"] === "number";
+    }
+    readRevision() {
+      if (this.revisionBinding !== null) {
+        return this.revisionBinding.current;
+      }
+      return this.revision;
+    }
+    writeRevision(value) {
+      this.revision = value;
+      if (this.revisionBinding !== null) {
+        this.revisionBinding.current = value;
+      }
+    }
+    get isEnabled() {
+      return this.enabled;
+    }
+    get isInFlight() {
+      return this.inFlight;
+    }
+    clearDedup() {
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+    }
+    reportAdapterLost(planned) {
+      if (planned === null || this.lossReported) {
+        return;
+      }
+      const target = this.pinnedOwner;
+      if (!isUniqueOwner(target)) {
+        return;
+      }
+      this.lossReported = true;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: FOCUS_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "adapter-lost"
+        });
+      } catch (error) {
+        void error;
+        return;
+      }
+      if (payload.length === 0 || payload.length > FOCUS_MAX_REQUEST_BYTES) {
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          FOCUS_OBJECT,
+          FOCUS_INTERFACE,
+          FOCUS_METHOD,
+          payload,
+          () => {
+          }
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    plannerService() {
+      return this.pinnedOwner;
+    }
+    enable(auth) {
+      if (this.enabled) {
+        return false;
+      }
+      if (!isRecord2(auth)) {
+        this.reject("focus-invalid-auth");
+        return false;
+      }
+      if (!isOwnerId(auth.owner) || !isGeneration(auth.generation)) {
+        this.reject("focus-invalid-auth");
+        return false;
+      }
+      const revision = auth.revision === void 0 ? 0 : auth.revision;
+      if (this.isSharedRevisionBinding(revision)) {
+        if (!isRevision(revision.current)) {
+          this.reject("focus-invalid-auth");
+          return false;
+        }
+      } else if (!isRevision(revision)) {
+        this.reject("focus-invalid-auth");
+        return false;
+      }
+      const kinds = ["active", "added", "removed", "output", "desktop"];
+      const attached = [];
+      for (const kind of kinds) {
+        let detach = null;
+        try {
+          detach = this.env.subscribe(kind, () => this.onSignal());
+        } catch (error) {
+          void error;
+          detach = null;
+        }
+        if (typeof detach !== "function") {
+          for (const done of attached) {
+            try {
+              done();
+            } catch (error) {
+              void error;
+            }
+          }
+          this.reject("focus-signal-failed");
+          return false;
+        }
+        attached.push(detach);
+      }
+      this.detaches = attached;
+      this.owner = auth.owner;
+      this.generation = auth.generation;
+      if (this.isSharedRevisionBinding(revision)) {
+        this.revisionBinding = revision;
+        this.writeRevision(revision.current);
+      } else {
+        this.revisionBinding = null;
+        this.revision = revision;
+      }
+      this.enabled = true;
+      this.invalidated = false;
+      this.writes = 0;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.lossReported = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.log(`${LOG_PREFIX}:ready`);
+      return true;
+    }
+    disable() {
+      if (!this.enabled && this.detaches.length === 0) {
+        return;
+      }
+      this.enabled = false;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.clearTimer();
+      for (const detach of this.detaches) {
+        try {
+          detach();
+        } catch (error) {
+          void error;
+        }
+      }
+      this.detaches = [];
+      this.log(`${LOG_PREFIX}:disabled`);
+    }
+    requestFocus(direction) {
+      if (!this.enabled) {
+        this.reject("focus-disabled");
+        return;
+      }
+      if (this.inFlight) {
+        this.reject("focus-busy");
+        return;
+      }
+      if (!isDirection(direction)) {
+        this.reject("focus-invalid-intent");
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveFocusAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reject("focus-exclusive-conflict");
+        this.disable();
+        return;
+      }
+      let observed = null;
+      try {
+        observed = this.env.observe();
+      } catch (error) {
+        void error;
+        observed = null;
+      }
+      if (!validateObserved(observed)) {
+        this.reject("focus-stale-scope");
+        this.disable();
+        return;
+      }
+      const current = observed;
+      if (current.fingerprint === this.lastFingerprint && direction === this.lastDirection) {
+        this.reject("focus-dedup");
+        return;
+      }
+      if (this.readRevision() < 0 || this.readRevision() > FOCUS_MAX_REVISION) {
+        this.reject("focus-stale-revision");
+        this.disable();
+        return;
+      }
+      if (this.seq < 0 || this.seq > FOCUS_MAX_SEQ) {
+        this.reject("focus-seq-exhausted");
+        this.disable();
+        return;
+      }
+      const correlation = `${this.generation}-f${String(this.seq)}`;
+      this.seq += 1;
+      if (!isCorrelationId(correlation)) {
+        this.reject("focus-invalid-auth");
+        this.disable();
+        return;
+      }
+      const windows = current.windows.map((entry) => ({
+        window: entry.id,
+        output: current.domainOutput,
+        workspace: current.domainWorkspace
+      }));
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      let requestRevision = this.readRevision();
+      if (requestRevision === 0) {
+        requestRevision = sortedIds.length;
+        if (this.revisionBinding !== null) {
+          if (sortedIds.length === 3) {
+            this.writeRevision(requestRevision);
+          }
+        } else {
+          this.writeRevision(requestRevision);
+        }
+      }
+      const fingerprint = focusFingerprint(
+        current.domainOutput,
+        current.domainWorkspace,
+        current.focusedId,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: FOCUS_CONTRACT_VERSION,
+          action: "request",
+          correlation_id: correlation,
+          owner: this.owner,
+          generation: this.generation,
+          revision: requestRevision,
+          fingerprint,
+          domain: { output: current.domainOutput, workspace: current.domainWorkspace },
+          focused_window: current.focusedId,
+          direction,
+          windows,
+          capabilities: { directional_focus: true }
+        });
+      } catch (error) {
+        void error;
+        this.reject("focus-invalid-intent");
+        return;
+      }
+      if (payload.length > FOCUS_MAX_REQUEST_BYTES) {
+        this.reject("focus-oversized");
+        return;
+      }
+      this.lastFingerprint = current.fingerprint;
+      this.lastDirection = direction;
+      this.diag("req", correlation, [
+        ["rev", requestRevision],
+        ["windows", sortedIds.length]
+      ]);
+      this.startFlight(payload, correlation, direction, current);
+    }
+    onSignal() {
+      this.invalidated = true;
+    }
+    startFlight(payload, correlation, direction, observed) {
+      this.inFlight = true;
+      this.invalidated = false;
+      this.writes = 0;
+      this.pending = null;
+      this.pendingObserved = observed;
+      this.pendingDirection = direction;
+      this.lossReported = false;
+      this.callbackSeen = false;
+      this.pinnedOwner = null;
+      this.activationStep = 1;
+      this.token += 1;
+      const flight = this.token;
+      this.activeToken = flight;
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "timer-failed"]]);
+        this.reject("focus-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      try {
+        this.env.callDbus(
+          FOCUS_DBUS_SERVICE,
+          FOCUS_DBUS_OBJECT,
+          FOCUS_DBUS_INTERFACE,
+          FOCUS_GET_OWNER_METHOD,
+          FOCUS_SERVICE,
+          (reply) => this.onOwnerInitial(reply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerInitial(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+        return;
+      }
+      if (isUniqueOwner(reply)) {
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.diag("owner", correlation, [["transition", "pinned"]]);
+        this.sendPlannerRequest(flight, payload, correlation);
+        return;
+      }
+      this.activationStep = 2;
+      this.diag("owner", correlation, [["transition", "activating"]]);
+      try {
+        this.env.callDbus(
+          FOCUS_DBUS_SERVICE,
+          FOCUS_DBUS_OBJECT,
+          FOCUS_DBUS_INTERFACE,
+          FOCUS_START_METHOD,
+          FOCUS_SERVICE,
+          (startReply) => this.onStartResult(startReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onStartResult(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+        return;
+      }
+      if (reply !== FOCUS_START_PRIMARY && reply !== FOCUS_START_ALREADY) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("owner", correlation, [["transition", "activation-failed"]]);
+        this.diag("result", correlation, [["result", "activation-failed"]]);
+        this.reject("focus-activation-failed");
+        this.disable();
+        return;
+      }
+      this.activationStep = 3;
+      try {
+        this.env.callDbus(
+          FOCUS_DBUS_SERVICE,
+          FOCUS_DBUS_OBJECT,
+          FOCUS_DBUS_INTERFACE,
+          FOCUS_GET_OWNER_METHOD,
+          FOCUS_SERVICE,
+          (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerAfterStart(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+        return;
+      }
+      if (!isUniqueOwner(reply)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("focus-owner-missing");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = reply;
+      this.activationStep = 4;
+      this.sendPlannerRequest(flight, payload, correlation);
+    }
+    sendPlannerRequest(flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner(target)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("focus-owner-missing");
+        this.disable();
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          FOCUS_OBJECT,
+          FOCUS_INTERFACE,
+          FOCUS_METHOD,
+          payload,
+          (reply) => this.onRequestReply(reply, flight, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onTimeout(flight, stage, correlation) {
+      if (!this.inFlight || flight !== this.activeToken) {
+        return;
+      }
+      const lost = this.pending;
+      if (lost !== null) {
+        this.reportAdapterLost(lost);
+      }
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      const timeoutCorr = correlation != null ? correlation : lost == null ? void 0 : lost.correlationId;
+      if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+        this.diag("result", timeoutCorr, [
+          ["result", "timeout"],
+          ["detail", stage]
+        ]);
+      }
+      this.reject(`focus-timeout-${stage}`);
+      this.disable();
+    }
+    onRequestReply(reply, flight, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      if (this.activationStep !== 4 || !isUniqueOwner(this.pinnedOwner)) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (typeof reply !== "string" || reply.length > FOCUS_MAX_REPLY_BYTES) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord2(parsed)) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      const outcome = parsed["outcome"];
+      if (outcome === "noop") {
+        if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("focus-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("focus-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "noop"]]);
+        this.log(`${LOG_PREFIX}:noop`);
+        return;
+      }
+      if (outcome === "rejected") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("result", correlation, [["result", "rejected"]]);
+        this.reject("focus-rejected");
+        this.disable();
+        return;
+      }
+      if (outcome === "diverged") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("result", correlation, [["result", "diverged"]]);
+        this.reject("focus-diverged");
+        this.disable();
+        return;
+      }
+      if (outcome !== "planned") {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      const planned = validatePlanned(parsed, correlation);
+      if (planned === null) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+        this.reject("focus-precondition-mismatch");
+        this.disable();
+        return;
+      }
+      if (planned.baseRevision !== this.readRevision()) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("result", correlation, [["result", "revision-mismatch"]]);
+        this.reject("focus-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.pending = planned;
+      this.diag("result", correlation, [
+        ["result", "planned"],
+        ["rev", planned.baseRevision]
+      ]);
+      this.applyPlanned(flight);
+    }
+    applyPlanned(flight) {
+      const planned = this.pending;
+      const captured = this.pendingObserved;
+      const wantedDirection = this.pendingDirection;
+      if (planned === null || captured === null || wantedDirection === null) {
+        this.inFlight = false;
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (planned.operation.domainOutput !== captured.domainOutput || planned.operation.domainWorkspace !== captured.domainWorkspace || planned.operation.fromWindow !== captured.focusedId || planned.operation.direction !== wantedDirection || planned.toWindow !== planned.operation.toWindow) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-target-mismatch");
+        this.disable();
+        return;
+      }
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-signal-invalid");
+        this.disable();
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveFocusAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-exclusive-conflict");
+        this.disable();
+        return;
+      }
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved(fresh)) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-stale-scope");
+        this.disable();
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-stale-revalidate");
+        this.disable();
+        return;
+      }
+      if (current.fingerprint !== captured.fingerprint) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-stale-revalidate");
+        this.disable();
+        return;
+      }
+      if (current.domainOutput !== captured.domainOutput || current.domainWorkspace !== captured.domainWorkspace || current.focusedId !== captured.focusedId) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-stale-scope");
+        this.disable();
+        return;
+      }
+      const wanted = planned.toWindow;
+      let target = null;
+      for (const entry of current.windows) {
+        if (entry.id === wanted) {
+          target = entry.ref;
+          break;
+        }
+      }
+      if (target === null) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-target-mismatch");
+        this.disable();
+        return;
+      }
+      let currentActive = null;
+      try {
+        currentActive = this.env.active();
+      } catch (error) {
+        void error;
+        currentActive = null;
+      }
+      if (currentActive === target) {
+        this.sendAcknowledge(flight, planned, true);
+        return;
+      }
+      if (this.writes >= 1) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-write-limit");
+        this.disable();
+        return;
+      }
+      let written = false;
+      try {
+        written = this.env.setActive(target) === true;
+      } catch (error) {
+        void error;
+        written = false;
+      }
+      if (!written) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.reject("focus-write-failed");
+        this.disable();
+        return;
+      }
+      this.writes += 1;
+      this.sendAcknowledge(flight, planned, false);
+    }
+    sendAcknowledge(flight, planned, wasActive) {
+      void flight;
+      void wasActive;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("focus-signal-invalid");
+        this.disable();
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner(target)) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
+        this.reject("focus-owner-missing");
+        this.disable();
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: FOCUS_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "accepted"
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
+        this.reject("focus-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("ack", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          FOCUS_OBJECT,
+          FOCUS_INTERFACE,
+          FOCUS_METHOD,
+          payload,
+          (reply) => this.onAckReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onAckReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("focus-signal-invalid");
+        this.disable();
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > FOCUS_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord2(parsed) || parsed["outcome"] !== "acknowledged") {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.reject("focus-correlation-mismatch");
+        this.disable();
+        return;
+      }
+      if (parsed["base_revision"] !== planned.baseRevision) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.reject("focus-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
+      this.sendVerify(planned);
+    }
+    sendVerify(planned) {
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("focus-signal-invalid");
+        this.disable();
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner(target)) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
+        this.reject("focus-owner-missing");
+        this.disable();
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved(fresh)) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.reject("focus-post-stale");
+        this.disable();
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.reject("focus-post-stale");
+        this.disable();
+        return;
+      }
+      if (current.domainOutput !== planned.operation.domainOutput || current.domainWorkspace !== planned.operation.domainWorkspace) {
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.reject("focus-post-stale");
+        this.disable();
+        return;
+      }
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      const fingerprint = focusFingerprint(
+        current.domainOutput,
+        current.domainWorkspace,
+        current.focusedId,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: FOCUS_CONTRACT_VERSION,
+          action: "verify",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          revision: planned.baseRevision,
+          fingerprint,
+          verified: true,
+          verified_preconditions: [...planned.preconditions],
+          verified_operation: {
+            domain_output: planned.operation.domainOutput,
+            domain_workspace: planned.operation.domainWorkspace,
+            from_leaf: planned.operation.fromLeaf,
+            to_leaf: planned.operation.toLeaf,
+            from_window: planned.operation.fromWindow,
+            to_window: planned.operation.toWindow,
+            direction: planned.operation.direction,
+            route: [...planned.operation.route]
+          }
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
+        this.reject("focus-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("verify", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          FOCUS_OBJECT,
+          FOCUS_INTERFACE,
+          FOCUS_METHOD,
+          payload,
+          (reply) => this.onVerifyReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
+        this.reject("focus-dbus-failed");
+        this.disable();
+      }
+    }
+    onVerifyReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("focus-signal-invalid");
+        this.disable();
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > FOCUS_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord2(parsed) || parsed["outcome"] !== "committed") {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("focus-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.reject("focus-correlation-mismatch");
+        this.disable();
+        return;
+      }
+      const revision = parsed["revision"];
+      if (typeof revision === "number" && Number.isInteger(revision) && revision === this.readRevision() + 1) {
+        this.writeRevision(revision);
+      } else {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.reject("focus-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.diag("outcome", planned.correlationId, [
+        ["result", "committed"],
+        ["rev", revision]
+      ]);
+      this.log(`${LOG_PREFIX}:applied`);
+    }
+    clearTimer() {
+      const cancel = this.cancelTimer;
+      this.cancelTimer = null;
+      if (cancel === null) {
+        return;
+      }
+      try {
+        cancel();
+      } catch (error) {
+        void error;
+      }
+    }
+    reject(token) {
+      try {
+        this.env.log(`${LOG_PREFIX}:reject:${token}`);
+      } catch (error) {
+        void error;
+      }
+    }
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    diag(stage, correlation, extra = []) {
+      try {
+        this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
+      } catch (error) {
+        void error;
+      }
+    }
+    log(message) {
+      try {
+        this.env.log(message);
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
+  // src/signal-capability.ts
+  function readMethod(value, name) {
+    let method = void 0;
+    try {
+      method = Reflect.get(value, name);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (typeof method !== "function") {
+      return null;
+    }
+    return method;
+  }
+  function isConnectableSignal(value) {
+    if (typeof value !== "object" && typeof value !== "function" || value === null) {
+      return false;
+    }
+    try {
+      const candidate = value;
+      return readMethod(candidate, "connect") !== null && readMethod(candidate, "disconnect") !== null;
+    } catch (error) {
+      void error;
+      return false;
+    }
+  }
+  function readSignal(owner, name) {
+    try {
+      return Reflect.get(owner, name);
+    } catch (error) {
+      void error;
+      return void 0;
+    }
+  }
+  function connectSignal(surface, handler) {
+    if (!isConnectableSignal(surface)) {
+      return null;
+    }
+    try {
+      Reflect.apply(surface.connect, surface, [handler]);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    let detached = false;
+    return () => {
+      if (detached) {
+        return;
+      }
+      detached = true;
+      try {
+        Reflect.apply(surface.disconnect, surface, [handler]);
+      } catch (error) {
+        void error;
+      }
+    };
+  }
+
+  // src/focus-adapter-entry.ts
+  var ENTRY_LOG = "plasma-auto-tiler:focus-entry";
+  var ENTRY_READY = `${ENTRY_LOG}:ready`;
+  var ENTRY_REJECT = `${ENTRY_LOG}:reject:focus-entry-invalid`;
+  var ENTRY_SCOPE_REJECT = `${ENTRY_LOG}:reject:focus-entry-scope-invalid`;
+  var ENTRY_SCOPE = `${ENTRY_LOG}:scope`;
+  var MAX_LIST = 1024;
+  var MAX_SCREENS = 32;
+  var MAX_DESKTOPS = 32;
+  var MAX_ID_LEN = 128;
+  function readProp(value, property) {
+    try {
+      return Reflect.get(value, property);
+    } catch (error) {
+      void error;
+      return void 0;
+    }
+  }
+  function isOpaqueId2(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isHexRun(text) {
+    if (text.length === 0) {
+      return false;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lower = code >= 97 && code <= 102;
+      const upper = code >= 65 && code <= 70;
+      if (!(digit || lower || upper)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUuidText(text) {
+    const parts = text.split("-");
+    const lens = [8, 4, 4, 4, 12];
+    if (parts.length !== lens.length) {
+      return false;
+    }
+    for (let index = 0; index < lens.length; index += 1) {
+      const part = parts[index];
+      if (part.length !== lens[index] || !isHexRun(part)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function unwrapBraced(text) {
+    if (text.length !== 38 || !text.startsWith("{") || !text.endsWith("}")) {
+      return null;
+    }
+    const inner = text.slice(1, 37);
+    if (!isUuidText(inner) || !isOpaqueId2(inner)) {
+      return null;
+    }
+    return inner;
+  }
+  function normalizeNativeId(value) {
+    if (typeof value === "string") {
+      if (isOpaqueId2(value)) {
+        return value;
+      }
+      return unwrapBraced(value);
+    }
+    let text = "";
+    try {
+      text = String(value);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (isOpaqueId2(text)) {
+      return text;
+    }
+    return unwrapBraced(text);
+  }
+  function decodeList(value, maxLength) {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    if (Array.isArray(value)) {
+      return value.length <= maxLength ? value : null;
+    }
+    let length = void 0;
+    try {
+      length = Reflect.get(value, "length");
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
+      return null;
+    }
+    const out = [];
+    for (let index = 0; index < length; index += 1) {
+      let element = void 0;
+      try {
+        element = Reflect.get(value, String(index));
+      } catch (error) {
+        void error;
+        return null;
+      }
+      if (element === void 0) {
+        return null;
+      }
+      out.push(element);
+    }
+    return out;
+  }
+  function resolveLexicalWorkspace() {
+    try {
+      const candidate = workspace;
+      if (typeof candidate === "object" && candidate !== null) {
+        return candidate;
+      }
+    } catch (error) {
+      void error;
+    }
+    return null;
+  }
+  function activeIneligibilityCategory(ref, outputRef, desktopRef) {
+    if (readProp(ref, "normalWindow") !== true) {
+      return "class";
+    }
+    if (readProp(ref, "managed") !== true) {
+      return "managed";
+    }
+    if (readProp(ref, "minimized") !== false) {
+      return "minimized";
+    }
+    if (readProp(ref, "fullScreen") !== false) {
+      return "fullscreen";
+    }
+    if (readProp(ref, "maximizeMode") !== 0) {
+      return "maximized";
+    }
+    if (readProp(ref, "onAllDesktops") !== false) {
+      return "all-desktops";
+    }
+    if (readProp(ref, "output") !== outputRef) {
+      return "output";
+    }
+    const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+    if (membership === null || membership.length !== 1 || membership[0] !== desktopRef) {
+      return "desktop";
+    }
+    return null;
+  }
+  function observeNative(liveWorkspace, log) {
+    const fail = (predicate) => {
+      try {
+        log == null ? void 0 : log(`${ENTRY_SCOPE}:${predicate}`);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    try {
+      if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+        return fail("workspace-invalid");
+      }
+      const surface = liveWorkspace;
+      let active = void 0;
+      try {
+        active = Reflect.get(surface, "activeWindow");
+      } catch (error) {
+        void error;
+        return fail("active-read-failed");
+      }
+      if (typeof active !== "object" || active === null) {
+        return fail("active-invalid");
+      }
+      const activeRef = active;
+      const activeOutput = readProp(activeRef, "output");
+      if (typeof activeOutput !== "object" || activeOutput === null) {
+        return fail("output-invalid");
+      }
+      const outputRef = activeOutput;
+      const lister = readProp(surface, "windowList");
+      if (typeof lister !== "function") {
+        return fail("window-list-missing");
+      }
+      let rawList = void 0;
+      try {
+        rawList = Reflect.apply(lister, surface, []);
+      } catch (error) {
+        void error;
+        return fail("window-list-failed");
+      }
+      const windows = decodeList(rawList, MAX_LIST);
+      if (windows === null) {
+        return fail("window-list-invalid");
+      }
+      const screens = decodeList(readProp(surface, "screens"), MAX_SCREENS);
+      if (screens === null || screens.indexOf(outputRef) < 0) {
+        return fail("screens-invalid");
+      }
+      const currentFn = readProp(surface, "currentDesktopForScreen");
+      if (typeof currentFn !== "function") {
+        return fail("desktop-fn-missing");
+      }
+      let desktop = void 0;
+      try {
+        desktop = Reflect.apply(
+          currentFn,
+          surface,
+          [outputRef]
+        );
+      } catch (error) {
+        void error;
+        return fail("desktop-read-failed");
+      }
+      if (typeof desktop !== "object" || desktop === null) {
+        return fail("desktop-invalid");
+      }
+      const desktopRef = desktop;
+      const seen = /* @__PURE__ */ new Set();
+      const entries = [];
+      for (const item of windows) {
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+        const ref = item;
+        if (readProp(ref, "normalWindow") !== true) {
+          continue;
+        }
+        if (readProp(ref, "managed") !== true) {
+          continue;
+        }
+        if (readProp(ref, "minimized") !== false) {
+          continue;
+        }
+        if (readProp(ref, "fullScreen") !== false) {
+          continue;
+        }
+        if (readProp(ref, "maximizeMode") !== 0) {
+          continue;
+        }
+        if (readProp(ref, "onAllDesktops") !== false) {
+          continue;
+        }
+        if (readProp(ref, "output") !== outputRef) {
+          continue;
+        }
+        const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+        if (membership === null || membership.length !== 1 || membership[0] !== desktopRef) {
+          continue;
+        }
+        let id = null;
+        try {
+          id = normalizeNativeId(Reflect.get(ref, "internalId"));
+        } catch (error) {
+          void error;
+          return fail("id-read-failed");
+        }
+        if (id === null) {
+          return fail("id-invalid");
+        }
+        if (seen.has(id)) {
+          return fail("id-duplicate");
+        }
+        seen.add(id);
+        entries.push({ id, ref });
+      }
+      if (entries.length === 0) {
+        return fail("empty-scope");
+      }
+      const sorted = [...entries].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      let activeNativeId = null;
+      try {
+        activeNativeId = normalizeNativeId(Reflect.get(activeRef, "internalId"));
+      } catch (error) {
+        void error;
+        return fail("active-unobserved:active-id-invalid");
+      }
+      if (activeNativeId === null) {
+        return fail("active-unobserved:active-id-invalid");
+      }
+      const ineligible = activeIneligibilityCategory(activeRef, outputRef, desktopRef);
+      if (ineligible !== null) {
+        return fail(`active-unobserved:active-ineligible:${ineligible}`);
+      }
+      let activeId = null;
+      for (const entry of sorted) {
+        if (entry.id === activeNativeId) {
+          activeId = entry.id;
+          if (entry.ref !== activeRef) {
+            try {
+              log == null ? void 0 : log(`${ENTRY_SCOPE}:active-wrapper-mismatch`);
+            } catch (error) {
+              void error;
+            }
+          }
+          break;
+        }
+      }
+      if (activeId === null) {
+        return fail("active-unobserved:active-missing");
+      }
+      const sortedIds = sorted.map((entry) => entry.id);
+      const fingerprint = JSON.stringify({ ids: sortedIds, active: activeId });
+      const byId = /* @__PURE__ */ new Map();
+      for (const entry of sorted) {
+        byId.set(entry.id, entry.ref);
+      }
+      const frozenWindows = Object.freeze(
+        sorted.map((entry) => Object.freeze({ id: entry.id, ref: entry.ref }))
+      );
+      const expected = fingerprint;
+      const capturedOutput = outputRef;
+      const capturedDesktop = desktopRef;
+      const capturedActive = activeRef;
+      const capturedRefs = new Map(byId);
+      return {
+        domainOutput: "focus-output",
+        domainWorkspace: "focus-workspace",
+        focusedId: activeId,
+        windows: frozenWindows,
+        activeRef,
+        fingerprint: expected,
+        revalidate: () => {
+          var _a;
+          try {
+            const fresh = observeNative(liveWorkspace, log);
+            if (fresh === null) {
+              return false;
+            }
+            if (fresh.fingerprint !== expected) {
+              return false;
+            }
+            if (fresh.activeRef !== capturedActive) {
+              return false;
+            }
+            const surface2 = liveWorkspace;
+            const liveActive = Reflect.get(surface2, "activeWindow");
+            if (typeof liveActive !== "object" || liveActive === null) {
+              return false;
+            }
+            const liveOutput = Reflect.get(liveActive, "output");
+            if (liveOutput !== capturedOutput) {
+              return false;
+            }
+            const currentFn2 = Reflect.get(surface2, "currentDesktopForScreen");
+            if (typeof currentFn2 !== "function") {
+              return false;
+            }
+            const liveDesktop = Reflect.apply(
+              currentFn2,
+              surface2,
+              [capturedOutput]
+            );
+            if (liveDesktop !== capturedDesktop) {
+              return false;
+            }
+            for (const entry of frozenWindows) {
+              if (capturedRefs.get(entry.id) !== byId.get(entry.id)) {
+                return false;
+              }
+              if (((_a = fresh.windows.find((item) => item.id === entry.id)) == null ? void 0 : _a.ref) !== entry.ref) {
+                return false;
+              }
+            }
+            return true;
+          } catch (error) {
+            void error;
+            return false;
+          }
+        }
+      };
+    } catch (error) {
+      void error;
+      return fail("observe-failed");
+    }
+  }
+  function startFocusAdapterEntry(overrides = {}) {
+    var _a;
+    const liveWorkspace = overrides.workspace !== void 0 ? overrides.workspace : resolveLexicalWorkspace();
+    const log = (_a = overrides.log) != null ? _a : ((message) => {
+      try {
+        console.log(message);
+      } catch (error) {
+        void error;
+      }
+    });
+    const fail = () => {
+      try {
+        log(ENTRY_REJECT);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+      return fail();
+    }
+    if (overrides.hasExclusiveFocusAuthority === void 0) {
+      return fail();
+    }
+    const authority = overrides.hasExclusiveFocusAuthority;
+    if (typeof authority !== "function") {
+      return fail();
+    }
+    let callDbus = overrides.callDbus;
+    if (callDbus === void 0) {
+      try {
+        const native = callDBus;
+        if (typeof native !== "function") {
+          return fail();
+        }
+        callDbus = (service, path, iface, method, payload, callback) => {
+          if (service === "org.freedesktop.DBus" && method === "StartServiceByName") {
+            native(
+              service,
+              path,
+              iface,
+              method,
+              payload,
+              0,
+              callback
+            );
+            return;
+          }
+          native(
+            service,
+            path,
+            iface,
+            method,
+            payload,
+            callback
+          );
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    let scheduleOnce = overrides.scheduleOnce;
+    if (scheduleOnce === void 0) {
+      try {
+        const ctor = QTimer;
+        if (typeof ctor !== "function") {
+          return fail();
+        }
+        scheduleOnce = (delayMs, callback) => {
+          const timer = new ctor();
+          timer.interval = delayMs;
+          timer.singleShot = true;
+          timer.timeout.connect(callback);
+          timer.start();
+          return () => {
+            try {
+              timer.stop();
+            } catch (error) {
+              void error;
+            }
+          };
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    const surface = liveWorkspace;
+    const sub = (name, handler) => {
+      try {
+        return connectSignal(readSignal(surface, name), handler);
+      } catch (error) {
+        void error;
+        return null;
+      }
+    };
+    const adapter = new FocusAdapter({
+      callDbus,
+      scheduleOnce,
+      log,
+      observe: () => observeNative(liveWorkspace, log),
+      setActive: (target) => {
+        try {
+          liveWorkspace.activeWindow = target;
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      active: () => {
+        try {
+          const current = liveWorkspace.activeWindow;
+          return typeof current === "object" && current !== null ? current : null;
+        } catch (error) {
+          void error;
+          return null;
+        }
+      },
+      hasExclusiveFocusAuthority: authority,
+      subscribe: (kind, handler) => {
+        const name = kind === "active" ? "windowActivated" : kind === "added" ? "windowAdded" : kind === "removed" ? "windowRemoved" : kind === "output" ? "screensChanged" : "currentDesktopChanged";
+        const detach = sub(name, handler);
+        if (detach === null) {
+          throw new Error("focus-entry-signal-failed");
+        }
+        return detach;
+      }
+    });
+    const enabled = adapter.enable({
+      owner: overrides.owner,
+      generation: overrides.generation,
+      revision: overrides.revision
+    });
+    if (!enabled) {
+      return null;
+    }
+    if (observeNative(liveWorkspace, log) === null) {
+      adapter.disable();
+      try {
+        log(ENTRY_SCOPE_REJECT);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
+    try {
+      log(ENTRY_READY);
+    } catch (error) {
+      void error;
+    }
+    return {
+      stop: () => {
+        try {
+          adapter.disable();
+        } catch (error) {
+          void error;
+        }
+      },
+      request: (direction) => {
+        try {
+          adapter.requestFocus(direction);
+        } catch (error) {
+          void error;
+        }
+      }
+    };
+  }
+
+  // src/geometry-order.ts
+  function sameRect(a, b) {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+  function rectArea(rect) {
+    return rect.w * rect.h;
+  }
+  function orderGeometryWrites(oldById, desired) {
+    const changed = desired.filter((entry) => {
+      const old = oldById.get(entry.window);
+      if (old === void 0) {
+        return true;
+      }
+      return !sameRect(old, entry.rect);
+    });
+    const scored = changed.map((entry) => {
+      const old = oldById.get(entry.window);
+      const delta = old === void 0 ? rectArea(entry.rect) : rectArea(entry.rect) - rectArea(old);
+      return { entry, delta };
+    });
+    scored.sort((a, b) => {
+      if (b.delta !== a.delta) {
+        return b.delta - a.delta;
+      }
+      return a.entry.window < b.entry.window ? -1 : a.entry.window > b.entry.window ? 1 : 0;
+    });
+    return Object.freeze(scored.map((item) => item.entry));
+  }
+
+  // src/movement-adapter.ts
+  var MOVEMENT_SERVICE = "org.plasmaautotiler.Planner";
+  var MOVEMENT_OBJECT = "/org/plasmaautotiler/Planner";
+  var MOVEMENT_INTERFACE = "org.plasmaautotiler.Planner1";
+  var MOVEMENT_METHOD = "DescribeMovement";
+  var MOVEMENT_DBUS_SERVICE = "org.freedesktop.DBus";
+  var MOVEMENT_DBUS_OBJECT = "/org/freedesktop/DBus";
+  var MOVEMENT_DBUS_INTERFACE = "org.freedesktop.DBus";
+  var MOVEMENT_GET_OWNER_METHOD = "GetNameOwner";
+  var MOVEMENT_START_METHOD = "StartServiceByName";
+  var MOVEMENT_START_PRIMARY = 1;
+  var MOVEMENT_START_ALREADY = 2;
+  var MOVEMENT_CONTRACT_VERSION = 1;
+  var MOVEMENT_MAX_REQUEST_BYTES = 64 * 1024;
+  var MOVEMENT_MAX_REPLY_BYTES = 64 * 1024;
+  var MOVEMENT_TIMEOUT_MS = 2e3;
+  var MOVEMENT_MAX_CORRELATION_LEN = 128;
+  var MOVEMENT_MAX_OWNER_LEN = 128;
+  var MOVEMENT_MAX_GENERATION_LEN = 64;
+  var MOVEMENT_MAX_REVISION = 1e6;
+  var MOVEMENT_MAX_ID_LEN = 128;
+  var MOVEMENT_MAX_WINDOWS = 64;
+  var MOVEMENT_MAX_GEOMETRY = 64;
+  var MOVEMENT_MAX_DOMAINS = 16;
+  var MOVEMENT_MAX_SEQ = 1e6;
+  var LOG_PREFIX2 = "plasma-auto-tiler:movement";
+  function movementFingerprint(domainOutput, domainWorkspace, focusedId, sortedIds) {
+    let hash = 2166136261;
+    const feed = (text) => {
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index) & 255;
+        hash = Math.imul(hash, 16777619);
+      }
+    };
+    feed(domainOutput);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(domainWorkspace);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(focusedId);
+    for (const id of sortedIds) {
+      hash ^= 31;
+      hash = Math.imul(hash, 16777619);
+      feed(id);
+    }
+    return hash >>> 0;
+  }
+  function isOpaqueId3(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MOVEMENT_MAX_ID_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUniqueOwner2(value) {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
+  }
+  function isCorrelationId2(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= MOVEMENT_MAX_CORRELATION_LEN && isOpaqueId3(value);
+  }
+  function isOwnerId2(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= MOVEMENT_MAX_OWNER_LEN && isOpaqueId3(value);
+  }
+  function isGeneration2(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MOVEMENT_MAX_GENERATION_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isRevision2(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= MOVEMENT_MAX_REVISION;
+  }
+  function isDirection2(value) {
+    return value === "left" || value === "right" || value === "up" || value === "down";
+  }
+  function isRecord3(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  function isFiniteInt(value) {
+    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+  }
+  function isTargetRect(value) {
+    if (!isRecord3(value)) {
+      return false;
+    }
+    const keys = Object.keys(value);
+    if (keys.length !== 4 || keys.indexOf("x") < 0 || keys.indexOf("y") < 0 || keys.indexOf("w") < 0 || keys.indexOf("h") < 0) {
+      return false;
+    }
+    const x = value["x"];
+    const y = value["y"];
+    const w = value["w"];
+    const h = value["h"];
+    if (!isFiniteInt(x) || !isFiniteInt(y) || !isFiniteInt(w) || !isFiniteInt(h)) {
+      return false;
+    }
+    if (w <= 0 || h <= 0) {
+      return false;
+    }
+    if (x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return false;
+    }
+    return true;
+  }
+  function sameRect2(a, b) {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+  function rectArea2(rect) {
+    return rect.w * rect.h;
+  }
+  function rectsOverlap(a, b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+  }
+  function rectContained(inner, outer) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+  }
+  var KNOWN_RULES = Object.freeze(["R1", "R2a", "R2b", "R2c", "R3", "R4"]);
+  var KNOWN_CAPABILITIES = Object.freeze([
+    "swap-neighbor",
+    "wrap-perpendicular",
+    "wrap-siblings",
+    "insert-child",
+    "split-group-child",
+    "reparent-leaf",
+    "cross-output-transfer"
+  ]);
+  var KNOWN_PRECONDITIONS2 = Object.freeze([
+    "focused-leaf-occupied-by-focused-window",
+    "neighbor-leaf-occupied",
+    "container-is-direct-parent",
+    "target-group-membership",
+    "parent-group-membership",
+    "source-root-membership-and-adjacent-same-workspace-output",
+    "adapter-must-verify-postconditions"
+  ]);
+  var KNOWN_KINDS = Object.freeze([
+    "WrapPerpendicular",
+    "SwapNeighbor",
+    "InsertIntoGroup",
+    "SplitGroupChild",
+    "WrapNeighbor",
+    "EscapeParent",
+    "CrossOutput"
+  ]);
+  var KNOWN_AXES = Object.freeze(["horizontal", "vertical"]);
+  var KNOWN_DIRECTIONS = Object.freeze(["left", "right", "up", "down"]);
+  function expectedPreconditions(kind) {
+    switch (kind) {
+      case "WrapPerpendicular":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "container-is-direct-parent",
+          "adapter-must-verify-postconditions"
+        ];
+      case "SwapNeighbor":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "neighbor-leaf-occupied",
+          "container-is-direct-parent",
+          "adapter-must-verify-postconditions"
+        ];
+      case "InsertIntoGroup":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "container-is-direct-parent",
+          "target-group-membership",
+          "adapter-must-verify-postconditions"
+        ];
+      case "SplitGroupChild":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "neighbor-leaf-occupied",
+          "container-is-direct-parent",
+          "target-group-membership",
+          "adapter-must-verify-postconditions"
+        ];
+      case "WrapNeighbor":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "neighbor-leaf-occupied",
+          "container-is-direct-parent",
+          "adapter-must-verify-postconditions"
+        ];
+      case "EscapeParent":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "container-is-direct-parent",
+          "parent-group-membership",
+          "adapter-must-verify-postconditions"
+        ];
+      case "CrossOutput":
+        return [
+          "focused-leaf-occupied-by-focused-window",
+          "source-root-membership-and-adjacent-same-workspace-output",
+          "adapter-must-verify-postconditions"
+        ];
+      default:
+        return null;
+    }
+  }
+  function expectedCapability(kind) {
+    switch (kind) {
+      case "WrapPerpendicular":
+        return "wrap-perpendicular";
+      case "SwapNeighbor":
+        return "swap-neighbor";
+      case "InsertIntoGroup":
+        return "insert-child";
+      case "SplitGroupChild":
+        return "split-group-child";
+      case "WrapNeighbor":
+        return "wrap-siblings";
+      case "EscapeParent":
+        return "reparent-leaf";
+      case "CrossOutput":
+        return "cross-output-transfer";
+      default:
+        return null;
+    }
+  }
+  function expectedRule(kind) {
+    switch (kind) {
+      case "WrapPerpendicular":
+        return "R1";
+      case "SwapNeighbor":
+        return "R2a";
+      case "InsertIntoGroup":
+      case "SplitGroupChild":
+        return "R2b";
+      case "WrapNeighbor":
+        return "R2c";
+      case "EscapeParent":
+        return "R3";
+      case "CrossOutput":
+        return "R4";
+      default:
+        return null;
+    }
+  }
+  function oppositeMovementDirection(direction) {
+    switch (direction) {
+      case "left":
+        return "right";
+      case "right":
+        return "left";
+      case "up":
+        return "down";
+      case "down":
+        return "up";
+    }
+  }
+  function hasExactKeys(value, keys) {
+    const actual = Object.keys(value);
+    if (actual.length !== keys.length) {
+      return false;
+    }
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isNonNegativeInt(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  }
+  function validateOperationShape(operation, rule, capability) {
+    if (!isRecord3(operation) || typeof operation["kind"] !== "string") {
+      return false;
+    }
+    const kind = operation["kind"];
+    if (KNOWN_KINDS.indexOf(kind) < 0) {
+      return false;
+    }
+    if (operation["rule"] !== rule) {
+      return false;
+    }
+    if (expectedRule(kind) !== rule) {
+      return false;
+    }
+    if (expectedCapability(kind) !== capability) {
+      return false;
+    }
+    switch (kind) {
+      case "WrapPerpendicular":
+        return hasExactKeys(operation, ["kind", "rule", "container", "axis"]) && isOpaqueId3(operation["container"]) && KNOWN_AXES.indexOf(operation["axis"]) >= 0;
+      case "SwapNeighbor":
+        return hasExactKeys(operation, ["kind", "rule", "container", "neighbor"]) && isOpaqueId3(operation["container"]) && isOpaqueId3(operation["neighbor"]);
+      case "InsertIntoGroup":
+        return hasExactKeys(operation, [
+          "kind",
+          "rule",
+          "container",
+          "target_group",
+          "insertion_index",
+          "insertion"
+        ]) && isOpaqueId3(operation["container"]) && isOpaqueId3(operation["target_group"]) && isNonNegativeInt(operation["insertion_index"]) && (operation["insertion"] === "midpoint" || operation["insertion"] === "near-edge");
+      case "SplitGroupChild":
+        return hasExactKeys(operation, [
+          "kind",
+          "rule",
+          "container",
+          "target_group",
+          "target_child",
+          "target_child_index",
+          "focused_side",
+          "axis"
+        ]) && isOpaqueId3(operation["container"]) && isOpaqueId3(operation["target_group"]) && isOpaqueId3(operation["target_child"]) && isNonNegativeInt(operation["target_child_index"]) && (operation["focused_side"] === "first" || operation["focused_side"] === "second") && KNOWN_AXES.indexOf(operation["axis"]) >= 0;
+      case "WrapNeighbor":
+        return hasExactKeys(operation, [
+          "kind",
+          "rule",
+          "container",
+          "neighbor",
+          "focused_before_neighbor",
+          "axis"
+        ]) && isOpaqueId3(operation["container"]) && isOpaqueId3(operation["neighbor"]) && typeof operation["focused_before_neighbor"] === "boolean" && KNOWN_AXES.indexOf(operation["axis"]) >= 0;
+      case "EscapeParent":
+        return hasExactKeys(operation, [
+          "kind",
+          "rule",
+          "container",
+          "parent",
+          "container_child_index",
+          "parent_insertion_index",
+          "continuation"
+        ]) && isOpaqueId3(operation["container"]) && isOpaqueId3(operation["parent"]) && isNonNegativeInt(operation["container_child_index"]) && (isNonNegativeInt(operation["parent_insertion_index"]) || operation["parent_insertion_index"] === null) && (operation["continuation"] === "none" || operation["continuation"] === "R1");
+      case "CrossOutput":
+        return hasExactKeys(operation, [
+          "kind",
+          "rule",
+          "target_output",
+          "source_root_child_index",
+          "target"
+        ]) && isOpaqueId3(operation["target_output"]) && isNonNegativeInt(operation["source_root_child_index"]) && (operation["target"] === "empty" || operation["target"] === "occupied");
+      default:
+        return false;
+    }
+  }
+  function validateGeometryEntry(value) {
+    if (!isRecord3(value)) {
+      return false;
+    }
+    if (!hasExactKeys(value, ["window", "leaf", "output", "workspace", "rect"])) {
+      return false;
+    }
+    if (!isOpaqueId3(value["window"]) || !isOpaqueId3(value["leaf"]) || !isOpaqueId3(value["output"]) || !isOpaqueId3(value["workspace"])) {
+      return false;
+    }
+    const rect = value["rect"];
+    if (!isRecord3(rect)) {
+      return false;
+    }
+    if (!hasExactKeys(rect, ["x", "y", "w", "h"])) {
+      return false;
+    }
+    return isTargetRect({ x: rect["x"], y: rect["y"], w: rect["w"], h: rect["h"] });
+  }
+  function validateDesiredFocus(value) {
+    if (!isRecord3(value)) {
+      return false;
+    }
+    if (!hasExactKeys(value, ["domain_output", "domain_workspace", "leaf"])) {
+      return false;
+    }
+    return isOpaqueId3(value["domain_output"]) && isOpaqueId3(value["domain_workspace"]) && isOpaqueId3(value["leaf"]);
+  }
+  function validatePlanned2(reply, correlationId) {
+    if (!isRecord3(reply)) {
+      return null;
+    }
+    if (!hasExactKeys(reply, [
+      "v",
+      "correlation_id",
+      "outcome",
+      "base_revision",
+      "capability",
+      "rule",
+      "preconditions",
+      "operation",
+      "desired_geometry",
+      "desired_focus"
+    ])) {
+      return null;
+    }
+    if (reply["v"] !== MOVEMENT_CONTRACT_VERSION) {
+      return null;
+    }
+    if (reply["correlation_id"] !== correlationId) {
+      return null;
+    }
+    if (reply["outcome"] !== "planned") {
+      return null;
+    }
+    const capability = reply["capability"];
+    const rule = reply["rule"];
+    if (typeof capability !== "string" || KNOWN_CAPABILITIES.indexOf(capability) < 0) {
+      return null;
+    }
+    if (typeof rule !== "string" || KNOWN_RULES.indexOf(rule) < 0) {
+      return null;
+    }
+    const preconditions = reply["preconditions"];
+    if (!Array.isArray(preconditions) || preconditions.length === 0 || preconditions.length > 7) {
+      return null;
+    }
+    const seenPre = /* @__PURE__ */ new Set();
+    for (const entry of preconditions) {
+      if (typeof entry !== "string" || KNOWN_PRECONDITIONS2.indexOf(entry) < 0 || seenPre.has(entry)) {
+        return null;
+      }
+      seenPre.add(entry);
+    }
+    const operation = reply["operation"];
+    if (!validateOperationShape(operation, rule, capability)) {
+      return null;
+    }
+    const expected = expectedPreconditions(operation["kind"]);
+    if (expected === null || preconditions.length !== expected.length) {
+      return null;
+    }
+    for (let index = 0; index < expected.length; index += 1) {
+      if (preconditions[index] !== expected[index]) {
+        return null;
+      }
+    }
+    const baseRevision = reply["base_revision"];
+    if (!isRevision2(baseRevision)) {
+      return null;
+    }
+    const geometryRaw = reply["desired_geometry"];
+    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > MOVEMENT_MAX_GEOMETRY) {
+      return null;
+    }
+    const geometry = [];
+    const seenWindow = /* @__PURE__ */ new Set();
+    for (const entry of geometryRaw) {
+      if (!validateGeometryEntry(entry)) {
+        return null;
+      }
+      const typed = entry;
+      if (seenWindow.has(typed.window)) {
+        return null;
+      }
+      seenWindow.add(typed.window);
+      geometry.push({
+        window: typed.window,
+        leaf: typed.leaf,
+        output: typed.output,
+        workspace: typed.workspace,
+        rect: { x: typed.rect.x, y: typed.rect.y, w: typed.rect.w, h: typed.rect.h }
+      });
+    }
+    const focusRaw = reply["desired_focus"];
+    if (!validateDesiredFocus(focusRaw)) {
+      return null;
+    }
+    const focusRecord = focusRaw;
+    return {
+      correlationId,
+      baseRevision,
+      capability,
+      rule,
+      preconditions: Object.freeze([...preconditions]),
+      operation,
+      geometry: Object.freeze(geometry),
+      focus: {
+        domainOutput: focusRecord["domain_output"],
+        domainWorkspace: focusRecord["domain_workspace"],
+        leaf: focusRecord["leaf"]
+      }
+    };
+  }
+  function toDesiredFocus(raw) {
+    return {
+      domainOutput: raw["domain_output"],
+      domainWorkspace: raw["domain_workspace"],
+      leaf: raw["leaf"]
+    };
+  }
+  function validateObserved2(observed) {
+    if (observed === null || typeof observed !== "object") {
+      return false;
+    }
+    if (!isOpaqueId3(observed.domainOutput) || !isOpaqueId3(observed.domainWorkspace)) {
+      return false;
+    }
+    if (!isOpaqueId3(observed.focusedId)) {
+      return false;
+    }
+    if (!Array.isArray(observed.windows) || !Array.isArray(observed.domains)) {
+      return false;
+    }
+    const windows = observed.windows;
+    const domains = observed.domains;
+    if (windows.length === 0 || windows.length > MOVEMENT_MAX_WINDOWS) {
+      return false;
+    }
+    if (domains.length === 0 || domains.length > MOVEMENT_MAX_DOMAINS) {
+      return false;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    let focusedFound = false;
+    const domainKeys = /* @__PURE__ */ new Set();
+    for (const domain of domains) {
+      if (typeof domain !== "object" || domain === null) {
+        return false;
+      }
+      const candidate = domain;
+      if (!isOpaqueId3(candidate.output) || !isOpaqueId3(candidate.workspace)) {
+        return false;
+      }
+      if (!isTargetRect({ x: candidate.bounds.x, y: candidate.bounds.y, w: candidate.bounds.w, h: candidate.bounds.h })) {
+        return false;
+      }
+      if (!isFiniteInt(candidate.gap) || candidate.gap < 0 || candidate.gap > 64) {
+        return false;
+      }
+      if (typeof candidate.adjacent !== "object" || candidate.adjacent === null || Array.isArray(candidate.adjacent)) {
+        return false;
+      }
+      const keys = Object.keys(candidate.adjacent);
+      if (keys.length > 4) {
+        return false;
+      }
+      for (const key of keys) {
+        if (KNOWN_DIRECTIONS.indexOf(key) < 0) {
+          return false;
+        }
+        const target = candidate.adjacent[key];
+        if (!isOpaqueId3(target) || target === candidate.output) {
+          return false;
+        }
+      }
+      const pair = `${candidate.output}${candidate.workspace}`;
+      if (domainKeys.has(pair)) {
+        return false;
+      }
+      domainKeys.add(pair);
+    }
+    const domainByKey = /* @__PURE__ */ new Map();
+    for (const domain of domains) {
+      const candidate = domain;
+      domainByKey.set(`${candidate.output}${candidate.workspace}`, candidate);
+    }
+    const oppositeOf = {
+      left: "right",
+      right: "left",
+      up: "down",
+      down: "up"
+    };
+    for (const domain of domains) {
+      const candidate = domain;
+      for (const key of Object.keys(candidate.adjacent)) {
+        const target = candidate.adjacent[key];
+        const targetDomain = domainByKey.get(`${target}${candidate.workspace}`);
+        if (targetDomain === void 0) {
+          return false;
+        }
+        const back = targetDomain.adjacent[oppositeOf[key]];
+        if (back !== candidate.output) {
+          return false;
+        }
+      }
+    }
+    for (const entry of windows) {
+      if (typeof entry !== "object" || entry === null) {
+        return false;
+      }
+      const candidate = entry;
+      if (!isOpaqueId3(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
+        return false;
+      }
+      if (!isOpaqueId3(candidate.output) || !isOpaqueId3(candidate.workspace)) {
+        return false;
+      }
+      if (!isTargetRect({ x: candidate.rect.x, y: candidate.rect.y, w: candidate.rect.w, h: candidate.rect.h })) {
+        return false;
+      }
+      if (seen.has(candidate.id)) {
+        return false;
+      }
+      seen.add(candidate.id);
+      if (candidate.id === observed.focusedId) {
+        focusedFound = true;
+      }
+      if (!domainKeys.has(`${candidate.output}${candidate.workspace}`)) {
+        return false;
+      }
+    }
+    if (!focusedFound) {
+      return false;
+    }
+    if (typeof observed.fingerprint !== "string" || observed.fingerprint.length === 0) {
+      return false;
+    }
+    if (typeof observed.revalidate !== "function") {
+      return false;
+    }
+    return true;
+  }
+  function orderMovementWrites(oldById, desired) {
+    return orderGeometryWrites(oldById, desired);
+  }
+  var MovementAdapter = class {
+    constructor(env) {
+      this.env = env;
+      this.enabled = false;
+      this.owner = "";
+      this.generation = "";
+      this.revision = 0;
+      // Shared one-session revision binding: when the authority passes a
+      // holder object, all four slices read and advance the same counter so
+      // sequential commands across slices bind the single Rust revision. A
+      // plain number keeps the previous per-adapter behavior.
+      this.revisionBinding = null;
+      this.inFlight = false;
+      this.token = 0;
+      this.activeToken = 0;
+      this.callbackSeen = false;
+      this.cancelTimer = null;
+      this.detaches = [];
+      this.invalidated = false;
+      this.suppressing = false;
+      this.seq = 0;
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      this.lossReported = false;
+      // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+      // resolved via GetNameOwner (plus one StartServiceByName phase only when
+      // absent) before any planner call. Null means unpinned; planner calls
+      // never fall back to the well-known name.
+      this.pinnedOwner = null;
+      // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+      // post-start owner, 4 planner dispatched. Single flight, no retry.
+      this.activationStep = 0;
+    }
+    isSharedRevisionBinding(value) {
+      if (typeof value !== "object" || value === null) {
+        return false;
+      }
+      return typeof value["current"] === "number";
+    }
+    readRevision() {
+      if (this.revisionBinding !== null) {
+        return this.revisionBinding.current;
+      }
+      return this.revision;
+    }
+    writeRevision(value) {
+      this.revision = value;
+      if (this.revisionBinding !== null) {
+        this.revisionBinding.current = value;
+      }
+    }
+    get isEnabled() {
+      return this.enabled;
+    }
+    get isInFlight() {
+      return this.inFlight;
+    }
+    clearDedup() {
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+    }
+    reportAdapterLost(planned) {
+      if (planned === null || this.lossReported) {
+        return;
+      }
+      const target = this.pinnedOwner;
+      if (!isUniqueOwner2(target)) {
+        return;
+      }
+      this.lossReported = true;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: MOVEMENT_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "adapter-lost"
+        });
+      } catch (error) {
+        void error;
+        return;
+      }
+      if (payload.length === 0 || payload.length > MOVEMENT_MAX_REQUEST_BYTES) {
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          MOVEMENT_OBJECT,
+          MOVEMENT_INTERFACE,
+          MOVEMENT_METHOD,
+          payload,
+          () => {
+          }
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    plannerService() {
+      return this.pinnedOwner;
+    }
+    enable(auth) {
+      if (this.enabled) {
+        return false;
+      }
+      if (!isRecord3(auth)) {
+        this.reject("movement-invalid-auth");
+        return false;
+      }
+      if (!isOwnerId2(auth.owner) || !isGeneration2(auth.generation)) {
+        this.reject("movement-invalid-auth");
+        return false;
+      }
+      const revision = auth.revision === void 0 ? 0 : auth.revision;
+      if (this.isSharedRevisionBinding(revision)) {
+        if (!isRevision2(revision.current)) {
+          this.reject("movement-invalid-auth");
+          return false;
+        }
+      } else if (!isRevision2(revision)) {
+        this.reject("movement-invalid-auth");
+        return false;
+      }
+      const kinds = ["active", "added", "removed", "output", "desktop", "geometry"];
+      const attached = [];
+      for (const kind of kinds) {
+        let detach = null;
+        try {
+          detach = this.env.subscribe(kind, () => this.onSignal(kind));
+        } catch (error) {
+          void error;
+          detach = null;
+        }
+        if (typeof detach !== "function") {
+          for (const done of attached) {
+            try {
+              done();
+            } catch (error) {
+              void error;
+            }
+          }
+          this.reject("movement-signal-failed");
+          return false;
+        }
+        attached.push(detach);
+      }
+      this.detaches = attached;
+      this.owner = auth.owner;
+      this.generation = auth.generation;
+      if (this.isSharedRevisionBinding(revision)) {
+        this.revisionBinding = revision;
+        this.writeRevision(revision.current);
+      } else {
+        this.revisionBinding = null;
+        this.revision = revision;
+      }
+      this.enabled = true;
+      this.invalidated = false;
+      this.suppressing = false;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      this.lossReported = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.log(`${LOG_PREFIX2}:ready`);
+      return true;
+    }
+    disable() {
+      if (!this.enabled && this.detaches.length === 0) {
+        return;
+      }
+      this.enabled = false;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.clearTimer();
+      for (const detach of this.detaches) {
+        try {
+          detach();
+        } catch (error) {
+          void error;
+        }
+      }
+      this.detaches = [];
+      this.log(`${LOG_PREFIX2}:disabled`);
+    }
+    requestMovement(direction) {
+      if (!this.enabled) {
+        this.reject("movement-disabled");
+        return;
+      }
+      if (this.inFlight) {
+        this.reject("movement-busy");
+        return;
+      }
+      if (!isDirection2(direction)) {
+        this.reject("movement-invalid-intent");
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveMovementAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reject("movement-exclusive-conflict");
+        this.disable();
+        return;
+      }
+      let observed = null;
+      try {
+        observed = this.env.observe();
+      } catch (error) {
+        void error;
+        observed = null;
+      }
+      if (!validateObserved2(observed)) {
+        this.reject("movement-stale-scope");
+        this.disable();
+        return;
+      }
+      const current = observed;
+      if (current.fingerprint === this.lastFingerprint && direction === this.lastDirection) {
+        this.reject("movement-dedup");
+        return;
+      }
+      if (this.seq < 0 || this.seq > MOVEMENT_MAX_SEQ) {
+        this.reject("movement-seq-exhausted");
+        this.disable();
+        return;
+      }
+      const correlation = `${this.generation}-m${String(this.seq)}`;
+      this.seq += 1;
+      if (!isCorrelationId2(correlation)) {
+        this.reject("movement-invalid-auth");
+        this.disable();
+        return;
+      }
+      const windows = current.windows.map((entry) => ({
+        window: entry.id,
+        output: entry.output,
+        workspace: entry.workspace
+      }));
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      let requestRevision = this.readRevision();
+      if (requestRevision === 0) {
+        requestRevision = sortedIds.length;
+        if (this.revisionBinding !== null) {
+          if (sortedIds.length === 3) {
+            this.writeRevision(requestRevision);
+          }
+        } else {
+          this.writeRevision(requestRevision);
+        }
+      }
+      const fingerprint = movementFingerprint(
+        current.domainOutput,
+        current.domainWorkspace,
+        current.focusedId,
+        sortedIds
+      );
+      const domains = current.domains.map((domain) => ({
+        output: domain.output,
+        workspace: domain.workspace,
+        bounds: { x: domain.bounds.x, y: domain.bounds.y, w: domain.bounds.w, h: domain.bounds.h },
+        gap: domain.gap,
+        adjacent: __spreadValues({}, domain.adjacent)
+      }));
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: MOVEMENT_CONTRACT_VERSION,
+          action: "request",
+          correlation_id: correlation,
+          owner: this.owner,
+          generation: this.generation,
+          revision: requestRevision,
+          fingerprint,
+          domain: { output: current.domainOutput, workspace: current.domainWorkspace },
+          focused_window: current.focusedId,
+          direction,
+          windows,
+          capabilities: {
+            swap_neighbor: true,
+            wrap_perpendicular: true,
+            wrap_siblings: true,
+            insert_child: true,
+            split_group_child: true,
+            reparent_leaf: true,
+            cross_output_transfer: true
+          },
+          domains
+        });
+      } catch (error) {
+        void error;
+        this.reject("movement-invalid-intent");
+        return;
+      }
+      if (payload.length > MOVEMENT_MAX_REQUEST_BYTES) {
+        this.reject("movement-oversized");
+        return;
+      }
+      this.lastFingerprint = current.fingerprint;
+      this.lastDirection = direction;
+      this.diag("req", correlation, [
+        ["rev", requestRevision],
+        ["windows", sortedIds.length]
+      ]);
+      this.startFlight(payload, correlation, direction, current);
+    }
+    onSignal(kind) {
+      if (kind === "geometry" && this.suppressing) {
+        return;
+      }
+      this.invalidated = true;
+    }
+    startFlight(payload, correlation, direction, observed) {
+      this.inFlight = true;
+      this.invalidated = false;
+      this.suppressing = false;
+      this.pending = null;
+      this.pendingObserved = observed;
+      this.pendingDirection = direction;
+      this.pendingMover = observed.focusedId;
+      this.lossReported = false;
+      this.callbackSeen = false;
+      this.pinnedOwner = null;
+      this.activationStep = 1;
+      this.token += 1;
+      const flight = this.token;
+      this.activeToken = flight;
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "timer-failed"]]);
+        this.reject("movement-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      try {
+        this.env.callDbus(
+          MOVEMENT_DBUS_SERVICE,
+          MOVEMENT_DBUS_OBJECT,
+          MOVEMENT_DBUS_INTERFACE,
+          MOVEMENT_GET_OWNER_METHOD,
+          MOVEMENT_SERVICE,
+          (reply) => this.onOwnerInitial(reply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("movement-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerInitial(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+        return;
+      }
+      if (isUniqueOwner2(reply)) {
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.diag("owner", correlation, [["transition", "pinned"]]);
+        this.sendPlannerRequest(flight, payload, correlation);
+        return;
+      }
+      this.activationStep = 2;
+      this.diag("owner", correlation, [["transition", "activating"]]);
+      try {
+        this.env.callDbus(
+          MOVEMENT_DBUS_SERVICE,
+          MOVEMENT_DBUS_OBJECT,
+          MOVEMENT_DBUS_INTERFACE,
+          MOVEMENT_START_METHOD,
+          MOVEMENT_SERVICE,
+          (startReply) => this.onStartResult(startReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("movement-dbus-failed");
+        this.disable();
+      }
+    }
+    onStartResult(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+        return;
+      }
+      if (reply !== MOVEMENT_START_PRIMARY && reply !== MOVEMENT_START_ALREADY) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("owner", correlation, [["transition", "activation-failed"]]);
+        this.diag("result", correlation, [["result", "activation-failed"]]);
+        this.reject("movement-activation-failed");
+        this.disable();
+        return;
+      }
+      this.activationStep = 3;
+      try {
+        this.env.callDbus(
+          MOVEMENT_DBUS_SERVICE,
+          MOVEMENT_DBUS_OBJECT,
+          MOVEMENT_DBUS_INTERFACE,
+          MOVEMENT_GET_OWNER_METHOD,
+          MOVEMENT_SERVICE,
+          (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("movement-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerAfterStart(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+        return;
+      }
+      if (!isUniqueOwner2(reply)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("movement-owner-missing");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = reply;
+      this.activationStep = 4;
+      this.sendPlannerRequest(flight, payload, correlation);
+    }
+    sendPlannerRequest(flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner2(target)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("movement-owner-missing");
+        this.disable();
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          MOVEMENT_OBJECT,
+          MOVEMENT_INTERFACE,
+          MOVEMENT_METHOD,
+          payload,
+          (reply) => this.onRequestReply(reply, flight, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("movement-dbus-failed");
+        this.disable();
+      }
+    }
+    onTimeout(flight, stage, correlation) {
+      if (!this.inFlight || flight !== this.activeToken) {
+        return;
+      }
+      const lost = this.pending;
+      if (lost !== null) {
+        this.reportAdapterLost(lost);
+      }
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      const timeoutCorr = correlation != null ? correlation : lost == null ? void 0 : lost.correlationId;
+      if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+        this.diag("result", timeoutCorr, [
+          ["result", "timeout"],
+          ["detail", stage]
+        ]);
+      }
+      this.reject(`movement-timeout-${stage}`);
+      this.disable();
+    }
+    onRequestReply(reply, flight, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      if (this.activationStep !== 4 || !isUniqueOwner2(this.pinnedOwner)) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord3(parsed)) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      const outcome = parsed["outcome"];
+      if (outcome === "noop") {
+        if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("movement-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("movement-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "noop"]]);
+        this.log(`${LOG_PREFIX2}:noop`);
+        return;
+      }
+      if (outcome === "rejected") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("result", correlation, [["result", "rejected"]]);
+        this.reject("movement-rejected");
+        this.disable();
+        return;
+      }
+      if (outcome === "diverged") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("result", correlation, [["result", "diverged"]]);
+        this.reject("movement-diverged");
+        this.disable();
+        return;
+      }
+      if (outcome !== "planned") {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      const rawFocus = parsed["desired_focus"];
+      const planned = validatePlanned2(parsed, correlation);
+      if (planned === null || !isRecord3(rawFocus)) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+        this.reject("movement-precondition-mismatch");
+        this.disable();
+        return;
+      }
+      if (!validateDesiredFocus(rawFocus)) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+        this.reject("movement-precondition-mismatch");
+        this.disable();
+        return;
+      }
+      const full = {
+        correlationId: planned.correlationId,
+        baseRevision: planned.baseRevision,
+        capability: planned.capability,
+        rule: planned.rule,
+        preconditions: planned.preconditions,
+        operation: planned.operation,
+        geometry: planned.geometry,
+        focus: toDesiredFocus(rawFocus)
+      };
+      if (full.baseRevision !== this.readRevision()) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMover = null;
+        this.diag("result", correlation, [["result", "revision-mismatch"]]);
+        this.reject("movement-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.pending = full;
+      this.diag("result", correlation, [
+        ["result", "planned"],
+        ["rev", full.baseRevision]
+      ]);
+      this.applyPlanned(flight);
+    }
+    boundsFor(output, workspace2, domains) {
+      for (const domain of domains) {
+        if (domain.output === output && domain.workspace === workspace2) {
+          return domain.bounds;
+        }
+      }
+      return null;
+    }
+    applyPlanned(flight) {
+      var _a, _b, _c, _d;
+      const planned = this.pending;
+      const captured = this.pendingObserved;
+      const wantedDirection = this.pendingDirection;
+      const mover = this.pendingMover;
+      if (planned === null || captured === null || wantedDirection === null || mover === null) {
+        this.inFlight = false;
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      const capturedIds = captured.windows.map((entry) => entry.id).sort();
+      const desiredIds = planned.geometry.map((entry) => entry.window).sort();
+      if (capturedIds.length !== desiredIds.length) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-target-mismatch");
+        return;
+      }
+      for (let index = 0; index < capturedIds.length; index += 1) {
+        if (capturedIds[index] !== desiredIds[index]) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-target-mismatch");
+          return;
+        }
+      }
+      for (const entry of planned.geometry) {
+        if (!isTargetRect({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h })) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-geometry-mismatch");
+          return;
+        }
+        const bounds = this.boundsFor(entry.output, entry.workspace, captured.domains);
+        if (bounds === null || !rectContained(entry.rect, bounds)) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-geometry-mismatch");
+          return;
+        }
+      }
+      for (let a = 0; a < planned.geometry.length; a += 1) {
+        for (let b = a + 1; b < planned.geometry.length; b += 1) {
+          const ra = planned.geometry[a].rect;
+          const rb = planned.geometry[b].rect;
+          if (rectsOverlap(ra, rb)) {
+            this.reportAdapterLost(planned);
+            this.failApply("movement-overlap-mismatch");
+            return;
+          }
+        }
+      }
+      const byDomain = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        const key = `${entry.output}${entry.workspace}`;
+        const group = byDomain.get(key);
+        if (group === void 0) {
+          byDomain.set(key, [entry]);
+        } else {
+          group.push(entry);
+        }
+      }
+      for (const [key, group] of byDomain) {
+        for (let a = 0; a < group.length; a += 1) {
+          for (let b = a + 1; b < group.length; b += 1) {
+            const ra = group[a].rect;
+            const rb = group[b].rect;
+            if (rectsOverlap(ra, rb)) {
+              this.reportAdapterLost(planned);
+              this.failApply("movement-overlap-mismatch");
+              return;
+            }
+          }
+        }
+        const first = group[0];
+        const bounds = this.boundsFor(first.output, first.workspace, captured.domains);
+        if (bounds === null) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-geometry-mismatch");
+          return;
+        }
+        let gap = 0;
+        let gapFound = false;
+        for (const domain of captured.domains) {
+          if (domain.output === first.output && domain.workspace === first.workspace) {
+            gap = domain.gap;
+            gapFound = true;
+            break;
+          }
+        }
+        void key;
+        if (!gapFound) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-geometry-mismatch");
+          return;
+        }
+        if (gap === 0) {
+          let area = 0;
+          for (const entry of group) {
+            area += rectArea2(entry.rect);
+          }
+          if (area !== rectArea2(bounds)) {
+            this.reportAdapterLost(planned);
+            this.failApply("movement-gap-mismatch");
+            return;
+          }
+        }
+      }
+      if (planned.rule === "R4") {
+        const operation = planned.operation;
+        const targetOutput = operation["target_output"];
+        const sourceDomain = (_a = captured.domains.find(
+          (domain) => domain.output === captured.domainOutput && domain.workspace === captured.domainWorkspace
+        )) != null ? _a : null;
+        const sourceOut = (_b = sourceDomain == null ? void 0 : sourceDomain.output) != null ? _b : captured.domainOutput;
+        const sourceWs = (_c = sourceDomain == null ? void 0 : sourceDomain.workspace) != null ? _c : captured.domainWorkspace;
+        const targetDomain = (_d = captured.domains.find(
+          (domain) => domain.output === targetOutput && domain.workspace === sourceWs
+        )) != null ? _d : null;
+        if (typeof targetOutput !== "string" || sourceDomain === null || targetDomain === null || wantedDirection === null) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-target-mismatch");
+          return;
+        }
+        const forward = sourceDomain.adjacent[wantedDirection];
+        const back = targetDomain.adjacent[oppositeMovementDirection(wantedDirection)];
+        if (forward !== targetOutput || back !== sourceOut) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-target-mismatch");
+          return;
+        }
+      }
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-signal-invalid");
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveMovementAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-exclusive-conflict");
+        return;
+      }
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved2(fresh)) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-stale-scope");
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-stale-revalidate");
+        return;
+      }
+      if (current.fingerprint !== captured.fingerprint) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-stale-revalidate");
+        return;
+      }
+      if (current.domainOutput !== captured.domainOutput || current.domainWorkspace !== captured.domainWorkspace || current.focusedId !== captured.focusedId) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-stale-scope");
+        return;
+      }
+      const capturedRects = /* @__PURE__ */ new Map();
+      for (const entry of captured.windows) {
+        capturedRects.set(entry.id, entry.rect);
+      }
+      for (const entry of current.windows) {
+        const want = capturedRects.get(entry.id);
+        if (want === void 0 || !sameRect2(want, entry.rect)) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-stale-revalidate");
+          return;
+        }
+      }
+      if (current.domains.length !== captured.domains.length) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-stale-scope");
+        return;
+      }
+      const ordered = orderMovementWrites(capturedRects, planned.geometry);
+      const byId = /* @__PURE__ */ new Map();
+      for (const entry of current.windows) {
+        byId.set(entry.id, entry.ref);
+      }
+      this.suppressing = false;
+      let applied = 0;
+      let partial = false;
+      let partialToken = "movement-partial-apply";
+      const desiredById = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        desiredById.set(entry.window, entry);
+      }
+      const writtenIds = /* @__PURE__ */ new Set();
+      for (const entry of ordered) {
+        if (this.invalidated) {
+          partial = true;
+          partialToken = "movement-signal-invalid";
+          break;
+        }
+        const target = byId.get(entry.window);
+        if (typeof target !== "object" || target === null) {
+          partial = true;
+          break;
+        }
+        let liveRef = null;
+        try {
+          const refetch = this.env.observe();
+          if (refetch !== null) {
+            for (const candidate of refetch.windows) {
+              if (candidate.id === entry.window) {
+                liveRef = candidate.ref;
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          void error;
+          liveRef = null;
+        }
+        if (liveRef !== target) {
+          partial = true;
+          break;
+        }
+        const bounds = this.boundsFor(entry.output, entry.workspace, captured.domains);
+        if (bounds === null || !rectContained(entry.rect, bounds)) {
+          partial = true;
+          break;
+        }
+        let written = false;
+        this.suppressing = true;
+        try {
+          written = this.env.setGeometry(target, entry.rect) === true;
+        } catch (error) {
+          void error;
+          written = false;
+        } finally {
+          this.suppressing = false;
+        }
+        if (!written) {
+          partial = true;
+          break;
+        }
+        applied += 1;
+        writtenIds.add(entry.window);
+        if (this.invalidated) {
+          partial = true;
+          partialToken = "movement-signal-invalid";
+          break;
+        }
+        try {
+          const refetch = this.env.observe();
+          if (refetch === null) {
+            partial = true;
+            partialToken = "movement-signal-invalid";
+            break;
+          }
+          if (refetch.windows.length !== captured.windows.length) {
+            partial = true;
+            partialToken = "movement-signal-invalid";
+            break;
+          }
+          for (const candidate of refetch.windows) {
+            const want = writtenIds.has(candidate.id) ? desiredById.get(candidate.id).rect : capturedRects.get(candidate.id);
+            if (want === void 0 || !sameRect2(want, candidate.rect)) {
+              partial = true;
+              partialToken = "movement-signal-invalid";
+              break;
+            }
+          }
+          if (partial) {
+            break;
+          }
+        } catch (error) {
+          void error;
+          partial = true;
+          partialToken = "movement-signal-invalid";
+          break;
+        }
+      }
+      this.suppressing = false;
+      void flight;
+      if (partial) {
+        this.reportAdapterLost(planned);
+        this.failApply(partialToken);
+        return;
+      }
+      const moverRef = byId.get(mover);
+      if (typeof moverRef !== "object" || moverRef === null) {
+        this.reportAdapterLost(planned);
+        this.failApply("movement-target-mismatch");
+        return;
+      }
+      let currentActive = null;
+      try {
+        currentActive = this.env.active();
+      } catch (error) {
+        void error;
+        currentActive = null;
+      }
+      if (currentActive !== moverRef) {
+        let focused = false;
+        try {
+          focused = this.env.setActive(moverRef) === true;
+        } catch (error) {
+          void error;
+          focused = false;
+        }
+        if (!focused) {
+          this.reportAdapterLost(planned);
+          this.failApply("movement-focus-failed");
+          return;
+        }
+      }
+      void applied;
+      this.sendAcknowledge(flight, planned);
+    }
+    failApply(token) {
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.reject(token);
+      this.disable();
+    }
+    sendAcknowledge(flight, planned) {
+      void flight;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("movement-signal-invalid");
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner2(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("movement-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: MOVEMENT_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "accepted"
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("movement-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("ack", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          MOVEMENT_OBJECT,
+          MOVEMENT_INTERFACE,
+          MOVEMENT_METHOD,
+          payload,
+          (reply) => this.onAckReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("movement-dbus-failed");
+      }
+    }
+    onAckReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("movement-signal-invalid");
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      if (!isRecord3(parsed) || parsed["outcome"] !== "acknowledged") {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.failApply("movement-correlation-mismatch");
+        return;
+      }
+      if (parsed["base_revision"] !== planned.baseRevision) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.failApply("movement-revision-mismatch");
+        return;
+      }
+      this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
+      this.sendVerify(planned);
+    }
+    sendVerify(planned) {
+      var _a, _b;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("movement-signal-invalid");
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner2(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("movement-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved2(fresh)) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("movement-post-stale");
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("movement-post-stale");
+        return;
+      }
+      if (current.domainOutput !== planned.focus.domainOutput || current.domainWorkspace !== planned.focus.domainWorkspace) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("movement-post-mismatch");
+        return;
+      }
+      const moverId = this.pendingMover;
+      if (moverId === null || current.focusedId !== moverId) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("movement-post-mismatch");
+        return;
+      }
+      const freshById = /* @__PURE__ */ new Map();
+      for (const entry of current.windows) {
+        freshById.set(entry.id, entry);
+      }
+      if (freshById.size !== planned.geometry.length) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("movement-post-mismatch");
+        return;
+      }
+      const leafByWindow = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        leafByWindow.set(entry.window, entry.leaf);
+      }
+      const verifiedGeometry = [];
+      for (const entry of planned.geometry) {
+        const live = freshById.get(entry.window);
+        if (live === void 0) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("movement-post-mismatch");
+          return;
+        }
+        if (!sameRect2(live.rect, entry.rect)) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("movement-post-mismatch");
+          return;
+        }
+        if (live.output !== entry.output || live.workspace !== entry.workspace) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("movement-post-mismatch");
+          return;
+        }
+        verifiedGeometry.push({
+          window: live.id,
+          leaf: leafByWindow.get(live.id),
+          output: live.output,
+          workspace: live.workspace,
+          rect: { x: live.rect.x, y: live.rect.y, w: live.rect.w, h: live.rect.h }
+        });
+      }
+      let activeRef = null;
+      try {
+        activeRef = this.env.active();
+      } catch (error) {
+        void error;
+        activeRef = null;
+      }
+      const moverRef = (_b = (_a = freshById.get(this.pendingMover)) == null ? void 0 : _a.ref) != null ? _b : null;
+      if (activeRef !== moverRef || moverRef === null) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("movement-post-mismatch");
+        return;
+      }
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      const fingerprint = movementFingerprint(
+        planned.focus.domainOutput,
+        planned.focus.domainWorkspace,
+        this.pendingMover,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: MOVEMENT_CONTRACT_VERSION,
+          action: "verify",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          revision: planned.baseRevision,
+          fingerprint,
+          verified: true,
+          verified_preconditions: [...planned.preconditions],
+          verified_operation: __spreadValues({}, planned.operation),
+          verified_geometry: verifiedGeometry,
+          verified_focus: {
+            domain_output: planned.focus.domainOutput,
+            domain_workspace: planned.focus.domainWorkspace,
+            leaf: planned.focus.leaf
+          }
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("movement-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("movement-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("verify", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          MOVEMENT_OBJECT,
+          MOVEMENT_INTERFACE,
+          MOVEMENT_METHOD,
+          payload,
+          (reply) => this.onVerifyReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("movement-dbus-failed");
+      }
+    }
+    onVerifyReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMover = null;
+      this.suppressing = false;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("movement-signal-invalid");
+        this.disable();
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord3(parsed) || parsed["outcome"] !== "committed") {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("movement-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.reject("movement-correlation-mismatch");
+        this.disable();
+        return;
+      }
+      const revision = parsed["revision"];
+      if (typeof revision === "number" && Number.isInteger(revision) && revision === this.readRevision() + 1) {
+        this.writeRevision(revision);
+      } else {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.reject("movement-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.diag("outcome", planned.correlationId, [
+        ["result", "committed"],
+        ["rev", revision]
+      ]);
+      this.log(`${LOG_PREFIX2}:applied`);
+    }
+    clearTimer() {
+      const cancel = this.cancelTimer;
+      this.cancelTimer = null;
+      if (cancel === null) {
+        return;
+      }
+      try {
+        cancel();
+      } catch (error) {
+        void error;
+      }
+    }
+    reject(token) {
+      try {
+        this.env.log(`${LOG_PREFIX2}:reject:${token}`);
+      } catch (error) {
+        void error;
+      }
+    }
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    diag(stage, correlation, extra = []) {
+      try {
+        this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
+      } catch (error) {
+        void error;
+      }
+    }
+    log(message) {
+      try {
+        this.env.log(message);
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
+  // src/movement-adapter-entry.ts
+  var ENTRY_LOG2 = "plasma-auto-tiler:movement-entry";
+  var ENTRY_READY2 = `${ENTRY_LOG2}:ready`;
+  var ENTRY_REJECT2 = `${ENTRY_LOG2}:reject:movement-entry-invalid`;
+  var ENTRY_SCOPE_REJECT2 = `${ENTRY_LOG2}:reject:movement-entry-scope-invalid`;
+  var ENTRY_SCOPE2 = `${ENTRY_LOG2}:scope`;
+  var MAX_LIST2 = 1024;
+  var MAX_SCREENS2 = 32;
+  var MAX_DESKTOPS2 = 32;
+  var MAX_ID_LEN2 = 128;
+  function readProp2(value, property) {
+    try {
+      return Reflect.get(value, property);
+    } catch (error) {
+      void error;
+      return void 0;
+    }
+  }
+  function isOpaqueId4(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LEN2) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isHexRun2(text) {
+    if (text.length === 0) {
+      return false;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lower = code >= 97 && code <= 102;
+      const upper = code >= 65 && code <= 70;
+      if (!(digit || lower || upper)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUuidText2(text) {
+    const parts = text.split("-");
+    const lens = [8, 4, 4, 4, 12];
+    if (parts.length !== lens.length) {
+      return false;
+    }
+    for (let index = 0; index < lens.length; index += 1) {
+      const part = parts[index];
+      if (part.length !== lens[index] || !isHexRun2(part)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function unwrapBraced2(text) {
+    if (text.length !== 38 || !text.startsWith("{") || !text.endsWith("}")) {
+      return null;
+    }
+    const inner = text.slice(1, 37);
+    if (!isUuidText2(inner) || !isOpaqueId4(inner)) {
+      return null;
+    }
+    return inner;
+  }
+  function normalizeNativeId2(value) {
+    if (typeof value === "string") {
+      if (isOpaqueId4(value)) {
+        return value;
+      }
+      return unwrapBraced2(value);
+    }
+    let text = "";
+    try {
+      text = String(value);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (isOpaqueId4(text)) {
+      return text;
+    }
+    return unwrapBraced2(text);
+  }
+  function decodeList2(value, maxLength) {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    if (Array.isArray(value)) {
+      return value.length <= maxLength ? value : null;
+    }
+    let length = void 0;
+    try {
+      length = Reflect.get(value, "length");
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
+      return null;
+    }
+    const out = [];
+    for (let index = 0; index < length; index += 1) {
+      let element = void 0;
+      try {
+        element = Reflect.get(value, String(index));
+      } catch (error) {
+        void error;
+        return null;
+      }
+      if (element === void 0) {
+        return null;
+      }
+      out.push(element);
+    }
+    return out;
+  }
+  function resolveLexicalWorkspace2() {
+    try {
+      const candidate = workspace;
+      if (typeof candidate === "object" && candidate !== null) {
+        return candidate;
+      }
+    } catch (error) {
+      void error;
+    }
+    return null;
+  }
+  function toQuantizedInt(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+    const rounded = Math.round(value);
+    if (!Number.isSafeInteger(rounded)) {
+      return null;
+    }
+    return rounded;
+  }
+  function isWorkAreaRect(rect) {
+    if (rect.w <= 0 || rect.h <= 0 || rect.w > 16384 || rect.h > 16384) {
+      return false;
+    }
+    if (rect.x < -16384 || rect.x > 16384 || rect.y < -16384 || rect.y > 16384) {
+      return false;
+    }
+    return true;
+  }
+  function deriveAdjacent(domains) {
+    const result = domains.map(() => ({}));
+    const overlap = (a0, a1, b0, b1) => Math.min(a1, b1) - Math.max(a0, b0);
+    for (let a = 0; a < domains.length; a += 1) {
+      const left = domains[a];
+      for (let b = 0; b < domains.length; b += 1) {
+        if (a === b) {
+          continue;
+        }
+        const right = domains[b];
+        if (left.workspaceId !== right.workspaceId) {
+          continue;
+        }
+        const la = left.bounds;
+        const lb = right.bounds;
+        let direction = null;
+        if (la.x + la.w === lb.x && overlap(la.y, la.y + la.h, lb.y, lb.y + lb.h) > 0) {
+          direction = "right";
+        } else if (lb.x + lb.w === la.x && overlap(la.y, la.y + la.h, lb.y, lb.y + lb.h) > 0) {
+          direction = "left";
+        } else if (la.y + la.h === lb.y && overlap(la.x, la.x + la.w, lb.x, lb.x + lb.w) > 0) {
+          direction = "down";
+        } else if (lb.y + lb.h === la.y && overlap(la.x, la.x + la.w, lb.x, lb.x + lb.w) > 0) {
+          direction = "up";
+        }
+        if (direction === null) {
+          continue;
+        }
+        const slot = result[a];
+        const other = result[b];
+        const opposite = direction === "right" ? "left" : direction === "left" ? "right" : direction === "down" ? "up" : "down";
+        if (slot[direction] !== void 0 && slot[direction] !== right.outputName) {
+          return null;
+        }
+        if (other[opposite] !== void 0 && other[opposite] !== left.outputName) {
+          return null;
+        }
+        slot[direction] = right.outputName;
+        other[opposite] = left.outputName;
+      }
+    }
+    return result;
+  }
+  function readFrameRect(ref) {
+    const geometry = readProp2(ref, "frameGeometry");
+    if (typeof geometry !== "object" || geometry === null) {
+      return null;
+    }
+    const record = geometry;
+    const x = toQuantizedInt(record["x"]);
+    const y = toQuantizedInt(record["y"]);
+    const widthRaw = record["width"] !== void 0 ? record["width"] : record["w"];
+    const heightRaw = record["height"] !== void 0 ? record["height"] : record["h"];
+    const w = toQuantizedInt(widthRaw);
+    const h = toQuantizedInt(heightRaw);
+    if (x === null || y === null || w === null || h === null) {
+      return null;
+    }
+    if (w <= 0 || h <= 0 || x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return null;
+    }
+    return { x, y, w, h };
+  }
+  function activeIneligibilityCategory2(ref, domainOf) {
+    if (readProp2(ref, "normalWindow") !== true) {
+      return "class";
+    }
+    if (readProp2(ref, "managed") !== true) {
+      return "managed";
+    }
+    if (readProp2(ref, "minimized") !== false) {
+      return "minimized";
+    }
+    if (readProp2(ref, "fullScreen") !== false) {
+      return "fullscreen";
+    }
+    if (readProp2(ref, "maximizeMode") !== 0) {
+      return "maximized";
+    }
+    if (readProp2(ref, "onAllDesktops") !== false) {
+      return "all-desktops";
+    }
+    if (readProp2(ref, "resizeable") === false) {
+      return "normal-resizable";
+    }
+    const domain = domainOf(readProp2(ref, "output"));
+    if (domain === void 0) {
+      return "output";
+    }
+    const membership = decodeList2(readProp2(ref, "desktops"), MAX_DESKTOPS2);
+    if (membership === null || membership.length !== 1 || membership[0] !== domain.desktopRef) {
+      return "desktop";
+    }
+    return null;
+  }
+  function observeNative2(liveWorkspace, log) {
+    const fail = (predicate) => {
+      try {
+        log == null ? void 0 : log(`${ENTRY_SCOPE2}:${predicate}`);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    try {
+      if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+        return fail("workspace-invalid");
+      }
+      const surface = liveWorkspace;
+      let active = void 0;
+      try {
+        active = Reflect.get(surface, "activeWindow");
+      } catch (error) {
+        void error;
+        return fail("active-read-failed");
+      }
+      if (typeof active !== "object" || active === null) {
+        return fail("active-invalid");
+      }
+      const activeRef = active;
+      const activeOutput = readProp2(activeRef, "output");
+      if (typeof activeOutput !== "object" || activeOutput === null) {
+        return fail("output-invalid");
+      }
+      const lister = readProp2(surface, "windowList");
+      if (typeof lister !== "function") {
+        return fail("window-list-missing");
+      }
+      let rawList = void 0;
+      try {
+        rawList = Reflect.apply(lister, surface, []);
+      } catch (error) {
+        void error;
+        return fail("window-list-failed");
+      }
+      const windows = decodeList2(rawList, MAX_LIST2);
+      if (windows === null) {
+        return fail("window-list-invalid");
+      }
+      const screens = decodeList2(readProp2(surface, "screens"), MAX_SCREENS2);
+      if (screens === null || screens.length === 0 || screens.indexOf(activeOutput) < 0) {
+        return fail("screens-invalid");
+      }
+      const currentFn = readProp2(surface, "currentDesktopForScreen");
+      const areaFn = readProp2(surface, "clientArea");
+      if (typeof currentFn !== "function" || typeof areaFn !== "function") {
+        return fail("scope-fns-missing");
+      }
+      const domains = [];
+      const seenPairs = /* @__PURE__ */ new Set();
+      const outputByRef = /* @__PURE__ */ new Map();
+      for (const screen of screens) {
+        if (typeof screen !== "object" || screen === null) {
+          return fail("screen-invalid");
+        }
+        const outputRef = screen;
+        const nameRaw = readProp2(outputRef, "name");
+        if (!isOpaqueId4(nameRaw)) {
+          return fail("output-name-invalid");
+        }
+        const outputName = nameRaw;
+        let desktop = void 0;
+        try {
+          desktop = Reflect.apply(
+            currentFn,
+            surface,
+            [outputRef]
+          );
+        } catch (error) {
+          void error;
+          return fail("desktop-read-failed");
+        }
+        if (typeof desktop !== "object" || desktop === null) {
+          return fail("desktop-invalid");
+        }
+        const desktopRef = desktop;
+        const desktopIdRaw = readProp2(desktopRef, "id");
+        if (!isOpaqueId4(desktopIdRaw)) {
+          return fail("workspace-id-invalid");
+        }
+        const workspaceId = desktopIdRaw;
+        const pair = `${outputName}${workspaceId}`;
+        if (seenPairs.has(pair)) {
+          return fail("domain-duplicate");
+        }
+        seenPairs.add(pair);
+        let area = void 0;
+        try {
+          area = Reflect.apply(areaFn, surface, [
+            5,
+            outputRef,
+            desktopRef
+          ]);
+        } catch (error) {
+          void error;
+          return fail("work-area-failed");
+        }
+        if (typeof area !== "object" || area === null) {
+          return fail("work-area-invalid");
+        }
+        const areaRecord = area;
+        const bx = toQuantizedInt(areaRecord["x"]);
+        const by = toQuantizedInt(areaRecord["y"]);
+        const bwRaw = areaRecord["width"] !== void 0 ? areaRecord["width"] : areaRecord["w"];
+        const bhRaw = areaRecord["height"] !== void 0 ? areaRecord["height"] : areaRecord["h"];
+        const bw = toQuantizedInt(bwRaw);
+        const bh = toQuantizedInt(bhRaw);
+        if (bx === null || by === null || bw === null || bh === null) {
+          return fail("work-area-coords-invalid");
+        }
+        if (!isWorkAreaRect({ x: bx, y: by, w: bw, h: bh })) {
+          return fail("work-area-bounds-invalid");
+        }
+        const built = {
+          outputName,
+          workspaceId,
+          outputRef,
+          desktopRef,
+          bounds: { x: bx, y: by, w: bw, h: bh }
+        };
+        domains.push(built);
+        outputByRef.set(outputRef, built);
+      }
+      const adjacentMaps = deriveAdjacent(domains);
+      if (adjacentMaps === null) {
+        return fail("adjacency-invalid");
+      }
+      const activeDomain = outputByRef.get(activeOutput);
+      if (activeDomain === void 0) {
+        return fail("domain-missing");
+      }
+      const seen = /* @__PURE__ */ new Set();
+      const entries = [];
+      for (const item of windows) {
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+        const ref = item;
+        if (readProp2(ref, "normalWindow") !== true) {
+          continue;
+        }
+        if (readProp2(ref, "managed") !== true) {
+          continue;
+        }
+        if (readProp2(ref, "minimized") !== false) {
+          continue;
+        }
+        if (readProp2(ref, "fullScreen") !== false) {
+          continue;
+        }
+        if (readProp2(ref, "maximizeMode") !== 0) {
+          continue;
+        }
+        if (readProp2(ref, "onAllDesktops") !== false) {
+          continue;
+        }
+        const resizeable = readProp2(ref, "resizeable");
+        if (resizeable === false) {
+          continue;
+        }
+        const output = readProp2(ref, "output");
+        const domain = typeof output === "object" && output !== null ? outputByRef.get(output) : void 0;
+        if (domain === void 0) {
+          continue;
+        }
+        const membership = decodeList2(readProp2(ref, "desktops"), MAX_DESKTOPS2);
+        if (membership === null || membership.length !== 1 || membership[0] !== domain.desktopRef) {
+          continue;
+        }
+        let id = null;
+        try {
+          id = normalizeNativeId2(Reflect.get(ref, "internalId"));
+        } catch (error) {
+          void error;
+          return fail("id-read-failed");
+        }
+        if (id === null) {
+          return fail("id-invalid");
+        }
+        if (seen.has(id)) {
+          return fail("id-duplicate");
+        }
+        seen.add(id);
+        const rect = readFrameRect(ref);
+        if (rect === null) {
+          return fail("frame-invalid");
+        }
+        entries.push({ id, ref, rect, output: domain.outputName, workspace: domain.workspaceId });
+      }
+      if (entries.length === 0) {
+        return fail("empty-scope");
+      }
+      const sorted = [...entries].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      let activeNativeId = null;
+      try {
+        activeNativeId = normalizeNativeId2(Reflect.get(activeRef, "internalId"));
+      } catch (error) {
+        void error;
+        return fail("active-unobserved:active-id-invalid");
+      }
+      if (activeNativeId === null) {
+        return fail("active-unobserved:active-id-invalid");
+      }
+      const ineligible = activeIneligibilityCategory2(activeRef, (output) => outputByRef.get(output));
+      if (ineligible !== null) {
+        return fail(`active-unobserved:active-ineligible:${ineligible}`);
+      }
+      let activeId = null;
+      for (const entry of sorted) {
+        if (entry.id === activeNativeId) {
+          activeId = entry.id;
+          if (entry.ref !== activeRef) {
+            try {
+              log == null ? void 0 : log(`${ENTRY_SCOPE2}:active-wrapper-mismatch`);
+            } catch (error) {
+              void error;
+            }
+          }
+          break;
+        }
+      }
+      if (activeId === null) {
+        return fail("active-unobserved:active-missing");
+      }
+      const sortedIds = sorted.map((entry) => entry.id);
+      const fingerprint = JSON.stringify({ ids: sortedIds, active: activeId });
+      const frozenWindows = Object.freeze(
+        sorted.map(
+          (entry) => Object.freeze({
+            id: entry.id,
+            ref: entry.ref,
+            rect: Object.freeze(__spreadValues({}, entry.rect)),
+            output: entry.output,
+            workspace: entry.workspace
+          })
+        )
+      );
+      const frozenDomains = Object.freeze(
+        domains.map(
+          (domain, index) => {
+            var _a;
+            return Object.freeze({
+              output: domain.outputName,
+              workspace: domain.workspaceId,
+              bounds: Object.freeze(__spreadValues({}, domain.bounds)),
+              gap: 0,
+              adjacent: Object.freeze(__spreadValues({}, (_a = adjacentMaps[index]) != null ? _a : {}))
+            });
+          }
+        )
+      );
+      const expected = fingerprint;
+      const capturedActive = activeRef;
+      const capturedOutput = activeDomain.outputRef;
+      const capturedDesktop = activeDomain.desktopRef;
+      return {
+        domainOutput: activeDomain.outputName,
+        domainWorkspace: activeDomain.workspaceId,
+        focusedId: activeId,
+        windows: frozenWindows,
+        domains: frozenDomains,
+        activeRef,
+        fingerprint: expected,
+        revalidate: () => {
+          try {
+            const fresh = observeNative2(liveWorkspace, log);
+            if (fresh === null) {
+              return false;
+            }
+            if (fresh.fingerprint !== expected) {
+              return false;
+            }
+            if (fresh.activeRef !== capturedActive) {
+              return false;
+            }
+            const liveSurface = liveWorkspace;
+            const liveActive = Reflect.get(liveSurface, "activeWindow");
+            if (typeof liveActive !== "object" || liveActive === null) {
+              return false;
+            }
+            const liveOutput = Reflect.get(liveActive, "output");
+            if (liveOutput !== capturedOutput) {
+              return false;
+            }
+            const liveCurrent = Reflect.get(liveSurface, "currentDesktopForScreen");
+            if (typeof liveCurrent !== "function") {
+              return false;
+            }
+            const liveDesktop = Reflect.apply(
+              liveCurrent,
+              liveSurface,
+              [capturedOutput]
+            );
+            if (liveDesktop !== capturedDesktop) {
+              return false;
+            }
+            for (const entry of frozenWindows) {
+              const match = fresh.windows.find((item) => item.id === entry.id);
+              if (match === void 0 || match.ref !== entry.ref) {
+                return false;
+              }
+              if (match.rect.x !== entry.rect.x || match.rect.y !== entry.rect.y || match.rect.w !== entry.rect.w || match.rect.h !== entry.rect.h) {
+                return false;
+              }
+            }
+            return true;
+          } catch (error) {
+            void error;
+            return false;
+          }
+        }
+      };
+    } catch (error) {
+      void error;
+      return fail("observe-failed");
+    }
+  }
+  function startMovementAdapterEntry(overrides = {}) {
+    var _a;
+    const liveWorkspace = overrides.workspace !== void 0 ? overrides.workspace : resolveLexicalWorkspace2();
+    const log = (_a = overrides.log) != null ? _a : ((message) => {
+      try {
+        console.log(message);
+      } catch (error) {
+        void error;
+      }
+    });
+    const fail = () => {
+      try {
+        log(ENTRY_REJECT2);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+      return fail();
+    }
+    if (overrides.hasExclusiveMovementAuthority === void 0) {
+      return fail();
+    }
+    const authority = overrides.hasExclusiveMovementAuthority;
+    if (typeof authority !== "function") {
+      return fail();
+    }
+    let callDbus = overrides.callDbus;
+    if (callDbus === void 0) {
+      try {
+        const native = callDBus;
+        if (typeof native !== "function") {
+          return fail();
+        }
+        callDbus = (service, path, iface, method, payload, callback) => {
+          if (service === "org.freedesktop.DBus" && method === "StartServiceByName") {
+            native(
+              service,
+              path,
+              iface,
+              method,
+              payload,
+              0,
+              callback
+            );
+            return;
+          }
+          native(
+            service,
+            path,
+            iface,
+            method,
+            payload,
+            callback
+          );
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    let scheduleOnce = overrides.scheduleOnce;
+    if (scheduleOnce === void 0) {
+      try {
+        const ctor = QTimer;
+        if (typeof ctor !== "function") {
+          return fail();
+        }
+        scheduleOnce = (delayMs, callback) => {
+          const timer = new ctor();
+          timer.interval = delayMs;
+          timer.singleShot = true;
+          timer.timeout.connect(callback);
+          timer.start();
+          return () => {
+            try {
+              timer.stop();
+            } catch (error) {
+              void error;
+            }
+          };
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    const surface = liveWorkspace;
+    const sub = (name, handler) => {
+      try {
+        return connectSignal(readSignal(surface, name), handler);
+      } catch (error) {
+        void error;
+        return null;
+      }
+    };
+    const subWindowGeometry = (handler) => {
+      try {
+        const lister = surface["windowList"];
+        if (typeof lister !== "function") {
+          return null;
+        }
+        let raw = void 0;
+        try {
+          raw = Reflect.apply(lister, surface, []);
+        } catch (error) {
+          void error;
+          return null;
+        }
+        const list = decodeList2(raw, MAX_LIST2);
+        if (list === null) {
+          return null;
+        }
+        const detaches = [];
+        for (const item of list) {
+          if (typeof item !== "object" || item === null) {
+            continue;
+          }
+          const detach = connectSignal(readSignal(item, "moveResizedChanged"), handler);
+          if (detach === null) {
+            continue;
+          }
+          detaches.push(detach);
+        }
+        if (detaches.length === 0) {
+          return null;
+        }
+        return () => {
+          for (const detach of detaches) {
+            try {
+              detach();
+            } catch (error) {
+              void error;
+            }
+          }
+        };
+      } catch (error) {
+        void error;
+        return null;
+      }
+    };
+    const adapter = new MovementAdapter({
+      callDbus,
+      scheduleOnce,
+      log,
+      observe: () => observeNative2(liveWorkspace, log),
+      setGeometry: (target, rect) => {
+        try {
+          Reflect.set(target, "frameGeometry", {
+            x: rect.x,
+            y: rect.y,
+            width: rect.w,
+            height: rect.h
+          });
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      setActive: (target) => {
+        try {
+          liveWorkspace.activeWindow = target;
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      active: () => {
+        try {
+          const current = liveWorkspace.activeWindow;
+          return typeof current === "object" && current !== null ? current : null;
+        } catch (error) {
+          void error;
+          return null;
+        }
+      },
+      hasExclusiveMovementAuthority: authority,
+      subscribe: (kind, handler) => {
+        if (kind === "geometry") {
+          const detach2 = subWindowGeometry(handler);
+          if (detach2 === null) {
+            throw new Error("movement-entry-signal-failed");
+          }
+          return detach2;
+        }
+        const name = kind === "active" ? "windowActivated" : kind === "added" ? "windowAdded" : kind === "removed" ? "windowRemoved" : kind === "output" ? "screensChanged" : "currentDesktopChanged";
+        const detach = sub(name, handler);
+        if (detach === null) {
+          throw new Error("movement-entry-signal-failed");
+        }
+        return detach;
+      }
+    });
+    const enabled = adapter.enable({
+      owner: overrides.owner,
+      generation: overrides.generation,
+      revision: overrides.revision
+    });
+    if (!enabled) {
+      return null;
+    }
+    if (observeNative2(liveWorkspace, log) === null) {
+      adapter.disable();
+      try {
+        log(ENTRY_SCOPE_REJECT2);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
+    try {
+      log(ENTRY_READY2);
+    } catch (error) {
+      void error;
+    }
+    return {
+      stop: () => {
+        try {
+          adapter.disable();
+        } catch (error) {
+          void error;
+        }
+      },
+      request: (direction) => {
+        try {
+          adapter.requestMovement(direction);
+        } catch (error) {
+          void error;
+        }
+      }
+    };
+  }
+
+  // src/pointer-resize-adapter.ts
+  var POINTER_RESIZE_SERVICE = "org.plasmaautotiler.Planner";
+  var POINTER_RESIZE_OBJECT = "/org/plasmaautotiler/Planner";
+  var POINTER_RESIZE_INTERFACE = "org.plasmaautotiler.Planner1";
+  var POINTER_RESIZE_METHOD = "DescribePointerResize";
+  var POINTER_RESIZE_DBUS_SERVICE = "org.freedesktop.DBus";
+  var POINTER_RESIZE_DBUS_OBJECT = "/org/freedesktop/DBus";
+  var POINTER_RESIZE_DBUS_INTERFACE = "org.freedesktop.DBus";
+  var POINTER_RESIZE_GET_OWNER_METHOD = "GetNameOwner";
+  var POINTER_RESIZE_START_METHOD = "StartServiceByName";
+  var POINTER_RESIZE_START_PRIMARY = 1;
+  var POINTER_RESIZE_START_ALREADY = 2;
+  var POINTER_RESIZE_CONTRACT_VERSION = 1;
+  var POINTER_RESIZE_MAX_REQUEST_BYTES = 64 * 1024;
+  var POINTER_RESIZE_MAX_REPLY_BYTES = 64 * 1024;
+  var POINTER_RESIZE_TIMEOUT_MS = 2e3;
+  var POINTER_RESIZE_MAX_CORRELATION_LEN = 128;
+  var POINTER_RESIZE_MAX_OWNER_LEN = 128;
+  var POINTER_RESIZE_MAX_GENERATION_LEN = 64;
+  var POINTER_RESIZE_MAX_REVISION = 1e6;
+  var POINTER_RESIZE_MAX_ID_LEN = 128;
+  var POINTER_RESIZE_MAX_WINDOWS = 64;
+  var POINTER_RESIZE_MAX_GEOMETRY = 64;
+  var POINTER_RESIZE_MAX_SHARES = 64;
+  var POINTER_RESIZE_MAX_SEQ = 1e6;
+  var POINTER_LOG = "plasma-auto-tiler:pointer-resize";
+  function pointerResizeFingerprint(domainOutput, domainWorkspace, focusedId, sortedIds) {
+    let hash = 2166136261;
+    const feed = (text) => {
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index) & 255;
+        hash = Math.imul(hash, 16777619);
+      }
+    };
+    feed(domainOutput);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(domainWorkspace);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(focusedId);
+    for (const id of sortedIds) {
+      hash ^= 31;
+      hash = Math.imul(hash, 16777619);
+      feed(id);
+    }
+    return hash >>> 0;
+  }
+  function isOpaqueId5(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > POINTER_RESIZE_MAX_ID_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUniqueOwner3(value) {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
+  }
+  function isCorrelationId3(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= POINTER_RESIZE_MAX_CORRELATION_LEN && isOpaqueId5(value);
+  }
+  function isOwnerId3(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= POINTER_RESIZE_MAX_OWNER_LEN && isOpaqueId5(value);
+  }
+  function isGeneration3(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > POINTER_RESIZE_MAX_GENERATION_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isRevision3(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= POINTER_RESIZE_MAX_REVISION;
+  }
+  function isDirection3(value) {
+    return value === "left" || value === "right" || value === "up" || value === "down";
+  }
+  function isPointerMode(value) {
+    return value === "inwards" || value === "outwards";
+  }
+  function isRecord4(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  function isFiniteNumber2(value) {
+    return typeof value === "number" && Number.isFinite(value);
+  }
+  function isFiniteInt2(value) {
+    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+  }
+  function isTargetRect2(value) {
+    if (!isRecord4(value)) {
+      return false;
+    }
+    const keys = Object.keys(value);
+    if (keys.length !== 4 || keys.indexOf("x") < 0 || keys.indexOf("y") < 0 || keys.indexOf("w") < 0 || keys.indexOf("h") < 0) {
+      return false;
+    }
+    const x = value["x"];
+    const y = value["y"];
+    const w = value["w"];
+    const h = value["h"];
+    if (!isFiniteInt2(x) || !isFiniteInt2(y) || !isFiniteInt2(w) || !isFiniteInt2(h)) {
+      return false;
+    }
+    if (w <= 0 || h <= 0) {
+      return false;
+    }
+    if (x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return false;
+    }
+    return true;
+  }
+  function sameRect3(a, b) {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+  function rectContained2(inner, outer) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+  }
+  function normalizePointerRect(value) {
+    if (!isRecord4(value)) {
+      return null;
+    }
+    const xRaw = value["x"];
+    const yRaw = value["y"];
+    const wRaw = value["width"] !== void 0 ? value["width"] : value["w"];
+    const hRaw = value["height"] !== void 0 ? value["height"] : value["h"];
+    if (!isFiniteNumber2(xRaw) || !isFiniteNumber2(yRaw) || !isFiniteNumber2(wRaw) || !isFiniteNumber2(hRaw)) {
+      return null;
+    }
+    const candidate = { x: Math.round(xRaw), y: Math.round(yRaw), w: Math.round(wRaw), h: Math.round(hRaw) };
+    return isTargetRect2(candidate) ? candidate : null;
+  }
+  function derivePointerEdge(start, stepped) {
+    const startRight = start.x + start.w;
+    const startBottom = start.y + start.h;
+    const steppedRight = stepped.x + stepped.w;
+    const steppedBottom = stepped.y + stepped.h;
+    const horizontalSame = stepped.x === start.x && stepped.w === start.w;
+    const verticalSame = stepped.y === start.y && stepped.h === start.h;
+    if (horizontalSame && verticalSame) {
+      return null;
+    }
+    if (!horizontalSame && !verticalSame) {
+      return "mixed";
+    }
+    if (!horizontalSame) {
+      if (stepped.x !== start.x && steppedRight === startRight) {
+        return { direction: "left", boundary: stepped.x };
+      }
+      if (stepped.x === start.x && steppedRight !== startRight) {
+        return { direction: "right", boundary: steppedRight };
+      }
+      return "mixed";
+    }
+    if (stepped.y !== start.y && steppedBottom === startBottom) {
+      return { direction: "up", boundary: stepped.y };
+    }
+    if (stepped.y === start.y && steppedBottom !== startBottom) {
+      return { direction: "down", boundary: steppedBottom };
+    }
+    return "mixed";
+  }
+  var POINTER_KIND = "ResizeSplitShare";
+  var POINTER_CAPABILITY = "pointer-resize";
+  var POINTER_PRECONDITIONS = Object.freeze([
+    "focused-leaf-occupied-by-focused-window",
+    "target-boundary-valid",
+    "resize-targets-same-domain",
+    "adapter-must-verify-postconditions"
+  ]);
+  var POINTER_OPERATION_KEYS = Object.freeze([
+    "kind",
+    "domain_output",
+    "domain_workspace",
+    "focused_leaf",
+    "focused_window",
+    "direction",
+    "mode",
+    "target_group",
+    "focused_child",
+    "neighbor_child",
+    "focused_index",
+    "neighbor_index",
+    "old_shares",
+    "new_shares"
+  ]);
+  function hasExactKeys2(value, keys) {
+    const actual = Object.keys(value);
+    if (actual.length !== keys.length) {
+      return false;
+    }
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isNonNegativeInt2(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  }
+  function isShareVector(value) {
+    if (!Array.isArray(value) || value.length < 2 || value.length > POINTER_RESIZE_MAX_SHARES) {
+      return false;
+    }
+    for (const entry of value) {
+      if (!isNonNegativeInt2(entry) || entry === 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function validateOperationShape2(operation) {
+    if (!isRecord4(operation)) {
+      return false;
+    }
+    if (!hasExactKeys2(operation, POINTER_OPERATION_KEYS)) {
+      return false;
+    }
+    if (operation["kind"] !== POINTER_KIND) {
+      return false;
+    }
+    if (!isOpaqueId5(operation["domain_output"]) || !isOpaqueId5(operation["domain_workspace"]) || !isOpaqueId5(operation["focused_leaf"]) || !isOpaqueId5(operation["focused_window"]) || !isOpaqueId5(operation["target_group"]) || !isOpaqueId5(operation["focused_child"]) || !isOpaqueId5(operation["neighbor_child"])) {
+      return false;
+    }
+    if (!isDirection3(operation["direction"])) {
+      return false;
+    }
+    if (!isPointerMode(operation["mode"])) {
+      return false;
+    }
+    if (!isNonNegativeInt2(operation["focused_index"]) || !isNonNegativeInt2(operation["neighbor_index"])) {
+      return false;
+    }
+    if (operation["focused_index"] === operation["neighbor_index"]) {
+      return false;
+    }
+    if (operation["focused_child"] === operation["neighbor_child"]) {
+      return false;
+    }
+    if (!isShareVector(operation["old_shares"]) || !isShareVector(operation["new_shares"])) {
+      return false;
+    }
+    const oldShares = operation["old_shares"];
+    const newShares = operation["new_shares"];
+    if (oldShares.length !== newShares.length) {
+      return false;
+    }
+    if (operation["focused_index"] >= oldShares.length) {
+      return false;
+    }
+    if (operation["neighbor_index"] >= oldShares.length) {
+      return false;
+    }
+    const focusedIndex = operation["focused_index"];
+    const neighborIndex = operation["neighbor_index"];
+    if (Math.abs(focusedIndex - neighborIndex) !== 1) {
+      return false;
+    }
+    const direction = operation["direction"];
+    const step = direction === "right" || direction === "down" ? 1 : -1;
+    if (neighborIndex - focusedIndex !== step) {
+      return false;
+    }
+    let same = true;
+    for (let index = 0; index < oldShares.length; index += 1) {
+      if (oldShares[index] !== newShares[index]) {
+        same = false;
+        break;
+      }
+    }
+    return !same;
+  }
+  function validateGeometryEntry2(value) {
+    if (!isRecord4(value)) {
+      return false;
+    }
+    if (!hasExactKeys2(value, ["window", "leaf", "output", "workspace", "rect"])) {
+      return false;
+    }
+    if (!isOpaqueId5(value["window"]) || !isOpaqueId5(value["leaf"]) || !isOpaqueId5(value["output"]) || !isOpaqueId5(value["workspace"])) {
+      return false;
+    }
+    const rect = value["rect"];
+    if (!isRecord4(rect)) {
+      return false;
+    }
+    if (!hasExactKeys2(rect, ["x", "y", "w", "h"])) {
+      return false;
+    }
+    return isTargetRect2({ x: rect["x"], y: rect["y"], w: rect["w"], h: rect["h"] });
+  }
+  function validateDesiredFocus2(value) {
+    if (!isRecord4(value)) {
+      return false;
+    }
+    if (!hasExactKeys2(value, ["domain_output", "domain_workspace", "leaf"])) {
+      return false;
+    }
+    return isOpaqueId5(value["domain_output"]) && isOpaqueId5(value["domain_workspace"]) && isOpaqueId5(value["leaf"]);
+  }
+  function validatePlanned3(reply, correlationId) {
+    if (!isRecord4(reply)) {
+      return null;
+    }
+    if (!hasExactKeys2(reply, [
+      "v",
+      "correlation_id",
+      "outcome",
+      "base_revision",
+      "capability",
+      "preconditions",
+      "operation",
+      "desired_geometry",
+      "desired_focus"
+    ])) {
+      return null;
+    }
+    if (reply["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+      return null;
+    }
+    if (reply["correlation_id"] !== correlationId) {
+      return null;
+    }
+    if (reply["outcome"] !== "planned") {
+      return null;
+    }
+    if (reply["capability"] !== POINTER_CAPABILITY) {
+      return null;
+    }
+    const preconditions = reply["preconditions"];
+    if (!Array.isArray(preconditions) || preconditions.length !== POINTER_PRECONDITIONS.length) {
+      return null;
+    }
+    for (let index = 0; index < POINTER_PRECONDITIONS.length; index += 1) {
+      if (preconditions[index] !== POINTER_PRECONDITIONS[index]) {
+        return null;
+      }
+    }
+    if (!validateOperationShape2(reply["operation"])) {
+      return null;
+    }
+    const baseRevision = reply["base_revision"];
+    if (!isRevision3(baseRevision)) {
+      return null;
+    }
+    const geometryRaw = reply["desired_geometry"];
+    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > POINTER_RESIZE_MAX_GEOMETRY) {
+      return null;
+    }
+    const geometry = [];
+    const seenWindow = /* @__PURE__ */ new Set();
+    for (const entry of geometryRaw) {
+      if (!validateGeometryEntry2(entry)) {
+        return null;
+      }
+      const typed = entry;
+      if (seenWindow.has(typed.window)) {
+        return null;
+      }
+      seenWindow.add(typed.window);
+      geometry.push({
+        window: typed.window,
+        leaf: typed.leaf,
+        output: typed.output,
+        workspace: typed.workspace,
+        rect: { x: typed.rect.x, y: typed.rect.y, w: typed.rect.w, h: typed.rect.h }
+      });
+    }
+    const focusRaw = reply["desired_focus"];
+    if (!validateDesiredFocus2(focusRaw)) {
+      return null;
+    }
+    const focusRecord = focusRaw;
+    return {
+      correlationId,
+      baseRevision,
+      preconditions: Object.freeze([...preconditions]),
+      operation: reply["operation"],
+      geometry: Object.freeze(geometry),
+      focus: {
+        domainOutput: focusRecord["domain_output"],
+        domainWorkspace: focusRecord["domain_workspace"],
+        leaf: focusRecord["leaf"]
+      }
+    };
+  }
+  function validateObserved3(observed) {
+    if (observed === null || typeof observed !== "object") {
+      return false;
+    }
+    if (!isOpaqueId5(observed.domainOutput) || !isOpaqueId5(observed.domainWorkspace)) {
+      return false;
+    }
+    if (!isOpaqueId5(observed.focusedId)) {
+      return false;
+    }
+    if (!Array.isArray(observed.windows)) {
+      return false;
+    }
+    const windows = observed.windows;
+    if (windows.length === 0 || windows.length > POINTER_RESIZE_MAX_WINDOWS) {
+      return false;
+    }
+    if (!isTargetRect2({
+      x: observed.domainBounds.x,
+      y: observed.domainBounds.y,
+      w: observed.domainBounds.w,
+      h: observed.domainBounds.h
+    })) {
+      return false;
+    }
+    if (!Number.isInteger(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
+      return false;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    let focusedFound = false;
+    for (const entry of windows) {
+      if (typeof entry !== "object" || entry === null) {
+        return false;
+      }
+      const candidate = entry;
+      if (!isOpaqueId5(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
+        return false;
+      }
+      if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
+        return false;
+      }
+      if (!isTargetRect2({ x: candidate.rect.x, y: candidate.rect.y, w: candidate.rect.w, h: candidate.rect.h })) {
+        return false;
+      }
+      if (seen.has(candidate.id)) {
+        return false;
+      }
+      seen.add(candidate.id);
+      if (candidate.id === observed.focusedId) {
+        focusedFound = true;
+      }
+    }
+    if (!focusedFound) {
+      return false;
+    }
+    if (typeof observed.fingerprint !== "string" || observed.fingerprint.length === 0) {
+      return false;
+    }
+    if (typeof observed.revalidate !== "function") {
+      return false;
+    }
+    return true;
+  }
+  function orderPointerWrites(oldById, desired) {
+    return orderGeometryWrites(oldById, desired);
+  }
+  var PointerResizeAdapter = class {
+    constructor(env) {
+      this.env = env;
+      this.enabled = false;
+      this.owner = "";
+      this.generation = "";
+      this.revision = 0;
+      // Shared one-session revision binding: when the authority passes a
+      // holder object, all four slices read and advance the same counter so
+      // sequential commands across slices bind the single Rust revision. A
+      // plain number keeps the previous per-adapter behavior.
+      this.revisionBinding = null;
+      this.gesture = null;
+      this.inFlight = false;
+      this.token = 0;
+      this.activeToken = 0;
+      this.callbackSeen = false;
+      this.cancelTimer = null;
+      this.suppressing = false;
+      this.seq = 0;
+      this.pendingStep = null;
+      // Rate-limited pointer-step coalescing: per-frame stepped signals while a
+      // flight is pending collapse to one marker plus one bounded summary.
+      this.coalescer = new PointerCoalescer();
+      this.pendingPlanned = null;
+      this.flightDirection = null;
+      this.flightRevision = 0;
+      this.lossReported = false;
+      this.appliedDesired = /* @__PURE__ */ new Map();
+      // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+      // resolved via GetNameOwner (plus one StartServiceByName phase only when
+      // absent) before any planner call. Null means unpinned; planner calls
+      // never fall back to the well-known name.
+      this.pinnedOwner = null;
+      // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+      // post-start owner, 4 planner dispatched. Single flight, no retry.
+      this.activationStep = 0;
+    }
+    isSharedRevisionBinding(value) {
+      if (typeof value !== "object" || value === null) {
+        return false;
+      }
+      return typeof value["current"] === "number";
+    }
+    readRevision() {
+      if (this.revisionBinding !== null) {
+        return this.revisionBinding.current;
+      }
+      return this.revision;
+    }
+    writeRevision(value) {
+      this.revision = value;
+      if (this.revisionBinding !== null) {
+        this.revisionBinding.current = value;
+      }
+    }
+    get isEnabled() {
+      return this.enabled;
+    }
+    get isInFlight() {
+      return this.inFlight;
+    }
+    get hasGesture() {
+      return this.gesture !== null;
+    }
+    reportAdapterLost(planned) {
+      if (planned === null || this.lossReported) {
+        return;
+      }
+      const target = this.pinnedOwner;
+      if (!isUniqueOwner3(target)) {
+        return;
+      }
+      this.lossReported = true;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: POINTER_RESIZE_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "adapter-lost"
+        });
+      } catch (error) {
+        void error;
+        return;
+      }
+      if (payload.length === 0 || payload.length > POINTER_RESIZE_MAX_REQUEST_BYTES) {
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          POINTER_RESIZE_OBJECT,
+          POINTER_RESIZE_INTERFACE,
+          POINTER_RESIZE_METHOD,
+          payload,
+          () => {
+          }
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    plannerService() {
+      return this.pinnedOwner;
+    }
+    enable(auth) {
+      if (this.enabled) {
+        return false;
+      }
+      if (!isRecord4(auth)) {
+        this.reject("pointer-invalid-auth");
+        return false;
+      }
+      if (!isOwnerId3(auth.owner) || !isGeneration3(auth.generation)) {
+        this.reject("pointer-invalid-auth");
+        return false;
+      }
+      const revision = auth.revision === void 0 ? 0 : auth.revision;
+      if (this.isSharedRevisionBinding(revision)) {
+        if (!isRevision3(revision.current)) {
+          this.reject("pointer-invalid-auth");
+          return false;
+        }
+      } else if (!isRevision3(revision)) {
+        this.reject("pointer-invalid-auth");
+        return false;
+      }
+      this.owner = auth.owner;
+      this.generation = auth.generation;
+      if (this.isSharedRevisionBinding(revision)) {
+        this.revisionBinding = revision;
+        this.writeRevision(revision.current);
+      } else {
+        this.revisionBinding = null;
+        this.revision = revision;
+      }
+      this.enabled = true;
+      this.gesture = null;
+      this.inFlight = false;
+      this.pendingStep = null;
+      this.pendingPlanned = null;
+      this.flightDirection = null;
+      this.flightRevision = 0;
+      this.suppressing = false;
+      this.lossReported = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.appliedDesired.clear();
+      this.log(`${POINTER_LOG}:ready`);
+      return true;
+    }
+    disable() {
+      if (!this.enabled && this.gesture === null && !this.inFlight) {
+        return;
+      }
+      this.enabled = false;
+      this.gesture = null;
+      this.inFlight = false;
+      this.pendingStep = null;
+      this.coalescer.reset();
+      this.pendingPlanned = null;
+      this.flightDirection = null;
+      this.flightRevision = 0;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.appliedDesired.clear();
+      this.clearTimer();
+      this.log(`${POINTER_LOG}:disabled`);
+    }
+    // Entry forwards the exact native ref whose public interactive start
+    // signal fired.
+    windowStarted(source) {
+      if (!this.enabled) {
+        this.reject("pointer-disabled");
+        return;
+      }
+      if (this.suppressing) {
+        return;
+      }
+      if (typeof source !== "object" || source === null) {
+        this.reject("pointer-unknown-window");
+        this.disable();
+        return;
+      }
+      if (this.gesture !== null) {
+        this.reject("pointer-gesture-conflict");
+        this.disable();
+        return;
+      }
+      if (!this.checkAuthority("pointer-exclusive-conflict")) {
+        return;
+      }
+      const observed = this.readObserved();
+      if (observed === null) {
+        this.reject("pointer-stale-scope");
+        this.disable();
+        return;
+      }
+      let match = null;
+      for (const entry of observed.windows) {
+        if (entry.ref === source) {
+          match = entry;
+          break;
+        }
+      }
+      if (match === null) {
+        this.reject("pointer-unknown-window");
+        this.disable();
+        return;
+      }
+      const state = this.readState(source);
+      if (state === null) {
+        this.reject("pointer-gesture-state");
+        this.disable();
+        return;
+      }
+      if (state.move === true && state.resize === false) {
+        this.gesture = {
+          sourceRef: source,
+          sourceId: match.id,
+          kind: "move",
+          direction: null,
+          startRect: __spreadValues({}, match.rect),
+          domainOutput: observed.domainOutput,
+          domainWorkspace: observed.domainWorkspace,
+          domainBounds: __spreadValues({}, observed.domainBounds),
+          focusedId: observed.focusedId,
+          fingerprint: observed.fingerprint,
+          observed,
+          finished: false,
+          lastBoundary: null
+        };
+        this.log(`${POINTER_LOG}:move-ignored`);
+        return;
+      }
+      if (state.move === false && state.resize === true) {
+        this.gesture = {
+          sourceRef: source,
+          sourceId: match.id,
+          kind: "resize",
+          direction: null,
+          startRect: __spreadValues({}, match.rect),
+          domainOutput: observed.domainOutput,
+          domainWorkspace: observed.domainWorkspace,
+          domainBounds: __spreadValues({}, observed.domainBounds),
+          focusedId: observed.focusedId,
+          fingerprint: observed.fingerprint,
+          observed,
+          finished: false,
+          lastBoundary: null
+        };
+        this.log(`${POINTER_LOG}:started`);
+        return;
+      }
+      this.reject("pointer-mixed-gesture");
+      this.disable();
+    }
+    // Entry forwards the exact native ref whose public stepped signal fired
+    // plus the proposed geometry payload. Classification uses the proposed
+    // payload only: the live native rect may lag the proposal.
+    windowStepped(source, payload) {
+      if (!this.enabled) {
+        return;
+      }
+      if (this.suppressing) {
+        return;
+      }
+      const gesture = this.gesture;
+      if (gesture === null) {
+        this.reject("pointer-step-without-gesture");
+        this.disable();
+        return;
+      }
+      if (source !== gesture.sourceRef) {
+        this.reject("pointer-foreign-signal");
+        this.disable();
+        return;
+      }
+      if (gesture.finished) {
+        this.reject("pointer-stale-step");
+        return;
+      }
+      const state = this.readState(gesture.sourceRef);
+      if (gesture.kind === "move") {
+        if (state !== null && state.move === true && state.resize === false) {
+          return;
+        }
+        this.reject("pointer-gesture-transition");
+        this.disable();
+        return;
+      }
+      if (state === null || state.move !== false || state.resize !== true) {
+        this.reject("pointer-gesture-transition");
+        this.disable();
+        return;
+      }
+      const stepped = normalizePointerRect(payload);
+      if (stepped === null) {
+        this.reject("pointer-bad-payload");
+        this.disable();
+        return;
+      }
+      const edge = derivePointerEdge(gesture.startRect, stepped);
+      if (edge === null) {
+        return;
+      }
+      if (edge === "mixed") {
+        this.reject("pointer-mixed-edge");
+        this.disable();
+        return;
+      }
+      if (gesture.direction === null) {
+        gesture.direction = edge.direction;
+      } else if (gesture.direction !== edge.direction) {
+        this.reject("pointer-direction-drift");
+        this.disable();
+        return;
+      }
+      const last = gesture.lastBoundary;
+      if (last !== null && last.direction === edge.direction && last.boundary === edge.boundary) {
+        if (this.inFlight) {
+          this.pendingStep = null;
+        }
+        this.reject("pointer-dedup");
+        return;
+      }
+      if (this.inFlight) {
+        this.pendingStep = { direction: edge.direction, boundary: edge.boundary };
+        if (this.coalescer.noteCoalesced()) {
+          this.log(`${POINTER_LOG}:coalesced`);
+        }
+        return;
+      }
+      if (!this.checkAuthority("pointer-exclusive-conflict")) {
+        return;
+      }
+      const fresh = this.readObserved();
+      if (fresh === null || !this.scopeMatches(fresh, gesture)) {
+        this.reject("pointer-stale-scope");
+        this.disable();
+        return;
+      }
+      this.sendRequest(fresh, gesture, edge.direction, edge.boundary);
+    }
+    // Entry forwards the exact native ref whose public finish signal fired.
+    // A pure move finish preserves tile assignment with no writes. A resize
+    // finish marks the gesture done; a pending flight (plus any coalesced
+    // latest step) still finalizes through acknowledge/verify.
+    windowFinished(source) {
+      if (!this.enabled) {
+        return;
+      }
+      if (this.suppressing) {
+        return;
+      }
+      const gesture = this.gesture;
+      if (gesture === null) {
+        return;
+      }
+      if (source !== gesture.sourceRef) {
+        this.reject("pointer-foreign-signal");
+        this.disable();
+        return;
+      }
+      if (gesture.finished) {
+        return;
+      }
+      gesture.finished = true;
+      if (gesture.kind === "move") {
+        this.gesture = null;
+        this.log(`${POINTER_LOG}:move-finished`);
+        return;
+      }
+      if (this.inFlight) {
+        return;
+      }
+      const step = this.pendingStep;
+      this.pendingStep = null;
+      if (step !== null) {
+        if (!this.checkAuthority("pointer-exclusive-conflict")) {
+          return;
+        }
+        const fresh = this.readObserved();
+        if (fresh === null || !this.scopeMatches(fresh, gesture)) {
+          this.reject("pointer-stale-scope");
+          this.disable();
+          return;
+        }
+        this.sendRequest(fresh, gesture, step.direction, step.boundary);
+        return;
+      }
+      this.gesture = null;
+      this.log(`${POINTER_LOG}:finished`);
+    }
+    // Entry forwards the exact native ref whose public moveResizedChanged
+    // signal fired. Signal-driven recursion guard: suppress
+    // adapter-originated neighbour geometry events (synchronous own-write
+    // reentrancy plus async events for written neighbours showing their
+    // desired rects) while unrelated native geometry or live-state drift
+    // invalidates the active gesture. The native-driven interactive source
+    // rect is expected to progress and never invalidates here.
+    windowGeometryChanged(source) {
+      if (!this.enabled) {
+        return;
+      }
+      if (this.suppressing) {
+        return;
+      }
+      const gesture = this.gesture;
+      if (gesture === null || gesture.kind !== "resize") {
+        return;
+      }
+      if (typeof source !== "object" || source === null) {
+        return;
+      }
+      if (source === gesture.sourceRef) {
+        return;
+      }
+      let fresh = null;
+      try {
+        fresh = this.readObserved();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (fresh === null) {
+        const lost2 = this.pendingPlanned;
+        if (lost2 !== null) {
+          this.reportAdapterLost(lost2);
+        }
+        this.failApply("pointer-signal-invalid");
+        return;
+      }
+      let liveId = null;
+      let liveRect = null;
+      for (const entry of fresh.windows) {
+        if (entry.ref === source) {
+          liveId = entry.id;
+          liveRect = entry.rect;
+          break;
+        }
+      }
+      if (liveId === null || liveRect === null) {
+        const lost2 = this.pendingPlanned;
+        if (lost2 !== null) {
+          this.reportAdapterLost(lost2);
+        }
+        this.failApply("pointer-signal-invalid");
+        return;
+      }
+      const wantWritten = this.appliedDesired.get(liveId);
+      if (wantWritten !== void 0) {
+        if (sameRect3(wantWritten, liveRect)) {
+          return;
+        }
+      } else {
+        let captured = null;
+        for (const entry of gesture.observed.windows) {
+          if (entry.id === liveId) {
+            captured = entry.rect;
+            break;
+          }
+        }
+        if (captured !== null && sameRect3(captured, liveRect)) {
+          return;
+        }
+      }
+      const lost = this.pendingPlanned;
+      if (lost !== null) {
+        this.reportAdapterLost(lost);
+      }
+      this.failApply("pointer-signal-invalid");
+    }
+    checkAuthority(token) {
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveResizeAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reject(token);
+        this.disable();
+        return false;
+      }
+      return true;
+    }
+    readObserved() {
+      let observed = null;
+      try {
+        observed = this.env.observe();
+      } catch (error) {
+        void error;
+        observed = null;
+      }
+      if (!validateObserved3(observed)) {
+        return null;
+      }
+      return observed;
+    }
+    readState(target) {
+      let state = null;
+      try {
+        state = this.env.readLiveState(target);
+      } catch (error) {
+        void error;
+        return null;
+      }
+      if (state === null || typeof state !== "object") {
+        return null;
+      }
+      if (state.move !== true && state.move !== false) {
+        return null;
+      }
+      if (state.resize !== true && state.resize !== false) {
+        return null;
+      }
+      return state;
+    }
+    // Own-scope revalidation: authority already checked by callers; here the
+    // fresh observation must bind the captured membership, domains, focus,
+    // source identity, and every non-source rect. The interactive source
+    // rect is natively driven and exempt from rect matching.
+    scopeMatches(fresh, gesture) {
+      if (fresh.domainOutput !== gesture.domainOutput || fresh.domainWorkspace !== gesture.domainWorkspace || fresh.focusedId !== gesture.focusedId || fresh.fingerprint !== gesture.fingerprint) {
+        return false;
+      }
+      let sourceFound = false;
+      const capturedRects = /* @__PURE__ */ new Map();
+      for (const entry of gesture.observed.windows) {
+        if (entry.id !== gesture.sourceId) {
+          capturedRects.set(entry.id, entry.rect);
+        }
+      }
+      for (const entry of fresh.windows) {
+        if (entry.id === gesture.sourceId) {
+          if (entry.ref !== gesture.sourceRef) {
+            return false;
+          }
+          sourceFound = true;
+          continue;
+        }
+        const want = capturedRects.get(entry.id);
+        if (want === void 0 || !sameRect3(want, entry.rect)) {
+          return false;
+        }
+      }
+      if (!sourceFound) {
+        return false;
+      }
+      let ok = false;
+      try {
+        ok = fresh.revalidate(gesture.sourceId) === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      return ok;
+    }
+    sendRequest(observed, gesture, direction, boundary) {
+      if (this.seq < 0 || this.seq > POINTER_RESIZE_MAX_SEQ) {
+        this.reject("pointer-seq-exhausted");
+        this.disable();
+        return;
+      }
+      const correlation = `${this.generation}-p${String(this.seq)}`;
+      this.seq += 1;
+      if (!isCorrelationId3(correlation)) {
+        this.reject("pointer-invalid-auth");
+        this.disable();
+        return;
+      }
+      const windows = observed.windows.map((entry) => ({
+        window: entry.id,
+        output: entry.output,
+        workspace: entry.workspace,
+        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }
+      }));
+      const sortedIds = observed.windows.map((entry) => entry.id).sort();
+      let requestRevision = this.readRevision();
+      if (requestRevision === 0) {
+        requestRevision = sortedIds.length;
+        if (this.revisionBinding !== null) {
+          if (sortedIds.length === 3) {
+            this.writeRevision(requestRevision);
+          }
+        } else {
+          this.writeRevision(requestRevision);
+        }
+      }
+      const fingerprint = pointerResizeFingerprint(
+        observed.domainOutput,
+        observed.domainWorkspace,
+        observed.focusedId,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: POINTER_RESIZE_CONTRACT_VERSION,
+          action: "request-pointer",
+          correlation_id: correlation,
+          owner: this.owner,
+          generation: this.generation,
+          revision: requestRevision,
+          fingerprint,
+          domain: {
+            output: observed.domainOutput,
+            workspace: observed.domainWorkspace,
+            bounds: {
+              x: observed.domainBounds.x,
+              y: observed.domainBounds.y,
+              w: observed.domainBounds.w,
+              h: observed.domainBounds.h
+            },
+            gap: observed.domainGap
+          },
+          focused_window: observed.focusedId,
+          direction,
+          proposed_boundary: boundary,
+          windows,
+          capabilities: { keyboard_resize: false, pointer_resize: true }
+        });
+      } catch (error) {
+        void error;
+        this.reject("pointer-invalid-intent");
+        return;
+      }
+      if (payload.length > POINTER_RESIZE_MAX_REQUEST_BYTES) {
+        this.reject("pointer-oversized");
+        return;
+      }
+      gesture.lastBoundary = { direction, boundary };
+      this.diag("req", correlation, [
+        ["rev", requestRevision],
+        ["windows", sortedIds.length]
+      ]);
+      this.startFlight(payload, correlation, direction, requestRevision);
+    }
+    startFlight(payload, correlation, direction, requestRevision) {
+      this.inFlight = true;
+      this.pendingPlanned = null;
+      this.flightDirection = direction;
+      this.flightRevision = requestRevision;
+      this.lossReported = false;
+      this.appliedDesired.clear();
+      this.callbackSeen = false;
+      this.pinnedOwner = null;
+      this.activationStep = 1;
+      this.token += 1;
+      const flight = this.token;
+      this.activeToken = flight;
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "timer-failed"]]);
+        this.reject("pointer-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      try {
+        this.env.callDbus(
+          POINTER_RESIZE_DBUS_SERVICE,
+          POINTER_RESIZE_DBUS_OBJECT,
+          POINTER_RESIZE_DBUS_INTERFACE,
+          POINTER_RESIZE_GET_OWNER_METHOD,
+          POINTER_RESIZE_SERVICE,
+          (reply) => this.onOwnerInitial(reply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("pointer-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerInitial(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+        return;
+      }
+      if (isUniqueOwner3(reply)) {
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.diag("owner", correlation, [["transition", "pinned"]]);
+        this.sendPlannerRequest(flight, payload, correlation);
+        return;
+      }
+      this.activationStep = 2;
+      this.diag("owner", correlation, [["transition", "activating"]]);
+      try {
+        this.env.callDbus(
+          POINTER_RESIZE_DBUS_SERVICE,
+          POINTER_RESIZE_DBUS_OBJECT,
+          POINTER_RESIZE_DBUS_INTERFACE,
+          POINTER_RESIZE_START_METHOD,
+          POINTER_RESIZE_SERVICE,
+          (startReply) => this.onStartResult(startReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("pointer-dbus-failed");
+        this.disable();
+      }
+    }
+    onStartResult(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+        return;
+      }
+      if (reply !== POINTER_RESIZE_START_PRIMARY && reply !== POINTER_RESIZE_START_ALREADY) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.flightDirection = null;
+        this.flightRevision = 0;
+        this.diag("owner", correlation, [["transition", "activation-failed"]]);
+        this.diag("result", correlation, [["result", "activation-failed"]]);
+        this.reject("pointer-activation-failed");
+        this.disable();
+        return;
+      }
+      this.activationStep = 3;
+      try {
+        this.env.callDbus(
+          POINTER_RESIZE_DBUS_SERVICE,
+          POINTER_RESIZE_DBUS_OBJECT,
+          POINTER_RESIZE_DBUS_INTERFACE,
+          POINTER_RESIZE_GET_OWNER_METHOD,
+          POINTER_RESIZE_SERVICE,
+          (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("pointer-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerAfterStart(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+        return;
+      }
+      if (!isUniqueOwner3(reply)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.flightDirection = null;
+        this.flightRevision = 0;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("pointer-owner-missing");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = reply;
+      this.activationStep = 4;
+      this.sendPlannerRequest(flight, payload, correlation);
+    }
+    sendPlannerRequest(flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner3(target)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("pointer-owner-missing");
+        this.disable();
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          POINTER_RESIZE_OBJECT,
+          POINTER_RESIZE_INTERFACE,
+          POINTER_RESIZE_METHOD,
+          payload,
+          (reply) => this.onRequestReply(reply, flight, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("pointer-dbus-failed");
+        this.disable();
+      }
+    }
+    onTimeout(flight, stage, correlation) {
+      if (!this.inFlight || flight !== this.activeToken) {
+        return;
+      }
+      const lost = this.pendingPlanned;
+      if (lost !== null) {
+        this.reportAdapterLost(lost);
+      }
+      this.clearTimer();
+      this.inFlight = false;
+      this.pendingPlanned = null;
+      this.pendingStep = null;
+      this.flightDirection = null;
+      this.flightRevision = 0;
+      const timeoutCorr = correlation != null ? correlation : lost == null ? void 0 : lost.correlationId;
+      if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+        this.diag("result", timeoutCorr, [
+          ["result", "timeout"],
+          ["detail", stage]
+        ]);
+      }
+      this.reject(`pointer-timeout-${stage}`);
+      this.disable();
+    }
+    onRequestReply(reply, flight, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      if (this.activationStep !== 4 || !isUniqueOwner3(this.pinnedOwner)) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord4(parsed)) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      const outcome = parsed["outcome"];
+      if (outcome === "noop") {
+        if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("pointer-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("pointer-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.flightDirection = null;
+        this.flightRevision = 0;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "noop"]]);
+        this.log(`${POINTER_LOG}:noop`);
+        this.settleFlight();
+        return;
+      }
+      if (outcome === "rejected") {
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.diag("result", correlation, [["result", "rejected"]]);
+        this.reject("pointer-rejected");
+        this.disable();
+        return;
+      }
+      if (outcome === "diverged") {
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.diag("result", correlation, [["result", "diverged"]]);
+        this.reject("pointer-diverged");
+        this.disable();
+        return;
+      }
+      if (outcome !== "planned") {
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      const planned = validatePlanned3(parsed, correlation);
+      if (planned === null) {
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+        this.reject("pointer-precondition-mismatch");
+        this.disable();
+        return;
+      }
+      if (planned.baseRevision !== this.flightRevision) {
+        this.inFlight = false;
+        this.pendingPlanned = null;
+        this.pendingStep = null;
+        this.diag("result", correlation, [["result", "revision-mismatch"]]);
+        this.reject("pointer-revision-mismatch");
+        this.disable();
+        return;
+      }
+      const gesture = this.gesture;
+      if (gesture !== null) {
+        const observedIds = new Set(gesture.observed.windows.map((entry) => entry.id));
+        if (planned.geometry.length !== observedIds.size) {
+          this.inFlight = false;
+          this.pendingPlanned = null;
+          this.pendingStep = null;
+          this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+          this.reject("pointer-precondition-mismatch");
+          this.disable();
+          return;
+        }
+        for (const entry of planned.geometry) {
+          if (!observedIds.has(entry.window)) {
+            this.inFlight = false;
+            this.pendingPlanned = null;
+            this.pendingStep = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+            this.reject("pointer-precondition-mismatch");
+            this.disable();
+            return;
+          }
+          if (entry.output !== gesture.domainOutput || entry.workspace !== gesture.domainWorkspace) {
+            this.inFlight = false;
+            this.pendingPlanned = null;
+            this.pendingStep = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+            this.reject("pointer-precondition-mismatch");
+            this.disable();
+            return;
+          }
+        }
+        if (planned.focus.domainOutput !== gesture.domainOutput || planned.focus.domainWorkspace !== gesture.domainWorkspace) {
+          this.inFlight = false;
+          this.pendingPlanned = null;
+          this.pendingStep = null;
+          this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+          this.reject("pointer-precondition-mismatch");
+          this.disable();
+          return;
+        }
+      }
+      this.pendingPlanned = planned;
+      this.diag("result", correlation, [
+        ["result", "planned"],
+        ["rev", planned.baseRevision]
+      ]);
+      this.applyPlanned(flight);
+    }
+    applyPlanned(flight) {
+      const planned = this.pendingPlanned;
+      const gesture = this.gesture;
+      const wantedDirection = this.flightDirection;
+      if (planned === null || gesture === null || gesture.kind !== "resize" || wantedDirection === null) {
+        this.reportAdapterLost(planned);
+        this.failApply("pointer-target-mismatch");
+        return;
+      }
+      const operation = planned.operation;
+      if (operation["focused_window"] !== gesture.focusedId || operation["direction"] !== wantedDirection || operation["domain_output"] !== gesture.domainOutput || operation["domain_workspace"] !== gesture.domainWorkspace) {
+        this.reportAdapterLost(planned);
+        this.failApply("pointer-target-mismatch");
+        return;
+      }
+      if (!this.checkApplyAuthority(planned)) {
+        return;
+      }
+      const fresh = this.readObserved();
+      if (fresh === null) {
+        this.reportAdapterLost(planned);
+        this.failApply("pointer-stale-scope");
+        return;
+      }
+      if (!this.scopeMatches(fresh, gesture)) {
+        this.reportAdapterLost(planned);
+        this.failApply("pointer-stale-revalidate");
+        return;
+      }
+      const oldById = /* @__PURE__ */ new Map();
+      for (const entry of fresh.windows) {
+        if (entry.id !== gesture.sourceId) {
+          oldById.set(entry.id, entry.rect);
+        }
+      }
+      const neighbours = [];
+      for (const entry of planned.geometry) {
+        if (entry.window !== gesture.sourceId) {
+          neighbours.push(entry);
+        }
+      }
+      const ordered = orderPointerWrites(oldById, neighbours);
+      const byId = /* @__PURE__ */ new Map();
+      for (const entry of fresh.windows) {
+        byId.set(entry.id, entry.ref);
+      }
+      const desiredById = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        desiredById.set(entry.window, entry);
+      }
+      const capturedRects = /* @__PURE__ */ new Map();
+      for (const entry of gesture.observed.windows) {
+        if (entry.id !== gesture.sourceId) {
+          capturedRects.set(entry.id, entry.rect);
+        }
+      }
+      this.suppressing = false;
+      let partial = false;
+      let partialToken = "pointer-partial-apply";
+      const writtenIds = /* @__PURE__ */ new Set();
+      for (const entry of ordered) {
+        if (!this.enabled || !this.inFlight || this.gesture !== gesture) {
+          partial = true;
+          partialToken = "pointer-signal-invalid";
+          break;
+        }
+        const target = byId.get(entry.window);
+        if (typeof target !== "object" || target === null) {
+          partial = true;
+          break;
+        }
+        let liveRef = null;
+        try {
+          const refetch = this.env.observe();
+          if (refetch !== null) {
+            for (const candidate of refetch.windows) {
+              if (candidate.id === entry.window) {
+                liveRef = candidate.ref;
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          void error;
+          liveRef = null;
+        }
+        if (liveRef !== target) {
+          partial = true;
+          break;
+        }
+        if (!this.checkApplyAuthoritySilent()) {
+          this.reportAdapterLost(planned);
+          this.failApply("pointer-exclusive-conflict");
+          return;
+        }
+        if (!rectContained2(entry.rect, gesture.domainBounds)) {
+          partial = true;
+          break;
+        }
+        let written = false;
+        this.suppressing = true;
+        try {
+          written = this.env.setGeometry(target, entry.rect) === true;
+        } catch (error) {
+          void error;
+          written = false;
+        } finally {
+          this.suppressing = false;
+        }
+        if (!written) {
+          partial = true;
+          break;
+        }
+        writtenIds.add(entry.window);
+        this.appliedDesired.set(entry.window, __spreadValues({}, entry.rect));
+        try {
+          const refetch = this.env.observe();
+          if (refetch === null) {
+            partial = true;
+            partialToken = "pointer-signal-invalid";
+            break;
+          }
+          if (refetch.windows.length !== gesture.observed.windows.length) {
+            partial = true;
+            partialToken = "pointer-signal-invalid";
+            break;
+          }
+          for (const candidate of refetch.windows) {
+            if (candidate.id === gesture.sourceId) {
+              if (candidate.ref !== gesture.sourceRef) {
+                partial = true;
+                partialToken = "pointer-signal-invalid";
+                break;
+              }
+              continue;
+            }
+            const want = writtenIds.has(candidate.id) ? desiredById.get(candidate.id).rect : capturedRects.get(candidate.id);
+            if (want === void 0 || !sameRect3(want, candidate.rect)) {
+              partial = true;
+              partialToken = "pointer-signal-invalid";
+              break;
+            }
+          }
+          if (partial) {
+            break;
+          }
+        } catch (error) {
+          void error;
+          partial = true;
+          partialToken = "pointer-signal-invalid";
+          break;
+        }
+      }
+      this.suppressing = false;
+      void flight;
+      if (partial) {
+        this.reportAdapterLost(planned);
+        this.failApply(partialToken);
+        return;
+      }
+      this.sendAcknowledge(flight, planned);
+    }
+    checkApplyAuthority(planned) {
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveResizeAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reportAdapterLost(planned);
+        this.failApply("pointer-exclusive-conflict");
+        return false;
+      }
+      return true;
+    }
+    checkApplyAuthoritySilent() {
+      try {
+        return this.env.hasExclusiveResizeAuthority() === true;
+      } catch (error) {
+        void error;
+        return false;
+      }
+    }
+    failApply(token) {
+      this.inFlight = false;
+      this.pendingPlanned = null;
+      this.pendingStep = null;
+      this.flightDirection = null;
+      this.flightRevision = 0;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.appliedDesired.clear();
+      this.reject(token);
+      this.disable();
+    }
+    sendAcknowledge(flight, planned) {
+      void flight;
+      const target = this.plannerService();
+      if (!isUniqueOwner3(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("pointer-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: POINTER_RESIZE_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "accepted"
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("pointer-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("ack", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          POINTER_RESIZE_OBJECT,
+          POINTER_RESIZE_INTERFACE,
+          POINTER_RESIZE_METHOD,
+          payload,
+          (reply) => this.onAckReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("pointer-dbus-failed");
+      }
+    }
+    onAckReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      if (!isRecord4(parsed) || parsed["outcome"] !== "acknowledged") {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.failApply("pointer-correlation-mismatch");
+        return;
+      }
+      if (parsed["base_revision"] !== planned.baseRevision) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.failApply("pointer-revision-mismatch");
+        return;
+      }
+      this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
+      this.sendVerify(planned);
+    }
+    sendVerify(planned) {
+      var _a, _b;
+      const target = this.plannerService();
+      if (!isUniqueOwner3(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("pointer-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      const gesture = this.gesture;
+      if (gesture === null || gesture.kind !== "resize") {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("pointer-target-mismatch");
+        return;
+      }
+      const fresh = this.readObserved();
+      if (fresh === null) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("pointer-post-stale");
+        return;
+      }
+      let ok = false;
+      try {
+        ok = fresh.revalidate(gesture.sourceId) === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("pointer-post-stale");
+        return;
+      }
+      if (fresh.domainOutput !== planned.focus.domainOutput || fresh.domainWorkspace !== planned.focus.domainWorkspace || fresh.focusedId !== gesture.focusedId) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("pointer-post-mismatch");
+        return;
+      }
+      const freshById = /* @__PURE__ */ new Map();
+      for (const entry of fresh.windows) {
+        freshById.set(entry.id, entry);
+      }
+      if (freshById.size !== planned.geometry.length) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("pointer-post-mismatch");
+        return;
+      }
+      const leafByWindow = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        leafByWindow.set(entry.window, entry.leaf);
+      }
+      const verifiedGeometry = [];
+      for (const entry of planned.geometry) {
+        const live = freshById.get(entry.window);
+        if (live === void 0) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("pointer-post-mismatch");
+          return;
+        }
+        if (!sameRect3(live.rect, entry.rect)) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("pointer-post-mismatch");
+          return;
+        }
+        if (live.output !== entry.output || live.workspace !== entry.workspace) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("pointer-post-mismatch");
+          return;
+        }
+        verifiedGeometry.push({
+          window: live.id,
+          leaf: leafByWindow.get(live.id),
+          output: live.output,
+          workspace: live.workspace,
+          rect: { x: live.rect.x, y: live.rect.y, w: live.rect.w, h: live.rect.h }
+        });
+      }
+      let activeRef = null;
+      try {
+        activeRef = this.env.active();
+      } catch (error) {
+        void error;
+        activeRef = null;
+      }
+      const focusedRef = (_b = (_a = freshById.get(gesture.focusedId)) == null ? void 0 : _a.ref) != null ? _b : null;
+      if (activeRef !== focusedRef || focusedRef === null) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("pointer-post-mismatch");
+        return;
+      }
+      const sortedIds = fresh.windows.map((entry) => entry.id).sort();
+      const fingerprint = pointerResizeFingerprint(
+        planned.focus.domainOutput,
+        planned.focus.domainWorkspace,
+        gesture.focusedId,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: POINTER_RESIZE_CONTRACT_VERSION,
+          action: "verify",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          revision: planned.baseRevision,
+          fingerprint,
+          verified: true,
+          verified_preconditions: [...planned.preconditions],
+          verified_operation: __spreadValues({}, planned.operation),
+          verified_geometry: verifiedGeometry,
+          verified_focus: {
+            domain_output: planned.focus.domainOutput,
+            domain_workspace: planned.focus.domainWorkspace,
+            leaf: planned.focus.leaf
+          }
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("pointer-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("pointer-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("verify", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          POINTER_RESIZE_OBJECT,
+          POINTER_RESIZE_INTERFACE,
+          POINTER_RESIZE_METHOD,
+          payload,
+          (reply) => this.onVerifyReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("pointer-dbus-failed");
+      }
+    }
+    onVerifyReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      this.inFlight = false;
+      this.pendingPlanned = null;
+      this.flightDirection = null;
+      if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord4(parsed) || parsed["outcome"] !== "committed") {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("pointer-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.reject("pointer-correlation-mismatch");
+        this.disable();
+        return;
+      }
+      const revision = parsed["revision"];
+      if (typeof revision === "number" && Number.isInteger(revision) && revision === this.flightRevision + 1) {
+        this.writeRevision(revision);
+      } else {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.reject("pointer-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.flightRevision = 0;
+      this.appliedDesired.clear();
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.diag("outcome", planned.correlationId, [
+        ["result", "committed"],
+        ["rev", revision]
+      ]);
+      this.log(`${POINTER_LOG}:applied`);
+      if (!this.refreshCapture(this.gesture, planned)) {
+        this.pendingStep = null;
+        this.reject("pointer-scope-changed");
+        this.disable();
+        return;
+      }
+      this.settleFlight();
+    }
+    // After a commit the gesture capture must advance: neighbours now
+    // legitimately show the committed plan, so the stale start capture is
+    // replaced by a fresh observation bound to that plan. Anything else
+    // (membership, domain, focus, source identity, neighbour drift) fails
+    // closed without an adapter-lost report: Rust already committed and
+    // holds no pending plan.
+    refreshCapture(gesture, planned) {
+      if (gesture === null || gesture.kind !== "resize") {
+        return false;
+      }
+      const fresh = this.readObserved();
+      if (fresh === null) {
+        return false;
+      }
+      if (fresh.domainOutput !== gesture.domainOutput || fresh.domainWorkspace !== gesture.domainWorkspace || fresh.focusedId !== gesture.focusedId) {
+        return false;
+      }
+      const plannedById = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        plannedById.set(entry.window, entry);
+      }
+      if (fresh.windows.length !== plannedById.size) {
+        return false;
+      }
+      for (const entry of fresh.windows) {
+        const want = plannedById.get(entry.id);
+        if (want === void 0) {
+          return false;
+        }
+        if (entry.output !== want.output || entry.workspace !== want.workspace) {
+          return false;
+        }
+        if (entry.id === gesture.sourceId) {
+          if (entry.ref !== gesture.sourceRef) {
+            return false;
+          }
+          continue;
+        }
+        if (!sameRect3(entry.rect, want.rect)) {
+          return false;
+        }
+      }
+      let ok = false;
+      try {
+        ok = fresh.revalidate(gesture.sourceId) === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        return false;
+      }
+      gesture.observed = fresh;
+      gesture.fingerprint = fresh.fingerprint;
+      return true;
+    }
+    // After a flight resolves without terminal failure: send the coalesced
+    // latest step when one exists (never stale intermediates), else close a
+    // finished gesture. The gesture stays open for further steps otherwise.
+    settleFlight() {
+      const gesture = this.gesture;
+      const step = this.pendingStep;
+      this.pendingStep = null;
+      const summary = this.coalescer.flushSummary();
+      if (summary !== null) {
+        this.log(summary);
+      }
+      if (gesture === null || gesture.kind !== "resize") {
+        return;
+      }
+      if (step !== null) {
+        if (!this.checkAuthority("pointer-exclusive-conflict")) {
+          return;
+        }
+        const fresh = this.readObserved();
+        if (fresh === null || !this.scopeMatches(fresh, gesture)) {
+          this.reject("pointer-stale-scope");
+          this.disable();
+          return;
+        }
+        if (gesture.direction !== null && gesture.direction !== step.direction) {
+          this.reject("pointer-direction-drift");
+          this.disable();
+          return;
+        }
+        gesture.direction = step.direction;
+        this.sendRequest(fresh, gesture, step.direction, step.boundary);
+        return;
+      }
+      if (gesture.finished) {
+        this.gesture = null;
+        this.log(`${POINTER_LOG}:finished`);
+      }
+    }
+    clearTimer() {
+      const cancel = this.cancelTimer;
+      this.cancelTimer = null;
+      if (cancel === null) {
+        return;
+      }
+      try {
+        cancel();
+      } catch (error) {
+        void error;
+      }
+    }
+    reject(token) {
+      try {
+        this.env.log(`${POINTER_LOG}:reject:${token}`);
+      } catch (error) {
+        void error;
+      }
+    }
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    diag(stage, correlation, extra = []) {
+      try {
+        this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
+      } catch (error) {
+        void error;
+      }
+    }
+    log(message) {
+      try {
+        this.env.log(message);
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
+  // src/pointer-resize-adapter-entry.ts
+  var ENTRY_LOG3 = "plasma-auto-tiler:pointer-resize-entry";
+  var ENTRY_READY3 = `${ENTRY_LOG3}:ready`;
+  var ENTRY_REJECT3 = `${ENTRY_LOG3}:reject:pointer-entry-invalid`;
+  var ENTRY_SCOPE_REJECT3 = `${ENTRY_LOG3}:reject:pointer-entry-scope-invalid`;
+  var ENTRY_SCOPE3 = `${ENTRY_LOG3}:scope`;
+  var MAX_LIST3 = 1024;
+  var MAX_DESKTOPS3 = 32;
+  var MAX_ID_LEN3 = 128;
+  function readProp3(value, property) {
+    try {
+      return Reflect.get(value, property);
+    } catch (error) {
+      void error;
+      return void 0;
+    }
+  }
+  function isOpaqueId6(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LEN3) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isHexRun3(text) {
+    if (text.length === 0) {
+      return false;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lower = code >= 97 && code <= 102;
+      const upper = code >= 65 && code <= 70;
+      if (!(digit || lower || upper)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUuidText3(text) {
+    const parts = text.split("-");
+    const lens = [8, 4, 4, 4, 12];
+    if (parts.length !== lens.length) {
+      return false;
+    }
+    for (let index = 0; index < lens.length; index += 1) {
+      const part = parts[index];
+      if (part.length !== lens[index] || !isHexRun3(part)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function unwrapBraced3(text) {
+    if (text.length !== 38 || !text.startsWith("{") || !text.endsWith("}")) {
+      return null;
+    }
+    const inner = text.slice(1, 37);
+    if (!isUuidText3(inner) || !isOpaqueId6(inner)) {
+      return null;
+    }
+    return inner;
+  }
+  function normalizeNativeId3(value) {
+    if (typeof value === "string") {
+      if (isOpaqueId6(value)) {
+        return value;
+      }
+      return unwrapBraced3(value);
+    }
+    let text = "";
+    try {
+      text = String(value);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (isOpaqueId6(text)) {
+      return text;
+    }
+    return unwrapBraced3(text);
+  }
+  function decodeList3(value, maxLength) {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    if (Array.isArray(value)) {
+      return value.length <= maxLength ? value : null;
+    }
+    let length = void 0;
+    try {
+      length = Reflect.get(value, "length");
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
+      return null;
+    }
+    const out = [];
+    for (let index = 0; index < length; index += 1) {
+      let element = void 0;
+      try {
+        element = Reflect.get(value, String(index));
+      } catch (error) {
+        void error;
+        return null;
+      }
+      if (element === void 0) {
+        return null;
+      }
+      out.push(element);
+    }
+    return out;
+  }
+  function resolveLexicalWorkspace3() {
+    try {
+      const candidate = workspace;
+      if (typeof candidate === "object" && candidate !== null) {
+        return candidate;
+      }
+    } catch (error) {
+      void error;
+    }
+    return null;
+  }
+  function toQuantizedInt2(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+    const rounded = Math.round(value);
+    if (!Number.isSafeInteger(rounded)) {
+      return null;
+    }
+    return rounded;
+  }
+  function readFrameRect2(ref) {
+    const geometry = readProp3(ref, "frameGeometry");
+    if (typeof geometry !== "object" || geometry === null) {
+      return null;
+    }
+    const record = geometry;
+    const x = toQuantizedInt2(record["x"]);
+    const y = toQuantizedInt2(record["y"]);
+    const widthRaw = record["width"] !== void 0 ? record["width"] : record["w"];
+    const heightRaw = record["height"] !== void 0 ? record["height"] : record["h"];
+    const w = toQuantizedInt2(widthRaw);
+    const h = toQuantizedInt2(heightRaw);
+    if (x === null || y === null || w === null || h === null) {
+      return null;
+    }
+    if (w <= 0 || h <= 0 || x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return null;
+    }
+    return { x, y, w, h };
+  }
+  function activeIneligibilityCategory3(ref, domainOutput, desktopRef) {
+    if (readProp3(ref, "normalWindow") !== true) {
+      return "class";
+    }
+    if (readProp3(ref, "managed") !== true) {
+      return "managed";
+    }
+    if (readProp3(ref, "minimized") !== false) {
+      return "minimized";
+    }
+    if (readProp3(ref, "fullScreen") !== false) {
+      return "fullscreen";
+    }
+    if (readProp3(ref, "maximizeMode") !== 0) {
+      return "maximized";
+    }
+    if (readProp3(ref, "onAllDesktops") !== false) {
+      return "all-desktops";
+    }
+    if (readProp3(ref, "resizeable") === false) {
+      return "normal-resizable";
+    }
+    const output = readProp3(ref, "output");
+    if (typeof output !== "object" || output === null) {
+      return "output";
+    }
+    const nameRaw = readProp3(output, "name");
+    if (!isOpaqueId6(nameRaw) || nameRaw !== domainOutput) {
+      return "output";
+    }
+    const membership = decodeList3(readProp3(ref, "desktops"), MAX_DESKTOPS3);
+    if (membership === null || membership.length !== 1 || membership[0] !== desktopRef) {
+      return "desktop";
+    }
+    return null;
+  }
+  function observeNative3(liveWorkspace, log) {
+    const fail = (predicate) => {
+      try {
+        log == null ? void 0 : log(`${ENTRY_SCOPE3}:${predicate}`);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    try {
+      if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+        return fail("workspace-invalid");
+      }
+      const surface = liveWorkspace;
+      let active = void 0;
+      try {
+        active = Reflect.get(surface, "activeWindow");
+      } catch (error) {
+        void error;
+        return fail("active-read-failed");
+      }
+      if (typeof active !== "object" || active === null) {
+        return fail("active-invalid");
+      }
+      const activeRef = active;
+      const activeOutput = readProp3(activeRef, "output");
+      if (typeof activeOutput !== "object" || activeOutput === null) {
+        return fail("output-invalid");
+      }
+      const lister = readProp3(surface, "windowList");
+      if (typeof lister !== "function") {
+        return fail("window-list-missing");
+      }
+      let rawList = void 0;
+      try {
+        rawList = Reflect.apply(lister, surface, []);
+      } catch (error) {
+        void error;
+        return fail("window-list-failed");
+      }
+      const windows = decodeList3(rawList, MAX_LIST3);
+      if (windows === null) {
+        return fail("window-list-invalid");
+      }
+      const currentFn = readProp3(surface, "currentDesktopForScreen");
+      const areaFn = readProp3(surface, "clientArea");
+      if (typeof currentFn !== "function" || typeof areaFn !== "function") {
+        return fail("scope-fns-missing");
+      }
+      const outputNameRaw = readProp3(activeOutput, "name");
+      if (!isOpaqueId6(outputNameRaw)) {
+        return fail("output-name-invalid");
+      }
+      const domainOutput = outputNameRaw;
+      let desktop = void 0;
+      try {
+        desktop = Reflect.apply(
+          currentFn,
+          surface,
+          [activeOutput]
+        );
+      } catch (error) {
+        void error;
+        return fail("desktop-read-failed");
+      }
+      if (typeof desktop !== "object" || desktop === null) {
+        return fail("desktop-invalid");
+      }
+      const desktopRef = desktop;
+      const desktopIdRaw = readProp3(desktopRef, "id");
+      if (!isOpaqueId6(desktopIdRaw)) {
+        return fail("workspace-id-invalid");
+      }
+      const domainWorkspace = desktopIdRaw;
+      let area = void 0;
+      try {
+        area = Reflect.apply(areaFn, surface, [
+          5,
+          activeOutput,
+          desktopRef
+        ]);
+      } catch (error) {
+        void error;
+        return fail("work-area-failed");
+      }
+      if (typeof area !== "object" || area === null) {
+        return fail("work-area-invalid");
+      }
+      const areaRecord = area;
+      const bx = toQuantizedInt2(areaRecord["x"]);
+      const by = toQuantizedInt2(areaRecord["y"]);
+      const bwRaw = areaRecord["width"] !== void 0 ? areaRecord["width"] : areaRecord["w"];
+      const bhRaw = areaRecord["height"] !== void 0 ? areaRecord["height"] : areaRecord["h"];
+      const bw = toQuantizedInt2(bwRaw);
+      const bh = toQuantizedInt2(bhRaw);
+      if (bx === null || by === null || bw === null || bh === null) {
+        return fail("work-area-coords-invalid");
+      }
+      if (bw <= 0 || bh <= 0 || bw > 16384 || bh > 16384 || bx < -16384 || bx > 16384 || by < -16384 || by > 16384) {
+        return fail("work-area-bounds-invalid");
+      }
+      const domainBounds = { x: bx, y: by, w: bw, h: bh };
+      const seen = /* @__PURE__ */ new Set();
+      const entries = [];
+      for (const item of windows) {
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+        const ref = item;
+        if (readProp3(ref, "normalWindow") !== true) {
+          continue;
+        }
+        if (readProp3(ref, "managed") !== true) {
+          continue;
+        }
+        if (readProp3(ref, "minimized") !== false) {
+          continue;
+        }
+        if (readProp3(ref, "fullScreen") !== false) {
+          continue;
+        }
+        if (readProp3(ref, "maximizeMode") !== 0) {
+          continue;
+        }
+        if (readProp3(ref, "onAllDesktops") !== false) {
+          continue;
+        }
+        const resizeable = readProp3(ref, "resizeable");
+        if (resizeable === false) {
+          continue;
+        }
+        const output = readProp3(ref, "output");
+        if (typeof output !== "object" || output === null) {
+          continue;
+        }
+        const nameRaw = readProp3(output, "name");
+        if (!isOpaqueId6(nameRaw)) {
+          return fail("output-name-invalid");
+        }
+        const membership = decodeList3(readProp3(ref, "desktops"), MAX_DESKTOPS3);
+        if (membership === null || membership.length !== 1) {
+          continue;
+        }
+        if (membership[0] !== desktopRef) {
+          return fail("desktop-scope-mismatch");
+        }
+        if (nameRaw !== domainOutput) {
+          return fail("output-scope-mismatch");
+        }
+        let id = null;
+        try {
+          id = normalizeNativeId3(Reflect.get(ref, "internalId"));
+        } catch (error) {
+          void error;
+          return fail("id-read-failed");
+        }
+        if (id === null) {
+          return fail("id-invalid");
+        }
+        if (seen.has(id)) {
+          return fail("id-duplicate");
+        }
+        seen.add(id);
+        const rect = readFrameRect2(ref);
+        if (rect === null) {
+          return fail("frame-invalid");
+        }
+        entries.push({ id, ref, rect, output: domainOutput, workspace: domainWorkspace });
+      }
+      if (entries.length === 0) {
+        return fail("empty-scope");
+      }
+      const sorted = [...entries].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      let activeNativeId = null;
+      try {
+        activeNativeId = normalizeNativeId3(Reflect.get(activeRef, "internalId"));
+      } catch (error) {
+        void error;
+        return fail("active-unobserved:active-id-invalid");
+      }
+      if (activeNativeId === null) {
+        return fail("active-unobserved:active-id-invalid");
+      }
+      const ineligible = activeIneligibilityCategory3(activeRef, domainOutput, desktopRef);
+      if (ineligible !== null) {
+        return fail(`active-unobserved:active-ineligible:${ineligible}`);
+      }
+      let activeId = null;
+      for (const entry of sorted) {
+        if (entry.id === activeNativeId) {
+          activeId = entry.id;
+          if (entry.ref !== activeRef) {
+            try {
+              log == null ? void 0 : log(`${ENTRY_SCOPE3}:active-wrapper-mismatch`);
+            } catch (error) {
+              void error;
+            }
+          }
+          break;
+        }
+      }
+      if (activeId === null) {
+        return fail("active-unobserved:active-missing");
+      }
+      const sortedIds = sorted.map((entry) => entry.id);
+      const fingerprint = String(
+        pointerResizeFingerprint(domainOutput, domainWorkspace, activeId, sortedIds)
+      );
+      const frozenWindows = Object.freeze(
+        sorted.map(
+          (entry) => Object.freeze({
+            id: entry.id,
+            ref: entry.ref,
+            rect: Object.freeze(__spreadValues({}, entry.rect)),
+            output: entry.output,
+            workspace: entry.workspace
+          })
+        )
+      );
+      const expected = fingerprint;
+      const capturedActive = activeRef;
+      return {
+        domainOutput,
+        domainWorkspace,
+        domainBounds: Object.freeze(__spreadValues({}, domainBounds)),
+        domainGap: 0,
+        focusedId: activeId,
+        windows: frozenWindows,
+        activeRef,
+        fingerprint: expected,
+        revalidate: (sourceId) => {
+          try {
+            const fresh = observeNative3(liveWorkspace, log);
+            if (fresh === null) {
+              return false;
+            }
+            if (fresh.fingerprint !== expected) {
+              return false;
+            }
+            if (fresh.activeRef !== capturedActive) {
+              return false;
+            }
+            for (const entry of frozenWindows) {
+              const match = fresh.windows.find((item) => item.id === entry.id);
+              if (match === void 0 || match.ref !== entry.ref) {
+                return false;
+              }
+              if (entry.id === sourceId) {
+                continue;
+              }
+              if (match.rect.x !== entry.rect.x || match.rect.y !== entry.rect.y || match.rect.w !== entry.rect.w || match.rect.h !== entry.rect.h) {
+                return false;
+              }
+            }
+            return true;
+          } catch (error) {
+            void error;
+            return false;
+          }
+        }
+      };
+    } catch (error) {
+      void error;
+      return fail("observe-failed");
+    }
+  }
+  function startPointerResizeAdapterEntry(overrides = {}) {
+    var _a;
+    const liveWorkspace = overrides.workspace !== void 0 ? overrides.workspace : resolveLexicalWorkspace3();
+    const log = (_a = overrides.log) != null ? _a : ((message) => {
+      try {
+        console.log(message);
+      } catch (error) {
+        void error;
+      }
+    });
+    const fail = () => {
+      try {
+        log(ENTRY_REJECT3);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+      return fail();
+    }
+    if (overrides.hasExclusiveResizeAuthority === void 0) {
+      return fail();
+    }
+    const authority = overrides.hasExclusiveResizeAuthority;
+    if (typeof authority !== "function") {
+      return fail();
+    }
+    let callDbus = overrides.callDbus;
+    if (callDbus === void 0) {
+      try {
+        const native = callDBus;
+        if (typeof native !== "function") {
+          return fail();
+        }
+        callDbus = (service, path, iface, method, payload, callback) => {
+          if (service === "org.freedesktop.DBus" && method === "StartServiceByName") {
+            native(
+              service,
+              path,
+              iface,
+              method,
+              payload,
+              0,
+              callback
+            );
+            return;
+          }
+          native(
+            service,
+            path,
+            iface,
+            method,
+            payload,
+            callback
+          );
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    let scheduleOnce = overrides.scheduleOnce;
+    if (scheduleOnce === void 0) {
+      try {
+        const ctor = QTimer;
+        if (typeof ctor !== "function") {
+          return fail();
+        }
+        scheduleOnce = (delayMs, callback) => {
+          const timer = new ctor();
+          timer.interval = delayMs;
+          timer.singleShot = true;
+          timer.timeout.connect(callback);
+          timer.start();
+          return () => {
+            try {
+              timer.stop();
+            } catch (error) {
+              void error;
+            }
+          };
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    const surface = liveWorkspace;
+    const lister = surface["windowList"];
+    if (typeof lister !== "function") {
+      return fail();
+    }
+    let raw = void 0;
+    try {
+      raw = Reflect.apply(lister, surface, []);
+    } catch (error) {
+      void error;
+      return fail();
+    }
+    const list = decodeList3(raw, MAX_LIST3);
+    if (list === null) {
+      return fail();
+    }
+    const adapter = new PointerResizeAdapter({
+      callDbus,
+      scheduleOnce,
+      log,
+      observe: () => observeNative3(liveWorkspace, log),
+      setGeometry: (target, rect) => {
+        try {
+          Reflect.set(target, "frameGeometry", {
+            x: rect.x,
+            y: rect.y,
+            width: rect.w,
+            height: rect.h
+          });
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      active: () => {
+        try {
+          const current = liveWorkspace.activeWindow;
+          return typeof current === "object" && current !== null ? current : null;
+        } catch (error) {
+          void error;
+          return null;
+        }
+      },
+      hasExclusiveResizeAuthority: authority,
+      readLiveState: (target) => {
+        try {
+          const move = Reflect.get(target, "move");
+          const resize = Reflect.get(target, "resize");
+          if (move !== true && move !== false || resize !== true && resize !== false) {
+            return null;
+          }
+          return { move, resize };
+        } catch (error) {
+          void error;
+          return null;
+        }
+      }
+    });
+    const attached = [];
+    const rollbackAttached = () => {
+      for (const detach of attached) {
+        try {
+          detach();
+        } catch (ignored) {
+          void ignored;
+        }
+      }
+      attached.length = 0;
+    };
+    for (const item of list) {
+      if (typeof item !== "object" || item === null) {
+        continue;
+      }
+      const ref = item;
+      const startedSurface = readSignal(ref, "interactiveMoveResizeStarted");
+      const steppedSurface = readSignal(ref, "interactiveMoveResizeStepped");
+      const finishedSurface = readSignal(ref, "interactiveMoveResizeFinished");
+      if (!isConnectableSignal(startedSurface) || !isConnectableSignal(steppedSurface) || !isConnectableSignal(finishedSurface)) {
+        continue;
+      }
+      const geometrySurface = readSignal(ref, "moveResizedChanged");
+      const geometryOptional = isConnectableSignal(geometrySurface) ? geometrySurface : null;
+      const onStarted = () => {
+        try {
+          adapter.windowStarted(ref);
+        } catch (error) {
+          void error;
+        }
+      };
+      const onStepped = (payload) => {
+        try {
+          adapter.windowStepped(ref, payload);
+        } catch (error) {
+          void error;
+        }
+      };
+      const onFinished = () => {
+        try {
+          adapter.windowFinished(ref);
+        } catch (error) {
+          void error;
+        }
+      };
+      const onGeometry = () => {
+        try {
+          adapter.windowGeometryChanged(ref);
+        } catch (error) {
+          void error;
+        }
+      };
+      const currentDetaches = [];
+      let requiredFailed = false;
+      try {
+        const startedDetach = connectSignal(startedSurface, onStarted);
+        if (startedDetach === null) {
+          requiredFailed = true;
+        } else {
+          currentDetaches.push(startedDetach);
+          const steppedDetach = connectSignal(steppedSurface, onStepped);
+          if (steppedDetach === null) {
+            requiredFailed = true;
+          } else {
+            currentDetaches.push(steppedDetach);
+            const finishedDetach = connectSignal(finishedSurface, onFinished);
+            if (finishedDetach === null) {
+              requiredFailed = true;
+            } else {
+              currentDetaches.push(finishedDetach);
+            }
+          }
+        }
+      } catch (ignored) {
+        void ignored;
+        requiredFailed = true;
+      }
+      if (requiredFailed) {
+        for (const detach of currentDetaches) {
+          try {
+            detach();
+          } catch (ignored) {
+            void ignored;
+          }
+        }
+        rollbackAttached();
+        return fail();
+      }
+      if (geometryOptional !== null) {
+        const geometryDetach = connectSignal(geometryOptional, onGeometry);
+        if (geometryDetach !== null) {
+          currentDetaches.push(geometryDetach);
+        }
+      }
+      const snapshot = [...currentDetaches];
+      attached.push(() => {
+        for (const detach of snapshot) {
+          try {
+            detach();
+          } catch (error) {
+            void error;
+          }
+        }
+      });
+    }
+    if (attached.length === 0) {
+      return fail();
+    }
+    const enabled = adapter.enable({
+      owner: overrides.owner,
+      generation: overrides.generation,
+      revision: overrides.revision
+    });
+    if (!enabled) {
+      for (const detach of attached) {
+        try {
+          detach();
+        } catch (error) {
+          void error;
+        }
+      }
+      return null;
+    }
+    if (observeNative3(liveWorkspace, log) === null) {
+      adapter.disable();
+      for (const detach of attached) {
+        try {
+          detach();
+        } catch (error) {
+          void error;
+        }
+      }
+      try {
+        log(ENTRY_SCOPE_REJECT3);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
+    try {
+      log(ENTRY_READY3);
+    } catch (error) {
+      void error;
+    }
+    return {
+      stop: () => {
+        try {
+          adapter.disable();
+        } catch (error) {
+          void error;
+        }
+        for (const detach of attached) {
+          try {
+            detach();
+          } catch (error) {
+            void error;
+          }
+        }
+      }
+    };
+  }
+
+  // src/resize-adapter.ts
+  var RESIZE_SERVICE = "org.plasmaautotiler.Planner";
+  var RESIZE_OBJECT = "/org/plasmaautotiler/Planner";
+  var RESIZE_INTERFACE = "org.plasmaautotiler.Planner1";
+  var RESIZE_METHOD = "DescribeResize";
+  var RESIZE_DBUS_SERVICE = "org.freedesktop.DBus";
+  var RESIZE_DBUS_OBJECT = "/org/freedesktop/DBus";
+  var RESIZE_DBUS_INTERFACE = "org.freedesktop.DBus";
+  var RESIZE_GET_OWNER_METHOD = "GetNameOwner";
+  var RESIZE_START_METHOD = "StartServiceByName";
+  var RESIZE_START_PRIMARY = 1;
+  var RESIZE_START_ALREADY = 2;
+  var RESIZE_CONTRACT_VERSION = 1;
+  var RESIZE_MAX_REQUEST_BYTES = 64 * 1024;
+  var RESIZE_MAX_REPLY_BYTES = 64 * 1024;
+  var RESIZE_TIMEOUT_MS = 2e3;
+  var RESIZE_MAX_CORRELATION_LEN = 128;
+  var RESIZE_MAX_OWNER_LEN = 128;
+  var RESIZE_MAX_GENERATION_LEN = 64;
+  var RESIZE_MAX_REVISION = 1e6;
+  var RESIZE_MAX_ID_LEN = 128;
+  var RESIZE_MAX_WINDOWS = 64;
+  var RESIZE_MAX_GEOMETRY = 64;
+  var RESIZE_MAX_SHARES = 64;
+  var RESIZE_MAX_SEQ = 1e6;
+  var LOG_PREFIX3 = "plasma-auto-tiler:resize";
+  function resizeFingerprint(domainOutput, domainWorkspace, focusedId, sortedIds) {
+    let hash = 2166136261;
+    const feed = (text) => {
+      for (let index = 0; index < text.length; index += 1) {
+        hash ^= text.charCodeAt(index) & 255;
+        hash = Math.imul(hash, 16777619);
+      }
+    };
+    feed(domainOutput);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(domainWorkspace);
+    hash ^= 31;
+    hash = Math.imul(hash, 16777619);
+    feed(focusedId);
+    for (const id of sortedIds) {
+      hash ^= 31;
+      hash = Math.imul(hash, 16777619);
+      feed(id);
+    }
+    return hash >>> 0;
+  }
+  function isOpaqueId7(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > RESIZE_MAX_ID_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUniqueOwner4(value) {
+    return typeof value === "string" && /^:[0-9]+\.[0-9]+$/.test(value);
+  }
+  function isCorrelationId4(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= RESIZE_MAX_CORRELATION_LEN && isOpaqueId7(value);
+  }
+  function isOwnerId4(value) {
+    return typeof value === "string" && value.length > 0 && value.length <= RESIZE_MAX_OWNER_LEN && isOpaqueId7(value);
+  }
+  function isGeneration4(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > RESIZE_MAX_GENERATION_LEN) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const ok = code >= 97 && code <= 122 || code >= 48 && code <= 57 || code === 45;
+      if (!ok) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isRevision4(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= RESIZE_MAX_REVISION;
+  }
+  function isDirection4(value) {
+    return value === "left" || value === "right" || value === "up" || value === "down";
+  }
+  function isResizeMode(value) {
+    return value === "inwards" || value === "outwards";
+  }
+  function isRecord5(value) {
+    return typeof value === "object" && value !== null && !Array.isArray(value);
+  }
+  function isFiniteInt3(value) {
+    return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
+  }
+  function isTargetRect3(value) {
+    if (!isRecord5(value)) {
+      return false;
+    }
+    const keys = Object.keys(value);
+    if (keys.length !== 4 || keys.indexOf("x") < 0 || keys.indexOf("y") < 0 || keys.indexOf("w") < 0 || keys.indexOf("h") < 0) {
+      return false;
+    }
+    const x = value["x"];
+    const y = value["y"];
+    const w = value["w"];
+    const h = value["h"];
+    if (!isFiniteInt3(x) || !isFiniteInt3(y) || !isFiniteInt3(w) || !isFiniteInt3(h)) {
+      return false;
+    }
+    if (w <= 0 || h <= 0) {
+      return false;
+    }
+    if (x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return false;
+    }
+    return true;
+  }
+  function sameRect4(a, b) {
+    return a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  }
+  function rectContained3(inner, outer) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+  }
+  var RESIZE_KIND = "ResizeSplitShare";
+  var RESIZE_CAPABILITY = "keyboard-resize";
+  var RESIZE_PRECONDITIONS = Object.freeze([
+    "focused-leaf-occupied-by-focused-window",
+    "target-boundary-valid",
+    "resize-targets-same-domain",
+    "adapter-must-verify-postconditions"
+  ]);
+  var RESIZE_OPERATION_KEYS = Object.freeze([
+    "kind",
+    "domain_output",
+    "domain_workspace",
+    "focused_leaf",
+    "focused_window",
+    "direction",
+    "mode",
+    "target_group",
+    "focused_child",
+    "neighbor_child",
+    "focused_index",
+    "neighbor_index",
+    "old_shares",
+    "new_shares"
+  ]);
+  function hasExactKeys3(value, keys) {
+    const actual = Object.keys(value);
+    if (actual.length !== keys.length) {
+      return false;
+    }
+    for (const key of keys) {
+      if (!Object.prototype.hasOwnProperty.call(value, key)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isNonNegativeInt3(value) {
+    return typeof value === "number" && Number.isInteger(value) && value >= 0;
+  }
+  function isShareVector2(value) {
+    if (!Array.isArray(value) || value.length < 2 || value.length > RESIZE_MAX_SHARES) {
+      return false;
+    }
+    for (const entry of value) {
+      if (!isNonNegativeInt3(entry) || entry === 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function validateOperationShape3(operation) {
+    if (!isRecord5(operation)) {
+      return false;
+    }
+    if (!hasExactKeys3(operation, RESIZE_OPERATION_KEYS)) {
+      return false;
+    }
+    if (operation["kind"] !== RESIZE_KIND) {
+      return false;
+    }
+    if (!isOpaqueId7(operation["domain_output"]) || !isOpaqueId7(operation["domain_workspace"]) || !isOpaqueId7(operation["focused_leaf"]) || !isOpaqueId7(operation["focused_window"]) || !isOpaqueId7(operation["target_group"]) || !isOpaqueId7(operation["focused_child"]) || !isOpaqueId7(operation["neighbor_child"])) {
+      return false;
+    }
+    if (!isDirection4(operation["direction"])) {
+      return false;
+    }
+    if (!isResizeMode(operation["mode"])) {
+      return false;
+    }
+    if (!isNonNegativeInt3(operation["focused_index"]) || !isNonNegativeInt3(operation["neighbor_index"])) {
+      return false;
+    }
+    if (operation["focused_index"] === operation["neighbor_index"]) {
+      return false;
+    }
+    if (operation["focused_child"] === operation["neighbor_child"]) {
+      return false;
+    }
+    if (!isShareVector2(operation["old_shares"]) || !isShareVector2(operation["new_shares"])) {
+      return false;
+    }
+    const oldShares = operation["old_shares"];
+    const newShares = operation["new_shares"];
+    if (oldShares.length !== newShares.length) {
+      return false;
+    }
+    if (operation["focused_index"] >= oldShares.length) {
+      return false;
+    }
+    if (operation["neighbor_index"] >= oldShares.length) {
+      return false;
+    }
+    let same = true;
+    for (let index = 0; index < oldShares.length; index += 1) {
+      if (oldShares[index] !== newShares[index]) {
+        same = false;
+        break;
+      }
+    }
+    return !same;
+  }
+  function validateGeometryEntry3(value) {
+    if (!isRecord5(value)) {
+      return false;
+    }
+    if (!hasExactKeys3(value, ["window", "leaf", "output", "workspace", "rect"])) {
+      return false;
+    }
+    if (!isOpaqueId7(value["window"]) || !isOpaqueId7(value["leaf"]) || !isOpaqueId7(value["output"]) || !isOpaqueId7(value["workspace"])) {
+      return false;
+    }
+    const rect = value["rect"];
+    if (!isRecord5(rect)) {
+      return false;
+    }
+    if (!hasExactKeys3(rect, ["x", "y", "w", "h"])) {
+      return false;
+    }
+    return isTargetRect3({ x: rect["x"], y: rect["y"], w: rect["w"], h: rect["h"] });
+  }
+  function validateDesiredFocus3(value) {
+    if (!isRecord5(value)) {
+      return false;
+    }
+    if (!hasExactKeys3(value, ["domain_output", "domain_workspace", "leaf"])) {
+      return false;
+    }
+    return isOpaqueId7(value["domain_output"]) && isOpaqueId7(value["domain_workspace"]) && isOpaqueId7(value["leaf"]);
+  }
+  function validatePlanned4(reply, correlationId) {
+    if (!isRecord5(reply)) {
+      return null;
+    }
+    if (!hasExactKeys3(reply, [
+      "v",
+      "correlation_id",
+      "outcome",
+      "base_revision",
+      "capability",
+      "preconditions",
+      "operation",
+      "desired_geometry",
+      "desired_focus"
+    ])) {
+      return null;
+    }
+    if (reply["v"] !== RESIZE_CONTRACT_VERSION) {
+      return null;
+    }
+    if (reply["correlation_id"] !== correlationId) {
+      return null;
+    }
+    if (reply["outcome"] !== "planned") {
+      return null;
+    }
+    if (reply["capability"] !== RESIZE_CAPABILITY) {
+      return null;
+    }
+    const preconditions = reply["preconditions"];
+    if (!Array.isArray(preconditions) || preconditions.length !== RESIZE_PRECONDITIONS.length) {
+      return null;
+    }
+    for (let index = 0; index < RESIZE_PRECONDITIONS.length; index += 1) {
+      if (preconditions[index] !== RESIZE_PRECONDITIONS[index]) {
+        return null;
+      }
+    }
+    if (!validateOperationShape3(reply["operation"])) {
+      return null;
+    }
+    const baseRevision = reply["base_revision"];
+    if (!isRevision4(baseRevision)) {
+      return null;
+    }
+    const geometryRaw = reply["desired_geometry"];
+    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > RESIZE_MAX_GEOMETRY) {
+      return null;
+    }
+    const geometry = [];
+    const seenWindow = /* @__PURE__ */ new Set();
+    for (const entry of geometryRaw) {
+      if (!validateGeometryEntry3(entry)) {
+        return null;
+      }
+      const typed = entry;
+      if (seenWindow.has(typed.window)) {
+        return null;
+      }
+      seenWindow.add(typed.window);
+      geometry.push({
+        window: typed.window,
+        leaf: typed.leaf,
+        output: typed.output,
+        workspace: typed.workspace,
+        rect: { x: typed.rect.x, y: typed.rect.y, w: typed.rect.w, h: typed.rect.h }
+      });
+    }
+    const focusRaw = reply["desired_focus"];
+    if (!validateDesiredFocus3(focusRaw)) {
+      return null;
+    }
+    const focusRecord = focusRaw;
+    return {
+      correlationId,
+      baseRevision,
+      preconditions: Object.freeze([...preconditions]),
+      operation: reply["operation"],
+      geometry: Object.freeze(geometry),
+      focus: {
+        domainOutput: focusRecord["domain_output"],
+        domainWorkspace: focusRecord["domain_workspace"],
+        leaf: focusRecord["leaf"]
+      }
+    };
+  }
+  function validateObserved4(observed) {
+    if (observed === null || typeof observed !== "object") {
+      return false;
+    }
+    if (!isOpaqueId7(observed.domainOutput) || !isOpaqueId7(observed.domainWorkspace)) {
+      return false;
+    }
+    if (!isOpaqueId7(observed.focusedId)) {
+      return false;
+    }
+    if (!Array.isArray(observed.windows)) {
+      return false;
+    }
+    const windows = observed.windows;
+    if (windows.length === 0 || windows.length > RESIZE_MAX_WINDOWS) {
+      return false;
+    }
+    if (!isTargetRect3({
+      x: observed.domainBounds.x,
+      y: observed.domainBounds.y,
+      w: observed.domainBounds.w,
+      h: observed.domainBounds.h
+    })) {
+      return false;
+    }
+    if (!Number.isInteger(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
+      return false;
+    }
+    const seen = /* @__PURE__ */ new Set();
+    let focusedFound = false;
+    for (const entry of windows) {
+      if (typeof entry !== "object" || entry === null) {
+        return false;
+      }
+      const candidate = entry;
+      if (!isOpaqueId7(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
+        return false;
+      }
+      if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
+        return false;
+      }
+      if (!isTargetRect3({ x: candidate.rect.x, y: candidate.rect.y, w: candidate.rect.w, h: candidate.rect.h })) {
+        return false;
+      }
+      if (seen.has(candidate.id)) {
+        return false;
+      }
+      seen.add(candidate.id);
+      if (candidate.id === observed.focusedId) {
+        focusedFound = true;
+      }
+    }
+    if (!focusedFound) {
+      return false;
+    }
+    if (typeof observed.fingerprint !== "string" || observed.fingerprint.length === 0) {
+      return false;
+    }
+    if (typeof observed.revalidate !== "function") {
+      return false;
+    }
+    return true;
+  }
+  function orderResizeWrites(oldById, desired) {
+    return orderGeometryWrites(oldById, desired);
+  }
+  var ResizeAdapter = class {
+    constructor(env) {
+      this.env = env;
+      this.enabled = false;
+      this.owner = "";
+      this.generation = "";
+      this.revision = 0;
+      // Shared one-session revision binding: when the authority passes a
+      // holder object, all four slices read and advance the same counter so
+      // sequential commands across slices bind the single Rust revision. A
+      // plain number keeps the previous per-adapter behavior.
+      this.revisionBinding = null;
+      this.inFlight = false;
+      this.token = 0;
+      this.activeToken = 0;
+      this.callbackSeen = false;
+      this.cancelTimer = null;
+      this.detaches = [];
+      this.invalidated = false;
+      this.suppressing = false;
+      this.seq = 0;
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+      this.lastMode = "";
+      this.lastPressIndex = -1;
+      this.repeatFocused = null;
+      this.repeatDirection = null;
+      this.repeatMode = null;
+      this.repeatNext = 0;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      this.lossReported = false;
+      // Session D-Bus activation pin: exact planner unique owner (`:N.M`)
+      // resolved via GetNameOwner (plus one StartServiceByName phase only when
+      // absent) before any planner call. Null means unpinned; planner calls
+      // never fall back to the well-known name.
+      this.pinnedOwner = null;
+      // 0 idle, 1 awaiting initial owner, 2 awaiting start result, 3 awaiting
+      // post-start owner, 4 planner dispatched. Single flight, no retry.
+      this.activationStep = 0;
+    }
+    isSharedRevisionBinding(value) {
+      if (typeof value !== "object" || value === null) {
+        return false;
+      }
+      return typeof value["current"] === "number";
+    }
+    readRevision() {
+      if (this.revisionBinding !== null) {
+        return this.revisionBinding.current;
+      }
+      return this.revision;
+    }
+    writeRevision(value) {
+      this.revision = value;
+      if (this.revisionBinding !== null) {
+        this.revisionBinding.current = value;
+      }
+    }
+    get isEnabled() {
+      return this.enabled;
+    }
+    get isInFlight() {
+      return this.inFlight;
+    }
+    clearDedup() {
+      this.lastFingerprint = "";
+      this.lastDirection = "";
+      this.lastMode = "";
+      this.lastPressIndex = -1;
+      this.repeatFocused = null;
+      this.repeatDirection = null;
+      this.repeatMode = null;
+      this.repeatNext = 0;
+    }
+    reportAdapterLost(planned) {
+      if (planned === null || this.lossReported) {
+        return;
+      }
+      const target = this.pinnedOwner;
+      if (!isUniqueOwner4(target)) {
+        return;
+      }
+      this.lossReported = true;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: RESIZE_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "adapter-lost"
+        });
+      } catch (error) {
+        void error;
+        return;
+      }
+      if (payload.length === 0 || payload.length > RESIZE_MAX_REQUEST_BYTES) {
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          RESIZE_OBJECT,
+          RESIZE_INTERFACE,
+          RESIZE_METHOD,
+          payload,
+          () => {
+          }
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    plannerService() {
+      return this.pinnedOwner;
+    }
+    enable(auth) {
+      if (this.enabled) {
+        return false;
+      }
+      if (!isRecord5(auth)) {
+        this.reject("resize-invalid-auth");
+        return false;
+      }
+      if (!isOwnerId4(auth.owner) || !isGeneration4(auth.generation)) {
+        this.reject("resize-invalid-auth");
+        return false;
+      }
+      const revision = auth.revision === void 0 ? 0 : auth.revision;
+      if (this.isSharedRevisionBinding(revision)) {
+        if (!isRevision4(revision.current)) {
+          this.reject("resize-invalid-auth");
+          return false;
+        }
+      } else if (!isRevision4(revision)) {
+        this.reject("resize-invalid-auth");
+        return false;
+      }
+      const kinds = ["active", "added", "removed", "output", "desktop", "geometry"];
+      const attached = [];
+      for (const kind of kinds) {
+        let detach = null;
+        try {
+          detach = this.env.subscribe(kind, () => this.onSignal(kind));
+        } catch (error) {
+          void error;
+          detach = null;
+        }
+        if (typeof detach !== "function") {
+          for (const done of attached) {
+            try {
+              done();
+            } catch (error) {
+              void error;
+            }
+          }
+          this.reject("resize-signal-failed");
+          return false;
+        }
+        attached.push(detach);
+      }
+      this.detaches = attached;
+      this.owner = auth.owner;
+      this.generation = auth.generation;
+      if (this.isSharedRevisionBinding(revision)) {
+        this.revisionBinding = revision;
+        this.writeRevision(revision.current);
+      } else {
+        this.revisionBinding = null;
+        this.revision = revision;
+      }
+      this.enabled = true;
+      this.invalidated = false;
+      this.suppressing = false;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      this.lossReported = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.log(`${LOG_PREFIX3}:ready`);
+      return true;
+    }
+    disable() {
+      if (!this.enabled && this.detaches.length === 0) {
+        return;
+      }
+      this.enabled = false;
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.clearDedup();
+      this.clearTimer();
+      for (const detach of this.detaches) {
+        try {
+          detach();
+        } catch (error) {
+          void error;
+        }
+      }
+      this.detaches = [];
+      this.log(`${LOG_PREFIX3}:disabled`);
+    }
+    requestResize(direction, mode) {
+      if (!this.enabled) {
+        this.reject("resize-disabled");
+        return;
+      }
+      if (this.inFlight) {
+        this.reject("resize-busy");
+        return;
+      }
+      if (!isDirection4(direction)) {
+        this.reject("resize-invalid-intent");
+        return;
+      }
+      if (!isResizeMode(mode)) {
+        this.reject("resize-invalid-intent");
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveResizeAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reject("resize-exclusive-conflict");
+        this.disable();
+        return;
+      }
+      let observed = null;
+      try {
+        observed = this.env.observe();
+      } catch (error) {
+        void error;
+        observed = null;
+      }
+      if (!validateObserved4(observed)) {
+        this.reject("resize-stale-scope");
+        this.disable();
+        return;
+      }
+      const current = observed;
+      let pressIndex = 0;
+      if (this.repeatFocused === current.focusedId && this.repeatDirection === direction && this.repeatMode === mode) {
+        pressIndex = this.repeatNext;
+      }
+      if (current.fingerprint === this.lastFingerprint && direction === this.lastDirection && mode === this.lastMode && pressIndex === this.lastPressIndex) {
+        this.reject("resize-dedup");
+        return;
+      }
+      if (this.seq < 0 || this.seq > RESIZE_MAX_SEQ) {
+        this.reject("resize-seq-exhausted");
+        this.disable();
+        return;
+      }
+      const correlation = `${this.generation}-r${String(this.seq)}`;
+      this.seq += 1;
+      if (!isCorrelationId4(correlation)) {
+        this.reject("resize-invalid-auth");
+        this.disable();
+        return;
+      }
+      const windows = current.windows.map((entry) => ({
+        window: entry.id,
+        output: entry.output,
+        workspace: entry.workspace,
+        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }
+      }));
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      let requestRevision = this.readRevision();
+      if (requestRevision === 0) {
+        requestRevision = sortedIds.length;
+        if (this.revisionBinding !== null) {
+          if (sortedIds.length === 3) {
+            this.writeRevision(requestRevision);
+          }
+        } else {
+          this.writeRevision(requestRevision);
+        }
+      }
+      const fingerprint = resizeFingerprint(
+        current.domainOutput,
+        current.domainWorkspace,
+        current.focusedId,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: RESIZE_CONTRACT_VERSION,
+          action: "request",
+          correlation_id: correlation,
+          owner: this.owner,
+          generation: this.generation,
+          revision: requestRevision,
+          fingerprint,
+          domain: {
+            output: current.domainOutput,
+            workspace: current.domainWorkspace,
+            bounds: {
+              x: current.domainBounds.x,
+              y: current.domainBounds.y,
+              w: current.domainBounds.w,
+              h: current.domainBounds.h
+            },
+            gap: current.domainGap
+          },
+          focused_window: current.focusedId,
+          direction,
+          mode,
+          press_index: pressIndex,
+          windows,
+          capabilities: { keyboard_resize: true, pointer_resize: false }
+        });
+      } catch (error) {
+        void error;
+        this.reject("resize-invalid-intent");
+        return;
+      }
+      if (payload.length > RESIZE_MAX_REQUEST_BYTES) {
+        this.reject("resize-oversized");
+        return;
+      }
+      this.lastFingerprint = current.fingerprint;
+      this.lastDirection = direction;
+      this.lastMode = mode;
+      this.lastPressIndex = pressIndex;
+      this.repeatFocused = current.focusedId;
+      this.repeatDirection = direction;
+      this.repeatMode = mode;
+      this.repeatNext = pressIndex + 1;
+      this.diag("req", correlation, [
+        ["rev", requestRevision],
+        ["windows", sortedIds.length]
+      ]);
+      this.startFlight(payload, correlation, direction, mode, current);
+    }
+    onSignal(kind) {
+      if (kind === "geometry" && this.suppressing) {
+        return;
+      }
+      this.invalidated = true;
+      this.clearDedup();
+    }
+    startFlight(payload, correlation, direction, mode, observed) {
+      this.inFlight = true;
+      this.invalidated = false;
+      this.suppressing = false;
+      this.pending = null;
+      this.pendingObserved = observed;
+      this.pendingDirection = direction;
+      this.pendingMode = mode;
+      this.pendingFocused = observed.focusedId;
+      this.lossReported = false;
+      this.callbackSeen = false;
+      this.pinnedOwner = null;
+      this.activationStep = 1;
+      this.token += 1;
+      const flight = this.token;
+      this.activeToken = flight;
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "timer-failed"]]);
+        this.reject("resize-timer-failed");
+        this.disable();
+        return;
+      }
+      this.cancelTimer = cancel;
+      try {
+        this.env.callDbus(
+          RESIZE_DBUS_SERVICE,
+          RESIZE_DBUS_OBJECT,
+          RESIZE_DBUS_INTERFACE,
+          RESIZE_GET_OWNER_METHOD,
+          RESIZE_SERVICE,
+          (reply) => this.onOwnerInitial(reply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("resize-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerInitial(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 1) {
+        return;
+      }
+      if (isUniqueOwner4(reply)) {
+        this.pinnedOwner = reply;
+        this.activationStep = 4;
+        this.diag("owner", correlation, [["transition", "pinned"]]);
+        this.sendPlannerRequest(flight, payload, correlation);
+        return;
+      }
+      this.activationStep = 2;
+      this.diag("owner", correlation, [["transition", "activating"]]);
+      try {
+        this.env.callDbus(
+          RESIZE_DBUS_SERVICE,
+          RESIZE_DBUS_OBJECT,
+          RESIZE_DBUS_INTERFACE,
+          RESIZE_START_METHOD,
+          RESIZE_SERVICE,
+          (startReply) => this.onStartResult(startReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("resize-dbus-failed");
+        this.disable();
+      }
+    }
+    onStartResult(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 2) {
+        return;
+      }
+      if (reply !== RESIZE_START_PRIMARY && reply !== RESIZE_START_ALREADY) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("owner", correlation, [["transition", "activation-failed"]]);
+        this.diag("result", correlation, [["result", "activation-failed"]]);
+        this.reject("resize-activation-failed");
+        this.disable();
+        return;
+      }
+      this.activationStep = 3;
+      try {
+        this.env.callDbus(
+          RESIZE_DBUS_SERVICE,
+          RESIZE_DBUS_OBJECT,
+          RESIZE_DBUS_INTERFACE,
+          RESIZE_GET_OWNER_METHOD,
+          RESIZE_SERVICE,
+          (ownerReply) => this.onOwnerAfterStart(ownerReply, flight, payload, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("resize-dbus-failed");
+        this.disable();
+      }
+    }
+    onOwnerAfterStart(reply, flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 3) {
+        return;
+      }
+      if (!isUniqueOwner4(reply)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("resize-owner-missing");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = reply;
+      this.activationStep = 4;
+      this.sendPlannerRequest(flight, payload, correlation);
+    }
+    sendPlannerRequest(flight, payload, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.activationStep !== 4) {
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner4(target)) {
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("owner", correlation, [["transition", "owner-missing"]]);
+        this.diag("result", correlation, [["result", "owner-missing"]]);
+        this.reject("resize-owner-missing");
+        this.disable();
+        return;
+      }
+      try {
+        this.env.callDbus(
+          target,
+          RESIZE_OBJECT,
+          RESIZE_INTERFACE,
+          RESIZE_METHOD,
+          payload,
+          (reply) => this.onRequestReply(reply, flight, correlation)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.inFlight = false;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.diag("result", correlation, [["result", "dbus-failed"]]);
+        this.reject("resize-dbus-failed");
+        this.disable();
+      }
+    }
+    onTimeout(flight, stage, correlation) {
+      if (!this.inFlight || flight !== this.activeToken) {
+        return;
+      }
+      const lost = this.pending;
+      if (lost !== null) {
+        this.reportAdapterLost(lost);
+      }
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      const timeoutCorr = correlation != null ? correlation : lost == null ? void 0 : lost.correlationId;
+      if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+        this.diag("result", timeoutCorr, [
+          ["result", "timeout"],
+          ["detail", stage]
+        ]);
+      }
+      this.reject(`resize-timeout-${stage}`);
+      this.disable();
+    }
+    onRequestReply(reply, flight, correlation) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      if (this.activationStep !== 4 || !isUniqueOwner4(this.pinnedOwner)) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord5(parsed)) {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      const outcome = parsed["outcome"];
+      if (outcome === "noop") {
+        if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("resize-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("resize-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.pinnedOwner = null;
+        this.activationStep = 0;
+        this.diag("result", correlation, [["result", "noop"]]);
+        this.log(`${LOG_PREFIX3}:noop`);
+        return;
+      }
+      if (outcome === "rejected") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("result", correlation, [["result", "rejected"]]);
+        this.reject("resize-rejected");
+        this.disable();
+        return;
+      }
+      if (outcome === "diverged") {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("result", correlation, [["result", "diverged"]]);
+        this.reject("resize-diverged");
+        this.disable();
+        return;
+      }
+      if (outcome !== "planned") {
+        this.inFlight = false;
+        this.diag("result", correlation, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      const planned = validatePlanned4(parsed, correlation);
+      if (planned === null) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+        this.reject("resize-precondition-mismatch");
+        this.disable();
+        return;
+      }
+      if (planned.baseRevision !== this.readRevision()) {
+        this.inFlight = false;
+        this.pending = null;
+        this.pendingObserved = null;
+        this.pendingDirection = null;
+        this.pendingMode = null;
+        this.pendingFocused = null;
+        this.diag("result", correlation, [["result", "revision-mismatch"]]);
+        this.reject("resize-revision-mismatch");
+        this.disable();
+        return;
+      }
+      const captured = this.pendingObserved;
+      if (captured !== null) {
+        const observedIds = new Set(captured.windows.map((entry) => entry.id));
+        if (planned.geometry.length !== observedIds.size) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMode = null;
+          this.pendingFocused = null;
+          this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+          this.reject("resize-precondition-mismatch");
+          this.disable();
+          return;
+        }
+        for (const entry of planned.geometry) {
+          if (!observedIds.has(entry.window)) {
+            this.inFlight = false;
+            this.pending = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.pendingMode = null;
+            this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+            this.reject("resize-precondition-mismatch");
+            this.disable();
+            return;
+          }
+          if (entry.output !== captured.domainOutput || entry.workspace !== captured.domainWorkspace) {
+            this.inFlight = false;
+            this.pending = null;
+            this.pendingObserved = null;
+            this.pendingDirection = null;
+            this.pendingMode = null;
+            this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+            this.reject("resize-precondition-mismatch");
+            this.disable();
+            return;
+          }
+        }
+        if (planned.focus.domainOutput !== captured.domainOutput || planned.focus.domainWorkspace !== captured.domainWorkspace) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMode = null;
+          this.pendingFocused = null;
+          this.diag("result", correlation, [["result", "precondition-mismatch"]]);
+          this.reject("resize-precondition-mismatch");
+          this.disable();
+          return;
+        }
+      }
+      this.pending = planned;
+      this.diag("result", correlation, [
+        ["result", "planned"],
+        ["rev", planned.baseRevision]
+      ]);
+      this.applyPlanned(flight);
+    }
+    applyPlanned(flight) {
+      const planned = this.pending;
+      const captured = this.pendingObserved;
+      const wantedDirection = this.pendingDirection;
+      const wantedMode = this.pendingMode;
+      const focused = this.pendingFocused;
+      if (planned === null || captured === null || focused === null || wantedDirection === null || wantedMode === null) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-target-mismatch");
+        return;
+      }
+      const operation = planned.operation;
+      if (operation["focused_window"] !== focused || operation["direction"] !== wantedDirection || operation["mode"] !== wantedMode || operation["domain_output"] !== captured.domainOutput || operation["domain_workspace"] !== captured.domainWorkspace) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-target-mismatch");
+        return;
+      }
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-signal-invalid");
+        return;
+      }
+      let authority = false;
+      try {
+        authority = this.env.hasExclusiveResizeAuthority() === true;
+      } catch (error) {
+        void error;
+        authority = false;
+      }
+      if (!authority) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-exclusive-conflict");
+        return;
+      }
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved4(fresh)) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-stale-scope");
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-stale-revalidate");
+        return;
+      }
+      if (current.fingerprint !== captured.fingerprint) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-stale-revalidate");
+        return;
+      }
+      if (current.domainOutput !== captured.domainOutput || current.domainWorkspace !== captured.domainWorkspace || current.focusedId !== captured.focusedId) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-stale-scope");
+        return;
+      }
+      const capturedRects = /* @__PURE__ */ new Map();
+      for (const entry of captured.windows) {
+        capturedRects.set(entry.id, entry.rect);
+      }
+      for (const entry of current.windows) {
+        const want = capturedRects.get(entry.id);
+        if (want === void 0 || !sameRect4(want, entry.rect)) {
+          this.reportAdapterLost(planned);
+          this.failApply("resize-stale-revalidate");
+          return;
+        }
+      }
+      const ordered = orderResizeWrites(capturedRects, planned.geometry);
+      const byId = /* @__PURE__ */ new Map();
+      for (const entry of current.windows) {
+        byId.set(entry.id, entry.ref);
+      }
+      this.suppressing = false;
+      let applied = 0;
+      let partial = false;
+      let partialToken = "resize-partial-apply";
+      const desiredById = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        desiredById.set(entry.window, entry);
+      }
+      const writtenIds = /* @__PURE__ */ new Set();
+      for (const entry of ordered) {
+        if (this.invalidated) {
+          partial = true;
+          partialToken = "resize-signal-invalid";
+          break;
+        }
+        const target = byId.get(entry.window);
+        if (typeof target !== "object" || target === null) {
+          partial = true;
+          break;
+        }
+        let liveRef = null;
+        try {
+          const refetch = this.env.observe();
+          if (refetch !== null) {
+            for (const candidate of refetch.windows) {
+              if (candidate.id === entry.window) {
+                liveRef = candidate.ref;
+                break;
+              }
+            }
+          }
+        } catch (error) {
+          void error;
+          liveRef = null;
+        }
+        if (liveRef !== target) {
+          partial = true;
+          break;
+        }
+        let writeAuthority = false;
+        try {
+          writeAuthority = this.env.hasExclusiveResizeAuthority() === true;
+        } catch (error) {
+          void error;
+          writeAuthority = false;
+        }
+        if (!writeAuthority) {
+          this.reportAdapterLost(planned);
+          this.failApply("resize-exclusive-conflict");
+          return;
+        }
+        if (!rectContained3(entry.rect, captured.domainBounds)) {
+          partial = true;
+          break;
+        }
+        let written = false;
+        this.suppressing = true;
+        try {
+          written = this.env.setGeometry(target, entry.rect) === true;
+        } catch (error) {
+          void error;
+          written = false;
+        } finally {
+          this.suppressing = false;
+        }
+        if (!written) {
+          partial = true;
+          break;
+        }
+        applied += 1;
+        writtenIds.add(entry.window);
+        if (this.invalidated) {
+          partial = true;
+          partialToken = "resize-signal-invalid";
+          break;
+        }
+        try {
+          const refetch = this.env.observe();
+          if (refetch === null) {
+            partial = true;
+            partialToken = "resize-signal-invalid";
+            break;
+          }
+          if (refetch.windows.length !== captured.windows.length) {
+            partial = true;
+            partialToken = "resize-signal-invalid";
+            break;
+          }
+          for (const candidate of refetch.windows) {
+            const want = writtenIds.has(candidate.id) ? desiredById.get(candidate.id).rect : capturedRects.get(candidate.id);
+            if (want === void 0 || !sameRect4(want, candidate.rect)) {
+              partial = true;
+              partialToken = "resize-signal-invalid";
+              break;
+            }
+          }
+          if (partial) {
+            break;
+          }
+        } catch (error) {
+          void error;
+          partial = true;
+          partialToken = "resize-signal-invalid";
+          break;
+        }
+      }
+      this.suppressing = false;
+      void flight;
+      if (partial) {
+        this.reportAdapterLost(planned);
+        this.failApply(partialToken);
+        return;
+      }
+      const focusedRef = byId.get(focused);
+      if (typeof focusedRef !== "object" || focusedRef === null) {
+        this.reportAdapterLost(planned);
+        this.failApply("resize-target-mismatch");
+        return;
+      }
+      let currentActive = null;
+      try {
+        currentActive = this.env.active();
+      } catch (error) {
+        void error;
+        currentActive = null;
+      }
+      if (currentActive !== focusedRef) {
+        let retained = false;
+        try {
+          retained = this.env.setActive(focusedRef) === true;
+        } catch (error) {
+          void error;
+          retained = false;
+        }
+        if (!retained) {
+          this.reportAdapterLost(planned);
+          this.failApply("resize-focus-failed");
+          return;
+        }
+      }
+      void applied;
+      this.sendAcknowledge(flight, planned);
+    }
+    failApply(token) {
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      this.suppressing = false;
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.reject(token);
+      this.disable();
+    }
+    sendAcknowledge(flight, planned) {
+      void flight;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("resize-signal-invalid");
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner4(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("resize-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: RESIZE_CONTRACT_VERSION,
+          action: "acknowledge",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          base_revision: planned.baseRevision,
+          outcome: "accepted"
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("resize-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("ack", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          RESIZE_OBJECT,
+          RESIZE_INTERFACE,
+          RESIZE_METHOD,
+          payload,
+          (reply) => this.onAckReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("resize-dbus-failed");
+      }
+    }
+    onAckReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("resize-signal-invalid");
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      if (!isRecord5(parsed) || parsed["outcome"] !== "acknowledged") {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.failApply("resize-correlation-mismatch");
+        return;
+      }
+      if (parsed["base_revision"] !== planned.baseRevision) {
+        this.reportAdapterLost(planned);
+        this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.failApply("resize-revision-mismatch");
+        return;
+      }
+      this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
+      this.sendVerify(planned);
+    }
+    sendVerify(planned) {
+      var _a, _b;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
+        this.failApply("resize-signal-invalid");
+        return;
+      }
+      const target = this.plannerService();
+      if (!isUniqueOwner4(target)) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
+        this.failApply("resize-owner-missing");
+        return;
+      }
+      this.callbackSeen = false;
+      this.token += 1;
+      const next = this.token;
+      this.activeToken = next;
+      let fresh = null;
+      try {
+        fresh = this.env.observe();
+      } catch (error) {
+        void error;
+        fresh = null;
+      }
+      if (!validateObserved4(fresh)) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("resize-post-stale");
+        return;
+      }
+      const current = fresh;
+      let ok = false;
+      try {
+        ok = current.revalidate() === true;
+      } catch (error) {
+        void error;
+        ok = false;
+      }
+      if (!ok) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
+        this.failApply("resize-post-stale");
+        return;
+      }
+      if (current.domainOutput !== planned.focus.domainOutput || current.domainWorkspace !== planned.focus.domainWorkspace) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("resize-post-mismatch");
+        return;
+      }
+      const focusedId = this.pendingFocused;
+      if (focusedId === null || current.focusedId !== focusedId) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("resize-post-mismatch");
+        return;
+      }
+      const freshById = /* @__PURE__ */ new Map();
+      for (const entry of current.windows) {
+        freshById.set(entry.id, entry);
+      }
+      if (freshById.size !== planned.geometry.length) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("resize-post-mismatch");
+        return;
+      }
+      const leafByWindow = /* @__PURE__ */ new Map();
+      for (const entry of planned.geometry) {
+        leafByWindow.set(entry.window, entry.leaf);
+      }
+      const verifiedGeometry = [];
+      for (const entry of planned.geometry) {
+        const live = freshById.get(entry.window);
+        if (live === void 0) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("resize-post-mismatch");
+          return;
+        }
+        if (!sameRect4(live.rect, entry.rect)) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("resize-post-mismatch");
+          return;
+        }
+        if (live.output !== entry.output || live.workspace !== entry.workspace) {
+          this.reportAdapterLost(planned);
+          this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+          this.failApply("resize-post-mismatch");
+          return;
+        }
+        verifiedGeometry.push({
+          window: live.id,
+          leaf: leafByWindow.get(live.id),
+          output: live.output,
+          workspace: live.workspace,
+          rect: { x: live.rect.x, y: live.rect.y, w: live.rect.w, h: live.rect.h }
+        });
+      }
+      let activeRef = null;
+      try {
+        activeRef = this.env.active();
+      } catch (error) {
+        void error;
+        activeRef = null;
+      }
+      const focusedRef = (_b = (_a = freshById.get(this.pendingFocused)) == null ? void 0 : _a.ref) != null ? _b : null;
+      if (activeRef !== focusedRef || focusedRef === null) {
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
+        this.failApply("resize-post-mismatch");
+        return;
+      }
+      const sortedIds = current.windows.map((entry) => entry.id).sort();
+      const fingerprint = resizeFingerprint(
+        planned.focus.domainOutput,
+        planned.focus.domainWorkspace,
+        this.pendingFocused,
+        sortedIds
+      );
+      let payload = "";
+      try {
+        payload = JSON.stringify({
+          v: RESIZE_CONTRACT_VERSION,
+          action: "verify",
+          correlation_id: planned.correlationId,
+          owner: this.owner,
+          generation: this.generation,
+          revision: planned.baseRevision,
+          fingerprint,
+          verified: true,
+          verified_preconditions: [...planned.preconditions],
+          verified_operation: __spreadValues({}, planned.operation),
+          verified_geometry: verifiedGeometry,
+          verified_focus: {
+            domain_output: planned.focus.domainOutput,
+            domain_workspace: planned.focus.domainWorkspace,
+            leaf: planned.focus.leaf
+          }
+        });
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
+        this.failApply("resize-service-fault");
+        return;
+      }
+      let cancel = null;
+      try {
+        cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
+        this.failApply("resize-timer-failed");
+        return;
+      }
+      this.cancelTimer = cancel;
+      this.diag("verify", planned.correlationId, [["transition", "sent"]]);
+      try {
+        this.env.callDbus(
+          target,
+          RESIZE_OBJECT,
+          RESIZE_INTERFACE,
+          RESIZE_METHOD,
+          payload,
+          (reply) => this.onVerifyReply(reply, next, planned)
+        );
+      } catch (error) {
+        void error;
+        this.clearTimer();
+        this.reportAdapterLost(planned);
+        this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
+        this.failApply("resize-dbus-failed");
+      }
+    }
+    onVerifyReply(reply, flight, planned) {
+      if (!this.inFlight || flight !== this.activeToken || this.callbackSeen) {
+        return;
+      }
+      this.callbackSeen = true;
+      this.clearTimer();
+      this.inFlight = false;
+      this.pending = null;
+      this.pendingObserved = null;
+      this.pendingDirection = null;
+      this.pendingMode = null;
+      this.pendingFocused = null;
+      this.suppressing = false;
+      if (this.invalidated) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
+        this.reject("resize-signal-invalid");
+        this.disable();
+        return;
+      }
+      if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      let parsed = null;
+      try {
+        parsed = JSON.parse(reply);
+      } catch (error) {
+        void error;
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      if (!isRecord5(parsed) || parsed["outcome"] !== "committed") {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
+        this.reject("resize-service-fault");
+        this.disable();
+        return;
+      }
+      if (parsed["correlation_id"] !== planned.correlationId) {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
+        this.reject("resize-correlation-mismatch");
+        this.disable();
+        return;
+      }
+      const revision = parsed["revision"];
+      if (typeof revision === "number" && Number.isInteger(revision) && revision === this.readRevision() + 1) {
+        this.writeRevision(revision);
+      } else {
+        this.reportAdapterLost(planned);
+        this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
+        this.reject("resize-revision-mismatch");
+        this.disable();
+        return;
+      }
+      this.pinnedOwner = null;
+      this.activationStep = 0;
+      this.diag("outcome", planned.correlationId, [
+        ["result", "committed"],
+        ["rev", revision]
+      ]);
+      this.log(`${LOG_PREFIX3}:applied`);
+    }
+    clearTimer() {
+      const cancel = this.cancelTimer;
+      this.cancelTimer = null;
+      if (cancel === null) {
+        return;
+      }
+      try {
+        cancel();
+      } catch (error) {
+        void error;
+      }
+    }
+    reject(token) {
+      try {
+        this.env.log(`${LOG_PREFIX3}:reject:${token}`);
+      } catch (error) {
+        void error;
+      }
+    }
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    diag(stage, correlation, extra = []) {
+      try {
+        this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
+      } catch (error) {
+        void error;
+      }
+    }
+    log(message) {
+      try {
+        this.env.log(message);
+      } catch (error) {
+        void error;
+      }
+    }
+  };
+
+  // src/resize-adapter-entry.ts
+  var ENTRY_LOG4 = "plasma-auto-tiler:resize-entry";
+  var ENTRY_READY4 = `${ENTRY_LOG4}:ready`;
+  var ENTRY_REJECT4 = `${ENTRY_LOG4}:reject:resize-entry-invalid`;
+  var ENTRY_SCOPE_REJECT4 = `${ENTRY_LOG4}:reject:resize-entry-scope-invalid`;
+  var ENTRY_SCOPE4 = `${ENTRY_LOG4}:scope`;
+  var ENTRY_BOOTSTRAP = `${ENTRY_LOG4}:bootstrap-trio`;
+  function isFreshRevisionHolder(value) {
+    if (typeof value !== "object" || value === null) {
+      return false;
+    }
+    return value["current"] === 0;
+  }
+  function rectContained4(inner, outer) {
+    return inner.x >= outer.x && inner.y >= outer.y && inner.x + inner.w <= outer.x + outer.w && inner.y + inner.h <= outer.y + outer.h;
+  }
+  function trioBootstrapSkipReason(observed) {
+    try {
+      if (observed.windows.length !== 3) {
+        return "non-three";
+      }
+      const sorted = [...observed.windows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      const middle = sorted[1];
+      const last = sorted[2];
+      if (middle === void 0 || last === void 0 || !(middle.rect.w > middle.rect.h) || !(last.rect.w <= last.rect.h)) {
+        return "shape";
+      }
+      return "uncontained";
+    } catch (error) {
+      void error;
+      return "unknown";
+    }
+  }
+  function trioBootstrapTarget(observed) {
+    try {
+      if (observed.windows.length !== 3) {
+        return null;
+      }
+      const sorted = [...observed.windows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      const first = sorted[0];
+      const middle = sorted[1];
+      const last = sorted[2];
+      if (first === void 0 || middle === void 0 || last === void 0) {
+        return null;
+      }
+      if (!(middle.rect.w > middle.rect.h)) {
+        return null;
+      }
+      if (!(last.rect.w <= last.rect.h)) {
+        return null;
+      }
+      for (const entry of sorted) {
+        if (!rectContained4(entry.rect, observed.domainBounds)) {
+          return null;
+        }
+      }
+      return { ref: last.ref };
+    } catch (error) {
+      void error;
+      return null;
+    }
+  }
+  var MAX_LIST4 = 1024;
+  var MAX_DESKTOPS4 = 32;
+  var MAX_ID_LEN4 = 128;
+  function readProp4(value, property) {
+    try {
+      return Reflect.get(value, property);
+    } catch (error) {
+      void error;
+      return void 0;
+    }
+  }
+  function isOpaqueId8(value) {
+    if (typeof value !== "string" || value.length === 0 || value.length > MAX_ID_LEN4) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const alnum = code >= 48 && code <= 57 || code >= 65 && code <= 90 || code >= 97 && code <= 122;
+      if (!(alnum || code === 45 || code === 95 || code === 46)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isHexRun4(text) {
+    if (text.length === 0) {
+      return false;
+    }
+    for (let index = 0; index < text.length; index += 1) {
+      const code = text.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lower = code >= 97 && code <= 102;
+      const upper = code >= 65 && code <= 70;
+      if (!(digit || lower || upper)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function isUuidText4(text) {
+    const parts = text.split("-");
+    const lens = [8, 4, 4, 4, 12];
+    if (parts.length !== lens.length) {
+      return false;
+    }
+    for (let index = 0; index < lens.length; index += 1) {
+      const part = parts[index];
+      if (part.length !== lens[index] || !isHexRun4(part)) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function unwrapBraced4(text) {
+    if (text.length !== 38 || !text.startsWith("{") || !text.endsWith("}")) {
+      return null;
+    }
+    const inner = text.slice(1, 37);
+    if (!isUuidText4(inner) || !isOpaqueId8(inner)) {
+      return null;
+    }
+    return inner;
+  }
+  function normalizeNativeId4(value) {
+    if (typeof value === "string") {
+      if (isOpaqueId8(value)) {
+        return value;
+      }
+      return unwrapBraced4(value);
+    }
+    let text = "";
+    try {
+      text = String(value);
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (isOpaqueId8(text)) {
+      return text;
+    }
+    return unwrapBraced4(text);
+  }
+  function decodeList4(value, maxLength) {
+    if (typeof value !== "object" || value === null) {
+      return null;
+    }
+    if (Array.isArray(value)) {
+      return value.length <= maxLength ? value : null;
+    }
+    let length = void 0;
+    try {
+      length = Reflect.get(value, "length");
+    } catch (error) {
+      void error;
+      return null;
+    }
+    if (typeof length !== "number" || !Number.isInteger(length) || length < 0 || length > maxLength) {
+      return null;
+    }
+    const out = [];
+    for (let index = 0; index < length; index += 1) {
+      let element = void 0;
+      try {
+        element = Reflect.get(value, String(index));
+      } catch (error) {
+        void error;
+        return null;
+      }
+      if (element === void 0) {
+        return null;
+      }
+      out.push(element);
+    }
+    return out;
+  }
+  function resolveLexicalWorkspace4() {
+    try {
+      const candidate = workspace;
+      if (typeof candidate === "object" && candidate !== null) {
+        return candidate;
+      }
+    } catch (error) {
+      void error;
+    }
+    return null;
+  }
+  function toQuantizedInt3(value) {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+    const rounded = Math.round(value);
+    if (!Number.isSafeInteger(rounded)) {
+      return null;
+    }
+    return rounded;
+  }
+  function readFrameRect3(ref) {
+    const geometry = readProp4(ref, "frameGeometry");
+    if (typeof geometry !== "object" || geometry === null) {
+      return null;
+    }
+    const record = geometry;
+    const x = toQuantizedInt3(record["x"]);
+    const y = toQuantizedInt3(record["y"]);
+    const widthRaw = record["width"] !== void 0 ? record["width"] : record["w"];
+    const heightRaw = record["height"] !== void 0 ? record["height"] : record["h"];
+    const w = toQuantizedInt3(widthRaw);
+    const h = toQuantizedInt3(heightRaw);
+    if (x === null || y === null || w === null || h === null) {
+      return null;
+    }
+    if (w <= 0 || h <= 0 || x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
+      return null;
+    }
+    return { x, y, w, h };
+  }
+  function activeIneligibilityCategory4(ref, domainOutput, desktopRef) {
+    if (readProp4(ref, "normalWindow") !== true) {
+      return "class";
+    }
+    if (readProp4(ref, "managed") !== true) {
+      return "managed";
+    }
+    if (readProp4(ref, "minimized") !== false) {
+      return "minimized";
+    }
+    if (readProp4(ref, "fullScreen") !== false) {
+      return "fullscreen";
+    }
+    if (readProp4(ref, "maximizeMode") !== 0) {
+      return "maximized";
+    }
+    if (readProp4(ref, "onAllDesktops") !== false) {
+      return "all-desktops";
+    }
+    if (readProp4(ref, "resizeable") === false) {
+      return "normal-resizable";
+    }
+    const output = readProp4(ref, "output");
+    if (typeof output !== "object" || output === null) {
+      return "output";
+    }
+    const nameRaw = readProp4(output, "name");
+    if (!isOpaqueId8(nameRaw) || nameRaw !== domainOutput) {
+      return "output";
+    }
+    const membership = decodeList4(readProp4(ref, "desktops"), MAX_DESKTOPS4);
+    if (membership === null || membership.length !== 1 || membership[0] !== desktopRef) {
+      return "desktop";
+    }
+    return null;
+  }
+  function observeNative4(liveWorkspace, log) {
+    const fail = (predicate) => {
+      try {
+        log == null ? void 0 : log(`${ENTRY_SCOPE4}:${predicate}`);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    try {
+      if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+        return fail("workspace-invalid");
+      }
+      const surface = liveWorkspace;
+      let active = void 0;
+      try {
+        active = Reflect.get(surface, "activeWindow");
+      } catch (error) {
+        void error;
+        return fail("active-read-failed");
+      }
+      if (typeof active !== "object" || active === null) {
+        return fail("active-invalid");
+      }
+      const activeRef = active;
+      const activeOutput = readProp4(activeRef, "output");
+      if (typeof activeOutput !== "object" || activeOutput === null) {
+        return fail("output-invalid");
+      }
+      const lister = readProp4(surface, "windowList");
+      if (typeof lister !== "function") {
+        return fail("window-list-missing");
+      }
+      let rawList = void 0;
+      try {
+        rawList = Reflect.apply(lister, surface, []);
+      } catch (error) {
+        void error;
+        return fail("window-list-failed");
+      }
+      const windows = decodeList4(rawList, MAX_LIST4);
+      if (windows === null) {
+        return fail("window-list-invalid");
+      }
+      const currentFn = readProp4(surface, "currentDesktopForScreen");
+      const areaFn = readProp4(surface, "clientArea");
+      if (typeof currentFn !== "function" || typeof areaFn !== "function") {
+        return fail("scope-fns-missing");
+      }
+      const outputNameRaw = readProp4(activeOutput, "name");
+      if (!isOpaqueId8(outputNameRaw)) {
+        return fail("output-name-invalid");
+      }
+      const domainOutput = outputNameRaw;
+      let desktop = void 0;
+      try {
+        desktop = Reflect.apply(
+          currentFn,
+          surface,
+          [activeOutput]
+        );
+      } catch (error) {
+        void error;
+        return fail("desktop-read-failed");
+      }
+      if (typeof desktop !== "object" || desktop === null) {
+        return fail("desktop-invalid");
+      }
+      const desktopRef = desktop;
+      const desktopIdRaw = readProp4(desktopRef, "id");
+      if (!isOpaqueId8(desktopIdRaw)) {
+        return fail("workspace-id-invalid");
+      }
+      const domainWorkspace = desktopIdRaw;
+      let area = void 0;
+      try {
+        area = Reflect.apply(areaFn, surface, [
+          5,
+          activeOutput,
+          desktopRef
+        ]);
+      } catch (error) {
+        void error;
+        return fail("work-area-failed");
+      }
+      if (typeof area !== "object" || area === null) {
+        return fail("work-area-invalid");
+      }
+      const areaRecord = area;
+      const bx = toQuantizedInt3(areaRecord["x"]);
+      const by = toQuantizedInt3(areaRecord["y"]);
+      const bwRaw = areaRecord["width"] !== void 0 ? areaRecord["width"] : areaRecord["w"];
+      const bhRaw = areaRecord["height"] !== void 0 ? areaRecord["height"] : areaRecord["h"];
+      const bw = toQuantizedInt3(bwRaw);
+      const bh = toQuantizedInt3(bhRaw);
+      if (bx === null || by === null || bw === null || bh === null) {
+        return fail("work-area-coords-invalid");
+      }
+      if (bw <= 0 || bh <= 0 || bw > 16384 || bh > 16384 || bx < -16384 || bx > 16384 || by < -16384 || by > 16384) {
+        return fail("work-area-bounds-invalid");
+      }
+      const domainBounds = { x: bx, y: by, w: bw, h: bh };
+      const seen = /* @__PURE__ */ new Set();
+      const entries = [];
+      for (const item of windows) {
+        if (typeof item !== "object" || item === null) {
+          continue;
+        }
+        const ref = item;
+        if (readProp4(ref, "normalWindow") !== true) {
+          continue;
+        }
+        if (readProp4(ref, "managed") !== true) {
+          continue;
+        }
+        if (readProp4(ref, "minimized") !== false) {
+          continue;
+        }
+        if (readProp4(ref, "fullScreen") !== false) {
+          continue;
+        }
+        if (readProp4(ref, "maximizeMode") !== 0) {
+          continue;
+        }
+        if (readProp4(ref, "onAllDesktops") !== false) {
+          continue;
+        }
+        const resizeable = readProp4(ref, "resizeable");
+        if (resizeable === false) {
+          continue;
+        }
+        const output = readProp4(ref, "output");
+        if (typeof output !== "object" || output === null) {
+          continue;
+        }
+        const nameRaw = readProp4(output, "name");
+        if (!isOpaqueId8(nameRaw)) {
+          return fail("output-name-invalid");
+        }
+        const membership = decodeList4(readProp4(ref, "desktops"), MAX_DESKTOPS4);
+        if (membership === null || membership.length !== 1) {
+          continue;
+        }
+        if (membership[0] !== desktopRef) {
+          return fail("desktop-scope-mismatch");
+        }
+        if (nameRaw !== domainOutput) {
+          return fail("output-scope-mismatch");
+        }
+        let id = null;
+        try {
+          id = normalizeNativeId4(Reflect.get(ref, "internalId"));
+        } catch (error) {
+          void error;
+          return fail("id-read-failed");
+        }
+        if (id === null) {
+          return fail("id-invalid");
+        }
+        if (seen.has(id)) {
+          return fail("id-duplicate");
+        }
+        seen.add(id);
+        const rect = readFrameRect3(ref);
+        if (rect === null) {
+          return fail("frame-invalid");
+        }
+        entries.push({ id, ref, rect, output: domainOutput, workspace: domainWorkspace });
+      }
+      if (entries.length === 0) {
+        return fail("empty-scope");
+      }
+      const sorted = [...entries].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+      let activeNativeId = null;
+      try {
+        activeNativeId = normalizeNativeId4(Reflect.get(activeRef, "internalId"));
+      } catch (error) {
+        void error;
+        return fail("active-unobserved:active-id-invalid");
+      }
+      if (activeNativeId === null) {
+        return fail("active-unobserved:active-id-invalid");
+      }
+      const ineligible = activeIneligibilityCategory4(activeRef, domainOutput, desktopRef);
+      if (ineligible !== null) {
+        return fail(`active-unobserved:active-ineligible:${ineligible}`);
+      }
+      let activeId = null;
+      for (const entry of sorted) {
+        if (entry.id === activeNativeId) {
+          activeId = entry.id;
+          if (entry.ref !== activeRef) {
+            try {
+              log == null ? void 0 : log(`${ENTRY_SCOPE4}:active-wrapper-mismatch`);
+            } catch (error) {
+              void error;
+            }
+          }
+          break;
+        }
+      }
+      if (activeId === null) {
+        return fail("active-unobserved:active-missing");
+      }
+      const sortedIds = sorted.map((entry) => entry.id);
+      const fingerprint = String(
+        resizeFingerprint(domainOutput, domainWorkspace, activeId, sortedIds)
+      );
+      const frozenWindows = Object.freeze(
+        sorted.map(
+          (entry) => Object.freeze({
+            id: entry.id,
+            ref: entry.ref,
+            rect: Object.freeze(__spreadValues({}, entry.rect)),
+            output: entry.output,
+            workspace: entry.workspace
+          })
+        )
+      );
+      const expected = fingerprint;
+      const capturedActive = activeRef;
+      return {
+        domainOutput,
+        domainWorkspace,
+        domainBounds: Object.freeze(__spreadValues({}, domainBounds)),
+        domainGap: 0,
+        focusedId: activeId,
+        windows: frozenWindows,
+        activeRef,
+        fingerprint: expected,
+        revalidate: () => {
+          try {
+            const fresh = observeNative4(liveWorkspace, log);
+            if (fresh === null) {
+              return false;
+            }
+            if (fresh.fingerprint !== expected) {
+              return false;
+            }
+            if (fresh.activeRef !== capturedActive) {
+              return false;
+            }
+            for (const entry of frozenWindows) {
+              const match = fresh.windows.find((item) => item.id === entry.id);
+              if (match === void 0 || match.ref !== entry.ref) {
+                return false;
+              }
+              if (match.rect.x !== entry.rect.x || match.rect.y !== entry.rect.y || match.rect.w !== entry.rect.w || match.rect.h !== entry.rect.h) {
+                return false;
+              }
+            }
+            return true;
+          } catch (error) {
+            void error;
+            return false;
+          }
+        }
+      };
+    } catch (error) {
+      void error;
+      return fail("observe-failed");
+    }
+  }
+  function startResizeAdapterEntry(overrides = {}) {
+    var _a;
+    const liveWorkspace = overrides.workspace !== void 0 ? overrides.workspace : resolveLexicalWorkspace4();
+    const log = (_a = overrides.log) != null ? _a : ((message) => {
+      try {
+        console.log(message);
+      } catch (error) {
+        void error;
+      }
+    });
+    const fail = () => {
+      try {
+        log(ENTRY_REJECT4);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    };
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+      return fail();
+    }
+    if (overrides.hasExclusiveResizeAuthority === void 0) {
+      return fail();
+    }
+    const authority = overrides.hasExclusiveResizeAuthority;
+    if (typeof authority !== "function") {
+      return fail();
+    }
+    let callDbus = overrides.callDbus;
+    if (callDbus === void 0) {
+      try {
+        const native = callDBus;
+        if (typeof native !== "function") {
+          return fail();
+        }
+        callDbus = (service, path, iface, method, payload, callback) => {
+          if (service === "org.freedesktop.DBus" && method === "StartServiceByName") {
+            native(
+              service,
+              path,
+              iface,
+              method,
+              payload,
+              0,
+              callback
+            );
+            return;
+          }
+          native(
+            service,
+            path,
+            iface,
+            method,
+            payload,
+            callback
+          );
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    let scheduleOnce = overrides.scheduleOnce;
+    if (scheduleOnce === void 0) {
+      try {
+        const ctor = QTimer;
+        if (typeof ctor !== "function") {
+          return fail();
+        }
+        scheduleOnce = (delayMs, callback) => {
+          const timer = new ctor();
+          timer.interval = delayMs;
+          timer.singleShot = true;
+          timer.timeout.connect(callback);
+          timer.start();
+          return () => {
+            try {
+              timer.stop();
+            } catch (error) {
+              void error;
+            }
+          };
+        };
+      } catch (error) {
+        void error;
+        return fail();
+      }
+    }
+    const surface = liveWorkspace;
+    const sub = (name, handler) => {
+      try {
+        return connectSignal(readSignal(surface, name), handler);
+      } catch (error) {
+        void error;
+        return null;
+      }
+    };
+    const subWindowGeometry = (handler) => {
+      try {
+        const lister = surface["windowList"];
+        if (typeof lister !== "function") {
+          return null;
+        }
+        let raw = void 0;
+        try {
+          raw = Reflect.apply(lister, surface, []);
+        } catch (error) {
+          void error;
+          return null;
+        }
+        const list = decodeList4(raw, MAX_LIST4);
+        if (list === null) {
+          return null;
+        }
+        const detaches = [];
+        for (const item of list) {
+          if (typeof item !== "object" || item === null) {
+            continue;
+          }
+          const detach = connectSignal(readSignal(item, "moveResizedChanged"), handler);
+          if (detach === null) {
+            continue;
+          }
+          detaches.push(detach);
+        }
+        if (detaches.length === 0) {
+          return null;
+        }
+        return () => {
+          for (const detach of detaches) {
+            try {
+              detach();
+            } catch (error) {
+              void error;
+            }
+          }
+        };
+      } catch (error) {
+        void error;
+        return null;
+      }
+    };
+    const adapter = new ResizeAdapter({
+      callDbus,
+      scheduleOnce,
+      log,
+      observe: () => observeNative4(liveWorkspace, log),
+      setGeometry: (target, rect) => {
+        try {
+          Reflect.set(target, "frameGeometry", {
+            x: rect.x,
+            y: rect.y,
+            width: rect.w,
+            height: rect.h
+          });
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      setActive: (target) => {
+        try {
+          liveWorkspace.activeWindow = target;
+          return true;
+        } catch (error) {
+          void error;
+          return false;
+        }
+      },
+      active: () => {
+        try {
+          const current = liveWorkspace.activeWindow;
+          return typeof current === "object" && current !== null ? current : null;
+        } catch (error) {
+          void error;
+          return null;
+        }
+      },
+      hasExclusiveResizeAuthority: authority,
+      subscribe: (kind, handler) => {
+        if (kind === "geometry") {
+          const detach2 = subWindowGeometry(handler);
+          if (detach2 === null) {
+            throw new Error("resize-entry-signal-failed");
+          }
+          return detach2;
+        }
+        const name = kind === "active" ? "windowActivated" : kind === "added" ? "windowAdded" : kind === "removed" ? "windowRemoved" : kind === "output" ? "screensChanged" : "currentDesktopChanged";
+        const detach = sub(name, handler);
+        if (detach === null) {
+          throw new Error("resize-entry-signal-failed");
+        }
+        return detach;
+      }
+    });
+    const enabled = adapter.enable({
+      owner: overrides.owner,
+      generation: overrides.generation,
+      revision: overrides.revision
+    });
+    if (!enabled) {
+      return null;
+    }
+    if (observeNative4(liveWorkspace, log) === null) {
+      adapter.disable();
+      try {
+        log(ENTRY_SCOPE_REJECT4);
+      } catch (error) {
+        void error;
+      }
+      return null;
+    }
+    try {
+      log(ENTRY_READY4);
+    } catch (error) {
+      void error;
+    }
+    const tryBootstrapTrio = () => {
+      try {
+        if (!isFreshRevisionHolder(overrides.revision)) {
+          try {
+            log(
+              formatRouteDiag("scope", [
+                ["count", -1],
+                ["decision", "skip"],
+                ["reason", "stale-holder"]
+              ])
+            );
+          } catch (error) {
+            void error;
+          }
+          return;
+        }
+        const observed = observeNative4(liveWorkspace, log);
+        if (observed === null) {
+          try {
+            log(
+              formatRouteDiag("scope", [
+                ["count", -1],
+                ["decision", "skip"],
+                ["reason", "no-scope"]
+              ])
+            );
+          } catch (error) {
+            void error;
+          }
+          return;
+        }
+        const target = trioBootstrapTarget(observed);
+        if (target === null) {
+          try {
+            log(
+              formatRouteDiag("scope", [
+                ["count", observed.windows.length],
+                ["decision", "skip"],
+                ["reason", trioBootstrapSkipReason(observed)]
+              ])
+            );
+          } catch (error) {
+            void error;
+          }
+          return;
+        }
+        try {
+          const surface2 = liveWorkspace;
+          if (surface2.activeWindow !== target.ref) {
+            surface2.activeWindow = target.ref;
+          }
+        } catch (error) {
+          void error;
+          return;
+        }
+        adapter.requestResize("up", "inwards");
+        try {
+          log(ENTRY_BOOTSTRAP);
+        } catch (error) {
+          void error;
+        }
+        try {
+          log(
+            formatRouteDiag("scope", [
+              ["count", 3],
+              ["decision", "adopt"]
+            ])
+          );
+        } catch (error) {
+          void error;
+        }
+      } catch (error) {
+        void error;
+      }
+    };
+    return {
+      stop: () => {
+        try {
+          adapter.disable();
+        } catch (error) {
+          void error;
+        }
+      },
+      request: (direction, mode) => {
+        try {
+          adapter.requestResize(direction, mode);
+        } catch (error) {
+          void error;
+        }
+      },
+      tryBootstrapTrio
+    };
+  }
+
+  // src/engine-authority.ts
+  var ENGINE_AUTHORITY_OWNER = "plasma-auto-tiler";
+  var ENGINE_AUTHORITY_GENERATION = "packaged-rust-1";
+  var ENGINE_AUTHORITY_REVISION = 0;
+  function createEngineAuthorityRevision() {
+    return { current: ENGINE_AUTHORITY_REVISION };
+  }
+  function packagedEngineAuthorityStarts() {
+    return {
+      startFocus: (args) => startFocusAdapterEntry(args),
+      startMovement: (args) => startMovementAdapterEntry(args),
+      startResize: (args) => startResizeAdapterEntry(args),
+      startPointerResize: (args) => startPointerResizeAdapterEntry(args)
+    };
+  }
+  var COMMAND_DIRECTIONS = Object.freeze([
+    "left",
+    "right",
+    "up",
+    "down"
+  ]);
+  function normalizeCommandDirection(value) {
+    for (const direction of COMMAND_DIRECTIONS) {
+      if (value === direction) {
+        return direction;
+      }
+    }
+    return "unknown";
+  }
+  function normalizeCommandResizeMode(value) {
+    if (value === "outwards" || value === "inwards") {
+      return value;
+    }
+    return "unknown";
+  }
+  function describeAttachFailure(focus, movement, resize, pointer) {
+    const failed2 = [];
+    if (focus === null) {
+      failed2.push("focus");
+    }
+    if (movement === null) {
+      failed2.push("movement");
+    }
+    if (resize === null) {
+      failed2.push("resize");
+    }
+    if (pointer === null) {
+      failed2.push("pointer");
+    }
+    if (failed2.length === 1) {
+      return failed2[0];
+    }
+    return "multiple";
+  }
+  var EngineAuthorityDispatcher = class {
+    constructor(mode, starts, log, initialRevision) {
+      this.mode = mode;
+      this.starts = starts;
+      this.log = log;
+      this.focusHandle = null;
+      this.movementHandle = null;
+      this.resizeHandle = null;
+      this.pointerHandle = null;
+      this.rustAvailable = false;
+      this.rustResizeMode = null;
+      // One-shot lazy retry: a boot-time empty/ineligible-scope start loss stays
+      // fail-closed until the first authority-gated production command, which
+      // makes exactly one fresh all-or-nothing start() through the same shared
+      // revision binding and exact-three bootstrap. Never polled, never per
+      // signal, never legacy.
+      this.lazyRetryUsed = false;
+      // Monotonic per-dispatcher command ordinal for route diagnostics: links
+      // one physical command to its retry/refusal outcome. Count only.
+      this.cmdSeq = 0;
+      this.hasExclusiveRustAuthority = () => this.isRustActive();
+      if (typeof initialRevision === "number" && Number.isInteger(initialRevision) && initialRevision >= 0 && initialRevision <= 1e6) {
+        this.revisionBinding = { current: initialRevision };
+      } else {
+        this.revisionBinding = createEngineAuthorityRevision();
+      }
+    }
+    // In-memory revision handover for recreation: the controller may adopt
+    // this snapshot when constructing a replacement dispatcher. No I/O.
+    revisionSnapshot() {
+      return this.revisionBinding.current;
+    }
+    isRustActive() {
+      return this.mode === "rust-development" && this.rustAvailable;
+    }
+    start() {
+      var _a, _b;
+      if (this.mode !== "rust-development") {
+        return false;
+      }
+      if (this.isRustActive()) {
+        return true;
+      }
+      const binding = {
+        owner: ENGINE_AUTHORITY_OWNER,
+        generation: ENGINE_AUTHORITY_GENERATION,
+        revision: this.revisionBinding
+      };
+      const authority = this.hasExclusiveRustAuthority;
+      let focus = null;
+      let movement = null;
+      let resize = null;
+      let pointer = null;
+      try {
+        focus = this.starts.startFocus(__spreadProps(__spreadValues({}, binding), { hasExclusiveFocusAuthority: authority }));
+        movement = this.starts.startMovement(__spreadProps(__spreadValues({}, binding), { hasExclusiveMovementAuthority: authority }));
+        resize = this.starts.startResize(__spreadProps(__spreadValues({}, binding), { hasExclusiveResizeAuthority: authority }));
+        pointer = this.starts.startPointerResize(__spreadProps(__spreadValues({}, binding), { hasExclusiveResizeAuthority: authority }));
+      } catch (error) {
+        void error;
+        focus = null;
+        movement = null;
+        resize = null;
+        pointer = null;
+      }
+      if (focus === null || movement === null || resize === null || pointer === null) {
+        try {
+          focus == null ? void 0 : focus.stop();
+        } catch (error) {
+          void error;
+        }
+        try {
+          movement == null ? void 0 : movement.stop();
+        } catch (error) {
+          void error;
+        }
+        try {
+          resize == null ? void 0 : resize.stop();
+        } catch (error) {
+          void error;
+        }
+        try {
+          pointer == null ? void 0 : pointer.stop();
+        } catch (error) {
+          void error;
+        }
+        this.focusHandle = null;
+        this.movementHandle = null;
+        this.resizeHandle = null;
+        this.pointerHandle = null;
+        this.rustAvailable = false;
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-unavailable");
+        } catch (error) {
+          void error;
+        }
+        try {
+          this.log(
+            formatRouteDiag("attach", [
+              ["result", "unavailable"],
+              ["slices", 4],
+              ["gen", ENGINE_AUTHORITY_GENERATION],
+              ["rev", this.revisionBinding.current],
+              ["failed", describeAttachFailure(focus, movement, resize, pointer)]
+            ])
+          );
+        } catch (error) {
+          void error;
+        }
+        return false;
+      }
+      this.focusHandle = focus;
+      this.movementHandle = movement;
+      this.resizeHandle = resize;
+      this.pointerHandle = pointer;
+      this.rustAvailable = true;
+      try {
+        this.log("plasma-auto-tiler:engine-authority-rust-ready");
+      } catch (error) {
+        void error;
+      }
+      try {
+        this.log(
+          formatRouteDiag("attach", [
+            ["result", "ready"],
+            ["slices", 4],
+            ["gen", ENGINE_AUTHORITY_GENERATION],
+            ["rev", this.revisionBinding.current]
+          ])
+        );
+      } catch (error) {
+        void error;
+      }
+      try {
+        (_b = (_a = this.resizeHandle).tryBootstrapTrio) == null ? void 0 : _b.call(_a);
+      } catch (error) {
+        void error;
+      }
+      return true;
+    }
+    // Authority-gated lazy one-shot retry. Invoked on the first actual
+    // rust-authority request after a boot-time start loss so production
+    // validates the exact-three eligible scope at command time through the
+    // existing adapters/bootstrap. Exactly one fresh all-or-nothing start();
+    // active authorities and consumed retries never re-attach. Fail-closed
+    // with no legacy route.
+    ensureStarted() {
+      if (this.mode !== "rust-development") {
+        return false;
+      }
+      if (this.isRustActive()) {
+        return true;
+      }
+      if (this.lazyRetryUsed) {
+        try {
+          this.log(
+            formatRouteDiag("retry", [
+              ["decision", "consumed"],
+              ["result", "refused"],
+              ["gen", ENGINE_AUTHORITY_GENERATION],
+              ["rev", this.revisionBinding.current]
+            ])
+          );
+        } catch (error) {
+          void error;
+        }
+        return false;
+      }
+      this.lazyRetryUsed = true;
+      const retried = this.start();
+      try {
+        this.log(
+          formatRouteDiag("retry", [
+            ["decision", "retry"],
+            ["result", retried ? "ready" : "unavailable"],
+            ["gen", ENGINE_AUTHORITY_GENERATION],
+            ["rev", this.revisionBinding.current]
+          ])
+        );
+      } catch (error) {
+        void error;
+      }
+      return retried;
+    }
+    // Delivery diagnostic for the keyboard shortcut callback route: one
+    // fixed token per routed Rust command identifying the slice and the
+    // bounded direction/mode. Emitted at dispatcher entry before the one-shot
+    // retry outcome, so a single Meta+Arrow attempt proves callback delivery
+    // even when the retry stays fail-closed. Rust-development only; the
+    // legacy mode never emits. Fixed vocabulary only, no window contents.
+    // focusOrResize delegates to requestFocus/requestResize and stays silent
+    // itself so each physical press logs exactly once.
+    commandReceived(kind, detail) {
+      var _a;
+      if (this.mode !== "rust-development") {
+        return;
+      }
+      try {
+        this.log(`plasma-auto-tiler:engine-authority-rust-command:${kind}:${detail}`);
+      } catch (error) {
+        void error;
+      }
+      try {
+        this.cmdSeq += 1;
+        const parts = detail.split(":");
+        const fields = [
+          ["seq", this.cmdSeq],
+          ["kind", kind],
+          ["detail", (_a = parts[0]) != null ? _a : "unknown"],
+          ["gen", ENGINE_AUTHORITY_GENERATION],
+          ["rev", this.revisionBinding.current]
+        ];
+        if (kind === "resize" && parts[1] !== void 0) {
+          fields.push(["mode", parts[1]]);
+        }
+        this.log(formatRouteDiag("cmd", fields));
+      } catch (error) {
+        void error;
+      }
+    }
+    refusedDiag(kind) {
+      if (this.mode !== "rust-development") {
+        return;
+      }
+      try {
+        this.log(
+          formatRouteDiag("retry", [
+            ["decision", "refused"],
+            ["kind", kind],
+            ["seq", this.cmdSeq],
+            ["gen", ENGINE_AUTHORITY_GENERATION],
+            ["rev", this.revisionBinding.current]
+          ])
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    stop() {
+      const focus = this.focusHandle;
+      const movement = this.movementHandle;
+      const resize = this.resizeHandle;
+      const pointer = this.pointerHandle;
+      this.focusHandle = null;
+      this.movementHandle = null;
+      this.resizeHandle = null;
+      this.pointerHandle = null;
+      this.rustAvailable = false;
+      this.rustResizeMode = null;
+      for (const handle of [focus, movement, resize, pointer]) {
+        try {
+          handle == null ? void 0 : handle.stop();
+        } catch (error) {
+          void error;
+        }
+      }
+    }
+    requestFocus(direction) {
+      this.commandReceived("focus", normalizeCommandDirection(direction));
+      this.ensureStarted();
+      if (!this.isRustActive() || this.focusHandle === null) {
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-refused");
+        } catch (error) {
+          void error;
+        }
+        this.refusedDiag("focus");
+        return;
+      }
+      try {
+        this.focusHandle.request(direction);
+      } catch (error) {
+        void error;
+      }
+    }
+    requestMove(direction) {
+      this.commandReceived("move", normalizeCommandDirection(direction));
+      this.ensureStarted();
+      if (!this.isRustActive() || this.movementHandle === null) {
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-refused");
+        } catch (error) {
+          void error;
+        }
+        this.refusedDiag("move");
+        return;
+      }
+      try {
+        this.movementHandle.request(direction);
+      } catch (error) {
+        void error;
+      }
+    }
+    requestResize(direction, resizeMode) {
+      this.commandReceived(
+        "resize",
+        `${normalizeCommandDirection(direction)}:${normalizeCommandResizeMode(resizeMode)}`
+      );
+      this.ensureStarted();
+      if (!this.isRustActive() || this.resizeHandle === null) {
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-refused");
+        } catch (error) {
+          void error;
+        }
+        this.refusedDiag("resize");
+        return;
+      }
+      try {
+        this.resizeHandle.request(direction, resizeMode);
+      } catch (error) {
+        void error;
+      }
+    }
+    enterOrExitRustResizeMode(resizeMode) {
+      this.commandReceived("resize-mode", normalizeCommandResizeMode(resizeMode));
+      this.ensureStarted();
+      if (!this.isRustActive()) {
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-refused");
+        } catch (error) {
+          void error;
+        }
+        this.refusedDiag("resize-mode");
+        return;
+      }
+      if (this.rustResizeMode === resizeMode) {
+        this.rustResizeMode = null;
+        try {
+          this.log("plasma-auto-tiler:engine-authority-rust-resize-exited");
+        } catch (error) {
+          void error;
+        }
+        return;
+      }
+      const entering = this.rustResizeMode === null;
+      this.rustResizeMode = resizeMode;
+      try {
+        this.log(
+          entering ? `plasma-auto-tiler:engine-authority-rust-resize-entered:${resizeMode}` : `plasma-auto-tiler:engine-authority-rust-resize-switched:${resizeMode}`
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    focusOrResize(direction) {
+      const resizeMode = this.rustResizeMode;
+      if (resizeMode !== null) {
+        this.requestResize(direction, resizeMode);
+        return;
+      }
+      this.requestFocus(direction);
+    }
+    rustResizeModeSnapshot() {
+      return this.rustResizeMode;
+    }
+  };
+  function createPackagedEngineAuthority(mode, log, initialRevision) {
+    return new EngineAuthorityDispatcher(mode, packagedEngineAuthorityStarts(), log, initialRevision);
+  }
+
   // src/controller.ts
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
   var WORK_AREA_CLIENT_AREA_OPTION4 = 5;
@@ -4744,6 +15948,11 @@
       this.automaticSplitTarget = DEFAULT_AUTOMATIC_SPLIT_TARGET;
       // Parsed but intentionally unused until the drag destination outline unit.
       this.dropOutlinePreview = DEFAULT_DROP_OUTLINE_PREVIEW;
+      // Strict packaged engine-authority mode. Empty/missing is legacy;
+      // unknown/malformed is legacy with a fixed diagnostic. Never enables Rust
+      // implicitly. Parsed once at startup; drives the exclusive dispatcher.
+      this.engineAuthorityMode = DEFAULT_ENGINE_AUTHORITY_MODE;
+      this.engineAuthority = null;
       // Deterministic session output keys (spec E). Rebuilt from `workspace.screens`
       // at startup and on screensChanged; never persisted. A stale or unknown
       // output wrapper is reported once per session tuple.
@@ -4753,6 +15962,9 @@
       // The output argument of the most recent `currentDesktopChanged` event
       // (spec F), preserved through the typed boundary. Session-only; the Unit 05
       // per-output scope re-resolution consumes it.
+      this.registeredShortcutIds = /* @__PURE__ */ new Set();
+      this.legacyDisconnects = [];
+      this.legacyLifecycleActive = false;
       this.recentDesktopChangeOutput = null;
       // Per-output-local mode (spec D1, Unit 05): outputKey -> ordered local
       // desktop id list. Logical workspace n on output X resolves to the nth id of
@@ -5084,6 +16296,26 @@
     dropOutlinePreviewSnapshot() {
       return this.dropOutlinePreview;
     }
+    // Strict packaged engine-authority mode snapshot. Read-only; set once at
+    // startup from engineAuthorityMode. Default is legacy.
+    engineAuthorityModeSnapshot() {
+      return this.engineAuthorityMode;
+    }
+    // Whether the exclusive Rust dispatcher is the single authority for the
+    // four target paths (focus, move, keyboard resize, pointer resize).
+    // False in legacy and whenever the Rust path is unavailable; callers
+    // must never fall back to legacy for a refused Rust request.
+    isRustAuthorityActive() {
+      var _a;
+      return ((_a = this.engineAuthority) == null ? void 0 : _a.isRustActive()) === true;
+    }
+    // Mode-gated routing: true whenever the packaged mode selects
+    // rust-development, even when the Rust path failed to start. Target
+    // commands and the legacy pointer subscription use this (not the
+    // availability above) so adapter loss refuses instead of invoking legacy.
+    useRustAuthority() {
+      return this.engineAuthorityMode === "rust-development";
+    }
     // Deterministic session output key for the given output (spec E), or
     // undefined before any rebuild observed it. Session-only; never persisted.
     outputKeyFor(output) {
@@ -5209,13 +16441,51 @@
     }
     start() {
       this.gate.run(() => {
-        this.environment.onWindowAdded((window) => this.handleWindowAdded(window));
-        this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window));
-        this.environment.onScreensChanged(() => this.handleScreensChanged());
-        this.environment.onCurrentDesktopChanged(
-          (previous, current, output) => this.handleCurrentDesktopChanged(previous, current, output)
+        var _a;
+        this.registerCommandShortcuts();
+        const authority = parseEngineAuthorityMode(
+          this.environment.readConfig(ENGINE_AUTHORITY_MODE_CONFIG_KEY, DEFAULT_ENGINE_AUTHORITY_MODE)
         );
-        this.environment.onDesktopsChanged(() => this.handleDesktopsChanged());
+        for (const diagnostic of authority.diagnostics) {
+          this.diagnostic(diagnostic);
+        }
+        this.engineAuthorityMode = authority.mode;
+        if (authority.mode === "rust-development") {
+          this.detachLegacyLifecycle();
+          const previous2 = this.engineAuthority;
+          let adopted = void 0;
+          try {
+            const snapshot = (_a = previous2 == null ? void 0 : previous2.revisionSnapshot) == null ? void 0 : _a.call(previous2);
+            if (typeof snapshot === "number" && Number.isInteger(snapshot) && snapshot >= 0) {
+              adopted = snapshot;
+            }
+          } catch (error) {
+            void error;
+            adopted = void 0;
+          }
+          const dispatcher = createPackagedEngineAuthority(authority.mode, (event) => this.diagnostic(event), adopted);
+          this.engineAuthority = dispatcher;
+          if (previous2 !== null && previous2 !== dispatcher) {
+            try {
+              previous2.stop();
+            } catch (error) {
+              void error;
+            }
+          }
+          dispatcher.start();
+          this.diagnostic("startup-handlers-ready:rust-development");
+          return;
+        }
+        const previous = this.engineAuthority;
+        this.engineAuthority = null;
+        if (previous !== null) {
+          try {
+            previous.stop();
+          } catch (error) {
+            void error;
+          }
+        }
+        this.attachLegacyLifecycle();
         this.rebuildOutputKeys();
         const mode = parseWorkspaceMode(
           this.environment.readConfig(WORKSPACE_MODE_CONFIG_KEY, DEFAULT_WORKSPACE_MODE)
@@ -5260,14 +16530,104 @@
       this.gate.run(() => this.inputActions.armKeyboardInsertion(direction), (reason) => this.disabled(reason));
       return;
     }
+    registerCommandShortcuts() {
+      const selected = selectProfile(this.environment.readConfig(SHORTCUT_PROFILE_CONFIG_KEY, DEFAULT_PROFILE));
+      let registeredNew = 0;
+      for (const row of selected.profile.rows) {
+        if (row.classification === "deferred" || row.classification === "component-requirement" || !COMMAND_SHORTCUT_ACTION_IDS.has(row.actionId) || !REGISTERED_PROFILE_ACTION_IDS.has(row.actionId) || this.registeredShortcutIds.has(row.shortcutId)) continue;
+        const direction = row.actionId.endsWith("left") || row.actionId.endsWith("left-arrow") ? "left" : row.actionId.endsWith("down") || row.actionId.endsWith("down-arrow") ? "down" : row.actionId.endsWith("up") || row.actionId.endsWith("up-arrow") ? "up" : "right";
+        const callback = row.actionId.startsWith("focus-") ? () => this.focusOrResize(direction) : row.actionId.startsWith("move-") ? () => this.moveActiveWindow(direction) : row.actionId === "resize-mode-outwards" ? () => this.enterOrExitResizeMode("outwards") : row.actionId === "resize-mode-inwards" ? () => this.enterOrExitResizeMode("inwards") : row.actionId.startsWith("resize-expand-") ? () => this.resizeActiveWindow(direction, "outwards") : row.actionId.startsWith("resize-contract-") ? () => this.resizeActiveWindow(direction, "inwards") : void 0;
+        if (callback === void 0) continue;
+        let registered = false;
+        try {
+          registered = this.environment.registerShortcut(row.shortcutId, row.text, row.sequence, callback);
+        } catch (error) {
+          void error;
+        }
+        if (registered) {
+          this.registeredShortcutIds.add(row.shortcutId);
+          registeredNew += 1;
+        } else this.diagnostic(`shortcut-register-failed:${row.shortcutId}`);
+      }
+      if (registeredNew > 0) this.diagnostic("shortcut-registered");
+    }
+    attachLegacyLifecycle() {
+      if (this.legacyLifecycleActive) return;
+      this.legacyDisconnects = [
+        this.environment.onWindowAdded((window) => this.handleWindowAdded(window)),
+        this.environment.onWindowRemoved((window) => this.handleWindowRemoved(window)),
+        this.environment.onScreensChanged(() => this.handleScreensChanged()),
+        this.environment.onCurrentDesktopChanged((previous, current, output) => this.handleCurrentDesktopChanged(previous, current, output)),
+        this.environment.onDesktopsChanged(() => this.handleDesktopsChanged())
+      ];
+      this.legacyLifecycleActive = true;
+    }
+    detachLegacyLifecycle() {
+      for (const disconnect of this.legacyDisconnects) {
+        try {
+          disconnect();
+        } catch (error) {
+          void error;
+        }
+      }
+      this.legacyDisconnects = [];
+      this.legacyLifecycleActive = false;
+      try {
+        this.interactiveDrag.detachAll();
+      } catch (error) {
+        void error;
+      }
+    }
     moveActiveWindow(direction) {
+      if (this.useRustAuthority()) {
+        const dispatcher = this.engineAuthority;
+        this.gate.run(
+          () => {
+            if (dispatcher === null) {
+              this.diagnostic("engine-authority-rust-refused");
+              return;
+            }
+            dispatcher.requestMove(direction);
+          },
+          (reason) => this.disabled(reason)
+        );
+        return;
+      }
       this.gate.run(() => this.directionalMovementStrategy.move(direction), (reason) => this.disabled(reason));
       return;
     }
     focusOrResize(direction) {
+      if (this.useRustAuthority()) {
+        const dispatcher = this.engineAuthority;
+        this.gate.run(
+          () => {
+            if (dispatcher === null) {
+              this.diagnostic("engine-authority-rust-refused");
+              return;
+            }
+            dispatcher.focusOrResize(direction);
+          },
+          (reason) => this.disabled(reason)
+        );
+        return;
+      }
       this.gate.run(() => this.inputActions.focusOrResize(direction), (reason) => this.disabled(reason));
     }
     enterOrExitResizeMode(mode) {
+      if (this.useRustAuthority()) {
+        const dispatcher = this.engineAuthority;
+        this.gate.run(
+          () => {
+            if (dispatcher === null) {
+              this.diagnostic("engine-authority-rust-refused");
+              return;
+            }
+            dispatcher.enterOrExitRustResizeMode(mode);
+          },
+          (reason) => this.disabled(reason)
+        );
+        return;
+      }
       this.gate.run(() => this.inputActions.enterOrExitResizeMode(mode), (reason) => this.disabled(reason));
     }
     // One safe split-resize step of the active window. `mode` is outwards
@@ -5288,6 +16648,20 @@
     // the result before `resize-completed` is claimed; there is no window
     // geometry write, no structural call, and no dual-write rollback path.
     resizeActiveWindow(direction, mode) {
+      if (this.useRustAuthority()) {
+        const dispatcher = this.engineAuthority;
+        this.gate.run(
+          () => {
+            if (dispatcher === null) {
+              this.diagnostic("engine-authority-rust-refused");
+              return;
+            }
+            dispatcher.requestResize(direction, mode);
+          },
+          (reason) => this.disabled(reason)
+        );
+        return;
+      }
       this.gate.run(() => this.inputActions.resizeActiveWindow(direction, mode), (reason) => this.disabled(reason));
       return;
     }
@@ -8683,6 +20057,36 @@
       return occupied;
     }
   };
+  var COMMAND_SHORTCUT_ACTION_IDS = Object.freeze(
+    /* @__PURE__ */ new Set([
+      "focus-left",
+      "focus-down",
+      "focus-up",
+      "focus-right",
+      "focus-left-arrow",
+      "focus-down-arrow",
+      "focus-up-arrow",
+      "focus-right-arrow",
+      "move-left",
+      "move-down",
+      "move-up",
+      "move-right",
+      "move-left-arrow",
+      "move-down-arrow",
+      "move-up-arrow",
+      "move-right-arrow",
+      "resize-mode-outwards",
+      "resize-mode-inwards",
+      "resize-expand-left",
+      "resize-expand-down",
+      "resize-expand-up",
+      "resize-expand-right",
+      "resize-contract-left",
+      "resize-contract-down",
+      "resize-contract-up",
+      "resize-contract-right"
+    ])
+  );
 
   // src/managed-root.ts
   function prepareManagedRoot(root, onPaddingFailure) {
@@ -8715,7 +20119,8 @@
       this.started = true;
       this.generation = (_c = (_b = (_a = this.environment).createGeneration) == null ? void 0 : _b.call(_a)) != null ? _c : processGeneration();
       this.enabled = this.environment.isEnabled();
-      this.publish();
+      this.diag("tray", "started", "ok");
+      this.publish(true);
       this.scheduleHeartbeat();
     }
     scheduleHeartbeat() {
@@ -8738,10 +20143,11 @@
       }
       this.enabled = enabled;
       this.advanceRevision();
-      this.publish();
+      this.diag("tray", "enabled-changed", "ok");
+      this.publish(true);
     }
     heartbeat() {
-      this.publish();
+      this.publish(false);
     }
     advanceRevision() {
       var _a, _b, _c;
@@ -8755,20 +20161,77 @@
     dispose() {
       var _a;
       this.disposed = true;
+      this.diag("tray", "stopped", "ok");
       (_a = this.cancelHeartbeat) == null ? void 0 : _a.call(this);
       this.cancelHeartbeat = void 0;
     }
-    publish() {
+    // Best-effort lifecycle diagnostic: validated generation plus bounded
+    // revision only. Never enabled state beyond the closed event, never
+    // identities or payloads. Logging never changes publish decisions.
+    diag(comp, event, result) {
+      var _a, _b;
+      try {
+        (_b = (_a = this.environment).log) == null ? void 0 : _b.call(
+          _a,
+          formatLifecycleDiag(comp, event, this.generation, this.revision, result)
+        );
+      } catch (error) {
+        void error;
+      }
+    }
+    publish(announce) {
       if (this.generation === void 0) {
         return;
       }
       try {
         this.environment.publishSnapshot(TRAY_SCHEMA, this.generation, this.revision, this.enabled);
+        if (announce) {
+          this.diag("bridge", "published", "ok");
+        }
       } catch (error) {
         void error;
+        if (!announce) {
+          return;
+        }
+        try {
+          this.diag("bridge", "send-failed", "failed");
+        } catch (ignored) {
+          void ignored;
+        }
       }
     }
   };
+
+  // src/build-identity.ts
+  var PACKAGE_VERSION = "0.1.0";
+  var LOCAL_DEV_FALLBACK = "local-dev";
+  function rawSourceRev() {
+    return typeof PLASMA_AUTO_TILER_SOURCE_REV === "string" ? PLASMA_AUTO_TILER_SOURCE_REV : LOCAL_DEV_FALLBACK;
+  }
+  function isBuildIdentity(value) {
+    if (value === LOCAL_DEV_FALLBACK) {
+      return true;
+    }
+    if (typeof value !== "string" || value.length !== 40) {
+      return false;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      const digit = code >= 48 && code <= 57;
+      const lowerHex = code >= 97 && code <= 102;
+      if (!digit && !lowerHex) {
+        return false;
+      }
+    }
+    return true;
+  }
+  function sourceRev() {
+    const raw = rawSourceRev();
+    return isBuildIdentity(raw) ? raw : LOCAL_DEV_FALLBACK;
+  }
+  function startupLine() {
+    return formatLifecycleDiag("bridge", "started", sourceRev(), void 0, "ok", PACKAGE_VERSION);
+  }
 
   // src/entry.ts
   function isKWinWindowSurface(value) {
@@ -8841,14 +20304,28 @@
       const signal = workspace.desktopsChanged;
       if (signal === void 0) {
         console.log("plasma-auto-tiler:workspace-surface-missing:desktopsChanged");
-        return;
+        return () => {
+        };
       }
       signal.connect(handler);
+      return () => signal.disconnect(handler);
     },
-    onWindowAdded: (handler) => workspace.windowAdded.connect(handler),
-    onWindowRemoved: (handler) => workspace.windowRemoved.connect(handler),
-    onScreensChanged: (handler) => workspace.screensChanged.connect(handler),
-    onCurrentDesktopChanged: (handler) => workspace.currentDesktopChanged.connect(handler),
+    onWindowAdded: (handler) => {
+      workspace.windowAdded.connect(handler);
+      return () => workspace.windowAdded.disconnect(handler);
+    },
+    onWindowRemoved: (handler) => {
+      workspace.windowRemoved.connect(handler);
+      return () => workspace.windowRemoved.disconnect(handler);
+    },
+    onScreensChanged: (handler) => {
+      workspace.screensChanged.connect(handler);
+      return () => workspace.screensChanged.disconnect(handler);
+    },
+    onCurrentDesktopChanged: (handler) => {
+      workspace.currentDesktopChanged.connect(handler);
+      return () => workspace.currentDesktopChanged.disconnect(handler);
+    },
     watchInteractiveWindow: (window, started, finished, stepped, moveResizedChanged, invalidated) => {
       const surface = window;
       const connected = [];
@@ -9092,11 +20569,13 @@
       };
     },
     readConfig: (key, defaultValue) => readConfig(key, defaultValue),
+    registerShortcut,
     log: (message) => console.log(message)
   }, (enabled) => trayPublisher == null ? void 0 : trayPublisher.notifyEnabledChanged(enabled));
   var trayTimers = /* @__PURE__ */ new Set();
   trayPublisher = new TrayPublisher({
     isEnabled: () => controller.isEnabled,
+    log: (message) => console.log(message),
     publishSnapshot: (schema, generation, revision, enabled) => {
       callDBus(
         "org.plasmaautotiler.Tray",
@@ -9131,10 +20610,15 @@
     }
   });
   controller.start();
-  if (typeof CONTROLLER_NONCE === "string" && typeof CONTROLLER_BUILD_ID === "string" && typeof CONTROLLER_PLUGIN_ID === "string") {
+  if (true) {
     console.log(
-      `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`
+      `plasma-auto-tiler:controller-ready:plugin=${"plasma-auto-tiler-kwin"}:nonce=${"start-20260910T211800-4876"}:build=${"controller-v1-c0eda8ad3428f2d9e3551707ca5749f8383efdc59d8cffc71d0486228e4a0e0d"}`
     );
+  }
+  try {
+    console.log(startupLine());
+  } catch (error) {
+    void error;
   }
   trayPublisher.start();
 })();

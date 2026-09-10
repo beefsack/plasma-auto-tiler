@@ -70,6 +70,8 @@ export interface PointerResizeEntryHandle {
 const ENTRY_LOG = "plasma-auto-tiler:pointer-resize-entry";
 const ENTRY_READY = `${ENTRY_LOG}:ready`;
 const ENTRY_REJECT = `${ENTRY_LOG}:reject:pointer-entry-invalid`;
+const ENTRY_SCOPE_REJECT = `${ENTRY_LOG}:reject:pointer-entry-scope-invalid`;
+const ENTRY_SCOPE = `${ENTRY_LOG}:scope`;
 
 const MAX_LIST = 1024;
 const MAX_DESKTOPS = 32;
@@ -242,10 +244,55 @@ function readFrameRect(ref: object): { x: number; y: number; w: number; h: numbe
     return { x, y, w, h };
 }
 
-function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
+function activeIneligibilityCategory(ref: object, domainOutput: string, desktopRef: object): string | null {
+    if (readProp(ref, "normalWindow") !== true) {
+        return "class";
+    }
+    if (readProp(ref, "managed") !== true) {
+        return "managed";
+    }
+    if (readProp(ref, "minimized") !== false) {
+        return "minimized";
+    }
+    if (readProp(ref, "fullScreen") !== false) {
+        return "fullscreen";
+    }
+    if (readProp(ref, "maximizeMode") !== 0) {
+        return "maximized";
+    }
+    if (readProp(ref, "onAllDesktops") !== false) {
+        return "all-desktops";
+    }
+    if (readProp(ref, "resizeable") === false) {
+        return "normal-resizable";
+    }
+    const output = readProp(ref, "output");
+    if (typeof output !== "object" || output === null) {
+        return "output";
+    }
+    const nameRaw = readProp(output, "name");
+    if (!isOpaqueId(nameRaw) || (nameRaw as string) !== domainOutput) {
+        return "output";
+    }
+    const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+    if (membership === null || membership.length !== 1 || membership[0] !== desktopRef) {
+        return "desktop";
+    }
+    return null;
+}
+
+function observeNative(liveWorkspace: unknown, log?: (message: string) => void): PointerResizeObserved | null {
+    const fail = (predicate: string): null => {
+        try {
+            log?.(`${ENTRY_SCOPE}:${predicate}`);
+        } catch (error) {
+            void error;
+        }
+        return null;
+    };
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
-            return null;
+            return fail("workspace-invalid");
         }
         const surface = liveWorkspace as Record<string, unknown>;
         let active: unknown = undefined;
@@ -253,39 +300,39 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
             active = Reflect.get(surface, "activeWindow");
         } catch (error) {
             void error;
-            return null;
+            return fail("active-read-failed");
         }
         if (typeof active !== "object" || active === null) {
-            return null;
+            return fail("active-invalid");
         }
         const activeRef = active as object;
         const activeOutput = readProp(activeRef, "output");
         if (typeof activeOutput !== "object" || activeOutput === null) {
-            return null;
+            return fail("output-invalid");
         }
         const lister = readProp(surface, "windowList");
         if (typeof lister !== "function") {
-            return null;
+            return fail("window-list-missing");
         }
         let rawList: unknown = undefined;
         try {
             rawList = Reflect.apply(lister as (...args: readonly never[]) => unknown, surface, []);
         } catch (error) {
             void error;
-            return null;
+            return fail("window-list-failed");
         }
         const windows = decodeList(rawList, MAX_LIST);
         if (windows === null) {
-            return null;
+            return fail("window-list-invalid");
         }
         const currentFn = readProp(surface, "currentDesktopForScreen");
         const areaFn = readProp(surface, "clientArea");
         if (typeof currentFn !== "function" || typeof areaFn !== "function") {
-            return null;
+            return fail("scope-fns-missing");
         }
         const outputNameRaw = readProp(activeOutput, "name");
         if (!isOpaqueId(outputNameRaw)) {
-            return null;
+            return fail("output-name-invalid");
         }
         const domainOutput = outputNameRaw as string;
         let desktop: unknown = undefined;
@@ -297,15 +344,15 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
             );
         } catch (error) {
             void error;
-            return null;
+            return fail("desktop-read-failed");
         }
         if (typeof desktop !== "object" || desktop === null) {
-            return null;
+            return fail("desktop-invalid");
         }
         const desktopRef = desktop as object;
         const desktopIdRaw = readProp(desktopRef, "id");
         if (!isOpaqueId(desktopIdRaw)) {
-            return null;
+            return fail("workspace-id-invalid");
         }
         const domainWorkspace = desktopIdRaw as string;
         let area: unknown = undefined;
@@ -317,10 +364,10 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
             ]);
         } catch (error) {
             void error;
-            return null;
+            return fail("work-area-failed");
         }
         if (typeof area !== "object" || area === null) {
-            return null;
+            return fail("work-area-invalid");
         }
         const areaRecord = area as Record<string, unknown>;
         const bx = toQuantizedInt(areaRecord["x"]);
@@ -330,10 +377,10 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
         const bw = toQuantizedInt(bwRaw);
         const bh = toQuantizedInt(bhRaw);
         if (bx === null || by === null || bw === null || bh === null) {
-            return null;
+            return fail("work-area-coords-invalid");
         }
         if (bw <= 0 || bh <= 0 || bw > 16384 || bh > 16384 || bx < -16384 || bx > 16384 || by < -16384 || by > 16384) {
-            return null;
+            return fail("work-area-bounds-invalid");
         }
         const domainBounds = { x: bx, y: by, w: bw, h: bh };
         const seen = new Set<string>();
@@ -371,7 +418,7 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
             }
             const nameRaw = readProp(output, "name");
             if (!isOpaqueId(nameRaw)) {
-                return null;
+                return fail("output-name-invalid");
             }
             const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
             if (membership === null || membership.length !== 1) {
@@ -381,41 +428,65 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
                 // Single-domain pointer resize: a tiled window on another
                 // desktop fails the whole observation closed rather than
                 // being silently dropped as a partial observation.
-                return null;
+                return fail("desktop-scope-mismatch");
             }
             if ((nameRaw as string) !== domainOutput) {
-                return null;
+                return fail("output-scope-mismatch");
             }
             let id: string | null = null;
             try {
                 id = normalizeNativeId(Reflect.get(ref, "internalId"));
             } catch (error) {
                 void error;
-                return null;
+                return fail("id-read-failed");
             }
-            if (id === null || seen.has(id)) {
-                return null;
+            if (id === null) {
+                return fail("id-invalid");
+            }
+            if (seen.has(id)) {
+                return fail("id-duplicate");
             }
             seen.add(id);
             const rect = readFrameRect(ref);
             if (rect === null) {
-                return null;
+                return fail("frame-invalid");
             }
             entries.push({ id, ref, rect, output: domainOutput, workspace: domainWorkspace });
         }
         if (entries.length === 0) {
-            return null;
+            return fail("empty-scope");
         }
         const sorted = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        let activeNativeId: string | null = null;
+        try {
+            activeNativeId = normalizeNativeId(Reflect.get(activeRef, "internalId"));
+        } catch (error) {
+            void error;
+            return fail("active-unobserved:active-id-invalid");
+        }
+        if (activeNativeId === null) {
+            return fail("active-unobserved:active-id-invalid");
+        }
+        const ineligible = activeIneligibilityCategory(activeRef, domainOutput, desktopRef);
+        if (ineligible !== null) {
+            return fail(`active-unobserved:active-ineligible:${ineligible}`);
+        }
         let activeId: string | null = null;
         for (const entry of sorted) {
-            if (entry.ref === activeRef) {
+            if (entry.id === activeNativeId) {
                 activeId = entry.id;
+                if (entry.ref !== activeRef) {
+                    try {
+                        log?.(`${ENTRY_SCOPE}:active-wrapper-mismatch`);
+                    } catch (error) {
+                        void error;
+                    }
+                }
                 break;
             }
         }
         if (activeId === null) {
-            return null;
+            return fail("active-unobserved:active-missing");
         }
         const sortedIds = sorted.map((entry) => entry.id);
         // One canonical fingerprint: the numeric wire binding carried as a
@@ -448,7 +519,7 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
             fingerprint: expected,
             revalidate: (sourceId: string) => {
                 try {
-                    const fresh = observeNative(liveWorkspace);
+                    const fresh = observeNative(liveWorkspace, log);
                     if (fresh === null) {
                         return false;
                     }
@@ -484,7 +555,7 @@ function observeNative(liveWorkspace: unknown): PointerResizeObserved | null {
         };
     } catch (error) {
         void error;
-        return null;
+        return fail("observe-failed");
     }
 }
 
@@ -606,7 +677,7 @@ export function startPointerResizeAdapterEntry(
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace),
+        observe: () => observeNative(liveWorkspace, log),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -780,7 +851,7 @@ export function startPointerResizeAdapterEntry(
         }
         return null;
     }
-    if (observeNative(liveWorkspace) === null) {
+    if (observeNative(liveWorkspace, log) === null) {
         adapter.disable();
         for (const detach of attached) {
             try {
@@ -790,7 +861,7 @@ export function startPointerResizeAdapterEntry(
             }
         }
         try {
-            log(ENTRY_REJECT);
+            log(ENTRY_SCOPE_REJECT);
         } catch (error) {
             void error;
         }

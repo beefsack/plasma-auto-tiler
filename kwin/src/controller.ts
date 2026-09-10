@@ -1108,6 +1108,7 @@ export class TileController {
                     }
                 }
                 dispatcher.start();
+                this.diagnostic("startup-handlers-ready:rust-development");
                 return;
             }
             const previous = this.engineAuthority;

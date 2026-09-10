@@ -628,8 +628,12 @@ describe("packaged controller authority wiring", () => {
             "rust mode must not emit the legacy attach summary",
         );
         assert.ok(
-            harness.logs.every((line) => !line.includes("startup-handlers-ready")),
-            "rust mode must not run legacy startup lifecycle",
+            harness.logs.every((line) => line !== "plasma-auto-tiler:startup-handlers-ready"),
+            "rust mode must not emit the legacy readiness marker",
+        );
+        assert.ok(
+            harness.logs.some((line) => line === "plasma-auto-tiler:startup-handlers-ready:rust-development"),
+            "rust mode must emit the distinct rust readiness marker",
         );
         assert.ok(harness.logs.some((line) => line.includes("engine-authority-rust-unavailable")));
     });
@@ -1120,5 +1124,332 @@ describe("engine authority keyboard delivery diagnostic", () => {
         assert.equal(requests.length, 0);
         assert.deepEqual(commandLines(logs), []);
         assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
+    });
+});
+
+describe("engine authority active identity by native id", () => {
+    type SliceStart = (workspace: unknown, logs: string[]) => { readonly stop: () => void } | null;
+    const slices: ReadonlyArray<{ readonly name: string; readonly scope: string; readonly start: SliceStart }> = [
+        {
+            name: "focus",
+            scope: "plasma-auto-tiler:focus-entry:scope:",
+            start: (workspace, logs) =>
+                startFocusAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        logs.push(message);
+                    },
+                    owner: ENGINE_AUTHORITY_OWNER,
+                    generation: ENGINE_AUTHORITY_GENERATION,
+                    revision: { current: 0 },
+                    hasExclusiveFocusAuthority: () => true,
+                }),
+        },
+        {
+            name: "movement",
+            scope: "plasma-auto-tiler:movement-entry:scope:",
+            start: (workspace, logs) =>
+                startMovementAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        logs.push(message);
+                    },
+                    owner: ENGINE_AUTHORITY_OWNER,
+                    generation: ENGINE_AUTHORITY_GENERATION,
+                    revision: { current: 0 },
+                    hasExclusiveMovementAuthority: () => true,
+                }),
+        },
+        {
+            name: "resize",
+            scope: "plasma-auto-tiler:resize-entry:scope:",
+            start: (workspace, logs) =>
+                startResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        logs.push(message);
+                    },
+                    owner: ENGINE_AUTHORITY_OWNER,
+                    generation: ENGINE_AUTHORITY_GENERATION,
+                    revision: { current: 0 },
+                    hasExclusiveResizeAuthority: () => true,
+                }),
+        },
+        {
+            name: "pointer",
+            scope: "plasma-auto-tiler:pointer-resize-entry:scope:",
+            start: (workspace, logs) =>
+                startPointerResizeAdapterEntry({
+                    workspace,
+                    callDbus: () => {},
+                    scheduleOnce: () => () => {},
+                    log: (message) => {
+                        logs.push(message);
+                    },
+                    owner: ENGINE_AUTHORITY_OWNER,
+                    generation: ENGINE_AUTHORITY_GENERATION,
+                    revision: { current: 0 },
+                    hasExclusiveResizeAuthority: () => true,
+                }),
+        },
+    ];
+
+    it("accepts distinct wrapper objects with the same internalId", () => {
+        for (const slice of slices) {
+            const { workspace } = makeSharedCallableWorld();
+            const listed = (workspace as Record<string, unknown>)["windowList"] as () => unknown[];
+            const [winA] = listed();
+            const activeCopy = { ...(winA as Record<string, unknown>) };
+            assert.notEqual(activeCopy, winA);
+            assert.equal(activeCopy["internalId"], "win-a");
+            (workspace as Record<string, unknown>)["activeWindow"] = activeCopy;
+            const logs: string[] = [];
+            const handle = slice.start(workspace, logs);
+            try {
+                assert.ok(handle !== null, `${slice.name} must accept same-id wrapper`);
+                assert.ok(logs.some((line) => line.includes(":ready")), logs.join("\n"));
+                assert.ok(
+                    logs.every((line) => !line.includes("active-unobserved")),
+                    logs.join("\n"),
+                );
+                assert.ok(
+                    logs.some((line) => line.includes(`${slice.scope}active-wrapper-mismatch`)),
+                    logs.join("\n"),
+                );
+            } finally {
+                try {
+                    handle?.stop();
+                } catch (error) {
+                    void error;
+                }
+            }
+        }
+    });
+
+    it("fails closed on absent, malformed, and non-normalizable active ids", () => {
+        const variants: ReadonlyArray<{ readonly label: string; readonly internalId: unknown; readonly token: string }> = [
+            { label: "malformed", internalId: "bad id!", token: "active-unobserved:active-id-invalid" },
+            { label: "non-normalizable", internalId: "{not-a-uuid}", token: "active-unobserved:active-id-invalid" },
+        ];
+        for (const slice of slices) {
+            for (const variant of variants) {
+                const { workspace } = makeSharedCallableWorld();
+                const listed = (workspace as Record<string, unknown>)["windowList"] as () => unknown[];
+                const [winA] = listed();
+                const activeCopy = { ...(winA as Record<string, unknown>), internalId: variant.internalId };
+                (workspace as Record<string, unknown>)["activeWindow"] = activeCopy;
+                const logs: string[] = [];
+                const handle = slice.start(workspace, logs);
+                assert.equal(handle, null, `${slice.name} ${variant.label} must fail closed`);
+                assert.ok(logs.some((line) => line.includes("scope-invalid")), logs.join("\n"));
+                assert.ok(logs.some((line) => line.includes(variant.token)), logs.join("\n"));
+                assert.ok(logs.every((line) => !line.includes("-entry:ready")), logs.join("\n"));
+                assert.ok(
+                    logs.every((line) => !line.includes("win-a") && !line.includes("bad id")),
+                    logs.join("\n"),
+                );
+            }
+            const { workspace } = makeSharedCallableWorld();
+            const listed = (workspace as Record<string, unknown>)["windowList"] as () => unknown[];
+            const [winA] = listed();
+            const activeCopy = { ...(winA as Record<string, unknown>) };
+            delete activeCopy["internalId"];
+            (workspace as Record<string, unknown>)["activeWindow"] = activeCopy;
+            const logs: string[] = [];
+            const handle = slice.start(workspace, logs);
+            assert.equal(handle, null, `${slice.name} absent id must fail closed`);
+            assert.ok(logs.some((line) => line.includes("scope-invalid")), logs.join("\n"));
+            assert.ok(logs.some((line) => line.includes("active-unobserved:")), logs.join("\n"));
+            assert.ok(logs.every((line) => !line.includes("-entry:ready")), logs.join("\n"));
+        }
+    });
+
+    it("refuses genuinely ineligible active windows with the predicate category", () => {
+        const cases: ReadonlyArray<{ readonly slice: string; readonly mutate: (active: Record<string, unknown>) => void; readonly token: string }> = [
+            {
+                slice: "focus",
+                mutate: (active) => {
+                    active["minimized"] = true;
+                },
+                token: "active-unobserved:active-ineligible:minimized",
+            },
+            {
+                slice: "movement",
+                mutate: (active) => {
+                    active["resizeable"] = false;
+                },
+                token: "active-unobserved:active-ineligible:normal-resizable",
+            },
+            {
+                slice: "resize",
+                mutate: (active) => {
+                    active["desktops"] = [{ id: "ws-other" }];
+                },
+                token: "active-unobserved:active-ineligible:desktop",
+            },
+            {
+                slice: "pointer",
+                mutate: (active) => {
+                    active["normalWindow"] = false;
+                },
+                token: "active-unobserved:active-ineligible:class",
+            },
+        ];
+        for (const expected of cases) {
+            const slice = slices.find((entry) => entry.name === expected.slice);
+            assert.ok(slice !== undefined);
+            const { workspace } = makeSharedCallableWorld();
+            const listed = (workspace as Record<string, unknown>)["windowList"] as () => unknown[];
+            const [winA] = listed();
+            const activeCopy = { ...(winA as Record<string, unknown>) };
+            expected.mutate(activeCopy);
+            (workspace as Record<string, unknown>)["activeWindow"] = activeCopy;
+            const logs: string[] = [];
+            const handle = slice.start(workspace, logs);
+            assert.equal(handle, null, `${expected.slice} ineligible active must stay refused`);
+            assert.ok(
+                logs.some((line) => line.includes(`${slice.scope}${expected.token}`)),
+                logs.join("\n"),
+            );
+            assert.ok(logs.every((line) => !line.includes("-entry:ready")), logs.join("\n"));
+        }
+    });
+
+    it("refuses duplicate native identities", () => {
+        for (const slice of slices) {
+            const { workspace } = makeSharedCallableWorld();
+            const listed = (workspace as Record<string, unknown>)["windowList"] as () => unknown[];
+            const [winA, winB] = listed();
+            const winADup = { ...(winA as Record<string, unknown>) };
+            assert.notEqual(winADup, winA);
+            (workspace as Record<string, unknown>)["windowList"] = (): unknown[] => [winA, winADup, winB];
+            (workspace as Record<string, unknown>)["activeWindow"] = winA;
+            const logs: string[] = [];
+            const handle = slice.start(workspace, logs);
+            assert.equal(handle, null, `${slice.name} duplicate id must stay refused`);
+            assert.ok(logs.some((line) => line.includes("scope:id-duplicate")), logs.join("\n"));
+            assert.ok(logs.every((line) => !line.includes("-entry:ready")), logs.join("\n"));
+        }
+    });
+});
+describe("engine authority post-enable scope diagnostics", () => {
+    it("keeps signal-failed for connection loss and uses scope-invalid post-enable", () => {
+        const dir = kwinSrcDir();
+        const focus = readFileSync(join(dir, "focus-adapter-entry.ts"), "utf8");
+        const movement = readFileSync(join(dir, "movement-adapter-entry.ts"), "utf8");
+        const resize = readFileSync(join(dir, "resize-adapter-entry.ts"), "utf8");
+        const pointer = readFileSync(join(dir, "pointer-resize-adapter-entry.ts"), "utf8");
+        for (const [body, token] of [
+            [focus, "focus-entry-signal-failed"],
+            [movement, "movement-entry-signal-failed"],
+            [resize, "resize-entry-signal-failed"],
+        ] as const) {
+            assert.ok(body.includes(token), `connection failure token must remain ${token}`);
+        }
+        for (const [body, token] of [
+            [focus, "focus-entry-scope-invalid"],
+            [movement, "movement-entry-scope-invalid"],
+            [resize, "resize-entry-scope-invalid"],
+            [pointer, "pointer-entry-scope-invalid"],
+        ] as const) {
+            assert.ok(body.includes(token), `post-enable token must be ${token}`);
+        }
+        assert.ok(pointer.includes("pointer-entry-invalid"), "pointer pre-ready token must remain");
+    });
+
+    it("focus post-enable scope loss emits scope-invalid plus the active predicate", () => {
+        const { workspace } = makeSharedCallableWorld();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        const logs: string[] = [];
+        const handle = startFocusAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: ENGINE_AUTHORITY_OWNER,
+            generation: ENGINE_AUTHORITY_GENERATION,
+            revision: { current: 0 },
+            hasExclusiveFocusAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        assert.ok(logs.some((line) => line.includes("focus-entry-scope-invalid")), logs.join("\n"));
+        assert.ok(logs.some((line) => line.includes("plasma-auto-tiler:focus-entry:scope:active-invalid")), logs.join("\n"));
+        assert.ok(logs.every((line) => !line.includes("focus-entry-signal-failed")), logs.join("\n"));
+    });
+
+    it("movement post-enable scope loss emits scope-invalid plus the active predicate", () => {
+        const { workspace } = makeSharedCallableWorld();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        const logs: string[] = [];
+        const handle = startMovementAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: ENGINE_AUTHORITY_OWNER,
+            generation: ENGINE_AUTHORITY_GENERATION,
+            revision: { current: 0 },
+            hasExclusiveMovementAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        assert.ok(logs.some((line) => line.includes("movement-entry-scope-invalid")), logs.join("\n"));
+        assert.ok(logs.some((line) => line.includes("plasma-auto-tiler:movement-entry:scope:active-invalid")), logs.join("\n"));
+        assert.ok(logs.every((line) => !line.includes("movement-entry-signal-failed")), logs.join("\n"));
+    });
+
+    it("resize post-enable scope loss emits scope-invalid plus the active predicate", () => {
+        const { workspace } = makeSharedCallableWorld();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        const logs: string[] = [];
+        const handle = startResizeAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: ENGINE_AUTHORITY_OWNER,
+            generation: ENGINE_AUTHORITY_GENERATION,
+            revision: { current: 0 },
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        assert.ok(logs.some((line) => line.includes("resize-entry-scope-invalid")), logs.join("\n"));
+        assert.ok(logs.some((line) => line.includes("plasma-auto-tiler:resize-entry:scope:active-invalid")), logs.join("\n"));
+        assert.ok(logs.every((line) => !line.includes("resize-entry-signal-failed")), logs.join("\n"));
+    });
+
+    it("pointer post-enable scope loss emits scope-invalid plus the active predicate", () => {
+        const { workspace } = makeSharedCallableWorld();
+        (workspace as Record<string, unknown>)["activeWindow"] = null;
+        const logs: string[] = [];
+        const handle = startPointerResizeAdapterEntry({
+            workspace,
+            callDbus: () => {},
+            scheduleOnce: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: ENGINE_AUTHORITY_OWNER,
+            generation: ENGINE_AUTHORITY_GENERATION,
+            revision: { current: 0 },
+            hasExclusiveResizeAuthority: () => true,
+        });
+        assert.equal(handle, null);
+        assert.ok(logs.some((line) => line.includes("pointer-entry-scope-invalid")), logs.join("\n"));
+        assert.ok(
+            logs.some((line) => line.includes("plasma-auto-tiler:pointer-resize-entry:scope:active-invalid")),
+            logs.join("\n"),
+        );
     });
 });

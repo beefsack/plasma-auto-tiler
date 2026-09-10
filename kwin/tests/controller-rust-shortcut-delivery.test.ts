@@ -178,7 +178,14 @@ describe("rust shortcut delivery registration", () => {
         assert.equal(harness.interactiveWatches.length, 0);
         assert.equal(harness.rootReads, 0);
         assert.ok(harness.logs.every((line) => !line.includes("drag-attach-summary")));
-        assert.ok(harness.logs.every((line) => !line.includes("startup-handlers-ready")));
+        assert.ok(
+            harness.logs.every((line) => line !== "plasma-auto-tiler:startup-handlers-ready"),
+            "rust mode must not emit the legacy readiness marker",
+        );
+        assert.ok(
+            harness.logs.some((line) => line === "plasma-auto-tiler:startup-handlers-ready:rust-development"),
+            "rust mode must emit the distinct rust readiness marker",
+        );
         assert.ok(harness.shortcuts.length > 0);
     });
 

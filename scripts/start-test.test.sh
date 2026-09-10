@@ -534,6 +534,31 @@ check_exit 1
 assert_contains "controller disabled after startup readiness"
 assert_not_contains "controller disabled itself during startup"
 
+# start: rust-development readiness marker is accepted like the legacy marker
+setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:startup-handlers-ready:rust-development"}'
+run_script start
+check_exit 0
+assert_contains "controller readiness confirmed"
+assert_contains "started:"
+
+# start: a disabled diagnostic after rust readiness is runtime failure
+setup_state '-- cursor: cursor-1' "" \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready:rust-development"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:runtime-failed"}'
+run_script start
+check_exit 1
+assert_contains "controller disabled after startup readiness"
+assert_not_contains "controller disabled itself during startup"
+
+# start: a disabled diagnostic before rust readiness is startup failure
+setup_state '-- cursor: cursor-1' "" \
+  '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:disabled:startup-failed"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready:rust-development"}'
+run_script start
+check_exit 1
+assert_contains "controller disabled itself during startup"
+assert_not_contains "controller disabled after startup readiness"
+
 # start: a same-PID start-time change immediately after load never creates a
 # replacement-identity receipt and never tears down against the replacement.
 setup_state '-- cursor: cursor-1' ""
@@ -894,6 +919,13 @@ FAKE_KWIN_IDENTITY_SEQUENCE='251700,251701' run_script status
 check_exit 0
 assert_contains "controller readiness diagnostics (captured KWin PID/start identity + journal): unknown/not-ready (KWin PID/start identity changed during journal read)"
 
+# status: rust-development readiness marker is observed like the legacy marker
+setup_state '-- cursor: cursor-1' '{"MESSAGE":"plasma-auto-tiler:startup-handlers-ready:rust-development"}'
+printf '%s' "$TEST_RECORDS" > "$WORK/state/shortcuts"
+run_script status
+check_exit 0
+assert_contains "controller readiness diagnostics (captured KWin PID/start identity + journal): observed"
+
 # status: malformed allComponents reply fails closed (never zero matches)
 setup_state '-- cursor: cursor-1' ""
 printf '{"type":"ao","data":["/component/kwin"]}\n' > "$WORK/state/components"
@@ -1060,6 +1092,16 @@ assert_contains "loaded: not-loaded"
 assert_contains "epoch (latest KWin-PID/start-identity-bound controller startup): historical (plugin unloaded)"
 assert_contains "plasma-auto-tiler:preset-applied:columns"
 assert_not_contains "current (plugin loaded)"
+
+# diagnostics: rust-development readiness reaches the current epoch
+setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready:rust-development"}
+{"_PID":"2517","MESSAGE":"plasma-auto-tiler:preset-applied:columns"}'
+printf 'true\n' > "$WORK/state/loaded"
+run_script diagnostics
+check_exit 0
+assert_contains "epoch (latest KWin-PID/start-identity-bound controller startup): current (plugin loaded)"
+assert_contains "readiness: reached"
+assert_contains "controller disabled: no"
 
 # diagnostics: multiple starts selects only the latest epoch
 setup_state '-- cursor: cursor-1' '{"_PID":"2517","MESSAGE":"plasma-auto-tiler:startup-handlers-ready"}

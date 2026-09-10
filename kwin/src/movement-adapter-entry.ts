@@ -57,7 +57,8 @@ export interface MovementEntryHandle {
 const ENTRY_LOG = "plasma-auto-tiler:movement-entry";
 const ENTRY_READY = `${ENTRY_LOG}:ready`;
 const ENTRY_REJECT = `${ENTRY_LOG}:reject:movement-entry-invalid`;
-const ENTRY_SIGNAL_REJECT = `${ENTRY_LOG}:reject:movement-entry-signal-failed`;
+const ENTRY_SCOPE_REJECT = `${ENTRY_LOG}:reject:movement-entry-scope-invalid`;
+const ENTRY_SCOPE = `${ENTRY_LOG}:scope`;
 
 const MAX_LIST = 1024;
 const MAX_SCREENS = 32;
@@ -296,10 +297,54 @@ function readFrameRect(ref: object): { x: number; y: number; w: number; h: numbe
     return { x, y, w, h };
 }
 
-function observeNative(liveWorkspace: unknown): MovementObserved | null {
+function activeIneligibilityCategory(
+    ref: object,
+    domainOf: (output: unknown) => { readonly desktopRef: object } | undefined,
+): string | null {
+    if (readProp(ref, "normalWindow") !== true) {
+        return "class";
+    }
+    if (readProp(ref, "managed") !== true) {
+        return "managed";
+    }
+    if (readProp(ref, "minimized") !== false) {
+        return "minimized";
+    }
+    if (readProp(ref, "fullScreen") !== false) {
+        return "fullscreen";
+    }
+    if (readProp(ref, "maximizeMode") !== 0) {
+        return "maximized";
+    }
+    if (readProp(ref, "onAllDesktops") !== false) {
+        return "all-desktops";
+    }
+    if (readProp(ref, "resizeable") === false) {
+        return "normal-resizable";
+    }
+    const domain = domainOf(readProp(ref, "output"));
+    if (domain === undefined) {
+        return "output";
+    }
+    const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+    if (membership === null || membership.length !== 1 || membership[0] !== domain.desktopRef) {
+        return "desktop";
+    }
+    return null;
+}
+
+function observeNative(liveWorkspace: unknown, log?: (message: string) => void): MovementObserved | null {
+    const fail = (predicate: string): null => {
+        try {
+            log?.(`${ENTRY_SCOPE}:${predicate}`);
+        } catch (error) {
+            void error;
+        }
+        return null;
+    };
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
-            return null;
+            return fail("workspace-invalid");
         }
         const surface = liveWorkspace as Record<string, unknown>;
         let active: unknown = undefined;
@@ -307,39 +352,39 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
             active = Reflect.get(surface, "activeWindow");
         } catch (error) {
             void error;
-            return null;
+            return fail("active-read-failed");
         }
         if (typeof active !== "object" || active === null) {
-            return null;
+            return fail("active-invalid");
         }
         const activeRef = active as object;
         const activeOutput = readProp(activeRef, "output");
         if (typeof activeOutput !== "object" || activeOutput === null) {
-            return null;
+            return fail("output-invalid");
         }
         const lister = readProp(surface, "windowList");
         if (typeof lister !== "function") {
-            return null;
+            return fail("window-list-missing");
         }
         let rawList: unknown = undefined;
         try {
             rawList = Reflect.apply(lister as (...args: readonly never[]) => unknown, surface, []);
         } catch (error) {
             void error;
-            return null;
+            return fail("window-list-failed");
         }
         const windows = decodeList(rawList, MAX_LIST);
         if (windows === null) {
-            return null;
+            return fail("window-list-invalid");
         }
         const screens = decodeList(readProp(surface, "screens"), MAX_SCREENS);
         if (screens === null || screens.length === 0 || screens.indexOf(activeOutput) < 0) {
-            return null;
+            return fail("screens-invalid");
         }
         const currentFn = readProp(surface, "currentDesktopForScreen");
         const areaFn = readProp(surface, "clientArea");
         if (typeof currentFn !== "function" || typeof areaFn !== "function") {
-            return null;
+            return fail("scope-fns-missing");
         }
         interface DomainBuild {
             readonly outputName: string;
@@ -353,12 +398,12 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
         const outputByRef = new Map<unknown, DomainBuild>();
         for (const screen of screens) {
             if (typeof screen !== "object" || screen === null) {
-                return null;
+                return fail("screen-invalid");
             }
             const outputRef = screen as object;
             const nameRaw = readProp(outputRef, "name");
             if (!isOpaqueId(nameRaw)) {
-                return null;
+                return fail("output-name-invalid");
             }
             const outputName = nameRaw as string;
             let desktop: unknown = undefined;
@@ -370,20 +415,20 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
                 );
             } catch (error) {
                 void error;
-                return null;
+                return fail("desktop-read-failed");
             }
             if (typeof desktop !== "object" || desktop === null) {
-                return null;
+                return fail("desktop-invalid");
             }
             const desktopRef = desktop as object;
             const desktopIdRaw = readProp(desktopRef, "id");
             if (!isOpaqueId(desktopIdRaw)) {
-                return null;
+                return fail("workspace-id-invalid");
             }
             const workspaceId = desktopIdRaw as string;
             const pair = `${outputName}\x1f${workspaceId}`;
             if (seenPairs.has(pair)) {
-                return null;
+                return fail("domain-duplicate");
             }
             seenPairs.add(pair);
             let area: unknown = undefined;
@@ -395,10 +440,10 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
                 ]);
             } catch (error) {
                 void error;
-                return null;
+                return fail("work-area-failed");
             }
             if (typeof area !== "object" || area === null) {
-                return null;
+                return fail("work-area-invalid");
             }
             const areaRecord = area as Record<string, unknown>;
             const bx = toQuantizedInt(areaRecord["x"]);
@@ -408,10 +453,10 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
             const bw = toQuantizedInt(bwRaw);
             const bh = toQuantizedInt(bhRaw);
             if (bx === null || by === null || bw === null || bh === null) {
-                return null;
+                return fail("work-area-coords-invalid");
             }
             if (!isWorkAreaRect({ x: bx, y: by, w: bw, h: bh })) {
-                return null;
+                return fail("work-area-bounds-invalid");
             }
             const built: DomainBuild = {
                 outputName,
@@ -429,11 +474,11 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
         // partial geometry rejects the observation.
         const adjacentMaps = deriveAdjacent(domains);
         if (adjacentMaps === null) {
-            return null;
+            return fail("adjacency-invalid");
         }
         const activeDomain = outputByRef.get(activeOutput);
         if (activeDomain === undefined) {
-            return null;
+            return fail("domain-missing");
         }
         const seen = new Set<string>();
         const entries: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number }; output: string; workspace: string }> = [];
@@ -478,31 +523,55 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
                 id = normalizeNativeId(Reflect.get(ref, "internalId"));
             } catch (error) {
                 void error;
-                return null;
+                return fail("id-read-failed");
             }
-            if (id === null || seen.has(id)) {
-                return null;
+            if (id === null) {
+                return fail("id-invalid");
+            }
+            if (seen.has(id)) {
+                return fail("id-duplicate");
             }
             seen.add(id);
             const rect = readFrameRect(ref);
             if (rect === null) {
-                return null;
+                return fail("frame-invalid");
             }
             entries.push({ id, ref, rect, output: domain.outputName, workspace: domain.workspaceId });
         }
         if (entries.length === 0) {
-            return null;
+            return fail("empty-scope");
         }
         const sorted = [...entries].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        let activeNativeId: string | null = null;
+        try {
+            activeNativeId = normalizeNativeId(Reflect.get(activeRef, "internalId"));
+        } catch (error) {
+            void error;
+            return fail("active-unobserved:active-id-invalid");
+        }
+        if (activeNativeId === null) {
+            return fail("active-unobserved:active-id-invalid");
+        }
+        const ineligible = activeIneligibilityCategory(activeRef, (output) => outputByRef.get(output));
+        if (ineligible !== null) {
+            return fail(`active-unobserved:active-ineligible:${ineligible}`);
+        }
         let activeId: string | null = null;
         for (const entry of sorted) {
-            if (entry.ref === activeRef) {
+            if (entry.id === activeNativeId) {
                 activeId = entry.id;
+                if (entry.ref !== activeRef) {
+                    try {
+                        log?.(`${ENTRY_SCOPE}:active-wrapper-mismatch`);
+                    } catch (error) {
+                        void error;
+                    }
+                }
                 break;
             }
         }
         if (activeId === null) {
-            return null;
+            return fail("active-unobserved:active-missing");
         }
         const sortedIds = sorted.map((entry) => entry.id);
         const fingerprint = JSON.stringify({ ids: sortedIds, active: activeId });
@@ -542,7 +611,7 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace);
+                    const fresh = observeNative(liveWorkspace, log);
                     if (fresh === null) {
                         return false;
                     }
@@ -596,7 +665,7 @@ function observeNative(liveWorkspace: unknown): MovementObserved | null {
         };
     } catch (error) {
         void error;
-        return null;
+        return fail("observe-failed");
     }
 }
 
@@ -759,7 +828,7 @@ export function startMovementAdapterEntry(
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace),
+        observe: () => observeNative(liveWorkspace, log),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -828,10 +897,10 @@ export function startMovementAdapterEntry(
     if (!enabled) {
         return null;
     }
-    if (observeNative(liveWorkspace) === null) {
+    if (observeNative(liveWorkspace, log) === null) {
         adapter.disable();
         try {
-            log(ENTRY_SIGNAL_REJECT);
+            log(ENTRY_SCOPE_REJECT);
         } catch (error) {
             void error;
         }
