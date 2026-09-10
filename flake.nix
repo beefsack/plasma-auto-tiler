@@ -32,6 +32,8 @@
           ./tests
           ./test-fixtures
           ./assets/icons/plasma-auto-tiler.svg
+          ./home-manager-module.nix
+          ./scripts/route-diag-follow.sh
         ];
       };
 
