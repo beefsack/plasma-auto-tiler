@@ -1140,3 +1140,190 @@ describe("focus entry QV4 callable signal startup", () => {
         }
     });
 });
+
+describe("focus adapter window-count-mismatch recovery", () => {
+    function makeArrayLikeWorld(): {
+        readonly workspace: Record<string, unknown>;
+        readonly signals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)>;
+    } {
+        const output = {};
+        const desktop = {};
+        const winA: Record<string, unknown> = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            output,
+            desktops: [desktop],
+            internalId: "win-a",
+        };
+        const winB: Record<string, unknown> = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            output,
+            desktops: [desktop],
+            internalId: "win-b",
+        };
+        const winC: Record<string, unknown> = {
+            normalWindow: true,
+            managed: true,
+            minimized: false,
+            fullScreen: false,
+            maximizeMode: 0,
+            onAllDesktops: false,
+            output,
+            desktops: [desktop],
+            internalId: "win-c",
+        };
+        const signals: Record<string, Qv4Signal & ((...args: readonly unknown[]) => void)> = {
+            windowActivated: makeQv4Signal(),
+            windowAdded: makeQv4Signal(),
+            windowRemoved: makeQv4Signal(),
+            screensChanged: makeQv4Signal(),
+            currentDesktopChanged: makeQv4Signal(),
+        };
+        // Qt-wrapper-style array-like windowList: length plus indexed slots,
+        // never a plain Array. Exercises the entry decodeList seam rather than
+        // the plain-array engine-authority fixture.
+        const arrayLike = { length: 3, 0: winA, 1: winB, 2: winC };
+        assert.equal(Array.isArray(arrayLike), false);
+        const workspace: Record<string, unknown> = {
+            activeWindow: winA,
+            windowList: function (): unknown {
+                return arrayLike;
+            },
+            screens: [output],
+            currentDesktopForScreen: (): unknown => desktop,
+            ...signals,
+        };
+        return { workspace, signals };
+    }
+
+    it("recovers on window-count-mismatch via the array-like entry seam and dispatches a later command", () => {
+        const { workspace } = makeArrayLikeWorld();
+        const logs: string[] = [];
+        const dbusCalls: Array<{ service: string; method: string; payload: string }> = [];
+        const callbacks: Array<(reply: unknown) => void> = [];
+        const handle = startFocusAdapterEntry({
+            workspace,
+            callDbus: (service, _path, _iface, method, payload, callback) => {
+                dbusCalls.push({ service, method, payload });
+                callbacks.push(callback);
+            },
+            scheduleOnce: () => () => {},
+            log: (message) => {
+                logs.push(message);
+            },
+            owner: "owner-1",
+            generation: "gen-1",
+            hasExclusiveFocusAuthority: () => true,
+        });
+        assert.ok(handle !== null);
+        handle.request("right");
+        assert.ok(callbacks[0] !== undefined);
+        callbacks[0]?.(":1.42");
+        const plannerIndex = dbusCalls.findIndex((call) => call.method === FOCUS_METHOD);
+        assert.ok(plannerIndex >= 0);
+        const payload = JSON.parse(dbusCalls[plannerIndex]?.payload as string) as Record<string, unknown>;
+        const correlation = payload["correlation_id"] as string;
+        (callbacks[plannerIndex] as (reply: unknown) => void)?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "window-count-mismatch",
+                message: "gate",
+            }),
+        );
+        assert.ok(logs.some((line) => line.includes("focus-rejected")));
+        const diag = logs.find((line) => line.includes(":result:") && line.includes("result=rejected"));
+        assert.ok(diag !== undefined);
+        assert.ok(diag.includes("detail=window-count-mismatch"));
+        assert.ok(!logs.some((line) => line.includes("focus:disabled")));
+        // Later command dispatches a new Planner request (different direction
+        // avoids the fingerprint+direction dedup).
+        const callsBefore = dbusCalls.filter((call) => call.method === FOCUS_METHOD).length;
+        handle.request("left");
+        assert.ok(!logs.slice(-3).some((line) => line.includes("focus-disabled")));
+        const latestOwnerIndex = callbacks.length - 1;
+        (callbacks[latestOwnerIndex] as (reply: unknown) => void)?.(":1.43");
+        const plannerCalls = dbusCalls.filter((call) => call.method === FOCUS_METHOD);
+        assert.equal(plannerCalls.length, callsBefore + 1);
+        handle.stop();
+    });
+
+    it("still disables on structural rejected details", () => {
+        const cases: unknown[] = [
+            { v: 1, correlation_id: "gen-1-f0", outcome: "rejected", kind: "snapshot-invalid", message: "bad" },
+            { v: 1, correlation_id: "gen-1-f0", outcome: "rejected", kind: "unauthorized", message: "bad" },
+            {
+                v: 1,
+                correlation_id: "gen-1-f0",
+                outcome: "rejected",
+                kind: "unauthorized",
+                detail: "window-count-mismatch",
+                message: "bad",
+            },
+            {
+                v: 1,
+                correlation_id: "gen-1-f0",
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "unknown-detail",
+                message: "bad",
+            },
+        ];
+        for (const reply of cases) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("right");
+            driveOwnerPresent(mocks);
+            const payload = firstPayload(mocks);
+            const fixed = { ...(reply as Record<string, unknown>), correlation_id: payload["correlation_id"] };
+            mocks.callbacks[1]?.(JSON.stringify(fixed));
+            assert.equal(mocks.writes, 0);
+            assert.ok(mocks.logs.some((line) => line.includes("focus-rejected") || line.includes("focus-service-fault") || line.includes("focus-diverged")));
+            assert.equal(adapter.isEnabled, false);
+        }
+    });
+
+    it("disables on unbound window-count-mismatch replies", () => {
+        const build =
+            (correlation: string, overrides: Record<string, unknown>): string =>
+                JSON.stringify({
+                    v: FOCUS_CONTRACT_VERSION,
+                    correlation_id: correlation,
+                    outcome: "rejected",
+                    kind: "snapshot-invalid",
+                    detail: "window-count-mismatch",
+                    message: "gate",
+                    ...overrides,
+                });
+        const cases: Array<{ overrides: (correlation: string) => Record<string, unknown>; token: string }> = [
+            { overrides: () => ({ v: 999 }), token: "focus-service-fault" },
+            { overrides: () => ({ correlation_id: "wrong-correlation" }), token: "focus-correlation-mismatch" },
+            { overrides: () => ({ kind: "stale-snapshot" }), token: "focus-rejected" },
+        ];
+        for (const entry of cases) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            const adapter = enableAdapter(mocks);
+            adapter.requestFocus("right");
+            driveOwnerPresent(mocks);
+            const correlation = firstPayload(mocks)["correlation_id"] as string;
+            mocks.callbacks[1]?.(build(correlation, entry.overrides(correlation)));
+            assert.equal(mocks.writes, 0);
+            assert.ok(mocks.logs.some((line) => line.includes(entry.token)));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(adapter.isInFlight, false);
+        }
+    });
+});

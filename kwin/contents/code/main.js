@@ -4981,6 +4981,9 @@
   function isRecord2(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
+  function isRecoverableWindowCountMismatch(parsed, contractVersion, correlation) {
+    return parsed["v"] === contractVersion && parsed["correlation_id"] === correlation && parsed["kind"] === "snapshot-invalid" && parsed["detail"] === "window-count-mismatch";
+  }
   var KNOWN_PRECONDITIONS = Object.freeze([
     "focused-leaf-occupied-by-focused-window",
     "target-leaf-occupied",
@@ -5700,6 +5703,40 @@
         return;
       }
       if (outcome === "rejected") {
+        if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("focus-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("focus-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        if (isRecoverableWindowCountMismatch(parsed, FOCUS_CONTRACT_VERSION, correlation)) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pinnedOwner = null;
+          this.activationStep = 0;
+          this.diag("result", correlation, [
+            ["result", "rejected"],
+            ["detail", "window-count-mismatch"]
+          ]);
+          this.reject("focus-rejected");
+          return;
+        }
         this.inFlight = false;
         this.pending = null;
         this.pendingObserved = null;
@@ -7099,6 +7136,9 @@
   function isRecord3(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
+  function isRecoverableWindowCountMismatch2(parsed, contractVersion, correlation) {
+    return parsed["v"] === contractVersion && parsed["correlation_id"] === correlation && parsed["kind"] === "snapshot-invalid" && parsed["detail"] === "window-count-mismatch";
+  }
   function isFiniteInt(value) {
     return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
   }
@@ -8224,6 +8264,43 @@
         return;
       }
       if (outcome === "rejected") {
+        if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMover = null;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("movement-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMover = null;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("movement-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        if (isRecoverableWindowCountMismatch2(parsed, MOVEMENT_CONTRACT_VERSION, correlation)) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMover = null;
+          this.pinnedOwner = null;
+          this.activationStep = 0;
+          this.diag("result", correlation, [
+            ["result", "rejected"],
+            ["detail", "window-count-mismatch"]
+          ]);
+          this.reject("movement-rejected");
+          return;
+        }
         this.inFlight = false;
         this.pending = null;
         this.pendingObserved = null;
@@ -9973,6 +10050,9 @@
   function isRecord4(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
+  function isRecoverableWindowCountMismatch3(parsed, contractVersion, correlation) {
+    return parsed["v"] === contractVersion && parsed["correlation_id"] === correlation && parsed["kind"] === "snapshot-invalid" && parsed["detail"] === "window-count-mismatch";
+  }
   function isFiniteNumber2(value) {
     return typeof value === "number" && Number.isFinite(value);
   }
@@ -11251,6 +11331,39 @@
         return;
       }
       if (outcome === "rejected") {
+        if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.pendingPlanned = null;
+          this.pendingStep = null;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("pointer-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.pendingPlanned = null;
+          this.pendingStep = null;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("pointer-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        if (isRecoverableWindowCountMismatch3(parsed, POINTER_RESIZE_CONTRACT_VERSION, correlation)) {
+          this.inFlight = false;
+          this.pendingPlanned = null;
+          this.flightDirection = null;
+          this.flightRevision = 0;
+          this.pinnedOwner = null;
+          this.activationStep = 0;
+          this.diag("result", correlation, [
+            ["result", "rejected"],
+            ["detail", "window-count-mismatch"]
+          ]);
+          this.reject("pointer-rejected");
+          this.settleFlight();
+          return;
+        }
         this.inFlight = false;
         this.pendingPlanned = null;
         this.pendingStep = null;
@@ -12892,6 +13005,9 @@
   function isRecord5(value) {
     return typeof value === "object" && value !== null && !Array.isArray(value);
   }
+  function isRecoverableWindowCountMismatch4(parsed, contractVersion, correlation) {
+    return parsed["v"] === contractVersion && parsed["correlation_id"] === correlation && parsed["kind"] === "snapshot-invalid" && parsed["detail"] === "window-count-mismatch";
+  }
   function isFiniteInt3(value) {
     return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
   }
@@ -13836,6 +13952,46 @@
         return;
       }
       if (outcome === "rejected") {
+        if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMode = null;
+          this.pendingFocused = null;
+          this.diag("result", correlation, [["result", "service-fault"]]);
+          this.reject("resize-service-fault");
+          this.disable();
+          return;
+        }
+        if (parsed["correlation_id"] !== correlation) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMode = null;
+          this.pendingFocused = null;
+          this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+          this.reject("resize-correlation-mismatch");
+          this.disable();
+          return;
+        }
+        if (isRecoverableWindowCountMismatch4(parsed, RESIZE_CONTRACT_VERSION, correlation)) {
+          this.inFlight = false;
+          this.pending = null;
+          this.pendingObserved = null;
+          this.pendingDirection = null;
+          this.pendingMode = null;
+          this.pendingFocused = null;
+          this.pinnedOwner = null;
+          this.activationStep = 0;
+          this.diag("result", correlation, [
+            ["result", "rejected"],
+            ["detail", "window-count-mismatch"]
+          ]);
+          this.reject("resize-rejected");
+          return;
+        }
         this.inFlight = false;
         this.pending = null;
         this.pendingObserved = null;
@@ -15854,6 +16010,36 @@
 
   // src/controller.ts
   var DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+  var COMMAND_SHORTCUT_ACTION_IDS = Object.freeze(
+    /* @__PURE__ */ new Set([
+      "focus-left",
+      "focus-down",
+      "focus-up",
+      "focus-right",
+      "focus-left-arrow",
+      "focus-down-arrow",
+      "focus-up-arrow",
+      "focus-right-arrow",
+      "move-left",
+      "move-down",
+      "move-up",
+      "move-right",
+      "move-left-arrow",
+      "move-down-arrow",
+      "move-up-arrow",
+      "move-right-arrow",
+      "resize-mode-outwards",
+      "resize-mode-inwards",
+      "resize-expand-left",
+      "resize-expand-down",
+      "resize-expand-up",
+      "resize-expand-right",
+      "resize-contract-left",
+      "resize-contract-down",
+      "resize-contract-up",
+      "resize-contract-right"
+    ])
+  );
   var WORK_AREA_CLIENT_AREA_OPTION4 = 5;
   var GROUP_OUTLINE_DURATION_MS = 700;
   function describeWorkspaceFailure(error) {
@@ -20057,36 +20243,6 @@
       return occupied;
     }
   };
-  var COMMAND_SHORTCUT_ACTION_IDS = Object.freeze(
-    /* @__PURE__ */ new Set([
-      "focus-left",
-      "focus-down",
-      "focus-up",
-      "focus-right",
-      "focus-left-arrow",
-      "focus-down-arrow",
-      "focus-up-arrow",
-      "focus-right-arrow",
-      "move-left",
-      "move-down",
-      "move-up",
-      "move-right",
-      "move-left-arrow",
-      "move-down-arrow",
-      "move-up-arrow",
-      "move-right-arrow",
-      "resize-mode-outwards",
-      "resize-mode-inwards",
-      "resize-expand-left",
-      "resize-expand-down",
-      "resize-expand-up",
-      "resize-expand-right",
-      "resize-contract-left",
-      "resize-contract-down",
-      "resize-contract-up",
-      "resize-contract-right"
-    ])
-  );
 
   // src/managed-root.ts
   function prepareManagedRoot(root, onPaddingFailure) {
@@ -20610,9 +20766,9 @@
     }
   });
   controller.start();
-  if (true) {
+  if (typeof CONTROLLER_NONCE === "string" && typeof CONTROLLER_BUILD_ID === "string" && typeof CONTROLLER_PLUGIN_ID === "string") {
     console.log(
-      `plasma-auto-tiler:controller-ready:plugin=${"plasma-auto-tiler-kwin"}:nonce=${"start-20260910T211800-4876"}:build=${"controller-v1-c0eda8ad3428f2d9e3551707ca5749f8383efdc59d8cffc71d0486228e4a0e0d"}`
+      `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`
     );
   }
   try {

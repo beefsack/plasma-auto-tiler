@@ -614,6 +614,103 @@ describe("resize adapter", () => {
         assert.equal(adapter.isEnabled, true);
     });
 
+    it("recovers on window-count-mismatch and dispatches a later command", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("right", "outwards");
+        driveOwnerPresent(mocks);
+        const correlation = firstPayload(mocks)["correlation_id"] as string;
+        const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
+        onRequest(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "window-count-mismatch",
+                message: "gate",
+            }),
+        );
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(mocks.logs.some((line) => line.includes("resize-rejected")));
+        const diag = mocks.logs.find((line) => line.includes(":result:") && line.includes("result=rejected"));
+        assert.ok(diag !== undefined);
+        assert.ok(diag.includes("detail=window-count-mismatch"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        const plannerBefore = plannerPayloads(mocks).length;
+        adapter.requestResize("left", "outwards");
+        driveLatestOwner(mocks, ":1.43");
+        assert.equal(plannerPayloads(mocks).length, plannerBefore + 1);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("still disables on structural rejected details", () => {
+        const cases: Array<Record<string, unknown>> = [
+            { kind: "snapshot-invalid", message: "bad" },
+            { kind: "unauthorized", message: "bad" },
+            { kind: "unauthorized", detail: "window-count-mismatch", message: "bad" },
+            { kind: "snapshot-invalid", detail: "unknown-detail", message: "bad" },
+        ];
+        for (const extra of cases) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestResize("right", "outwards");
+            driveOwnerPresent(mocks);
+            const correlation = firstPayload(mocks)["correlation_id"] as string;
+            const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
+            onRequest(JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", ...extra }));
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(mocks.logs.some((line) => line.includes("resize-rejected")));
+            assert.equal(adapter.isEnabled, false);
+        }
+    });
+
+    it("disables on unbound window-count-mismatch replies", () => {
+        const cases: Array<{ extra: (correlation: string) => Record<string, unknown>; token: string }> = [
+            {
+                extra: (correlation) => ({
+                    v: 999,
+                    correlation_id: correlation,
+                    kind: "snapshot-invalid",
+                    detail: "window-count-mismatch",
+                }),
+                token: "resize-service-fault",
+            },
+            {
+                extra: () => ({
+                    v: 1,
+                    correlation_id: "wrong-correlation",
+                    kind: "snapshot-invalid",
+                    detail: "window-count-mismatch",
+                }),
+                token: "resize-correlation-mismatch",
+            },
+            {
+                extra: (correlation) => ({
+                    v: 1,
+                    correlation_id: correlation,
+                    kind: "stale-snapshot",
+                    detail: "window-count-mismatch",
+                }),
+                token: "resize-rejected",
+            },
+        ];
+        for (const entry of cases) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestResize("right", "outwards");
+            driveOwnerPresent(mocks);
+            const correlation = firstPayload(mocks)["correlation_id"] as string;
+            const onRequest = mocks.callbacks[1] as (reply: unknown) => void;
+            onRequest(JSON.stringify({ outcome: "rejected", message: "gate", ...entry.extra(correlation) }));
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(mocks.logs.some((line) => line.includes(entry.token)));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(adapter.isInFlight, false);
+        }
+    });
+
     it("fails closed when post-observation geometry drifts before verify", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);

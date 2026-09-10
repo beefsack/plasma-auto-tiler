@@ -268,6 +268,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Closed recoverable rejection: exactly the selected three-window product
+// gate, fully bound to this flight. Exact route contract v, exact flight
+// correlation_id, exact kind snapshot-invalid, exact detail
+// window-count-mismatch. Anything else stays terminal.
+function isRecoverableWindowCountMismatch(
+    parsed: Record<string, unknown>,
+    contractVersion: number,
+    correlation: string,
+): boolean {
+    return (
+        parsed["v"] === contractVersion &&
+        parsed["correlation_id"] === correlation &&
+        parsed["kind"] === "snapshot-invalid" &&
+        parsed["detail"] === "window-count-mismatch"
+    );
+}
+
 function isFiniteNumber(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value);
 }
@@ -1752,6 +1769,39 @@ export class PointerResizeAdapter {
             return;
         }
         if (outcome === "rejected") {
+            if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
+                this.inFlight = false;
+                this.pendingPlanned = null;
+                this.pendingStep = null;
+                this.diag("result", correlation, [["result", "service-fault"]]);
+                this.reject("pointer-service-fault");
+                this.disable();
+                return;
+            }
+            if (parsed["correlation_id"] !== correlation) {
+                this.inFlight = false;
+                this.pendingPlanned = null;
+                this.pendingStep = null;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+                this.reject("pointer-correlation-mismatch");
+                this.disable();
+                return;
+            }
+            if (isRecoverableWindowCountMismatch(parsed, POINTER_RESIZE_CONTRACT_VERSION, correlation)) {
+                this.inFlight = false;
+                this.pendingPlanned = null;
+                this.flightDirection = null;
+                this.flightRevision = 0;
+                this.pinnedOwner = null;
+                this.activationStep = 0;
+                this.diag("result", correlation, [
+                    ["result", "rejected"],
+                    ["detail", "window-count-mismatch"],
+                ]);
+                this.reject("pointer-rejected");
+                this.settleFlight();
+                return;
+            }
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;

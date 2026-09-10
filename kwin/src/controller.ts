@@ -161,6 +161,17 @@ import {
 export type { CurrentScope, SelectedOverlay } from "./controller-reflow-observers";
 
 const DIAGNOSTIC_PREFIX = "plasma-auto-tiler:";
+export const COMMAND_SHORTCUT_ACTION_IDS: ReadonlySet<string> = Object.freeze(
+    new Set<string>([
+        "focus-left", "focus-down", "focus-up", "focus-right",
+        "focus-left-arrow", "focus-down-arrow", "focus-up-arrow", "focus-right-arrow",
+        "move-left", "move-down", "move-up", "move-right",
+        "move-left-arrow", "move-down-arrow", "move-up-arrow", "move-right-arrow",
+        "resize-mode-outwards", "resize-mode-inwards",
+        "resize-expand-left", "resize-expand-down", "resize-expand-up", "resize-expand-right",
+        "resize-contract-left", "resize-contract-down", "resize-contract-up", "resize-contract-right",
+    ]),
+);
 // KWin tile minimumSize default is QSizeF(0.15, 0.15) in working-area-relative
 // units (src/tiles/tile.h:179, pinned v6.7.3). A position-directed 50/50 drop
 // split produces two equal halves; when either half falls below this floor KWin
@@ -5119,14 +5130,3 @@ export class TileController {
         return occupied;
     }
 }
-export const COMMAND_SHORTCUT_ACTION_IDS: ReadonlySet<string> = Object.freeze(
-    new Set<string>([
-        "focus-left", "focus-down", "focus-up", "focus-right",
-        "focus-left-arrow", "focus-down-arrow", "focus-up-arrow", "focus-right-arrow",
-        "move-left", "move-down", "move-up", "move-right",
-        "move-left-arrow", "move-down-arrow", "move-up-arrow", "move-right-arrow",
-        "resize-mode-outwards", "resize-mode-inwards",
-        "resize-expand-left", "resize-expand-down", "resize-expand-up", "resize-expand-right",
-        "resize-contract-left", "resize-contract-down", "resize-contract-up", "resize-contract-right",
-    ]),
-);

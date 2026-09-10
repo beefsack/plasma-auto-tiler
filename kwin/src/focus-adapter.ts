@@ -206,6 +206,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Closed recoverable rejection: exactly the selected three-window product
+// gate, fully bound to this flight. Exact route contract v, exact flight
+// correlation_id, exact kind snapshot-invalid, exact detail
+// window-count-mismatch. Anything else stays terminal.
+function isRecoverableWindowCountMismatch(
+    parsed: Record<string, unknown>,
+    contractVersion: number,
+    correlation: string,
+): boolean {
+    return (
+        parsed["v"] === contractVersion &&
+        parsed["correlation_id"] === correlation &&
+        parsed["kind"] === "snapshot-invalid" &&
+        parsed["detail"] === "window-count-mismatch"
+    );
+}
+
 interface PlannedOperation {
     readonly domainOutput: string;
     readonly domainWorkspace: string;
@@ -1027,6 +1044,40 @@ export class FocusAdapter {
             return;
         }
         if (outcome === "rejected") {
+            if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.diag("result", correlation, [["result", "service-fault"]]);
+                this.reject("focus-service-fault");
+                this.disable();
+                return;
+            }
+            if (parsed["correlation_id"] !== correlation) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+                this.reject("focus-correlation-mismatch");
+                this.disable();
+                return;
+            }
+            if (isRecoverableWindowCountMismatch(parsed, FOCUS_CONTRACT_VERSION, correlation)) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pinnedOwner = null;
+                this.activationStep = 0;
+                this.diag("result", correlation, [
+                    ["result", "rejected"],
+                    ["detail", "window-count-mismatch"],
+                ]);
+                this.reject("focus-rejected");
+                return;
+            }
             // Refused service fault fails closed: no write, terminal disable.
             this.inFlight = false;
             this.pending = null;

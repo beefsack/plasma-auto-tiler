@@ -244,6 +244,23 @@ function isRecord(value: unknown): value is Record<string, unknown> {
     return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+// Closed recoverable rejection: exactly the selected three-window product
+// gate, fully bound to this flight. Exact route contract v, exact flight
+// correlation_id, exact kind snapshot-invalid, exact detail
+// window-count-mismatch. Anything else stays terminal.
+function isRecoverableWindowCountMismatch(
+    parsed: Record<string, unknown>,
+    contractVersion: number,
+    correlation: string,
+): boolean {
+    return (
+        parsed["v"] === contractVersion &&
+        parsed["correlation_id"] === correlation &&
+        parsed["kind"] === "snapshot-invalid" &&
+        parsed["detail"] === "window-count-mismatch"
+    );
+}
+
 function isFiniteInt(value: unknown): value is number {
     return typeof value === "number" && Number.isFinite(value) && Number.isInteger(value);
 }
@@ -1326,6 +1343,46 @@ export class ResizeAdapter {
             return;
         }
         if (outcome === "rejected") {
+            if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pendingMode = null;
+                this.pendingFocused = null;
+                this.diag("result", correlation, [["result", "service-fault"]]);
+                this.reject("resize-service-fault");
+                this.disable();
+                return;
+            }
+            if (parsed["correlation_id"] !== correlation) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pendingMode = null;
+                this.pendingFocused = null;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
+                this.reject("resize-correlation-mismatch");
+                this.disable();
+                return;
+            }
+            if (isRecoverableWindowCountMismatch(parsed, RESIZE_CONTRACT_VERSION, correlation)) {
+                this.inFlight = false;
+                this.pending = null;
+                this.pendingObserved = null;
+                this.pendingDirection = null;
+                this.pendingMode = null;
+                this.pendingFocused = null;
+                this.pinnedOwner = null;
+                this.activationStep = 0;
+                this.diag("result", correlation, [
+                    ["result", "rejected"],
+                    ["detail", "window-count-mismatch"],
+                ]);
+                this.reject("resize-rejected");
+                return;
+            }
             this.inFlight = false;
             this.pending = null;
             this.pendingObserved = null;

@@ -868,6 +868,106 @@ describe("movement adapter noop and refusal", () => {
         assert.equal(adapter.isEnabled, false);
     });
 
+    it("recovers on window-count-mismatch and dispatches a later command", () => {
+        const mocks = mockEnvTwoWindow();
+        const adapter = enableAdapter(mocks);
+        adapter.requestMovement("right");
+        driveOwnerPresent(mocks);
+        const payload = firstPayload(mocks);
+        const correlation = payload["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "window-count-mismatch",
+                message: "gate",
+            }),
+        );
+        assert.equal(mocks.geometryWrites.length, 0);
+        assert.ok(mocks.logs.some((l) => l.includes("movement-rejected")));
+        const diag = mocks.logs.find((l) => l.includes(":result:") && l.includes("result=rejected"));
+        assert.ok(diag !== undefined);
+        assert.ok(diag.includes("detail=window-count-mismatch"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        const plannerBefore = mocks.dbusCalls.filter((call) => call.method === MOVEMENT_METHOD).length;
+        adapter.requestMovement("left");
+        const latestOwner = mocks.callbacks.length - 1;
+        mocks.callbacks[latestOwner]?.(":1.43");
+        const plannerAfter = mocks.dbusCalls.filter((call) => call.method === MOVEMENT_METHOD).length;
+        assert.equal(plannerAfter, plannerBefore + 1);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("still disables on structural rejected details", () => {
+        const cases: Array<Record<string, unknown>> = [
+            { kind: "snapshot-invalid", message: "bad" },
+            { kind: "unauthorized", message: "bad" },
+            { kind: "unauthorized", detail: "window-count-mismatch", message: "bad" },
+            { kind: "snapshot-invalid", detail: "unknown-detail", message: "bad" },
+            { kind: "snapshot-invalid", detail: "", message: "bad" },
+        ];
+        for (const extra of cases) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestMovement("right");
+            driveOwnerPresent(mocks);
+            const payload = firstPayload(mocks);
+            mocks.callbacks[1]?.(
+                JSON.stringify({ v: 1, correlation_id: payload["correlation_id"], outcome: "rejected", ...extra }),
+            );
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(mocks.logs.some((l) => l.includes("movement-rejected")));
+            assert.equal(adapter.isEnabled, false);
+        }
+    });
+
+    it("disables on unbound window-count-mismatch replies", () => {
+        const cases: Array<{ extra: (correlation: string) => Record<string, unknown>; token: string }> = [
+            {
+                extra: (correlation) => ({
+                    v: 999,
+                    correlation_id: correlation,
+                    kind: "snapshot-invalid",
+                    detail: "window-count-mismatch",
+                }),
+                token: "movement-service-fault",
+            },
+            {
+                extra: () => ({
+                    v: 1,
+                    correlation_id: "wrong-correlation",
+                    kind: "snapshot-invalid",
+                    detail: "window-count-mismatch",
+                }),
+                token: "movement-correlation-mismatch",
+            },
+            {
+                extra: (correlation) => ({
+                    v: 1,
+                    correlation_id: correlation,
+                    kind: "stale-snapshot",
+                    detail: "window-count-mismatch",
+                }),
+                token: "movement-rejected",
+            },
+        ];
+        for (const entry of cases) {
+            const mocks = mockEnvTwoWindow();
+            const adapter = enableAdapter(mocks);
+            adapter.requestMovement("right");
+            driveOwnerPresent(mocks);
+            const correlation = firstPayload(mocks)["correlation_id"] as string;
+            mocks.callbacks[1]?.(JSON.stringify({ outcome: "rejected", message: "gate", ...entry.extra(correlation) }));
+            assert.equal(mocks.geometryWrites.length, 0);
+            assert.ok(mocks.logs.some((l) => l.includes(entry.token)));
+            assert.equal(adapter.isEnabled, false);
+            assert.equal(adapter.isInFlight, false);
+        }
+    });
+
     it("rejects partial operation shapes before any write", () => {
         const mocks = mockEnvTwoWindow();
         const adapter = enableAdapter(mocks);
