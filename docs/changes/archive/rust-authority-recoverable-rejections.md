@@ -57,5 +57,5 @@ teardown for malformed, identity, transport, authority, and transaction faults.
   that references it.
 - `npm --prefix kwin run typecheck` retains only the pre-existing unused
   `catalogValidationDiagnostics` error. `npm --prefix kwin test` executes the
-  11 new route tests successfully but has 11 failures from protected untracked
+  12 new route tests successfully but has 11 failures from protected untracked
   cosmic/POC residue. `bash scripts/start-test.test.sh` passes 399 checks.
