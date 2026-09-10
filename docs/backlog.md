@@ -669,3 +669,9 @@ Only meaningful pending or active work is listed.
   runtimes | [comparison](reference-wm-comparison.md)
 - P3 | parked | Publish the reproducible KPackage artifact to KDE Store and
   GitHub Release after MVP delivery dependencies are complete | [delivered foundations](changes/archive/delivered-foundations.md)
+- P2 | investigate KWin controller silent unload | Determine the actor or
+  lifecycle event that unloads a manually loaded controller without a recorded
+  `dev-off`; current KWin 6.7.4 APIs and retained journal evidence cannot
+  attribute it. A future explicitly authorized observation must bind each
+  action to before/after `isScriptLoaded`, exact `Script<ID>` introspection, and
+  KWin PID/start identity.

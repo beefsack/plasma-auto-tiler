@@ -35,8 +35,14 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   created receipt dir, and remove its state pointers/dir. Rollback never
   unloads a script it did not load and never touches a planner it did not
   positively verify; each failed rollback step prints a precise loud error.
-  Success disarms rollback. If dev mode is already up it reports that and
-  makes no changes. `start-test.sh` keeps its duplicate plugin guard.
+  Success disarms rollback. Health requires both a verified worktree Planner
+  and `isScriptLoaded=true`: when both are up, `dev-on` makes no changes; when
+  both are down, it performs the normal bring-up; when only the verified
+  Planner is up, it loads one controller against that Planner without starting,
+  stopping, or reconfiguring either half, writes a fresh immutable receipt, and
+  updates the state pointer only after re-verifying the same D-Bus owner and
+  start identity; when only the controller is up, it refuses rather than
+  loading a duplicate. `start-test.sh` keeps its duplicate plugin guard.
 - `reload` rebuilds and safely swaps only the recorded worktree Planner. It
   never reloads or unloads the KWin script and requires the recorded
   PID/exe and current process state. The replacement is launched detached
@@ -47,13 +53,15 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   no `/nix/store` after normalization, `planner-service` cmdline, and captured
   start identity. On failure only an already positively
   verified replacement is terminated, never an unverified PID.
-- `dev-off` reads the script ID from the dynamically found controller
-  receipt, passes both receipt (`CONTROLLER_OWNERSHIP_FILE`) and ID to
-  `start-test.sh stop`, terminates only the recorded worktree Planner PID
-  after identity checks that accept only the worktree exe or its exact
-  kernel-generated ` (deleted)` form, then re-enables the packaged script.
+- `dev-off` independently checks both halves. A loaded controller still
+  requires its exact receipt and `start-test.sh stop`; an already-unloaded
+  controller is never stopped with its stale ID. It terminates only a recorded
+  worktree Planner that passes the existing identity checks, skips an absent or
+  unverified Planner without killing it, then re-enables the packaged script.
 - `dev-status` is read-only: name owner PID plus `/proc/<pid>/exe`,
-  `isScriptLoaded`, recorded script ID, and installed unit state.
+  `isScriptLoaded`, recorded script ID, and installed unit state. It also
+  reports `dev mode: UP`, `DOWN`, `SPLIT`, or `UNKNOWN`; `UP` requires both a
+  verified worktree Planner and loaded controller.
 
 ## Manual Fallback
 
