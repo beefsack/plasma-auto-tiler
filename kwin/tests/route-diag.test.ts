@@ -80,6 +80,38 @@ describe("route-diag token schema", () => {
         }
         assert.ok(line.includes("corr=gen-1-f0"));
     });
+
+    it("bounds attach failure attribution to closed slice tokens", () => {
+        assert.equal(
+            formatRouteDiag("attach", [
+                ["result", "unavailable"],
+                ["slices", 4],
+                ["gen", "packaged-rust-1"],
+                ["rev", 0],
+                ["failed", "movement"],
+            ]),
+            "plasma-auto-tiler:route-diag:attach:result=unavailable:slices=4:gen=packaged-rust-1:rev=0:failed=movement",
+        );
+        assert.ok(
+            formatRouteDiag("attach", [
+                ["result", "unavailable"],
+                ["slices", 4],
+                ["gen", "packaged-rust-1"],
+                ["rev", 0],
+                ["failed", "multiple"],
+            ]).includes("failed=multiple"),
+        );
+        // Injection never widens the closed vocabulary.
+        assert.ok(
+            formatRouteDiag("attach", [
+                ["result", "unavailable"],
+                ["slices", 4],
+                ["gen", "packaged-rust-1"],
+                ["rev", 0],
+                ["failed", "has space!!"],
+            ]).includes("failed=unknown"),
+        );
+    });
 });
 
 describe("route-diag pointer coalescing", () => {

@@ -105,6 +105,34 @@ function normalizeCommandResizeMode(value: unknown): AuthorityResizeMode | "unkn
     return "unknown";
 }
 
+// Fixed closed failed-slice attribution for attach diagnostics: exactly one
+// token naming the single null slice, else the bounded `multiple` token for
+// thrown or multi-null losses. Slice names only, no identities or payloads.
+function describeAttachFailure(
+    focus: unknown,
+    movement: unknown,
+    resize: unknown,
+    pointer: unknown,
+): string {
+    const failed: string[] = [];
+    if (focus === null) {
+        failed.push("focus");
+    }
+    if (movement === null) {
+        failed.push("movement");
+    }
+    if (resize === null) {
+        failed.push("resize");
+    }
+    if (pointer === null) {
+        failed.push("pointer");
+    }
+    if (failed.length === 1) {
+        return failed[0] as string;
+    }
+    return "multiple";
+}
+
 export class EngineAuthorityDispatcher {
     private focusHandle: FocusEntryHandle | null = null;
     private movementHandle: MovementEntryHandle | null = null;
@@ -228,6 +256,7 @@ export class EngineAuthorityDispatcher {
                         ["slices", 4],
                         ["gen", ENGINE_AUTHORITY_GENERATION],
                         ["rev", this.revisionBinding.current],
+                        ["failed", describeAttachFailure(focus, movement, resize, pointer)],
                     ]),
                 );
             } catch (error) {

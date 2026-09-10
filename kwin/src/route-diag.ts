@@ -146,7 +146,8 @@ function sanitizeField(key: string, value: unknown): string {
         key === "reason" ||
         key === "transition" ||
         key === "route" ||
-        key === "action"
+        key === "action" ||
+        key === "failed"
     ) {
         return typeof value === "string" && isSafeCategory(value) ? value : "unknown";
     }

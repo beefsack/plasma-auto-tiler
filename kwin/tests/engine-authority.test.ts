@@ -949,6 +949,74 @@ describe("engine authority lazy one-shot retry", () => {
         assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
         assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
     });
+
+    it("attributes the failed attach slice on init loss and consumed retry with no legacy and clean teardown", () => {
+        const calls: Array<{ readonly slice: string; readonly owner: unknown; readonly generation: unknown; readonly revision: unknown; readonly authorityType: string }> = [];
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const logs: string[] = [];
+        const dispatcher = createEngineAuthority("rust-development", fakeStarts({ fail: "movement", calls, requests }), (message) => {
+            logs.push(message);
+        });
+        assert.equal(dispatcher.start(), false);
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(calls.length, 4);
+        // Physical Meta+Right reaches command delivery then fail-closes on the
+        // single lazy retry.
+        dispatcher.requestFocus("right");
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(calls.length, 8);
+        assert.equal(requests.length, 0);
+        // Retry consumed: no further attach attempts.
+        dispatcher.requestFocus("right");
+        assert.equal(calls.length, 8);
+        assert.equal(requests.length, 0);
+        assert.equal(dispatcher.isRustActive(), false);
+        const attach = logs.filter((line) => line.includes("route-diag:attach:"));
+        assert.equal(attach.length, 2);
+        for (const line of attach) {
+            assert.ok(line.includes("result=unavailable"), line);
+            assert.ok(line.includes("slices=4"), line);
+            assert.ok(line.includes("failed=movement"), line);
+        }
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-command:focus:right")));
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-unavailable")));
+        assert.ok(logs.some((line) => line.includes("engine-authority-rust-refused")));
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+        dispatcher.stop();
+        assert.equal(dispatcher.isRustActive(), false);
+        assert.equal(requests.length, 0);
+    });
+
+    it("bounds multi-slice attach loss to one token and keeps successful attach without attribution", () => {
+        const allNull: EngineAuthorityStarts = {
+            startFocus: () => null,
+            startMovement: () => null,
+            startResize: () => null,
+            startPointerResize: () => null,
+        };
+        const logs: string[] = [];
+        const failed = createEngineAuthority("rust-development", allNull, (message) => {
+            logs.push(message);
+        });
+        assert.equal(failed.start(), false);
+        const attach = logs.filter((line) => line.includes("route-diag:attach:"));
+        assert.equal(attach.length, 1);
+        assert.ok(attach[0] !== undefined);
+        assert.ok(attach[0].includes("failed=multiple"), attach[0]);
+        assert.ok(logs.every((line) => !line.toLowerCase().includes("legacy")));
+
+        const requests: Array<{ readonly slice: string; readonly args: readonly unknown[] }> = [];
+        const readyLogs: string[] = [];
+        const ready = createEngineAuthority("rust-development", fakeStarts({ requests }), (message) => {
+            readyLogs.push(message);
+        });
+        assert.equal(ready.start(), true);
+        const readyAttach = readyLogs.filter((line) => line.includes("route-diag:attach:"));
+        assert.equal(readyAttach.length, 1);
+        assert.ok(readyAttach[0] !== undefined);
+        assert.ok(readyAttach[0].includes("result=ready"), readyAttach[0]);
+        assert.ok(!readyAttach[0].includes("failed="), readyAttach[0]);
+    });
 });
 
 describe("engine authority keyboard delivery diagnostic", () => {
