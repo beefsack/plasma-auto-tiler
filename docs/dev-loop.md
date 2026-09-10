@@ -19,8 +19,9 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   than `$!`. `$!` is a launch hint only and never authoritative (setsid may
   fork when it is a process-group leader). After a bounded wait the owner
   PID is derived from `GetNameOwner` plus `GetConnectionUnixProcessID` and
-  accepted only when `/proc/<pid>/exe` is exactly the worktree `$BIN`, is
-  not under `/nix/store`, cmdline contains `planner-service`, and the
+  accepted only when `/proc/<pid>/exe` is the worktree `$BIN` or its exact
+  kernel-generated `$BIN (deleted)` form, normalizes outside `/nix/store`,
+  cmdline contains `planner-service`, and the
   `/proc/<pid>/stat` start identity is captured. That verified PID/exe/start
   is recorded. On failure only an already positively verified worktree
   planner is terminated, never an unverified PID or intermediate bash.
@@ -42,13 +43,15 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   with `setsid nohup ... &` where `$!` is a hint only; the new PID is
   derived from the D-Bus owner (`GetNameOwner` plus
   `GetConnectionUnixProcessID`) under the same bounded wait and accepted
-  only with exact worktree exe, no `/nix/store`, `planner-service` cmdline,
-  and captured start identity. On failure only an already positively
+  only with the worktree exe or its exact kernel-generated ` (deleted)` form,
+  no `/nix/store` after normalization, `planner-service` cmdline, and captured
+  start identity. On failure only an already positively
   verified replacement is terminated, never an unverified PID.
 - `dev-off` reads the script ID from the dynamically found controller
   receipt, passes both receipt (`CONTROLLER_OWNERSHIP_FILE`) and ID to
   `start-test.sh stop`, terminates only the recorded worktree Planner PID
-  after exact identity checks, then re-enables the packaged script.
+  after identity checks that accept only the worktree exe or its exact
+  kernel-generated ` (deleted)` form, then re-enables the packaged script.
 - `dev-status` is read-only: name owner PID plus `/proc/<pid>/exe`,
   `isScriptLoaded`, recorded script ID, and installed unit state.
 
@@ -95,8 +98,9 @@ devenv shell --impure -- bash scripts/start-test.sh start
 4. Build and start only `target/debug/plasma-auto-tiler planner-service` from
    this worktree. Record its output; derive the Planner PID from the D-Bus
    owner (`GetNameOwner` plus `GetConnectionUnixProcessID`), never from `$!`,
-   and require `/proc/<pid>/exe` to be exactly that worktree path (never
-   `/nix/store`), cmdline to contain `planner-service`, and the start
+   and require `/proc/<pid>/exe` to be that worktree path or its exact
+   kernel-generated ` (deleted)` form (never `/nix/store` after normalization),
+   cmdline to contain `planner-service`, and the start
    identity to be captured.
 5. `start-test.sh start` loads worktree KWin bundle. Retain its exact ID and receipt.
 

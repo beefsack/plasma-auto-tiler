@@ -51,13 +51,21 @@ dev-on:
       [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       printf '%s\n' "${fields[19]}"
     }
+    planner_exe_is_worktree() {
+      local raw="$1" normalized="$1"
+      [[ -n "$raw" ]] || return 1
+      case "$BIN" in *" (deleted)") return 1 ;; esac
+      case "$normalized" in *" (deleted)") normalized="${normalized%' (deleted)'}"; ;; esac
+      case "$normalized" in */nix/store/*) return 1 ;; esac
+      [[ "$normalized" == "$BIN" ]] || return 1
+    }
+    case "$BIN" in *" (deleted)") echo "error: configured worktree binary path is ambiguous ('$BIN'); refusing" >&2; exit 1 ;; esac
     planner_verify_worktree() {
       local pid="$1" exe candidate_start
       [[ "$pid" =~ ^[0-9]+$ ]] || return 1
       [[ -d "/proc/$pid" ]] || return 1
       exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
-      [[ -n "$exe" && "$exe" == "$BIN" ]] || return 1
-      case "$exe" in */nix/store/*) return 1 ;; esac
+      planner_exe_is_worktree "$exe" || return 1
       tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "planner-service" || return 1
       candidate_start="$(planner_start_identity "$pid")" || return 1
       [[ "$candidate_start" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -127,7 +135,7 @@ dev-on:
         [[ -f "$START_FILE" ]] && RECORDED_START="$(cat "$START_FILE")"
         CURRENT_START=""
         CURRENT_START="$(planner_start_identity "$RECORDED_PID" 2>/dev/null || true)"
-        if [[ -n "$CURRENT_EXE" && "$CURRENT_EXE" == "$BIN" && "$CURRENT_EXE" == "$RECORDED_EXE" && -n "$CURRENT_START" && "$CURRENT_START" == "$RECORDED_START" ]]; then
+        if planner_exe_is_worktree "$CURRENT_EXE" && [[ "$RECORDED_EXE" == "$BIN" && -n "$CURRENT_START" && "$CURRENT_START" == "$RECORDED_START" ]]; then
           echo "dev-on: dev mode already up (planner pid $RECORDED_PID, receipt $RECORDED_RECEIPT); making no changes"
           if command -v jq >/dev/null 2>&1; then
             SID="$(jq -r '.script_id // empty' "$RECORDED_RECEIPT" 2>/dev/null || true)"
@@ -144,7 +152,7 @@ dev-on:
       OWNER_PID="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$(echo "$OWNER" | awk '{print $NF}' | tr -d '\"')" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null || true)"
       if [[ -n "${OWNER_PID:-}" && -d "/proc/$OWNER_PID" ]]; then
         OWNER_EXE="$(readlink "/proc/$OWNER_PID/exe" 2>/dev/null || true)"
-        if [[ "$OWNER_EXE" == "$BIN" ]]; then
+        if planner_exe_is_worktree "$OWNER_EXE"; then
           echo "dev-on: dev mode already up (planner pid $OWNER_PID owns $PLANNER_BUS); making no changes"
           exit 0
         fi
@@ -271,13 +279,20 @@ reload:
       [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       printf '%s\n' "${fields[19]}"
     }
+    planner_exe_is_worktree() {
+      local raw="$1" normalized="$1"
+      [[ -n "$raw" ]] || return 1
+      case "$BIN" in *" (deleted)") return 1 ;; esac
+      case "$normalized" in *" (deleted)") normalized="${normalized%' (deleted)'}"; ;; esac
+      case "$normalized" in */nix/store/*) return 1 ;; esac
+      [[ "$normalized" == "$BIN" ]] || return 1
+    }
     planner_verify_worktree() {
       local pid="$1" exe candidate_start
       [[ "$pid" =~ ^[0-9]+$ ]] || return 1
       [[ -d "/proc/$pid" ]] || return 1
       exe="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
-      [[ -n "$exe" && "$exe" == "$BIN" ]] || return 1
-      case "$exe" in */nix/store/*) return 1 ;; esac
+      planner_exe_is_worktree "$exe" || return 1
       tr '\0' ' ' < "/proc/$pid/cmdline" 2>/dev/null | grep -Fq "planner-service" || return 1
       candidate_start="$(planner_start_identity "$pid")" || return 1
       [[ "$candidate_start" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -299,12 +314,12 @@ reload:
     RECORDED_EXE="$(cat "$EXE_FILE")"
     RECORDED_START="$(cat "$START_FILE")"
     [[ "$OLD_PID" =~ ^[0-9]+$ ]] || { echo "error: recorded planner pid is invalid: $OLD_PID" >&2; exit 1; }
+    case "$BIN" in *" (deleted)") echo "error: configured worktree binary path is ambiguous ('$BIN'); refusing" >&2; exit 1 ;; esac
     [[ "$RECORDED_EXE" == "$BIN" ]] || { echo "error: recorded planner exe ($RECORDED_EXE) is not the worktree binary ($BIN); refusing" >&2; exit 1; }
     [[ "$RECORDED_START" =~ ^[1-9][0-9]*$ ]] || { echo "error: recorded planner start identity is invalid: $RECORDED_START" >&2; exit 1; }
     [[ -d "/proc/$OLD_PID" ]] || { echo "error: recorded planner pid $OLD_PID is not running" >&2; exit 1; }
     CURRENT_EXE="$(readlink "/proc/$OLD_PID/exe" 2>/dev/null || true)"
-    [[ "$CURRENT_EXE" == "$BIN" ]] || { echo "error: /proc/$OLD_PID/exe is '$CURRENT_EXE', expected '$BIN'; refusing to touch it" >&2; exit 1; }
-    case "$CURRENT_EXE" in */nix/store/*) echo "error: recorded planner resolved through /nix/store; refusing" >&2; exit 1 ;; esac
+    planner_exe_is_worktree "$CURRENT_EXE" || { echo "error: /proc/$OLD_PID/exe is '$CURRENT_EXE', expected '$BIN' (or '$BIN (deleted)'); refusing to touch it" >&2; exit 1; }
     CURRENT_START="$(planner_start_identity "$OLD_PID")" || { echo "error: could not capture planner start identity for pid $OLD_PID; refusing" >&2; exit 1; }
     [[ "$CURRENT_START" == "$RECORDED_START" ]] || { echo "error: planner start identity changed (current $CURRENT_START, recorded $RECORDED_START); refusing" >&2; exit 1; }
     if ! tr '\0' ' ' < "/proc/$OLD_PID/cmdline" 2>/dev/null | grep -Fq "planner-service"; then
@@ -322,11 +337,7 @@ reload:
     # Re-verify identity immediately before terminating (TOCTOU guard).
     # Cargo can atomically replace $BIN, leaving the old exe as "$BIN (deleted)".
     CURRENT_EXE="$(readlink "/proc/$OLD_PID/exe" 2>/dev/null || true)"
-    case "$CURRENT_EXE" in */nix/store/*) echo "error: planner identity changed to /nix/store before swap; refusing" >&2; exit 1 ;; esac
-    if [[ "$CURRENT_EXE" != "$BIN" && "$CURRENT_EXE" != "$BIN (deleted)" ]]; then
-      echo "error: planner identity changed before swap (exe '$CURRENT_EXE'); refusing" >&2
-      exit 1
-    fi
+    planner_exe_is_worktree "$CURRENT_EXE" || { echo "error: planner identity changed before swap (exe '$CURRENT_EXE'); refusing" >&2; exit 1; }
     CURRENT_START="$(planner_start_identity "$OLD_PID")" || { echo "error: planner identity changed before swap; refusing" >&2; exit 1; }
     [[ "$CURRENT_START" == "$RECORDED_START" ]] || { echo "error: planner start identity changed before swap; refusing" >&2; exit 1; }
     kill "$OLD_PID" || { echo "error: could not terminate planner pid $OLD_PID" >&2; exit 1; }
@@ -410,6 +421,14 @@ dev-off:
       [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
       printf '%s\n' "${fields[19]}"
     }
+    planner_exe_is_worktree() {
+      local raw="$1" normalized="$1"
+      [[ -n "$raw" ]] || return 1
+      case "$BIN" in *" (deleted)") return 1 ;; esac
+      case "$normalized" in *" (deleted)") normalized="${normalized%' (deleted)'}"; ;; esac
+      case "$normalized" in */nix/store/*) return 1 ;; esac
+      [[ "$normalized" == "$BIN" ]] || return 1
+    }
     # Planner preflight before any mutation: prove the recorded Planner
     # identity exists before unloading the KWin script.
     [[ -f "$PID_FILE" ]] || { echo "error: no recorded planner pid ($PID_FILE missing); refusing ambiguous kill" >&2; exit 1; }
@@ -419,12 +438,12 @@ dev-off:
     RECORDED_EXE="$(cat "$EXE_FILE")"
     RECORDED_START="$(cat "$START_FILE")"
     [[ "$RECORDED_PID" =~ ^[0-9]+$ ]] || { echo "error: recorded planner pid is invalid: $RECORDED_PID" >&2; exit 1; }
+    case "$BIN" in *" (deleted)") echo "error: configured worktree binary path is ambiguous ('$BIN'); refusing to kill $RECORDED_PID" >&2; exit 1 ;; esac
     [[ "$RECORDED_EXE" == "$BIN" ]] || { echo "error: recorded planner exe ($RECORDED_EXE) is not the worktree binary ($BIN); refusing to kill $RECORDED_PID" >&2; exit 1; }
     [[ "$RECORDED_START" =~ ^[1-9][0-9]*$ ]] || { echo "error: recorded planner start identity is invalid: $RECORDED_START" >&2; exit 1; }
     [[ -d "/proc/$RECORDED_PID" ]] || { echo "error: recorded planner pid $RECORDED_PID is not running" >&2; exit 1; }
     CURRENT_EXE="$(readlink "/proc/$RECORDED_PID/exe" 2>/dev/null || true)"
-    [[ "$CURRENT_EXE" == "$BIN" ]] || { echo "error: /proc/$RECORDED_PID/exe is '$CURRENT_EXE', expected '$BIN'; refusing to kill" >&2; exit 1; }
-    case "$CURRENT_EXE" in */nix/store/*) echo "error: recorded planner resolved through /nix/store; refusing" >&2; exit 1 ;; esac
+    planner_exe_is_worktree "$CURRENT_EXE" || { echo "error: /proc/$RECORDED_PID/exe is '$CURRENT_EXE', expected '$BIN' (or '$BIN (deleted)'); refusing to kill" >&2; exit 1; }
     CURRENT_START="$(planner_start_identity "$RECORDED_PID")" || { echo "error: could not capture planner start identity for pid $RECORDED_PID; refusing" >&2; exit 1; }
     [[ "$CURRENT_START" == "$RECORDED_START" ]] || { echo "error: planner start identity changed (current $CURRENT_START, recorded $RECORDED_START); refusing" >&2; exit 1; }
     if ! tr '\0' ' ' < "/proc/$RECORDED_PID/cmdline" 2>/dev/null | grep -Fq "planner-service"; then
@@ -462,8 +481,7 @@ dev-off:
     # Re-check the same PID/start-time/identity immediately before TERM.
     [[ -d "/proc/$RECORDED_PID" ]] || { echo "error: recorded planner pid $RECORDED_PID is not running after script stop" >&2; exit 1; }
     RECHECK_EXE="$(readlink "/proc/$RECORDED_PID/exe" 2>/dev/null || true)"
-    [[ "$RECHECK_EXE" == "$BIN" ]] || { echo "error: /proc/$RECORDED_PID/exe is '$RECHECK_EXE', expected '$BIN'; refusing to kill" >&2; exit 1; }
-    case "$RECHECK_EXE" in */nix/store/*) echo "error: recorded planner resolved through /nix/store; refusing" >&2; exit 1 ;; esac
+    planner_exe_is_worktree "$RECHECK_EXE" || { echo "error: /proc/$RECORDED_PID/exe is '$RECHECK_EXE', expected '$BIN' (or '$BIN (deleted)'); refusing to kill" >&2; exit 1; }
     RECHECK_START="$(planner_start_identity "$RECORDED_PID")" || { echo "error: planner start identity changed after script stop; refusing" >&2; exit 1; }
     [[ "$RECHECK_START" == "$RECORDED_START" ]] || { echo "error: planner start identity changed after script stop (current $RECHECK_START, recorded $RECORDED_START); refusing" >&2; exit 1; }
     if ! tr '\0' ' ' < "/proc/$RECORDED_PID/cmdline" 2>/dev/null | grep -Fq "planner-service"; then
