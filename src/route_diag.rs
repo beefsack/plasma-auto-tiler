@@ -199,8 +199,10 @@ pub fn describe_refusal(route: Route, request_json: &str, refusal: Refusal) -> S
 /// One bounded line describing a produced reply: route, outcome category
 /// (plan/refusal/ack/terminal), validated correlation echo, and the terminal
 /// revision when the reply carries one (bounded, omitted when out of bounds).
-/// Malformed JSON reports
-/// `result=unknown` and never echoes input bytes.
+/// Rejected and diverged replies append a bounded enumerated branch-specific
+/// `:detail=...` token from their closed vocabularies; any other outcome never
+/// carries a detail suffix. Malformed JSON reports `result=unknown` and never
+/// echoes input bytes.
 #[must_use]
 pub fn describe_reply(route: Route, reply_json: &str) -> String {
     let raw: serde_json::Value =
@@ -214,16 +216,137 @@ pub fn describe_reply(route: Route, reply_json: &str) -> String {
     let corr = raw
         .get("correlation_id")
         .and_then(serde_json::Value::as_str);
+    let outcome = outcome_of(&raw);
     let base = format!(
         "{ROUTE_DIAG_PREFIX}:route={}:result={}:corr={}",
         route.as_str(),
-        outcome_of(&raw),
+        outcome,
         sanitize_corr(corr)
     );
-    match bounded_rev(&raw) {
+    let base = match bounded_rev(&raw) {
         Some(rev) => format!("{base}:rev={rev}"),
         None => base,
+    };
+    match outcome {
+        "rejected" => format!("{base}:detail={}", rejected_detail_of(&raw)),
+        "diverged" => format!("{base}:detail={}", divergence_detail_of(&raw)),
+        _ => base,
     }
+}
+
+/// Closed branch-specific diagnostic detail vocabulary for Planner-side
+/// `outcome=rejected` reply/session lines. Every token is bounded lowercase
+/// kebab-case with no payload; anything outside this set renders as
+/// [`REJECTION_DETAIL_UNKNOWN`] and is never echoed.
+pub const REJECTION_DETAIL_UNKNOWN: &str = "unknown-detail";
+/// Closed vocabulary of all Planner rejection diagnostic details (sorted for
+/// review; order is not wire-significant).
+pub const REJECTION_DETAILS: &[&str] = &[
+    "carried-bounds-invalid",
+    "carried-rect-invalid",
+    "correlation-invalid",
+    "cross-domain-observation",
+    "cross-route-action-fenced",
+    "cross-route-pending-fenced",
+    "direction-invalid",
+    "duplicate-window",
+    "fingerprint-mismatch",
+    "focused-observation-mismatch",
+    "generation-invalid",
+    "membership-mismatch",
+    "movement-domain-mismatch",
+    "no-pending",
+    "not-acknowledged",
+    "observed-id-invalid",
+    "oversized-request",
+    "owner-invalid",
+    "rect-containment-mismatch",
+    "refused-cross-domain-mismatch",
+    "refused-duplicate-window",
+    "refused-exception-behavior-unselected",
+    "refused-focus-mismatch",
+    "refused-malformed-input",
+    "refused-malformed-topology",
+    "refused-not-tiled",
+    "refused-partial-observation",
+    "refused-planner-noop",
+    "refused-planner-rejected",
+    "refused-unchanged",
+    "refused-unknown-domain",
+    "refused-unknown-window",
+    "refused-unsupported-capability",
+    "reply-overflow",
+    "request-malformed",
+    "resize-mode-invalid",
+    "revision-invalid",
+    "root-id-invalid",
+    "seed-failed",
+    "seeded-membership-mismatch",
+    "unauthorized-caller",
+    "unknown-detail",
+    "unknown-field",
+    "unknown-value",
+    "unseeded-trio",
+    "unsupported-capability",
+    "unsupported-version",
+    "window-count-mismatch",
+];
+
+/// Closed branch-specific diagnostic detail vocabulary for Planner-side
+/// `outcome=diverged` reply/session lines on the transaction routes.
+pub const DIVERGENCE_DETAIL_UNKNOWN: &str = "unknown-divergence";
+pub const DIVERGENCE_DETAILS: &[&str] = &[
+    "adapter-lost",
+    "capability-refused",
+    "correlation-mismatch",
+    "generation-mismatch",
+    "owner-mismatch",
+    "partial-application",
+    "pending-exists",
+    "postcondition-mismatch",
+    "postcondition-unverified",
+    "revision-exhausted",
+    "session-full",
+    "stale-revision",
+];
+
+/// Closed-vocabulary check for a rejection detail token.
+#[must_use]
+pub fn is_valid_rejection_detail(value: &str) -> bool {
+    REJECTION_DETAILS.contains(&value)
+}
+
+/// Validated rejected-outcome detail for a parsed reply value. Returns the
+/// closed-vocabulary token when the reply carries an approved `detail`;
+/// synthesizes `unauthorized-caller` for the existing fixed
+/// `kind=unauthorized` in-band rejection without a wire detail; otherwise
+/// returns the fixed bounded `unknown-detail` token. Never echoes input.
+#[must_use]
+pub fn rejected_detail_of(raw: &serde_json::Value) -> &'static str {
+    if let Some(text) = raw.get("detail").and_then(serde_json::Value::as_str)
+        && let Some(hit) = REJECTION_DETAILS.iter().find(|d| **d == text)
+    {
+        return hit;
+    }
+    if raw.get("kind").and_then(serde_json::Value::as_str) == Some("unauthorized")
+        && let Some(hit) = REJECTION_DETAILS
+            .iter()
+            .find(|d| **d == "unauthorized-caller")
+    {
+        return hit;
+    }
+    REJECTION_DETAIL_UNKNOWN
+}
+
+/// Validated diverged-outcome detail from its existing bounded reply kind.
+/// Unrecognized values render the fixed bounded fallback and are never echoed.
+#[must_use]
+pub fn divergence_detail_of(raw: &serde_json::Value) -> &'static str {
+    raw.get("kind")
+        .and_then(serde_json::Value::as_str)
+        .and_then(|text| DIVERGENCE_DETAILS.iter().find(|detail| **detail == text))
+        .copied()
+        .unwrap_or(DIVERGENCE_DETAIL_UNKNOWN)
 }
 
 /// Lifecycle component for background/tray/bridge/planner events.
@@ -418,16 +541,32 @@ impl SessionOutcome {
 }
 
 /// One bounded line describing an already-computed portable Session outcome:
-/// `plasma-auto-tiler:route-diag:route=session:result=...:corr=...[:rev=N]`.
+/// `plasma-auto-tiler:route-diag:route=session:result=...:corr=...[:rev=N][:detail=...]`.
 /// Pure with no I/O and no Session access, so logging can never change
 /// authority, timing, IPC semantics, Session state, or fail-closed behavior.
 /// Validated correlation echo only; bounded revision only when in bounds.
-/// Never window data, geometry, or raw payload bytes.
+/// Rejected and diverged outcomes append a validated closed-vocabulary
+/// `:detail=...` token; any other outcome never carries a detail suffix. Never
+/// window data, geometry, or raw payload bytes.
 #[must_use]
 pub fn describe_session_outcome(
     outcome: SessionOutcome,
     corr: Option<&str>,
     rev: Option<u64>,
+) -> String {
+    describe_session_outcome_with_detail(outcome, corr, rev, None)
+}
+
+/// Session outcome line with an explicit branch-specific detail token.
+/// `Rejected` and `Diverged` append `:detail=...`; each token is validated
+/// against its closed vocabulary and is never echoed. Other outcomes ignore
+/// the detail.
+#[must_use]
+pub fn describe_session_outcome_with_detail(
+    outcome: SessionOutcome,
+    corr: Option<&str>,
+    rev: Option<u64>,
+    detail: Option<&str>,
 ) -> String {
     let corr = sanitize_corr_opt(corr).unwrap_or("invalid");
     let mut line = format!(
@@ -440,6 +579,20 @@ pub fn describe_session_outcome(
         && rev <= LIFECYCLE_MAX_REVISION
     {
         line.push_str(&format!(":rev={rev}"));
+    }
+    let token = match outcome {
+        SessionOutcome::Rejected => match detail {
+            Some(text) if is_valid_rejection_detail(text) => Some(text),
+            _ => Some(REJECTION_DETAIL_UNKNOWN),
+        },
+        SessionOutcome::Diverged => match detail {
+            Some(text) if DIVERGENCE_DETAILS.contains(&text) => Some(text),
+            _ => Some(DIVERGENCE_DETAIL_UNKNOWN),
+        },
+        _ => None,
+    };
+    if let Some(token) = token {
+        line.push_str(&format!(":detail={token}"));
     }
     line
 }
@@ -463,10 +616,11 @@ pub fn session_outcome_of_reply_outcome(outcome: &str) -> Option<SessionOutcome>
 /// Build the portable session outcome line from an already-returned reply
 /// JSON value only. This is the Planner-boundary emission helper: callers
 /// pass the reply string they already computed and returned on the wire, so
-/// the session line correlates (`corr`, bounded `rev`, `result`) without
-/// touching portable Session state, timing, authority, logging frameworks,
-/// or platform I/O. Returns `None` when the reply carries no known outcome
-/// (no line is emitted then). Never echoes payload bytes.
+/// the session line correlates (`corr`, bounded `rev`, `result`, plus the
+/// validated failure `detail`) without touching portable Session state,
+/// timing, authority, logging frameworks, or platform I/O. Returns `None`
+/// when the reply carries no known outcome (no line is emitted then). Never
+/// echoes payload bytes.
 #[must_use]
 pub fn session_line_for_reply(reply_json: &str) -> Option<String> {
     let raw: serde_json::Value = serde_json::from_str(reply_json).ok()?;
@@ -479,7 +633,23 @@ pub fn session_line_for_reply(reply_json: &str) -> Option<String> {
         .get("correlation_id")
         .and_then(serde_json::Value::as_str);
     let rev = bounded_rev(&raw);
-    Some(describe_session_outcome(mapped, corr, rev))
+    if mapped == SessionOutcome::Rejected {
+        Some(describe_session_outcome_with_detail(
+            mapped,
+            corr,
+            rev,
+            Some(rejected_detail_of(&raw)),
+        ))
+    } else if mapped == SessionOutcome::Diverged {
+        Some(describe_session_outcome_with_detail(
+            mapped,
+            corr,
+            rev,
+            Some(divergence_detail_of(&raw)),
+        ))
+    } else {
+        Some(describe_session_outcome(mapped, corr, rev))
+    }
 }
 
 /// Visible no-activation current-boot hint for the `route-diag` command and
@@ -768,8 +938,6 @@ mod tests {
             (SessionOutcome::Planned, "planned"),
             (SessionOutcome::Acknowledged, "acknowledged"),
             (SessionOutcome::Committed, "committed"),
-            (SessionOutcome::Rejected, "rejected"),
-            (SessionOutcome::Diverged, "diverged"),
             (SessionOutcome::Noop, "noop"),
         ] {
             let line = describe_session_outcome(outcome, Some("gen-1-f0"), Some(3));
@@ -785,7 +953,44 @@ mod tests {
                 line,
                 describe_session_outcome(outcome, Some("gen-1-f0"), Some(3))
             );
+            // Outcomes without a failure reason never carry a detail suffix.
+            assert!(!line.contains(":detail="), "{line}");
         }
+        // Rejected appends the fixed bounded fallback when no valid detail is
+        // supplied directly.
+        let rejected =
+            describe_session_outcome(SessionOutcome::Rejected, Some("gen-1-f0"), Some(3));
+        assert_eq!(
+            rejected,
+            "plasma-auto-tiler:route-diag:route=session:result=rejected:corr=gen-1-f0:rev=3:detail=unknown-detail",
+            "{rejected:?}"
+        );
+        assert_eq!(
+            rejected,
+            describe_session_outcome(SessionOutcome::Rejected, Some("gen-1-f0"), Some(3))
+        );
+        // Explicit valid detail is carried; invalid detail falls back without echo.
+        let explicit = describe_session_outcome_with_detail(
+            SessionOutcome::Rejected,
+            Some("gen-1-f0"),
+            Some(3),
+            Some("root-id-invalid"),
+        );
+        assert!(explicit.ends_with(":detail=root-id-invalid"), "{explicit}");
+        let invalid = describe_session_outcome_with_detail(
+            SessionOutcome::Rejected,
+            Some("gen-1-f0"),
+            Some(3),
+            Some("evil; rm -rf"),
+        );
+        assert!(invalid.ends_with(":detail=unknown-detail"), "{invalid}");
+        assert!(!invalid.contains("evil"), "{invalid}");
+        let diverged =
+            describe_session_outcome(SessionOutcome::Diverged, Some("gen-1-f0"), Some(3));
+        assert!(
+            diverged.ends_with(":detail=unknown-divergence"),
+            "{diverged}"
+        );
         // Bad correlation never echoes; out-of-bounds revision is omitted.
         let bad = describe_session_outcome(SessionOutcome::Committed, Some("bad corr!!"), Some(3));
         assert!(bad.contains("corr=invalid"), "{bad}");
@@ -1177,6 +1382,208 @@ mod tests {
         assert!(
             tray.contains("released before any formatting or"),
             "tray publish path must document lock release before output"
+        );
+    }
+
+    #[test]
+    fn rejection_detail_vocabulary_is_closed_distinct_and_sanitized() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for token in REJECTION_DETAILS {
+            assert!(!token.is_empty() && token.len() <= 48, "{token}");
+            assert!(
+                token.bytes().all(|b| b.is_ascii_lowercase() || b == b'-'),
+                "{token} must be lowercase kebab-case"
+            );
+            assert!(seen.insert(*token), "duplicate detail token {token}");
+            assert!(is_valid_rejection_detail(token), "{token}");
+        }
+        // Closed: anything outside the set is rejected without echo.
+        for bad in [
+            "",
+            "SNAPSHOT-INVALID",
+            "snapshot_invalid",
+            "snapshot-invalid",
+            "root-id-invalid ",
+            "evil; rm -rf",
+            "gen-1-f0",
+            "unauthorized",
+        ] {
+            assert!(!is_valid_rejection_detail(bad), "{bad}");
+        }
+        // Sanitizer passes approved tokens through and falls back without echo.
+        for token in REJECTION_DETAILS {
+            let raw = json!({
+                "v": 1,
+                "correlation_id": "gen-1-f0",
+                "outcome": "rejected",
+                "kind": "snapshot-invalid",
+                "message": "snapshot or intent is malformed",
+                "detail": token,
+            });
+            assert_eq!(rejected_detail_of(&raw), *token, "{token}");
+        }
+        for raw in [
+            json!({
+                "v": 1, "correlation_id": "gen-1-f0", "outcome": "rejected",
+                "kind": "snapshot-invalid", "message": "m",
+            }),
+            json!({
+                "v": 1, "correlation_id": "gen-1-f0", "outcome": "rejected",
+                "kind": "snapshot-invalid", "message": "m", "detail": "evil; rm -rf",
+            }),
+            json!({
+                "v": 1, "correlation_id": "gen-1-f0", "outcome": "rejected",
+                "kind": "snapshot-invalid", "message": "m", "detail": 42,
+            }),
+            json!({
+                "v": 1, "correlation_id": "gen-1-f0", "outcome": "rejected",
+                "kind": "snapshot-invalid", "message": "m", "detail": "",
+            }),
+        ] {
+            assert_eq!(rejected_detail_of(&raw), REJECTION_DETAIL_UNKNOWN);
+        }
+        // The existing fixed unauthorized in-band reply (no wire detail, no
+        // correlation) synthesizes its bounded detail.
+        let fixed =
+            serde_json::from_str::<serde_json::Value>(crate::planner_service::UNAUTHORIZED_REPLY)
+                .expect("fixed reply is JSON");
+        assert_eq!(rejected_detail_of(&fixed), "unauthorized-caller");
+    }
+
+    #[test]
+    fn rejected_reply_and_session_lines_share_validated_detail() {
+        for route in [Route::Focus, Route::Movement, Route::Resize, Route::Pointer] {
+            for token in REJECTION_DETAILS {
+                let reply_text = json!({
+                    "v": 1,
+                    "correlation_id": "gen-1-d9",
+                    "outcome": "rejected",
+                    "kind": "snapshot-invalid",
+                    "message": "snapshot or intent is malformed",
+                    "detail": token,
+                    "base_revision": 3,
+                })
+                .to_string();
+                let reply_line = describe_reply(route, &reply_text);
+                assert!(
+                    reply_line.contains(&format!("route={}", route.as_str())),
+                    "{reply_line}"
+                );
+                assert!(reply_line.contains("result=rejected"), "{reply_line}");
+                assert!(reply_line.contains("corr=gen-1-d9"), "{reply_line}");
+                assert!(reply_line.contains(":rev=3"), "{reply_line}");
+                assert!(
+                    reply_line.ends_with(&format!(":detail={token}")),
+                    "{reply_line} must append :detail={token} last"
+                );
+                let session = session_line_for_reply(&reply_text).expect("rejected yields a line");
+                assert!(session.contains("route=session"), "{session}");
+                assert!(session.contains("result=rejected"), "{session}");
+                assert!(session.contains("corr=gen-1-d9"), "{session}");
+                assert!(session.contains(":rev=3"), "{session}");
+                assert!(
+                    session.ends_with(&format!(":detail={token}")),
+                    "{session} must append :detail={token} last"
+                );
+            }
+        }
+        // Detail without revision still appends last, after corr.
+        let no_rev = json!({
+            "v": 1, "correlation_id": "gen-1-d9", "outcome": "rejected",
+            "kind": "owner-invalid", "message": "owner is invalid",
+            "detail": "owner-invalid",
+        })
+        .to_string();
+        let line = describe_reply(Route::Focus, &no_rev);
+        assert!(line.ends_with(":detail=owner-invalid"), "{line}");
+        let session = session_line_for_reply(&no_rev).expect("line");
+        assert!(session.ends_with(":detail=owner-invalid"), "{session}");
+        // Unapproved detail renders the fixed bounded token on both lines,
+        // never the input bytes.
+        let evil = json!({
+            "v": 1, "correlation_id": "gen-1-d9", "outcome": "rejected",
+            "kind": "snapshot-invalid", "message": "m", "detail": "evil; rm -rf",
+            "base_revision": 3,
+        })
+        .to_string();
+        let reply_line = describe_reply(Route::Movement, &evil);
+        assert!(
+            reply_line.ends_with(":detail=unknown-detail"),
+            "{reply_line}"
+        );
+        assert!(!reply_line.contains("evil"), "{reply_line}");
+        let session = session_line_for_reply(&evil).expect("line");
+        assert!(session.ends_with(":detail=unknown-detail"), "{session}");
+        assert!(!session.contains("evil"), "{session}");
+        // Non-failure outcomes never carry a detail suffix, even when the
+        // wire reply carries a detail field.
+        for outcome in ["planned", "noop", "acknowledged", "committed"] {
+            let reply_text = json!({
+                "v": 1, "correlation_id": "gen-1-d9", "outcome": outcome,
+                "base_revision": 3, "detail": "root-id-invalid",
+            })
+            .to_string();
+            let reply_line = describe_reply(Route::Focus, &reply_text);
+            assert!(!reply_line.contains(":detail="), "{reply_line}");
+            let session = session_line_for_reply(&reply_text).expect("line");
+            assert!(!session.contains(":detail="), "{session}");
+        }
+    }
+
+    #[test]
+    fn diverged_reply_and_session_lines_share_validated_detail() {
+        use std::collections::HashSet;
+
+        let mut seen = HashSet::new();
+        for token in DIVERGENCE_DETAILS {
+            assert!(seen.insert(*token), "duplicate detail token {token}");
+            let reply_text = json!({
+                "v": 1,
+                "correlation_id": "gen-1-d9",
+                "outcome": "diverged",
+                "kind": token,
+                "base_revision": 3,
+            })
+            .to_string();
+            for route in [Route::Focus, Route::Movement, Route::Resize, Route::Pointer] {
+                let line = describe_reply(route, &reply_text);
+                assert!(line.ends_with(&format!(":detail={token}")), "{line}");
+            }
+            let session = session_line_for_reply(&reply_text).expect("diverged yields a line");
+            assert!(session.ends_with(&format!(":detail={token}")), "{session}");
+        }
+        let unknown = json!({
+            "v": 1,
+            "correlation_id": "gen-1-d9",
+            "outcome": "diverged",
+            "kind": "evil; rm -rf",
+        })
+        .to_string();
+        let line = describe_reply(Route::Focus, &unknown);
+        assert!(line.ends_with(":detail=unknown-divergence"), "{line}");
+        assert!(!line.contains("evil"), "{line}");
+    }
+
+    #[test]
+    fn unauthorized_fixed_reply_carries_its_bounded_detail_on_both_lines() {
+        let fixed = crate::planner_service::UNAUTHORIZED_REPLY;
+        for route in [Route::Focus, Route::Movement, Route::Resize, Route::Pointer] {
+            let reply_line = describe_reply(route, fixed);
+            assert!(reply_line.contains("result=rejected"), "{reply_line}");
+            assert!(reply_line.contains("corr=invalid"), "{reply_line}");
+            assert!(
+                reply_line.ends_with(":detail=unauthorized-caller"),
+                "{reply_line}"
+            );
+            assert!(!reply_line.contains("uid"), "{reply_line}");
+        }
+        let session = session_line_for_reply(fixed).expect("fixed reply yields a line");
+        assert!(session.contains("route=session"), "{session}");
+        assert!(session.contains("result=rejected"), "{session}");
+        assert!(
+            session.ends_with(":detail=unauthorized-caller"),
+            "{session}"
         );
     }
 }

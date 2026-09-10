@@ -670,6 +670,29 @@ const TRIO_MSG_OBSERVATION: &str = "observation does not cover the known window 
 const TRIO_MSG_CAPABILITY: &str = "operation needs an undeclared capability";
 const TRIO_MSG_SESSION_FULL: &str = "trio session correlation bound was reached";
 
+/// Closed branch-specific diagnostic detail for a session refusal kind.
+/// Shared across focus/movement/resize routes for semantically identical
+/// session-layer refusals; distinct from the pre-session validation details.
+fn trio_refusal_detail(kind: crate::session::RefusalKind) -> &'static str {
+    use crate::session::RefusalKind as R;
+    match kind {
+        R::DuplicateWindow => "refused-duplicate-window",
+        R::UnknownWindow => "refused-unknown-window",
+        R::UnknownDomain => "refused-unknown-domain",
+        R::FocusMismatch => "refused-focus-mismatch",
+        R::NotTiled => "refused-not-tiled",
+        R::PlannerNoop => "refused-planner-noop",
+        R::PlannerRejected => "refused-planner-rejected",
+        R::UnsupportedCapability => "refused-unsupported-capability",
+        R::CrossDomainMismatch => "refused-cross-domain-mismatch",
+        R::MalformedInput => "refused-malformed-input",
+        R::MalformedTopology => "refused-malformed-topology",
+        R::PartialObservation => "refused-partial-observation",
+        R::ExceptionBehaviorUnselected => "refused-exception-behavior-unselected",
+        R::Unchanged => "refused-unchanged",
+    }
+}
+
 fn trio_is_opaque_id(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= TRIO_MAX_ID_LEN
@@ -876,12 +899,14 @@ struct TrioFocusReply {
     operation: Option<TrioFocusOperationReply>,
     #[serde(skip_serializing_if = "Option::is_none")]
     to_window: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'static str>,
 }
 
 fn trio_serialize_focus(reply: &TrioFocusReply) -> String {
     match serde_json::to_string(reply) {
         Ok(text) if text.len() <= TRIO_MAX_REPLY_BYTES => text,
-        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\"}"
+        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\",\"detail\":\"reply-overflow\"}"
             .to_owned(),
     }
 }
@@ -890,6 +915,7 @@ fn trio_focus_rejected(
     correlation_id: String,
     kind: &'static str,
     message: &'static str,
+    detail: &'static str,
 ) -> String {
     trio_serialize_focus(&TrioFocusReply {
         v: 1,
@@ -903,6 +929,7 @@ fn trio_focus_rejected(
         preconditions: None,
         operation: None,
         to_window: None,
+        detail: Some(detail),
     })
 }
 
@@ -923,6 +950,7 @@ fn trio_focus_diverged(
         preconditions: None,
         operation: None,
         to_window: None,
+        detail: None,
     })
 }
 
@@ -1443,17 +1471,24 @@ struct TrioMoveReply {
     desired_geometry: Option<Vec<TrioGeometryReply>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     desired_focus: Option<TrioFocusBodyReply>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'static str>,
 }
 
 fn trio_serialize_move(reply: &TrioMoveReply) -> String {
     match serde_json::to_string(reply) {
         Ok(text) if text.len() <= TRIO_MAX_REPLY_BYTES => text,
-        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\"}"
+        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\",\"detail\":\"reply-overflow\"}"
             .to_owned(),
     }
 }
 
-fn trio_move_rejected(correlation_id: String, kind: &'static str, message: &'static str) -> String {
+fn trio_move_rejected(
+    correlation_id: String,
+    kind: &'static str,
+    message: &'static str,
+    detail: &'static str,
+) -> String {
     trio_serialize_move(&TrioMoveReply {
         v: 1,
         correlation_id,
@@ -1468,6 +1503,7 @@ fn trio_move_rejected(correlation_id: String, kind: &'static str, message: &'sta
         operation: None,
         desired_geometry: None,
         desired_focus: None,
+        detail: Some(detail),
     })
 }
 
@@ -1486,6 +1522,7 @@ fn trio_move_diverged(correlation_id: String, kind: &'static str, message: &'sta
         operation: None,
         desired_geometry: None,
         desired_focus: None,
+        detail: None,
     })
 }
 
@@ -1774,12 +1811,14 @@ struct TrioResizeReply {
     desired_geometry: Option<Vec<TrioGeometryReply>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     desired_focus: Option<TrioFocusBodyReply>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    detail: Option<&'static str>,
 }
 
 fn trio_serialize_resize(reply: &TrioResizeReply) -> String {
     match serde_json::to_string(reply) {
         Ok(text) if text.len() <= TRIO_MAX_REPLY_BYTES => text,
-        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\"}"
+        _ => "{\"v\":1,\"correlation_id\":\"\",\"outcome\":\"rejected\",\"kind\":\"snapshot-invalid\",\"message\":\"snapshot or intent is malformed\",\"detail\":\"reply-overflow\"}"
             .to_owned(),
     }
 }
@@ -1788,6 +1827,7 @@ fn trio_resize_rejected(
     correlation_id: String,
     kind: &'static str,
     message: &'static str,
+    detail: &'static str,
 ) -> String {
     trio_serialize_resize(&TrioResizeReply {
         v: 1,
@@ -1802,6 +1842,7 @@ fn trio_resize_rejected(
         operation: None,
         desired_geometry: None,
         desired_focus: None,
+        detail: Some(detail),
     })
 }
 
@@ -1823,6 +1864,7 @@ fn trio_resize_diverged(
         operation: None,
         desired_geometry: None,
         desired_focus: None,
+        detail: None,
     })
 }
 
@@ -2072,13 +2114,18 @@ impl ManualTrioService {
     /// no geometry and can never seed the trio.
     pub fn evaluate_focus_json(&mut self, request_json: &str) -> String {
         if request_json.len() > TRIO_MAX_REQUEST_BYTES {
-            return trio_focus_rejected(String::new(), "oversized", TRIO_MSG_OVERSIZED);
+            return trio_focus_rejected(
+                String::new(),
+                "oversized",
+                TRIO_MSG_OVERSIZED,
+                "oversized-request",
+            );
         }
         let raw: serde_json::Value = match serde_json::from_str(request_json) {
             Ok(raw) => raw,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_focus_rejected(String::new(), kind, message);
+                return trio_focus_rejected(String::new(), kind, message, kind);
             }
         };
         let action = raw
@@ -2096,7 +2143,7 @@ impl ManualTrioService {
                 } else {
                     ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
                 };
-                trio_focus_rejected(trio_valid_correlation_echo(&raw), kind, message)
+                trio_focus_rejected(trio_valid_correlation_echo(&raw), kind, message, kind)
             }
         }
     }
@@ -2106,7 +2153,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "request" {
@@ -2115,16 +2162,22 @@ impl ManualTrioService {
             } else {
                 ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
             };
-            return trio_focus_rejected(request.correlation_id.clone(), kind, message);
+            return trio_focus_rejected(request.correlation_id.clone(), kind, message, kind);
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
-            return trio_focus_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_focus_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         }
         if OwnerId::parse(&request.owner).is_none() {
             return trio_focus_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -2132,6 +2185,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -2139,6 +2193,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if !trio_is_opaque_id(&request.domain.output)
@@ -2149,6 +2204,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OPAQUE_ID,
+                "root-id-invalid",
             );
         }
         let Some(direction) = trio_parse_direction(&request.direction) else {
@@ -2156,6 +2212,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "direction-invalid",
                 TRIO_MSG_DIRECTION,
+                "direction-invalid",
             );
         };
         if request.windows.len() != TRIO_WINDOWS {
@@ -2163,6 +2220,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "window-count-mismatch",
             );
         }
         {
@@ -2176,6 +2234,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "observed-id-invalid",
                     );
                 }
                 if !seen.insert(entry.window.clone()) {
@@ -2183,6 +2242,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "duplicate-window",
                     );
                 }
             }
@@ -2192,6 +2252,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "unsupported-capability",
                 TRIO_MSG_CAPABILITY,
+                "unsupported-capability",
             );
         }
         let expected = Self::focus_expected_fingerprint(
@@ -2205,6 +2266,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "fingerprint-mismatch",
             );
         }
         if !self.claim_correlation(&request.correlation_id) {
@@ -2224,6 +2286,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "unseeded-trio",
             );
         }
         let flat: Vec<(String, String, String)> = request
@@ -2241,6 +2304,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "membership-mismatch",
             );
         }
         let owner = OwnerId::parse(&request.owner).expect("validated");
@@ -2324,6 +2388,7 @@ impl ManualTrioService {
                             .collect(),
                     }),
                     to_window: Some(plan.dispatch.operation.to_window.0.clone()),
+                    detail: None,
                 })
             }
             Err(ProposeError::PendingExists) => trio_focus_diverged(
@@ -2354,12 +2419,14 @@ impl ManualTrioService {
                         preconditions: None,
                         operation: None,
                         to_window: None,
+                        detail: None,
                     })
                 } else {
                     trio_focus_rejected(
                         request.correlation_id.clone(),
                         kind.as_str(),
                         kind.message(),
+                        trio_refusal_detail(kind),
                     )
                 }
             }
@@ -2416,7 +2483,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "verify" {
@@ -2424,16 +2491,23 @@ impl ManualTrioService {
                 trio_valid_correlation_echo(raw),
                 "unsupported-version",
                 TRIO_MSG_VERSION,
+                "unsupported-version",
             );
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
-            return trio_focus_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_focus_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         }
         if OwnerId::parse(&request.owner).is_none() {
             return trio_focus_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -2441,6 +2515,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -2448,6 +2523,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if request.verified_preconditions.len() != TRIO_FOCUS_PRECONDITIONS.len()
@@ -2492,13 +2568,19 @@ impl ManualTrioService {
             }
         }
         let Some(correlation) = CorrelationId::parse(&request.correlation_id) else {
-            return trio_focus_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_focus_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         };
         let Some(owner) = OwnerId::parse(&request.owner) else {
             return trio_focus_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         };
         let Some(generation) = GenerationId::parse(&request.generation) else {
@@ -2506,6 +2588,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         };
         let operation = FocusOperation {
@@ -2619,6 +2702,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "no-pending",
                 "no pending plan awaits verification",
+                "no-pending",
             );
         };
         match session.verify_focus(&post) {
@@ -2636,17 +2720,20 @@ impl ManualTrioService {
                     preconditions: None,
                     operation: None,
                     to_window: None,
+                    detail: None,
                 })
             }
             Err(crate::reconcile::VerifyError::NoPending) => trio_focus_rejected(
                 request.correlation_id.clone(),
                 "no-pending",
                 "no pending plan awaits verification",
+                "no-pending",
             ),
             Err(crate::reconcile::VerifyError::NotAcknowledged) => trio_focus_rejected(
                 request.correlation_id.clone(),
                 "not-acknowledged",
                 "plan awaits acknowledgement before verification",
+                "not-acknowledged",
             ),
             Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                 self.pending = None;
@@ -2684,13 +2771,13 @@ impl ManualTrioService {
                 let (kind, message) = trio_classify_parse_error(&error);
                 return match route {
                     TrioAckRoute::Focus => {
-                        trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                     TrioAckRoute::Movement => {
-                        trio_move_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_move_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                     TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                        trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                 };
             }
@@ -2699,29 +2786,47 @@ impl ManualTrioService {
         if !version_ok {
             let echo = trio_valid_correlation_echo(raw);
             return match route {
-                TrioAckRoute::Focus => {
-                    trio_focus_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
-                TrioAckRoute::Movement => {
-                    trio_move_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
-                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                    trio_resize_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
+                TrioAckRoute::Focus => trio_focus_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
+                TrioAckRoute::Movement => trio_move_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
+                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
             };
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
             let empty = String::new();
             return match route {
-                TrioAckRoute::Focus => {
-                    trio_focus_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
-                TrioAckRoute::Movement => {
-                    trio_move_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
-                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                    trio_resize_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
+                TrioAckRoute::Focus => trio_focus_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
+                TrioAckRoute::Movement => trio_move_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
+                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
             };
         }
         if OwnerId::parse(&request.owner).is_none() {
@@ -2730,16 +2835,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
             };
         }
@@ -2749,16 +2857,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
             };
         }
@@ -2768,16 +2879,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "revision-invalid",
                     TRIO_MSG_REVISION,
+                    "revision-invalid",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "revision-invalid",
                     TRIO_MSG_REVISION,
+                    "revision-invalid",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "revision-invalid",
                     TRIO_MSG_REVISION,
+                    "revision-invalid",
                 ),
             };
         }
@@ -2792,17 +2906,20 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "unknown-value",
                         TRIO_MSG_UNKNOWN_VALUE,
+                        "unknown-value",
                     ),
                     TrioAckRoute::Movement => trio_move_rejected(
                         request.correlation_id.clone(),
                         "unknown-value",
                         TRIO_MSG_UNKNOWN_VALUE,
+                        "unknown-value",
                     ),
                     TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
                         trio_resize_rejected(
                             request.correlation_id.clone(),
                             "unknown-value",
                             TRIO_MSG_UNKNOWN_VALUE,
+                            "unknown-value",
                         )
                     }
                 };
@@ -2823,21 +2940,31 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "cross-route-pending-fenced",
                 );
             }
         }
         let Some(correlation) = CorrelationId::parse(&request.correlation_id) else {
             let empty = String::new();
             return match route {
-                TrioAckRoute::Focus => {
-                    trio_focus_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
-                TrioAckRoute::Movement => {
-                    trio_move_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
-                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                    trio_resize_rejected(empty, "correlation-invalid", TRIO_MSG_CORRELATION)
-                }
+                TrioAckRoute::Focus => trio_focus_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
+                TrioAckRoute::Movement => trio_move_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
+                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
+                    empty,
+                    "correlation-invalid",
+                    TRIO_MSG_CORRELATION,
+                    "correlation-invalid",
+                ),
             };
         };
         let Some(owner) = OwnerId::parse(&request.owner) else {
@@ -2846,16 +2973,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "owner-invalid",
                     TRIO_MSG_OWNER,
+                    "owner-invalid",
                 ),
             };
         };
@@ -2865,16 +2995,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "generation-invalid",
                     TRIO_MSG_GENERATION,
+                    "generation-invalid",
                 ),
             };
         };
@@ -2891,16 +3024,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
             };
         };
@@ -2918,6 +3054,7 @@ impl ManualTrioService {
                     preconditions: None,
                     operation: None,
                     to_window: None,
+                    detail: None,
                 }),
                 TrioAckRoute::Movement => trio_serialize_move(&TrioMoveReply {
                     v: 1,
@@ -2933,6 +3070,7 @@ impl ManualTrioService {
                     operation: None,
                     desired_geometry: None,
                     desired_focus: None,
+                    detail: None,
                 }),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
                     trio_serialize_resize(&TrioResizeReply {
@@ -2948,6 +3086,7 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 }
             },
@@ -2956,16 +3095,19 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
                 TrioAckRoute::Movement => trio_move_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
                 TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits acknowledgement",
+                    "no-pending",
                 ),
             },
             Err(crate::reconcile::AckError::Diverged(reason)) => {
@@ -3003,13 +3145,13 @@ impl ManualTrioService {
                 let (kind, message) = trio_classify_parse_error(&error);
                 return match route {
                     TrioAckRoute::Focus => {
-                        trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_focus_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                     TrioAckRoute::Movement => {
-                        trio_move_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_move_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                     TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                        trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message)
+                        trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message, kind)
                     }
                 };
             }
@@ -3017,15 +3159,24 @@ impl ManualTrioService {
         if request.v != 1 || request.action != "note-loss" {
             let echo = trio_valid_correlation_echo(raw);
             return match route {
-                TrioAckRoute::Focus => {
-                    trio_focus_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
-                TrioAckRoute::Movement => {
-                    trio_move_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
-                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => {
-                    trio_resize_rejected(echo, "unsupported-version", TRIO_MSG_VERSION)
-                }
+                TrioAckRoute::Focus => trio_focus_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
+                TrioAckRoute::Movement => trio_move_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
+                TrioAckRoute::ResizeKeyboard | TrioAckRoute::ResizePointer => trio_resize_rejected(
+                    echo,
+                    "unsupported-version",
+                    TRIO_MSG_VERSION,
+                    "unsupported-version",
+                ),
             };
         }
         // Cross-route resize loss never touches the foreign pending cycle.
@@ -3043,6 +3194,7 @@ impl ManualTrioService {
                     String::new(),
                     "no-pending",
                     "no pending plan awaits loss",
+                    "cross-route-pending-fenced",
                 );
             }
         }
@@ -3079,13 +3231,18 @@ impl ManualTrioService {
     /// carries no per-window geometry and can never seed the trio.
     pub fn evaluate_movement_json(&mut self, request_json: &str) -> String {
         if request_json.len() > TRIO_MAX_REQUEST_BYTES {
-            return trio_move_rejected(String::new(), "oversized", TRIO_MSG_OVERSIZED);
+            return trio_move_rejected(
+                String::new(),
+                "oversized",
+                TRIO_MSG_OVERSIZED,
+                "oversized-request",
+            );
         }
         let raw: serde_json::Value = match serde_json::from_str(request_json) {
             Ok(raw) => raw,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_move_rejected(String::new(), kind, message);
+                return trio_move_rejected(String::new(), kind, message, kind);
             }
         };
         let action = raw
@@ -3103,7 +3260,7 @@ impl ManualTrioService {
                 } else {
                     ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
                 };
-                trio_move_rejected(trio_valid_correlation_echo(&raw), kind, message)
+                trio_move_rejected(trio_valid_correlation_echo(&raw), kind, message, kind)
             }
         }
     }
@@ -3113,7 +3270,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_move_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_move_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "request" {
@@ -3122,16 +3279,22 @@ impl ManualTrioService {
             } else {
                 ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
             };
-            return trio_move_rejected(request.correlation_id.clone(), kind, message);
+            return trio_move_rejected(request.correlation_id.clone(), kind, message, kind);
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
-            return trio_move_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_move_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         }
         if OwnerId::parse(&request.owner).is_none() {
             return trio_move_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -3139,6 +3302,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -3146,6 +3310,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if !trio_is_opaque_id(&request.domain.output)
@@ -3156,6 +3321,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OPAQUE_ID,
+                "root-id-invalid",
             );
         }
         let Some(direction) = trio_parse_direction(&request.direction) else {
@@ -3163,6 +3329,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "direction-invalid",
                 TRIO_MSG_DIRECTION,
+                "direction-invalid",
             );
         };
         if request.windows.len() != TRIO_WINDOWS {
@@ -3170,6 +3337,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "window-count-mismatch",
             );
         }
         {
@@ -3183,6 +3351,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "observed-id-invalid",
                     );
                 }
                 if !seen.insert(entry.window.clone()) {
@@ -3190,6 +3359,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "duplicate-window",
                     );
                 }
             }
@@ -3207,6 +3377,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "fingerprint-mismatch",
             );
         }
         if !request.windows.iter().any(|w| {
@@ -3218,6 +3389,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "focused-observation-mismatch",
             );
         }
         if !self.claim_correlation(&request.correlation_id) {
@@ -3237,6 +3409,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "unseeded-trio",
             );
         }
         let flat: Vec<(String, String, String)> = request
@@ -3254,6 +3427,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "membership-mismatch",
             );
         }
         // The trio scope is exactly one domain: a carried domains vector must
@@ -3265,6 +3439,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "movement-domain-mismatch",
             );
         }
         let owner = OwnerId::parse(&request.owner).expect("validated");
@@ -3357,6 +3532,7 @@ impl ManualTrioService {
                     operation: Some(operation),
                     desired_geometry: Some(desired_geometry),
                     desired_focus: Some(desired_focus),
+                    detail: None,
                 })
             }
             Err(ProposeError::PendingExists) => trio_move_diverged(
@@ -3389,12 +3565,14 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 } else {
                     trio_move_rejected(
                         request.correlation_id.clone(),
                         kind.as_str(),
                         kind.message(),
+                        trio_refusal_detail(kind),
                     )
                 }
             }
@@ -3506,7 +3684,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_move_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_move_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "verify" {
@@ -3514,16 +3692,23 @@ impl ManualTrioService {
                 trio_valid_correlation_echo(raw),
                 "unsupported-version",
                 TRIO_MSG_VERSION,
+                "unsupported-version",
             );
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
-            return trio_move_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_move_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         }
         if OwnerId::parse(&request.owner).is_none() {
             return trio_move_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -3531,6 +3716,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -3538,6 +3724,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if request.verified_geometry.is_empty()
@@ -3587,13 +3774,19 @@ impl ManualTrioService {
             preconditions.push(pre);
         }
         let Some(correlation) = CorrelationId::parse(&request.correlation_id) else {
-            return trio_move_rejected(String::new(), "correlation-invalid", TRIO_MSG_CORRELATION);
+            return trio_move_rejected(
+                String::new(),
+                "correlation-invalid",
+                TRIO_MSG_CORRELATION,
+                "correlation-invalid",
+            );
         };
         let Some(owner) = OwnerId::parse(&request.owner) else {
             return trio_move_rejected(
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         };
         let Some(generation) = GenerationId::parse(&request.generation) else {
@@ -3601,6 +3794,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         };
         let Some(pending) = self.pending.clone() else {
@@ -3609,6 +3803,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits verification",
+                    "no-pending",
                 );
             }
             let post = PostObservation::new(
@@ -3636,17 +3831,20 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 }
                 Err(crate::reconcile::VerifyError::NoPending) => trio_move_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits verification",
+                    "no-pending",
                 ),
                 Err(crate::reconcile::VerifyError::NotAcknowledged) => trio_move_rejected(
                     request.correlation_id.clone(),
                     "not-acknowledged",
                     "plan awaits acknowledgement before verification",
+                    "not-acknowledged",
                 ),
                 Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                     self.pending = None;
@@ -3827,17 +4025,20 @@ impl ManualTrioService {
                     operation: None,
                     desired_geometry: None,
                     desired_focus: None,
+                    detail: None,
                 })
             }
             Err(crate::reconcile::VerifyError::NoPending) => trio_move_rejected(
                 request.correlation_id.clone(),
                 "no-pending",
                 "no pending plan awaits verification",
+                "no-pending",
             ),
             Err(crate::reconcile::VerifyError::NotAcknowledged) => trio_move_rejected(
                 request.correlation_id.clone(),
                 "not-acknowledged",
                 "plan awaits acknowledgement before verification",
+                "not-acknowledged",
             ),
             Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                 self.pending = None;
@@ -3856,13 +4057,18 @@ impl ManualTrioService {
     /// mutation and pointer-owned pending is never touched.
     pub fn evaluate_keyboard_json(&mut self, request_json: &str) -> String {
         if request_json.len() > TRIO_MAX_REQUEST_BYTES {
-            return trio_resize_rejected(String::new(), "oversized", TRIO_MSG_OVERSIZED);
+            return trio_resize_rejected(
+                String::new(),
+                "oversized",
+                TRIO_MSG_OVERSIZED,
+                "oversized-request",
+            );
         }
         let raw: serde_json::Value = match serde_json::from_str(request_json) {
             Ok(raw) => raw,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_resize_rejected(String::new(), kind, message);
+                return trio_resize_rejected(String::new(), kind, message, kind);
             }
         };
         let action = raw
@@ -3875,6 +4081,7 @@ impl ManualTrioService {
                 trio_valid_correlation_echo(&raw),
                 "unknown-value",
                 TRIO_MSG_UNKNOWN_VALUE,
+                "cross-route-action-fenced",
             ),
             "acknowledge" => {
                 if self.resize_pending_is(TrioResizeOrigin::Pointer) {
@@ -3882,6 +4089,7 @@ impl ManualTrioService {
                         trio_valid_correlation_echo(&raw),
                         "no-pending",
                         "no pending plan awaits acknowledgement",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_trio_ack(&raw, TrioAckRoute::ResizeKeyboard)
@@ -3892,6 +4100,7 @@ impl ManualTrioService {
                         trio_valid_correlation_echo(&raw),
                         "no-pending",
                         "no pending plan awaits verification",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_resize_verify(&raw, TrioResizeOrigin::Keyboard)
@@ -3902,6 +4111,7 @@ impl ManualTrioService {
                         String::new(),
                         "no-pending",
                         "no pending plan awaits loss",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_trio_loss(&raw, TrioAckRoute::ResizeKeyboard)
@@ -3912,7 +4122,7 @@ impl ManualTrioService {
                 } else {
                     ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
                 };
-                trio_resize_rejected(trio_valid_correlation_echo(&raw), kind, message)
+                trio_resize_rejected(trio_valid_correlation_echo(&raw), kind, message, kind)
             }
         }
     }
@@ -3923,13 +4133,18 @@ impl ManualTrioService {
     /// mutation and keyboard-owned pending is never touched.
     pub fn evaluate_pointer_json(&mut self, request_json: &str) -> String {
         if request_json.len() > TRIO_MAX_REQUEST_BYTES {
-            return trio_resize_rejected(String::new(), "oversized", TRIO_MSG_OVERSIZED);
+            return trio_resize_rejected(
+                String::new(),
+                "oversized",
+                TRIO_MSG_OVERSIZED,
+                "oversized-request",
+            );
         }
         let raw: serde_json::Value = match serde_json::from_str(request_json) {
             Ok(raw) => raw,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_resize_rejected(String::new(), kind, message);
+                return trio_resize_rejected(String::new(), kind, message, kind);
             }
         };
         let action = raw
@@ -3942,6 +4157,7 @@ impl ManualTrioService {
                 trio_valid_correlation_echo(&raw),
                 "unknown-value",
                 TRIO_MSG_UNKNOWN_VALUE,
+                "cross-route-action-fenced",
             ),
             "acknowledge" => {
                 if self.resize_pending_is(TrioResizeOrigin::Keyboard) {
@@ -3949,6 +4165,7 @@ impl ManualTrioService {
                         trio_valid_correlation_echo(&raw),
                         "no-pending",
                         "no pending plan awaits acknowledgement",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_trio_ack(&raw, TrioAckRoute::ResizePointer)
@@ -3959,6 +4176,7 @@ impl ManualTrioService {
                         trio_valid_correlation_echo(&raw),
                         "no-pending",
                         "no pending plan awaits verification",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_resize_verify(&raw, TrioResizeOrigin::Pointer)
@@ -3969,6 +4187,7 @@ impl ManualTrioService {
                         String::new(),
                         "no-pending",
                         "no pending plan awaits loss",
+                        "cross-route-pending-fenced",
                     );
                 }
                 self.evaluate_trio_loss(&raw, TrioAckRoute::ResizePointer)
@@ -3979,7 +4198,7 @@ impl ManualTrioService {
                 } else {
                     ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
                 };
-                trio_resize_rejected(trio_valid_correlation_echo(&raw), kind, message)
+                trio_resize_rejected(trio_valid_correlation_echo(&raw), kind, message, kind)
             }
         }
     }
@@ -4026,7 +4245,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "request" {
@@ -4035,13 +4254,14 @@ impl ManualTrioService {
             } else {
                 ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
             };
-            return trio_resize_rejected(request.correlation_id.clone(), kind, message);
+            return trio_resize_rejected(request.correlation_id.clone(), kind, message, kind);
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
             return trio_resize_rejected(
                 String::new(),
                 "correlation-invalid",
                 TRIO_MSG_CORRELATION,
+                "correlation-invalid",
             );
         }
         if OwnerId::parse(&request.owner).is_none() {
@@ -4049,6 +4269,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -4056,6 +4277,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -4063,6 +4285,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if !trio_is_opaque_id(&request.domain.output)
@@ -4073,6 +4296,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OPAQUE_ID,
+                "root-id-invalid",
             );
         }
         let Some(direction) = trio_parse_direction(&request.direction) else {
@@ -4080,6 +4304,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "direction-invalid",
                 TRIO_MSG_DIRECTION,
+                "direction-invalid",
             );
         };
         if request.windows.len() != TRIO_WINDOWS {
@@ -4087,6 +4312,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "window-count-mismatch",
             );
         }
         {
@@ -4100,6 +4326,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "observed-id-invalid",
                     );
                 }
                 if !seen.insert(entry.window.clone()) {
@@ -4107,6 +4334,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "duplicate-window",
                     );
                 }
             }
@@ -4116,6 +4344,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "unsupported-capability",
                 TRIO_MSG_CAPABILITY,
+                "unsupported-capability",
             );
         }
         let Some(carried_bounds) = Self::resize_carried_bounds(&request.domain) else {
@@ -4123,6 +4352,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "carried-bounds-invalid",
             );
         };
         for entry in &request.windows {
@@ -4131,6 +4361,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "snapshot-invalid",
                     TRIO_MSG_OBSERVATION,
+                    "carried-rect-invalid",
                 );
             }
             if !rect_contained_in(
@@ -4146,6 +4377,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "snapshot-invalid",
                     TRIO_MSG_OBSERVATION,
+                    "rect-containment-mismatch",
                 );
             }
         }
@@ -4160,6 +4392,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "fingerprint-mismatch",
             );
         }
         for entry in &request.windows {
@@ -4169,6 +4402,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "cross-domain-mismatch",
                     TRIO_MSG_OBSERVATION,
+                    "cross-domain-observation",
                 );
             }
         }
@@ -4181,6 +4415,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "focused-observation-mismatch",
             );
         }
         if !self.claim_correlation(&request.correlation_id) {
@@ -4214,6 +4449,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "seed-failed",
             );
         }
         if !self.resize_seeded_matches(
@@ -4227,6 +4463,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "seeded-membership-mismatch",
             );
         }
         let domain = DomainKey {
@@ -4266,6 +4503,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "direction-invalid",
                 TRIO_MSG_DIRECTION,
+                "resize-mode-invalid",
             );
         };
         match session.propose_resize(
@@ -4319,12 +4557,14 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 } else {
                     trio_resize_rejected(
                         request.correlation_id.clone(),
                         kind.as_str(),
                         kind.message(),
+                        trio_refusal_detail(kind),
                     )
                 }
             }
@@ -4403,6 +4643,7 @@ impl ManualTrioService {
             operation: Some(operation),
             desired_geometry: Some(desired_geometry),
             desired_focus: Some(desired_focus),
+            detail: None,
         })
     }
 
@@ -4411,7 +4652,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "request-pointer" {
@@ -4420,13 +4661,14 @@ impl ManualTrioService {
             } else {
                 ("unknown-value", TRIO_MSG_UNKNOWN_VALUE)
             };
-            return trio_resize_rejected(request.correlation_id.clone(), kind, message);
+            return trio_resize_rejected(request.correlation_id.clone(), kind, message, kind);
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
             return trio_resize_rejected(
                 String::new(),
                 "correlation-invalid",
                 TRIO_MSG_CORRELATION,
+                "correlation-invalid",
             );
         }
         if OwnerId::parse(&request.owner).is_none() {
@@ -4434,6 +4676,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -4441,6 +4684,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -4448,6 +4692,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if !trio_is_opaque_id(&request.domain.output)
@@ -4458,6 +4703,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OPAQUE_ID,
+                "root-id-invalid",
             );
         }
         let Some(direction) = trio_parse_direction(&request.direction) else {
@@ -4465,6 +4711,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "direction-invalid",
                 TRIO_MSG_DIRECTION,
+                "direction-invalid",
             );
         };
         if request.windows.len() != TRIO_WINDOWS {
@@ -4472,6 +4719,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "window-count-mismatch",
             );
         }
         {
@@ -4485,6 +4733,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "observed-id-invalid",
                     );
                 }
                 if !seen.insert(entry.window.clone()) {
@@ -4492,6 +4741,7 @@ impl ManualTrioService {
                         request.correlation_id.clone(),
                         "snapshot-invalid",
                         TRIO_MSG_OPAQUE_ID,
+                        "duplicate-window",
                     );
                 }
             }
@@ -4501,6 +4751,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "unsupported-capability",
                 TRIO_MSG_CAPABILITY,
+                "unsupported-capability",
             );
         }
         let Some(carried_bounds) = Self::resize_carried_bounds(&request.domain) else {
@@ -4508,6 +4759,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "carried-bounds-invalid",
             );
         };
         for entry in &request.windows {
@@ -4516,6 +4768,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "snapshot-invalid",
                     TRIO_MSG_OBSERVATION,
+                    "carried-rect-invalid",
                 );
             }
             if !rect_contained_in(
@@ -4531,6 +4784,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "snapshot-invalid",
                     TRIO_MSG_OBSERVATION,
+                    "rect-containment-mismatch",
                 );
             }
         }
@@ -4545,6 +4799,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "fingerprint-mismatch",
             );
         }
         for entry in &request.windows {
@@ -4554,6 +4809,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "cross-domain-mismatch",
                     TRIO_MSG_OBSERVATION,
+                    "cross-domain-observation",
                 );
             }
         }
@@ -4566,6 +4822,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "focused-observation-mismatch",
             );
         }
         if !self.claim_correlation(&request.correlation_id) {
@@ -4599,6 +4856,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "seed-failed",
             );
         }
         if !self.resize_seeded_matches(
@@ -4612,6 +4870,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "snapshot-invalid",
                 TRIO_MSG_OBSERVATION,
+                "seeded-membership-mismatch",
             );
         }
         let domain = DomainKey {
@@ -4696,12 +4955,14 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 } else {
                     trio_resize_rejected(
                         request.correlation_id.clone(),
                         kind.as_str(),
                         kind.message(),
+                        trio_refusal_detail(kind),
                     )
                 }
             }
@@ -4762,7 +5023,7 @@ impl ManualTrioService {
             Ok(request) => request,
             Err(error) => {
                 let (kind, message) = trio_classify_parse_error(&error);
-                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message);
+                return trio_resize_rejected(trio_valid_correlation_echo(raw), kind, message, kind);
             }
         };
         if request.v != 1 || request.action != "verify" {
@@ -4770,6 +5031,7 @@ impl ManualTrioService {
                 trio_valid_correlation_echo(raw),
                 "unsupported-version",
                 TRIO_MSG_VERSION,
+                "unsupported-version",
             );
         }
         if CorrelationId::parse(&request.correlation_id).is_none() {
@@ -4777,6 +5039,7 @@ impl ManualTrioService {
                 String::new(),
                 "correlation-invalid",
                 TRIO_MSG_CORRELATION,
+                "correlation-invalid",
             );
         }
         if OwnerId::parse(&request.owner).is_none() {
@@ -4784,6 +5047,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         }
         if GenerationId::parse(&request.generation).is_none() {
@@ -4791,6 +5055,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         }
         if request.revision > TRIO_MAX_REVISION {
@@ -4798,6 +5063,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "revision-invalid",
                 TRIO_MSG_REVISION,
+                "revision-invalid",
             );
         }
         if request.verified_geometry.is_empty()
@@ -4860,6 +5126,7 @@ impl ManualTrioService {
                 String::new(),
                 "correlation-invalid",
                 TRIO_MSG_CORRELATION,
+                "correlation-invalid",
             );
         };
         let Some(owner) = OwnerId::parse(&request.owner) else {
@@ -4867,6 +5134,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "owner-invalid",
                 TRIO_MSG_OWNER,
+                "owner-invalid",
             );
         };
         let Some(generation) = GenerationId::parse(&request.generation) else {
@@ -4874,6 +5142,7 @@ impl ManualTrioService {
                 request.correlation_id.clone(),
                 "generation-invalid",
                 TRIO_MSG_GENERATION,
+                "generation-invalid",
             );
         };
         let Some(TrioPending::Resize {
@@ -4891,6 +5160,7 @@ impl ManualTrioService {
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits verification",
+                    "no-pending",
                 );
             }
             let post = ResizePostObservation::new(
@@ -4917,17 +5187,20 @@ impl ManualTrioService {
                         operation: None,
                         desired_geometry: None,
                         desired_focus: None,
+                        detail: None,
                     })
                 }
                 Err(crate::reconcile::VerifyError::NoPending) => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "no-pending",
                     "no pending plan awaits verification",
+                    "no-pending",
                 ),
                 Err(crate::reconcile::VerifyError::NotAcknowledged) => trio_resize_rejected(
                     request.correlation_id.clone(),
                     "not-acknowledged",
                     "plan awaits acknowledgement before verification",
+                    "not-acknowledged",
                 ),
                 Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                     self.pending = None;
@@ -5089,17 +5362,20 @@ impl ManualTrioService {
                     operation: None,
                     desired_geometry: None,
                     desired_focus: None,
+                    detail: None,
                 })
             }
             Err(crate::reconcile::VerifyError::NoPending) => trio_resize_rejected(
                 request.correlation_id.clone(),
                 "no-pending",
                 "no pending plan awaits verification",
+                "no-pending",
             ),
             Err(crate::reconcile::VerifyError::NotAcknowledged) => trio_resize_rejected(
                 request.correlation_id.clone(),
                 "not-acknowledged",
                 "plan awaits acknowledgement before verification",
+                "not-acknowledged",
             ),
             Err(crate::reconcile::VerifyError::Diverged(reason)) => {
                 self.pending = None;
@@ -5970,5 +6246,444 @@ mod trio_service_tests {
         .to_string();
         let late = reply_of(&service.evaluate_movement_json(&late_move_verify));
         assert_eq!(late["outcome"], "diverged", "{late}");
+    }
+
+    fn assert_rejected_detail(
+        route: crate::route_diag::Route,
+        reply_text: &str,
+        expected: &str,
+    ) -> serde_json::Value {
+        let reply: serde_json::Value = serde_json::from_str(reply_text).expect("reply is JSON");
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["detail"], expected, "{reply}");
+        assert!(
+            reply_text.len() <= TRIO_MAX_REPLY_BYTES,
+            "rejected reply exceeds cap"
+        );
+        let route_line = crate::route_diag::describe_reply(route, reply_text);
+        assert!(route_line.contains("result=rejected"), "{route_line}");
+        assert!(
+            route_line.ends_with(&format!(":detail={expected}")),
+            "{route_line}"
+        );
+        let session = crate::route_diag::session_line_for_reply(reply_text)
+            .expect("rejected yields a session line");
+        assert!(session.contains("result=rejected"), "{session}");
+        assert!(
+            session.ends_with(&format!(":detail={expected}")),
+            "{session}"
+        );
+        reply
+    }
+
+    fn fp_for(focused: &str, ids: &[&str]) -> u64 {
+        let owned: Vec<String> = ids.iter().map(|s| (*s).to_owned()).collect();
+        crate::focus_service::focus_fingerprint("out-1", "ws-1", focused, &owned)
+    }
+
+    fn seed_and_commit(service: &mut ManualTrioService) {
+        let plan = reply_of(&service.evaluate_keyboard_json(&keyboard_request(
+            "trio-seed-cm",
+            "win-c",
+            3,
+            eligible_windows(),
+        )));
+        assert_eq!(plan["outcome"], "planned", "{plan}");
+        let reply = reply_of(&service.evaluate_keyboard_json(&ack("trio-seed-cm", 3)));
+        assert_eq!(reply["outcome"], "acknowledged", "{reply}");
+        let reply = reply_of(&service.evaluate_keyboard_json(&resize_verify_from_plan(
+            &plan,
+            "trio-seed-cm",
+            "win-c",
+            3,
+        )));
+        assert_eq!(reply["outcome"], "committed", "{reply}");
+        assert_eq!(service.accepted_revision(), 4);
+    }
+
+    #[test]
+    fn focus_two_window_request_carries_count_mismatch_detail() {
+        let mut service = ManualTrioService::new();
+        let two = serde_json::json!([
+            {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+            {"window": "win-b", "output": "out-1", "workspace": "ws-1"}
+        ]);
+        let request = serde_json::json!({
+            "v": 1, "action": "request", "correlation_id": "trio-2w-1",
+            "owner": "owner-1", "generation": "gen-1", "revision": 2,
+            "fingerprint": fp_for("win-b", &["win-a", "win-b"]),
+            "domain": {"output": "out-1", "workspace": "ws-1"},
+            "focused_window": "win-b", "direction": "up",
+            "windows": two,
+            "capabilities": {"directional_focus": true}
+        })
+        .to_string();
+        let reply_text = service.evaluate_focus_json(&request);
+        assert_rejected_detail(
+            crate::route_diag::Route::Focus,
+            &reply_text,
+            "window-count-mismatch",
+        );
+        assert!(!service.is_established());
+    }
+
+    #[test]
+    fn rejection_details_are_branch_specific_across_routes() {
+        // Focus root vs observed vs duplicate vs fingerprint vs unseeded.
+        {
+            let mut service = ManualTrioService::new();
+            let bad_root = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-1",
+                "owner": "owner-1", "generation": "gen-1", "revision": 3,
+                "fingerprint": fp("win-c"),
+                "domain": {"output": "", "workspace": "ws-1"},
+                "focused_window": "win-c", "direction": "up",
+                "windows": plain_windows(),
+                "capabilities": {"directional_focus": true}
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&bad_root),
+                "root-id-invalid",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let bad_observed = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-2",
+                "owner": "owner-1", "generation": "gen-1", "revision": 3,
+                "fingerprint": fp("win-c"),
+                "domain": {"output": "out-1", "workspace": "ws-1"},
+                "focused_window": "win-c", "direction": "up",
+                "windows": [
+                    {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "bad id!!", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "win-c", "output": "out-1", "workspace": "ws-1"}
+                ],
+                "capabilities": {"directional_focus": true}
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&bad_observed),
+                "observed-id-invalid",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let dupe = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-3",
+                "owner": "owner-1", "generation": "gen-1", "revision": 3,
+                "fingerprint": fp("win-c"),
+                "domain": {"output": "out-1", "workspace": "ws-1"},
+                "focused_window": "win-c", "direction": "up",
+                "windows": [
+                    {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "win-c", "output": "out-1", "workspace": "ws-1"}
+                ],
+                "capabilities": {"directional_focus": true}
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&dupe),
+                "duplicate-window",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let mut bad_fp =
+                serde_json::from_str::<serde_json::Value>(&focus_request("trio-br-4", "win-c", 3))
+                    .expect("valid");
+            bad_fp["fingerprint"] = serde_json::json!(0);
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&bad_fp.to_string()),
+                "fingerprint-mismatch",
+            );
+        }
+        {
+            // Unseeded trio: fully valid focus request on a fresh service.
+            let mut service = ManualTrioService::new();
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&focus_request("trio-br-5", "win-c", 3)),
+                "unseeded-trio",
+            );
+        }
+        {
+            // Membership mismatch on a seeded service (unknown win-x with a
+            // matching fingerprint so the fingerprint gate passes).
+            let mut service = ManualTrioService::new();
+            seed_and_commit(&mut service);
+            let request = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-6",
+                "owner": "owner-1", "generation": "gen-1", "revision": 4,
+                "fingerprint": fp_for("win-c", &["win-a", "win-b", "win-x"]),
+                "domain": {"output": "out-1", "workspace": "ws-1"},
+                "focused_window": "win-c", "direction": "up",
+                "windows": [
+                    {"window": "win-a", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "win-b", "output": "out-1", "workspace": "ws-1"},
+                    {"window": "win-x", "output": "out-1", "workspace": "ws-1"}
+                ],
+                "capabilities": {"directional_focus": true}
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Focus,
+                &service.evaluate_focus_json(&request),
+                "membership-mismatch",
+            );
+        }
+        // Movement focused-observation vs domain mismatch.
+        {
+            let mut service = ManualTrioService::new();
+            seed_and_commit(&mut service);
+            let request = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-7",
+                "owner": "owner-1", "generation": "gen-1", "revision": 4,
+                "fingerprint": fp_for("win-x", &["win-a", "win-b", "win-c"]),
+                "domain": {"output": "out-1", "workspace": "ws-1"},
+                "focused_window": "win-x", "direction": "down",
+                "windows": plain_windows(),
+                "capabilities": {
+                    "swap_neighbor": true, "wrap_perpendicular": true, "wrap_siblings": true,
+                    "insert_child": true, "split_group_child": true, "reparent_leaf": true,
+                    "cross_output_transfer": true
+                }
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Movement,
+                &service.evaluate_movement_json(&request),
+                "focused-observation-mismatch",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            seed_and_commit(&mut service);
+            let mut request = serde_json::from_str::<serde_json::Value>(&movement_request(
+                "trio-br-8",
+                "win-b",
+                "down",
+                4,
+            ))
+            .expect("valid");
+            request["domains"] = serde_json::json!([{
+                "output": "out-1", "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1600, "h": 900}, "gap": 8,
+                "adjacent": {}
+            }]);
+            assert_rejected_detail(
+                crate::route_diag::Route::Movement,
+                &service.evaluate_movement_json(&request.to_string()),
+                "movement-domain-mismatch",
+            );
+        }
+        // Resize carried bounds/rect/containment/cross-domain/seed/seeded/mode.
+        {
+            let mut service = ManualTrioService::new();
+            let mut request = serde_json::from_str::<serde_json::Value>(&keyboard_request(
+                "trio-br-9",
+                "win-c",
+                3,
+                eligible_windows(),
+            ))
+            .expect("valid");
+            request["domain"]["gap"] = serde_json::json!(999);
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&request.to_string()),
+                "carried-bounds-invalid",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let bad_rect = windows_json((100, 100, 0, 400), (200, 200, 400, 640));
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&keyboard_request(
+                    "trio-br-10",
+                    "win-c",
+                    3,
+                    bad_rect,
+                )),
+                "carried-rect-invalid",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let outside = windows_json((1900, 1000, 100, 40), (200, 200, 400, 640));
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&keyboard_request(
+                    "trio-br-11",
+                    "win-c",
+                    3,
+                    outside,
+                )),
+                "rect-containment-mismatch",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let mut request = serde_json::from_str::<serde_json::Value>(&keyboard_request(
+                "trio-br-12",
+                "win-c",
+                3,
+                eligible_windows(),
+            ))
+            .expect("valid");
+            request["windows"][0]["output"] = serde_json::json!("out-2");
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&request.to_string()),
+                "cross-domain-observation",
+            );
+        }
+        {
+            // Seed failure: sorted-B tall cannot select wide Horizontal.
+            let mut service = ManualTrioService::new();
+            let tall_b = windows_json((100, 100, 400, 640), (200, 200, 400, 640));
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&keyboard_request(
+                    "trio-br-13",
+                    "win-c",
+                    3,
+                    tall_b,
+                )),
+                "seed-failed",
+            );
+            assert!(!service.is_established());
+        }
+        {
+            // Seeded membership: same windows under a different work area.
+            let mut service = ManualTrioService::new();
+            seed_and_commit(&mut service);
+            let mut request = serde_json::from_str::<serde_json::Value>(&keyboard_request(
+                "trio-br-14",
+                "win-c",
+                4,
+                eligible_windows(),
+            ))
+            .expect("valid");
+            request["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 1600, "h": 900});
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&request.to_string()),
+                "seeded-membership-mismatch",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let mut request = serde_json::from_str::<serde_json::Value>(&keyboard_request(
+                "trio-br-15",
+                "win-c",
+                3,
+                eligible_windows(),
+            ))
+            .expect("valid");
+            request["mode"] = serde_json::json!("sideways");
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&request.to_string()),
+                "resize-mode-invalid",
+            );
+        }
+        // Pointer route carries its own bounds detail; keyboard/pointer
+        // foreign actions are fenced.
+        {
+            let mut service = ManualTrioService::new();
+            let mut request =
+                serde_json::from_str::<serde_json::Value>(&pointer_request("trio-br-16", 520, 3))
+                    .expect("valid");
+            request["domain"]["gap"] = serde_json::json!(999);
+            assert_rejected_detail(
+                crate::route_diag::Route::Pointer,
+                &service.evaluate_pointer_json(&request.to_string()),
+                "carried-bounds-invalid",
+            );
+        }
+        {
+            let mut service = ManualTrioService::new();
+            let foreign = pointer_request("trio-br-17", 520, 3);
+            assert_rejected_detail(
+                crate::route_diag::Route::Resize,
+                &service.evaluate_keyboard_json(&foreign),
+                "cross-route-action-fenced",
+            );
+            assert!(!service.is_established());
+        }
+        {
+            // Cross-route pending fencing: keyboard owns the pending plan, so
+            // a pointer acknowledge is fenced without mutation.
+            let mut service = ManualTrioService::new();
+            let plan = reply_of(&service.evaluate_keyboard_json(&keyboard_request(
+                "trio-br-18",
+                "win-c",
+                3,
+                eligible_windows(),
+            )));
+            assert_eq!(plan["outcome"], "planned", "{plan}");
+            assert_rejected_detail(
+                crate::route_diag::Route::Pointer,
+                &service.evaluate_pointer_json(&ack("trio-br-18", 3)),
+                "cross-route-pending-fenced",
+            );
+            assert!(service.is_established());
+        }
+        // Session-layer refusal surfaces its own detail (movement with no
+        // capabilities cannot plan).
+        {
+            let mut service = ManualTrioService::new();
+            seed_and_commit(&mut service);
+            let request = serde_json::json!({
+                "v": 1, "action": "request", "correlation_id": "trio-br-19",
+                "owner": "owner-1", "generation": "gen-1", "revision": 4,
+                "fingerprint": fp("win-c"),
+                "domain": {"output": "out-1", "workspace": "ws-1"},
+                "focused_window": "win-c", "direction": "up",
+                "windows": plain_windows(),
+                "capabilities": {
+                    "swap_neighbor": false, "wrap_perpendicular": false, "wrap_siblings": false,
+                    "insert_child": false, "split_group_child": false, "reparent_leaf": false,
+                    "cross_output_transfer": false
+                }
+            })
+            .to_string();
+            assert_rejected_detail(
+                crate::route_diag::Route::Movement,
+                &service.evaluate_movement_json(&request),
+                "refused-unsupported-capability",
+            );
+        }
+        // Oversized envelope carries its bounded detail on every route.
+        {
+            let big = "x".repeat(TRIO_MAX_REQUEST_BYTES + 1);
+            for (route, text) in [
+                (
+                    crate::route_diag::Route::Focus,
+                    ManualTrioService::new().evaluate_focus_json(&big),
+                ),
+                (
+                    crate::route_diag::Route::Movement,
+                    ManualTrioService::new().evaluate_movement_json(&big),
+                ),
+                (
+                    crate::route_diag::Route::Resize,
+                    ManualTrioService::new().evaluate_keyboard_json(&big),
+                ),
+                (
+                    crate::route_diag::Route::Pointer,
+                    ManualTrioService::new().evaluate_pointer_json(&big),
+                ),
+            ] {
+                assert_rejected_detail(route, &text, "oversized-request");
+            }
+        }
     }
 }
