@@ -72,6 +72,8 @@ export const MOVEMENT_MAX_SEQ = 1000000;
 
 const LOG_PREFIX = "plasma-auto-tiler:movement";
 
+import { formatRouteDiag } from "./route-diag";
+
 export type MovementDirection = "left" | "right" | "up" | "down";
 export type MovementSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
 
@@ -1219,6 +1221,10 @@ export class MovementAdapter {
         }
         this.lastFingerprint = current.fingerprint;
         this.lastDirection = direction;
+        this.diag("req", correlation, [
+            ["rev", requestRevision],
+            ["windows", sortedIds.length],
+        ]);
         this.startFlight(payload, correlation, direction, current);
     }
 
@@ -1251,11 +1257,12 @@ export class MovementAdapter {
         this.activeToken = flight;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
         } catch (error) {
             void error;
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "timer-failed"]]);
             this.reject("movement-timer-failed");
             this.disable();
             return;
@@ -1279,6 +1286,7 @@ export class MovementAdapter {
             this.clearTimer();
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("movement-dbus-failed");
             this.disable();
         }
@@ -1296,6 +1304,7 @@ export class MovementAdapter {
         if (isUniqueOwner(reply)) {
             this.pinnedOwner = reply;
             this.activationStep = 4;
+            this.diag("owner", correlation, [["transition", "pinned"]]);
             this.sendPlannerRequest(flight, payload, correlation);
             return;
         }
@@ -1303,6 +1312,7 @@ export class MovementAdapter {
         // flags value 0 is fixed (MOVEMENT_START_FLAGS); the production entry
         // appends it as the second native D-Bus argument.
         this.activationStep = 2;
+        this.diag("owner", correlation, [["transition", "activating"]]);
         try {
             this.env.callDbus(
                 MOVEMENT_DBUS_SERVICE,
@@ -1318,6 +1328,7 @@ export class MovementAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("movement-dbus-failed");
             this.disable();
         }
@@ -1342,6 +1353,8 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("owner", correlation, [["transition", "activation-failed"]]);
+            this.diag("result", correlation, [["result", "activation-failed"]]);
             this.reject("movement-activation-failed");
             this.disable();
             return;
@@ -1364,6 +1377,7 @@ export class MovementAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("movement-dbus-failed");
             this.disable();
         }
@@ -1386,6 +1400,8 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("movement-owner-missing");
             this.disable();
             return;
@@ -1405,6 +1421,8 @@ export class MovementAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("movement-owner-missing");
             this.disable();
             return;
@@ -1424,12 +1442,13 @@ export class MovementAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("movement-dbus-failed");
             this.disable();
         }
     }
 
-    private onTimeout(flight: number, stage: string): void {
+    private onTimeout(flight: number, stage: string, correlation?: string): void {
         if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
@@ -1443,6 +1462,13 @@ export class MovementAdapter {
         this.pendingObserved = null;
         this.pendingDirection = null;
         this.pendingMover = null;
+        const timeoutCorr = correlation ?? lost?.correlationId;
+        if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+            this.diag("result", timeoutCorr, [
+                ["result", "timeout"],
+                ["detail", stage],
+            ]);
+        }
         this.reject(`movement-timeout-${stage}`);
         this.disable();
     }
@@ -1459,6 +1485,7 @@ export class MovementAdapter {
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
@@ -1469,12 +1496,14 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed)) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
@@ -1483,12 +1512,14 @@ export class MovementAdapter {
         if (outcome === "noop") {
             if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "service-fault"]]);
                 this.reject("movement-service-fault");
                 this.disable();
                 return;
             }
             if (parsed["correlation_id"] !== correlation) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
                 this.reject("movement-correlation-mismatch");
                 this.disable();
                 return;
@@ -1502,6 +1533,7 @@ export class MovementAdapter {
             // and re-pins. Adapter stays enabled (no disable here).
             this.pinnedOwner = null;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "noop"]]);
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -1511,6 +1543,7 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("result", correlation, [["result", "rejected"]]);
             this.reject("movement-rejected");
             this.disable();
             return;
@@ -1521,12 +1554,14 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("result", correlation, [["result", "diverged"]]);
             this.reject("movement-diverged");
             this.disable();
             return;
         }
         if (outcome !== "planned") {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
@@ -1540,6 +1575,7 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
             this.reject("movement-precondition-mismatch");
             this.disable();
             return;
@@ -1550,6 +1586,7 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
             this.reject("movement-precondition-mismatch");
             this.disable();
             return;
@@ -1570,11 +1607,16 @@ export class MovementAdapter {
             this.pendingObserved = null;
             this.pendingDirection = null;
             this.pendingMover = null;
+            this.diag("result", correlation, [["result", "revision-mismatch"]]);
             this.reject("movement-revision-mismatch");
             this.disable();
             return;
         }
         this.pending = full;
+        this.diag("result", correlation, [
+            ["result", "planned"],
+            ["rev", full.baseRevision],
+        ]);
         this.applyPlanned(flight);
     }
 
@@ -1990,12 +2032,14 @@ export class MovementAdapter {
         void flight;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("movement-signal-invalid");
             return;
         }
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("movement-owner-missing");
             return;
         }
@@ -2017,19 +2061,22 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
+            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("movement-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("ack", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -2043,6 +2090,7 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("movement-dbus-failed");
         }
     }
@@ -2055,11 +2103,13 @@ export class MovementAdapter {
         this.clearTimer();
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("movement-signal-invalid");
             return;
         }
         if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
@@ -2069,41 +2119,49 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "acknowledged") {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
         if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.failApply("movement-correlation-mismatch");
             return;
         }
         if (parsed["base_revision"] !== planned.baseRevision) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
             this.failApply("movement-revision-mismatch");
             return;
         }
+        this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
         this.sendVerify(planned);
     }
 
     private sendVerify(planned: PlannedMovement): void {
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("movement-signal-invalid");
             return;
         }
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("movement-owner-missing");
             return;
         }
@@ -2120,6 +2178,7 @@ export class MovementAdapter {
         }
         if (!validateObserved(fresh)) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("movement-post-stale");
             return;
         }
@@ -2133,6 +2192,7 @@ export class MovementAdapter {
         }
         if (!ok) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("movement-post-stale");
             return;
         }
@@ -2141,6 +2201,7 @@ export class MovementAdapter {
             current.domainWorkspace !== planned.focus.domainWorkspace
         ) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("movement-post-mismatch");
             return;
         }
@@ -2150,6 +2211,7 @@ export class MovementAdapter {
         const moverId = this.pendingMover;
         if (moverId === null || current.focusedId !== moverId) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("movement-post-mismatch");
             return;
         }
@@ -2160,6 +2222,7 @@ export class MovementAdapter {
         }
         if (freshById.size !== planned.geometry.length) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("movement-post-mismatch");
             return;
         }
@@ -2172,16 +2235,19 @@ export class MovementAdapter {
             const live = freshById.get(entry.window);
             if (live === undefined) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("movement-post-mismatch");
                 return;
             }
             if (!sameRect(live.rect, entry.rect)) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("movement-post-mismatch");
                 return;
             }
             if (live.output !== entry.output || live.workspace !== entry.workspace) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("movement-post-mismatch");
                 return;
             }
@@ -2204,6 +2270,7 @@ export class MovementAdapter {
         const moverRef = freshById.get(this.pendingMover as string)?.ref ?? null;
         if (activeRef !== moverRef || moverRef === null) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("movement-post-mismatch");
             return;
         }
@@ -2237,19 +2304,22 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("movement-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
+            cancel = this.env.scheduleOnce(MOVEMENT_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("movement-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("verify", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -2263,6 +2333,7 @@ export class MovementAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("movement-dbus-failed");
         }
     }
@@ -2281,12 +2352,14 @@ export class MovementAdapter {
         this.suppressing = false;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("movement-signal-invalid");
             this.disable();
             return;
         }
         if (typeof reply !== "string" || reply.length > MOVEMENT_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
@@ -2297,24 +2370,28 @@ export class MovementAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "committed") {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
         }
         if (parsed["v"] !== MOVEMENT_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("movement-service-fault");
             this.disable();
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.reject("movement-correlation-mismatch");
             this.disable();
             return;
@@ -2324,6 +2401,7 @@ export class MovementAdapter {
             this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
             this.reject("movement-revision-mismatch");
             this.disable();
             return;
@@ -2331,6 +2409,10 @@ export class MovementAdapter {
         // Idle reset: drop the pin so the next idle command re-resolves.
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.diag("outcome", planned.correlationId, [
+            ["result", "committed"],
+            ["rev", revision],
+        ]);
         this.log(`${LOG_PREFIX}:applied`);
     }
 
@@ -2350,6 +2432,20 @@ export class MovementAdapter {
     private reject(token: string): void {
         try {
             this.env.log(`${LOG_PREFIX}:reject:${token}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    private diag(
+        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
+        correlation: string,
+        extra: ReadonlyArray<readonly [string, unknown]> = [],
+    ): void {
+        try {
+            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
         } catch (error) {
             void error;
         }

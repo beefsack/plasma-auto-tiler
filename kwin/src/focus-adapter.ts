@@ -99,6 +99,8 @@ export function focusFingerprint(
 
 const LOG_PREFIX = "plasma-auto-tiler:focus";
 
+import { formatRouteDiag } from "./route-diag";
+
 export type FocusDirection = "left" | "right" | "up" | "down";
 export type FocusSignal = "active" | "added" | "removed" | "output" | "desktop";
 
@@ -714,6 +716,10 @@ export class FocusAdapter {
         }
         this.lastFingerprint = current.fingerprint;
         this.lastDirection = direction;
+        this.diag("req", correlation, [
+            ["rev", requestRevision],
+            ["windows", sortedIds.length],
+        ]);
         this.startFlight(payload, correlation, direction, current);
     }
 
@@ -742,11 +748,12 @@ export class FocusAdapter {
         this.activeToken = flight;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
         } catch (error) {
             void error;
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "timer-failed"]]);
             this.reject("focus-timer-failed");
             this.disable();
             return;
@@ -770,6 +777,7 @@ export class FocusAdapter {
             this.clearTimer();
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -787,6 +795,7 @@ export class FocusAdapter {
         if (isUniqueOwner(reply)) {
             this.pinnedOwner = reply;
             this.activationStep = 4;
+            this.diag("owner", correlation, [["transition", "pinned"]]);
             this.sendPlannerRequest(flight, payload, correlation);
             return;
         }
@@ -794,6 +803,7 @@ export class FocusAdapter {
         // flags value 0 is fixed (FOCUS_START_FLAGS); the production entry
         // appends it as the second native D-Bus argument.
         this.activationStep = 2;
+        this.diag("owner", correlation, [["transition", "activating"]]);
         try {
             this.env.callDbus(
                 FOCUS_DBUS_SERVICE,
@@ -809,6 +819,7 @@ export class FocusAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -832,6 +843,8 @@ export class FocusAdapter {
             this.pinnedOwner = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("owner", correlation, [["transition", "activation-failed"]]);
+            this.diag("result", correlation, [["result", "activation-failed"]]);
             this.reject("focus-activation-failed");
             this.disable();
             return;
@@ -854,6 +867,7 @@ export class FocusAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -875,6 +889,8 @@ export class FocusAdapter {
             this.pinnedOwner = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("focus-owner-missing");
             this.disable();
             return;
@@ -894,6 +910,8 @@ export class FocusAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("focus-owner-missing");
             this.disable();
             return;
@@ -913,12 +931,13 @@ export class FocusAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
     }
 
-    private onTimeout(flight: number, stage: string): void {
+    private onTimeout(flight: number, stage: string, correlation?: string): void {
         if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
@@ -931,6 +950,13 @@ export class FocusAdapter {
         this.pending = null;
         this.pendingObserved = null;
         this.pendingDirection = null;
+        const timeoutCorr = correlation ?? lost?.correlationId;
+        if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+            this.diag("result", timeoutCorr, [
+                ["result", "timeout"],
+                ["detail", stage],
+            ]);
+        }
         this.reject(`focus-timeout-${stage}`);
         this.disable();
     }
@@ -947,6 +973,7 @@ export class FocusAdapter {
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > FOCUS_MAX_REPLY_BYTES) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -957,12 +984,14 @@ export class FocusAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed)) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -973,12 +1002,14 @@ export class FocusAdapter {
             // accepting, then release the flight without a write.
             if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "service-fault"]]);
                 this.reject("focus-service-fault");
                 this.disable();
                 return;
             }
             if (parsed["correlation_id"] !== correlation) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
                 this.reject("focus-correlation-mismatch");
                 this.disable();
                 return;
@@ -991,6 +1022,7 @@ export class FocusAdapter {
             // and re-pins. Adapter stays enabled (no disable here).
             this.pinnedOwner = null;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "noop"]]);
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -1000,6 +1032,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("result", correlation, [["result", "rejected"]]);
             this.reject("focus-rejected");
             this.disable();
             return;
@@ -1009,12 +1042,14 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("result", correlation, [["result", "diverged"]]);
             this.reject("focus-diverged");
             this.disable();
             return;
         }
         if (outcome !== "planned") {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1025,6 +1060,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
             this.reject("focus-precondition-mismatch");
             this.disable();
             return;
@@ -1034,11 +1070,16 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("result", correlation, [["result", "revision-mismatch"]]);
             this.reject("focus-revision-mismatch");
             this.disable();
             return;
         }
         this.pending = planned;
+        this.diag("result", correlation, [
+            ["result", "planned"],
+            ["rev", planned.baseRevision],
+        ]);
         this.applyPlanned(flight);
     }
 
@@ -1228,6 +1269,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("focus-signal-invalid");
             this.disable();
             return;
@@ -1239,6 +1281,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
             this.reject("focus-owner-missing");
             this.disable();
             return;
@@ -1265,13 +1308,14 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
+            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
@@ -1279,11 +1323,13 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
             this.reject("focus-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("ack", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -1300,6 +1346,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -1319,6 +1366,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("focus-signal-invalid");
             this.disable();
             return;
@@ -1329,6 +1377,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1343,6 +1392,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1353,6 +1403,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1364,6 +1415,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1374,6 +1426,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.reject("focus-correlation-mismatch");
             this.disable();
             return;
@@ -1384,10 +1437,12 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
             this.reject("focus-revision-mismatch");
             this.disable();
             return;
         }
+        this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
         this.sendVerify(planned);
     }
 
@@ -1400,6 +1455,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("focus-signal-invalid");
             this.disable();
             return;
@@ -1411,6 +1467,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
             this.reject("focus-owner-missing");
             this.disable();
             return;
@@ -1432,6 +1489,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.reject("focus-post-stale");
             this.disable();
             return;
@@ -1450,6 +1508,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.reject("focus-post-stale");
             this.disable();
             return;
@@ -1465,6 +1524,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.reject("focus-post-stale");
             this.disable();
             return;
@@ -1506,13 +1566,14 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
+            cancel = this.env.scheduleOnce(FOCUS_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
@@ -1520,11 +1581,13 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
             this.reject("focus-timer-failed");
             this.disable();
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("verify", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -1541,6 +1604,7 @@ export class FocusAdapter {
             this.pending = null;
             this.pendingObserved = null;
             this.pendingDirection = null;
+            this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
             this.reject("focus-dbus-failed");
             this.disable();
         }
@@ -1560,12 +1624,14 @@ export class FocusAdapter {
         // during ack/verify fails closed instead of applying.
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("focus-signal-invalid");
             this.disable();
             return;
         }
         if (typeof reply !== "string" || reply.length > FOCUS_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1576,12 +1642,14 @@ export class FocusAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "committed") {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
@@ -1589,12 +1657,14 @@ export class FocusAdapter {
         // Exact commit binding: v, correlation, and exactly revision+1.
         if (parsed["v"] !== FOCUS_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("focus-service-fault");
             this.disable();
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.reject("focus-correlation-mismatch");
             this.disable();
             return;
@@ -1604,6 +1674,7 @@ export class FocusAdapter {
             this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
             this.reject("focus-revision-mismatch");
             this.disable();
             return;
@@ -1611,6 +1682,10 @@ export class FocusAdapter {
         // Idle reset: drop the pin so the next idle command re-resolves.
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.diag("outcome", planned.correlationId, [
+            ["result", "committed"],
+            ["rev", revision],
+        ]);
         this.log(`${LOG_PREFIX}:applied`);
     }
 
@@ -1630,6 +1705,20 @@ export class FocusAdapter {
     private reject(token: string): void {
         try {
             this.env.log(`${LOG_PREFIX}:reject:${token}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    private diag(
+        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
+        correlation: string,
+        extra: ReadonlyArray<readonly [string, unknown]> = [],
+    ): void {
+        try {
+            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
         } catch (error) {
             void error;
         }

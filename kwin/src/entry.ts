@@ -366,6 +366,7 @@ const controller = new TileController({
 const trayTimers = new Set<QTimer>();
 trayPublisher = new TrayPublisher({
     isEnabled: () => controller.isEnabled,
+    log: (message) => console.log(message),
     publishSnapshot: (schema, generation, revision, enabled) => {
         callDBus(
             "org.plasmaautotiler.Tray",

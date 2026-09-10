@@ -175,6 +175,24 @@ Historical implementation detail is recoverable in Git history.
   residue. The authorization is revoked for any restoration ambiguity,
   broader host mutation, material security/product/architecture change, or
   need for manual arrangement; stop and ask the user in those cases.
+- The user subsequently authorized reversible project-scoped KWin, session
+  D-Bus, and Rust Planner testing for Rust-authority diagnosis. Each attempt
+  must pin exact source, owner, baseline, bounded resources, and restoration;
+  it must not close windows, touch unrelated state, or inspect or alter
+  preserved advisory, shadow, or nested residue. Production KWin is never
+  killed. A production script may change only through a reviewed lifecycle that
+  proves exact source binding and exact restoration; otherwise the route stops
+  before mutation. This authorization does not broaden access to non-project
+  resources.
+- Before any further troubleshooting or product development, current project
+  processes and Rust-path IPC must emit verbose, structured, correlated logs to
+  their existing visible KWin console, stdout, or stderr/journal sinks. Future
+  troubleshooting checks those logs first. The shared
+  `plasma-auto-tiler:route-diag` schema must identify component, direction or
+  stage, correlation, authority generation, revision, event/action, and
+  outcome while excluding captions, application content, secrets, raw
+  environment, native identifiers, raw D-Bus payloads, and unbounded pointer
+  steps. Log failures cannot change product behavior or fail operations.
 - The unidentified prior `plasma-auto-tiler-advisory-*` runtime-directory
   residue is preserved untouched. Do not search for, enumerate, inspect,
   identify heuristically, modify, or delete it. After the resource-order

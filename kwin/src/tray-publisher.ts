@@ -1,3 +1,5 @@
+import { formatLifecycleDiag } from "./route-diag";
+
 export const TRAY_SCHEMA = 1;
 export const TRAY_HEARTBEAT_MS = 1000;
 export const MAX_SIGNED_REVISION = 2147483647;
@@ -7,6 +9,7 @@ export interface TrayPublisherEnvironment {
     readonly publishSnapshot: (schema: number, generation: string, revision: number, enabled: boolean) => void;
     readonly scheduleOnce: (delayMs: number, callback: () => void) => (() => void) | void;
     readonly createGeneration?: () => string;
+    readonly log?: (message: string) => void;
 }
 
 function processGeneration(): string {
@@ -30,7 +33,8 @@ export class TrayPublisher {
         this.started = true;
         this.generation = this.environment.createGeneration?.() ?? processGeneration();
         this.enabled = this.environment.isEnabled();
-        this.publish();
+        this.diag("tray", "started", "ok");
+        this.publish(true);
         this.scheduleHeartbeat();
     }
 
@@ -54,11 +58,14 @@ export class TrayPublisher {
         }
         this.enabled = enabled;
         this.advanceRevision();
-        this.publish();
+        this.diag("tray", "enabled-changed", "ok");
+        this.publish(true);
     }
 
     private heartbeat(): void {
-        this.publish();
+        // Steady-state heartbeat stays silent: only state changes and
+        // state-change send failures emit diagnostics, never per-second spam.
+        this.publish(false);
     }
 
     private advanceRevision(): void {
@@ -72,18 +79,45 @@ export class TrayPublisher {
 
     dispose(): void {
         this.disposed = true;
+        this.diag("tray", "stopped", "ok");
         this.cancelHeartbeat?.();
         this.cancelHeartbeat = undefined;
     }
 
-    private publish(): void {
+    // Best-effort lifecycle diagnostic: validated generation plus bounded
+    // revision only. Never enabled state beyond the closed event, never
+    // identities or payloads. Logging never changes publish decisions.
+    private diag(comp: "tray" | "bridge", event: string, result: string): void {
+        try {
+            this.environment.log?.(
+                formatLifecycleDiag(comp, event, this.generation, this.revision, result),
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private publish(announce: boolean): void {
         if (this.generation === undefined) {
             return;
         }
         try {
             this.environment.publishSnapshot(TRAY_SCHEMA, this.generation, this.revision, this.enabled);
+            // Bridge outcome for state-change sends only; heartbeat sends
+            // stay silent to avoid per-second spam. Payload never logged.
+            if (announce) {
+                this.diag("bridge", "published", "ok");
+            }
         } catch (error) {
             void error;
+            if (!announce) {
+                return;
+            }
+            try {
+                this.diag("bridge", "send-failed", "failed");
+            } catch (ignored) {
+                void ignored;
+            }
         }
     }
 }

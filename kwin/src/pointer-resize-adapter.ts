@@ -88,6 +88,7 @@ export const POINTER_RESIZE_MAX_SHARES = 64;
 export const POINTER_RESIZE_MAX_SEQ = 1000000;
 
 import { orderGeometryWrites } from "./geometry-order";
+import { formatRouteDiag, PointerCoalescer } from "./route-diag";
 
 const POINTER_LOG = "plasma-auto-tiler:pointer-resize";
 
@@ -789,6 +790,9 @@ export class PointerResizeAdapter {
     private suppressing = false;
     private seq = 0;
     private pendingStep: PendingPointerStep | null = null;
+    // Rate-limited pointer-step coalescing: per-frame stepped signals while a
+    // flight is pending collapse to one marker plus one bounded summary.
+    private readonly coalescer = new PointerCoalescer();
     private pendingPlanned: PlannedPointer | null = null;
     private flightDirection: PointerResizeDirection | null = null;
     private flightRevision = 0;
@@ -920,6 +924,7 @@ export class PointerResizeAdapter {
         this.gesture = null;
         this.inFlight = false;
         this.pendingStep = null;
+        this.coalescer.reset();
         this.pendingPlanned = null;
         this.flightDirection = null;
         this.flightRevision = 0;
@@ -1094,7 +1099,12 @@ export class PointerResizeAdapter {
         }
         if (this.inFlight) {
             this.pendingStep = { direction: edge.direction, boundary: edge.boundary };
-            this.log(`${POINTER_LOG}:coalesced`);
+            // Rate-limited: only the first suppressed step per flight episode
+            // emits the marker; the rest only bump the coalesced count that
+            // settleFlight summarizes. No per-frame logging.
+            if (this.coalescer.noteCoalesced()) {
+                this.log(`${POINTER_LOG}:coalesced`);
+            }
             return;
         }
         if (!this.checkAuthority("pointer-exclusive-conflict")) {
@@ -1432,6 +1442,10 @@ export class PointerResizeAdapter {
             return;
         }
         gesture.lastBoundary = { direction, boundary };
+        this.diag("req", correlation, [
+            ["rev", requestRevision],
+            ["windows", sortedIds.length],
+        ]);
         this.startFlight(payload, correlation, direction, requestRevision);
     }
 
@@ -1455,11 +1469,12 @@ export class PointerResizeAdapter {
         this.activeToken = flight;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
         } catch (error) {
             void error;
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "timer-failed"]]);
             this.reject("pointer-timer-failed");
             this.disable();
             return;
@@ -1483,6 +1498,7 @@ export class PointerResizeAdapter {
             this.clearTimer();
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("pointer-dbus-failed");
             this.disable();
         }
@@ -1500,6 +1516,7 @@ export class PointerResizeAdapter {
         if (isUniqueOwner(reply)) {
             this.pinnedOwner = reply;
             this.activationStep = 4;
+            this.diag("owner", correlation, [["transition", "pinned"]]);
             this.sendPlannerRequest(flight, payload, correlation);
             return;
         }
@@ -1507,6 +1524,7 @@ export class PointerResizeAdapter {
         // flags value 0 is fixed (POINTER_RESIZE_START_FLAGS); the production
         // entry appends it as the second native D-Bus argument.
         this.activationStep = 2;
+        this.diag("owner", correlation, [["transition", "activating"]]);
         try {
             this.env.callDbus(
                 POINTER_RESIZE_DBUS_SERVICE,
@@ -1522,6 +1540,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("pointer-dbus-failed");
             this.disable();
         }
@@ -1547,6 +1566,8 @@ export class PointerResizeAdapter {
             this.pendingStep = null;
             this.flightDirection = null;
             this.flightRevision = 0;
+            this.diag("owner", correlation, [["transition", "activation-failed"]]);
+            this.diag("result", correlation, [["result", "activation-failed"]]);
             this.reject("pointer-activation-failed");
             this.disable();
             return;
@@ -1569,6 +1590,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("pointer-dbus-failed");
             this.disable();
         }
@@ -1592,6 +1614,8 @@ export class PointerResizeAdapter {
             this.pendingStep = null;
             this.flightDirection = null;
             this.flightRevision = 0;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("pointer-owner-missing");
             this.disable();
             return;
@@ -1611,6 +1635,8 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("pointer-owner-missing");
             this.disable();
             return;
@@ -1630,12 +1656,13 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("pointer-dbus-failed");
             this.disable();
         }
     }
 
-    private onTimeout(flight: number, stage: string): void {
+    private onTimeout(flight: number, stage: string, correlation?: string): void {
         if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
@@ -1649,6 +1676,13 @@ export class PointerResizeAdapter {
         this.pendingStep = null;
         this.flightDirection = null;
         this.flightRevision = 0;
+        const timeoutCorr = correlation ?? lost?.correlationId;
+        if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+            this.diag("result", timeoutCorr, [
+                ["result", "timeout"],
+                ["detail", stage],
+            ]);
+        }
         this.reject(`pointer-timeout-${stage}`);
         this.disable();
     }
@@ -1665,6 +1699,7 @@ export class PointerResizeAdapter {
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
@@ -1675,12 +1710,14 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed)) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
@@ -1689,12 +1726,14 @@ export class PointerResizeAdapter {
         if (outcome === "noop") {
             if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "service-fault"]]);
                 this.reject("pointer-service-fault");
                 this.disable();
                 return;
             }
             if (parsed["correlation_id"] !== correlation) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
                 this.reject("pointer-correlation-mismatch");
                 this.disable();
                 return;
@@ -1707,6 +1746,7 @@ export class PointerResizeAdapter {
             // and re-pins. Gesture stays open for further steps.
             this.pinnedOwner = null;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "noop"]]);
             this.log(`${POINTER_LOG}:noop`);
             this.settleFlight();
             return;
@@ -1715,6 +1755,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;
+            this.diag("result", correlation, [["result", "rejected"]]);
             this.reject("pointer-rejected");
             this.disable();
             return;
@@ -1723,6 +1764,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;
+            this.diag("result", correlation, [["result", "diverged"]]);
             this.reject("pointer-diverged");
             this.disable();
             return;
@@ -1731,6 +1773,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
@@ -1740,6 +1783,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
             this.reject("pointer-precondition-mismatch");
             this.disable();
             return;
@@ -1748,6 +1792,7 @@ export class PointerResizeAdapter {
             this.inFlight = false;
             this.pendingPlanned = null;
             this.pendingStep = null;
+            this.diag("result", correlation, [["result", "revision-mismatch"]]);
             this.reject("pointer-revision-mismatch");
             this.disable();
             return;
@@ -1761,6 +1806,7 @@ export class PointerResizeAdapter {
                 this.inFlight = false;
                 this.pendingPlanned = null;
                 this.pendingStep = null;
+                this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                 this.reject("pointer-precondition-mismatch");
                 this.disable();
                 return;
@@ -1770,6 +1816,7 @@ export class PointerResizeAdapter {
                     this.inFlight = false;
                     this.pendingPlanned = null;
                     this.pendingStep = null;
+                    this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                     this.reject("pointer-precondition-mismatch");
                     this.disable();
                     return;
@@ -1778,6 +1825,7 @@ export class PointerResizeAdapter {
                     this.inFlight = false;
                     this.pendingPlanned = null;
                     this.pendingStep = null;
+                    this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                     this.reject("pointer-precondition-mismatch");
                     this.disable();
                     return;
@@ -1790,12 +1838,17 @@ export class PointerResizeAdapter {
                 this.inFlight = false;
                 this.pendingPlanned = null;
                 this.pendingStep = null;
+                this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                 this.reject("pointer-precondition-mismatch");
                 this.disable();
                 return;
             }
         }
         this.pendingPlanned = planned;
+        this.diag("result", correlation, [
+            ["result", "planned"],
+            ["rev", planned.baseRevision],
+        ]);
         this.applyPlanned(flight);
     }
 
@@ -2024,6 +2077,7 @@ export class PointerResizeAdapter {
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("pointer-owner-missing");
             return;
         }
@@ -2045,19 +2099,22 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
+            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("pointer-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("ack", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -2071,6 +2128,7 @@ export class PointerResizeAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("pointer-dbus-failed");
         }
     }
@@ -2083,6 +2141,7 @@ export class PointerResizeAdapter {
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
@@ -2092,29 +2151,35 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "acknowledged") {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
         if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.failApply("pointer-correlation-mismatch");
             return;
         }
         if (parsed["base_revision"] !== planned.baseRevision) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
             this.failApply("pointer-revision-mismatch");
             return;
         }
+        this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
         this.sendVerify(planned);
     }
 
@@ -2122,6 +2187,7 @@ export class PointerResizeAdapter {
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("pointer-owner-missing");
             return;
         }
@@ -2132,12 +2198,14 @@ export class PointerResizeAdapter {
         const gesture = this.gesture;
         if (gesture === null || gesture.kind !== "resize") {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("pointer-target-mismatch");
             return;
         }
         const fresh = this.readObserved();
         if (fresh === null) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("pointer-post-stale");
             return;
         }
@@ -2150,6 +2218,7 @@ export class PointerResizeAdapter {
         }
         if (!ok) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("pointer-post-stale");
             return;
         }
@@ -2159,6 +2228,7 @@ export class PointerResizeAdapter {
             fresh.focusedId !== gesture.focusedId
         ) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("pointer-post-mismatch");
             return;
         }
@@ -2171,6 +2241,7 @@ export class PointerResizeAdapter {
         }
         if (freshById.size !== planned.geometry.length) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("pointer-post-mismatch");
             return;
         }
@@ -2183,16 +2254,19 @@ export class PointerResizeAdapter {
             const live = freshById.get(entry.window);
             if (live === undefined) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("pointer-post-mismatch");
                 return;
             }
             if (!sameRect(live.rect, entry.rect)) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("pointer-post-mismatch");
                 return;
             }
             if (live.output !== entry.output || live.workspace !== entry.workspace) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("pointer-post-mismatch");
                 return;
             }
@@ -2214,6 +2288,7 @@ export class PointerResizeAdapter {
         const focusedRef = freshById.get(gesture.focusedId)?.ref ?? null;
         if (activeRef !== focusedRef || focusedRef === null) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("pointer-post-mismatch");
             return;
         }
@@ -2247,19 +2322,22 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("pointer-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
+            cancel = this.env.scheduleOnce(POINTER_RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("pointer-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("verify", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -2273,6 +2351,7 @@ export class PointerResizeAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("pointer-dbus-failed");
         }
     }
@@ -2288,6 +2367,7 @@ export class PointerResizeAdapter {
         this.flightDirection = null;
         if (typeof reply !== "string" || reply.length > POINTER_RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
@@ -2298,24 +2378,28 @@ export class PointerResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "committed") {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
         }
         if (parsed["v"] !== POINTER_RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("pointer-service-fault");
             this.disable();
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.reject("pointer-correlation-mismatch");
             this.disable();
             return;
@@ -2329,6 +2413,7 @@ export class PointerResizeAdapter {
             this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
             this.reject("pointer-revision-mismatch");
             this.disable();
             return;
@@ -2338,6 +2423,10 @@ export class PointerResizeAdapter {
         // Idle reset: drop the pin so the next idle step re-resolves.
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.diag("outcome", planned.correlationId, [
+            ["result", "committed"],
+            ["rev", revision],
+        ]);
         this.log(`${POINTER_LOG}:applied`);
         if (!this.refreshCapture(this.gesture, planned)) {
             this.pendingStep = null;
@@ -2416,6 +2505,12 @@ export class PointerResizeAdapter {
         const gesture = this.gesture;
         const step = this.pendingStep;
         this.pendingStep = null;
+        // Bounded coalescing summary: one line with the suppressed-step count
+        // per settled flight, then reset for the next episode.
+        const summary = this.coalescer.flushSummary();
+        if (summary !== null) {
+            this.log(summary);
+        }
         if (gesture === null || gesture.kind !== "resize") {
             return;
         }
@@ -2460,6 +2555,20 @@ export class PointerResizeAdapter {
     private reject(token: string): void {
         try {
             this.env.log(`${POINTER_LOG}:reject:${token}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    private diag(
+        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
+        correlation: string,
+        extra: ReadonlyArray<readonly [string, unknown]> = [],
+    ): void {
+        try {
+            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
         } catch (error) {
             void error;
         }

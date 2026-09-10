@@ -74,6 +74,8 @@ import { orderGeometryWrites } from "./geometry-order";
 
 const LOG_PREFIX = "plasma-auto-tiler:resize";
 
+import { formatRouteDiag } from "./route-diag";
+
 export type ResizeDirection = "left" | "right" | "up" | "down";
 export type ResizeMode = "inwards" | "outwards";
 export type ResizeSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
@@ -999,6 +1001,10 @@ export class ResizeAdapter {
         this.repeatDirection = direction;
         this.repeatMode = mode;
         this.repeatNext = pressIndex + 1;
+        this.diag("req", correlation, [
+            ["rev", requestRevision],
+            ["windows", sortedIds.length],
+        ]);
         this.startFlight(payload, correlation, direction, mode, current);
     }
 
@@ -1035,11 +1041,12 @@ export class ResizeAdapter {
         this.activeToken = flight;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(flight, "request", correlation));
         } catch (error) {
             void error;
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "timer-failed"]]);
             this.reject("resize-timer-failed");
             this.disable();
             return;
@@ -1063,6 +1070,7 @@ export class ResizeAdapter {
             this.clearTimer();
             this.inFlight = false;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("resize-dbus-failed");
             this.disable();
         }
@@ -1080,6 +1088,7 @@ export class ResizeAdapter {
         if (isUniqueOwner(reply)) {
             this.pinnedOwner = reply;
             this.activationStep = 4;
+            this.diag("owner", correlation, [["transition", "pinned"]]);
             this.sendPlannerRequest(flight, payload, correlation);
             return;
         }
@@ -1087,6 +1096,7 @@ export class ResizeAdapter {
         // flags value 0 is fixed (RESIZE_START_FLAGS); the production entry
         // appends it as the second native D-Bus argument.
         this.activationStep = 2;
+        this.diag("owner", correlation, [["transition", "activating"]]);
         try {
             this.env.callDbus(
                 RESIZE_DBUS_SERVICE,
@@ -1102,6 +1112,7 @@ export class ResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("resize-dbus-failed");
             this.disable();
         }
@@ -1127,6 +1138,8 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("owner", correlation, [["transition", "activation-failed"]]);
+            this.diag("result", correlation, [["result", "activation-failed"]]);
             this.reject("resize-activation-failed");
             this.disable();
             return;
@@ -1149,6 +1162,7 @@ export class ResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("resize-dbus-failed");
             this.disable();
         }
@@ -1172,6 +1186,8 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("resize-owner-missing");
             this.disable();
             return;
@@ -1191,6 +1207,8 @@ export class ResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("owner", correlation, [["transition", "owner-missing"]]);
+            this.diag("result", correlation, [["result", "owner-missing"]]);
             this.reject("resize-owner-missing");
             this.disable();
             return;
@@ -1210,12 +1228,13 @@ export class ResizeAdapter {
             this.inFlight = false;
             this.activationStep = 0;
             this.pinnedOwner = null;
+            this.diag("result", correlation, [["result", "dbus-failed"]]);
             this.reject("resize-dbus-failed");
             this.disable();
         }
     }
 
-    private onTimeout(flight: number, stage: string): void {
+    private onTimeout(flight: number, stage: string, correlation?: string): void {
         if (!this.inFlight || flight !== this.activeToken) {
             return;
         }
@@ -1230,6 +1249,13 @@ export class ResizeAdapter {
         this.pendingDirection = null;
         this.pendingMode = null;
         this.pendingFocused = null;
+        const timeoutCorr = correlation ?? lost?.correlationId;
+        if (typeof timeoutCorr === "string" && timeoutCorr.length > 0) {
+            this.diag("result", timeoutCorr, [
+                ["result", "timeout"],
+                ["detail", stage],
+            ]);
+        }
         this.reject(`resize-timeout-${stage}`);
         this.disable();
     }
@@ -1246,6 +1272,7 @@ export class ResizeAdapter {
         this.clearTimer();
         if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
@@ -1256,12 +1283,14 @@ export class ResizeAdapter {
         } catch (error) {
             void error;
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed)) {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
@@ -1270,12 +1299,14 @@ export class ResizeAdapter {
         if (outcome === "noop") {
             if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "service-fault"]]);
                 this.reject("resize-service-fault");
                 this.disable();
                 return;
             }
             if (parsed["correlation_id"] !== correlation) {
                 this.inFlight = false;
+                this.diag("result", correlation, [["result", "correlation-mismatch"]]);
                 this.reject("resize-correlation-mismatch");
                 this.disable();
                 return;
@@ -1290,6 +1321,7 @@ export class ResizeAdapter {
             // and re-pins. Adapter stays enabled (no disable here).
             this.pinnedOwner = null;
             this.activationStep = 0;
+            this.diag("result", correlation, [["result", "noop"]]);
             this.log(`${LOG_PREFIX}:noop`);
             return;
         }
@@ -1300,6 +1332,7 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "rejected"]]);
             this.reject("resize-rejected");
             this.disable();
             return;
@@ -1311,12 +1344,14 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "diverged"]]);
             this.reject("resize-diverged");
             this.disable();
             return;
         }
         if (outcome !== "planned") {
             this.inFlight = false;
+            this.diag("result", correlation, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
@@ -1329,6 +1364,7 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "precondition-mismatch"]]);
             this.reject("resize-precondition-mismatch");
             this.disable();
             return;
@@ -1340,6 +1376,7 @@ export class ResizeAdapter {
             this.pendingDirection = null;
             this.pendingMode = null;
             this.pendingFocused = null;
+            this.diag("result", correlation, [["result", "revision-mismatch"]]);
             this.reject("resize-revision-mismatch");
             this.disable();
             return;
@@ -1356,6 +1393,7 @@ export class ResizeAdapter {
                 this.pendingDirection = null;
                 this.pendingMode = null;
                 this.pendingFocused = null;
+                this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                 this.reject("resize-precondition-mismatch");
                 this.disable();
                 return;
@@ -1368,6 +1406,7 @@ export class ResizeAdapter {
                     this.pendingDirection = null;
                     this.pendingMode = null;
                     this.pendingFocused = null;
+                    this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                     this.reject("resize-precondition-mismatch");
                     this.disable();
                     return;
@@ -1379,6 +1418,7 @@ export class ResizeAdapter {
                     this.pendingDirection = null;
                     this.pendingMode = null;
                     this.pendingFocused = null;
+                    this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                     this.reject("resize-precondition-mismatch");
                     this.disable();
                     return;
@@ -1395,12 +1435,17 @@ export class ResizeAdapter {
                 this.pendingDirection = null;
                 this.pendingMode = null;
                 this.pendingFocused = null;
+                this.diag("result", correlation, [["result", "precondition-mismatch"]]);
                 this.reject("resize-precondition-mismatch");
                 this.disable();
                 return;
             }
         }
         this.pending = planned;
+        this.diag("result", correlation, [
+            ["result", "planned"],
+            ["rev", planned.baseRevision],
+        ]);
         this.applyPlanned(flight);
     }
 
@@ -1687,12 +1732,14 @@ export class ResizeAdapter {
         void flight;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("resize-signal-invalid");
             return;
         }
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("resize-owner-missing");
             return;
         }
@@ -1714,19 +1761,22 @@ export class ResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "ack", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("resize-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("ack", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -1740,6 +1790,7 @@ export class ResizeAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("resize-dbus-failed");
         }
     }
@@ -1752,11 +1803,13 @@ export class ResizeAdapter {
         this.clearTimer();
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("resize-signal-invalid");
             return;
         }
         if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
@@ -1766,41 +1819,49 @@ export class ResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "acknowledged") {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
         if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.failApply("resize-correlation-mismatch");
             return;
         }
         if (parsed["base_revision"] !== planned.baseRevision) {
             this.reportAdapterLost(planned);
+            this.diag("ack", planned.correlationId, [["result", "revision-mismatch"]]);
             this.failApply("resize-revision-mismatch");
             return;
         }
+        this.diag("ack", planned.correlationId, [["result", "acknowledged"]]);
         this.sendVerify(planned);
     }
 
     private sendVerify(planned: PlannedResize): void {
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "signal-invalid"]]);
             this.failApply("resize-signal-invalid");
             return;
         }
         const target = this.plannerService();
         if (!isUniqueOwner(target)) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "owner-missing"]]);
             this.failApply("resize-owner-missing");
             return;
         }
@@ -1817,6 +1878,7 @@ export class ResizeAdapter {
         }
         if (!validateObserved(fresh)) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("resize-post-stale");
             return;
         }
@@ -1830,6 +1892,7 @@ export class ResizeAdapter {
         }
         if (!ok) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-stale"]]);
             this.failApply("resize-post-stale");
             return;
         }
@@ -1838,6 +1901,7 @@ export class ResizeAdapter {
             current.domainWorkspace !== planned.focus.domainWorkspace
         ) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("resize-post-mismatch");
             return;
         }
@@ -1847,6 +1911,7 @@ export class ResizeAdapter {
         const focusedId = this.pendingFocused;
         if (focusedId === null || current.focusedId !== focusedId) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("resize-post-mismatch");
             return;
         }
@@ -1857,6 +1922,7 @@ export class ResizeAdapter {
         }
         if (freshById.size !== planned.geometry.length) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("resize-post-mismatch");
             return;
         }
@@ -1869,16 +1935,19 @@ export class ResizeAdapter {
             const live = freshById.get(entry.window);
             if (live === undefined) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("resize-post-mismatch");
                 return;
             }
             if (!sameRect(live.rect, entry.rect)) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("resize-post-mismatch");
                 return;
             }
             if (live.output !== entry.output || live.workspace !== entry.workspace) {
                 this.reportAdapterLost(planned);
+                this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
                 this.failApply("resize-post-mismatch");
                 return;
             }
@@ -1901,6 +1970,7 @@ export class ResizeAdapter {
         const focusedRef = freshById.get(this.pendingFocused as string)?.ref ?? null;
         if (activeRef !== focusedRef || focusedRef === null) {
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "post-mismatch"]]);
             this.failApply("resize-post-mismatch");
             return;
         }
@@ -1934,19 +2004,22 @@ export class ResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "service-fault"]]);
             this.failApply("resize-service-fault");
             return;
         }
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify"));
+            cancel = this.env.scheduleOnce(RESIZE_TIMEOUT_MS, () => this.onTimeout(next, "verify", planned.correlationId));
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "timer-failed"]]);
             this.failApply("resize-timer-failed");
             return;
         }
         this.cancelTimer = cancel;
+        this.diag("verify", planned.correlationId, [["transition", "sent"]]);
         try {
             this.env.callDbus(
                 target,
@@ -1960,6 +2033,7 @@ export class ResizeAdapter {
             void error;
             this.clearTimer();
             this.reportAdapterLost(planned);
+            this.diag("verify", planned.correlationId, [["result", "dbus-failed"]]);
             this.failApply("resize-dbus-failed");
         }
     }
@@ -1979,12 +2053,14 @@ export class ResizeAdapter {
         this.suppressing = false;
         if (this.invalidated) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "signal-invalid"]]);
             this.reject("resize-signal-invalid");
             this.disable();
             return;
         }
         if (typeof reply !== "string" || reply.length > RESIZE_MAX_REPLY_BYTES) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
@@ -1995,24 +2071,28 @@ export class ResizeAdapter {
         } catch (error) {
             void error;
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (!isRecord(parsed) || parsed["outcome"] !== "committed") {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (parsed["v"] !== RESIZE_CONTRACT_VERSION) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "service-fault"]]);
             this.reject("resize-service-fault");
             this.disable();
             return;
         }
         if (parsed["correlation_id"] !== planned.correlationId) {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "correlation-mismatch"]]);
             this.reject("resize-correlation-mismatch");
             this.disable();
             return;
@@ -2022,6 +2102,7 @@ export class ResizeAdapter {
             this.writeRevision(revision);
         } else {
             this.reportAdapterLost(planned);
+            this.diag("outcome", planned.correlationId, [["result", "revision-mismatch"]]);
             this.reject("resize-revision-mismatch");
             this.disable();
             return;
@@ -2029,6 +2110,10 @@ export class ResizeAdapter {
         // Idle reset: drop the pin so the next idle command re-resolves.
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.diag("outcome", planned.correlationId, [
+            ["result", "committed"],
+            ["rev", revision],
+        ]);
         this.log(`${LOG_PREFIX}:applied`);
     }
 
@@ -2048,6 +2133,20 @@ export class ResizeAdapter {
     private reject(token: string): void {
         try {
             this.env.log(`${LOG_PREFIX}:reject:${token}`);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
+    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    private diag(
+        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
+        correlation: string,
+        extra: ReadonlyArray<readonly [string, unknown]> = [],
+    ): void {
+        try {
+            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
         } catch (error) {
             void error;
         }

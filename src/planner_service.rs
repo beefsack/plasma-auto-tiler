@@ -381,6 +381,63 @@ fn authorized_caller(
     }
 }
 
+/// Best-effort route-diag emission. Contract: the caller must have released
+/// the single-flight `operation_lock` guard before calling, so formatting and
+/// stderr output never execute while the Planner operation lock (or any
+/// session mutex) is held. Pure bounded formatting only; never alters wire
+/// behavior. The session line derives solely from the already-returned reply
+/// value (Planner-boundary emission, no portable Session access).
+fn emit_route_refusal(
+    route: crate::route_diag::Route,
+    request: &str,
+    refusal: crate::route_diag::Refusal,
+) {
+    eprintln!("{}", crate::route_diag::describe_request(route, request));
+    eprintln!(
+        "{}",
+        crate::route_diag::describe_refusal(route, request, refusal)
+    );
+}
+
+/// Best-effort request/reply/session emission after the lock is released.
+/// The portable session outcome line is derived only from the already
+/// computed `reply` value via [`crate::route_diag::session_line_for_reply`].
+fn emit_route_reply(route: crate::route_diag::Route, request: &str, reply: &str) {
+    eprintln!("{}", crate::route_diag::describe_request(route, request));
+    eprintln!("{}", crate::route_diag::describe_reply(route, reply));
+    if let Some(line) = crate::route_diag::session_line_for_reply(reply) {
+        eprintln!("{line}");
+    }
+}
+
+/// Best-effort Planner trio-seeded lifecycle emission after the lock is
+/// released. Generation/correlation come from already-computed request/reply
+/// values only; bounded revision only when in bounds.
+fn emit_planner_seeded(request: &str, reply: &str) {
+    let generation = crate::route_diag::generation_of_request(request);
+    let reply_raw: serde_json::Value =
+        serde_json::from_str(reply).unwrap_or(serde_json::Value::Null);
+    let corr = reply_raw
+        .get("correlation_id")
+        .and_then(serde_json::Value::as_str);
+    let rev = reply_raw
+        .get("revision")
+        .or_else(|| reply_raw.get("base_revision"))
+        .and_then(serde_json::Value::as_u64)
+        .filter(|rev| *rev <= crate::route_diag::MAX_DIAG_REVISION);
+    eprintln!(
+        "{}",
+        crate::route_diag::describe_lifecycle(
+            crate::route_diag::LifecycleComp::Planner,
+            crate::route_diag::LifecycleEvent::Seeded,
+            generation.as_deref(),
+            rev,
+            corr,
+            Some(crate::route_diag::LifecycleResult::Ok),
+        )
+    );
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct NestedManifest {
     workdir: PathBuf,
@@ -1338,27 +1395,60 @@ impl PlannerEndpoint {
         // True bounded single-flight: non-queuing acquire held across the
         // credential/proc/filesystem verify and the pure evaluate, so
         // unauthorized callers cannot cause unbounded concurrent checks.
+        // Diagnostics are emitted only after the guard is released (see
+        // `emit_route_*` contract), so logging never holds the lock.
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let reply = evaluate_json(&request);
         if reply.len() > MAX_REPLY_BYTES {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Move, &request, &reply);
         Ok(reply)
     }
 
@@ -1374,24 +1464,65 @@ impl PlannerEndpoint {
         // bounds, and terminal service-loss semantics as EvaluateMove. The
         // existing EvaluateMove contract is frozen. The reply is a
         // deterministic advisory plan with no native command/execution fields
-        // and no mutation.
+        // and no mutation. Diagnostics are emitted only after the guard is
+        // released (see `emit_route_*` contract).
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Advisory,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Advisory,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Advisory,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Advisory,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_advisory_request(&request)?;
+        let reply = match self.evaluate_advisory_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Advisory,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > ADVISORY_MAX_REPLY_BYTES {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Advisory,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
@@ -1403,7 +1534,10 @@ impl PlannerEndpoint {
         // stderr, then withhold that reply until the process is stopped while
         // holding the single-flight guard so further calls fail fast.
         // Earlier success/stale correlations (mismatch or rejected) return
-        // normally with no marker and no hang.
+        // normally with no marker and no hang. NOTE: this terminal armed-loss
+        // path intentionally holds the guard across the hang by design; all
+        // route-diag lines below are emitted only after the guard is released
+        // on non-armed paths.
         if let Some(armed) = self.advisory_loss_correlation.as_deref()
             && let Some(marker) = loss_marker_for_armed_reply(&reply, armed)
         {
@@ -1413,6 +1547,8 @@ impl PlannerEndpoint {
                 "planner serving connection was lost".to_owned(),
             ));
         }
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Advisory, &request, &reply);
         Ok(reply)
     }
 
@@ -1430,28 +1566,71 @@ impl PlannerEndpoint {
         // changes behavior. The reply carries complete desired rectangles
         // for exactly three opaque windows with no native
         // command/execution/actuation fields and no mutation, over a
-        // separate session tracker from advisory.
+        // separate session tracker from advisory. Diagnostics are emitted
+        // only after the guard is released (see `emit_route_*` contract).
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Shadow,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Shadow,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Shadow,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Shadow,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_shadow_request(&request)?;
+        let reply = match self.evaluate_shadow_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Shadow,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > SHADOW_MAX_REPLY_BYTES {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Shadow,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Shadow, &request, &reply);
         Ok(reply)
     }
 
@@ -1469,27 +1648,76 @@ impl PlannerEndpoint {
         // behavior and no generic IPC is introduced. The reply is a bounded
         // focus plan/ack/verify transaction over the endpoint-owned
         // in-memory focus service (single portable session, single pending).
+        // Diagnostics are emitted only after the guard is released (see
+        // `emit_route_*` contract).
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Focus,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Focus,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Focus,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Focus,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_focus_request(&request)?;
+        let reply = match self.evaluate_focus_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Focus,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > FOCUS_MAX_REPLY {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Focus,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        // Correlated diagnostics only: emitted after verification on the real
+        // request path with the lock released, so logging never triggers bus
+        // activation itself and never holds the operation lock. The portable
+        // session outcome line derives solely from the already-returned reply
+        // value at this Planner boundary.
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Focus, &request, &reply);
         Ok(reply)
     }
 
@@ -1507,29 +1735,77 @@ impl PlannerEndpoint {
         // route changes behavior and no generic IPC is introduced. The reply
         // is a bounded movement plan/ack/verify transaction over the
         // endpoint-owned in-memory movement service (single portable
-        // session, single pending, `cosmic_v1` R1-R4 with complete desired
-        // geometry/focus).
+        // session, single pending).
+        // Diagnostics are emitted only after the guard is released (see
+        // `emit_route_*` contract).
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Movement,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Movement,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Movement,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Movement,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_movement_request(&request)?;
+        let reply = match self.evaluate_movement_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Movement,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > MOVEMENT_MAX_REPLY {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Movement,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        // Correlated diagnostics only: emitted after verification on the real
+        // request path with the lock released, so logging never triggers bus
+        // activation itself and never holds the operation lock. The portable
+        // session outcome line derives solely from the already-returned reply
+        // value at this Planner boundary.
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Movement, &request, &reply);
         Ok(reply)
     }
 
@@ -1545,32 +1821,84 @@ impl PlannerEndpoint {
         // single-flight, current-KWin-owner/same-uid/executable pinning with
         // pre/post owner revalidation, connection-loss, and reply-size
         // checks. No existing route changes behavior and no generic IPC is
-        // introduced. The reply is a bounded resize plan/ack/verify
-        // transaction over the endpoint-owned in-memory resize service
-        // (single portable session, single pending, `Session::propose_resize`
-        // split-share with complete adjacent/share/projected geometry and
-        // retained focus). Action-fenced to keyboard `request` plus shared
+        // introduced. Action-fenced to keyboard `request` plus shared
         // ack/verify/loss only; pointer actions never mutate this route.
+        // Diagnostics are emitted only after the guard is released (see
+        // `emit_route_*` contract).
+        // The trio-seeded lifecycle line below fires exactly on the
+        // false-to-true establishment transition caused by this call; the
+        // `was_established` read takes the trio mutex only, never the
+        // operation lock.
+        let was_established = self.is_trio_established();
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Resize,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Resize,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Resize,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Resize,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_resize_request(&request)?;
+        let reply = match self.evaluate_resize_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Resize,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > RESIZE_MAX_REPLY {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Resize,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
+        }
+        let seeded_now = self.is_trio_established();
+        // Release the operation lock before any output (see `emit_route_*`
+        // contract). The portable session outcome line derives solely from
+        // the already-returned reply value at this Planner boundary.
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Resize, &request, &reply);
+        if !was_established && seeded_now {
+            emit_planner_seeded(&request, &reply);
         }
         Ok(reply)
     }
@@ -1586,32 +1914,84 @@ impl PlannerEndpoint {
         // single-flight, current-KWin-owner/same-uid/executable pinning with
         // pre/post owner revalidation, connection-loss, and reply-size
         // checks over the same endpoint-owned in-memory resize service
-        // (single portable session, single pending). The JSON `action` must
-        // be `request-pointer` with a Rust-derived boundary/shares from a
-        // normalized `proposed_boundary`; `acknowledge`/`verify`/`note-loss`
-        // bind only to the same pointer cycle. Keyboard actions and
-        // keyboard-owned pending cycles never mutate through this route.
-        // Keyboard wire behavior is unchanged.
+        // (single portable session, single pending). Keyboard wire behavior
+        // is unchanged.
+        // Diagnostics are emitted only after the guard is released (see
+        // `emit_route_*` contract).
+        // The trio-seeded lifecycle line below fires exactly on the
+        // false-to-true establishment transition caused by this call; the
+        // `was_established` read takes the trio mutex only, never the
+        // operation lock.
+        let was_established = self.is_trio_established();
         let Some(_guard) = self.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Pointer,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Pointer,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Pointer,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_planner_caller(emitter.connection(), caller).await else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Pointer,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
-        let reply = self.evaluate_pointer_resize_request(&request)?;
+        let reply = match self.evaluate_pointer_resize_request(&request) {
+            Ok(reply) => reply,
+            Err(error) => {
+                drop(_guard);
+                emit_route_refusal(
+                    crate::route_diag::Route::Pointer,
+                    &request,
+                    crate::route_diag::Refusal::Unavailable,
+                );
+                return Err(error);
+            }
+        };
         if reply.len() > POINTER_RESIZE_MAX_REPLY {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Pointer,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
+        }
+        let seeded_now = self.is_trio_established();
+        // Release the operation lock before any output (see `emit_route_*`
+        // contract). The portable session outcome line derives solely from
+        // the already-returned reply value at this Planner boundary.
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Pointer, &request, &reply);
+        if !was_established && seeded_now {
+            emit_planner_seeded(&request, &reply);
         }
         Ok(reply)
     }
@@ -1764,16 +2144,35 @@ impl NestedPlannerEndpoint {
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
+        // Nested-mode EvaluateMove: same contract as production, bound to the
+        // explicit manifest snapshot. Diagnostics after guard release only.
         let Some(_guard) = self.inner.operation_lock.try_lock() else {
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Busy,
+            );
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::ConnectionLost,
+            );
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
         }
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let Some(_identity) = verify_nested_caller(
@@ -1784,14 +2183,28 @@ impl NestedPlannerEndpoint {
         )
         .await
         else {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Unauthorized,
+            );
             return Err(PlannerError::Unauthorized);
         };
         let reply = evaluate_json(&request);
         if reply.len() > MAX_REPLY_BYTES {
+            drop(_guard);
+            emit_route_refusal(
+                crate::route_diag::Route::Move,
+                &request,
+                crate::route_diag::Refusal::Oversize,
+            );
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
+        drop(_guard);
+        emit_route_reply(crate::route_diag::Route::Move, &request, &reply);
         Ok(reply)
     }
 }

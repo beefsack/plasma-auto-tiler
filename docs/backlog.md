@@ -6,7 +6,10 @@ Only meaningful pending or active work is listed.
   groups/shares, logical workspaces/outputs, focus/navigation, movement, and
   reconciliation; thin adapters own native boundaries. KWin direct geometry is
   the actuator and Custom Tiles are legacy-only, never dual structural
-  authority. Preserve production behavior through small opt-in/shadow slices.
+  authority. The logs-first observability prerequisite is complete: diagnose
+  all future background-service and Rust-path troubleshooting from
+  `plasma-auto-tiler:route-diag` before product work. Preserve production
+  behavior through small opt-in/shadow slices.
     Checkpoint, Rust-core stabilization, static slice 3 implementation, and the
     standalone advisory entry/builder/loader prerequisite are complete. The
     namespaced standalone path deterministically binds its exact source, input,

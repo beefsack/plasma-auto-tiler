@@ -349,11 +349,29 @@ impl TrayEndpoint {
     }
 
     pub fn owner_changed(&self, owner: Option<&str>) {
-        let _operation_guard = self.operation_lock.lock_blocking();
-        self.state
-            .lock()
-            .expect("tray state mutex poisoned")
-            .owner_changed(owner);
+        // State transition first; the best-effort lifecycle line is formatted
+        // and emitted only after both the operation guard and the state mutex
+        // are released, so logging never holds either lock.
+        {
+            let _operation_guard = self.operation_lock.lock_blocking();
+            self.state
+                .lock()
+                .expect("tray state mutex poisoned")
+                .owner_changed(owner);
+        }
+        // Best-effort lifecycle diagnostic only: no owner bytes, no state
+        // change, never affects the transition above.
+        eprintln!(
+            "{}",
+            crate::route_diag::describe_lifecycle(
+                crate::route_diag::LifecycleComp::Tray,
+                crate::route_diag::LifecycleEvent::OwnerChanged,
+                None,
+                None,
+                None,
+                None,
+            )
+        );
     }
 
     pub fn projection(&self) -> TrayProjection {
@@ -367,9 +385,61 @@ impl TrayEndpoint {
         schema: i32,
         snapshot: Snapshot,
     ) -> Result<(), TrayError> {
-        let mut state = self.state.lock().expect("tray state mutex poisoned");
-        let now_ms = self.started.elapsed().as_millis().min(u64::MAX as u128) as u64;
-        state.publish_snapshot_from(Some(publisher), Some(identity), schema, snapshot, now_ms)
+        // Bounded values for the best-effort diagnostic are determined from
+        // existing state only (no new timers/state): the generation clone is
+        // the validated bounded token, the revision is carried as u64 when
+        // non-negative. The state mutex is released before any formatting or
+        // output, and only state changes or refusals emit (steady-state
+        // duplicates stay silent, mirroring the KWin heartbeat discipline).
+        // Never publisher, owner, or payload bytes. Logging never changes the
+        // result below.
+        let generation_for_log = snapshot.generation.clone();
+        let rev_for_log = u64::try_from(snapshot.revision).ok();
+        let (result, should_log, lifecycle_result) = {
+            let mut state = self.state.lock().expect("tray state mutex poisoned");
+            let before = (
+                state.generation.clone(),
+                state.revision,
+                state.snapshot.as_ref().map(|current| current.enabled),
+            );
+            let result = state.publish_snapshot_from(
+                Some(publisher),
+                Some(identity),
+                schema,
+                snapshot,
+                self.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
+            );
+            let after = (
+                state.generation.clone(),
+                state.revision,
+                state.snapshot.as_ref().map(|current| current.enabled),
+            );
+            // Refusals always emit (bounded, coalesced by category); successes
+            // emit only on an actual state change.
+            let lifecycle_result = match &result {
+                Ok(()) => crate::route_diag::LifecycleResult::Ok,
+                Err(TrayError::InvalidSnapshot(_)) | Err(TrayError::UnauthorizedPublisher) => {
+                    crate::route_diag::LifecycleResult::Rejected
+                }
+                Err(TrayError::EmissionFailed(_)) => crate::route_diag::LifecycleResult::Failed,
+            };
+            let should_log = result.is_err() || (result.is_ok() && before != after);
+            (result, should_log, lifecycle_result)
+        };
+        if should_log {
+            eprintln!(
+                "{}",
+                crate::route_diag::describe_lifecycle(
+                    crate::route_diag::LifecycleComp::Tray,
+                    crate::route_diag::LifecycleEvent::Published,
+                    Some(generation_for_log.as_str()),
+                    rev_for_log,
+                    None,
+                    Some(lifecycle_result),
+                )
+            );
+        }
+        result
     }
 }
 
@@ -1067,6 +1137,113 @@ mod tests {
         drop(operation_guard);
         let refreshed_at = endpoint.state.lock().unwrap().view(before).refreshed_at;
         assert!(refreshed_at.is_some_and(|refreshed_at| refreshed_at > before));
+    }
+
+    #[test]
+    fn steady_state_duplicate_publish_leaves_observable_state_unchanged_for_coalescing() {
+        // Finding 7: the endpoint stays silent on steady-state duplicates
+        // (no state change) and emits only on state changes or refusals,
+        // using existing state only with no new timing/state behavior and no
+        // raw snapshot logging. The duplicate heartbeat below must leave the
+        // observable (generation, revision, enabled) triple unchanged, which
+        // is the silence signal the endpoint gates `eprintln` on.
+        let mut state = super::TrayState::default();
+        state.owner_changed(Some(":org.kwin"));
+        let identity = publisher_identity(1);
+        state
+            .publish_snapshot_from(
+                Some(":org.kwin"),
+                Some(&identity),
+                1,
+                super::Snapshot {
+                    generation: "alpha".to_owned(),
+                    revision: 1,
+                    enabled: true,
+                },
+                0,
+            )
+            .unwrap();
+        let before = (
+            state.generation.clone(),
+            state.revision,
+            state.snapshot.as_ref().map(|current| current.enabled),
+        );
+        state
+            .publish_snapshot_from(
+                Some(":org.kwin"),
+                Some(&identity),
+                1,
+                super::Snapshot {
+                    generation: "alpha".to_owned(),
+                    revision: 1,
+                    enabled: true,
+                },
+                1,
+            )
+            .unwrap();
+        // Same generation/revision/enabled is accepted but changes nothing
+        // observable: the endpoint treats this as a silent heartbeat.
+        let after_duplicate = (
+            state.generation.clone(),
+            state.revision,
+            state.snapshot.as_ref().map(|current| current.enabled),
+        );
+        assert_eq!(after_duplicate.0, before.0);
+        assert_eq!(after_duplicate.1, before.1);
+        assert_eq!(after_duplicate.2, before.2);
+        // A genuine state change alters the triple: the endpoint emits one
+        // bounded lifecycle line for it.
+        state
+            .publish_snapshot_from(
+                Some(":org.kwin"),
+                Some(&identity),
+                1,
+                super::Snapshot {
+                    generation: "alpha".to_owned(),
+                    revision: 2,
+                    enabled: true,
+                },
+                2,
+            )
+            .unwrap();
+        let after_change = (
+            state.generation.clone(),
+            state.revision,
+            state.snapshot.as_ref().map(|current| current.enabled),
+        );
+        assert_ne!(after_change, before);
+    }
+
+    #[test]
+    fn tray_publish_path_gates_output_on_state_change_without_raw_snapshot() {
+        // Finding 4 + 7 source contract: the mutex is released before any
+        // formatting/output, output is gated on `should_log`, and no raw
+        // snapshot/owner/publisher bytes are logged.
+        let source = include_str!("tray_endpoint.rs");
+        let body = source
+            .split("fn publish_authenticated_snapshot")
+            .nth(1)
+            .expect("publish path present");
+        let end = body.find("#[zbus::interface").unwrap_or(body.len());
+        let body = &body[..end];
+        assert!(
+            body.contains("should_log"),
+            "publish path must gate output on state change"
+        );
+        assert!(
+            body.contains("released before any formatting"),
+            "publish path must release the mutex before output"
+        );
+        assert!(
+            !body.contains("snapshot.clone()"),
+            "publish path must avoid cloning the whole snapshot per publish"
+        );
+        // The only lifecycle emit in this path carries generation/rev/result
+        // tokens, never the snapshot struct or publisher/owner strings.
+        assert!(
+            body.contains("describe_lifecycle"),
+            "publish path must use the bounded describer"
+        );
     }
 
     #[test]

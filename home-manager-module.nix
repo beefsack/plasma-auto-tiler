@@ -54,6 +54,12 @@ in
           BusName = "org.plasmaautotiler.Planner";
           ExecStart = "${plannerCfg.package}/bin/plasma-auto-tiler planner-service";
           Restart = "no";
+          # Explicitly retain stdout/stderr in the user journal so the
+          # best-effort route-diag stderr lines are visible via the
+          # `route-diag` viewer/follow script. Same as the systemd default;
+          # no behavior change, no new service, no activation.
+          StandardOutput = "journal";
+          StandardError = "journal";
         };
       };
     })

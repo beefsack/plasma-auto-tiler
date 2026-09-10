@@ -681,6 +681,34 @@ pub enum StopOutcome {
     Stopped,
 }
 
+/// Best-effort structured tray lifecycle diagnostic.
+/// Visible via stderr alongside the existing foreground CLI stdout, which is
+/// separately visible in the terminal: the tray autostart entry has no
+/// committed systemd unit, so the `route-diag` viewer reads the full
+/// current-user current-boot journal anchor-filtered to show KWin, Planner,
+/// and tray records together. Closed vocabulary only (`comp=tray`,
+/// `started`/`stopped`, validated `gen`, no `rev`/`corr`), never paths, PIDs,
+/// names, raw errors, environment, record details, or payloads. Pure
+/// formatting plus `eprintln`; never alters authority, sequencing, state,
+/// return values, or failure behavior.
+fn emit_tray_lifecycle(
+    event: crate::route_diag::LifecycleEvent,
+    generation: Option<&str>,
+    result: crate::route_diag::LifecycleResult,
+) {
+    eprintln!(
+        "{}",
+        crate::route_diag::describe_lifecycle(
+            crate::route_diag::LifecycleComp::Tray,
+            event,
+            generation,
+            None,
+            None,
+            Some(result),
+        )
+    );
+}
+
 pub fn stop(paths: &LifecyclePaths) -> Result<StopOutcome, String> {
     with_lock(paths, |_| {
         stop_locked(
@@ -717,6 +745,13 @@ fn stop_locked<P: ProcessControl>(
             remove_file_snapshot_for_remove(&snapshot.file)?;
             #[cfg(not(test))]
             remove_file_snapshot(&snapshot.file)?;
+            // Best-effort only: stale-record removal is the actual stop
+            // transition here; stderr keeps existing stdout compatible.
+            emit_tray_lifecycle(
+                crate::route_diag::LifecycleEvent::Stopped,
+                Some(snapshot.record.generation_token.as_str()),
+                crate::route_diag::LifecycleResult::Ok,
+            );
             return Ok(StopOutcome::RemovedStaleRecord);
         }
         Err(_) => return Ok(StopOutcome::Retained(RecordError::Unreadable)),
@@ -731,6 +766,12 @@ fn stop_locked<P: ProcessControl>(
         match process.identity(snapshot.record.pid) {
             Ok(None) => {
                 remove_file_snapshot(&snapshot.file)?;
+                // Best-effort only: successful terminate + record removal.
+                emit_tray_lifecycle(
+                    crate::route_diag::LifecycleEvent::Stopped,
+                    Some(snapshot.record.generation_token.as_str()),
+                    crate::route_diag::LifecycleResult::Ok,
+                );
                 return Ok(StopOutcome::Stopped);
             }
             Ok(Some(_)) => thread::sleep(Duration::from_millis(10)),
@@ -807,13 +848,21 @@ fn create_managed_record_locked(paths: &ManagedPaths) -> io::Result<()> {
     let final_running = current_process_identity(paths)?;
     let binary = store_executable_identity(&final_running.resolved_executable_path)?
         .ok_or_else(|| invalid("current store executable disappeared"))?;
+    let generation = format!("{:x}-{:x}", std::process::id(), nanos);
     write_managed_record_after_identity_check(
         paths.pid_record(),
         &current,
         &final_running,
         &binary,
-        format!("{:x}-{:x}", std::process::id(), nanos),
-    )
+        generation.clone(),
+    )?;
+    // Best-effort only: managed record established (actual start transition).
+    emit_tray_lifecycle(
+        crate::route_diag::LifecycleEvent::Started,
+        Some(generation.as_str()),
+        crate::route_diag::LifecycleResult::Ok,
+    );
+    Ok(())
 }
 
 fn reject_dogfood_launch_environment() -> io::Result<()> {
@@ -1019,16 +1068,24 @@ fn create_launch_record(paths: &LifecyclePaths) -> io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let generation = format!("{:x}-{:x}", std::process::id(), nanos);
     write_record_with_identity(
         paths.pid_record(),
         &LifecycleRecord {
             pid: std::process::id(),
             start_tick: process_identity.start_tick,
             resolved_executable_path: paths.binary.clone(),
-            generation_token: format!("{:x}-{:x}", std::process::id(), nanos),
+            generation_token: generation.clone(),
         },
         &binary,
-    )
+    )?;
+    // Best-effort only: launch record established (actual start transition).
+    emit_tray_lifecycle(
+        crate::route_diag::LifecycleEvent::Started,
+        Some(generation.as_str()),
+        crate::route_diag::LifecycleResult::Ok,
+    );
+    Ok(())
 }
 
 pub fn signal_current_record_ready() -> io::Result<()> {
@@ -1199,15 +1256,24 @@ fn create_current_record_locked(paths: &LifecyclePaths) -> io::Result<()> {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_nanos();
+    let generation = format!("{:x}-{:x}", std::process::id(), nanos);
     write_record(
         paths.pid_record(),
         &LifecycleRecord {
             pid: std::process::id(),
             start_tick: identity.start_tick,
             resolved_executable_path: paths.binary.clone(),
-            generation_token: format!("{:x}-{:x}", std::process::id(), nanos),
+            generation_token: generation.clone(),
         },
-    )
+    )?;
+    // Best-effort only: current record established (actual start transition).
+    // The idempotent self-PID early return above stays silent (no transition).
+    emit_tray_lifecycle(
+        crate::route_diag::LifecycleEvent::Started,
+        Some(generation.as_str()),
+        crate::route_diag::LifecycleResult::Ok,
+    );
+    Ok(())
 }
 
 pub fn cleanup_current_record() -> Result<(), String> {
@@ -1234,6 +1300,13 @@ fn cleanup_managed_record_locked(paths: &ManagedPaths) -> Result<(), String> {
     let identity = managed_current_identity(paths).map_err(|e| e.to_string())?;
     if process_matches(&record, &identity) {
         remove_file_snapshot(&record.file)?;
+        // Best-effort only: managed record removed (actual stop transition).
+        // No-op/mismatched branches above stay silent.
+        emit_tray_lifecycle(
+            crate::route_diag::LifecycleEvent::Stopped,
+            Some(record.record.generation_token.as_str()),
+            crate::route_diag::LifecycleResult::Ok,
+        );
     }
     Ok(())
 }
@@ -1256,6 +1329,13 @@ fn cleanup_current_record_locked(paths: &LifecyclePaths) -> Result<(), String> {
             .is_some_and(|i| process_matches(&snapshot, &i))
         {
             remove_file_snapshot(&snapshot.file)?;
+            // Best-effort only: current record removed (actual stop
+            // transition). Absent/mismatched branches stay silent.
+            emit_tray_lifecycle(
+                crate::route_diag::LifecycleEvent::Stopped,
+                Some(snapshot.record.generation_token.as_str()),
+                crate::route_diag::LifecycleResult::Ok,
+            );
         }
         Ok(())
     })();
@@ -1525,6 +1605,15 @@ fn start_locked(paths: &LifecyclePaths) -> Result<(), String> {
                     ));
                 }
                 println!("start: launched helper PID {child_pid}");
+                // Best-effort only: child record established (actual start
+                // transition). No safe generation at this CLI boundary (the
+                // child owns its token), so `gen=invalid` per contract.
+                // Existing stdout above is unchanged.
+                emit_tray_lifecycle(
+                    crate::route_diag::LifecycleEvent::Started,
+                    None,
+                    crate::route_diag::LifecycleResult::Ok,
+                );
                 return Ok(());
             }
             Ok(Some(record))
@@ -5118,5 +5207,258 @@ mod tests {
         assert!(!paths.desktop().exists());
 
         fs::remove_dir_all(root).unwrap();
+    }
+
+    struct GoneProcess;
+    impl ProcessControl for GoneProcess {
+        fn identity(&self, _pid: u32) -> io::Result<Option<ProcessIdentity>> {
+            Ok(None)
+        }
+        fn terminate(&self, _pid: u32, _expected: &ProcessIdentity) -> io::Result<()> {
+            panic!("stale path must not signal");
+        }
+    }
+
+    struct TerminatingProcess {
+        identity: ProcessIdentity,
+        calls: Cell<usize>,
+    }
+    impl ProcessControl for TerminatingProcess {
+        fn identity(&self, _pid: u32) -> io::Result<Option<ProcessIdentity>> {
+            let calls = self.calls.get();
+            self.calls.set(calls + 1);
+            if calls == 0 {
+                Ok(Some(self.identity.clone()))
+            } else {
+                Ok(None)
+            }
+        }
+        fn terminate(&self, _pid: u32, _expected: &ProcessIdentity) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn installed_process_identity(paths: &LifecyclePaths, start_tick: u64) -> ProcessIdentity {
+        let binary = installed_identity(paths.binary())
+            .unwrap()
+            .expect("installed binary present");
+        ProcessIdentity {
+            start_tick,
+            resolved_executable_path: paths.binary().to_path_buf(),
+            executable: ProcessExecutableIdentity {
+                dev: binary.dev,
+                ino: binary.ino,
+                content: binary.content,
+            },
+        }
+    }
+
+    #[test]
+    fn route_diag_stale_and_stopped_transitions_keep_return_values() {
+        // Real `stop_with` call coverage over both removal branches: stale
+        // record removal and successful terminate + removal. Return values
+        // and record removal are unchanged; the new stderr lifecycle line is
+        // best-effort only. Foreground CLI stdout remains separately visible
+        // in the terminal; the tray autostart stderr is aggregated by the
+        // full-journal anchor-filtered `route-diag` viewer together with
+        // KWin and Planner records.
+        for (name, generation) in [
+            ("route-diag-stale", "test-gen-1"),
+            ("route-diag-stale-second", "test-gen-9"),
+        ] {
+            let root = unit_root(name);
+            fs::create_dir(&root).unwrap();
+            fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+            let paths = LifecyclePaths::new(
+                root.join("data/plasma-auto-tiler"),
+                root.join("config/autostart/plasma-auto-tiler.desktop"),
+                root.join("runtime/plasma-auto-tiler/tray.pid"),
+                root.join("proc"),
+            );
+            let source = root.join("source");
+            fs::write(&source, b"v1").unwrap();
+            fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+            install_locked(&paths, &source).unwrap();
+            write_record(
+                paths.pid_record(),
+                &LifecycleRecord {
+                    pid: 424242,
+                    start_tick: 10,
+                    resolved_executable_path: paths.binary().to_path_buf(),
+                    generation_token: generation.to_owned(),
+                },
+            )
+            .unwrap();
+            let outcome = stop_with(&paths, &GoneProcess).unwrap();
+            assert_eq!(outcome, StopOutcome::RemovedStaleRecord);
+            assert!(!paths.pid_record().exists());
+            fs::remove_dir_all(root).unwrap();
+        }
+
+        let root = unit_root("route-diag-stopped");
+        fs::create_dir(&root).unwrap();
+        fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
+        let paths = LifecyclePaths::new(
+            root.join("data/plasma-auto-tiler"),
+            root.join("config/autostart/plasma-auto-tiler.desktop"),
+            root.join("runtime/plasma-auto-tiler/tray.pid"),
+            root.join("proc"),
+        );
+        let source = root.join("source");
+        fs::write(&source, b"v1").unwrap();
+        fs::set_permissions(&source, fs::Permissions::from_mode(0o755)).unwrap();
+        install_locked(&paths, &source).unwrap();
+        write_record(
+            paths.pid_record(),
+            &LifecycleRecord {
+                pid: 424243,
+                start_tick: 11,
+                resolved_executable_path: paths.binary().to_path_buf(),
+                generation_token: "test-gen-2".to_owned(),
+            },
+        )
+        .unwrap();
+        let identity = installed_process_identity(&paths, 11);
+        let outcome = stop_with(
+            &paths,
+            &TerminatingProcess {
+                identity,
+                calls: Cell::new(0),
+            },
+        )
+        .unwrap();
+        assert_eq!(outcome, StopOutcome::Stopped);
+        assert!(!paths.pid_record().exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn route_diag_tray_lines_are_bounded_and_redacted() {
+        // Closed vocabulary with validated generation only; no rev/corr
+        // (no safe value exists), never PIDs/paths/names/raw errors.
+        use crate::route_diag::{
+            LifecycleComp, LifecycleEvent, LifecycleResult, describe_lifecycle,
+        };
+        let started = describe_lifecycle(
+            LifecycleComp::Tray,
+            LifecycleEvent::Started,
+            Some("test-gen-1"),
+            None,
+            None,
+            Some(LifecycleResult::Ok),
+        );
+        assert_eq!(
+            started,
+            "plasma-auto-tiler:route-diag:lifecycle:comp=tray:event=started:gen=test-gen-1:result=ok"
+        );
+        let stopped = describe_lifecycle(
+            LifecycleComp::Tray,
+            LifecycleEvent::Stopped,
+            Some("test-gen-2"),
+            None,
+            None,
+            Some(LifecycleResult::Ok),
+        );
+        assert!(stopped.contains("comp=tray:event=stopped"), "{stopped}");
+        assert!(stopped.contains("gen=test-gen-2"), "{stopped}");
+        // Invalid generation degrades to `gen=invalid` per contract, never
+        // echoes raw bytes.
+        let invalid = describe_lifecycle(
+            LifecycleComp::Tray,
+            LifecycleEvent::Stopped,
+            Some("BAD GEN!!"),
+            None,
+            None,
+            Some(LifecycleResult::Ok),
+        );
+        assert!(invalid.contains("gen=invalid"), "{invalid}");
+        assert!(!invalid.contains("BAD"), "{invalid}");
+        // No PID/path/name/error bytes appear even when the caller holds them.
+        for forbidden in ["424242", "plasma-auto-tiler/tray.pid", "secret", "Error"] {
+            assert!(!started.contains(forbidden), "{started}");
+            assert!(!stopped.contains(forbidden), "{stopped}");
+        }
+        assert!(!started.contains(":rev="), "{started}");
+        assert!(!started.contains(":corr="), "{started}");
+    }
+
+    #[test]
+    fn route_diag_tray_source_contract_avoids_spam_and_viewer_changes() {
+        // Transition/command boundaries only: start/stop + managed
+        // create/cleanup emit; read-only status, install, and remove stay
+        // silent (no heartbeat/repeated spam, no invented install/remove
+        // events outside the closed started/stopped vocabulary).
+        let source = include_str!("tray_lifecycle.rs");
+        for marker in [
+            "fn start_locked",
+            "fn stop_locked",
+            "fn create_managed_record_locked",
+            "fn cleanup_managed_record_locked",
+            "fn create_current_record_locked",
+            "fn cleanup_current_record_locked",
+            "fn create_launch_record",
+        ] {
+            let body = source.split(marker).nth(1).expect("branch present");
+            let end = body.find("\nfn ").unwrap_or(body.len().min(6000));
+            assert!(
+                body[..end].contains("emit_tray_lifecycle"),
+                "{marker} must emit the bounded lifecycle line"
+            );
+        }
+        for marker in ["fn status_command", "fn install_locked", "fn remove_locked"] {
+            let body = source.split(marker).nth(1).expect("branch present");
+            let end = body.find("\nfn ").unwrap_or(body.len().min(6000));
+            assert!(
+                !body[..end].contains("emit_tray_lifecycle"),
+                "{marker} must stay silent (no heartbeat spam / no invented event)"
+            );
+        }
+        // Closed categories only in the emit helper.
+        let helper = source
+            .split("fn emit_tray_lifecycle")
+            .nth(1)
+            .expect("helper present");
+        let helper = &helper[..helper.find("\nfn ").unwrap_or(helper.len().min(1500))];
+        assert!(helper.contains("LifecycleComp::Tray"), "{helper}");
+        assert!(helper.contains("describe_lifecycle"), "{helper}");
+        assert!(helper.contains("eprintln!"), "{helper}");
+        for forbidden in [
+            "display()",
+            "pid",
+            "PID",
+            "to_string_lossy",
+            "{e}",
+            "{error}",
+        ] {
+            assert!(
+                !helper.contains(forbidden),
+                "emit helper must not log {forbidden}"
+            );
+        }
+        // Existing public stdout compatibility is preserved.
+        for line in [
+            "println!(\"status: stopped\")",
+            "println!(\"stop: stopped helper\")",
+            "println!(\"start: launched helper PID",
+        ] {
+            assert!(source.contains(line), "public stdout changed: {line}");
+        }
+        // Viewer aggregation: the tray autostart stderr is aggregated by the
+        // full-journal anchor-filtered `route-diag` viewer together with
+        // KWin and Planner records, while foreground CLI stdout stays
+        // separately visible in the terminal.
+        assert!(
+            source.contains("anchor-filtered"),
+            "source must document viewer aggregation"
+        );
+        let route = include_str!("route_diag.rs");
+        assert!(
+            route.contains("\"plasma-kwin_wayland.service\""),
+            "viewer KWin unit changed"
+        );
+        assert!(
+            route.contains("\"plasma-auto-tiler-planner.service\""),
+            "viewer planner unit changed"
+        );
     }
 }

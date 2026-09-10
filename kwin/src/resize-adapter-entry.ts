@@ -32,6 +32,7 @@
 // retained on the focused window. All logs are fixed redacted tokens.
 
 import { ResizeAdapter, ResizeObserved, resizeFingerprint } from "./resize-adapter";
+import { formatRouteDiag } from "./route-diag";
 import { connectSignal, readSignal } from "./signal-capability";
 
 export interface ResizeEntryOverrides {
@@ -93,6 +94,30 @@ function rectContained(
     );
 }
 
+// Skip category for the exact-three adoption, mirroring
+// trioBootstrapTarget below. Count only, never identities or geometry.
+function trioBootstrapSkipReason(observed: ResizeObserved): string {
+    try {
+        if (observed.windows.length !== 3) {
+            return "non-three";
+        }
+        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+        const middle = sorted[1];
+        const last = sorted[2];
+        if (
+            middle === undefined ||
+            last === undefined ||
+            !(middle.rect.w > middle.rect.h) ||
+            !(last.rect.w <= last.rect.h)
+        ) {
+            return "shape";
+        }
+        return "uncontained";
+    } catch (error) {
+        void error;
+        return "unknown";
+    }
+}
 // Exact-three adoption target from a live observation: exactly three
 // eligible windows in the single active domain with real contained rects,
 // where the sorted middle window is wide and the sorted last window is
@@ -784,14 +809,49 @@ export function startResizeAdapterEntry(
             // Single-shot adoption: only a fresh shared holder may seed, so
             // an established or foreign revision never re-seeds.
             if (!isFreshRevisionHolder(overrides.revision)) {
+                try {
+                    log(
+                        formatRouteDiag("scope", [
+                            ["count", -1],
+                            ["decision", "skip"],
+                            ["reason", "stale-holder"],
+                        ]),
+                    );
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             const observed = observeNative(liveWorkspace);
             if (observed === null) {
+                try {
+                    log(
+                        formatRouteDiag("scope", [
+                            ["count", -1],
+                            ["decision", "skip"],
+                            ["reason", "no-scope"],
+                        ]),
+                    );
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             const target = trioBootstrapTarget(observed);
             if (target === null) {
+                // Exact-three scope validation: window count only plus the
+                // fixed skip category. Never identities or geometry.
+                try {
+                    log(
+                        formatRouteDiag("scope", [
+                            ["count", observed.windows.length],
+                            ["decision", "skip"],
+                            ["reason", trioBootstrapSkipReason(observed)],
+                        ]),
+                    );
+                } catch (error) {
+                    void error;
+                }
                 return;
             }
             // Deterministic focus alignment through public state: the Rust
@@ -810,6 +870,16 @@ export function startResizeAdapterEntry(
             adapter.requestResize("up", "inwards");
             try {
                 log(ENTRY_BOOTSTRAP);
+            } catch (error) {
+                void error;
+            }
+            try {
+                log(
+                    formatRouteDiag("scope", [
+                        ["count", 3],
+                        ["decision", "adopt"],
+                    ]),
+                );
             } catch (error) {
                 void error;
             }

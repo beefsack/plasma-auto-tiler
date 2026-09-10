@@ -18,6 +18,13 @@ fn main() {
             "tray-status" => plasma_auto_tiler::tray_lifecycle::status_command(),
             "tray-stop" => plasma_auto_tiler::tray_lifecycle::stop_command(),
             "tray-remove" => plasma_auto_tiler::tray_lifecycle::remove_command(),
+            // Visible no-activation current-boot hint: prints the shared
+            // route-diag anchor and the exact current-boot journal follow
+            // invocation. Pure stdout with no I/O, no D-Bus, no activation.
+            "route-diag" => {
+                println!("{}", plasma_auto_tiler::route_diag::route_diag_status());
+                Ok(())
+            }
             command => Err(format!("unknown command: {command}")),
         },
         [_, command, flag, correlation]

@@ -20,6 +20,7 @@ import { startFocusAdapterEntry, type FocusEntryHandle } from "./focus-adapter-e
 import { startMovementAdapterEntry, type MovementEntryHandle } from "./movement-adapter-entry";
 import { startPointerResizeAdapterEntry, type PointerResizeEntryHandle } from "./pointer-resize-adapter-entry";
 import { startResizeAdapterEntry, type ResizeEntryHandle } from "./resize-adapter-entry";
+import { formatRouteDiag } from "./route-diag";
 import type { EngineAuthorityMode } from "./controller-config";
 
 export const ENGINE_AUTHORITY_OWNER = "plasma-auto-tiler";
@@ -118,6 +119,9 @@ export class EngineAuthorityDispatcher {
     // revision binding and exact-three bootstrap. Never polled, never per
     // signal, never legacy.
     private lazyRetryUsed = false;
+    // Monotonic per-dispatcher command ordinal for route diagnostics: links
+    // one physical command to its retry/refusal outcome. Count only.
+    private cmdSeq = 0;
 
     constructor(
         private readonly mode: EngineAuthorityMode,
@@ -217,6 +221,18 @@ export class EngineAuthorityDispatcher {
             } catch (error) {
                 void error;
             }
+            try {
+                this.log(
+                    formatRouteDiag("attach", [
+                        ["result", "unavailable"],
+                        ["slices", 4],
+                        ["gen", ENGINE_AUTHORITY_GENERATION],
+                        ["rev", this.revisionBinding.current],
+                    ]),
+                );
+            } catch (error) {
+                void error;
+            }
             return false;
         }
         this.focusHandle = focus;
@@ -226,6 +242,18 @@ export class EngineAuthorityDispatcher {
         this.rustAvailable = true;
         try {
             this.log("plasma-auto-tiler:engine-authority-rust-ready");
+        } catch (error) {
+            void error;
+        }
+        try {
+            this.log(
+                formatRouteDiag("attach", [
+                    ["result", "ready"],
+                    ["slices", 4],
+                    ["gen", ENGINE_AUTHORITY_GENERATION],
+                    ["rev", this.revisionBinding.current],
+                ]),
+            );
         } catch (error) {
             void error;
         }
@@ -255,10 +283,35 @@ export class EngineAuthorityDispatcher {
             return true;
         }
         if (this.lazyRetryUsed) {
+            try {
+                this.log(
+                    formatRouteDiag("retry", [
+                        ["decision", "consumed"],
+                        ["result", "refused"],
+                        ["gen", ENGINE_AUTHORITY_GENERATION],
+                        ["rev", this.revisionBinding.current],
+                    ]),
+                );
+            } catch (error) {
+                void error;
+            }
             return false;
         }
         this.lazyRetryUsed = true;
-        return this.start();
+        const retried = this.start();
+        try {
+            this.log(
+                formatRouteDiag("retry", [
+                    ["decision", "retry"],
+                    ["result", retried ? "ready" : "unavailable"],
+                    ["gen", ENGINE_AUTHORITY_GENERATION],
+                    ["rev", this.revisionBinding.current],
+                ]),
+            );
+        } catch (error) {
+            void error;
+        }
+        return retried;
     }
 
     // Delivery diagnostic for the keyboard shortcut callback route: one
@@ -275,6 +328,51 @@ export class EngineAuthorityDispatcher {
         }
         try {
             this.log(`plasma-auto-tiler:engine-authority-rust-command:${kind}:${detail}`);
+        } catch (error) {
+            void error;
+        }
+        // Correlated command line: monotonic seq plus the shared authority
+        // generation/revision so one press links to its retry/refusal and to
+        // the adapter correlation emitted downstream. Fixed categories and
+        // counts only.
+        try {
+            this.cmdSeq += 1;
+            const parts = detail.split(":");
+            const fields: Array<readonly [string, unknown]> = [
+                ["seq", this.cmdSeq],
+                ["kind", kind],
+                ["detail", parts[0] ?? "unknown"],
+                ["gen", ENGINE_AUTHORITY_GENERATION],
+                ["rev", this.revisionBinding.current],
+            ];
+            // Resize commands carry `direction:mode`; keep both as separate
+            // fixed-category fields rather than a joined token.
+            if (kind === "resize" && parts[1] !== undefined) {
+                fields.push(["mode", parts[1]]);
+            }
+            this.log(formatRouteDiag("cmd", fields));
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private refusedDiag(kind: "focus" | "move" | "resize" | "resize-mode"): void {
+        // Rust-development only: legacy stays silent (no cmd seq exists to
+        // link against, so an ungated line would emit orphan seq=0).
+        if (this.mode !== "rust-development") {
+            return;
+        }
+        // Links the refusal to the command seq above. Count/category only.
+        try {
+            this.log(
+                formatRouteDiag("retry", [
+                    ["decision", "refused"],
+                    ["kind", kind],
+                    ["seq", this.cmdSeq],
+                    ["gen", ENGINE_AUTHORITY_GENERATION],
+                    ["rev", this.revisionBinding.current],
+                ]),
+            );
         } catch (error) {
             void error;
         }
@@ -309,6 +407,7 @@ export class EngineAuthorityDispatcher {
             } catch (error) {
                 void error;
             }
+            this.refusedDiag("focus");
             return;
         }
         try {
@@ -327,6 +426,7 @@ export class EngineAuthorityDispatcher {
             } catch (error) {
                 void error;
             }
+            this.refusedDiag("move");
             return;
         }
         try {
@@ -348,6 +448,7 @@ export class EngineAuthorityDispatcher {
             } catch (error) {
                 void error;
             }
+            this.refusedDiag("resize");
             return;
         }
         try {
@@ -366,6 +467,7 @@ export class EngineAuthorityDispatcher {
             } catch (error) {
                 void error;
             }
+            this.refusedDiag("resize-mode");
             return;
         }
         if (this.rustResizeMode === resizeMode) {

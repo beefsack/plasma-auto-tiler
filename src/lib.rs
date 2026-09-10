@@ -22,6 +22,7 @@ pub mod poc3_host_pilot;
 pub mod poc3_host_trio;
 pub mod reconcile;
 pub mod resize_service;
+pub mod route_diag;
 pub mod session;
 pub mod shadow_projection;
 pub mod trace;
