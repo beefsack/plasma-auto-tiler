@@ -208,6 +208,9 @@ describe("resize entry exact-three bootstrap", () => {
         handle.tryBootstrapTrio?.();
         assert.equal(calls.length, 0);
         assert.equal(holder.current, 0);
+        const scope = logs.find((line) => line.includes(":scope:"));
+        assert.ok(scope?.includes("reason=middle-not-wide"), scope);
+        assert.ok(!scope?.includes("reason=last-not-tall"), scope);
         handle.stop();
     });
 
@@ -221,6 +224,9 @@ describe("resize entry exact-three bootstrap", () => {
         handle.tryBootstrapTrio?.();
         assert.equal(calls.length, 0);
         assert.equal(holder.current, 0);
+        const scope = logs.find((line) => line.includes(":scope:"));
+        assert.ok(scope?.includes("reason=last-not-tall"), scope);
+        assert.ok(!scope?.includes("reason=middle-not-wide"), scope);
         handle.stop();
     });
 

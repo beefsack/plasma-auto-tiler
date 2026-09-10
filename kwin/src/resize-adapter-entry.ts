@@ -105,13 +105,14 @@ function trioBootstrapSkipReason(observed: ResizeObserved): string {
         const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
         const middle = sorted[1];
         const last = sorted[2];
-        if (
-            middle === undefined ||
-            last === undefined ||
-            !(middle.rect.w > middle.rect.h) ||
-            !(last.rect.w <= last.rect.h)
-        ) {
-            return "shape";
+        if (middle === undefined || last === undefined) {
+            return "unknown";
+        }
+        if (!(middle.rect.w > middle.rect.h)) {
+            return "middle-not-wide";
+        }
+        if (!(last.rect.w <= last.rect.h)) {
+            return "last-not-tall";
         }
         return "uncontained";
     } catch (error) {

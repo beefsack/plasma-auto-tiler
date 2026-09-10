@@ -14788,8 +14788,14 @@
       const sorted = [...observed.windows].sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
       const middle = sorted[1];
       const last = sorted[2];
-      if (middle === void 0 || last === void 0 || !(middle.rect.w > middle.rect.h) || !(last.rect.w <= last.rect.h)) {
-        return "shape";
+      if (middle === void 0 || last === void 0) {
+        return "unknown";
+      }
+      if (!(middle.rect.w > middle.rect.h)) {
+        return "middle-not-wide";
+      }
+      if (!(last.rect.w <= last.rect.h)) {
+        return "last-not-tall";
       }
       return "uncontained";
     } catch (error) {
@@ -20766,9 +20772,9 @@
     }
   });
   controller.start();
-  if (typeof CONTROLLER_NONCE === "string" && typeof CONTROLLER_BUILD_ID === "string" && typeof CONTROLLER_PLUGIN_ID === "string") {
+  if (true) {
     console.log(
-      `plasma-auto-tiler:controller-ready:plugin=${CONTROLLER_PLUGIN_ID}:nonce=${CONTROLLER_NONCE}:build=${CONTROLLER_BUILD_ID}`
+      `plasma-auto-tiler:controller-ready:plugin=${"plasma-auto-tiler-kwin"}:nonce=${"start-20260911T023137-126593"}:build=${"controller-v1-bd36a770b3b05f921ab8dbddd7aef2464732481548ea4c71ecea307b8cf319aa"}`
     );
   }
   try {
