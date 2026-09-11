@@ -175,6 +175,38 @@ bool journalEntryValid(const ShortcutJournalEntry &entry)
     return ShortcutReconciler::keysValid(entry.pre) && ShortcutReconciler::keysValid(entry.post);
 }
 
+bool readJournalKeys(const KConfigGroup &group, const QString &key, QList<int> *out, QString *error)
+{
+    bool ok = false;
+    const QList<int> values = keysFromString(group.readEntry(key, QString()), &ok);
+    if (!ok) {
+        if (error) {
+            *error = QStringLiteral("journal is malformed");
+        }
+        return false;
+    }
+    if (out) {
+        *out = values;
+    }
+    return true;
+}
+
+void writeJournalEntry(KConfigGroup &group, const QString &prefix, const ShortcutJournalEntry &entry)
+{
+    group.writeEntry(prefix + QStringLiteral("Component"), entry.component);
+    group.writeEntry(prefix + QStringLiteral("Action"), entry.action);
+    group.writeEntry(prefix + QStringLiteral("Pre"), keysToString(entry.pre));
+    group.writeEntry(prefix + QStringLiteral("Post"), keysToString(entry.post));
+}
+
+bool readJournalEntry(const KConfigGroup &group, const QString &prefix, ShortcutJournalEntry *out, QString *error)
+{
+    out->component = group.readEntry(prefix + QStringLiteral("Component"), QString());
+    out->action = group.readEntry(prefix + QStringLiteral("Action"), QString());
+    return readJournalKeys(group, prefix + QStringLiteral("Pre"), &out->pre, error)
+        && readJournalKeys(group, prefix + QStringLiteral("Post"), &out->post, error);
+}
+
 bool ensurePrivateDir(const QString &dirPath, QString *error)
 {
     QDir dir;
@@ -269,27 +301,51 @@ QSet<int> intSetFromKeySet(const QSet<QKeySequence> &keys)
 
 } // namespace
 
+const QList<ShortcutConflictRow> &shortcutConflictTable()
+{
+    static const QList<ShortcutConflictRow> table = {
+        {shortcutFocusComponent(), shortcutFocusAction(), {SHORTCUT_META_L}, shortcutLockComponent(),
+         shortcutLockAction(), {SHORTCUT_META_L}, shortcutResolutionRelocate(), {SHORTCUT_META_ESC}},
+        {shortcutResizeUpComponent(), shortcutResizeUpAction(), {SHORTCUT_META_ALT_K},
+         shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {SHORTCUT_META_ALT_K},
+         shortcutResolutionClear(), {}},
+        {shortcutResizeRightComponent(), shortcutResizeRightAction(), {SHORTCUT_META_ALT_L},
+         shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {SHORTCUT_META_ALT_L},
+         shortcutResolutionClear(), {}},
+    };
+    return table;
+}
+
 bool ShortcutReconciler::isAllowlisted(const QString &component, const QString &action)
 {
-    return (component == shortcutFocusComponent() && action == shortcutFocusAction())
-        || (component == shortcutLockComponent() && action == shortcutLockAction());
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        if ((component == row.projectComponent && action == row.projectAction)
+            || (component == row.foreignComponent && action == row.foreignAction)) {
+            return true;
+        }
+    }
+    return false;
 }
 
-QList<int> ShortcutReconciler::focusPostKeys()
-{
-    return {SHORTCUT_META_L};
-}
-
+QList<int> ShortcutReconciler::focusPostKeys() { return shortcutConflictTable().at(0).projectPost; }
 QList<int> ShortcutReconciler::lockPostFor(const QList<int> &lockPre)
 {
+    const QList<int> target = shortcutConflictTable().at(0).resolutionTarget;
     QList<int> replaced;
     replaced.reserve(lockPre.size());
     for (int key : lockPre) {
-        replaced.append(key == SHORTCUT_META_L ? SHORTCUT_META_ESC : key);
+        if (key == SHORTCUT_META_L) {
+            for (int t : target) replaced.append(t);
+        } else {
+            replaced.append(key);
+        }
     }
     return dedupKeys(replaced);
 }
-
+QList<int> ShortcutReconciler::resizeUpPostKeys() { return shortcutConflictTable().at(1).projectPost; }
+QList<int> ShortcutReconciler::resizeRightPostKeys() { return shortcutConflictTable().at(2).projectPost; }
+QList<int> ShortcutReconciler::switchNextExpectedPre() { return shortcutConflictTable().at(1).foreignExpectedPre; }
+QList<int> ShortcutReconciler::switchLastExpectedPre() { return shortcutConflictTable().at(2).foreignExpectedPre; }
 QList<int> ShortcutReconciler::dedupKeys(const QList<int> &keys)
 {
     QList<int> deduped;
@@ -590,8 +646,28 @@ bool ShortcutReconciler::journalPathSafe(const QString &path, QString *error)
 
 bool ShortcutReconciler::journalRolesValid(const ShortcutJournal &journal)
 {
-    return journal.focus.component == shortcutFocusComponent() && journal.focus.action == shortcutFocusAction()
-        && journal.lock.component == shortcutLockComponent() && journal.lock.action == shortcutLockAction();
+    const QList<ShortcutConflictRow> &table = shortcutConflictTable();
+    if (table.size() != 3) {
+        return false;
+    }
+    if (journal.focus.component != table.at(0).projectComponent || journal.focus.action != table.at(0).projectAction
+        || journal.lock.component != table.at(0).foreignComponent || journal.lock.action != table.at(0).foreignAction
+        || journal.resizeUp.component != table.at(1).projectComponent
+        || journal.resizeUp.action != table.at(1).projectAction || journal.switchNext.component != table.at(1).foreignComponent
+        || journal.switchNext.action != table.at(1).foreignAction || journal.resizeRight.component != table.at(2).projectComponent
+        || journal.resizeRight.action != table.at(2).projectAction || journal.switchLast.component != table.at(2).foreignComponent
+        || journal.switchLast.action != table.at(2).foreignAction) {
+        return false;
+    }
+    return journal.row0Kind == table.at(0).resolution && journal.row1Kind == table.at(1).resolution
+        && journal.row2Kind == table.at(2).resolution;
+}
+
+bool ShortcutReconciler::journalPostsValid(const ShortcutJournal &journal)
+{
+    return journal.focus.post == focusPostKeys() && journal.lock.post == lockPostFor(journal.lock.pre)
+        && journal.resizeUp.post == resizeUpPostKeys() && journal.switchNext.post.isEmpty()
+        && journal.resizeRight.post == resizeRightPostKeys() && journal.switchLast.post.isEmpty();
 }
 
 bool KGlobalAccelStore::checkSetterContract(QString *error)
@@ -959,36 +1035,20 @@ bool KConfigFileJournal::load(ShortcutJournal *journal, QString *error) const
     loaded.phase = group.readEntry(QStringLiteral("Phase"), QString());
     loaded.owner = group.readEntry(QStringLiteral("Owner"), QString());
     loaded.uid = group.readEntry(QStringLiteral("Uid"), 0u);
-    loaded.focus.component = group.readEntry(QStringLiteral("FocusComponent"), QString());
-    loaded.focus.action = group.readEntry(QStringLiteral("FocusAction"), QString());
-    loaded.lock.component = group.readEntry(QStringLiteral("LockComponent"), QString());
-    loaded.lock.action = group.readEntry(QStringLiteral("LockAction"), QString());
-    bool ok = false;
-    loaded.focus.pre = keysFromString(group.readEntry(QStringLiteral("FocusPre"), QString()), &ok);
-    if (!ok) {
-        if (error) {
-            *error = QStringLiteral("journal is malformed");
-        }
+    loaded.row0Kind = group.readEntry(QStringLiteral("Row0Kind"), QString());
+    loaded.row1Kind = group.readEntry(QStringLiteral("Row1Kind"), QString());
+    loaded.row2Kind = group.readEntry(QStringLiteral("Row2Kind"), QString());
+    if (!readJournalEntry(group, QStringLiteral("Focus"), &loaded.focus, error)
+        || !readJournalEntry(group, QStringLiteral("Lock"), &loaded.lock, error)
+        || !readJournalEntry(group, QStringLiteral("ResizeUp"), &loaded.resizeUp, error)
+        || !readJournalEntry(group, QStringLiteral("SwitchNext"), &loaded.switchNext, error)
+        || !readJournalEntry(group, QStringLiteral("ResizeRight"), &loaded.resizeRight, error)
+        || !readJournalEntry(group, QStringLiteral("SwitchLast"), &loaded.switchLast, error)) {
         return false;
     }
-    loaded.focus.post = keysFromString(group.readEntry(QStringLiteral("FocusPost"), QString()), &ok);
-    if (!ok) {
+    if (loaded.schema == QStringLiteral("shortcut-override-v1")) {
         if (error) {
-            *error = QStringLiteral("journal is malformed");
-        }
-        return false;
-    }
-    loaded.lock.pre = keysFromString(group.readEntry(QStringLiteral("LockPre"), QString()), &ok);
-    if (!ok) {
-        if (error) {
-            *error = QStringLiteral("journal is malformed");
-        }
-        return false;
-    }
-    loaded.lock.post = keysFromString(group.readEntry(QStringLiteral("LockPost"), QString()), &ok);
-    if (!ok) {
-        if (error) {
-            *error = QStringLiteral("journal is malformed");
+            *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
         }
         return false;
     }
@@ -1005,16 +1065,24 @@ bool KConfigFileJournal::load(ShortcutJournal *journal, QString *error) const
         }
         return false;
     }
-    if (!journalEntryValid(loaded.focus) || !journalEntryValid(loaded.lock)) {
+    if (!journalEntryValid(loaded.focus) || !journalEntryValid(loaded.lock) || !journalEntryValid(loaded.resizeUp)
+        || !journalEntryValid(loaded.switchNext) || !journalEntryValid(loaded.resizeRight)
+        || !journalEntryValid(loaded.switchLast)) {
         if (error) {
             *error = QStringLiteral("journal entries are outside the exact allowlist");
         }
         return false;
     }
-    // Exact roles: focus must be kwin/focus-right, lock must be ksmserver/Lock Session.
+    // Exact ordered roles: table order plus resolution kinds.
     if (!ShortcutReconciler::journalRolesValid(loaded)) {
         if (error) {
             *error = QStringLiteral("journal roles are swapped or not the exact allowlist");
+        }
+        return false;
+    }
+    if (!ShortcutReconciler::journalPostsValid(loaded)) {
+        if (error) {
+            *error = QStringLiteral("journal postimage is not the allowed image");
         }
         return false;
     }
@@ -1051,6 +1119,8 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         return false;
     }
     if (journal.schema != shortcutJournalSchema() || !journalEntryValid(journal.focus) || !journalEntryValid(journal.lock)
+        || !journalEntryValid(journal.resizeUp) || !journalEntryValid(journal.switchNext)
+        || !journalEntryValid(journal.resizeRight) || !journalEntryValid(journal.switchLast)
         || !ShortcutReconciler::journalRolesValid(journal)) {
         if (error) {
             *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
@@ -1071,14 +1141,15 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         group.writeEntry(QStringLiteral("Phase"), journal.phase);
         group.writeEntry(QStringLiteral("Owner"), journal.owner);
         group.writeEntry(QStringLiteral("Uid"), journal.uid);
-        group.writeEntry(QStringLiteral("FocusComponent"), journal.focus.component);
-        group.writeEntry(QStringLiteral("FocusAction"), journal.focus.action);
-        group.writeEntry(QStringLiteral("FocusPre"), keysToString(journal.focus.pre));
-        group.writeEntry(QStringLiteral("FocusPost"), keysToString(journal.focus.post));
-        group.writeEntry(QStringLiteral("LockComponent"), journal.lock.component);
-        group.writeEntry(QStringLiteral("LockAction"), journal.lock.action);
-        group.writeEntry(QStringLiteral("LockPre"), keysToString(journal.lock.pre));
-        group.writeEntry(QStringLiteral("LockPost"), keysToString(journal.lock.post));
+        writeJournalEntry(group, QStringLiteral("Focus"), journal.focus);
+        writeJournalEntry(group, QStringLiteral("Lock"), journal.lock);
+        writeJournalEntry(group, QStringLiteral("ResizeUp"), journal.resizeUp);
+        writeJournalEntry(group, QStringLiteral("SwitchNext"), journal.switchNext);
+        writeJournalEntry(group, QStringLiteral("ResizeRight"), journal.resizeRight);
+        writeJournalEntry(group, QStringLiteral("SwitchLast"), journal.switchLast);
+        group.writeEntry(QStringLiteral("Row0Kind"), journal.row0Kind);
+        group.writeEntry(QStringLiteral("Row1Kind"), journal.row1Kind);
+        group.writeEntry(QStringLiteral("Row2Kind"), journal.row2Kind);
         config.sync();
     }
     // Private owner-safe permissions without weakening KConfig durability
@@ -1099,7 +1170,16 @@ bool KConfigFileJournal::persist(const ShortcutJournal &journal, QString *error)
         || readback.focus.action != journal.focus.action || readback.focus.pre != journal.focus.pre
         || readback.focus.post != journal.focus.post || readback.lock.component != journal.lock.component
         || readback.lock.action != journal.lock.action || readback.lock.pre != journal.lock.pre
-        || readback.lock.post != journal.lock.post) {
+        || readback.lock.post != journal.lock.post || readback.resizeUp.component != journal.resizeUp.component
+        || readback.resizeUp.action != journal.resizeUp.action || readback.resizeUp.pre != journal.resizeUp.pre
+        || readback.resizeUp.post != journal.resizeUp.post || readback.switchNext.component != journal.switchNext.component
+        || readback.switchNext.action != journal.switchNext.action || readback.switchNext.pre != journal.switchNext.pre
+        || readback.switchNext.post != journal.switchNext.post || readback.resizeRight.component != journal.resizeRight.component
+        || readback.resizeRight.action != journal.resizeRight.action || readback.resizeRight.pre != journal.resizeRight.pre
+        || readback.resizeRight.post != journal.resizeRight.post || readback.switchLast.component != journal.switchLast.component
+        || readback.switchLast.action != journal.switchLast.action || readback.switchLast.pre != journal.switchLast.pre
+        || readback.switchLast.post != journal.switchLast.post || readback.row0Kind != journal.row0Kind
+        || readback.row1Kind != journal.row1Kind || readback.row2Kind != journal.row2Kind) {
         if (error) {
             *error = QStringLiteral("journal readback mismatch");
         }
@@ -1185,6 +1265,10 @@ ShortcutApplyResult ShortcutReconciler::apply()
     }
     ShortcutTuple focusCurrent;
     ShortcutTuple lockCurrent;
+    ShortcutTuple resizeUpCurrent;
+    ShortcutTuple switchNextCurrent;
+    ShortcutTuple resizeRightCurrent;
+    ShortcutTuple switchLastCurrent;
     if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusCurrent, &error)) {
         result.error = error;
         return result;
@@ -1193,11 +1277,23 @@ ShortcutApplyResult ShortcutReconciler::apply()
         result.error = error;
         return result;
     }
-    if (!keysValid(focusCurrent.active) || !keysValid(lockCurrent.active)) {
+    if (!findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &resizeUpCurrent, &error)
+        || !findAllowlisted(tuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &switchNextCurrent,
+                            &error)
+        || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &resizeRightCurrent,
+                            &error)
+        || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &switchLastCurrent,
+                            &error)) {
+        result.error = error;
+        return result;
+    }
+    if (!keysValid(focusCurrent.active) || !keysValid(lockCurrent.active) || !keysValid(resizeUpCurrent.active)
+        || !keysValid(switchNextCurrent.active) || !keysValid(resizeRightCurrent.active)
+        || !keysValid(switchLastCurrent.active)) {
         result.error = QStringLiteral("allowlisted tuple is unbounded");
         return result;
     }
-    // Preflight: refuse on any Meta+Esc claimed by a non-allowlisted record.
+    // Preflight: refuse when any exact claimed/replacement chord is held by non-allowlisted record.
     // No journal and no mutation on this path.
     for (const ShortcutTuple &tuple : tuples) {
         if (isAllowlisted(tuple.component, tuple.action)) {
@@ -1207,14 +1303,16 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.error = QStringLiteral("unrelated tuple is unbounded");
             return result;
         }
-        if (tuple.active.contains(SHORTCUT_META_ESC)) {
-            result.error = QStringLiteral("refusing to apply: Meta+Esc is claimed by %1/%2").arg(tuple.component, tuple.action);
+        if (tuple.active.contains(SHORTCUT_META_ESC) || tuple.active.contains(SHORTCUT_META_ALT_K) || tuple.active.contains(SHORTCUT_META_ALT_L)) {
+            result.error = QStringLiteral("refusing to apply: Meta+Esc/Meta+Alt+K/Meta+Alt+L is claimed by %1/%2").arg(tuple.component, tuple.action);
             return result;
         }
     }
 
     const QList<int> focusPost = focusPostKeys();
     const QList<int> lockPost = lockPostFor(lockCurrent.active);
+    const QList<int> resizeUpPost = resizeUpPostKeys();
+    const QList<int> resizeRightPost = resizeRightPostKeys();
     const bool focusNeeds = focusCurrent.active != focusPost;
     const bool lockHadMetaL = lockCurrent.active.contains(SHORTCUT_META_L);
     const bool lockHasMetaEsc = lockCurrent.active.contains(SHORTCUT_META_ESC);
@@ -1224,7 +1322,7 @@ ShortcutApplyResult ShortcutReconciler::apply()
         return result;
     }
     if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact two writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
         return result;
     }
 
@@ -1236,18 +1334,16 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.writes = usedWrites();
             return result;
         }
-        if (!journalRolesValid(journal)) {
-            result.error = QStringLiteral("journal roles are swapped or not the exact allowlist");
-            result.writes = usedWrites();
-            return result;
-        }
         if (journal.owner != owner || journal.uid != uid) {
             result.error = QStringLiteral("KGlobalAccel service owner drifted");
             result.writes = usedWrites();
             return result;
         }
         if (journal.phase == shortcutJournalPhaseComplete()) {
-            if (focusCurrent.active == journal.focus.post && lockCurrent.active == journal.lock.post) {
+            if (focusCurrent.active == journal.focus.post && lockCurrent.active == journal.lock.post
+                && resizeUpCurrent.active == journal.resizeUp.post && switchNextCurrent.active == journal.switchNext.post
+                && resizeRightCurrent.active == journal.resizeRight.post
+                && switchLastCurrent.active == journal.switchLast.post) {
                 result.ok = true;
                 result.writes = usedWrites();
                 return result;
@@ -1256,35 +1352,53 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.writes = usedWrites();
             return result;
         }
-        // Resume with the recorded postimage only when it equals the
-        // deterministic allowed derivation from the recorded pre.
-        const QList<int> expectedFocusPost = focusPostKeys();
-        const QList<int> expectedLockPost = lockPostFor(journal.lock.pre);
-        if (journal.focus.post != expectedFocusPost || journal.lock.post != expectedLockPost) {
-            result.error = QStringLiteral("journal postimage is not the allowed image");
-            result.writes = usedWrites();
-            return result;
-        }
-        // Resume/Finish Apply gate: before any write, each live tuple must
-        // be exactly its recorded pre or its recorded post. Anything else
-        // is external focus/lock drift and must not be re-clobbered.
-        // Zero writes have occurred at this point, so failing here is clean.
+        // Resume gate: before any write, each live tuple must be exactly
+        // its recorded pre or post. Zero writes have occurred, so clean.
         {
-            const bool focusKnown = focusCurrent.active == journal.focus.pre || focusCurrent.active == journal.focus.post;
+            const bool known = focusCurrent.active == journal.focus.pre || focusCurrent.active == journal.focus.post;
             const bool lockKnown = lockCurrent.active == journal.lock.pre || lockCurrent.active == journal.lock.post;
-            if (!focusKnown || !lockKnown) {
+            const bool upKnown = resizeUpCurrent.active == journal.resizeUp.pre
+                || resizeUpCurrent.active == journal.resizeUp.post;
+            const bool nextKnown = switchNextCurrent.active == journal.switchNext.pre
+                || switchNextCurrent.active == journal.switchNext.post;
+            const bool rightKnown = resizeRightCurrent.active == journal.resizeRight.pre
+                || resizeRightCurrent.active == journal.resizeRight.post;
+            const bool lastKnown = switchLastCurrent.active == journal.switchLast.pre
+                || switchLastCurrent.active == journal.switchLast.post;
+            if (!known || !lockKnown || !upKnown || !nextKnown || !rightKnown || !lastKnown) {
                 result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
                 result.writes = usedWrites();
                 return result;
             }
         }
     } else {
+        // Fresh closed-table foreign preimage preflight before any journal/write.
+        if (switchNextCurrent.active != switchNextExpectedPre()) {
+            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+Alt+K")
+                               .arg(shortcutSwitchNextComponent(), shortcutSwitchNextAction());
+            return result;
+        }
+        if (switchLastCurrent.active != switchLastExpectedPre()) {
+            result.error = QStringLiteral("refusing to apply: %1/%2 preimage is not exactly Meta+Alt+L")
+                               .arg(shortcutSwitchLastComponent(), shortcutSwitchLastAction());
+            return result;
+        }
         journal.schema = shortcutJournalSchema();
         journal.phase = shortcutJournalPhasePending();
         journal.owner = owner;
         journal.uid = uid;
         journal.focus = {shortcutFocusComponent(), shortcutFocusAction(), focusCurrent.active, focusPost};
         journal.lock = {shortcutLockComponent(), shortcutLockAction(), lockCurrent.active, lockPost};
+        journal.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), resizeUpCurrent.active, resizeUpPost};
+        journal.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), switchNextCurrent.active,
+                              QList<int>{}};
+        journal.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), resizeRightCurrent.active,
+                               resizeRightPost};
+        journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), switchLastCurrent.active,
+                              QList<int>{}};
+        journal.row0Kind = shortcutResolutionRelocate();
+        journal.row1Kind = shortcutResolutionClear();
+        journal.row2Kind = shortcutResolutionClear();
         if (!m_journal->persist(journal, &error)) {
             result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
             return result;
@@ -1427,6 +1541,118 @@ ShortcutApplyResult ShortcutReconciler::apply()
         }
     }
 
+    // Rows 1-2 ordered: project then foreign(clear) per row, resumable.
+    if (journal.phase == shortcutJournalPhasePending()
+        && (resizeUpCurrent.active != journal.resizeUp.post || switchNextCurrent.active != journal.switchNext.post
+            || resizeRightCurrent.active != journal.resizeRight.post
+            || switchLastCurrent.active != journal.switchLast.post)) {
+        journal.phase = shortcutJournalPhaseFocusApplied();
+        if (!m_journal->persist(journal, &error)) {
+            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+            return result;
+        }
+    }
+    {
+        ShortcutJournalEntry *projs[2] = {&journal.resizeUp, &journal.resizeRight};
+        ShortcutJournalEntry *fors[2] = {&journal.switchNext, &journal.switchLast};
+        for (int r = 0; r < 2; ++r) {
+            QList<ShortcutTuple> cur;
+            if (!m_store->readAll(&cur, &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            ShortcutTuple proj;
+            ShortcutTuple foreign;
+            if (!findAllowlisted(cur, projs[r]->component, projs[r]->action, &proj, &error)
+                || !findAllowlisted(cur, fors[r]->component, fors[r]->action, &foreign, &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            if (foreign.active != fors[r]->pre && foreign.active != fors[r]->post) {
+                result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
+                result.writes = usedWrites();
+                return result;
+            }
+            if (proj.active != projs[r]->post) {
+                if (proj.active != projs[r]->pre) {
+                    result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (!checkOwner(&error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+                QList<int> confirmed;
+                if (!m_store->writeKeys(projs[r]->component, projs[r]->action, proj.componentFriendly, proj.friendly,
+                                        projs[r]->post, &confirmed, &error)) {
+                    result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (confirmed != projs[r]->post) {
+                    result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+                    return result;
+                }
+                if (!checkOwner(&error)) {
+                    result.error = error;
+                    return result;
+                }
+            }
+            // Ordered gate: foreign clears only while its project owns the chord.
+            QList<ShortcutTuple> gate;
+            if (!m_store->readAll(&gate, &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            ShortcutTuple projGate;
+            ShortcutTuple forGate;
+            if (!findAllowlisted(gate, projs[r]->component, projs[r]->action, &projGate, &error)
+                || !findAllowlisted(gate, fors[r]->component, fors[r]->action, &forGate, &error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            if (projGate.active != projs[r]->post) {
+                result.error = QStringLiteral("refusing the foreign write while its project does not own the chord");
+                result.writes = usedWrites();
+                return result;
+            }
+            if (forGate.active != fors[r]->post) {
+                if (forGate.active != fors[r]->pre) {
+                    result.error = QStringLiteral("foreign binding changed during apply");
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (!checkOwner(&error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+                QList<int> confirmed;
+                if (!m_store->writeKeys(fors[r]->component, fors[r]->action, forGate.componentFriendly,
+                                        forGate.friendly, fors[r]->post, &confirmed, &error)) {
+                    result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+                if (confirmed != fors[r]->post) {
+                    result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+                    return result;
+                }
+                if (!checkOwner(&error)) {
+                    result.error = error;
+                    result.writes = usedWrites();
+                    return result;
+                }
+            }
+        }
+    }
+
     // Finish Apply: only the allowed pre/post image is permitted.
     QList<ShortcutTuple> finalTuples;
     if (!m_store->readAll(&finalTuples, &error)) {
@@ -1436,19 +1662,31 @@ ShortcutApplyResult ShortcutReconciler::apply()
     }
     ShortcutTuple focusFinal;
     ShortcutTuple lockFinal;
+    ShortcutTuple upFinal;
+    ShortcutTuple nextFinal;
+    ShortcutTuple rightFinal;
+    ShortcutTuple lastFinal;
     if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)) {
+        || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &nextFinal, &error)
+        || !findAllowlisted(finalTuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightFinal,
+                            &error)
+        || !findAllowlisted(finalTuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastFinal,
+                            &error)) {
         result.error = error;
         result.writes = usedWrites();
         return result;
     }
-    if (focusFinal.active != journal.focus.post || lockFinal.active != journal.lock.post) {
+    if (focusFinal.active != journal.focus.post || lockFinal.active != journal.lock.post
+        || upFinal.active != journal.resizeUp.post || nextFinal.active != journal.switchNext.post
+        || rightFinal.active != journal.resizeRight.post || lastFinal.active != journal.switchLast.post) {
         result.error = QStringLiteral("finish-apply verification failed: live state drifted from the recorded post image");
         result.writes = usedWrites();
         return result;
     }
     if (usedWrites() > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact two writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
         return result;
     }
     journal.phase = shortcutJournalPhaseComplete();
@@ -1504,16 +1742,20 @@ ShortcutRevertResult ShortcutReconciler::revert()
     }
     ShortcutTuple focusCurrent;
     ShortcutTuple lockCurrent;
+    ShortcutTuple upCurrent;
+    ShortcutTuple nextCurrent;
+    ShortcutTuple rightCurrent;
+    ShortcutTuple lastCurrent;
     if (!findAllowlisted(tuples, shortcutFocusComponent(), shortcutFocusAction(), &focusCurrent, &error)
-        || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockCurrent, &error)) {
+        || !findAllowlisted(tuples, shortcutLockComponent(), shortcutLockAction(), &lockCurrent, &error)
+        || !findAllowlisted(tuples, shortcutResizeUpComponent(), shortcutResizeUpAction(), &upCurrent, &error)
+        || !findAllowlisted(tuples, shortcutSwitchNextComponent(), shortcutSwitchNextAction(), &nextCurrent, &error)
+        || !findAllowlisted(tuples, shortcutResizeRightComponent(), shortcutResizeRightAction(), &rightCurrent,
+                            &error)
+        || !findAllowlisted(tuples, shortcutSwitchLastComponent(), shortcutSwitchLastAction(), &lastCurrent, &error)) {
         result.error = error;
         return result;
     }
-
-    const bool focusNoop = journal.focus.pre == journal.focus.post;
-    const bool lockNoop = journal.lock.pre == journal.lock.post;
-    const bool focusOwned = !focusNoop && focusCurrent.active == journal.focus.post;
-    const bool lockOwned = !lockNoop && lockCurrent.active == journal.lock.post;
 
     auto checkOwner = [&](QString *ownerError) {
         QString liveOwner;
@@ -1530,23 +1772,51 @@ ShortcutRevertResult ShortcutReconciler::revert()
         return true;
     };
 
-    // No-op entries (pre == post) never need a write; external edits to
-    // either tuple are preserved independently.
-    // Restore in reverse dependency order: lock first, then focus.
-    if (lockOwned) {
+    // Reverse ordered restore: only currently owned postimages, scoped.
+    ShortcutJournalEntry *ordered[6] = {&journal.focus, &journal.lock, &journal.resizeUp, &journal.switchNext,
+                                        &journal.resizeRight, &journal.switchLast};
+    QList<int> currents[6] = {focusCurrent.active, lockCurrent.active, upCurrent.active,
+                              nextCurrent.active, rightCurrent.active, lastCurrent.active};
+    bool owned[6] = {false, false, false, false, false, false};
+    for (int i = 0; i < 6; ++i) {
+        owned[i] = ordered[i]->pre != ordered[i]->post && currents[i] == ordered[i]->post;
+    }
+    for (int idx = 5; idx >= 0; --idx) {
+        if (!owned[idx]) {
+            continue;
+        }
+        QList<ShortcutTuple> mid;
+        if (!m_store->readAll(&mid, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        ShortcutTuple live;
+        if (!findAllowlisted(mid, ordered[idx]->component, ordered[idx]->action, &live, &error)) {
+            result.error = error;
+            result.writes = usedWrites();
+            return result;
+        }
+        if (live.active != ordered[idx]->post && live.active != ordered[idx]->pre) {
+            result.untouched.append(QStringLiteral("%1/%2").arg(ordered[idx]->component, ordered[idx]->action));
+            continue;
+        }
+        if (live.active != ordered[idx]->post) {
+            continue;
+        }
         if (!checkOwner(&error)) {
             result.error = error;
             result.writes = usedWrites();
             return result;
         }
         QList<int> confirmed;
-        if (!m_store->writeKeys(journal.lock.component, journal.lock.action, lockCurrent.componentFriendly,
-                                lockCurrent.friendly, journal.lock.pre, &confirmed, &error)) {
-            result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed for lock") : error;
+        if (!m_store->writeKeys(ordered[idx]->component, ordered[idx]->action, live.componentFriendly, live.friendly,
+                                ordered[idx]->pre, &confirmed, &error)) {
+            result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed") : error;
             result.writes = usedWrites();
             return result;
         }
-        if (confirmed != journal.lock.pre) {
+        if (confirmed != ordered[idx]->pre) {
             result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
             result.writes = usedWrites();
             return result;
@@ -1557,78 +1827,28 @@ ShortcutRevertResult ShortcutReconciler::revert()
             return result;
         }
     }
-    if (focusOwned) {
-        // Re-read focus identity after a lock restore so friendly names stay exact.
-        QList<ShortcutTuple> mid;
-        if (!m_store->readAll(&mid, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        ShortcutTuple focusMid;
-        if (!findAllowlisted(mid, shortcutFocusComponent(), shortcutFocusAction(), &focusMid, &error)) {
-            result.error = error;
-            result.writes = usedWrites();
-            return result;
-        }
-        if (focusMid.active != journal.focus.post && focusMid.active != journal.focus.pre) {
-            result.untouched.append(QStringLiteral("%1/%2").arg(journal.focus.component, journal.focus.action));
-        } else if (focusMid.active == journal.focus.post) {
-            if (!checkOwner(&error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-            QList<int> confirmed;
-            if (!m_store->writeKeys(journal.focus.component, journal.focus.action, focusMid.componentFriendly,
-                                    focusMid.friendly, journal.focus.pre, &confirmed, &error)) {
-                result.error = error.isEmpty() ? QStringLiteral("setShortcutKeys call failed for focus") : error;
-                result.writes = usedWrites();
-                return result;
-            }
-            if (confirmed != journal.focus.pre) {
-                result.error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                result.writes = usedWrites();
-                return result;
-            }
-            if (!checkOwner(&error)) {
-                result.error = error;
-                result.writes = usedWrites();
-                return result;
-            }
-        }
-    }
 
     result.writes = usedWrites();
     if (result.writes > SHORTCUT_MAX_WRITES) {
-        result.error = QStringLiteral("tuple writes exceed the exact two writes max");
+        result.error = QStringLiteral("tuple writes exceed the exact six writes max");
         return result;
     }
 
-    // Authoritative verification: only tuples still equal to the recorded
-    // postimage were restored; external edits stay untouched and reported
-    // independently per tuple.
     QList<ShortcutTuple> finalTuples;
     if (!m_store->readAll(&finalTuples, &error)) {
         result.error = error;
         return result;
     }
-    ShortcutTuple focusFinal;
-    ShortcutTuple lockFinal;
-    if (!findAllowlisted(finalTuples, shortcutFocusComponent(), shortcutFocusAction(), &focusFinal, &error)
-        || !findAllowlisted(finalTuples, shortcutLockComponent(), shortcutLockAction(), &lockFinal, &error)) {
-        result.error = error;
-        return result;
+    ShortcutTuple finals[6];
+    for (int i = 0; i < 6; ++i) {
+        if (!findAllowlisted(finalTuples, ordered[i]->component, ordered[i]->action, &finals[i], &error)) {
+            result.error = error;
+            return result;
+        }
+        if (finals[i].active != ordered[i]->pre) {
+            result.untouched.append(QStringLiteral("%1/%2").arg(ordered[i]->component, ordered[i]->action));
+        }
     }
-    const bool focusAtPre = focusFinal.active == journal.focus.pre;
-    const bool lockAtPre = lockFinal.active == journal.lock.pre;
-    if (!focusAtPre) {
-        result.untouched.append(QStringLiteral("%1/%2").arg(journal.focus.component, journal.focus.action));
-    }
-    if (!lockAtPre) {
-        result.untouched.append(QStringLiteral("%1/%2").arg(journal.lock.component, journal.lock.action));
-    }
-    // Deduplicate while preserving order.
     {
         QStringList deduped;
         for (const QString &item : result.untouched) {
@@ -1639,7 +1859,14 @@ ShortcutRevertResult ShortcutReconciler::revert()
         result.untouched = deduped;
     }
 
-    if (focusAtPre && lockAtPre) {
+    bool allAtPre = true;
+    for (int i = 0; i < 6; ++i) {
+        if (finals[i].active != ordered[i]->pre) {
+            allAtPre = false;
+            break;
+        }
+    }
+    if (allAtPre) {
         if (!m_journal->remove(&error)) {
             result.error = error.isEmpty() ? QStringLiteral("could not remove the journal") : error;
             return result;
@@ -1651,7 +1878,6 @@ ShortcutRevertResult ShortcutReconciler::revert()
         }
         return result;
     }
-    // Journal is removed only when both authoritative restores complete.
     result.ok = false;
     if (result.error.isEmpty()) {
         result.error = QStringLiteral("external edits left untouched; journal retained");

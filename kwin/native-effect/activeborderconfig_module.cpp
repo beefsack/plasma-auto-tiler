@@ -203,7 +203,10 @@ void ActiveBorderConfigModule::requestShortcutRestore()
 void ActiveBorderConfigModule::runShortcutApply()
 {
     if (!confirmShortcutAction(QStringLiteral("Apply Shortcuts"),
-                               QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc?"))) {
+                               QStringLiteral("Assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign "
+                                              "resize-outwards-up to Meta+Alt+K clearing Switch to Next Keyboard "
+                                              "Layout; assign resize-outwards-right to Meta+Alt+L clearing Switch to "
+                                              "Last-Used Keyboard Layout?"))) {
         return;
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
@@ -224,7 +227,9 @@ void ActiveBorderConfigModule::runShortcutApply()
 void ActiveBorderConfigModule::runShortcutRevert()
 {
     if (!confirmShortcutAction(QStringLiteral("Revert Shortcuts"),
-                               QStringLiteral("Restore the recorded Lock Session and focus-right bindings? Externally edited bindings stay untouched."))) {
+                               QStringLiteral("Restore the recorded 3-row bindings (focus-right/Lock Session, "
+                                              "resize-outwards-up/Switch to Next, resize-outwards-right/Switch to "
+                                              "Last-Used)? Externally edited bindings stay untouched."))) {
         return;
     }
     if (m_shortcutStore == nullptr || m_shortcutJournal == nullptr) {
@@ -302,19 +307,35 @@ void ActiveBorderConfigModule::refreshShortcutState()
     }
     const ShortcutTuple *focusCurrent = nullptr;
     const ShortcutTuple *lockCurrent = nullptr;
-    int focusMatches = 0;
-    int lockMatches = 0;
+    const ShortcutTuple *upCurrent = nullptr;
+    const ShortcutTuple *nextCurrent = nullptr;
+    const ShortcutTuple *rightCurrent = nullptr;
+    const ShortcutTuple *lastCurrent = nullptr;
+    int matches[6] = {0, 0, 0, 0, 0, 0};
     for (const ShortcutTuple &tuple : tuples) {
         if (tuple.component == shortcutFocusComponent() && tuple.action == shortcutFocusAction()) {
-            ++focusMatches;
+            ++matches[0];
             focusCurrent = &tuple;
-        }
-        if (tuple.component == shortcutLockComponent() && tuple.action == shortcutLockAction()) {
-            ++lockMatches;
+        } else if (tuple.component == shortcutLockComponent() && tuple.action == shortcutLockAction()) {
+            ++matches[1];
             lockCurrent = &tuple;
+        } else if (tuple.component == shortcutResizeUpComponent() && tuple.action == shortcutResizeUpAction()) {
+            ++matches[2];
+            upCurrent = &tuple;
+        } else if (tuple.component == shortcutSwitchNextComponent() && tuple.action == shortcutSwitchNextAction()) {
+            ++matches[3];
+            nextCurrent = &tuple;
+        } else if (tuple.component == shortcutResizeRightComponent() && tuple.action == shortcutResizeRightAction()) {
+            ++matches[4];
+            rightCurrent = &tuple;
+        } else if (tuple.component == shortcutSwitchLastComponent() && tuple.action == shortcutSwitchLastAction()) {
+            ++matches[5];
+            lastCurrent = &tuple;
         }
     }
-    if (focusMatches != 1 || lockMatches != 1 || focusCurrent == nullptr || lockCurrent == nullptr) {
+    if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1 || matches[3] != 1 || matches[4] != 1 || matches[5] != 1
+        || focusCurrent == nullptr || lockCurrent == nullptr || upCurrent == nullptr || nextCurrent == nullptr
+        || rightCurrent == nullptr || lastCurrent == nullptr) {
         m_shortcutStatus = QStringLiteral("Shortcut state unavailable: allowlisted bindings are missing.");
         updateShortcutPresentation(false);
         return;
@@ -323,8 +344,8 @@ void ActiveBorderConfigModule::refreshShortcutState()
         if (ShortcutReconciler::isAllowlisted(tuple.component, tuple.action)) {
             continue;
         }
-        if (tuple.active.contains(SHORTCUT_META_ESC)) {
-            m_shortcutStatus = QStringLiteral("Conflict: Meta+Esc is claimed by %1/%2. Apply is refused.").arg(tuple.component, tuple.action);
+        if (tuple.active.contains(SHORTCUT_META_ESC) || tuple.active.contains(SHORTCUT_META_ALT_K) || tuple.active.contains(SHORTCUT_META_ALT_L)) {
+            m_shortcutStatus = QStringLiteral("Conflict: Meta+Esc/Meta+Alt+K/Meta+Alt+L is claimed by %1/%2. Apply is refused.").arg(tuple.component, tuple.action);
             updateShortcutPresentation(false);
             return;
         }
@@ -337,11 +358,11 @@ void ActiveBorderConfigModule::refreshShortcutState()
         return;
     }
     const QList<int> focusPost = ShortcutReconciler::focusPostKeys();
-    // A valid complete journal is authoritative: report applied only when
-    // both exact live tuple lists equal the journal postimages.
     if (journalValid && journal.phase == shortcutJournalPhaseComplete()) {
-        if (focusCurrent->active == journal.focus.post && lockCurrent->active == journal.lock.post) {
-            m_shortcutStatus = QStringLiteral("Shortcuts applied (journal complete).");
+        if (focusCurrent->active == journal.focus.post && lockCurrent->active == journal.lock.post
+            && upCurrent->active == journal.resizeUp.post && nextCurrent->active == journal.switchNext.post
+            && rightCurrent->active == journal.resizeRight.post && lastCurrent->active == journal.switchLast.post) {
+            m_shortcutStatus = QStringLiteral("Shortcuts applied (journal complete, 3 rows).");
         } else {
             m_shortcutStatus = QStringLiteral("Shortcuts drifted after apply-complete; live bindings differ from the recorded post image.");
         }
@@ -351,13 +372,24 @@ void ActiveBorderConfigModule::refreshShortcutState()
     const bool focusAtPost = focusCurrent->active == focusPost;
     const bool lockHasMetaL = lockCurrent->active.contains(SHORTCUT_META_L);
     const bool lockHasMetaEsc = lockCurrent->active.contains(SHORTCUT_META_ESC);
-    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc) {
-        m_shortcutStatus = QStringLiteral("Shortcuts applied: focus-right owns Meta+L, Lock Session owns Meta+Esc.");
+    const bool upAtPost = upCurrent->active == ShortcutReconciler::resizeUpPostKeys();
+    const bool nextClear = nextCurrent->active.isEmpty();
+    const bool rightAtPost = rightCurrent->active == ShortcutReconciler::resizeRightPostKeys();
+    const bool lastClear = lastCurrent->active.isEmpty();
+    const bool nextAtPre = nextCurrent->active == ShortcutReconciler::switchNextExpectedPre();
+    const bool lastAtPre = lastCurrent->active == ShortcutReconciler::switchLastExpectedPre();
+    if (focusAtPost && !lockHasMetaL && lockHasMetaEsc && upAtPost && nextClear && rightAtPost && lastClear) {
+        m_shortcutStatus = QStringLiteral("Shortcuts applied (3 rows): focus-right owns Meta+L, Lock Session owns "
+                                          "Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, "
+                                          "resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared.");
         updateShortcutPresentation(false);
         return;
     }
-    if (!focusAtPost && lockHasMetaL) {
-        m_shortcutStatus = QStringLiteral("Ready: Apply will assign focus-right to Meta+L and move Lock Session to Meta+Esc.");
+    if (!focusAtPost && lockHasMetaL && nextAtPre && lastAtPre) {
+        m_shortcutStatus = QStringLiteral("Ready (3 rows): Apply will assign focus-right to Meta+L and move Lock "
+                                          "Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing "
+                                          "Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch "
+                                          "to Last-Used.");
         updateShortcutPresentation(false);
         return;
     }

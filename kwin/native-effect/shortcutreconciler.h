@@ -18,9 +18,13 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
 
 // Bounded KCM shortcut-override backend/state machine.
 //
-// Allowlist only:
-//   kwin / plasma-auto-tiler-focus-right  -> Meta+L post
-//   ksmserver / Lock Session              -> Meta+L replaced by Meta+Esc post
+// Closed ordered conflict-resolution table (only):
+//   row 0 relocate: kwin/plasma-auto-tiler-focus-right -> Meta+L post;
+//     ksmserver/Lock Session Meta+L replaced by Meta+Esc post
+//   row 1 clear: kwin/plasma-auto-tiler-resize-outwards-up -> Meta+Alt+K;
+//     KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout cleared
+//   row 2 clear: kwin/plasma-auto-tiler-resize-outwards-right -> Meta+Alt+L;
+//     KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout cleared
 //
 // Uses only the KGlobalAccel D-Bus APIs proven on live Plasma 6.7.4:
 //   org.kde.kglobalaccel /kglobalaccel org.kde.KGlobalAccel
@@ -38,12 +42,14 @@ namespace KWin
 
 inline constexpr int SHORTCUT_META_L = 268435532; // Meta+L (Qt Meta | Key_L)
 inline constexpr int SHORTCUT_META_ESC = 285212672; // Meta+Esc (Qt Meta | Key_Escape)
+inline constexpr int SHORTCUT_META_ALT_K = 402653259; // Meta+Alt+K catalog resize-outwards-up
+inline constexpr int SHORTCUT_META_ALT_L = 402653260; // Meta+Alt+L catalog resize-outwards-right
 inline constexpr uint SHORTCUT_SET_FLAGS = 6; // SetPresent|NoAutoloading
 inline constexpr int SHORTCUT_MAX_KEYS_PER_TUPLE = 16;
 inline constexpr int SHORTCUT_MAX_TUPLES = 16384;
 inline constexpr int SHORTCUT_MAX_STRING_LEN = 256;
 inline constexpr int SHORTCUT_MAX_KEY_VALUE = 536870911;
-inline constexpr int SHORTCUT_MAX_WRITES = 2;
+inline constexpr int SHORTCUT_MAX_WRITES = 6;
 
 inline const QString &shortcutService()
 {
@@ -100,9 +106,19 @@ inline const QString &shortcutLockAction()
     static const QString value = QStringLiteral("Lock Session");
     return value;
 }
+inline const QString &shortcutResizeUpComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeUpAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-up"); return v; }
+inline const QString &shortcutResizeRightComponent() { static const QString v = QStringLiteral("kwin"); return v; }
+inline const QString &shortcutResizeRightAction() { static const QString v = QStringLiteral("plasma-auto-tiler-resize-outwards-right"); return v; }
+inline const QString &shortcutSwitchNextComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
+inline const QString &shortcutSwitchNextAction() { static const QString v = QStringLiteral("Switch to Next Keyboard Layout"); return v; }
+inline const QString &shortcutSwitchLastComponent() { static const QString v = QStringLiteral("KDE Keyboard Layout Switcher"); return v; }
+inline const QString &shortcutSwitchLastAction() { static const QString v = QStringLiteral("Switch to Last-Used Keyboard Layout"); return v; }
+inline const QString &shortcutResolutionRelocate() { static const QString v = QStringLiteral("relocate"); return v; }
+inline const QString &shortcutResolutionClear() { static const QString v = QStringLiteral("clear"); return v; }
 inline const QString &shortcutJournalSchema()
 {
-    static const QString value = QStringLiteral("shortcut-override-v1");
+    static const QString value = QStringLiteral("shortcut-override-v2");
     return value;
 }
 inline const QString &shortcutJournalGroup()
@@ -151,7 +167,28 @@ struct ShortcutJournal
     uint uid = 0;
     ShortcutJournalEntry focus;
     ShortcutJournalEntry lock;
+    ShortcutJournalEntry resizeUp;
+    ShortcutJournalEntry switchNext;
+    ShortcutJournalEntry resizeRight;
+    ShortcutJournalEntry switchLast;
+    QString row0Kind;
+    QString row1Kind;
+    QString row2Kind;
 };
+
+struct ShortcutConflictRow
+{
+    QString projectComponent;
+    QString projectAction;
+    QList<int> projectPost;
+    QString foreignComponent;
+    QString foreignAction;
+    QList<int> foreignExpectedPre;
+    QString resolution;
+    QList<int> resolutionTarget;
+};
+
+const QList<ShortcutConflictRow> &shortcutConflictTable();
 
 struct ShortcutApplyResult
 {
@@ -237,6 +274,10 @@ public:
     static bool isAllowlisted(const QString &component, const QString &action);
     static QList<int> focusPostKeys();
     static QList<int> lockPostFor(const QList<int> &lockPre);
+    static QList<int> resizeUpPostKeys();
+    static QList<int> resizeRightPostKeys();
+    static QList<int> switchNextExpectedPre();
+    static QList<int> switchLastExpectedPre();
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
     static bool stringValid(const QString &value);
@@ -250,6 +291,7 @@ public:
     static bool decodeKeySequenceSlots(const QList<int> &slotValues, QKeySequence *out);
     static bool journalPathSafe(const QString &path, QString *error);
     static bool journalRolesValid(const ShortcutJournal &journal);
+    static bool journalPostsValid(const ShortcutJournal &journal);
 
 private:
     ShortcutStore *m_store = nullptr;

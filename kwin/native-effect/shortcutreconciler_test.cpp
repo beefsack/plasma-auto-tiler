@@ -37,6 +37,8 @@ using namespace KWin;
 
 constexpr int META_L = 268435532;
 constexpr int META_ESC = 285212672;
+constexpr int META_ALT_K = 402653259;
+constexpr int META_ALT_L = 402653260;
 
 ShortcutTuple makeTuple(const QString &component, const QString &action, const QList<int> &active)
 {
@@ -241,6 +243,12 @@ public:
             return false;
         }
         // Mirror the real KConfig backend load validation.
+        if (stored.schema == QStringLiteral("shortcut-override-v1")) {
+            if (error) {
+                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
+            }
+            return false;
+        }
         if (stored.schema != shortcutJournalSchema()) {
             if (error) {
                 *error = QStringLiteral("journal schema is unknown");
@@ -260,25 +268,30 @@ public:
             }
             return false;
         }
+        if (!ShortcutReconciler::journalPostsValid(stored)) {
+            if (error) {
+                *error = QStringLiteral("journal postimage is not the allowed image");
+            }
+            return false;
+        }
         if (!ShortcutReconciler::uniqueNameValid(stored.owner)) {
             if (error) {
                 *error = QStringLiteral("journal owner is malformed");
             }
             return false;
         }
-        if (!ShortcutReconciler::keysValid(stored.focus.pre) || !ShortcutReconciler::keysValid(stored.focus.post)
-            || !ShortcutReconciler::keysValid(stored.lock.pre) || !ShortcutReconciler::keysValid(stored.lock.post)) {
-            if (error) {
-                *error = QStringLiteral("journal entries are outside the exact allowlist");
+        {
+            const ShortcutJournalEntry entries[6] = {stored.focus, stored.lock, stored.resizeUp, stored.switchNext,
+                                                     stored.resizeRight, stored.switchLast};
+            for (const auto &e : entries) {
+                if (!ShortcutReconciler::keysValid(e.pre) || !ShortcutReconciler::keysValid(e.post)
+                    || !ShortcutReconciler::isAllowlisted(e.component, e.action)) {
+                    if (error) {
+                        *error = QStringLiteral("journal entries are outside the exact allowlist");
+                    }
+                    return false;
+                }
             }
-            return false;
-        }
-        if (!ShortcutReconciler::isAllowlisted(stored.focus.component, stored.focus.action)
-            || !ShortcutReconciler::isAllowlisted(stored.lock.component, stored.lock.action)) {
-            if (error) {
-                *error = QStringLiteral("journal entries are outside the exact allowlist");
-            }
-            return false;
         }
         if (journal) {
             *journal = stored;
@@ -288,6 +301,12 @@ public:
 
     bool persist(const ShortcutJournal &journal, QString *error) override
     {
+        if (journal.schema == QStringLiteral("shortcut-override-v1")) {
+            if (error) {
+                *error = QStringLiteral("journal schema version v1 is unsupported; expected shortcut-override-v2 (upgrade required, no migration)");
+            }
+            return false;
+        }
         if (journal.schema != shortcutJournalSchema()) {
             if (error) {
                 *error = QStringLiteral("journal schema is unknown");
@@ -313,37 +332,46 @@ public:
             }
             return false;
         }
-        if (!ShortcutReconciler::journalRolesValid(journal)) {
+        if (!ShortcutReconciler::journalRolesValid(journal) || !ShortcutReconciler::journalPostsValid(journal)) {
             if (error) {
                 *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
             }
             return false;
         }
-        if (!ShortcutReconciler::keysValid(journal.focus.pre) || !ShortcutReconciler::keysValid(journal.focus.post)
-            || !ShortcutReconciler::keysValid(journal.lock.pre) || !ShortcutReconciler::keysValid(journal.lock.post)) {
-            if (error) {
-                *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
+        {
+            const ShortcutJournalEntry entries[6] = {journal.focus, journal.lock, journal.resizeUp, journal.switchNext,
+                                                     journal.resizeRight, journal.switchLast};
+            for (const auto &e : entries) {
+                if (!ShortcutReconciler::keysValid(e.pre) || !ShortcutReconciler::keysValid(e.post)
+                    || !ShortcutReconciler::isAllowlisted(e.component, e.action)) {
+                    if (error) {
+                        *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
+                    }
+                    return false;
+                }
             }
-            return false;
-        }
-        if (!ShortcutReconciler::isAllowlisted(journal.focus.component, journal.focus.action)
-            || !ShortcutReconciler::isAllowlisted(journal.lock.component, journal.lock.action)) {
-            if (error) {
-                *error = QStringLiteral("refusing to persist a journal outside the exact allowlist");
-            }
-            return false;
         }
         stored = journal;
         present = true;
         ++persists;
         // Sync+readback mirrors the real backend: every field must round-trip.
         const ShortcutJournal readback = stored;
+        const ShortcutJournalEntry exp[6] = {journal.focus, journal.lock, journal.resizeUp, journal.switchNext,
+                                             journal.resizeRight, journal.switchLast};
+        const ShortcutJournalEntry got[6] = {readback.focus, readback.lock, readback.resizeUp, readback.switchNext,
+                                             readback.resizeRight, readback.switchLast};
+        for (int i = 0; i < 6; ++i) {
+            if (got[i].component != exp[i].component || got[i].action != exp[i].action || got[i].pre != exp[i].pre
+                || got[i].post != exp[i].post) {
+                if (error) {
+                    *error = QStringLiteral("journal readback mismatch");
+                }
+                return false;
+            }
+        }
         if (readback.schema != journal.schema || readback.phase != journal.phase || readback.owner != journal.owner
-            || readback.uid != journal.uid || readback.focus.component != journal.focus.component
-            || readback.focus.action != journal.focus.action || readback.focus.pre != journal.focus.pre
-            || readback.focus.post != journal.focus.post || readback.lock.component != journal.lock.component
-            || readback.lock.action != journal.lock.action || readback.lock.pre != journal.lock.pre
-            || readback.lock.post != journal.lock.post) {
+            || readback.uid != journal.uid || readback.row0Kind != journal.row0Kind || readback.row1Kind != journal.row1Kind
+            || readback.row2Kind != journal.row2Kind) {
             if (error) {
                 *error = QStringLiteral("journal readback mismatch");
             }
@@ -359,41 +387,59 @@ public:
     }
 };
 
+void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
+{
+    store.tuples = {
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), focusPre),
+        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), lockPre),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-up"), QList<int>{7}),
+        makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Next Keyboard Layout"),
+                  QList<int>{META_ALT_K}),
+        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-resize-outwards-right"), QList<int>{8}),
+        makeTuple(QStringLiteral("KDE Keyboard Layout Switcher"), QStringLiteral("Switch to Last-Used Keyboard Layout"),
+                  QList<int>{META_ALT_L}),
+    };
+}
+
+void fillResizeReady(ShortcutJournal &journal, const QList<int> &upPre, const QList<int> &rightPre)
+{
+    journal.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), upPre, {META_ALT_K}};
+    journal.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {META_ALT_K}, {}};
+    journal.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), rightPre, {META_ALT_L}};
+    journal.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {META_ALT_L}, {}};
+    journal.row0Kind = shortcutResolutionRelocate();
+    journal.row1Kind = shortcutResolutionClear();
+    journal.row2Kind = shortcutResolutionClear();
+}
+
 void applySuccessAndOrder()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L, 134217795}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L, 134217795});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     const ShortcutApplyResult result = reconciler.apply();
     CHECK(result.ok);
-    CHECK(result.writes == 2);
+    CHECK(result.writes == 6);
     CHECK(journal.present);
-    CHECK(store.uid == static_cast<uint>(::geteuid()));
-    CHECK(journal.stored.uid == static_cast<uint>(::geteuid()));
-    CHECK(store.writeLog.size() == 2);
-    if (store.writeLog.size() == 2) {
-        CHECK(store.writeLog.at(0).component == QStringLiteral("kwin"));
+    CHECK(journal.stored.row0Kind == shortcutResolutionRelocate());
+    CHECK(journal.stored.row1Kind == shortcutResolutionClear());
+    CHECK(journal.stored.row2Kind == shortcutResolutionClear());
+    CHECK(store.writeLog.size() == 6);
+    if (store.writeLog.size() == 6) {
         CHECK(store.writeLog.at(0).action == QStringLiteral("plasma-auto-tiler-focus-right"));
         CHECK(store.writeLog.at(0).keys == QList<int>{META_L});
-        CHECK(store.writeLog.at(1).component == QStringLiteral("ksmserver"));
         CHECK(store.writeLog.at(1).action == QStringLiteral("Lock Session"));
-        // Other lock keys preserved exactly in order, Meta+L replaced by Meta+Esc.
         CHECK(store.writeLog.at(1).keys == (QList<int>{META_ESC, 134217795}));
+        CHECK(store.writeLog.at(2).action == QStringLiteral("plasma-auto-tiler-resize-outwards-up"));
+        CHECK(store.writeLog.at(2).keys == QList<int>{META_ALT_K});
+        CHECK(store.writeLog.at(3).action == QStringLiteral("Switch to Next Keyboard Layout"));
+        CHECK(store.writeLog.at(3).keys == QList<int>{});
+        CHECK(store.writeLog.at(4).action == QStringLiteral("plasma-auto-tiler-resize-outwards-right"));
+        CHECK(store.writeLog.at(4).keys == QList<int>{META_ALT_L});
+        CHECK(store.writeLog.at(5).action == QStringLiteral("Switch to Last-Used Keyboard Layout"));
+        CHECK(store.writeLog.at(5).keys == QList<int>{});
     }
-    // Final daemon state is the allowed post image.
-    for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.component == QStringLiteral("kwin")) {
-            CHECK(tuple.active == (QList<int>{META_L}));
-        }
-        if (tuple.component == QStringLiteral("ksmserver")) {
-            CHECK(tuple.active == (QList<int>{META_ESC, 134217795}));
-        }
-    }
-    // No out-of-allowlist writes.
     for (const auto &record : store.writeLog) {
         CHECK(ShortcutReconciler::isAllowlisted(record.component, record.action));
     }
@@ -402,11 +448,8 @@ void applySuccessAndOrder()
 void metaEscConflictRefusesWithoutJournalOrMutation()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{META_ESC}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{META_ESC}));
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     const ShortcutApplyResult result = reconciler.apply();
@@ -419,10 +462,7 @@ void metaEscConflictRefusesWithoutJournalOrMutation()
 void malformedReplyFailsClosed()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{META_L}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{META_L}, QList<int>{META_L});
     store.malformedRead = true;
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
@@ -435,10 +475,7 @@ void malformedReplyFailsClosed()
 void ownerDriftFailsClosed()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
     store.driftAfterNextWrite = true;
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
@@ -453,13 +490,8 @@ void ownerDriftFailsClosed()
 void partialWriteRecovery()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
     FakeJournal journal;
-    // Simulate interruption: focus write verified, journal at focus-applied,
-    // lock still at pre. Re-apply must resume the lock write only.
     ShortcutJournal partial;
     partial.schema = shortcutJournalSchema();
     partial.phase = shortcutJournalPhaseFocusApplied();
@@ -467,22 +499,24 @@ void partialWriteRecovery()
     partial.uid = static_cast<uint>(::geteuid());
     partial.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}, QList<int>{META_L}};
     partial.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(partial, QList<int>{7}, QList<int>{8});
     QString persistError;
     CHECK(journal.persist(partial, &persistError));
-    CHECK(partial.uid == static_cast<uint>(::geteuid()));
-    // Daemon reflects the partial progress.
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.component == QStringLiteral("kwin")) {
+        if (tuple.component == QStringLiteral("kwin") && tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
             tuple.active = QList<int>{META_L};
         }
     }
     ShortcutReconciler reconciler(&store, &journal);
     const ShortcutApplyResult result = reconciler.apply();
     CHECK(result.ok);
-    CHECK(store.writeLog.size() == 1);
-    if (!store.writeLog.isEmpty()) {
-        CHECK(store.writeLog.at(0).component == QStringLiteral("ksmserver"));
-        CHECK(store.writeLog.at(0).keys == (QList<int>{META_ESC}));
+    CHECK(store.writeLog.size() == 5);
+    if (store.writeLog.size() == 5) {
+        CHECK(store.writeLog.at(0).action == QStringLiteral("Lock Session"));
+        CHECK(store.writeLog.at(1).action == QStringLiteral("plasma-auto-tiler-resize-outwards-up"));
+        CHECK(store.writeLog.at(2).action == QStringLiteral("Switch to Next Keyboard Layout"));
+        CHECK(store.writeLog.at(3).action == QStringLiteral("plasma-auto-tiler-resize-outwards-right"));
+        CHECK(store.writeLog.at(4).action == QStringLiteral("Switch to Last-Used Keyboard Layout"));
     }
     ShortcutJournal loaded;
     QString loadError;
@@ -493,16 +527,12 @@ void partialWriteRecovery()
 void externalEditsUntouchedAndJournalRetained()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L, 42}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L, 42});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     CHECK(reconciler.apply().ok);
-    // External edit to focus after apply-complete.
     for (ShortcutTuple &tuple : store.tuples) {
-        if (tuple.component == QStringLiteral("kwin")) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
             tuple.active = QList<int>{111};
         }
     }
@@ -512,16 +542,14 @@ void externalEditsUntouchedAndJournalRetained()
     CHECK(!reverted.journalRemoved);
     CHECK(journal.present);
     CHECK(reverted.untouched.contains(QStringLiteral("kwin/plasma-auto-tiler-focus-right")));
-    // Lock was still owned, so it is restored; focus external edit is untouched.
     for (const ShortcutTuple &tuple : store.tuples) {
-        if (tuple.component == QStringLiteral("ksmserver")) {
+        if (tuple.action == QStringLiteral("Lock Session")) {
             CHECK(tuple.active == (QList<int>{META_L, 42}));
         }
-        if (tuple.component == QStringLiteral("kwin")) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
             CHECK(tuple.active == (QList<int>{111}));
         }
     }
-    // No out-of-allowlist writes across apply+revert.
     for (const auto &record : store.writeLog) {
         CHECK(ShortcutReconciler::isAllowlisted(record.component, record.action));
     }
@@ -530,10 +558,7 @@ void externalEditsUntouchedAndJournalRetained()
 void cleanRevertRemovesJournal()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     CHECK(reconciler.apply().ok);
@@ -559,6 +584,7 @@ void kconfigJournalWriteSyncReadback()
     journal.uid = static_cast<uint>(::geteuid());
     journal.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
     journal.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(journal, QList<int>{7}, QList<int>{8});
     QString error;
     CHECK(fileJournal.persist(journal, &error));
     CHECK(fileJournal.hasJournal());
@@ -591,10 +617,10 @@ void swappedRolesRejected()
     swapped.uid = static_cast<uint>(::geteuid());
     swapped.focus = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
     swapped.lock = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
+    fillResizeReady(swapped, QList<int>{7}, QList<int>{8});
     QString error;
     CHECK(!journal.persist(swapped, &error));
     CHECK(!journal.present);
-    // Loader-equivalent role check through the public predicate.
     CHECK(!ShortcutReconciler::journalRolesValid(swapped));
     ShortcutJournal correct = swapped;
     correct.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
@@ -612,6 +638,7 @@ void persistRejectsInvalidPhaseOwnerUid()
     base.uid = static_cast<uint>(::geteuid());
     base.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
     base.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(base, QList<int>{7}, QList<int>{8});
     QString error;
     ShortcutJournal bad = base;
     bad.phase = QStringLiteral("bogus-phase");
@@ -661,10 +688,7 @@ void strictOwnerAndIntrospection()
     // Malformed owner fails closed through the store.
     FakeShortcutStore store;
     store.owner = QStringLiteral("not-unique");
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     CHECK(!reconciler.apply().ok);
@@ -674,10 +698,7 @@ void strictOwnerAndIntrospection()
 void friendlyLabelsValidated()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     // Empty friendly label is rejected by the fake mirroring the backend.
     store.tuples[0].friendly = QString();
     FakeJournal journal;
@@ -700,16 +721,13 @@ void duplicateMetaEscDeduped()
     CHECK(ShortcutReconciler::dedupKeys(QList<int>{1, 1, 2, 1, 2}) == (QList<int>{1, 2}));
     // End-to-end: pre with duplicate Meta+L collapses to a single Meta+Esc.
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L, META_L, 42}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L, META_L, 42});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     const ShortcutApplyResult result = reconciler.apply();
     CHECK(result.ok);
-    CHECK(store.writeLog.size() == 2);
-    if (store.writeLog.size() == 2) {
+    CHECK(store.writeLog.size() == 6);
+    if (store.writeLog.size() == 6) {
         CHECK(store.writeLog.at(1).keys == (QList<int>{META_ESC, 42}));
     }
 }
@@ -717,33 +735,25 @@ void duplicateMetaEscDeduped()
 void exactTwoWriteLimit()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     const ShortcutApplyResult result = reconciler.apply();
     CHECK(result.ok);
-    // Exact-two-write constraint: one apply uses exactly two tuple writes.
-    CHECK(result.writes == 2);
+    CHECK(result.writes == 6);
     CHECK(result.writes <= SHORTCUT_MAX_WRITES);
-    CHECK(store.writeLog.size() == 2);
-    // Revert is a separate operation with its own exact-two budget.
+    CHECK(store.writeLog.size() == 6);
     ShortcutReconciler reverting(&store, &journal);
     const ShortcutRevertResult reverted = reverting.revert();
     CHECK(reverted.ok);
-    CHECK(reverted.writes == 2);
+    CHECK(reverted.writes == 6);
     CHECK(reverted.writes <= SHORTCUT_MAX_WRITES);
 }
 
 void finishApplyDriftClassified()
 {
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     FakeJournal journal;
     ShortcutReconciler reconciler(&store, &journal);
     CHECK(reconciler.apply().ok);
@@ -768,14 +778,11 @@ void finishApplyDriftClassified()
     bad.uid = static_cast<uint>(::geteuid());
     bad.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{1}};
     bad.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_L, META_L, META_L}};
-    // lock post is not the deduped derivation of its pre, but persist it directly to simulate corruption.
+    fillResizeReady(bad, QList<int>{7}, QList<int>{8});
     corrupt.present = true;
     corrupt.stored = bad;
     FakeShortcutStore store2;
-    store2.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{META_L}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store2, QList<int>{META_L}, QList<int>{META_L});
     ShortcutReconciler resuming(&store2, &corrupt);
     const ShortcutApplyResult corruptResult = resuming.apply();
     CHECK(!corruptResult.ok);
@@ -787,10 +794,18 @@ void noOpRevertSkipsWrites()
     FakeShortcutStore store;
     store.owner = QStringLiteral(":1.20");
     store.uid = static_cast<uint>(::geteuid());
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{META_L}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_ESC}),
-    };
+    seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-up")) {
+            tuple.active = QList<int>{META_ALT_K};
+        }
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-resize-outwards-right")) {
+            tuple.active = QList<int>{META_ALT_L};
+        }
+        if (tuple.action.contains(QStringLiteral("Keyboard Layout"))) {
+            tuple.active = QList<int>{};
+        }
+    }
     FakeJournal journal;
     ShortcutJournal noop;
     noop.schema = shortcutJournalSchema();
@@ -799,6 +814,13 @@ void noOpRevertSkipsWrites()
     noop.uid = static_cast<uint>(::geteuid());
     noop.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{META_L}, QList<int>{META_L}};
     noop.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_ESC}, QList<int>{META_ESC}};
+    noop.resizeUp = {shortcutResizeUpComponent(), shortcutResizeUpAction(), QList<int>{META_ALT_K}, QList<int>{META_ALT_K}};
+    noop.switchNext = {shortcutSwitchNextComponent(), shortcutSwitchNextAction(), QList<int>{}, QList<int>{}};
+    noop.resizeRight = {shortcutResizeRightComponent(), shortcutResizeRightAction(), QList<int>{META_ALT_L}, QList<int>{META_ALT_L}};
+    noop.switchLast = {shortcutSwitchLastComponent(), shortcutSwitchLastAction(), QList<int>{}, QList<int>{}};
+    noop.row0Kind = shortcutResolutionRelocate();
+    noop.row1Kind = shortcutResolutionClear();
+    noop.row2Kind = shortcutResolutionClear();
     QString error;
     CHECK(journal.persist(noop, &error));
     const int writesBefore = store.writeLog.size();
@@ -846,6 +868,7 @@ void journalPathSafety()
     journal.uid = static_cast<uint>(::geteuid());
     journal.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
     journal.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(journal, QList<int>{7}, QList<int>{8});
     CHECK(!unsafe.persist(journal, &error));
     CHECK(!unsafe.hasJournal());
     CHECK(!unsafe.load(&journal, &error));
@@ -1125,10 +1148,7 @@ void introspectionStrictParsing()
     // The fake store mirrors the real parser: bad XML fails the apply
     // with zero writes.
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     store.contractXml = QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
                                        "<method name=\"setShortcutKeys\"/>"
                                        "</interface></node>");
@@ -1141,10 +1161,7 @@ void introspectionStrictParsing()
     // Legacy combined form fails the apply with zero writes and the error
     // reports the split contract, never the erroneous combined signature.
     FakeShortcutStore legacyStore;
-    legacyStore.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(legacyStore, QList<int>{1}, QList<int>{META_L});
     legacyStore.contractXml = legacyCombined;
     FakeJournal legacyJournal;
     ShortcutReconciler legacyReconciler(&legacyStore, &legacyJournal);
@@ -1164,10 +1181,7 @@ void resumeGateFailsClosedZeroWrites()
     // post: must fail before any write (old code wrote focus first).
     {
         FakeShortcutStore store;
-        store.tuples = {
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        };
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
         FakeJournal journal;
         ShortcutJournal pending;
         pending.schema = shortcutJournalSchema();
@@ -1178,6 +1192,7 @@ void resumeGateFailsClosedZeroWrites()
                          QList<int>{419430420}, QList<int>{META_L}};
         pending.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
                         QList<int>{META_ESC}};
+        fillResizeReady(pending, QList<int>{7}, QList<int>{8});
         QString persistError;
         CHECK(journal.persist(pending, &persistError));
         // Drift to a value that passes the live-state guards (still claims
@@ -1199,10 +1214,7 @@ void resumeGateFailsClosedZeroWrites()
     // must fail with zero writes instead of re-clobbering focus.
     {
         FakeShortcutStore store;
-        store.tuples = {
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420}),
-            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        };
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
         FakeJournal journal;
         ShortcutJournal partial;
         partial.schema = shortcutJournalSchema();
@@ -1213,10 +1225,11 @@ void resumeGateFailsClosedZeroWrites()
                          QList<int>{419430420}, QList<int>{META_L}};
         partial.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
                         QList<int>{META_ESC}};
+        fillResizeReady(partial, QList<int>{7}, QList<int>{8});
         QString persistError;
         CHECK(journal.persist(partial, &persistError));
         for (ShortcutTuple &tuple : store.tuples) {
-            if (tuple.component == QStringLiteral("kwin")) {
+            if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
                 tuple.active = QList<int>{888};
             }
         }
@@ -1231,10 +1244,7 @@ void resumeGateFailsClosedZeroWrites()
     // Finish Apply must fail with zero writes.
     {
         FakeShortcutStore store;
-        store.tuples = {
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{META_L}),
-            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        };
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_L});
         FakeJournal journal;
         ShortcutJournal partial;
         partial.schema = shortcutJournalSchema();
@@ -1245,6 +1255,7 @@ void resumeGateFailsClosedZeroWrites()
                          QList<int>{META_L}};
         partial.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
                         QList<int>{META_ESC}};
+        fillResizeReady(partial, QList<int>{7}, QList<int>{8});
         QString persistError;
         CHECK(journal.persist(partial, &persistError));
         // Lock drift that keeps Meta+Esc claimed by the allowlisted lock
@@ -1276,6 +1287,7 @@ void fakeJournalMirrorsRealValidation()
                   QList<int>{META_L}};
     base.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
                  QList<int>{META_ESC}};
+    fillResizeReady(base, QList<int>{7}, QList<int>{8});
     // Unbounded keys are rejected like the real backend.
     ShortcutJournal bad = base;
     QList<int> tooMany;
@@ -1387,10 +1399,7 @@ void pinImmutableFailsClosed()
     // normal apply/revert flows (repeated same-owner confirmations) stay
     // correct while a drifted second owner fails closed.
     FakeShortcutStore store;
-    store.tuples = {
-        makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-        makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-    };
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
     QString ownerError;
     CHECK(store.currentOwner(nullptr, nullptr, &ownerError));
     CHECK(store.pinned == QStringLiteral(":1.20"));
@@ -1483,10 +1492,7 @@ void writeFailureControlsFailClosed()
     // with zero completed writes reported and the journal retained.
     {
         FakeShortcutStore store;
-        store.tuples = {
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        };
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
         store.failNextWrite = true;
         FakeJournal journal;
         ShortcutReconciler reconciler(&store, &journal);
@@ -1497,16 +1503,231 @@ void writeFailureControlsFailClosed()
     // Reply-mismatch control fails closed with the confirm error.
     {
         FakeShortcutStore store;
-        store.tuples = {
-            makeTuple(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}),
-            makeTuple(QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}),
-        };
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
         store.badReplyNextWrite = true;
         FakeJournal journal;
         ShortcutReconciler reconciler(&store, &journal);
         const ShortcutApplyResult result = reconciler.apply();
         CHECK(!result.ok);
         CHECK(result.error.contains(QStringLiteral("confirm")));
+    }
+}
+
+void tablePreimageRefusalZeroMutation()
+{
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+                tuple.active = QList<int>{999};
+            }
+        }
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+                tuple.active = QList<int>{META_ALT_K};
+            }
+        }
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+}
+
+void tableClearRevertAndScopedOwnership()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    FakeJournal journal;
+    CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active.isEmpty());
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            CHECK(tuple.active.isEmpty());
+        }
+    }
+    CHECK(ShortcutReconciler(&store, &journal).revert().ok);
+    CHECK(!journal.present);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active == QList<int>{META_ALT_K});
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            CHECK(tuple.active == QList<int>{META_ALT_L});
+        }
+    }
+    CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            tuple.active = QList<int>{999};
+        }
+    }
+    ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(!reverted.ok);
+    CHECK(!reverted.journalRemoved);
+    CHECK(journal.present);
+    CHECK(reverted.untouched.contains(QStringLiteral("KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout")));
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+            CHECK(tuple.active == QList<int>{999});
+        }
+        if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+            CHECK(tuple.active == QList<int>{META_ALT_L});
+        }
+    }
+}
+
+void schemaV1UpgradeExplicit()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    FakeJournal journal;
+    ShortcutJournal bad;
+    bad.schema = QStringLiteral("shortcut-override-v1");
+    bad.phase = shortcutJournalPhasePending();
+    bad.owner = QStringLiteral(":1.20");
+    bad.uid = static_cast<uint>(::geteuid());
+    bad.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
+    bad.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+    fillResizeReady(bad, QList<int>{7}, QList<int>{8});
+    journal.present = true;
+    journal.stored = bad;
+    const ShortcutApplyResult ar = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!ar.ok);
+    CHECK(ar.error.contains(QStringLiteral("schema")));
+    CHECK(ar.error.contains(QStringLiteral("upgrade")));
+    CHECK(store.writeLog.isEmpty());
+    const ShortcutRevertResult rr = ShortcutReconciler(&store, &journal).revert();
+    CHECK(!rr.ok);
+    CHECK(rr.error.contains(QStringLiteral("upgrade")));
+    CHECK(store.writeLog.isEmpty());
+}
+
+void corruptPostFailsAllLoadedPaths()
+{
+    auto makeBad = []() {
+        ShortcutJournal bad;
+        bad.schema = shortcutJournalSchema();
+        bad.phase = shortcutJournalPhaseFocusApplied();
+        bad.owner = QStringLiteral(":1.20");
+        bad.uid = static_cast<uint>(::geteuid());
+        bad.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
+        bad.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+        fillResizeReady(bad, QList<int>{7}, QList<int>{8});
+        bad.switchNext.post = QList<int>{999};
+        return bad;
+    };
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_L});
+        FakeJournal journal;
+        journal.present = true;
+        journal.stored = makeBad();
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("allowed image")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(r.writes == 0);
+        const ShortcutRevertResult rr = ShortcutReconciler(&store, &journal).revert();
+        CHECK(!rr.ok);
+        CHECK(rr.error.contains(QStringLiteral("allowed image")));
+        CHECK(store.writeLog.isEmpty());
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+        FakeJournal journal;
+        ShortcutJournal bad = makeBad();
+        bad.phase = shortcutJournalPhaseComplete();
+        journal.present = true;
+        journal.stored = bad;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("allowed image")));
+        CHECK(store.writeLog.isEmpty());
+    }
+}
+
+void rowForeignGateAndMidCrossResume()
+{
+    auto validJournal = [](const QString &phase) {
+        ShortcutJournal j;
+        j.schema = shortcutJournalSchema();
+        j.phase = phase;
+        j.owner = QStringLiteral(":1.20");
+        j.uid = static_cast<uint>(::geteuid());
+        j.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{1}, QList<int>{META_L}};
+        j.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L}, QList<int>{META_ESC}};
+        fillResizeReady(j, QList<int>{7}, QList<int>{8});
+        return j;
+    };
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+        store.tuples[3].active = QList<int>{999};
+        FakeJournal journal;
+        journal.present = true;
+        journal.stored = validJournal(shortcutJournalPhaseFocusApplied());
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("neither")));
+        CHECK(store.writeLog.isEmpty());
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+        store.tuples[2].active = QList<int>{META_ALT_K};
+        FakeJournal journal;
+        ShortcutJournal j = validJournal(shortcutJournalPhaseFocusApplied());
+        QString e;
+        CHECK(journal.persist(j, &e));
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(r.ok);
+        CHECK(store.writeLog.size() == 3);
+        CHECK(journal.stored.phase == shortcutJournalPhaseComplete());
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{META_L}, QList<int>{META_ESC});
+        store.tuples[2].active = QList<int>{META_ALT_K};
+        store.tuples[3].active = QList<int>{};
+        store.tuples[4].active = QList<int>{META_ALT_L};
+        FakeJournal journal;
+        ShortcutJournal j = validJournal(shortcutJournalPhaseFocusApplied());
+        QString e;
+        CHECK(journal.persist(j, &e));
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(r.ok);
+        CHECK(store.writeLog.size() == 1);
+    }
+}
+
+void unrelatedChordsAllRefuse()
+{
+    for (int chord : {META_ALT_K, META_ALT_L}) {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{chord}));
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
     }
 }
 
@@ -1522,6 +1743,8 @@ int main(int argc, char **argv)
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("conflict")) {
         metaEscConflictRefusesWithoutJournalOrMutation();
+        tablePreimageRefusalZeroMutation();
+        unrelatedChordsAllRefuse();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("malformed")) {
         malformedReplyFailsClosed();
@@ -1543,16 +1766,20 @@ int main(int argc, char **argv)
         partialWriteRecovery();
         finishApplyDriftClassified();
         resumeGateFailsClosedZeroWrites();
+        rowForeignGateAndMidCrossResume();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("external")) {
         externalEditsUntouchedAndJournalRetained();
         cleanRevertRemovesJournal();
         noOpRevertSkipsWrites();
+        tableClearRevertAndScopedOwnership();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("journal")) {
         kconfigJournalWriteSyncReadback();
         journalPathSafety();
         fakeJournalMirrorsRealValidation();
+        schemaV1UpgradeExplicit();
+        corruptPostFailsAllLoadedPaths();
     }
     if (scenario != QStringLiteral("all") && scenario != QStringLiteral("success") && scenario != QStringLiteral("conflict")
         && scenario != QStringLiteral("malformed") && scenario != QStringLiteral("owner") && scenario != QStringLiteral("recovery")

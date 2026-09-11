@@ -2,15 +2,16 @@
 
 ## Goal
 
-Deliver the approved explicit KCM shortcut override for the MVP: focus-right
-takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
+Deliver the approved explicit KCM shortcut override table for the MVP. Explicit
+KCM Apply alone resolves only the closed compiled-in rows.
 
 ## Scope And Non-Goals
 
 - Explicit KCM Apply performs the override; explicit KCM Revert recovers it.
   Installation and startup never mutate global shortcuts.
-- Non-conflicting project shortcuts register by default; only the conflicting
-  Plasma-global lock binding changes, and only through Apply.
+- Non-conflicting project shortcuts register by default. The closed table is
+  the only conflict allowlist and carries each project identity/chord, foreign
+  identity, expected foreign preimage, and either `relocate` or `clear`.
 - Layout detection, omission, opt-in configuration, migration, KGlobalAccel
   reconciliation, and complete keyboard-layout support remain deferred to the
   parked post-release record in [Shortcut Scope](shortcuts.md).
@@ -19,11 +20,17 @@ takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
 
 ## Acceptance
 
-- Fixed identities: `kwin` / `plasma-auto-tiler-focus-right` is `Meta+L`;
-  `ksmserver` / `Lock Session` moves from `Meta+L` to `Meta+Esc` on Apply.
-- Preflight fails closed on a `Meta+Esc` conflict: unexpected conflicts are
-  refused, and Apply makes no partial mutation.
-- Non-`Meta+L` lock keys are preserved unchanged.
+- Row 1: `kwin` / `plasma-auto-tiler-focus-right` takes `Meta+L`; `ksmserver`
+  / `Lock Session` relocates `Meta+L` to `Meta+Esc`. Non-`Meta+L` lock keys
+  keep their order.
+- Row 2: `kwin` / `plasma-auto-tiler-resize-outwards-up` takes `Meta+Alt+K`;
+  `KDE Keyboard Layout Switcher` / `Switch to Next Keyboard Layout` clears
+  from the exact preimage `Meta+Alt+K`.
+- Row 3: `kwin` / `plasma-auto-tiler-resize-outwards-right` takes
+  `Meta+Alt+L`; `KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard
+  Layout` clears from the exact preimage `Meta+Alt+L`.
+- Whole-table preflight fails closed for any unexpected row preimage or target
+  conflict, before journal creation or mutation.
 - Revert restores only bindings still owned by that override.
 - Live acceptance is one user-run Apply/Revert/interrupted-recovery gate:
   separately authorized, bounded, reversible manual confirmation with exact
@@ -41,7 +48,7 @@ takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
 
 - Static-only complete: KCM Apply/Revert with Finish Apply/Restore recovery,
   confirmation-gated mutations, ordinary Settings Apply without shortcut
-  mutation, ordered two-write Apply, ownership-scoped Revert, and private
+  mutation, ordered six-write Apply, ownership-scoped Revert, and private
   project journal.
 - Focused static coverage in `shortcutreconciler_test.cpp` (Apply order,
   `Meta+Esc` refusal without mutation, partial-write resume, external-edit
@@ -54,8 +61,9 @@ takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
 - Approved durable contract, including exact role allowlist, preserved
   non-`Meta+L` lock keys, and private project journal, is recorded in
   [decisions](../decisions.md#shortcuts); this record duplicates no decision.
-- Static KCM override/recovery implementation with the focused coverage above
-  is accepted as static-only; no live evidence is accepted under this record yet.
+- Static KCM table/recovery implementation with the focused coverage above is
+  accepted as static-only. No live Apply/Revert/interrupted-recovery result is
+  claimed under this record.
 - Resolved Plasma 6 KGlobalAccel compatibility defect: host Plasma/KWin 6.7.4
   exposes `setShortcutKeys(as actionId, a(ai) keys, u flags) -> a(ai)` with
   `QSet<QKeySequence>` annotations; old strict `asa(ai)u` validator failed

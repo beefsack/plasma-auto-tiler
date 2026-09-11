@@ -692,14 +692,13 @@ Only meaningful pending or active work is listed.
   Qt QML `QV4::WeakMapPrototype::method_get`; PID 3568836 SIGABRT through inbound
   libdbus `QKeySequence` demarshalling). Do not reintroduce that framing. |
   [change](changes/archive/active-border-colour-override.md)
-- P1 | active | Generalize the KCM shortcut override from the fixed
-  `focus-right`/`Lock Session` pair to a table of conflict resolutions, and add
-  a clear operation alongside relocate, so `Meta+Alt+K`/`Meta+Alt+L` can be
-  taken from KDE Keyboard Layout Switcher. Amending the durable allowlist at
-  `docs/decisions.md:228-242` is user-approved. The static generalization
-  proceeds now with the existing `focus-right`/`Lock Session` relocation as the
-  first table row, so the pending single-pair live Apply/Revert/interrupted-
-  recovery gate still runs first and exercises the table path unchanged. |
+- P1 | shipped, live-unproven | KCM shortcut override is now a closed
+  compiled-in conflict-resolution table with `relocate` and `clear`; the
+  `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
+  Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. Static coverage
+  is complete. The remaining gate is the existing single-pair user-run live
+  Apply/Revert/interrupted-recovery confirmation, which must run first and
+  exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
 - P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
   resize failure is the KDE Keyboard Layout Switcher double-claim. Verified

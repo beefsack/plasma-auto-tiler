@@ -230,16 +230,27 @@ Historical implementation detail is recoverable in Git history.
   and KGlobalAccel reconciliation are deferred.
 - Non-conflicting project shortcuts register by default. Conflicting
   Plasma-global shortcuts change only through explicit KCM Apply and Revert.
-  Focus-right is `Meta+L`; the explicit override moves KDE lock to `Meta+Esc`.
-  Recovery is explicit in the KCM, Revert restores only bindings still owned by
-  that override, and unexpected conflicts are refused. Installation and startup
+  The allowlist is a closed compiled-in ordered table: each row specifies the
+  project component/action and chord, foreign component/action, expected foreign
+  preimage, and a `relocate` or `clear` resolution. No user-supplied or
+  arbitrary row is accepted. Recovery is explicit in the KCM, Revert restores
+  only bindings still owned by that override, unexpected table preimages or
+  target conflicts are refused before any mutation, and installation/startup
   never mutate global shortcuts.
-- KCM override/recovery is static-only complete: confirmed Apply/Revert plus
-  Finish Apply/Restore for interrupted applies; ordinary Settings Apply never
-  mutates shortcuts. Exact allowlist is `kwin/plasma-auto-tiler-focus-right`
-  and `ksmserver/Lock Session` only; non-`Meta+L` lock keys keep order, and the
-  journal is private project-owned. Focused reconciler/KCM static coverage
-  exists; no live Apply/Revert/interrupted-recovery result is claimed.
+- Table row 1 is `kwin/plasma-auto-tiler-focus-right` taking `Meta+L` from
+  `ksmserver/Lock Session` by relocating `Meta+L` to `Meta+Esc`; other lock keys
+  retain order. Row 2 is
+  `kwin/plasma-auto-tiler-resize-outwards-up` taking `Meta+Alt+K` by clearing
+  `KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout` from exact
+  preimage `Meta+Alt+K`. Row 3 is
+  `kwin/plasma-auto-tiler-resize-outwards-right` taking `Meta+Alt+L` by clearing
+  `KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout` from exact
+  preimage `Meta+Alt+L`.
+- KCM table override/recovery is static-only complete: confirmed Apply/Revert
+  plus Finish Apply/Restore for interrupted applies; ordinary Settings Apply
+  never mutates shortcuts. The private project journal records each resolution
+  kind and exact prior keys. Focused reconciler/KCM static coverage exists; no
+  live Apply/Revert/interrupted-recovery result is claimed.
 
 ## COSMIC Movement And Groups
 
