@@ -1,0 +1,213 @@
+# Live Shortcut Override Verification
+
+## Purpose
+
+This is the user-run acceptance procedure for the KCM shortcut override. Read
+`docs/live-kwin-testing.md` first. It does not grant authorization; perform this
+only under the separately authorized live gate. No agent participates in any
+step. Use physical keys only: D-Bus `invokeShortcut` does not prove xkb delivery.
+
+The KCM has one whole-table `Apply Shortcuts`, not a row-selective Apply. Phase
+1 therefore observes row 1 only, but Apply necessarily reconciles all six entries.
+Do not test rows 2-3 until Phase 2, and Revert after Phase 1 before proceeding.
+
+## Preconditions And Baseline
+
+1. Use a disposable desktop with three normal, resizable, Wayland-native test
+   windows. Do not move real windows or alter unrelated settings.
+2. Open a terminal and run these read-only commands. Preserve the complete
+   terminal output as the baseline ledger. `kreadconfig6` prints an empty line
+   for an absent or empty key, so retain the `grep` output as the authoritative
+   absent-versus-present record.
+
+```sh
+CONFIG="${XDG_CONFIG_HOME:-$HOME/.config}/kglobalshortcutsrc"
+printf 'CONFIG=%s\n' "$CONFIG"
+stat -c 'size=%s mtime=%y' "$CONFIG"
+sha256sum "$CONFIG"
+grep -n -F -e '[kwin]' -e '[ksmserver]' -e '[KDE Keyboard Layout Switcher]' \
+  -e 'plasma-auto-tiler-focus-right=' \
+  -e 'plasma-auto-tiler-resize-outwards-up=' \
+  -e 'plasma-auto-tiler-resize-outwards-right=' \
+  -e 'Lock Session=' \
+  -e 'Switch to Next Keyboard Layout=' \
+  -e 'Switch to Last-Used Keyboard Layout=' "$CONFIG"
+awk '/^\[/{group=$0} /Meta\+Esc/{printf "%s:%d:%s\n", group, NR, $0}' "$CONFIG"
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-focus-right
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-resize-outwards-up
+kreadconfig6 --file kglobalshortcutsrc --group kwin --key plasma-auto-tiler-resize-outwards-right
+kreadconfig6 --file kglobalshortcutsrc --group ksmserver --key 'Lock Session'
+kreadconfig6 --file kglobalshortcutsrc --group 'KDE Keyboard Layout Switcher' --key 'Switch to Next Keyboard Layout'
+kreadconfig6 --file kglobalshortcutsrc --group 'KDE Keyboard Layout Switcher' --key 'Switch to Last-Used Keyboard Layout'
+```
+
+3. Locate the private journal read-only. Its verified filename is
+   `shortcut-override-journalrc`, with group `[ShortcutOverride]` and schema
+   `shortcut-override-v2`. Source uses the KCM process's
+   `QStandardPaths::AppConfigLocation`, so the exact host directory is
+   intentionally not guessed. This command discovers it if it already exists:
+
+```sh
+JOURNAL="$(grep -rl -m1 -F 'SchemaVersion=shortcut-override-v2' "${XDG_CONFIG_HOME:-$HOME/.config}" 2>/dev/null || true)"
+printf 'JOURNAL=%s\n' "$JOURNAL"
+test -z "$JOURNAL" || { stat -c 'size=%s mtime=%y' "$JOURNAL"; sha256sum "$JOURNAL"; grep -n -F -e '[ShortcutOverride]' -e 'SchemaVersion=' -e 'Phase=' "$JOURNAL"; }
+```
+
+4. A nonempty `JOURNAL` is a possible project journal, not proof of its state.
+   Do not start a fresh Apply. Open the project KCM and use its displayed status
+   to choose "Interrupted Recovery" or the normal Revert route below.
+5. Run `just dev-status`; it must report `dev mode: DOWN`. Otherwise do not run
+   this procedure over an existing runtime. Restore that runtime through its own
+   approved route first. Then start the authorized test runtime in a dedicated
+   terminal with `just dev`. Copy the path printed as `combined log: ...`; leave
+   that terminal running until testing is complete. It captures Planner and KWin.
+6. Open the exact project KCM with:
+
+```sh
+kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
+```
+
+   The graphical route is System Settings `Desktop Effects`; the direct command
+   above is the verified project KCM route. In its `Shortcuts` group, `Ready (3
+   rows): ...` is valid. `Shortcuts differ from the allowed image.` is also valid
+   when the baseline already gives focus-right `Meta+L` while Lock Session still
+   has it. Do not use ordinary Settings Apply: it never changes shortcuts.
+
+## Phase 1 - Row 1 Observation
+
+1. Click `Apply Shortcuts`. The confirmation is titled `Apply Shortcuts` and
+   names all three rows: focus-right/Lock Session, resize-outwards-up/Switch to
+   Next, and resize-outwards-right/Switch to Last-Used. Select `Yes` only if it
+   matches the baseline ledger.
+2. Expect `Shortcuts applied (journal complete, 3 rows).` or the equivalent
+   complete status spelling out that focus-right owns `Meta+L`, Lock Session
+   owns `Meta+Esc`, and both Switcher actions are cleared. Any conflict or
+   refusal is a failure: do not retry; go to "Failures" then "Manual
+   Restoration".
+3. Re-run the six `kreadconfig6` commands plus the `grep` and `awk` commands
+   from the baseline. Find and record the now-created journal with the `JOURNAL` command.
+   It must show the project actions at `Meta+L`, `Meta+Alt+K`, and `Meta+Alt+L`;
+   Lock Session must contain `Meta+Esc` and no `Meta+L`; the two Switcher actions
+   must be empty. Record every non-`Meta+L` Lock Session key in its displayed
+   order. `Meta+Esc` must have no other claimant in the config output.
+4. With the left test window focused, physically press `Meta+L`. PASS: focus
+   moves right without locking the session.
+5. Physically press `Meta+Esc`. This is intentionally part of the test. PASS:
+   the session locks. Authenticate normally to return, then verify the same
+   disposable windows remain usable. Do not substitute another lock method.
+6. Physically test every captured non-`Meta+L` Lock Session key in its recorded
+   order. PASS: each still locks the session; authenticate back in after each.
+   FAIL: a missing, reordered, or changed lock key.
+
+## Phase 1 Revert
+
+1. In the `Shortcuts` group click `Revert Shortcuts`. The confirmation is titled
+   `Revert Shortcuts` and says external edits stay untouched. Select `Yes`.
+2. Re-run every baseline command. PASS: all six allowlisted records, every
+   `Meta+Esc` line, the `kglobalshortcutsrc` hash, and journal state match the
+   ledger. The journal must be absent. The captured mtime is provenance only and
+   may legitimately differ after a content-exact restore.
+3. The KCM must not report `Untouched:` here. If it does, or the config hash
+   differs, stop: restoration is not exact or it detected an external edit and
+   deliberately left that entry alone.
+
+## Interrupted Recovery
+
+There is no supported, user-inducible way to stop this Apply between its ordered
+writes. `Apply Shortcuts` blocks in synchronous D-Bus calls; the UI has no
+cancel/yield point. Do not attempt a timed close, kill, logout, power loss, or
+configuration edit: none is deterministic and each adds unrelated recovery risk.
+
+The closest honest substitute is to verify the recovery routing only if an
+actual unexpected interruption leaves the journal. Reopen the project KCM. Its
+status must say `Interrupted apply found (phase apply-pending). Finish Apply or
+Restore.` or name `phase focus-applied`; only then are `Finish Apply` and
+`Restore` visible.
+
+1. `Finish Apply` repeats the Apply confirmation. After `Yes`, PASS means the
+   complete three-row postimage in Phase 1 step 3 and status `Shortcuts applied
+   (journal complete, 3 rows).` Then run `Revert Shortcuts` and require the
+   baseline ledger exactly.
+2. `Restore` repeats the Revert confirmation. After `Yes`, PASS means all six
+   allowlisted entries equal their recorded preimage and the journal is absent.
+3. If no actual interruption occurs, record `interrupted recovery: not
+   user-inducible; not live-executed`. Static coverage remains the only evidence
+   for partial-write recovery. Do not claim this branch passed.
+
+## Phase 2 - Clear Rows
+
+Run this only after Phase 1 Apply, locking checks, and Revert all pass.
+
+1. Apply again through `Apply Shortcuts` and its same confirmation. Confirm the
+   complete three-row postimage and keep the combined log path.
+2. Arrange the three disposable windows as the normal `H[A,V[B,C]]` shape: a
+   left pane `A`, and a right column with top `B` and bottom `C`. Keep focus on
+   the indicated pane for each test.
+3. Focus the LEFT pane `A`, then physically press `Meta+Alt+L`. PASS: its right
+   edge grows and the right neighbor adjusts. This must be the left pane:
+   grow-right on the rightmost pane is a legitimate COSMIC `unchanged` no-op.
+4. Focus the BOTTOM pane `C`, then physically press `Meta+Alt+K`. PASS: its top
+   edge grows and the top neighbor adjusts. This must be the bottom pane:
+   grow-up on the topmost pane is a legitimate COSMIC `unchanged` no-op.
+5. `Meta+Alt+H` and `Meta+Alt+J` have no competing config claim and are known
+   controls. Focus the TOP-RIGHT pane `B`: test one outward `Meta+Alt+H` toward
+   `A`, one outward `Meta+Alt+J` toward `C`, then their `Shift` inward forms.
+   This distinguishes a general runtime failure from either cleared chord.
+6. The outer inset consumes 8 px on each side, or 16 px per axis. Therefore a
+   `pair-below-minimum` refusal is slightly more likely and is a correct refusal,
+   not a shortcut or COSMIC bug. It is distinct from the edge `unchanged` no-op.
+7. Click `Revert Shortcuts`, accept its confirmation, and require the entire
+   baseline ledger again before closing the KCM.
+
+## Failures And Logs
+
+1. Do not retry Apply, Finish Apply, Revert, or Restore after an unexpected
+   status, conflict, missing key, or changed baseline. Capture the KCM status,
+   the baseline/postimage output, and the private journal path and hash.
+2. Preserve the exact file printed as `combined log:`. It contains `[planner]`
+   and PID-filtered `[kwin]` output and persists after `just dev` tears down.
+
+3. Look for `plasma-auto-tiler:plan:shortcut-failed action=<action>
+   sequence=<sequence>`; it names the exact refused project chord. For a resize
+   refusal, the diagnostic is `plasma-auto-tiler:plan:cmd=<correlation>
+   kind=resize windows=<N> outcome=rejected`, followed by
+   `plasma-auto-tiler:plan:rejected kind=pair-below-minimum` when the pair is
+   below its valid minimum. Boundary no-ops are `unchanged`, not that rejection.
+4. For `kind=snapshot-invalid`, retain the paired Planner detail token and map
+   it with `docs/changes/archive/snapshot-invalid-details.md`. Do not treat the
+   generic kind as sufficient diagnosis; the bounded `detail` token names the
+   failed Planner check.
+
+## Manual Restoration
+
+Run this teardown on every abort, including a partial Apply, a missing recovery
+button, or an unavailable project KCM. First preference is always the project
+KCM's `Restore` (interrupted journal) or `Revert Shortcuts` (complete journal):
+both restore only entries whose live postimage is still project-owned.
+
+If that route is unavailable, open the verified system Shortcuts module:
+
+```sh
+systemsettings kcm_keys
+```
+
+Restore only these exact component/action records from the baseline ledger, then
+save through that module and rerun all baseline commands until they match:
+
+| Component | Action | Restore value |
+| --- | --- | --- |
+| `kwin` | `plasma-auto-tiler-focus-right` | captured preimage, including absent/empty |
+| `ksmserver` | `Lock Session` | captured preimage, preserving every key and order |
+| `kwin` | `plasma-auto-tiler-resize-outwards-up` | captured preimage, including absent/empty |
+| `KDE Keyboard Layout Switcher` | `Switch to Next Keyboard Layout` | captured preimage |
+| `kwin` | `plasma-auto-tiler-resize-outwards-right` | captured preimage, including absent/empty |
+| `KDE Keyboard Layout Switcher` | `Switch to Last-Used Keyboard Layout` | captured preimage |
+
+The exact in-module control labels for editing a specific entry are unverified
+without launching that KCM, so do not assume a button name: select only the
+listed component/action and enter the captured value. No source-verified CLI
+can replay this journal, and direct `kglobalshortcutsrc` editing is not an
+accepted restoration route. If the Shortcuts module cannot represent a captured
+value or preserve Lock Session order, stop with the ledger and journal intact;
+do not edit config files or delete the journal. Finish by stopping `just dev`
+with Ctrl-C if it was started, then retain its printed combined log.

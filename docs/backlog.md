@@ -700,6 +700,7 @@ Only meaningful pending or active work is listed.
   Apply/Revert/interrupted-recovery confirmation, which must run first and
   exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
+   [runbook](live-shortcut-override-verification.md)
 - P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
   resize failure is the KDE Keyboard Layout Switcher double-claim. Verified
   static fact: `~/.config/kglobalshortcutsrc:6-7` binds

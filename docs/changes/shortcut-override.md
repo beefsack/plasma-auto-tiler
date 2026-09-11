@@ -74,8 +74,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
 
 ## Next Action
 
-- Seek separate authorization for the single user-run live
-  Apply/Revert/interrupted-recovery acceptance gate with exact restoration.
+- Separate authorization remains required for the single user-run live
+  Apply/Revert/interrupted-recovery gate; follow the [verification runbook](../live-shortcut-override-verification.md). No live result is claimed.
 
 ## Retained Core Triage
 
