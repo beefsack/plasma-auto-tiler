@@ -231,13 +231,17 @@ pub const COSMIC_CHILD_MIN_HEIGHT_PX: i64 = 240;
 /// (12px first operation).
 #[must_use]
 pub const fn keyboard_step_px(press_index: u32) -> i32 {
-    let step = COSMIC_KEYBOARD_PREVIOUS_PX
-        + COSMIC_KEYBOARD_STEP_INCREMENT_PX
-        + COSMIC_KEYBOARD_STEP_INCREMENT_PX * press_index as i32;
-    if step > COSMIC_KEYBOARD_MAX_STEP_PX {
+    // Total in u64 so every u32 press_index is representable
+    // (max 10 + 2 + 2 * 4294967295 fits); the source `.min(20)` cap
+    // applies afterwards. The previous i32 `press_index as i32` multiply
+    // overflowed for large indices (wrong step, debug panic).
+    let step = COSMIC_KEYBOARD_PREVIOUS_PX as u64
+        + COSMIC_KEYBOARD_STEP_INCREMENT_PX as u64
+        + COSMIC_KEYBOARD_STEP_INCREMENT_PX as u64 * press_index as u64;
+    if step > COSMIC_KEYBOARD_MAX_STEP_PX as u64 {
         COSMIC_KEYBOARD_MAX_STEP_PX
     } else {
-        step
+        step as i32
     }
 }
 
@@ -647,6 +651,18 @@ mod tests {
         assert_eq!(COSMIC_KEYBOARD_PREVIOUS_PX, 10);
         assert_eq!(COSMIC_KEYBOARD_STEP_INCREMENT_PX, 2);
         assert_eq!(COSMIC_KEYBOARD_MAX_STEP_PX, 20);
+    }
+
+    #[test]
+    fn keyboard_step_px_caps_for_all_u32_without_overflow() {
+        // D6: the `(10 + 2 + 2 * press_index).min(20)` schedule must hold
+        // for every u32. The previous i32 `press_index as i32` multiply
+        // returned 10 for u32::MAX and panicked in debug for 2^31.
+        assert_eq!(keyboard_step_px(1_073_741_823), 20);
+        assert_eq!(keyboard_step_px(1_073_741_824), 20);
+        assert_eq!(keyboard_step_px(2_147_483_647), 20);
+        assert_eq!(keyboard_step_px(2_147_483_648), 20);
+        assert_eq!(keyboard_step_px(u32::MAX), 20);
     }
 
     #[test]

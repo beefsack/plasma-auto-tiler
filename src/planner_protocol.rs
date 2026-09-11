@@ -1132,6 +1132,10 @@ impl Planner {
             seed_order,
             true,
             |session, observation| {
+                let _ = session.sync_focus_from_window(
+                    &ctx.domain_key,
+                    &WindowId(ctx.request.focused_window.clone()),
+                );
                 session.propose_move(
                     &ctx.domain_key,
                     &window,
@@ -1206,6 +1210,10 @@ impl Planner {
             seed_order,
             true,
             |session, observation| {
+                let _ = session.sync_focus_from_window(
+                    &ctx.domain_key,
+                    &WindowId(ctx.request.focused_window.clone()),
+                );
                 session.propose_focus(
                     &ctx.domain_key,
                     &window,
@@ -1291,6 +1299,10 @@ impl Planner {
             seed_order,
             true,
             |session, observation| {
+                let _ = session.sync_focus_from_window(
+                    &ctx.domain_key,
+                    &WindowId(ctx.request.focused_window.clone()),
+                );
                 session.propose_resize(
                     &ctx.domain_key,
                     &window,
@@ -2479,5 +2491,121 @@ mod tests {
         );
         let recovered = parse_reply(&planner2.evaluate(&recover));
         assert_eq!(recovered["outcome"], "planned", "{recovered}");
+    }
+
+    #[test]
+    fn retained_ordinary_activation_resyncs_focus_for_directional() {
+        // Part A: ordinary KWin activation changes only the observed
+        // `focused_window`; retained Session focus otherwise only moves via
+        // planned commands. A directional command carrying the other valid
+        // tiled focus with complete matching membership must plan without a
+        // generation change, and the follow-up must remain usable.
+        let mut planner = Planner::new();
+        let first = retained_request(
+            "d4-focus-sync-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            admit_body("win-1"),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&first))["outcome"], "planned");
+        let second = retained_request(
+            "d4-focus-sync-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            admit_body("win-2"),
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&second))["outcome"],
+            "planned"
+        );
+        // Retained focus is now win-2. Ordinary activation moves observed
+        // focus to win-1; membership is complete and unchanged.
+        let activated = retained_request(
+            "d4-focus-sync-3",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "right"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&activated));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        // Committed resync: follow-up from the new focus stays usable.
+        let follow = retained_request(
+            "d4-focus-sync-4",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "focus", "window": "win-2", "direction": "left"}),
+        );
+        let follow_reply = parse_reply(&planner.evaluate(&follow));
+        assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+        assert_geometry_covers(&follow_reply, &["win-1", "win-2"]);
+    }
+
+    #[test]
+    fn retained_keyboard_resize_caps_large_press_index() {
+        // D6: retained `op=resize` must apply the COSMIC
+        // `(10 + 2 + 2 * press_index).min(20)` cap for every u32.
+        // The previous i32 multiply returned 10px for u32::MAX and
+        // panicked in debug for 2^31, so a held-key repeat with a large
+        // index mis-sized the retained boundary.
+        fn resize_shares(press_index: u32) -> serde_json::Value {
+            let mut planner = Planner::new();
+            for (correlation, focused, windows, command) in [
+                (
+                    "d6-resize-cap-1",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80)],
+                    admit_body("win-1"),
+                ),
+                (
+                    "d6-resize-cap-2",
+                    "win-1",
+                    vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                    admit_body("win-2"),
+                ),
+            ] {
+                let request =
+                    retained_request(correlation, "owner-1", "gen-1", focused, &windows, command);
+                assert_eq!(
+                    parse_reply(&planner.evaluate(&request))["outcome"],
+                    "planned"
+                );
+            }
+            let request = retained_request(
+                "d6-resize-cap-3",
+                "owner-1",
+                "gen-1",
+                "win-2",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({
+                    "op": "resize",
+                    "window": "win-2",
+                    "direction": "left",
+                    "mode": "outwards",
+                    "press_index": press_index,
+                }),
+            );
+            parse_reply(&planner.evaluate(&request))
+        }
+        let capped = resize_shares(4);
+        assert_eq!(capped["outcome"], "planned", "{capped}");
+        assert_geometry_covers(&capped, &["win-1", "win-2"]);
+        for press_index in [2_147_483_648u32, u32::MAX] {
+            let reply = resize_shares(press_index);
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+            assert_geometry_covers(&reply, &["win-1", "win-2"]);
+            assert_eq!(
+                reply["detail"]["new_shares"], capped["detail"]["new_shares"],
+                "press_index {press_index} must cap at 20px like press_index 4: {reply} vs {capped}"
+            );
+        }
     }
 }

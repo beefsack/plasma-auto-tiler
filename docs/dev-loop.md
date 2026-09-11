@@ -5,12 +5,33 @@ These recipes never stop or mask units, never resolve the Planner through
 `/nix/store`, and never create a `result` symlink. Preconditions fail closed.
 
 ```sh
+just dev         # foreground: refuse unless DOWN, dev-on, tail labeled logs, Ctrl-C tears down via dev-off
 just dev-on      # disable packaged script, start worktree Planner + KWin bundle
 just dev-status  # read-only: name owner, isScriptLoaded, receipt, unit state
 just reload      # rebuild and swap only the recorded worktree Planner
 just dev-off     # unload exact script, stop recorded Planner, re-enable packaged script
 ```
 
+- `dev` is a small foreground composition of the existing recipes. It
+  probes the same two strict facts as `dev-on` (verified worktree Planner
+  owning the D-Bus name, strictly parsed `isScriptLoaded`) and refuses
+  without mutating unless both are down. UP and either SPLIT direction
+  refuse with a clear error: this session never adopts pre-existing state.
+  Use `just dev-status` to inspect, `just dev-off` to teardown pre-existing
+  state, `just dev-on` for detached bring-up/recovery, and `just reload`
+  for a stale `(deleted)` Planner. A stale owner exe refuses the same way.
+  Malformed `isScriptLoaded` fails closed before mutation. On DOWN it runs
+  `just dev-on`; on bring-up failure it exits non-zero with no logs tailed
+  and no extra teardown (rollback stays owned by `dev-on`). On success it
+  arms `just dev-off` for `INT`/`TERM`/`EXIT`, then tails the live Planner
+  log from `$STATE_DIR/planner-log` prefixed `[planner]` and the KWin
+  journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
+  receipt `.pid`, filtered to `plasma-auto-tiler:plan`) prefixed `[kwin]`.
+   `Ctrl-C` stops the tails and runs the existing fail-closed receipt-bound
+   `dev-off`; a `dev-off` failure exits non-zero loudly. Missing log,
+   receipt, KWin pid, `tail`, or `journalctl` fails closed through the same
+   teardown trap rather than tailing silently. An unverified teardown never
+   retries unload; it directs recovery through logout/login.
 - `dev-on` disables the packaged KWin script, verifies `isScriptLoaded`
   `false`, requires `org.plasmaautotiler.Planner` to be unowned (it does not
   stop units for you), builds, launches exactly

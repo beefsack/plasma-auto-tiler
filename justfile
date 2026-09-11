@@ -817,3 +817,93 @@ dev-status:
     else
       echo "dev mode: SPLIT (planner $PLANNER_FACT${PLANNER_DETAIL:+, $PLANNER_DETAIL}, controller $CTRL_FACT)"
     fi
+
+# Foreground dev session: refuse unless DOWN, bring up via dev-on, tail labeled logs, teardown via dev-off on exit/Ctrl-C.
+# Optional `verbose` arg enables Planner full request/reply logging to its own log file:
+# `just dev verbose` (or `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1 just dev` via env passthrough).
+dev mode="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    JUSTFILE="{{ justfile() }}"
+    RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp}"
+    STATE_DIR="$RUNTIME_DIR/plasma-auto-tiler-dev"
+    DEV_MODE="{{ mode }}"
+    if [[ "$DEV_MODE" == "verbose" ]]; then
+      export PLASMA_AUTO_TILER_PLANNER_VERBOSE=1
+    elif [[ -n "$DEV_MODE" ]]; then
+      echo "error: just dev: unknown mode '$DEV_MODE' (expected '' or 'verbose')" >&2
+      exit 1
+    fi
+    # Reuse the existing strict read-only health probe; only a known DOWN
+    # state can be owned and torn down by this foreground invocation.
+    DEV_STATUS="$(just --justfile "$JUSTFILE" dev-status)"
+    printf '%s\n' "$DEV_STATUS"
+    case "$DEV_STATUS" in
+      *"dev mode: DOWN (planner unowned, controller unloaded)"*) ;;
+      *"dev mode:"*)
+        echo "error: just dev: refusing: dev mode is not DOWN; this foreground session never adopts UP/SPLIT" >&2
+        echo "hint: run 'just dev-status' to inspect, 'just dev-off' to teardown pre-existing, 'just dev-on' for detached bring-up/recovery" >&2
+        exit 1
+        ;;
+      *)
+        echo "error: just dev: dev-status did not report a usable mode; refusing" >&2
+        exit 1
+        ;;
+    esac
+    # Bring-up composes the existing detached recipe. Its own fail-closed
+    # rollback owns failures here; no extra teardown is attempted on failure
+    # and no logs are tailed without success.
+    JUST_DEV_ON_RC=0
+    just --justfile "$JUSTFILE" dev-on || JUST_DEV_ON_RC=$?
+    if [[ "$JUST_DEV_ON_RC" -ne 0 ]]; then
+      echo "error: just dev: bring-up via dev-on failed (exit $JUST_DEV_ON_RC); no logs tailed; rollback handled by dev-on" >&2
+      exit "$JUST_DEV_ON_RC"
+    fi
+    # From here the session is UP via this command, so arm receipt-bound
+    # teardown for exit/Ctrl-C before touching logs.
+    TEARDOWN_DONE=0
+    TAIL_PID=""
+    JOURNAL_PID=""
+    KWIN_PID=""
+    PLANNER_LOG=""
+    dev_cleanup() {
+      local rc=$?
+      trap - INT TERM EXIT
+      set +e
+      if [[ -n "${TAIL_PID:-}" ]]; then kill "$TAIL_PID" 2>/dev/null || true; fi
+      if [[ -n "${JOURNAL_PID:-}" ]]; then kill "$JOURNAL_PID" 2>/dev/null || true; fi
+      if jobs -p >/dev/null 2>&1; then kill $(jobs -p) 2>/dev/null || true; fi
+      wait 2>/dev/null || true
+      if [[ "${TEARDOWN_DONE:-0}" -eq 0 ]]; then
+        TEARDOWN_DONE=1
+        just --justfile "$JUSTFILE" dev-off
+        OFF_RC=$?
+        if [[ "$OFF_RC" -ne 0 ]]; then
+          echo "error: just dev: dev-off teardown failed (exit $OFF_RC)" >&2
+          echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
+          exit "$OFF_RC"
+        fi
+      fi
+      exit "$rc"
+    }
+    trap dev_cleanup EXIT
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+    [[ -f "$STATE_DIR/planner-log" ]] || { echo "error: just dev: missing planner log pointer ($STATE_DIR/planner-log)" >&2; exit 1; }
+    PLANNER_LOG="$(cat "$STATE_DIR/planner-log")"
+    [[ -n "$PLANNER_LOG" && -f "$PLANNER_LOG" && ! -L "$PLANNER_LOG" ]] || { echo "error: just dev: planner log missing or symlinked: ${PLANNER_LOG:-unknown}" >&2; exit 1; }
+    [[ -f "$STATE_DIR/controller-receipt-path" ]] || { echo "error: just dev: missing controller receipt pointer" >&2; exit 1; }
+    RECEIPT="$(cat "$STATE_DIR/controller-receipt-path")"
+    [[ -n "$RECEIPT" && -f "$RECEIPT" && ! -L "$RECEIPT" ]] || { echo "error: just dev: controller receipt missing or symlinked: ${RECEIPT:-unknown}" >&2; exit 1; }
+    KWIN_PID="$(jq -r '.pid // empty' "$RECEIPT" 2>/dev/null || true)"
+    [[ "$KWIN_PID" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: controller receipt has no valid KWin pid: $RECEIPT" >&2; exit 1; }
+    command -v tail >/dev/null 2>&1 || { echo "error: just dev: required tool 'tail' not found" >&2; exit 1; }
+    command -v journalctl >/dev/null 2>&1 || { echo "error: just dev: required tool 'journalctl' not found" >&2; exit 1; }
+    echo "just dev: up; tailing planner log and KWin journal (Ctrl-C tears down via dev-off)"
+    echo "planner log: $PLANNER_LOG"
+    echo "kwin pid: $KWIN_PID"
+    tail -n +1 -F "$PLANNER_LOG" 2>/dev/null | sed -u 's/^/[planner] /' &
+    TAIL_PID=$!
+    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:plan" | sed -u 's/^/[kwin] /' &
+    JOURNAL_PID=$!
+    wait

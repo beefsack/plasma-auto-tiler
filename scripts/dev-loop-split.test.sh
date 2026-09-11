@@ -70,6 +70,7 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'setsid %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+printf 'setsid-env VERBOSE=%s\n' "${PLASMA_AUTO_TILER_PLANNER_VERBOSE:-0}" >> "${FAKE_CALL_LOG:?}"
 exit 0
 EOF
   cat > "$FAKE_BIN/bin/systemctl" <<'EOF'
@@ -78,7 +79,26 @@ set -euo pipefail
 printf 'unknown\n'
 exit 0
 EOF
-  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl"
+  cat > "$FAKE_BIN/bin/tail" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'tail %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+for a in "$@"; do
+  if [[ -f "$a" ]]; then
+    echo "fake-planner-line"
+    break
+  fi
+done
+exit 0
+EOF
+  cat > "$FAKE_BIN/bin/journalctl" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'journalctl %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+echo "plasma-auto-tiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-applied"
+exit 0
+EOF
+  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
   cat > "$WORK/fake-start-test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -96,13 +116,17 @@ if [[ "${1:-}" == "start" ]]; then
   fi
   receipt="${CONTROLLER_OWNERSHIP_FILE:?missing receipt}"
   [[ ! -e "$receipt" && ! -L "$receipt" ]] || { echo "fake start-test: receipt already exists" >&2; exit 1; }
-  printf '{"script_id":7}\n' > "$receipt"
+  printf '{"script_id":7,"pid":4242,"start_identity":"101010"}\n' > "$receipt"
   printf 'true\n' > "$state/loaded"
   echo "fake started script 7"
   exit 0
 fi
 if [[ "${1:-}" == "stop" ]]; then
   printf 'start-test stop %s\n' "${2:-}" >> "$calllog"
+  if [[ -f "$state/stop-fails" ]]; then
+    echo "fake stop-test: simulated teardown failure" >&2
+    exit 1
+  fi
   receipt="${CONTROLLER_OWNERSHIP_FILE:?missing receipt}"
   [[ -f "$receipt" && ! -L "$receipt" ]] || { echo "fake start-test: receipt missing" >&2; exit 1; }
   sid="$(jq -r '.script_id // empty' "$receipt" 2>/dev/null || true)"
@@ -174,7 +198,7 @@ reset_state() {
   : > "$WORK/calls.log"
   : > "$OUTPUT"
   printf 'false\n' > "$WORK/state/loaded"
-  rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails"
+  rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails"
   export FAKE_STATE_DIR="$WORK/state"
   export FAKE_CALL_LOG="$WORK/calls.log"
   export PROC_ROOT="$WORK/proc"
@@ -293,9 +317,16 @@ assert_contains "dev-on" "real justfile list dev-on"
 assert_contains "dev-off" "real justfile list dev-off"
 assert_contains "dev-status" "real justfile list dev-status"
 assert_contains "reload" "real justfile list reload"
+assert_contains "dev" "real justfile list dev"
 
 run_just_real --dry-run dev-status
 check_exit 0 "real justfile dry-run dev-status"
+
+run_just_real --dry-run dev
+check_exit 0 "real justfile dry-run dev"
+
+run_just_real --dry-run dev verbose
+check_exit 0 "real justfile dry-run dev verbose"
 
 # dev-on: both up reports already up and changes nothing.
 reset_state
@@ -521,6 +552,185 @@ run_just dev-status
 check_exit 0 "dev-status stale exit"
 assert_contains "dev mode: SPLIT" "dev-status stale split"
 assert_not_contains "dev mode: UP" "dev-status stale not up"
+
+# dev (foreground): refuses when UP without mutating.
+reset_state
+make_planner_proc 4242 111111
+set_planner_owned 4242
+set_controller true
+run_just dev
+check_exit 1 "dev up refuse exit"
+assert_contains "refusing" "dev up refuse msg"
+assert_contains "never adopts UP/SPLIT" "dev up refuse adoption"
+assert_calls_missing "start-test start" "dev up no start"
+assert_calls_missing "setsid" "dev up no launch"
+assert_calls_missing "dogfood" "dev up no dogfood"
+assert_calls_missing "tail " "dev up no tail"
+assert_calls_missing "journalctl " "dev up no journal"
+
+# dev: refuses SPLIT planner-up/controller-down without launching.
+reset_state
+make_planner_proc 4243 222222
+set_planner_owned 4243
+set_controller false
+run_just dev
+check_exit 1 "dev split up/down refuse exit"
+assert_contains "refusing" "dev split up/down refuse msg"
+assert_calls_missing "start-test start" "dev split up/down no start"
+assert_calls_missing "setsid" "dev split up/down no launch"
+assert_calls_missing "dogfood" "dev split up/down no dogfood"
+assert_calls_missing "tail " "dev split up/down no tail"
+
+# dev: refuses SPLIT planner-down/controller-up without duplicate.
+reset_state
+set_controller true
+run_just dev
+check_exit 1 "dev split down/up refuse exit"
+assert_contains "refusing" "dev split down/up refuse msg"
+assert_calls_missing "start-test start" "dev split down/up no start"
+assert_calls_missing "setsid" "dev split down/up no launch"
+assert_calls_missing "dogfood" "dev split down/up no dogfood"
+
+# dev: refuses stale (deleted) owner without mutating.
+reset_state
+make_planner_proc 4247 101010 "$PLASMA_AUTO_TILER_BIN (deleted)"
+set_planner_owned 4247
+set_controller false
+run_just dev
+check_exit 1 "dev stale refuse exit"
+assert_contains "stale" "dev stale refuse msg"
+assert_calls_missing "start-test start" "dev stale no start"
+assert_calls_missing "setsid" "dev stale no launch"
+assert_calls_missing "dogfood" "dev stale no dogfood"
+
+# dev: malformed isScriptLoaded fails closed before mutation.
+reset_state
+touch "$WORK/state/loaded-malformed"
+run_just dev
+check_exit 1 "dev malformed exit"
+assert_contains "dev mode: UNKNOWN" "dev malformed status"
+assert_calls_missing "start-test start" "dev malformed no start"
+assert_calls_missing "setsid" "dev malformed no launch"
+assert_calls_missing "dogfood" "dev malformed no dogfood"
+
+# dev: bring-up failure propagates without silent success and without tailing.
+reset_state
+set_controller false
+touch "$WORK/state/start-fails"
+run_just dev
+check_exit 1 "dev bring-up fail exit"
+assert_contains "bring-up via dev-on failed" "dev bring-up fail msg"
+assert_not_contains "[planner]" "dev bring-up fail no planner tail"
+assert_not_contains "[kwin]" "dev bring-up fail no kwin tail"
+assert_calls_missing "tail " "dev bring-up fail no tail call"
+assert_calls_missing "journalctl " "dev bring-up fail no journal call"
+
+# dev: DOWN bring-up tails labeled logs then tears down via dev-off.
+reset_state
+set_controller false
+sleep 300 &
+DEV_CYCLE_PID=$!
+make_planner_proc "$DEV_CYCLE_PID" 777000
+printf '%s\n' "$DEV_CYCLE_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_CYCLE_EXIT="$EXIT"
+kill "$DEV_CYCLE_PID" 2>/dev/null || true
+wait "$DEV_CYCLE_PID" 2>/dev/null || true
+EXIT="$DEV_CYCLE_EXIT"
+check_exit 0 "dev down cycle exit"
+assert_contains "[planner]" "dev down planner label"
+assert_contains "[kwin]" "dev down kwin label"
+assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
+assert_calls_contain "dogfood disable" "dev down disable"
+assert_calls_contain "setsid" "dev down launch"
+assert_calls_contain "start-test start" "dev down start"
+assert_calls_contain "tail " "dev down tail"
+assert_calls_contain "journalctl " "dev down journal"
+assert_calls_contain "start-test stop 7" "dev down teardown stop"
+assert_calls_contain "dogfood enable" "dev down teardown enable"
+
+# dev: an unverifiable teardown stops after the exact receipt-bound attempt.
+reset_state
+set_controller false
+touch "$WORK/state/stop-fails"
+sleep 300 &
+DEV_TEARDOWN_PID=$!
+make_planner_proc "$DEV_TEARDOWN_PID" 888000
+printf '%s\n' "$DEV_TEARDOWN_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_TEARDOWN_EXIT="$EXIT"
+kill "$DEV_TEARDOWN_PID" 2>/dev/null || true
+wait "$DEV_TEARDOWN_PID" 2>/dev/null || true
+EXIT="$DEV_TEARDOWN_EXIT"
+check_exit 1 "dev teardown failure exit"
+assert_contains "teardown is unverified" "dev teardown failure explicit"
+assert_contains "logout/login" "dev teardown failure recovery"
+assert_calls_contain "start-test stop 7" "dev teardown exact stop once"
+assert_calls_missing "dogfood enable" "dev teardown failure no further teardown"
+
+# dev verbose: unknown mode refuses before mutation.
+reset_state
+set_controller false
+run_just dev bogus
+check_exit 1 "dev bogus mode exit"
+assert_contains "unknown mode" "dev bogus mode msg"
+assert_calls_missing "start-test start" "dev bogus no start"
+assert_calls_missing "setsid " "dev bogus no launch"
+assert_calls_missing "dogfood" "dev bogus no dogfood"
+
+# dev verbose: DOWN bring-up exports exactly 1 to the Planner launch.
+reset_state
+set_controller false
+unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+sleep 300 &
+DEV_VERBOSE_PID=$!
+make_planner_proc "$DEV_VERBOSE_PID" 999001
+printf '%s\n' "$DEV_VERBOSE_PID" > "$WORK/state/owner-pid"
+run_just dev verbose
+DEV_VERBOSE_EXIT="$EXIT"
+kill "$DEV_VERBOSE_PID" 2>/dev/null || true
+wait "$DEV_VERBOSE_PID" 2>/dev/null || true
+EXIT="$DEV_VERBOSE_EXIT"
+check_exit 0 "dev verbose cycle exit"
+assert_calls_contain "setsid-env VERBOSE=1" "dev verbose exports opt-in"
+assert_calls_contain "start-test stop 7" "dev verbose teardown stop"
+unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+
+# dev default: no mode arg leaves the Planner launch silent (VERBOSE=0).
+reset_state
+set_controller false
+unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+sleep 300 &
+DEV_QUIET_PID=$!
+make_planner_proc "$DEV_QUIET_PID" 999002
+printf '%s\n' "$DEV_QUIET_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_QUIET_EXIT="$EXIT"
+kill "$DEV_QUIET_PID" 2>/dev/null || true
+wait "$DEV_QUIET_PID" 2>/dev/null || true
+EXIT="$DEV_QUIET_EXIT"
+check_exit 0 "dev default cycle exit"
+assert_calls_contain "setsid-env VERBOSE=0" "dev default stays silent"
+assert_calls_contain "start-test stop 7" "dev default teardown stop"
+unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
+
+# dev env passthrough: exported 1 without the arg still reaches the launch.
+reset_state
+set_controller false
+export PLASMA_AUTO_TILER_PLANNER_VERBOSE=1
+sleep 300 &
+DEV_PASS_PID=$!
+make_planner_proc "$DEV_PASS_PID" 999003
+printf '%s\n' "$DEV_PASS_PID" > "$WORK/state/owner-pid"
+run_just dev
+DEV_PASS_EXIT="$EXIT"
+kill "$DEV_PASS_PID" 2>/dev/null || true
+wait "$DEV_PASS_PID" 2>/dev/null || true
+EXIT="$DEV_PASS_EXIT"
+check_exit 0 "dev passthrough cycle exit"
+assert_calls_contain "setsid-env VERBOSE=1" "dev passthrough exports opt-in"
+assert_calls_contain "start-test stop 7" "dev passthrough teardown stop"
+unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
 
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]

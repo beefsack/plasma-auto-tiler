@@ -755,6 +755,45 @@ impl Session {
         (self.focused_domain.clone(), self.focused_leaf.clone())
     }
 
+    /// Synchronize retained focus from an ordinary activation of a known
+    /// tiled window in an existing domain.
+    ///
+    /// Only updates the focused domain/leaf; topology, membership, revision,
+    /// and pending state are untouched. Fails closed (`false`, no mutation)
+    /// on divergence, pending/drag residue, unknown domains, malformed
+    /// topology, or unknown/exception/cross-domain windows. Callers must
+    /// still run the full directional proposal so ownership, observation
+    /// completeness, and capability validation apply unchanged.
+    pub fn sync_focus_from_window(&mut self, domain: &DomainKey, window: &WindowId) -> bool {
+        if self.reconciler.divergence().is_some() {
+            return false;
+        }
+        if self.has_pending() || self.drag.is_some() {
+            return false;
+        }
+        if self.domains.iter().find(|d| &d.key() == domain).is_none() {
+            return false;
+        }
+        if !self.validate_current_topology() {
+            return false;
+        }
+        let Some(link) = self.windows.get(window) else {
+            return false;
+        };
+        if link.output != domain.output || link.workspace != domain.workspace {
+            return false;
+        }
+        let Some(tree) = self.trees.get(domain).cloned().flatten() else {
+            return false;
+        };
+        if !collect_leaves(&tree).contains(&link.leaf) {
+            return false;
+        }
+        self.focused_domain = Some(domain.clone());
+        self.focused_leaf = Some(link.leaf.clone());
+        true
+    }
+
     /// Number of tracked exception windows.
     #[must_use]
     pub fn exception_count(&self) -> usize {
