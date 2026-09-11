@@ -721,11 +721,15 @@ Only meaningful pending or active work is listed.
   log. Static/hermetic coverage only; repeated Ctrl-C/restart cycles are
   user-observed but not formally gated. |
   [change](changes/dev-loop-teardown.md)
-- P2 | active | Capture `snapshot-invalid`. Still unreproduced after the resize
-  investigation deliberately excluded it. Correlations p44-p65 were all rejected
-  after moves, with a remove at p42 and an admit at p43. 14 producing conditions
-  live at `src/planner_protocol.rs:211-216,349-466,849-895,908-1274`. Needs its
-  own dedicated verbose capture. |
+- P2 | user-owned live capture | Capture `snapshot-invalid`. Still unreproduced
+  after the resize investigation deliberately excluded it. Correlations p44-p65
+  were all rejected after moves, with a remove at p42 and an admit at p43. The
+  diagnosability blocker is now removed: all 34 distinct Planner producing
+  conditions emit distinct bounded `detail` tokens, with 14 compound checks
+  split, and the token-to-condition map is
+  [recorded](changes/archive/snapshot-invalid-details.md). `window-count-mismatch`
+  recoverable semantics are unchanged. Remaining work is one dedicated verbose
+  live capture, which will now name the exact failing check. |
 - P2 | investigate KWin controller silent unload | Determine the actor or
   lifecycle event that unloads a manually loaded controller without a recorded
   `dev-off`; current KWin 6.7.4 APIs and retained journal evidence cannot
