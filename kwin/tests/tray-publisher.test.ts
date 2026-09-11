@@ -3,8 +3,6 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { dirname, resolve } from "node:path";
 import { MAX_SIGNED_REVISION, TrayPublisher } from "../src/tray-publisher";
-import { window } from "./controller-fixtures";
-import { dragSetup, movedGeometry, setup as controllerSetup, startDrag } from "./controller-fixture-scenarios";
 
 interface TrayFixture {
     readonly contract: {
@@ -222,7 +220,7 @@ test("retains each tray timer through its timeout callback", () => {
     assert.match(scheduleOnce, /const trayTimers = new Set<QTimer>\(\);/);
     assert.match(
         scheduleOnce,
-        /trayTimers\.add\(timer\);[\s\S]*timer\.timeout\?\.connect\(\(\) => \{[\s\S]*callback\(\);[\s\S]*finally \{[\s\S]*trayTimers\.delete\(timer\);/,
+        /trayTimers\.add\(timer\);[\s\S]*timer\.timeout\.connect\(\(\) => \{[\s\S]*callback\(\);[\s\S]*finally \{[\s\S]*trayTimers\.delete\(timer\);/,
     );
 });
 
@@ -236,43 +234,4 @@ test("does not publish or reschedule after disposal", () => {
     assert.equal(state.snapshots.length, 1);
     assert.equal(state.scheduleCount(), schedules);
     assert.equal(state.cancelCount(), 1);
-});
-
-test("publishes controller disable immediately without affecting pointer drag handling", () => {
-    let publisher: TrayPublisher | undefined;
-    const state = controllerSetup((enabled) => publisher?.notifyEnabledChanged(enabled));
-    const snapshots: Snapshot[] = [];
-    publisher = new TrayPublisher({
-        isEnabled: () => state.controller.isEnabled,
-        publishSnapshot: (schema, generation, revision, enabled) => {
-            snapshots.push({ schema, generation, revision, enabled });
-        },
-        scheduleOnce: (_delayMs, callback) => {
-            state.harness.scheduled.push({ delayMs: 1000, callback, cancelled: false });
-        },
-        createGeneration: () => "first",
-    });
-    publisher.start();
-
-    state.target.split = () => {
-        throw new Error("split failed");
-    };
-    state.controller.armKeyboardInsertion("right");
-    state.harness.emitAdded(window());
-
-    assert.equal(state.controller.isEnabled, false);
-    assert.deepEqual(snapshots, [
-        { schema: 1, generation: "first", revision: 0, enabled: true },
-        { schema: 1, generation: "first", revision: 1, enabled: false },
-    ]);
-    state.controller.armKeyboardInsertion("right");
-    assert.equal(snapshots.length, 2);
-
-    const drag = dragSetup();
-    startDrag(drag.dragged);
-    drag.harness.cursor = { x: 60, y: 60 };
-    drag.dragged.frameGeometry = movedGeometry();
-    drag.dragged.tile = null;
-    drag.dragged.interactiveMoveResizeFinished.emit();
-    assert.equal(drag.controller.isEnabled, true);
 });

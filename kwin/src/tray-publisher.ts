@@ -1,5 +1,3 @@
-import { formatLifecycleDiag } from "./route-diag";
-
 export const TRAY_SCHEMA = 1;
 export const TRAY_HEARTBEAT_MS = 1000;
 export const MAX_SIGNED_REVISION = 2147483647;
@@ -84,17 +82,9 @@ export class TrayPublisher {
         this.cancelHeartbeat = undefined;
     }
 
-    // Best-effort lifecycle diagnostic: validated generation plus bounded
-    // revision only. Never enabled state beyond the closed event, never
-    // identities or payloads. Logging never changes publish decisions.
-    private diag(comp: "tray" | "bridge", event: string, result: string): void {
-        try {
-            this.environment.log?.(
-                formatLifecycleDiag(comp, event, this.generation, this.revision, result),
-            );
-        } catch (error) {
-            void error;
-        }
+    // Group E single-engine cleanup: lifecycle diagnostics removed. Tray
+    // state transitions stay silent; publishing decisions are unchanged.
+    private diag(_comp: "tray" | "bridge", _event: string, _result: string): void {
     }
 
     private publish(announce: boolean): void {

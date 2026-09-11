@@ -5,11 +5,10 @@
 //! divergence. No platform, process, IPC, geometry, or native execution
 //! imports; only [`crate::directional`] semantic types.
 //!
-//! Sealed/versioned policy note: the planning policy itself stays frozen as
-//! POC1 evidence in [`crate::directional`] and [`crate::planner_contract`];
-//! those modules are conformance evidence and are not re-abstracted here.
-//! [`CONTRACT_VERSION`] pins this adapter envelope; [`POLICY_VERSION`] pins
-//! the POC1 policy it carries plans from.
+//! Sealed/versioned policy note: the planning policy itself stays frozen in
+//! [`crate::directional`] as conformance evidence and is not re-abstracted
+//! here. [`CONTRACT_VERSION`] pins this adapter envelope; [`POLICY_VERSION`]
+//! pins the policy it carries plans from.
 //!
 //! Error discipline: validators return `bool` and reconciler errors carry
 //! only typed [`DivergenceKind`] variants with fixed redacted messages. Input
@@ -24,7 +23,7 @@ use crate::ids::{CorrelationId, GenerationId, OwnerId};
 
 /// Adapter envelope version.
 pub const CONTRACT_VERSION: u32 = 1;
-/// Sealed POC1 planning policy version carried by plans.
+/// Sealed planning policy version carried by plans.
 pub const POLICY_VERSION: u32 = 1;
 /// Portable session lifecycle policy version (`cosmic_v1`).
 ///
@@ -41,7 +40,7 @@ pub use crate::ids::MAX_GENERATION_LEN;
 /// Opaque owner token bound (shared with [`crate::ids`]).
 pub use crate::ids::MAX_OWNER_LEN;
 pub use crate::ids::{is_correlation_id, is_generation_id, is_owner_id};
-/// Revision bound (inclusive), shared with planner/POC3 bounds.
+/// Revision bound (inclusive), shared by planner routes.
 pub const MAX_REVISION: u64 = 1_000_000;
 /// Precondition vector cap (directional plans carry at most a handful).
 pub const MAX_PRECONDITIONS: usize = 8;

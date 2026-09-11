@@ -1,32 +1,17 @@
-pub mod advisory_contract;
-pub mod advisory_trio;
-pub mod build_identity;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;
 pub mod focus_service;
 pub mod geometry;
 pub mod ids;
-pub mod manual_runtime;
 pub mod movement_service;
-pub mod planner_contract;
-// Linux-only KWin identity boundary (systemd unit, wrapper files, process
-// identity). Portable advisory/core modules must not depend on it.
-#[cfg(target_os = "linux")]
-pub mod planner_kwin_identity;
+// Linux-only KWin identity boundary removed (Group E single-engine cleanup).
+// Caller authorization is exactly the fail-closed same-UID check in
+// [`crate::planner_service`] via `GetConnectionUnixUser`.
 pub mod planner_service;
-pub mod poc3;
-pub mod poc3_contract;
-pub mod poc3_diag;
-pub mod poc3_diag_supervisor;
-pub mod poc3_host_pilot;
-pub mod poc3_host_trio;
 pub mod reconcile;
 pub mod resize_service;
-pub mod route_diag;
 pub mod session;
-pub mod shadow_projection;
-pub mod trace;
 pub mod tray;
 pub mod tray_endpoint;
 pub mod tray_lifecycle;

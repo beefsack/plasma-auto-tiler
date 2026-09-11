@@ -254,8 +254,7 @@ static_scan() {
   for script in \
     "$REPO_ROOT/scripts/start-test.sh" \
     "$REPO_ROOT/scripts/dogfood-install.sh" \
-    "$REPO_ROOT/scripts/live-test.sh" \
-    "$REPO_ROOT/scripts/nested-kwin-spike.sh"; do
+    "$REPO_ROOT/scripts/live-test.sh"; do
     bash -n "$script" || return 1
   done
   if grep -nE 'catch[[:space:]]*\{|sourceMappingURL|node:' "$BUNDLE"; then

@@ -465,14 +465,11 @@ describe("focus adapter source hygiene and production isolation", () => {
         }
     });
 
-    it("production startup activates the adapter only through the mode-gated dispatcher", () => {
+    it("production startup keeps the adapter out of the single-engine entry", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("focus-adapter"));
         assert.ok(!entry.includes("FocusAdapter"));
         assert.ok(!entry.includes("startFocusAdapterEntry"));
-        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("focus-adapter-entry"));
-        assert.ok(authority.includes("startFocusAdapterEntry"));
     });
 
     it("explicit entry requires exclusive authority and fails closed", () => {
@@ -487,21 +484,11 @@ describe("focus adapter source hygiene and production isolation", () => {
         assert.equal(handle, null);
     });
 
-    it("routes the focus slice only through the mode-gated dispatcher", () => {
+    it("keeps the focus slice out of the single-engine controller", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
-            const body = readFileSync(join(dir, name), "utf8");
-            assert.ok(!body.includes("focus-adapter"));
-            assert.ok(!body.includes("FocusAdapter"));
-            assert.ok(!body.includes("DescribeFocus"));
-            assert.ok(!body.includes("startFocusAdapterEntry"));
+            assert.equal(existsSync(join(dir, name)), false, `${name} must stay removed`);
         }
-        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
-        assert.ok(controller.includes("engine-authority"));
-        assert.ok(controller.includes("isRustAuthorityActive"));
-        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("focus-adapter-entry"));
-        assert.ok(authority.includes("startFocusAdapterEntry"));
     });
 });
 
@@ -1243,9 +1230,9 @@ describe("focus adapter window-count-mismatch recovery", () => {
             }),
         );
         assert.ok(logs.some((line) => line.includes("focus-rejected")));
-        const diag = logs.find((line) => line.includes(":result:") && line.includes("result=rejected"));
-        assert.ok(diag !== undefined);
-        assert.ok(diag.includes("detail=window-count-mismatch"));
+        // Group E: route-diag removed; recovery is proven by the bounded
+        // reject token with the adapter staying enabled (zero :result: lines).
+        assert.ok(!logs.some((line) => line.includes(":result:")));
         assert.ok(!logs.some((line) => line.includes("focus:disabled")));
         // Later command dispatches a new Planner request (different direction
         // avoids the fingerprint+direction dedup).

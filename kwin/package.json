@@ -6,16 +6,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
     "build": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js",
-    "build-start": "test -n \"$CONTROLLER_NONCE\" && test -n \"$CONTROLLER_BUILD_ID\" && test -n \"$CONTROLLER_PLUGIN_ID\" && esbuild src/entry.ts --bundle --format=iife --target=es2017 --define:CONTROLLER_NONCE=\\\"$CONTROLLER_NONCE\\\" --define:CONTROLLER_BUILD_ID=\\\"$CONTROLLER_BUILD_ID\\\" --define:CONTROLLER_PLUGIN_ID=\\\"$CONTROLLER_PLUGIN_ID\\\" --outfile=contents/code/main.js",
-    "build-provenance": "test -n \"$PROVENANCE_OUTFILE\" && test -n \"$PROVENANCE_PLUGIN_ID\" && esbuild src/provenance-entry.ts --bundle --format=iife --target=es2017 --define:PROVENANCE_NONCE=\\\"$PROVENANCE_NONCE\\\" --define:PROVENANCE_BUILD_ID=\\\"$PROVENANCE_BUILD_ID\\\" --define:PROVENANCE_PLUGIN_ID=\\\"$PROVENANCE_PLUGIN_ID\\\" --outfile=\"$PROVENANCE_OUTFILE.tmp\" && mv -n -- \"$PROVENANCE_OUTFILE.tmp\" \"$PROVENANCE_OUTFILE\"",
-    "build:planner-probe": "esbuild src/planner-shadow-probe-entry.ts --bundle --format=iife --target=es2017 --outfile=dist/planner-shadow-probe.js",
-    "build:poc3-command": "node ../scripts/poc3-build-command.mjs",
-    "build:id-probe": "node ../scripts/poc3-build-id-probe.mjs",
-    "test:poc3": "rm -rf dist/tests-poc3 && esbuild \"tests/poc3-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-poc3 && node --test \"dist/tests-poc3/**/*.test.js\" && bash ../scripts/poc3-command.test.sh",
     "test:movement": "rm -rf dist/tests-movement && esbuild \"tests/movement-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-movement && node --test \"dist/tests-movement/**/*.test.js\"",
     "test:resize": "rm -rf dist/tests-resize && esbuild \"tests/resize-adapter.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests-resize && node --test \"dist/tests-resize/**/*.test.js\"",
-    "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\" && bash ../scripts/start-test.test.sh",
-    "build:installed": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --define:PLASMA_AUTO_TILER_SOURCE_REV=\\\"${PLASMA_AUTO_TILER_SOURCE_REV:-local-dev}\\\" --outfile=contents/code/main.js"
+    "test": "npm run build && rm -rf dist/tests && esbuild \"tests/*.test.ts\" --bundle --platform=node --format=cjs --target=es2020 --outdir=dist/tests && TRAY_BRIDGE_FIXTURE=../test-fixtures/tray-bridge-v1.json node --test \"dist/tests/**/*.test.js\"",
+    "build:installed": "rm -rf dist && esbuild src/entry.ts --bundle --format=iife --target=es2017 --outfile=contents/code/main.js"
   },
   "engines": {
     "node": ">=24"

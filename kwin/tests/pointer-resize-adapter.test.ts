@@ -1069,9 +1069,9 @@ describe("pointer resize adapter", () => {
         );
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((line) => line.includes("pointer-rejected")));
-        const diag = mocks.logs.find((line) => line.includes(":result:") && line.includes("result=rejected"));
-        assert.ok(diag !== undefined);
-        assert.ok(diag.includes("detail=window-count-mismatch"));
+        // Group E: route-diag removed; recovery is proven by the bounded
+        // reject token with the adapter staying enabled (zero :result: lines).
+        assert.ok(!mocks.logs.some((line) => line.includes(":result:")));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         const requestsBefore = requestPayloads(mocks).length;
@@ -1317,32 +1317,19 @@ describe("pointer resize adapter", () => {
         assert.ok(src.includes('from "./geometry-order"'));
     });
 
-    it("production startup activates the pointer adapter only through the mode-gated dispatcher", () => {
+    it("production startup keeps the pointer adapter out of the single-engine entry", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("pointer-resize-adapter"));
         assert.ok(!entry.includes("PointerResizeAdapter"));
         assert.ok(!entry.includes("startPointerResizeAdapterEntry"));
         assert.ok(!entry.includes("DescribePointerResize"));
-        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("pointer-resize-adapter-entry"));
-        assert.ok(authority.includes("startPointerResizeAdapterEntry"));
     });
 
-    it("routes the pointer slice only through the mode-gated dispatcher", () => {
+    it("keeps the pointer slice out of the single-engine controller", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
-            const body = readFileSync(join(dir, name), "utf8");
-            assert.ok(!body.includes("pointer-resize-adapter"));
-            assert.ok(!body.includes("PointerResizeAdapter"));
-            assert.ok(!body.includes("DescribePointerResize"));
-            assert.ok(!body.includes("startPointerResizeAdapterEntry"));
+            assert.equal(existsSync(join(dir, name)), false, `${name} must stay removed`);
         }
-        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
-        assert.ok(controller.includes("engine-authority"));
-        assert.ok(controller.includes("isRustAuthorityActive"));
-        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("pointer-resize-adapter-entry"));
-        assert.ok(authority.includes("startPointerResizeAdapterEntry"));
     });
 });
 

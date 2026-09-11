@@ -32,7 +32,6 @@
 // retained on the focused window. All logs are fixed redacted tokens.
 
 import { ResizeAdapter, ResizeObserved, resizeFingerprint } from "./resize-adapter";
-import { formatRouteDiag } from "./route-diag";
 import { connectSignal, readSignal } from "./signal-capability";
 
 export interface ResizeEntryOverrides {
@@ -56,13 +55,10 @@ export interface ResizeEntryOverrides {
 export interface ResizeEntryHandle {
     readonly stop: () => void;
     readonly request: (direction: unknown, mode: unknown) => void;
-    // One-shot exact-three adoption, invoked by the authority dispatcher
-    // after all four slices are active. Observes public state only and, for
-    // exactly three eligible windows, aligns the deterministic focus target
-    // natively and issues one canonical keyboard resize through the normal
-    // adapter flight so seeding plus projection flow through the public
-    // plan, direct geometry, acknowledgement, and post-observation contract.
-    // Fail closed: anything ineligible or stale skips silently.
+    // Obsolete one-shot exact-three adoption route (Group B removed).
+    // Retained as an optional hook only so the existing dispatcher call
+    // (`resizeHandle.tryBootstrapTrio?.()`) still typechecks; the entry
+    // no longer implements it and never seeds. New code must not use it.
     readonly tryBootstrapTrio?: () => void;
 }
 
@@ -71,192 +67,6 @@ const ENTRY_READY = `${ENTRY_LOG}:ready`;
 const ENTRY_REJECT = `${ENTRY_LOG}:reject:resize-entry-invalid`;
 const ENTRY_SCOPE_REJECT = `${ENTRY_LOG}:reject:resize-entry-scope-invalid`;
 const ENTRY_SCOPE = `${ENTRY_LOG}:scope`;
-const ENTRY_BOOTSTRAP = `${ENTRY_LOG}:bootstrap-trio`;
-
-// Fresh shared-revision holder: exactly `{ current: 0 }`, meaning no slice
-// has transacted yet and the Rust trio is unseeded. Anything else (a number,
-// undefined, or an advanced holder) skips adoption.
-function isFreshRevisionHolder(value: unknown): value is { current: number } {
-    if (typeof value !== "object" || value === null) {
-        return false;
-    }
-    return (value as Record<string, unknown>)["current"] === 0;
-}
-
-function rectContained(
-    inner: { x: number; y: number; w: number; h: number },
-    outer: { x: number; y: number; w: number; h: number },
-): boolean {
-    return (
-        inner.x >= outer.x &&
-        inner.y >= outer.y &&
-        inner.x + inner.w <= outer.x + outer.w &&
-        inner.y + inner.h <= outer.y + outer.h
-    );
-}
-
-// Skip category for the exact-three adoption, mirroring
-// trioBootstrapTarget below. Count only, never identities or geometry.
-function trioOrientationCategory(w: number, h: number): string {
-    if (w > h) {
-        return "landscape";
-    }
-    if (w < h) {
-        return "portrait";
-    }
-    return "square";
-}
-
-// Slot predicate mirror of trioBootstrapTarget: slot 0 has no orientation
-// gate (always pass), slot 1 requires wide (w > h), slot 2 requires
-// tall-or-square (w <= h). Preserves every predicate exactly.
-function trioSlotSatisfies(slot: number, w: number, h: number): boolean {
-    if (slot === 1) {
-        return w > h;
-    }
-    if (slot === 2) {
-        return w <= h;
-    }
-    return true;
-}
-
-// Stable truncated non-crypto hash of the normalized opaque ID (FNV-1a
-// 32-bit, fixed 8-char lowercase hex). Fixed length, opaque charset, no
-// raw ID bytes, no title/caption/geometry/user data. Chosen over raw
-// resourceClass: resourceClass is the xdg app_id, explicitly forbidden by
-// the route-diag bounded-token convention (never app ids), while this hash
-// stays opaque yet lets a person correlate the physical window across
-// repeated lines via slot order plus orientation. No crypto dependency.
-function truncIdHash(id: string): string {
-    let hash = 0x811c9dc5;
-    for (let index = 0; index < id.length; index += 1) {
-        hash ^= id.charCodeAt(index);
-        hash = Math.imul(hash, 0x01000193) >>> 0;
-    }
-    let hex = hash.toString(16);
-    while (hex.length < 8) {
-        hex = `0${hex}`;
-    }
-    return hex;
-}
-
-// Bounded per-window breakdown for an exact-three attempt: one
-// formatRouteDiag scope line per sorted candidate (slot 0|1|2,
-// landscape|portrait|square, pass|fail, 8-hex opaque identity). Derived
-// tokens only; never title/caption/raw geometry/user data/raw ID. Same
-// lexical sort as trioBootstrapTarget. Emitted after the existing scope
-// skip/adopt summary so the established scope contract is preserved.
-function logTrioWindowDiags(
-    log: (message: string) => void,
-    observed: ResizeObserved,
-): void {
-    try {
-        if (observed.windows.length !== 3) {
-            return;
-        }
-        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        for (let slot = 0; slot < 3; slot += 1) {
-            const entry = sorted[slot];
-            if (entry === undefined) {
-                continue;
-            }
-            let w: unknown = undefined;
-            let h: unknown = undefined;
-            try {
-                w = entry.rect.w;
-                h = entry.rect.h;
-            } catch (error) {
-                void error;
-                continue;
-            }
-            if (typeof w !== "number" || typeof h !== "number") {
-                continue;
-            }
-            const kind = trioOrientationCategory(w, h);
-            const pass = trioSlotSatisfies(slot, w, h);
-            let wid = "00000000";
-            try {
-                wid = truncIdHash(entry.id);
-            } catch (error) {
-                void error;
-                continue;
-            }
-            const detail = slot === 0 ? "trio-slot-0" : slot === 1 ? "trio-slot-1" : "trio-slot-2";
-            try {
-                log(
-                    formatRouteDiag("scope", [
-                        ["detail", detail],
-                        ["kind", kind],
-                        ["result", pass ? "pass" : "fail"],
-                        ["wid", wid],
-                    ]),
-                );
-            } catch (error) {
-                void error;
-            }
-        }
-    } catch (error) {
-        void error;
-    }
-}
-function trioBootstrapSkipReason(observed: ResizeObserved): string {
-    try {
-        if (observed.windows.length !== 3) {
-            return "non-three";
-        }
-        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        const middle = sorted[1];
-        const last = sorted[2];
-        if (middle === undefined || last === undefined) {
-            return "unknown";
-        }
-        if (!(middle.rect.w > middle.rect.h)) {
-            return "middle-not-wide";
-        }
-        if (!(last.rect.w <= last.rect.h)) {
-            return "last-not-tall";
-        }
-        return "uncontained";
-    } catch (error) {
-        void error;
-        return "unknown";
-    }
-}
-// Exact-three adoption target from a live observation: exactly three
-// eligible windows in the single active domain with real contained rects,
-// where the sorted middle window is wide and the sorted last window is
-// tall-or-tie. The wide/tall rule mirrors the portable COSMIC admission
-// axis (wide splits Horizontal, otherwise Vertical) so the Rust seed binds
-// the deterministic H[A,V[B,C]] shape; anything else fails closed.
-function trioBootstrapTarget(observed: ResizeObserved): { ref: object } | null {
-    try {
-        if (observed.windows.length !== 3) {
-            return null;
-        }
-        const sorted = [...observed.windows].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
-        const first = sorted[0] as ResizeObserved["windows"][number];
-        const middle = sorted[1] as ResizeObserved["windows"][number];
-        const last = sorted[2] as ResizeObserved["windows"][number];
-        if (first === undefined || middle === undefined || last === undefined) {
-            return null;
-        }
-        if (!(middle.rect.w > middle.rect.h)) {
-            return null;
-        }
-        if (!(last.rect.w <= last.rect.h)) {
-            return null;
-        }
-        for (const entry of sorted) {
-            if (!rectContained(entry.rect, observed.domainBounds)) {
-                return null;
-            }
-        }
-        return { ref: last.ref };
-    } catch (error) {
-        void error;
-        return null;
-    }
-}
 
 const MAX_LIST = 1024;
 const MAX_DESKTOPS = 32;
@@ -984,93 +794,6 @@ export function startResizeAdapterEntry(
     } catch (error) {
         void error;
     }
-    const tryBootstrapTrio = (): void => {
-        try {
-            // Single-shot adoption: only a fresh shared holder may seed, so
-            // an established or foreign revision never re-seeds.
-            if (!isFreshRevisionHolder(overrides.revision)) {
-                try {
-                    log(
-                        formatRouteDiag("scope", [
-                            ["count", -1],
-                            ["decision", "skip"],
-                            ["reason", "stale-holder"],
-                        ]),
-                    );
-                } catch (error) {
-                    void error;
-                }
-                return;
-            }
-            const observed = observeNative(liveWorkspace, log);
-            if (observed === null) {
-                try {
-                    log(
-                        formatRouteDiag("scope", [
-                            ["count", -1],
-                            ["decision", "skip"],
-                            ["reason", "no-scope"],
-                        ]),
-                    );
-                } catch (error) {
-                    void error;
-                }
-                return;
-            }
-            const target = trioBootstrapTarget(observed);
-            if (target === null) {
-                // Exact-three scope validation: window count only plus the
-                // fixed skip category. Never identities or geometry. The
-                // per-window breakdown below runs after the summary so the
-                // established first-scope-line contract is preserved.
-                try {
-                    log(
-                        formatRouteDiag("scope", [
-                            ["count", observed.windows.length],
-                            ["decision", "skip"],
-                            ["reason", trioBootstrapSkipReason(observed)],
-                        ]),
-                    );
-                } catch (error) {
-                    void error;
-                }
-                logTrioWindowDiags(log, observed);
-                return;
-            }
-            // Deterministic focus alignment through public state: the Rust
-            // seed always focuses the sorted-last window, so the canonical
-            // intent below must start there. Native activation only; the
-            // projection itself flows through the adapter flight.
-            try {
-                const surface = liveWorkspace as { activeWindow: unknown };
-                if (surface.activeWindow !== target.ref) {
-                    surface.activeWindow = target.ref;
-                }
-            } catch (error) {
-                void error;
-                return;
-            }
-            adapter.requestResize("up", "inwards");
-            try {
-                log(ENTRY_BOOTSTRAP);
-            } catch (error) {
-                void error;
-            }
-            try {
-                log(
-                    formatRouteDiag("scope", [
-                        ["count", 3],
-                        ["decision", "adopt"],
-                    ]),
-                );
-            } catch (error) {
-                void error;
-            }
-            logTrioWindowDiags(log, observed);
-        } catch (error) {
-            void error;
-        }
-    };
     return {
         stop: () => {
             try {
@@ -1086,6 +809,5 @@ export function startResizeAdapterEntry(
                 void error;
             }
         },
-        tryBootstrapTrio,
     };
 }

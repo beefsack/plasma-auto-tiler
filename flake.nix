@@ -33,7 +33,6 @@
           ./test-fixtures
           ./assets/icons/plasma-auto-tiler.svg
           ./home-manager-module.nix
-          ./scripts/route-diag-follow.sh
         ];
       };
 
@@ -142,8 +141,6 @@
             grep -Fx "package=plasma-auto-tiler-kwin" "$installRoot/build-id"
             grep -Fx "version=0.1.0" "$installRoot/build-id"
             grep -Fx "source=${sourceRev}" "$installRoot/build-id"
-            grep -Fq '"${sourceRev}"' "$installRoot/contents/code/main.js"
-            grep -Fq 'formatLifecycleDiag("bridge", "started"' "$installRoot/contents/code/main.js"
             runHook postInstallCheck
           '';
         };
@@ -187,8 +184,6 @@
             grep -Fx "package=plasma-auto-tiler" "$out/share/plasma-auto-tiler/build-id"
             grep -Fx "version=0.1.0" "$out/share/plasma-auto-tiler/build-id"
             grep -Fx "source=${sourceRev}" "$out/share/plasma-auto-tiler/build-id"
-            grep -Fq ":version=" "$out/bin/plasma-auto-tiler"
-            grep -Fq "${sourceRev}" "$out/bin/plasma-auto-tiler"
             runHook postInstallCheck
           '';
         };

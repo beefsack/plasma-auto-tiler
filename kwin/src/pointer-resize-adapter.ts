@@ -88,9 +88,46 @@ export const POINTER_RESIZE_MAX_SHARES = 64;
 export const POINTER_RESIZE_MAX_SEQ = 1000000;
 
 import { orderGeometryWrites } from "./geometry-order";
-import { formatRouteDiag, PointerCoalescer } from "./route-diag";
 
 const POINTER_LOG = "plasma-auto-tiler:pointer-resize";
+
+// Group E single-engine cleanup: minimal bounded pointer-step coalescer
+// (previously imported from route-diag). Per-frame stepped signals collapse
+// to at most one `coalesced` marker per flight plus one bounded summary when
+// the flight settles. Counts only; no geometry, no payload bytes.
+class PointerCoalescer {
+    private coalesced = 0;
+    private marked = false;
+
+    noteCoalesced(): boolean {
+        this.coalesced += 1;
+        if (!this.marked) {
+            this.marked = true;
+            return true;
+        }
+        return false;
+    }
+
+    count(): number {
+        return this.coalesced;
+    }
+
+    flushSummary(): string | null {
+        if (this.coalesced === 0) {
+            return null;
+        }
+        const count = this.coalesced <= 1000000 ? this.coalesced : 1000000;
+        const line = `${POINTER_LOG}:coalesced-count:${count}`;
+        this.coalesced = 0;
+        this.marked = false;
+        return line;
+    }
+
+    reset(): void {
+        this.coalesced = 0;
+        this.marked = false;
+    }
+}
 
 export type PointerResizeDirection = "left" | "right" | "up" | "down";
 
@@ -1397,17 +1434,9 @@ export class PointerResizeAdapter {
         let requestRevision = this.readRevision();
         if (requestRevision === 0) {
             requestRevision = sortedIds.length;
-            // Shared trio holder must never be poisoned by a non-seed
-            // revision: only the exact-three seed revision may be stored.
-            // The wire still carries N so Rust rejects fail-closed;
-            // standalone per-adapter revision keeps the previous N binding.
-            if (this.revisionBinding !== null) {
-                if (sortedIds.length === 3) {
-                    this.writeRevision(requestRevision);
-                }
-            } else {
-                this.writeRevision(requestRevision);
-            }
+            // Generic bounded observation: the initial revision is the
+            // membership size N. No exact-three gate.
+            this.writeRevision(requestRevision);
         }
         const fingerprint = pointerResizeFingerprint(
             observed.domainOutput,
@@ -2610,18 +2639,13 @@ export class PointerResizeAdapter {
         }
     }
 
-    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
-    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    // Group E single-engine cleanup: per-command route diagnostics removed.
+    // At most one bounded kind log per command via reject(); this stays silent.
     private diag(
-        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
-        correlation: string,
-        extra: ReadonlyArray<readonly [string, unknown]> = [],
+        _stage: string,
+        _correlation: string,
+        _extra: ReadonlyArray<readonly [string, unknown]> = [],
     ): void {
-        try {
-            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
-        } catch (error) {
-            void error;
-        }
     }
 
     private log(message: string): void {

@@ -44,14 +44,10 @@ ActiveBorderConfigModule::ActiveBorderConfigModule(QObject *parent, const KPlugi
     m_ui.shortcutProfileCombo->addItem(i18n("Hyprland"), QStringLiteral("hyprland"));
     m_ui.shortcutProfileCombo->addItem(i18n("bspwm"), QStringLiteral("bspwm"));
 
-    m_ui.engineAuthorityModeCombo->addItem(i18n("Legacy"), QStringLiteral("legacy"));
-    m_ui.engineAuthorityModeCombo->addItem(i18n("Rust (development)"), QStringLiteral("rust-development"));
-
     connect(m_ui.tilingAlgorithmCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.automaticSplitTargetCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.workspaceModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.shortcutProfileCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
-    connect(m_ui.engineAuthorityModeCombo, QOverload<int>::of(&QComboBox::currentIndexChanged), this, &ActiveBorderConfigModule::updateScriptState);
     connect(m_ui.dropOutlinePreviewCheckBox, &QCheckBox::toggled, this, &ActiveBorderConfigModule::updateScriptState);
 
     m_shortcutStore = createLiveShortcutStore();
@@ -376,7 +372,6 @@ QVariantMap ActiveBorderConfigModule::currentScriptValues() const
         {QStringLiteral("automaticSplitTarget"), m_ui.automaticSplitTargetCombo->currentData()},
         {QStringLiteral("workspaceMode"), m_ui.workspaceModeCombo->currentData()},
         {QStringLiteral("shortcutProfile"), m_ui.shortcutProfileCombo->currentData()},
-        {QStringLiteral("engineAuthorityMode"), m_ui.engineAuthorityModeCombo->currentData()},
         {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
     };
 }
@@ -389,7 +384,6 @@ void ActiveBorderConfigModule::updateScriptState()
         {QStringLiteral("automaticSplitTarget"), QStringLiteral("dwindle")},
         {QStringLiteral("workspaceMode"), QStringLiteral("per-output-local")},
         {QStringLiteral("shortcutProfile"), QStringLiteral("cosmic")},
-        {QStringLiteral("engineAuthorityMode"), QStringLiteral("legacy")},
         {QStringLiteral("dropOutlinePreview"), false},
     };
     unmanagedWidgetChangeState(!m_loadedScriptValues.isEmpty() && current != m_loadedScriptValues);
@@ -410,7 +404,6 @@ void ActiveBorderConfigModule::load()
     const QString automaticSplitTarget = group.readEntry(QStringLiteral("automaticSplitTarget"), QStringLiteral("dwindle"));
     const QString workspaceMode = group.readEntry(QStringLiteral("workspaceMode"), QStringLiteral("per-output-local"));
     const QString shortcutProfile = group.readEntry(QStringLiteral("shortcutProfile"), QStringLiteral("cosmic"));
-    const QString engineAuthorityMode = group.readEntry(QStringLiteral("engineAuthorityMode"), QStringLiteral("legacy"));
     const QString dropOutlinePreviewRaw = group.readEntry(QStringLiteral("dropOutlinePreview"), QString());
     m_loadedDropOutlinePreviewRawValid = !group.hasKey(QStringLiteral("dropOutlinePreview"))
         || dropOutlinePreviewRaw.compare(QStringLiteral("true"), Qt::CaseInsensitive) == 0
@@ -419,14 +412,12 @@ void ActiveBorderConfigModule::load()
     select(m_ui.automaticSplitTargetCombo, automaticSplitTarget, QStringLiteral("dwindle"));
     select(m_ui.workspaceModeCombo, workspaceMode, QStringLiteral("per-output-local"));
     select(m_ui.shortcutProfileCombo, shortcutProfile, QStringLiteral("cosmic"));
-    select(m_ui.engineAuthorityModeCombo, engineAuthorityMode, QStringLiteral("legacy"));
     m_ui.dropOutlinePreviewCheckBox->setChecked(group.readEntry(QStringLiteral("dropOutlinePreview"), false));
     m_loadedScriptValues = {
         {QStringLiteral("tilingAlgorithm"), tilingAlgorithm},
         {QStringLiteral("automaticSplitTarget"), automaticSplitTarget},
         {QStringLiteral("workspaceMode"), workspaceMode},
         {QStringLiteral("shortcutProfile"), shortcutProfile},
-        {QStringLiteral("engineAuthorityMode"), engineAuthorityMode},
         {QStringLiteral("dropOutlinePreview"), m_ui.dropOutlinePreviewCheckBox->isChecked()},
     };
     updateScriptState();
@@ -439,8 +430,6 @@ void ActiveBorderConfigModule::save()
     KCModule::save();
 
     const QVariantMap current = currentScriptValues();
-    const bool engineAuthorityChanged = !m_loadedScriptValues.isEmpty()
-        && current.value(QStringLiteral("engineAuthorityMode")) != m_loadedScriptValues.value(QStringLiteral("engineAuthorityMode"));
     if (!m_loadedDropOutlinePreviewRawValid || current != m_loadedScriptValues) {
         KConfigGroup group(KSharedConfig::openConfig(QStringLiteral("kwinrc")), QStringLiteral("Script-plasma-auto-tiler-kwin"));
         if (current.value(QStringLiteral("tilingAlgorithm")) != m_loadedScriptValues.value(QStringLiteral("tilingAlgorithm"))) {
@@ -455,18 +444,12 @@ void ActiveBorderConfigModule::save()
         if (current.value(QStringLiteral("shortcutProfile")) != m_loadedScriptValues.value(QStringLiteral("shortcutProfile"))) {
             group.writeEntry(QStringLiteral("shortcutProfile"), current.value(QStringLiteral("shortcutProfile")).toString());
         }
-        if (current.value(QStringLiteral("engineAuthorityMode")) != m_loadedScriptValues.value(QStringLiteral("engineAuthorityMode"))) {
-            group.writeEntry(QStringLiteral("engineAuthorityMode"), current.value(QStringLiteral("engineAuthorityMode")).toString());
-        }
         if (!m_loadedDropOutlinePreviewRawValid || current.value(QStringLiteral("dropOutlinePreview")) != m_loadedScriptValues.value(QStringLiteral("dropOutlinePreview"))) {
             group.writeEntry(QStringLiteral("dropOutlinePreview"), current.value(QStringLiteral("dropOutlinePreview")).toBool());
         }
         group.sync();
         m_loadedScriptValues = current;
         m_loadedDropOutlinePreviewRawValid = true;
-    }
-    if (engineAuthorityChanged) {
-        m_scriptReconfigurePending = true;
     }
     updateScriptState();
 
@@ -500,7 +483,6 @@ void ActiveBorderConfigModule::defaults()
     m_ui.automaticSplitTargetCombo->setCurrentIndex(m_ui.automaticSplitTargetCombo->findData(QStringLiteral("dwindle")));
     m_ui.workspaceModeCombo->setCurrentIndex(m_ui.workspaceModeCombo->findData(QStringLiteral("per-output-local")));
     m_ui.shortcutProfileCombo->setCurrentIndex(m_ui.shortcutProfileCombo->findData(QStringLiteral("cosmic")));
-    m_ui.engineAuthorityModeCombo->setCurrentIndex(m_ui.engineAuthorityModeCombo->findData(QStringLiteral("legacy")));
     m_ui.dropOutlinePreviewCheckBox->setChecked(false);
     updateScriptState();
 }

@@ -37,7 +37,7 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<entry name="workspaceMode" type="Enum">/);
         assert.match(schema, /<entry name="shortcutProfile" type="Enum">/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">/);
-        assert.match(schema, /<entry name="engineAuthorityMode" type="Enum">/);
+        assert.doesNotMatch(schema, /engineAuthorityMode/);
     });
 
     it("declares the startup defaults in the KConfigXT schema", () => {
@@ -46,7 +46,7 @@ describe("production bundle compatibility", () => {
         assert.match(schema, /<default>per-output-local<\/default>/);
         assert.match(schema, /<default>cosmic<\/default>/);
         assert.match(schema, /<entry name="dropOutlinePreview" type="Bool">[\s\S]*?<default>false<\/default>/);
-        assert.match(schema, /<entry name="engineAuthorityMode" type="Enum">[\s\S]*?<default>legacy<\/default>/);
+        assert.doesNotMatch(schema, /engineAuthorityMode/);
         for (const preset of ["columns", "rows", "balanced-grid", "dwindle"]) {
             assert.match(schema, new RegExp(`<choice name="${preset}" value="${preset}"\\/>`));
         }
@@ -59,18 +59,16 @@ describe("production bundle compatibility", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm"]) {
             assert.match(schema, new RegExp(`<choice name="${profile}" value="${profile}"\\/>`));
         }
-        for (const authority of ["legacy", "rust-development"]) {
-            assert.match(schema, new RegExp(`<choice name="${authority}" value="${authority}"\\/>`));
-        }
     });
 
     it("declares the standard KCM UI with kcfg-bound controls", () => {
         const ui = readFileSync("contents/ui/config.ui", "utf8");
         assert.match(ui, /<widget class="QWidget"/);
-        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile", "engineAuthorityMode"]) {
+        for (const entry of ["tilingAlgorithm", "automaticSplitTarget", "workspaceMode", "shortcutProfile"]) {
             assert.match(ui, new RegExp(`name="kcfg_${entry}"`));
         }
         assert.match(ui, /<widget class="QCheckBox" name="kcfg_dropOutlinePreview">/);
+        assert.doesNotMatch(ui, /engineAuthorityMode/);
     });
 
     it("shares one callable-signal connector across all four Rust entries", () => {
@@ -95,14 +93,10 @@ describe("production bundle compatibility", () => {
         }
     });
 
-    it("declares windowActivated and keeps Rust authority all-or-nothing", () => {
+    it("declares windowActivated without a Rust authority dispatcher", () => {
         const globals = readFileSync("src/kwin-globals.d.ts", "utf8");
         assert.ok(globals.includes("windowActivated"));
-        const authority = readFileSync("src/engine-authority.ts", "utf8");
-        for (const entry of ["focus-adapter-entry", "movement-adapter-entry", "resize-adapter-entry", "pointer-resize-adapter-entry"]) {
-            assert.ok(authority.includes(entry), `dispatcher must start ${entry}`);
-        }
-        assert.ok(authority.includes("focus === null || movement === null || resize === null || pointer === null"));
+        assert.throws(() => readFileSync("src/engine-authority.ts", "utf8"));
     });
 
     it("names exact window signals with window-owned stepped payload and no polling/globals/legacy", () => {

@@ -74,8 +74,6 @@ import { orderGeometryWrites } from "./geometry-order";
 
 const LOG_PREFIX = "plasma-auto-tiler:resize";
 
-import { formatRouteDiag } from "./route-diag";
-
 export type ResizeDirection = "left" | "right" | "up" | "down";
 export type ResizeMode = "inwards" | "outwards";
 export type ResizeSignal = "active" | "added" | "removed" | "output" | "desktop" | "geometry";
@@ -955,17 +953,9 @@ export class ResizeAdapter {
         let requestRevision = this.readRevision();
         if (requestRevision === 0) {
             requestRevision = sortedIds.length;
-            // Shared trio holder must never be poisoned by a non-seed
-            // revision: only the exact-three seed revision may be stored.
-            // The wire still carries N so Rust rejects fail-closed;
-            // standalone per-adapter revision keeps the previous N binding.
-            if (this.revisionBinding !== null) {
-                if (sortedIds.length === 3) {
-                    this.writeRevision(requestRevision);
-                }
-            } else {
-                this.writeRevision(requestRevision);
-            }
+            // Generic bounded observation: the initial revision is the
+            // membership size N. No exact-three gate.
+            this.writeRevision(requestRevision);
         }
         const fingerprint = resizeFingerprint(
             current.domainOutput,
@@ -2195,18 +2185,13 @@ export class ResizeAdapter {
         }
     }
 
-    // Correlated route diagnostic: fixed vocabulary plus the opaque per-flight
-    // correlation and integer counts only. Never captions, geometry, or PIDs.
+    // Group E single-engine cleanup: per-command route diagnostics removed.
+    // At most one bounded kind log per command via reject(); this stays silent.
     private diag(
-        stage: "req" | "owner" | "result" | "ack" | "verify" | "outcome",
-        correlation: string,
-        extra: ReadonlyArray<readonly [string, unknown]> = [],
+        _stage: string,
+        _correlation: string,
+        _extra: ReadonlyArray<readonly [string, unknown]> = [],
     ): void {
-        try {
-            this.env.log(formatRouteDiag(stage, [["corr", correlation], ...extra]));
-        } catch (error) {
-            void error;
-        }
     }
 
     private log(message: string): void {

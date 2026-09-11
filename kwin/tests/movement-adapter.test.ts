@@ -887,9 +887,9 @@ describe("movement adapter noop and refusal", () => {
         );
         assert.equal(mocks.geometryWrites.length, 0);
         assert.ok(mocks.logs.some((l) => l.includes("movement-rejected")));
-        const diag = mocks.logs.find((l) => l.includes(":result:") && l.includes("result=rejected"));
-        assert.ok(diag !== undefined);
-        assert.ok(diag.includes("detail=window-count-mismatch"));
+        // Group E: route-diag removed; recovery is proven by the bounded
+        // reject token with the adapter staying enabled (zero :result: lines).
+        assert.ok(!mocks.logs.some((l) => l.includes(":result:")));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         const plannerBefore = mocks.dbusCalls.filter((call) => call.method === MOVEMENT_METHOD).length;
@@ -1447,15 +1447,12 @@ describe("movement adapter source hygiene and production isolation", () => {
         assert.ok(!entry.includes("pollFor"));
     });
 
-    it("production startup activates the adapter only through the mode-gated dispatcher", () => {
+    it("production startup keeps the adapter out of the single-engine entry", () => {
         const entry = readFileSync(join(kwinSrcDir(), "entry.ts"), "utf8");
         assert.ok(!entry.includes("movement-adapter"));
         assert.ok(!entry.includes("MovementAdapter"));
         assert.ok(!entry.includes("startMovementAdapterEntry"));
         assert.ok(!entry.includes("DescribeMovement"));
-        const authority = readFileSync(join(kwinSrcDir(), "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("movement-adapter-entry"));
-        assert.ok(authority.includes("startMovementAdapterEntry"));
     });
 
     it("explicit entry requires exclusive authority and fails closed", () => {
@@ -1470,21 +1467,11 @@ describe("movement adapter source hygiene and production isolation", () => {
         assert.equal(handle, null);
     });
 
-    it("routes the movement slice only through the mode-gated dispatcher", () => {
+    it("keeps the movement slice out of the single-engine controller", () => {
         const dir = kwinSrcDir();
         for (const name of ["controller.ts", "controller-input-actions.ts", "controller-interactive-drag.ts"]) {
-            const body = readFileSync(join(dir, name), "utf8");
-            assert.ok(!body.includes("movement-adapter"));
-            assert.ok(!body.includes("MovementAdapter"));
-            assert.ok(!body.includes("DescribeMovement"));
-            assert.ok(!body.includes("startMovementAdapterEntry"));
+            assert.equal(existsSync(join(dir, name)), false, `${name} must stay removed`);
         }
-        const controller = readFileSync(join(dir, "controller.ts"), "utf8");
-        assert.ok(controller.includes("engine-authority"));
-        assert.ok(controller.includes("isRustAuthorityActive"));
-        const authority = readFileSync(join(dir, "engine-authority.ts"), "utf8");
-        assert.ok(authority.includes("movement-adapter-entry"));
-        assert.ok(authority.includes("startMovementAdapterEntry"));
     });
 });
 

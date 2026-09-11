@@ -46,13 +46,5 @@
             <label>Show a destination outline while dragging a tiled window</label>
             <default>false</default>
         </entry>
-        <entry name="engineAuthorityMode" type="Enum">
-            <label>The engine authority for focus, move, and resize</label>
-            <default>legacy</default>
-            <choices>
-                <choice name="legacy" value="legacy"/>
-                <choice name="rust-development" value="rust-development"/>
-            </choices>
-        </entry>
     </group>
 </kcfg>

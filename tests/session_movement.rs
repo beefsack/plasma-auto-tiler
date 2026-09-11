@@ -6,11 +6,6 @@
 //! frozen `cosmic_v1` planner indirectly via the session; asserts rules
 //! R1-R4, focus retention, shares/order, domain isolation, refusals, geometry
 //! completeness, commit, determinism, and a bounded property-like loop.
-//!
-//! Residual limitation: the frozen trace v1 envelope replays movement
-//! dispatches only (no focus/lifecycle/session-topology envelope). Session
-//! deterministic replay below covers Session propose/ack/verify determinism;
-//! trace format is intentionally not expanded and the byte lock is untouched.
 
 use plasma_auto_tiler::contract::{
     AckOutcome, AdapterAck, DivergenceKind, FocusCapabilities, FocusPostObservation,
@@ -1941,44 +1936,6 @@ fn deterministic_replay_of_moves() {
         s
     }
     assert_eq!(run_focus().focus(), run_focus().focus());
-    let trace = serde_json::json!({
-        "v": 1,
-        "meta": {"policy_version": 1},
-        "owner": "owner-1",
-        "generation": "gen-1",
-        "initial_observation": {"owner": "owner-1", "generation": "gen-1", "revision": 0, "fingerprint": 7},
-        "events": [
-            {"type": "request", "correlation_id": "corr-1",
-             "observation": {"owner": "owner-1", "generation": "gen-1", "revision": 0, "fingerprint": 7},
-             "snapshot": {"outputs": [{"id": "source", "workspace": "workspace-1",
-                "tree": {"kind": "group", "id": "root", "axis": "horizontal",
-                 "children": [{"kind": "leaf", "id": "A"}, {"kind": "leaf", "id": "B"}]}, "adjacent": {}}],
-              "windows": [{"window": "w-A", "leaf": "A", "output": "source", "workspace": "workspace-1"},
-                          {"window": "w-B", "leaf": "B", "output": "source", "workspace": "workspace-1"}]},
-             "intent": {"source_output": "source", "focused_leaf": "A", "focused_window": "w-A", "direction": "right"},
-             "capabilities": {"swap_neighbor": true, "wrap_perpendicular": true, "wrap_siblings": true, "insert_child": true, "split_group_child": true, "reparent_leaf": true, "cross_output_transfer": true}},
-            {"type": "plan", "correlation_id": "corr-1", "rule": "R2a", "capability": "swap-neighbor", "base_revision": 0,
-             "preconditions": ["focused-leaf-occupied-by-focused-window", "neighbor-leaf-occupied", "container-is-direct-parent", "adapter-must-verify-postconditions"],
-             "operation": {"kind": "swap-neighbor", "rule": "R2a", "container": "root", "neighbor": "B"}},
-            {"type": "ack", "correlation_id": "corr-1", "base_revision": 0, "outcome": "accepted"},
-            {"type": "verify", "correlation_id": "corr-1",
-             "observation": {"owner": "owner-1", "generation": "gen-1", "revision": 0, "fingerprint": 22},
-             "verified": true,
-             "verified_preconditions": ["focused-leaf-occupied-by-focused-window", "neighbor-leaf-occupied", "container-is-direct-parent", "adapter-must-verify-postconditions"],
-             "verified_operation": {"kind": "swap-neighbor", "rule": "R2a", "container": "root", "neighbor": "B"}}
-        ],
-        "expected": {"terminal_state": "verified", "diagnostic": "none"}
-    });
-    let outcome = plasma_auto_tiler::trace::replay_trace_json(&trace.to_string()).expect("replay");
-    assert_eq!(
-        outcome.state,
-        plasma_auto_tiler::trace::TerminalState::Verified
-    );
-    assert_eq!(
-        outcome.diagnostic,
-        plasma_auto_tiler::trace::DiagnosticClass::None
-    );
-    assert_eq!(outcome.revision, 1);
 }
 
 #[test]

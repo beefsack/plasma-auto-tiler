@@ -4,7 +4,6 @@ set -euo pipefail
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 KWIN_DIR="$REPO_ROOT/kwin"
 BUNDLE="$KWIN_DIR/contents/code/main.js"
-PROVENANCE_BUNDLE=""
 META="$KWIN_DIR/metadata.json"
 PROC_ROOT="${PROC_ROOT:-/proc}"
 
@@ -13,9 +12,6 @@ BUS_DEST="org.kde.KWin"
 BUS_PATH="/Scripting"
 BUS_SCRIPTING_IFACE="org.kde.kwin.Scripting"
 BUS_SCRIPT_IFACE="org.kde.kwin.Script"
-PROVENANCE_PLUGIN_PREFIX="plasma-auto-tiler-checkout-provenance-"
-PROVENANCE_PLUGIN_ID="${PROVENANCE_PLUGIN_ID:-}"
-CONTROLLER_READY_MESSAGE=""
 OWNED_RECEIPT=""
 OWNED_NONCE=""
 OWNED_BUILD=""
@@ -31,7 +27,6 @@ KG_COMP_IFACE="org.kde.kglobalaccel.Component"
 
 PLUGIN_ID=""
 SCRIPT_ID=""
-PROVENANCE_SCRIPT_ID=""
 KWIN_PID=""
 KWIN_START_IDENTITY=""
 # Immutable identity captured before a lifecycle operation. Rechecks compare
@@ -39,17 +34,7 @@ KWIN_START_IDENTITY=""
 KWIN_PREOP_PID=""
 KWIN_PREOP_START_IDENTITY=""
 KWIN_IDENTITY_MISMATCH=0
-JOURNAL_CURSOR=""
-# Attempt-owned temporary file holding the retained raw current-attempt
-# after-cursor same-KWin-PID evidence (project diagnostics plus kwin_scripting
-# messages only; never window captions). Lives until post-cleanup reporting
-# completes, then is removed.
-EVIDENCE_FILE=""
-PROVENANCE_TMP_DIR=""
-PROVENANCE_OWNERSHIP_FILE="${PROVENANCE_OWNERSHIP_FILE:-}"
 CONTROLLER_OWNERSHIP_FILE="${CONTROLLER_OWNERSHIP_FILE:-}"
-PROVENANCE_LOAD_ATTEMPTED=0
-PROVENANCE_SIGNAL_PENDING=""
 START_NONCE="${START_NONCE:-}"
 
 # The exact project action IDs this lifecycle interface owns.
@@ -136,37 +121,10 @@ dbus_string_valid='((keys | sort) == ["data","type"]) and (.type == "s") and ((.
 dbus_uint_valid='((keys | sort) == ["data","type"]) and (.type == "u") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and ((.data[0] | tostring | test("^(0|[1-9][0-9]*)$"))) and (.data[0] >= 0) and (.data[0] <= 4294967295)'
 dbus_pid_valid='((keys | sort) == ["data","type"]) and (.type == "u") and ((.data | type) == "array") and ((.data | length) == 1) and ((.data[0] | type) == "number") and ((.data[0] | floor) == .data[0]) and ((.data[0] | tostring | test("^[1-9][0-9]*$"))) and (.data[0] > 0) and (.data[0] <= 4294967295)'
 desktops_valid='((keys | sort) == ["data","type"]) and (.type == "a(uss)") and ((.data | type) == "array") and (all(.data[]; ((. | type) == "array") and ((. | length) == 3) and ((.[0] | type) == "number") and ((.[0] | floor) == .[0]) and (.[0] >= 0) and ((.[1] | type) == "string") and ((.[1] | length) > 0) and ((.[2] | type) == "string") and ((.[2] | length) > 0))) and ((.data | map(.[0])) as $positions | ($positions | unique | length) == ($positions | length)) and ((.data | map(.[1])) as $ids | ($ids | unique | length) == ($ids | length))'
-# Slurp-mode predicates (jq -s) over journalctl JSON-lines output.
-journal_lines_valid='all(.[]; type == "object")'
-readiness_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | any(. == "plasma-auto-tiler:startup-handlers-ready" or . == "plasma-auto-tiler:startup-handlers-ready:rust-development")) as $ready | ($messages | any(startswith("plasma-auto-tiler:disabled:"))) as $disabled | ($ready and ($disabled | not))'
-startup_disabled_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | to_entries | map(select(.value == "plasma-auto-tiler:startup-handlers-ready" or .value == "plasma-auto-tiler:startup-handlers-ready:rust-development") | .key) | .[-1] // -1) as $ready | ($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key // -1) as $disabled | ($disabled >= 0 and ($ready < 0 or $disabled < $ready))'
-runtime_disabled_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | to_entries | map(select(.value == "plasma-auto-tiler:startup-handlers-ready" or .value == "plasma-auto-tiler:startup-handlers-ready:rust-development") | .key) | .[-1] // -1) as $ready | ($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key // -1) as $disabled | ($ready >= 0 and $disabled > $ready)'
-readiness_evidence_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] as $messages | ($messages | any(. == "plasma-auto-tiler:startup-handlers-ready" or . == "plasma-auto-tiler:startup-handlers-ready:rust-development"))'
-provenance_ready_valid='any(.[]; ((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string") and .MESSAGE == $message)'
-controller_ready_valid="$provenance_ready_valid"
-disabled_seen_valid='[.[] | select((.MESSAGE? | type) == "string") | .MESSAGE] | any(startswith("plasma-auto-tiler:disabled:"))'
-# Slurp-mode diagnostics summary over journalctl JSON-lines (already validated
-# as objects). Keeps only records whose _PID equals the current KWin pid,
-# extracts the ordered project messages, and locates the ordered
-# controller-startup tokens. Output is one JSON object with matching-record
-# presence, messages, and the final indexes of each startup/disabled token.
-diagnostics_summary='(map(select(((._PID? // "") == $pid) and ((.MESSAGE? | type) == "string"))) | map(.MESSAGE) | map(select(startswith("plasma-auto-tiler:")))) as $messages | {kept: (map(select((._PID? // "") == $pid)) | length), messages: $messages, lastReady: (($messages | to_entries | map(select(.value == "plasma-auto-tiler:startup-handlers-ready" or .value == "plasma-auto-tiler:startup-handlers-ready:rust-development") | .key)) | .[-1]?), lastDisabledAny: (($messages | to_entries | map(select(.value | startswith("plasma-auto-tiler:disabled:"))) | .[-1]?.key))}'
-# Classifies the ordered project messages of one epoch window (from $start)
-# into exact proof tokens: -invoked (callback delivery), -rejected:/-failed:
-# (callback reached a rejecting/failing guard), and success tokens (preset
-# applied, completed, armed, managed, or a no-op reflow).
-diagnostics_classify='def isinvoked: test("^plasma-auto-tiler:(keyboard|focus|move|detach|attach|fill)-invoked$") or startswith("plasma-auto-tiler:preset-invoked:"); def isrejected: contains("-rejected:") or contains("-failed:"); def issuccess: startswith("plasma-auto-tiler:preset-applied:") or test("^plasma-auto-tiler:(keyboard|move|detach|attach|reflow|fill)-completed$") or . == "plasma-auto-tiler:automatic-placement-managed" or . == "plasma-auto-tiler:keyboard-armed" or . == "plasma-auto-tiler:reflow-noop" or . == "plasma-auto-tiler:reflow-no-capacity"; {epoch: .messages[$start:], invoked: [.messages[$start:][] | select(isinvoked)], rejected: [.messages[$start:][] | select(isrejected)], success: [.messages[$start:][] | select(issuccess)]}'
-
-# Current-attempt (after-cursor, same-KWin-PID) failure-report extraction
-# predicates over slurped journalctl JSON-lines. Disabled reasons are reported
-# exactly; kwin_scripting warnings/errors are reported separately.
-start_attempt_project='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:"))]'
-start_attempt_disabled='[.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | .MESSAGE | select(startswith("plasma-auto-tiler:disabled:"))]'
-start_attempt_kwin_scripting='[.[] | select((._PID? // "") == $pid) | select((((.QT_CATEGORY? // "") == "kwin_scripting") or ((.SYSLOG_IDENTIFIER? // "") == "kwin_scripting"))) | select((.MESSAGE? | type) == "string") | .MESSAGE]'
-
-# Bounded deterministic readiness wait: fixed attempt count and fixed delay.
-READINESS_ATTEMPTS=30
-READINESS_DELAY=0.1
+# Group E single-engine dev loop: no journal readiness wait, no
+# dual-runtime lifecycle assertions. Bring-up proves the load through the
+# strict isScriptLoaded envelope plus the receipt-bound exact Script<ID>
+# introspection below; teardown is receipt-bound exact unload.
 
 usage() {
   cat <<'EOF'
@@ -176,17 +134,13 @@ Manual lifecycle interface for the plasma-auto-tiler-kwin KWin script.
 
 Commands:
   start    build the kwin bundle, load and run plasma-auto-tiler through
-            KWin's /Scripting D-Bus interface, and confirm controller
-            readiness from ordered diagnostics bound to the captured KWin PID/start identity
-  status   report the exact plugin load state, controller readiness
-           evidence, and persisted KGlobalAccel action records
+            KWin's /Scripting D-Bus interface, and confirm the exact
+            loaded state bound to the captured KWin PID/start identity
+  status   report the exact plugin load state and persisted KGlobalAccel
+            action records
   stop <script-id>
             unload only the exact controller script ID returned by start and
             report any persisted action records
-  diagnostics
-            report the latest KWin-PID/start-identity-bound controller-startup epoch's
-           ordered project diagnostics, labeled current or historical by
-           the current load state; read-only, never mutates
   desktops
            read the exact VirtualDesktopManager desktops envelope through
            busctl and report the strictly decoded position/id/name rows;
@@ -201,14 +155,6 @@ Commands:
             after a read-only preflight proves the exact setter contract,
             target ownership, and absence of unrelated conflicts
 
-  provenance <nonce>
-            build and load the inert checkout carrier under a fresh unguessable
-            plugin identity, run only its exact returned Script<ID>, and
-            require its plugin/nonce/build diagnostic from the captured full
-            KWin identity. This never loads the controller
-  provenance-stop <script-id>
-             stop and unload only the exact provenance script ID retained from
-             provenance, then verify that the carrier is not loaded
   snapshot-shortcuts
             print the exact project-owned KGlobalAccel tuples as JSON;
             read-only, never mutates
@@ -220,12 +166,11 @@ Commands:
 
 start mutates live KWin state and still requires explicit authorization.
 start never mutates shortcut records; only reconcile-shortcuts --apply does.
-  stop <script-id> requires the nonce-owned receipt created by start and does
-  not roll back Custom Tile changes the script already made.
+  stop <script-id> requires the nonce-owned receipt created by start.
   start without CONTROLLER_OWNERSHIP_FILE creates a private random receipt and
   prints its exact stop command.
 KGlobalAccel records persist after unload and do not prove live callbacks.
-status, diagnostics, desktops, and reconcile-shortcuts are read-only.
+status, desktops, and reconcile-shortcuts are read-only.
 EOF
 }
 
@@ -307,30 +252,12 @@ ensure_controller_receipt() {
   CONTROLLER_OWNERSHIP_FILE="$receipt_dir/ownership"
 }
 
-ensure_provenance_receipt() {
-  if [[ -n "$PROVENANCE_OWNERSHIP_FILE" ]]; then
-    validate_provenance_receipt_target
-    return
-  fi
-  local runtime_dir="${XDG_RUNTIME_DIR:-/tmp}"
-  safe_output_path "$runtime_dir/.plasma-auto-tiler-provenance-receipt" || return 1
-  local receipt_dir
-  receipt_dir="$(mktemp -d -- "$runtime_dir/plasma-auto-tiler-provenance.XXXXXX")" || return 1
-  chmod 700 "$receipt_dir" || { rmdir -- "$receipt_dir"; return 1; }
-  PROVENANCE_OWNERSHIP_FILE="$receipt_dir/ownership"
-}
-
 validate_controller_receipt_target() {
   [[ -n "$CONTROLLER_OWNERSHIP_FILE" ]] || return 0
   safe_output_path "$CONTROLLER_OWNERSHIP_FILE" || return 1
   [[ ! -e "$CONTROLLER_OWNERSHIP_FILE" && ! -L "$CONTROLLER_OWNERSHIP_FILE" ]]
 }
 
-validate_provenance_receipt_target() {
-  [[ -n "$PROVENANCE_OWNERSHIP_FILE" ]] || return 0
-  safe_output_path "$PROVENANCE_OWNERSHIP_FILE" || return 1
-  [[ ! -e "$PROVENANCE_OWNERSHIP_FILE" && ! -L "$PROVENANCE_OWNERSHIP_FILE" ]]
-}
 
 remove_owned_file() {
   local file="$1" expected="${2:-}" parent name identity inode
@@ -349,17 +276,18 @@ remove_owned_file() {
   [[ ! -e "$file" && ! -L "$file" ]]
 }
 
+
 remove_ownership() {
   [[ -n "$1" ]] || return 0
   remove_owned_file "$@"
 }
+
 
 load_ownership() {
   local file="$1" kind="$2" expected_id="$3" expected_plugin="$4" value
   [[ -n "$file" && -f "$file" && ! -L "$file" ]] || return 1
   value="$(<"$file")" || return 1
   local build_pattern='^controller-v1-[0-9a-f]{64}$'
-  [[ "$kind" == provenance ]] && build_pattern='^checkout-carrier-v1-[0-9a-f]{64}$'
   jq -s -e --arg kind "$kind" --arg build_pattern "$build_pattern" "length == 1 and (.[0] | $ownership_valid)" <<<"$value" >/dev/null 2>&1 || return 1
   jq -s -e --argjson expected_id "$expected_id" 'length == 1 and (.[0].script_id == $expected_id)' <<<"$value" >/dev/null 2>&1 || return 1
   [[ -z "$expected_plugin" || "$(jq -r '.plugin' <<<"$value")" == "$expected_plugin" ]] || return 1
@@ -371,11 +299,9 @@ load_ownership() {
   OWNED_RECEIPT="$value"
   OWNED_NONCE="$(jq -r '.nonce' <<<"$value")"
   OWNED_BUILD="$(jq -r '.build' <<<"$value")"
-  if [[ "$kind" == provenance ]]; then
-    PROVENANCE_PLUGIN_ID="$(jq -r '.plugin' <<<"$value")"
-  fi
   printf '%s\n' "$value"
 }
+
 
 capture_kwin_identity() {
   [[ "$KWIN_PID" =~ ^[1-9][0-9]*$ ]] || return 1
@@ -392,6 +318,7 @@ capture_kwin_identity() {
   [[ "${fields[19]:-}" =~ ^[1-9][0-9]*$ ]] || return 1
   KWIN_START_IDENTITY="${fields[19]}"
 }
+
 
 kwin_identity_unchanged() {
   local expected_pid="${KWIN_PREOP_PID:-$KWIN_PID}" expected_start="${KWIN_PREOP_START_IDENTITY:-$KWIN_START_IDENTITY}"
@@ -410,31 +337,24 @@ kwin_identity_unchanged() {
   fi
 }
 
+
 verify_exact_script() {
   local id="$1" plugin="$2" introspect loaded
   [[ "$id" =~ ^[0-9]+$ && "$id" -le 2147483647 ]] || return 1
   local receipt_file receipt_kind receipt
-  if [[ "$plugin" == "$PROVENANCE_PLUGIN_ID" ]]; then
-    receipt_file="$PROVENANCE_OWNERSHIP_FILE"
-    receipt_kind=provenance
-  else
-    receipt_file="$CONTROLLER_OWNERSHIP_FILE"
-    receipt_kind=controller
-  fi
+  receipt_file="$CONTROLLER_OWNERSHIP_FILE"
+  receipt_kind=controller
   [[ -n "$receipt_file" && -f "$receipt_file" && ! -L "$receipt_file" ]] || return 1
   receipt="$(load_ownership "$receipt_file" "$receipt_kind" "$id" "$plugin")" || return 1
   [[ "$receipt" == "$OWNED_RECEIPT" ]] || return 1
   kwin_identity_unchanged || return 1
   introspect="$(busctl $BUS_SCOPE --json=short introspect "$BUS_DEST" "/Scripting/Script$id" 2>/dev/null)" || return 1
   strict_json_matches "$script_iface_valid" "$introspect" || return 1
-  if [[ "$plugin" == "$PROVENANCE_PLUGIN_ID" ]]; then
-    loaded="$(provenance_loaded_word 2>/dev/null || true)"
-  else
-    loaded="$(plugin_loaded_word 2>/dev/null || true)"
-  fi
+  loaded="$(plugin_loaded_word 2>/dev/null || true)"
   [[ "$loaded" == loaded ]] || return 1
   kwin_identity_unchanged || return 1
 }
+
 
 kwin_identity_matches_receipt() {
   local receipt="$1" expected_pid expected_start current_pid current_start
@@ -459,15 +379,12 @@ kwin_identity_matches_receipt() {
   fi
 }
 
+
 exact_cleanup() {
   local id="$1" plugin="$2" rc=0 out after receipt="${OWNED_RECEIPT:-}"
   EXACT_CLEANUP_AFTER=""
   verify_exact_script "$id" "$plugin" || return 1
-  # Unloading the carrier destroys its Script<ID> object. Calling stop first
-  # therefore makes unloadScript report false for the exact carrier.
-  if [[ "$plugin" != "$PROVENANCE_PLUGIN_ID" ]]; then
-    busctl $BUS_SCOPE call "$BUS_DEST" "/Scripting/Script$id" $BUS_SCRIPT_IFACE stop >/dev/null 2>&1 || rc=1
-  fi
+  busctl $BUS_SCOPE call "$BUS_DEST" "/Scripting/Script$id" $BUS_SCRIPT_IFACE stop >/dev/null 2>&1 || rc=1
   out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE unloadScript s "$plugin" 2>/dev/null)" || rc=1
   if ! strict_json_matches "$unload_valid" "$out"; then
     echo "error: unloadScript reply was malformed; teardown remains unverified" >&2
@@ -478,11 +395,7 @@ exact_cleanup() {
   fi
   # A malformed/false unload reply is not success by itself. Only the strict
   # postcondition can turn it into verified teardown.
-  if [[ "$plugin" == "$PROVENANCE_PLUGIN_ID" ]]; then
-    after="$(provenance_loaded_word 2>/dev/null || true)"
-  else
-    after="$(plugin_loaded_word 2>/dev/null || true)"
-  fi
+  after="$(plugin_loaded_word 2>/dev/null || true)"
   EXACT_CLEANUP_AFTER="$after"
   [[ "$after" == not-loaded ]] || rc=1
   if [[ "$rc" -eq 0 ]] && ! kwin_identity_matches_receipt "$receipt"; then
@@ -494,6 +407,7 @@ exact_cleanup() {
 
 # Exact idempotent stop/unload of a directly loaded script. No script ID means
 # no teardown: the public API cannot safely identify a partially loaded script.
+
 cleanup_loaded() {
   [[ -n "$SCRIPT_ID" ]] || return 1
   if exact_cleanup "$SCRIPT_ID" "$PLUGIN_ID"; then
@@ -503,125 +417,15 @@ cleanup_loaded() {
   fi
 }
 
-cleanup_provenance_loaded() {
-  [[ -n "$PROVENANCE_SCRIPT_ID" ]] || return 1
-  exact_cleanup "$PROVENANCE_SCRIPT_ID" "$PROVENANCE_PLUGIN_ID"
-}
-
-provenance_failure() {
-  local msg="$1" cleanup_state=unverified loaded_after=""
-  if [[ -n "$PROVENANCE_SCRIPT_ID" && "$KWIN_IDENTITY_MISMATCH" -eq 0 ]]; then
-    write_ownership "$PROVENANCE_OWNERSHIP_FILE" provenance "$nonce" "$build_id" "$PROVENANCE_PLUGIN_ID" "$PROVENANCE_SCRIPT_ID" || true
-  fi
-  if [[ -n "$PROVENANCE_SCRIPT_ID" && "$KWIN_IDENTITY_MISMATCH" -eq 0 ]] && cleanup_provenance_loaded; then
-    loaded_after="$EXACT_CLEANUP_AFTER"
-    if remove_ownership "$PROVENANCE_OWNERSHIP_FILE" "$OWNED_RECEIPT"; then
-      cleanup_state=verified
-    fi
-  fi
-  printf 'provenance: partial nonce=%s build=%s pid=%s script-id=%s plugin=%s cleanup=%s' \
-    "$nonce" "$build_id" "$KWIN_PID" "$PROVENANCE_SCRIPT_ID" "$PROVENANCE_PLUGIN_ID" "$cleanup_state"
-  [[ -n "$loaded_after" ]] && printf ' loaded-after=%s' "$loaded_after"
-  printf '\n'
-  echo "error: $msg" >&2
-  remove_provenance_temp
-  exit 1
-}
-
-provenance_unverified_failure() {
-  local msg="$1"
-  printf 'provenance: partial nonce=%s build=%s pid=%s script-id=%s plugin=%s cleanup=unverified\n' \
-    "$nonce" "$build_id" "$KWIN_PID" "${PROVENANCE_SCRIPT_ID:-unknown}" "$PROVENANCE_PLUGIN_ID"
-  echo "error: $msg" >&2
-  remove_provenance_temp
-  exit 1
-}
-
-remove_provenance_temp() {
-  if [[ -n "$PROVENANCE_TMP_DIR" && -d "$PROVENANCE_TMP_DIR" && ! -L "$PROVENANCE_TMP_DIR" ]]; then
-    rm -f -- "$PROVENANCE_TMP_DIR/main.js"
-    rm -f -- "$PROVENANCE_TMP_DIR/main.js.tmp"
-    rm -f -- "$PROVENANCE_TMP_DIR/load-reply"
-    rmdir -- "$PROVENANCE_TMP_DIR" 2>/dev/null || true
-  fi
-}
-
-signal_during_provenance() {
-  local sig="$1" cleanup_state=unverified
-  trap '' INT TERM
-  if [[ -n "$PROVENANCE_SCRIPT_ID" ]] && cleanup_provenance_loaded && remove_ownership "$PROVENANCE_OWNERSHIP_FILE" "$OWNED_RECEIPT"; then
-    cleanup_state=verified
-  fi
-  printf 'provenance: partial nonce=%s build=%s pid=%s script-id=%s plugin=%s cleanup=%s\n' \
-    "$nonce" "$build_id" "$KWIN_PID" "${PROVENANCE_SCRIPT_ID:-unknown}" "$PROVENANCE_PLUGIN_ID" "$cleanup_state" >&2
-  remove_provenance_temp
-  trap - INT TERM
-  kill -"$sig" "$$"
-}
-
-defer_provenance_signal() {
-  PROVENANCE_SIGNAL_PENDING="$1"
-}
-
-restore_provenance_traps() {
-  trap 'signal_during_provenance INT' INT
-  trap 'signal_during_provenance TERM' TERM
-}
 
 cleanup_after_load() {
   local msg="$1"
   local cleanup_state=unverified
   if cleanup_loaded; then cleanup_state=verified; fi
   printf 'start: partial script-id=%s cleanup=%s\n' "${SCRIPT_ID:-unknown}" "$cleanup_state"
-  [[ -n "${EVIDENCE_FILE:-}" ]] && rm -f "$EVIDENCE_FILE"
   echo "error: $msg" >&2
   echo "note: exact controller teardown was $cleanup_state; no plugin-name fallback was attempted" >&2
   exit 1
-}
-
-# Reports the retained attempt-owned after-cursor same-KWin-PID evidence for a
-# failed start: the raw project messages, exact disabled:* reasons, and
-# separate kwin_scripting warnings/errors. Reads from the attempt-owned
-# evidence file, scopes strictly to the current attempt (never the historical
-# pre-cursor epoch), and prints no window caption or payload.
-report_start_failure() {
-  local pid="$1"
-  echo "controller diagnostics (current attempt, after-cursor, same-KWin-PID):" >&2
-  jq -s -r --arg pid "$pid" "$start_attempt_project | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
-  echo "disabled reasons (current attempt):" >&2
-  jq -s -r --arg pid "$pid" "$start_attempt_disabled | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
-  echo "kwin_scripting warnings/errors (current attempt):" >&2
-  jq -s -r --arg pid "$pid" "$start_attempt_kwin_scripting | .[]" "$EVIDENCE_FILE" 2>/dev/null | sed 's/^/  /' >&2 || true
-}
-
-# Readiness failure: report the retained evidence, perform the exact idempotent
-# cleanup, then report the same retained evidence again before removing it.
-fail_start_readiness() {
-  local msg="$1"
-  report_start_failure "$KWIN_PID"
-  local cleanup_state=unverified
-  if cleanup_loaded; then cleanup_state=verified; fi
-  printf 'start: partial script-id=%s cleanup=%s\n' "${SCRIPT_ID:-unknown}" "$cleanup_state"
-  echo "error: $msg" >&2
-  echo "note: exact controller teardown was $cleanup_state; no plugin-name fallback was attempted" >&2
-  report_start_failure "$KWIN_PID"
-  rm -f "$EVIDENCE_FILE"
-  exit 1
-}
-
-# A signal during start leaves the attempt-owned evidence temp file
-# un-reported and the start outcome unknown. Remove the temp file so it does
-# not leak in /tmp and no historical or partial diagnostics are ever
-# presented as current, then re-raise the signal. No supervisor is added;
-# the runner owns interruption reporting and cleanup.
-signal_during_start() {
-  local sig="$1"
-  local cleanup_state=unverified
-  if [[ -n "$SCRIPT_ID" ]] && cleanup_loaded; then cleanup_state=verified; fi
-  printf 'start: partial script-id=%s cleanup=%s\n' "${SCRIPT_ID:-unknown}" "$cleanup_state" >&2
-  [[ -n "${EVIDENCE_FILE:-}" ]] && rm -f "$EVIDENCE_FILE"
-  trap - INT TERM
-  kill -"$sig" "$$"
 }
 
 find_kwin_pid() {
@@ -762,216 +566,6 @@ report_shortcut_drift() {
   fi
 }
 
-provenance_loaded_word() {
-  local out
-  out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE isScriptLoaded s "$PROVENANCE_PLUGIN_ID")" || {
-    echo "error: provenance isScriptLoaded call failed: $out" >&2
-    return 1
-  }
-  if ! strict_json_matches "$isloaded_valid" "$out"; then
-    echo "error: unexpected provenance isScriptLoaded reply: $out" >&2
-    return 1
-  fi
-  if [[ "$(jq -r '.data[0]' <<<"$out")" == true ]]; then
-    printf 'loaded\n'
-  else
-    printf 'not-loaded\n'
-  fi
-}
-
-cmd_provenance() {
-  require_tools npm busctl jq journalctl sha256sum od tr stat
-  if [[ $# -ne 1 || ! "$1" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,63}$ ]]; then
-    echo "error: provenance requires one nonce matching [A-Za-z0-9][A-Za-z0-9._-]{7,63}" >&2
-    exit 1
-  fi
-  local nonce="$1" build_id source_digest is_loaded_out journal_cursor_out random_suffix requested_plugin
-  trap 'signal_during_provenance INT' INT
-  trap 'signal_during_provenance TERM' TERM
-  PROVENANCE_LOAD_ATTEMPTED=0
-  source_digest="$(sha256sum "$KWIN_DIR/src/provenance-entry.ts" | awk '{print $1}')" || {
-    echo "error: could not calculate provenance source identity" >&2
-    exit 1
-  }
-  [[ "$source_digest" =~ ^[[:xdigit:]]{64}$ ]] || {
-    echo "error: provenance source identity is invalid" >&2
-    exit 1
-  }
-  build_id="checkout-carrier-v1-$source_digest"
-  requested_plugin="$PROVENANCE_PLUGIN_ID"
-  if [[ "${PLASMA_AUTO_TILER_HERMETIC_TEST:-}" == 1 && -n "$requested_plugin" ]]; then
-    [[ "$requested_plugin" =~ ^${PROVENANCE_PLUGIN_PREFIX}[[:xdigit:]]{32}$ ]] || {
-      echo "error: hermetic provenance plugin identity is invalid" >&2
-      exit 1
-    }
-  else
-    random_suffix="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')" || {
-      echo "error: could not generate an unguessable provenance plugin identity" >&2
-      exit 1
-    }
-    [[ "$random_suffix" =~ ^[[:xdigit:]]{32}$ ]] || {
-      echo "error: generated provenance plugin identity is invalid" >&2
-      exit 1
-    }
-    PROVENANCE_PLUGIN_ID="${PROVENANCE_PLUGIN_PREFIX}${random_suffix}"
-  fi
-  [[ "$PROVENANCE_PLUGIN_ID" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$ ]] || {
-    echo "error: provenance plugin identity is invalid" >&2
-    exit 1
-  }
-  safe_output_path "${TMPDIR:-/tmp}/.plasma-auto-tiler-provenance-output" || {
-    echo "error: provenance temporary output parent is unsafe" >&2
-    exit 1
-  }
-  ensure_provenance_receipt || {
-    echo "error: provenance ownership receipt path is unsafe, already exists, or has an unsafe parent" >&2
-    exit 1
-  }
-  is_loaded_out="$(provenance_loaded_word)" || exit 1
-  if [[ "$is_loaded_out" == loaded ]]; then
-    echo "error: provenance carrier is already loaded; refusing to load another instance" >&2
-    exit 1
-  fi
-  printf 'provenance-baseline: plugin=%s loaded=%s\n' "$PROVENANCE_PLUGIN_ID" "$is_loaded_out"
-  PROVENANCE_TMP_DIR="$(mktemp -d "${TMPDIR:-/tmp}/plasma-auto-tiler-provenance.XXXXXX")" || {
-    echo "error: could not create a private provenance output directory" >&2
-    exit 1
-  }
-  chmod 700 "$PROVENANCE_TMP_DIR"
-  PROVENANCE_BUNDLE="$PROVENANCE_TMP_DIR/main.js"
-  PROVENANCE_NONCE="$nonce" PROVENANCE_BUILD_ID="$build_id" PROVENANCE_PLUGIN_ID="$PROVENANCE_PLUGIN_ID" PROVENANCE_OUTFILE="$PROVENANCE_BUNDLE" npm --prefix "$KWIN_DIR" run build-provenance >/dev/null || {
-    remove_provenance_temp
-    echo "error: npm run build-provenance failed in $KWIN_DIR" >&2
-    exit 1
-  }
-  [[ -f "$PROVENANCE_BUNDLE" && ! -L "$PROVENANCE_BUNDLE" ]] || {
-    remove_provenance_temp
-    echo "error: provenance bundle was not created at a private temporary path" >&2
-    exit 1
-  }
-  KWIN_PID="$(find_kwin_pid)" || {
-    remove_provenance_temp
-    echo "error: could not identify one KWin process for provenance diagnostics" >&2
-    exit 1
-  }
-  capture_kwin_identity || { remove_provenance_temp; echo "error: could not capture KWin PID/start identity" >&2; exit 1; }
-  KWIN_PREOP_PID="$KWIN_PID"
-  KWIN_PREOP_START_IDENTITY="$KWIN_START_IDENTITY"
-  KWIN_IDENTITY_MISMATCH=0
-  journal_cursor_out="$(journalctl --user --quiet --show-cursor -n 1)" || {
-    remove_provenance_temp
-    echo "error: could not capture the pre-provenance journal cursor" >&2
-    exit 1
-  }
-  JOURNAL_CURSOR="${journal_cursor_out##*-- cursor: }"
-  if [[ -z "$JOURNAL_CURSOR" || "$JOURNAL_CURSOR" == "$journal_cursor_out" ]]; then
-    remove_provenance_temp
-    echo "error: journal cursor output did not contain an opaque cursor token" >&2
-    exit 1
-  fi
-  local load_out script_obj introspect_out journal_out ready_message load_reply_file load_pid
-  PROVENANCE_LOAD_ATTEMPTED=1
-  PROVENANCE_SIGNAL_PENDING=""
-  trap 'defer_provenance_signal INT' INT
-  trap 'defer_provenance_signal TERM' TERM
-  local load_rc=0
-  load_reply_file="$PROVENANCE_TMP_DIR/load-reply"
-  if busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE loadScript ss "$PROVENANCE_BUNDLE" "$PROVENANCE_PLUGIN_ID" >"$load_reply_file" & then
-    load_pid=$!
-    if wait "$load_pid"; then load_rc=0; else load_rc=$?; fi
-  else
-    load_rc=$?
-  fi
-  if [[ "$load_rc" -ne 0 && -n "$load_pid" ]] && kill -0 "$load_pid" 2>/dev/null; then
-    if wait "$load_pid"; then load_rc=0; else load_rc=$?; fi
-  fi
-  load_out="$(<"$load_reply_file")" || load_out=""
-  if [[ "$load_rc" -ne 0 ]]; then
-    restore_provenance_traps
-    provenance_unverified_failure "provenance loadScript reply was lost${PROVENANCE_SIGNAL_PENDING:+ during $PROVENANCE_SIGNAL_PENDING}; no public API identifies a partially loaded script by exact ID"
-  fi
-  if ! strict_json_matches "$load_valid" "$load_out"; then
-    restore_provenance_traps
-    provenance_unverified_failure "provenance loadScript reply is not a strict {\"type\":\"i\",\"data\":[ID]}; exact teardown is unverified"
-  fi
-  PROVENANCE_SCRIPT_ID="$(jq -r '.data[0]' <<<"$load_out")"
-  write_ownership "$PROVENANCE_OWNERSHIP_FILE" provenance "$nonce" "$build_id" "$PROVENANCE_PLUGIN_ID" "$PROVENANCE_SCRIPT_ID" || {
-    restore_provenance_traps
-    provenance_failure "could not atomically retain provenance ownership"
-  }
-  restore_provenance_traps
-  if [[ -n "$PROVENANCE_SIGNAL_PENDING" ]]; then
-    signal_during_provenance "$PROVENANCE_SIGNAL_PENDING"
-  fi
-  kwin_identity_unchanged || provenance_failure "KWin process identity changed immediately after provenance load"
-  script_obj="/Scripting/Script$PROVENANCE_SCRIPT_ID"
-  introspect_out="$(busctl $BUS_SCOPE --json=short introspect "$BUS_DEST" "$script_obj")" || {
-    provenance_failure "provenance introspect failed for $script_obj"
-  }
-  if ! strict_json_matches "$script_iface_valid" "$introspect_out"; then
-    provenance_failure "$script_obj does not expose the org.kde.kwin.Script interface"
-  fi
-  if [[ "$(provenance_loaded_word)" != loaded ]]; then
-    provenance_failure "provenance plugin '$PROVENANCE_PLUGIN_ID' was not reported loaded after exact object introspection"
-  fi
-  if ! busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$script_obj" $BUS_SCRIPT_IFACE run >/dev/null 2>&1; then
-    provenance_failure "provenance run() failed on $script_obj"
-  fi
-  ready_message="plasma-auto-tiler:provenance-ready:plugin=$PROVENANCE_PLUGIN_ID:nonce=$nonce:build=$build_id"
-  journal_out="$(journalctl --user --quiet --no-pager --after-cursor="$JOURNAL_CURSOR" "_PID=$KWIN_PID" -o json)" || {
-    provenance_failure "could not read provenance readiness diagnostics"
-  }
-  if ! jq -s -e --arg pid "$KWIN_PID" --arg message "$ready_message" "$provenance_ready_valid" <<<"$journal_out" >/dev/null 2>&1; then
-    provenance_failure "provenance nonce/build diagnostic was not confirmed for current KWin PID"
-  fi
-  kwin_identity_unchanged || provenance_failure "KWin process identity changed during provenance setup"
-  remove_provenance_temp
-  trap - INT TERM
-  printf 'provenance: ready nonce=%s build=%s pid=%s script-id=%s plugin=%s receipt=%s\n' \
-    "$nonce" "$build_id" "$KWIN_PID" "$PROVENANCE_SCRIPT_ID" "$PROVENANCE_PLUGIN_ID" \
-    "$(ownership_json provenance "$nonce" "$build_id" "$PROVENANCE_PLUGIN_ID" "$PROVENANCE_SCRIPT_ID")"
-  echo "provenance receipt path: $PROVENANCE_OWNERSHIP_FILE"
-  printf 'provenance-stop command: PROVENANCE_OWNERSHIP_FILE=%q bash %q provenance-stop %s\n' \
-    "$PROVENANCE_OWNERSHIP_FILE" "$0" "$PROVENANCE_SCRIPT_ID"
-  echo "note: current public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-}
-
-cmd_provenance_stop() {
-  require_tools busctl jq stat
-  if [[ $# -ne 1 || ! "$1" =~ ^[0-9]+$ || "$1" -gt 2147483647 ]]; then
-    echo "error: provenance-stop requires one non-negative 32-bit script ID" >&2
-    exit 1
-  fi
-  local script_id="$1" script_obj loaded out
-  script_obj="/Scripting/Script$script_id"
-  [[ -n "$PROVENANCE_OWNERSHIP_FILE" ]] || {
-    echo "error: provenance-stop requires the nonce-owned provenance receipt; refusing stale script teardown" >&2
-    exit 1
-  }
-  load_ownership "$PROVENANCE_OWNERSHIP_FILE" provenance "$script_id" "" >/dev/null || {
-    echo "error: provenance ownership receipt does not match script id $script_id; refusing teardown" >&2
-    exit 1
-  }
-  [[ "$PROVENANCE_PLUGIN_ID" =~ ^${PROVENANCE_PLUGIN_PREFIX}[[:xdigit:]]{32}$ ]] || {
-    echo "error: provenance ownership receipt has an invalid plugin identity; refusing teardown" >&2
-    exit 1
-  }
-  loaded="$(provenance_loaded_word)" || exit 1
-  if [[ "$loaded" == not-loaded ]]; then
-    echo "error: provenance carrier is not loaded; refusing to use stale script id $script_id" >&2
-    exit 1
-  fi
-  exact_cleanup "$script_id" "$PROVENANCE_PLUGIN_ID" || {
-    echo "error: exact provenance teardown was not verified; refusing to touch another script" >&2
-    exit 1
-  }
-  remove_ownership "$PROVENANCE_OWNERSHIP_FILE" "$OWNED_RECEIPT" || {
-    echo "error: provenance ownership receipt cleanup was not verified; refusing to claim teardown complete" >&2
-    exit 1
-  }
-  printf 'provenance-stop: script-id=%s plugin=%s unloaded and verified loaded-after=not-loaded\n' "$script_id" "$PROVENANCE_PLUGIN_ID"
-}
-
 cmd_snapshot_shortcuts() {
   require_tools busctl jq stat
   collect_project_action_tuples
@@ -998,7 +592,7 @@ cmd_snapshot_kglobalaccel() {
 }
 
 cmd_start() {
-  require_tools npm busctl jq journalctl sha256sum stat
+  require_tools npm busctl jq sha256sum stat
   read_plugin_id
   safe_output_path "$BUNDLE" || { echo "error: controller bundle path is unsafe" >&2; exit 1; }
   local start_nonce controller_build source_digest
@@ -1017,11 +611,8 @@ cmd_start() {
   }
   controller_build="controller-v1-$source_digest"
 
-  trap 'signal_during_start INT' INT
-  trap 'signal_during_start TERM' TERM
-
-  if ! ( cd "$KWIN_DIR" && CONTROLLER_NONCE="$start_nonce" CONTROLLER_BUILD_ID="$controller_build" CONTROLLER_PLUGIN_ID="$PLUGIN_ID" npm run build-start ); then
-    echo "error: npm run build-start failed in $KWIN_DIR" >&2
+  if ! ( cd "$KWIN_DIR" && npm run build ); then
+    echo "error: npm run build failed in $KWIN_DIR" >&2
     exit 1
   fi
   if [[ ! -f "$BUNDLE" ]]; then
@@ -1050,7 +641,7 @@ cmd_start() {
   }
 
   KWIN_PID="$(find_kwin_pid)" || {
-    echo "error: could not identify one KWin process for readiness diagnostics" >&2
+    echo "error: could not identify one KWin process" >&2
     exit 1
   }
   capture_kwin_identity || {
@@ -1060,17 +651,6 @@ cmd_start() {
   KWIN_PREOP_PID="$KWIN_PID"
   KWIN_PREOP_START_IDENTITY="$KWIN_START_IDENTITY"
   KWIN_IDENTITY_MISMATCH=0
-
-  local journal_cursor_out
-  journal_cursor_out="$(journalctl --user --quiet --show-cursor -n 1)" || {
-    echo "error: could not capture the pre-load journal cursor" >&2
-    exit 1
-  }
-  JOURNAL_CURSOR="${journal_cursor_out##*-- cursor: }"
-  if [[ -z "$JOURNAL_CURSOR" || "$JOURNAL_CURSOR" == "$journal_cursor_out" ]]; then
-    echo "error: journal cursor output did not contain an opaque cursor token" >&2
-    exit 1
-  fi
 
   local load_out
   load_out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE loadScript ss "$BUNDLE" "$PLUGIN_ID")" || {
@@ -1082,7 +662,6 @@ cmd_start() {
 
   SCRIPT_ID="$(jq -r '.data[0]' <<<"$load_out")"
   kwin_identity_unchanged || cleanup_after_load "KWin process identity changed immediately after controller load"
-  CONTROLLER_READY_MESSAGE="plasma-auto-tiler:controller-ready:plugin=$PLUGIN_ID:nonce=$start_nonce:build=$controller_build"
   ensure_controller_receipt || cleanup_after_load "could not create a private controller ownership receipt path"
   write_ownership "$CONTROLLER_OWNERSHIP_FILE" controller "$start_nonce" "$controller_build" "$PLUGIN_ID" "$SCRIPT_ID" || cleanup_after_load "could not atomically retain controller ownership"
   local script_obj="/Scripting/Script$SCRIPT_ID"
@@ -1099,100 +678,47 @@ cmd_start() {
     cleanup_after_load "run() failed on $script_obj"
   fi
 
-  # KWin's console output can reach the user journal just after run() returns.
-  # Wait for ordered same-KWin-PID readiness diagnostics within a bounded
-  # deterministic window. The pre-load cursor prevents old/unrelated messages
-  # being accepted, and a disabled diagnostic fails immediately.
-  local attempt journal_out
-  EVIDENCE_FILE="$(mktemp "${TMPDIR:-/tmp}/plasma-auto-tiler-start.XXXXXX")" || {
-    cleanup_after_load "could not create the attempt evidence file"
-  }
-  for ((attempt = 1; attempt <= READINESS_ATTEMPTS; attempt += 1)); do
-    journal_out="$(journalctl --user --quiet --no-pager --after-cursor="$JOURNAL_CURSOR" "_PID=$KWIN_PID" -o json)" || {
-      cleanup_after_load "could not read KWin readiness diagnostics"
-    }
-    if ! jq -s -e "$journal_lines_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      cleanup_after_load "could not parse KWin readiness diagnostics"
-    fi
-    kwin_identity_unchanged || cleanup_after_load "KWin process identity changed during controller readiness"
-    # Retain only the attempt-owned project diagnostics and kwin_scripting
-    # messages (never window captions or unrelated records).
-    jq -s -c --arg pid "$KWIN_PID" \
-      '.[] | select((._PID? // "") == $pid) | select((.MESSAGE? | type) == "string") | select(((.MESSAGE | startswith("plasma-auto-tiler:")) or ((.QT_CATEGORY? // .SYSLOG_IDENTIFIER? // "") == "kwin_scripting")))' \
-      <<<"$journal_out" > "$EVIDENCE_FILE" || {
-      cleanup_after_load "could not retain KWin readiness evidence"
-    }
-    if jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null 2>&1 && \
-      jq -s -e --arg pid "$KWIN_PID" --arg message "$CONTROLLER_READY_MESSAGE" "$controller_ready_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      rm -f "$EVIDENCE_FILE"
-      trap - INT TERM
-      echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; controller readiness confirmed; script-id=$SCRIPT_ID plugin=$PLUGIN_ID nonce=$start_nonce build=$controller_build kwin-pid=$KWIN_PID start-identity=$KWIN_START_IDENTITY receipt=$(ownership_json controller "$start_nonce" "$controller_build" "$PLUGIN_ID" "$SCRIPT_ID")"
-      echo
-      echo "stop it:"
-      printf '  CONTROLLER_OWNERSHIP_FILE=%q bash %q stop %s\n' "$CONTROLLER_OWNERSHIP_FILE" "$0" "$SCRIPT_ID"
-      echo
-      echo "inspect it:"
-      echo "  $0 status"
-      echo
-      echo "note: current public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-      echo "shortcut assignments: not checked; controller readiness does not prove requested keys are active."
-      echo "note: stopping/unloading does not roll back Custom Tile changes the script already made."
-      return 0
-    fi
-    if jq -s -e "$runtime_disabled_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      fail_start_readiness "controller disabled after startup readiness"
-    fi
-    if jq -s -e "$readiness_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      fail_start_readiness "controller nonce/build diagnostic was not confirmed for the current KWin PID"
-    fi
-    if jq -s -e "$startup_disabled_valid" <<<"$journal_out" >/dev/null 2>&1; then
-      fail_start_readiness "controller disabled itself during startup"
-    fi
-    sleep "$READINESS_DELAY" || cleanup_after_load "could not wait for KWin readiness diagnostics"
-  done
-  fail_start_readiness "controller readiness was not confirmed by KWin diagnostics within the bounded window"
+  # Single-engine bring-up proof: the strict isScriptLoaded envelope must
+  # report the plugin loaded after run(), bound to the unchanged KWin
+  # PID/start identity. No journal readiness wait, no nonce/build
+  # diagnostics, no dual-runtime assertions.
+  kwin_identity_unchanged || cleanup_after_load "KWin process identity changed after controller run"
+  local loaded_after
+  loaded_after="$(plugin_loaded_word)" || cleanup_after_load "could not verify controller load state"
+  if [[ "$loaded_after" != loaded ]]; then
+    cleanup_after_load "controller plugin '$PLUGIN_ID' is not reported loaded after run"
+  fi
+  echo "started: plugin '$PLUGIN_ID' loaded as script id $SCRIPT_ID; script-id=$SCRIPT_ID plugin=$PLUGIN_ID nonce=$start_nonce build=$controller_build kwin-pid=$KWIN_PID start-identity=$KWIN_START_IDENTITY receipt=$(ownership_json controller "$start_nonce" "$controller_build" "$PLUGIN_ID" "$SCRIPT_ID")"
+  echo
+  echo "stop it:"
+  printf '  CONTROLLER_OWNERSHIP_FILE=%q bash %q stop %s\n' "$CONTROLLER_OWNERSHIP_FILE" "$0" "$SCRIPT_ID"
+  echo
+  echo "inspect it:"
+  echo "  $0 status"
+  echo
+  echo "note: current public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
+  echo "shortcut assignments: not checked; loaded state does not prove requested keys are active."
 }
 
 cmd_status() {
-  require_tools busctl jq journalctl
+  require_tools busctl jq
   read_plugin_id
 
-  local loaded pid journal_out records count identity_bound=0
+  local loaded pid records count
   loaded="$(plugin_loaded_word)"
   echo "plugin: $PLUGIN_ID"
   echo "loaded: $loaded"
-  echo "controller running/callbacks: not proven by loaded state, journal evidence, or KGlobalAccel records"
+  echo "controller running/callbacks: not proven by loaded state or KGlobalAccel records"
 
   pid="$(find_kwin_pid 2>/dev/null || true)"
   if [[ -z "$pid" ]]; then
-    echo "controller readiness diagnostics (captured KWin PID/start identity + journal): unknown/not-ready (no single KWin process identified)"
+    echo "KWin identity: unavailable (no single KWin process identified)"
   else
     KWIN_PID="$pid"
     if ! capture_kwin_identity; then
-      echo "controller readiness diagnostics (captured KWin PID/start identity + journal): unknown/not-ready (KWin PID/start identity unavailable)"
+      echo "KWin identity: unavailable (PID/start identity unavailable)"
     else
-      identity_bound=1
       echo "KWin identity: PID/start identity captured"
-    fi
-    if [[ "$identity_bound" -eq 1 ]]; then
-      journal_out="$(journalctl --user --quiet --no-pager "_PID=$pid" -o json)" || {
-      echo "error: could not read KWin readiness diagnostics" >&2
-      exit 1
-      }
-      if ! kwin_identity_unchanged; then
-        echo "controller readiness diagnostics (captured KWin PID/start identity + journal): unknown/not-ready (KWin PID/start identity changed during journal read)"
-      elif [[ -z "$journal_out" ]]; then
-        echo "controller readiness diagnostics (captured KWin PID/start identity + journal): not observed"
-      elif ! jq -s -e "$journal_lines_valid" <<<"$journal_out" >/dev/null 2>&1; then
-        echo "error: could not parse KWin readiness diagnostics" >&2
-        exit 1
-      elif jq -s -e "$disabled_seen_valid" <<<"$journal_out" >/dev/null 2>&1; then
-        echo "controller readiness diagnostics (captured KWin PID/start identity + journal): disabled diagnostic observed"
-      elif jq -s -e "$readiness_evidence_valid" <<<"$journal_out" >/dev/null 2>&1; then
-        echo "controller readiness diagnostics (captured KWin PID/start identity + journal): observed"
-      else
-        echo "controller readiness diagnostics (captured KWin PID/start identity + journal): not observed"
-      fi
     fi
   fi
 
@@ -1203,157 +729,6 @@ cmd_status() {
   report_shortcut_drift "$records"
   echo "note: KGlobalAccel records persist after unload and do not prove live callbacks."
   echo "note: public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-  echo "note: journal diagnostics are historical evidence bound to this captured KWin identity, not a current-liveness proof."
-    echo "diagnostics: run '$0 diagnostics' for the latest KWin-PID/start-identity-bound controller-startup diagnostic evidence."
-}
-
-cmd_diagnostics() {
-  require_tools busctl jq journalctl
-  read_plugin_id
-
-  local loaded
-  loaded="$(plugin_loaded_word)"
-
-  local pid
-  pid="$(find_kwin_pid 2>/dev/null || true)"
-
-  echo "plugin: $PLUGIN_ID"
-  echo "loaded: $loaded"
-  if [[ -z "$pid" ]]; then
-    echo "kwin pid: unavailable (no single KWin process identified)"
-    echo "controller running/callbacks: not proven"
-    echo "diagnostics epoch (latest KWin-PID/start-identity-bound startup): unknown/not-ready (no single KWin process identified)"
-    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
-    echo "note: public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-    return 0
-  fi
-  echo "kwin pid: $pid"
-
-  KWIN_PID="$pid"
-  if ! capture_kwin_identity; then
-    echo "controller running/callbacks: not proven"
-    echo "diagnostics epoch (latest KWin-PID/start-identity-bound startup): unknown/not-ready (KWin PID/start identity unavailable)"
-    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
-    echo "note: public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-    return 0
-  fi
-  echo "KWin identity: PID/start identity captured"
-
-  local journal_out
-  journal_out="$(journalctl --user --quiet --no-pager "_PID=$pid" -o json)" || {
-    echo "error: could not read the KWin diagnostics journal" >&2
-    exit 1
-  }
-  local after_pid
-  after_pid="$(find_kwin_pid 2>/dev/null || true)"
-  if [[ "$after_pid" != "$pid" ]] || ! kwin_identity_unchanged; then
-    echo "controller running/callbacks: not proven"
-    echo "diagnostics epoch (latest KWin-PID/start-identity-bound startup): unknown/not-ready (KWin PID/start identity changed during journal read)"
-    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
-    echo "note: public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-    return 0
-  fi
-  if [[ -z "$journal_out" ]]; then
-    echo "controller running/callbacks: not proven"
-    echo "diagnostics epoch (latest KWin-PID/start-identity-bound startup): unknown/not-ready (no journal records for this KWin identity)"
-    echo "note: persisted shortcut records do not prove callbacks; only an exact '-invoked' or '-rejected:'/'preset-failed:' diagnostic token proves callback delivery."
-    echo "note: public KWin APIs provide operational lifecycle binding, not direct evaluated-memory source proof."
-    return 0
-  fi
-  if ! jq -s -e "$journal_lines_valid" <<<"$journal_out" >/dev/null 2>&1; then
-    echo "error: could not parse the KWin diagnostics journal" >&2
-    exit 1
-  fi
-
-  local summary
-  summary="$(jq -s -c --arg pid "$pid" "$diagnostics_summary" <<<"$journal_out")" || {
-    echo "error: could not summarize the KWin diagnostics journal" >&2
-    exit 1
-  }
-
-  local kept count last_ready last_disabled_any
-  kept="$(jq -r '.kept' <<<"$summary")"
-  count="$(jq -r '.messages | length' <<<"$summary")"
-  last_ready="$(jq -r '.lastReady // -1' <<<"$summary")"
-  last_disabled_any="$(jq -r '.lastDisabledAny // -1' <<<"$summary")"
-
-  # The epoch window begins at the latest readiness or disabled diagnostic.
-  local latest_start start_index
-  latest_start="$last_ready"
-  if [[ "$last_disabled_any" -gt "$latest_start" ]]; then
-    latest_start="$last_disabled_any"
-  fi
-  start_index=-1
-
-  local epoch_label readiness_label disabled_label
-  epoch_label="unknown"
-  readiness_label="unknown"
-  disabled_label="unknown"
-
-  if [[ "$count" -eq 0 ]]; then
-    if [[ "$kept" -eq 0 ]]; then
-      epoch_label="unknown (no journal records match captured KWin identity; PID-mismatched records excluded)"
-    else
-      epoch_label="unknown (no project diagnostics for captured KWin identity)"
-    fi
-  elif [[ "$latest_start" -lt 0 ]]; then
-    if [[ "$last_disabled_any" -ge 0 ]]; then
-      epoch_label="disabled"
-      readiness_label="unknown"
-      disabled_label="yes"
-      start_index="$last_disabled_any"
-    else
-      epoch_label="unknown (no controller-startup epoch observed)"
-    fi
-  elif [[ "$last_ready" -ge 0 ]]; then
-    if [[ "$loaded" == "not-loaded" ]]; then
-      epoch_label="historical (plugin unloaded)"
-    else
-      epoch_label="current (plugin loaded)"
-    fi
-    readiness_label="reached"
-    if [[ "$last_disabled_any" -gt "$last_ready" ]]; then
-      disabled_label="yes"
-    else
-      disabled_label="no"
-    fi
-    start_index="$last_ready"
-  elif [[ "$last_disabled_any" -ge 0 ]]; then
-    epoch_label="disabled (latest startup disabled)"
-    readiness_label="not-reached"
-    disabled_label="yes"
-    start_index="$latest_start"
-  else
-    epoch_label="incomplete (startup-handlers-ready not observed)"
-    readiness_label="unknown"
-    disabled_label="no"
-    start_index="$latest_start"
-  fi
-
-  echo "controller running/callbacks: not proven by journal evidence alone"
-  echo "diagnostics epoch (latest KWin-PID/start-identity-bound controller startup): $epoch_label"
-  echo "  readiness: $readiness_label"
-  echo "  controller disabled: $disabled_label"
-
-  if [[ "$start_index" -ge 0 ]]; then
-    local classified
-    classified="$(jq -c --argjson start "$start_index" "$diagnostics_classify" <<<"$summary")" || {
-      echo "error: could not classify the KWin diagnostics journal" >&2
-      exit 1
-    }
-    echo "  callback invocation tokens (prove callback delivery):"
-    jq -r '.invoked[]' <<<"$classified" | sed 's/^/    /'
-    echo "  rejection tokens (prove callback reached a rejecting guard):"
-    jq -r '.rejected[]' <<<"$classified" | sed 's/^/    /'
-    echo "  success tokens (prove the completed/successful stage):"
-    jq -r '.success[]' <<<"$classified" | sed 's/^/    /'
-    echo "  ordered diagnostics:"
-    jq -r '.epoch[]' <<<"$classified" | sed 's/^/    /'
-  fi
-
-  echo "note: callback invocation/rejection is proven only by the exact diagnostic tokens listed above."
-  echo "note: persisted shortcut records do not prove callbacks; only a matching diagnostic token proves callback delivery."
-  echo "note: journal diagnostics are historical evidence bound to this captured KWin identity, not a current-liveness proof."
 }
 
 cmd_desktops() {
@@ -1394,7 +769,6 @@ cmd_stop() {
     echo "error: plugin '$PLUGIN_ID' is not loaded; refusing to use stale script id $script_id" >&2
     exit 1
   else
-    CONTROLLER_READY_MESSAGE="plasma-auto-tiler:controller-ready:plugin=$PLUGIN_ID:nonce=$OWNED_NONCE:build=$OWNED_BUILD"
     if ! exact_cleanup "$script_id" "$PLUGIN_ID"; then
       echo "error: exact controller teardown was not verified; refusing to touch another script" >&2
       exit 1
@@ -1681,7 +1055,7 @@ cmd_reconcile_shortcuts() {
 }
 
 if [[ $# -eq 0 ]]; then
-  echo "error: missing command (start, status, stop, diagnostics, desktops, reconcile-shortcuts, provenance, provenance-stop, snapshot-shortcuts, or snapshot-kglobalaccel)" >&2
+  echo "error: missing command (start, status, stop, desktops, reconcile-shortcuts, snapshot-shortcuts, or snapshot-kglobalaccel)" >&2
   usage >&2
   exit 1
 fi
@@ -1712,13 +1086,6 @@ case "${1:-}" in
   stop)
     cmd_stop "${@:2}"
     ;;
-  diagnostics)
-    if [[ $# -ne 1 ]]; then
-      echo "error: 'diagnostics' takes no arguments" >&2
-      exit 1
-    fi
-    cmd_diagnostics
-    ;;
   desktops)
     if [[ $# -ne 1 ]]; then
       echo "error: 'desktops' takes no arguments" >&2
@@ -1732,12 +1099,6 @@ case "${1:-}" in
       exit 1
     fi
     cmd_reconcile_shortcuts "${2:-}"
-    ;;
-  provenance)
-    cmd_provenance "${@:2}"
-    ;;
-  provenance-stop)
-    cmd_provenance_stop "${@:2}"
     ;;
   snapshot-shortcuts)
     if [[ $# -ne 1 ]]; then
