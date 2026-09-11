@@ -50,3 +50,31 @@
 - Practical loop: establish `QT_PLUGIN_PATH` then log in once; toggle existing
   code through `[Plugins]` plus reconfigure; after same-path rebuild, log in
   again before evaluating it.
+
+## Hot Unique-Name Reload Verdict
+
+- Source: KWin 6.7.4 `src/effect/effectloader.cpp:274-283,293-317,392-405`,
+  `effecthandler.cpp:337-340,1567-1602`; KCoreAddons 6.29.0
+  `src/lib/plugin/kpluginmetadata.cpp:56-95,163-191,253-306`; Qt 6.11.1
+  `src/corelib/plugin/qfactoryloader.cpp:265-267,372-386,426-486`.
+- 1. Yes: every native `findEffect()`, `findAllEffects()`, and
+  `queryAndLoadAll()` calls `KPluginMetaData::findPlugins()` anew.
+  `findPlugins()` runs a fresh `QDirIterator` over each Qt library path plus
+  `kwin/effects/plugins`; `reconfigure()` calls `queryAndLoadAll()`. This is
+  why a newly installed system native effect can be discovered without restart.
+- Qt's `QFactoryLoader` does cache a seen directory, but KWin native effects
+  do not use it for discovery; KWin constructs `QPluginLoader` from each found
+  file path.
+- 2. Native `pluginId` is the library complete basename; an embedded different
+  `Id` only warns and does not override it. Therefore a unique filename also
+  needs its own `[Plugins]` `<new-id>Enabled` key: `<old-id>Enabled` does not
+  survive the rename (`effectloader.cpp:52-70`; `effecthandler.cpp:1576-1601`).
+- Thus two distinct library filenames in one directory cannot share this ID.
+- If identical IDs arise across search paths, `findPlugins()` silently retains
+  the first `QDirIterator` result and ignores later copies (`:265-305`); do not
+  rely on that order. Distinct unique basenames avoid this collision.
+- Verdict: hot reload is achievable. Stage a fresh basename, retain the active
+  old file, set old false and new true, then reconfigure; KWin unloads old
+  before loading new. Only then remove stale files. Unlinking a resident old
+  file leaves its mapped, unload-prevented library usable, but removing it
+  before the transition stops `configChanged()` finding its ID to unload it.
