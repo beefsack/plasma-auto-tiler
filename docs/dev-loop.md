@@ -26,7 +26,9 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
   arms `just dev-off` for `INT`/`TERM`/`EXIT`, then tails the live Planner
   log from `$STATE_DIR/planner-log` prefixed `[planner]` and the KWin
   journal plugin lines (`journalctl --user -f _PID=<kwin-pid>` from the
-  receipt `.pid`, filtered to `plasma-auto-tiler:plan`) prefixed `[kwin]`.
+   receipt `.pid`, filtered to `plasma-auto-tiler:plan`) prefixed `[kwin]`.
+   The labeled stream is also captured at `$STATE_DIR/dev-log`'s path; the
+   durable file persists after teardown.
    `Ctrl-C` stops the tails and runs the existing fail-closed receipt-bound
    `dev-off`; a `dev-off` failure exits non-zero loudly. Missing log,
    receipt, KWin pid, `tail`, or `journalctl` fails closed through the same

@@ -133,7 +133,7 @@ dev-on:
           *) echo "error: rollback: refusing to remove unexpected receipt dir $ROLLBACK_RECEIPT_DIR" >&2 ;;
         esac
       fi
-      rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log" 2>/dev/null || echo "error: rollback: could not remove dev state files in $STATE_DIR" >&2
+      rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log" "$STATE_DIR/dev-log" "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream" 2>/dev/null || echo "error: rollback: could not remove dev state files in $STATE_DIR" >&2
       rmdir -- "$STATE_DIR" 2>/dev/null || true
       return "$orig_rc"
     }
@@ -658,7 +658,7 @@ dev-off:
       exit 1
     fi
     bash "$REPO_ROOT/scripts/dogfood-install.sh" enable || { echo "error: dogfood-install.sh enable failed" >&2; exit 1; }
-    rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log"
+    rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log" "$STATE_DIR/dev-log" "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream"
     rmdir -- "$STATE_DIR" 2>/dev/null || true
     if [[ -n "$RECEIPT" ]]; then
       PARENT_DIR="$(dirname -- "$RECEIPT")"
@@ -884,20 +884,30 @@ dev mode="":
     TEARDOWN_DONE=0
     TAIL_PID=""
     JOURNAL_PID=""
+    FOLLOW_PID=""
+    TEE_PID=""
     KWIN_PID=""
     PLANNER_LOG=""
+    DEV_LOG=""
+    DEV_FIFO="$STATE_DIR/dev-stream"
+    PLANNER_STREAM="$STATE_DIR/dev-planner-stream"
+    KWIN_STREAM="$STATE_DIR/dev-kwin-stream"
     dev_cleanup() {
       local rc=$?
       trap - INT TERM EXIT
       set +e
       if [[ -n "${TAIL_PID:-}" ]]; then kill "$TAIL_PID" 2>/dev/null || true; fi
       if [[ -n "${JOURNAL_PID:-}" ]]; then kill "$JOURNAL_PID" 2>/dev/null || true; fi
+      if [[ -n "${FOLLOW_PID:-}" ]]; then kill "$FOLLOW_PID" 2>/dev/null || true; fi
+      if [[ -n "${TEE_PID:-}" ]]; then kill "$TEE_PID" 2>/dev/null || true; fi
       if jobs -p >/dev/null 2>&1; then kill $(jobs -p) 2>/dev/null || true; fi
       wait 2>/dev/null || true
       if [[ "${TEARDOWN_DONE:-0}" -eq 0 ]]; then
         TEARDOWN_DONE=1
         just --justfile "$JUSTFILE" dev-off
         OFF_RC=$?
+        if [[ -n "${DEV_LOG:-}" ]]; then echo "combined log: $DEV_LOG"; fi
+        rm -f -- "$STATE_DIR/dev-stream" "$STATE_DIR/dev-planner-stream" "$STATE_DIR/dev-kwin-stream" 2>/dev/null || true
         if [[ "$OFF_RC" -ne 0 ]]; then
           echo "error: just dev: dev-off teardown failed (exit $OFF_RC)" >&2
           echo "error: just dev: teardown is unverified; do not retry unload. Recover with logout/login." >&2
@@ -919,11 +929,23 @@ dev mode="":
     [[ "$KWIN_PID" =~ ^[1-9][0-9]*$ ]] || { echo "error: just dev: controller receipt has no valid KWin pid: $RECEIPT" >&2; exit 1; }
     command -v tail >/dev/null 2>&1 || { echo "error: just dev: required tool 'tail' not found" >&2; exit 1; }
     command -v journalctl >/dev/null 2>&1 || { echo "error: just dev: required tool 'journalctl' not found" >&2; exit 1; }
+    command -v tee >/dev/null 2>&1 || { echo "error: just dev: required tool 'tee' not found" >&2; exit 1; }
     echo "just dev: up; tailing planner log and KWin journal (Ctrl-C tears down via dev-off)"
     echo "planner log: $PLANNER_LOG"
     echo "kwin pid: $KWIN_PID"
-    tail -n +1 -F "$PLANNER_LOG" 2>/dev/null | sed -u 's/^/[planner] /' &
+    DEV_LOG="$(mktemp "$RUNTIME_DIR/plasma-auto-tiler-dev.XXXXXX.log")" || { echo "error: just dev: could not create combined log" >&2; exit 1; }
+    printf '%s\n' "$DEV_LOG" > "$STATE_DIR/dev-log" || { echo "error: just dev: could not record combined log path" >&2; exit 1; }
+    rm -f -- "$DEV_FIFO" "$PLANNER_STREAM" "$KWIN_STREAM" 2>/dev/null || true
+    mkfifo -- "$DEV_FIFO" || { echo "error: just dev: could not create stream $DEV_FIFO" >&2; exit 1; }
+    : > "$PLANNER_STREAM" || { echo "error: just dev: could not create $PLANNER_STREAM" >&2; exit 1; }
+    : > "$KWIN_STREAM" || { echo "error: just dev: could not create $KWIN_STREAM" >&2; exit 1; }
+    echo "combined log: $DEV_LOG"
+    tee -a "$DEV_LOG" <"$DEV_FIFO" &
+    TEE_PID=$!
+    tail -n +1 -F "$PLANNER_LOG" 2>/dev/null | sed -u 's/^/[planner] /' >>"$PLANNER_STREAM" &
     TAIL_PID=$!
-    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:plan" | sed -u 's/^/[kwin] /' &
+    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:plan" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
     JOURNAL_PID=$!
+    tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" >"$DEV_FIFO" 2>/dev/null &
+    FOLLOW_PID=$!
     wait

@@ -28,6 +28,9 @@
 - Controller failure does not prevent teardown of an independently verified
   Planner.
 - Hermetic dev-loop coverage and shell syntax checks pass.
+- `just dev` captures the labeled stream to a per-session durable log
+  (`$STATE_DIR/dev-log` path) via single-writer capture; the file persists
+  after teardown.
 
 ## Evidence
 
@@ -35,3 +38,5 @@
   call `deleteLater()`; the latter returns false if no matching script remains.
 - Hermetic false-reply, malformed-postcondition, controller-failure/Planner,
   pager, and syntax coverage pass; no live action ran.
+- Hermetic DOWN cycle asserts combined-log print at startup/teardown,
+  durable labeled planner/kwin content, and single-writer serialization.

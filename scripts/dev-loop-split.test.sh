@@ -83,6 +83,20 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'tail %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+is_follower=0
+for a in "$@"; do
+  case "$a" in *dev-planner-stream*|*dev-kwin-stream*) is_follower=1 ;; esac
+done
+if [[ "$is_follower" -eq 1 ]]; then
+  if [[ "${FAKE_TAIL_FOLLOW_BLOCK:-0}" == "1" ]]; then
+    exec sleep 1000
+  fi
+  sleep 0.2
+  for a in "$@"; do
+    if [[ -f "$a" ]]; then cat -- "$a" 2>/dev/null || true; fi
+  done
+  exit 0
+fi
 for a in "$@"; do
   if [[ -f "$a" ]]; then
     echo "fake-planner-line"
@@ -239,6 +253,15 @@ run_just() {
   set +e
   FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
+  set -e
+}
+
+run_just_async() {
+  set +e
+  set -m
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
+  JUST_ASYNC_PID=$!
+  set +m
   set -e
 }
 
@@ -648,6 +671,59 @@ assert_calls_contain "tail " "dev down tail"
 assert_calls_contain "journalctl " "dev down journal"
 assert_calls_contain "start-test stop 7" "dev down teardown stop"
 assert_calls_contain "dogfood enable" "dev down teardown enable"
+assert_contains "combined log:" "dev down combined log printed"
+DEV_LOG_PATH="$(grep -F "combined log:" "$OUTPUT" | head -n 1 | sed 's/.*combined log: //;s/[[:space:]]*$//')"
+if [[ -n "${DEV_LOG_PATH:-}" && -f "$DEV_LOG_PATH" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log retained]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -n "${DEV_LOG_PATH:-}" ]] && grep -Fq "[planner]" "$DEV_LOG_PATH" && grep -Fq "[kwin]" "$DEV_LOG_PATH"; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log labeled content]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ "$(grep -c -F "combined log:" "$OUTPUT" || true)" -ge 2 ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down combined log teardown reprint]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+
+# dev: Ctrl-C during streaming tears down via dev-off with exit 130.
+reset_state
+set_controller false
+sleep 300 &
+DEV_INT_PID=$!
+make_planner_proc "$DEV_INT_PID" 777002
+printf '%s\n' "$DEV_INT_PID" > "$WORK/state/owner-pid"
+export FAKE_TAIL_FOLLOW_BLOCK=1
+: > "$OUTPUT"
+run_just_async dev
+JUST_PID="$JUST_ASYNC_PID"
+READY=0
+for _ in $(seq 1 50); do
+  if grep -Fq "combined log:" "$OUTPUT" 2>/dev/null; then READY=1; break; fi
+  if ! kill -0 "$JUST_PID" 2>/dev/null; then break; fi
+  sleep 0.2
+done
+if [[ "$READY" -ne 1 ]]; then
+  echo "FAIL [dev SIGINT setup missing combined log]" >&2
+  cat "$OUTPUT" >&2
+  FAIL=$((FAIL + 1))
+  kill "$JUST_PID" 2>/dev/null || true
+  kill -KILL "$JUST_PID" 2>/dev/null || true
+  set +e; wait "$JUST_PID" 2>/dev/null; set -e
+  EXIT=1
+else
+  kill -INT "$JUST_PID" 2>/dev/null || true
+  kill -INT -- "-$JUST_PID" 2>/dev/null || true
+  set +e
+  N=0
+  while kill -0 "$JUST_PID" 2>/dev/null; do
+    N=$((N + 1))
+    if [[ "$N" -gt 50 ]]; then kill -KILL "$JUST_PID" 2>/dev/null || true; break; fi
+    sleep 0.2
+  done
+  wait "$JUST_PID" 2>/dev/null
+  EXIT=$?
+  set -e
+  check_exit 130 "dev SIGINT exit"
+  assert_calls_contain "start-test stop 7" "dev SIGINT teardown stop"
+  assert_calls_contain "dogfood enable" "dev SIGINT teardown enable"
+  if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev SIGINT stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+fi
+unset FAKE_TAIL_FOLLOW_BLOCK
+kill "$DEV_INT_PID" 2>/dev/null || true
+wait "$DEV_INT_PID" 2>/dev/null || true
 
 # dev: an unverifiable teardown stops after the exact receipt-bound attempt.
 reset_state
