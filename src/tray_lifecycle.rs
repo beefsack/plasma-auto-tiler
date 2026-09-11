@@ -5191,10 +5191,7 @@ mod tests {
         // record removal and successful terminate + removal. Return values
         // and record removal are unchanged. Foreground CLI stdout remains
         // separately visible in the terminal.
-        for (name, generation) in [
-            ("stale", "test-gen-1"),
-            ("stale-second", "test-gen-9"),
-        ] {
+        for (name, generation) in [("stale", "test-gen-1"), ("stale-second", "test-gen-9")] {
             let root = unit_root(name);
             fs::create_dir(&root).unwrap();
             fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
@@ -5260,5 +5257,4 @@ mod tests {
         assert!(!paths.pid_record().exists());
         fs::remove_dir_all(root).unwrap();
     }
-
 }

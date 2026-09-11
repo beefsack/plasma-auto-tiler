@@ -17,9 +17,9 @@ fn main() {
             "tray-remove" => plasma_auto_tiler::tray_lifecycle::remove_command(),
             command => Err(format!("unknown command: {command}")),
         },
-        [_, command, ..] if command == "planner-service" => Err(
-            "planner-service takes no arguments".to_owned(),
-        ),
+        [_, command, ..] if command == "planner-service" => {
+            Err("planner-service takes no arguments".to_owned())
+        }
         [_, command, ..] if command.starts_with("tray-") => {
             Err(format!("{command} takes no arguments"))
         }
