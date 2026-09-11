@@ -721,12 +721,6 @@ Only meaningful pending or active work is listed.
   log. Static/hermetic coverage only; repeated Ctrl-C/restart cycles are
   user-observed but not formally gated. |
   [change](changes/dev-loop-teardown.md)
-- P2 | active | Repair the pre-existing `nix flake check` failure. The
-  `assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "Type" ];`
-  at `flake.nix:361` predates recent work and no longer matches the unit, which
-  now also carries `StandardError`/`StandardOutput` from earlier planner-logging
-  work. Unrelated to any shipped change; it only blocks the flake verification
-  gate. |
 - P2 | active | Capture `snapshot-invalid`. Still unreproduced after the resize
   investigation deliberately excluded it. Correlations p44-p65 were all rejected
   after moves, with a remove at p42 and an admit at p43. 14 producing conditions

@@ -358,7 +358,7 @@
         assert plannerUnit.Service.BusName == "org.plasmaautotiler.Planner";
         assert plannerUnit.Service.ExecStart == "${tray}/bin/plasma-auto-tiler planner-service";
         assert plannerUnit.Service.Restart == "no";
-        assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "Type" ];
+        assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "StandardError" "StandardOutput" "Type" ];
         assert !(builtins.hasAttr "ProtectSystem" plannerUnit.Service);
         assert !(builtins.hasAttr "ProtectHome" plannerUnit.Service);
         assert !(builtins.hasAttr "PrivateDevices" plannerUnit.Service);
