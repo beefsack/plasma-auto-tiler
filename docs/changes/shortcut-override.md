@@ -68,3 +68,11 @@ takes `Meta+L`, and explicit KCM Apply alone moves KDE lock to `Meta+Esc`.
 
 - Seek separate authorization for the single user-run live
   Apply/Revert/interrupted-recovery acceptance gate with exact restoration.
+
+## Retained Core Triage
+
+- PID 3568836 aborted while KWin's D-Bus server demarshalled an inbound
+  `QKeySequence` argument (`deliverCall`/`activateObject`), before its target
+  method ran. This is unrelated to Apply/Revert, which sends `setShortcutKeys`
+  from KWin to the separate KGlobalAccel service. The stripped stack does not
+  identify the inbound method or sender.
