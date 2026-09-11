@@ -701,6 +701,16 @@ Only meaningful pending or active work is listed.
   exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
+- P2 | user decision pending | The `interrupted-recovery` half of the shortcut
+  override live acceptance criterion is unsatisfiable as written. Runbook
+  authoring established that Apply is synchronous with no cancel point, so a
+  user cannot deterministically interrupt it between its two ordered writes.
+  Interrupted recovery therefore has static coverage only, and the runbook
+  documents the honest unexpected-interruption route instead. Choose one:
+  accept static-only coverage and amend the acceptance criterion in
+  `docs/changes/shortcut-override.md`, or authorize a deliberate
+  fault-injection path to make the gate runnable. Do not decide this without
+  the user. |
 - P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
   resize failure is the KDE Keyboard Layout Switcher double-claim. Verified
   static fact: `~/.config/kglobalshortcutsrc:6-7` binds
