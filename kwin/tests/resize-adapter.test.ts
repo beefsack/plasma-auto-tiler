@@ -653,6 +653,7 @@ describe("resize adapter", () => {
             { kind: "unauthorized", message: "bad" },
             { kind: "unauthorized", detail: "window-count-mismatch", message: "bad" },
             { kind: "snapshot-invalid", detail: "unknown-detail", message: "bad" },
+            { kind: "snapshot-invalid", detail: "domain-output-invalid", message: "bad" },
         ];
         for (const extra of cases) {
             const mocks = mockEnvTwoWindow();

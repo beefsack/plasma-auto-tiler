@@ -1266,6 +1266,14 @@ describe("focus adapter window-count-mismatch recovery", () => {
                 detail: "unknown-detail",
                 message: "bad",
             },
+            {
+                v: 1,
+                correlation_id: "gen-1-f0",
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "domain-output-invalid",
+                message: "bad",
+            },
         ];
         for (const reply of cases) {
             const refs = makeRefs();

@@ -232,6 +232,58 @@ fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
     })
 }
 
+fn snapshot_invalid(correlation_id: String, message: &str, detail: &'static str) -> String {
+    debug_assert!(PLANNER_SNAPSHOT_DETAILS.contains(&detail));
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id,
+        outcome: "rejected",
+        kind: Some("snapshot-invalid".to_owned()),
+        message: Some(message.to_owned()),
+        base_revision: None,
+        detail: Some(serde_json::Value::String(detail.to_owned())),
+        desired_geometry: None,
+        desired_focus: None,
+    })
+}
+
+const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
+    "domain-output-invalid",
+    "domain-workspace-invalid",
+    "focused-id-invalid",
+    "window-limit",
+    "observed-window-invalid",
+    "observed-output-invalid",
+    "observed-workspace-invalid",
+    "duplicate-window",
+    "domain-bounds-invalid",
+    "gap-low",
+    "gap-high",
+    "outer-gap-low",
+    "outer-gap-high",
+    "window-rect-invalid",
+    "window-out-of-bounds",
+    "focused-not-observed",
+    "inset-exhausted",
+    "domain-invalid",
+    "commit-rejected",
+    "missing-seed-order",
+    "seed-failed",
+    "placement-bounds-invalid",
+    "admit-op-invalid",
+    "admit-window-invalid",
+    "admit-output-invalid",
+    "admit-workspace-invalid",
+    "remove-op-invalid",
+    "remove-window-invalid",
+    "move-op-invalid",
+    "move-window-invalid",
+    "focus-op-invalid",
+    "focus-window-invalid",
+    "resize-op-invalid",
+    "resize-window-invalid",
+];
+
 fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static str) {
     let text = error.to_string();
     if text.contains("unknown field") {
@@ -348,41 +400,63 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             MSG_REVISION,
         ));
     }
-    if !is_opaque_id(&request.domain.output)
-        || !is_opaque_id(&request.domain.workspace)
-        || (!request.focused_window.is_empty() && !is_opaque_id(&request.focused_window))
-    {
-        return Err(rejected(
+    if !is_opaque_id(&request.domain.output) {
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "domain-output-invalid",
+        ));
+    }
+    if !is_opaque_id(&request.domain.workspace) {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "domain-workspace-invalid",
+        ));
+    }
+    if !request.focused_window.is_empty() && !is_opaque_id(&request.focused_window) {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "focused-id-invalid",
         ));
     }
     if request.windows.len() > PLAN_MAX_WINDOWS {
-        return Err(rejected(
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "window-limit",
         ));
     }
     {
         let mut seen = std::collections::HashSet::new();
         for entry in &request.windows {
-            if !is_opaque_id(&entry.window)
-                || !is_opaque_id(&entry.output)
-                || !is_opaque_id(&entry.workspace)
-            {
-                return Err(rejected(
+            if !is_opaque_id(&entry.window) {
+                return Err(snapshot_invalid(
                     request.correlation_id.clone(),
-                    "snapshot-invalid",
                     MSG_OPAQUE_ID,
+                    "observed-window-invalid",
+                ));
+            }
+            if !is_opaque_id(&entry.output) {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OPAQUE_ID,
+                    "observed-output-invalid",
+                ));
+            }
+            if !is_opaque_id(&entry.workspace) {
+                return Err(snapshot_invalid(
+                    request.correlation_id.clone(),
+                    MSG_OPAQUE_ID,
+                    "observed-workspace-invalid",
                 ));
             }
             if !seen.insert(entry.window.clone()) {
-                return Err(rejected(
+                return Err(snapshot_invalid(
                     request.correlation_id.clone(),
-                    "snapshot-invalid",
                     MSG_OPAQUE_ID,
+                    "duplicate-window",
                 ));
             }
         }
@@ -398,23 +472,47 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         carried_bounds.y,
         carried_bounds.w,
         carried_bounds.h,
-    ) || request.domain.gap < 0
-        || request.domain.gap > GEOMETRY_MAX_GAP
-        || request.domain.outer_gap < 0
-        || request.domain.outer_gap > GEOMETRY_MAX_GAP
-    {
-        return Err(rejected(
+    ) {
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "domain-bounds-invalid",
+        ));
+    }
+    if request.domain.gap < 0 {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "gap-low",
+        ));
+    }
+    if request.domain.gap > GEOMETRY_MAX_GAP {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "gap-high",
+        ));
+    }
+    if request.domain.outer_gap < 0 {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "outer-gap-low",
+        ));
+    }
+    if request.domain.outer_gap > GEOMETRY_MAX_GAP {
+        return Err(snapshot_invalid(
+            request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "outer-gap-high",
         ));
     }
     for entry in &request.windows {
         if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
-            return Err(rejected(
+            return Err(snapshot_invalid(
                 request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OBSERVATION,
+                "window-rect-invalid",
             ));
         }
         if !rect_contained(
@@ -426,10 +524,10 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             },
             carried_bounds,
         ) {
-            return Err(rejected(
+            return Err(snapshot_invalid(
                 request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OBSERVATION,
+                "window-out-of-bounds",
             ));
         }
         if entry.output != request.domain.output || entry.workspace != request.domain.workspace {
@@ -446,10 +544,10 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             .iter()
             .any(|w| w.window == request.focused_window)
     {
-        return Err(rejected(
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "focused-not-observed",
         ));
     }
     let owner = OwnerId::parse(&request.owner).expect("validated");
@@ -460,10 +558,10 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
     let Ok(projected_bounds) =
         crate::geometry::inset_bounds(carried_bounds, request.domain.outer_gap)
     else {
-        return Err(rejected(
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "inset-exhausted",
         ));
     };
     let domain = OutputDomain {
@@ -474,10 +572,10 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         adjacent: std::collections::BTreeMap::new(),
     };
     if !domain.validate() {
-        return Err(rejected(
+        return Err(snapshot_invalid(
             request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "domain-invalid",
         ));
     }
     let domain_key = DomainKey {
@@ -872,7 +970,7 @@ impl Planner {
                         return text;
                     }
                     self.sessions.remove(&ctx.domain_key);
-                    return rejected(cid, "snapshot-invalid", MSG_OBSERVATION);
+                    return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
                 }
                 Err(error) if needs_rebuild(&error) => {
                     self.sessions.remove(&ctx.domain_key);
@@ -884,7 +982,7 @@ impl Planner {
         }
         let Some(order) = seed_order else {
             if ambiguous_as_snapshot {
-                return rejected(cid, "snapshot-invalid", MSG_OBSERVATION);
+                return snapshot_invalid(cid, MSG_OBSERVATION, "missing-seed-order");
             }
             return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
         };
@@ -895,7 +993,7 @@ impl Planner {
             &ctx.domain,
             &order,
         ) else {
-            return rejected(cid, "snapshot-invalid", MSG_OBSERVATION);
+            return snapshot_invalid(cid, MSG_OBSERVATION, "seed-failed");
         };
         let base = session.accepted_revision();
         let observation = observation_for(base, ctx);
@@ -906,7 +1004,7 @@ impl Planner {
                     self.store_committed(ctx.domain_key.clone(), session);
                     return text;
                 }
-                rejected(cid, "snapshot-invalid", MSG_OBSERVATION)
+                snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
             }
             Err(error) => propose_failure(error, cid),
         }
@@ -920,15 +1018,32 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "admit"
-            || !is_opaque_id(&command.window)
-            || !is_opaque_id(&command.output)
-            || !is_opaque_id(&command.workspace)
-        {
-            return rejected(
+        if command.op != "admit" {
+            return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OPAQUE_ID,
+                "admit-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "admit-window-invalid",
+            );
+        }
+        if !is_opaque_id(&command.output) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "admit-output-invalid",
+            );
+        }
+        if !is_opaque_id(&command.workspace) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "admit-workspace-invalid",
             );
         }
         if command.output != ctx.request.domain.output
@@ -962,10 +1077,10 @@ impl Planner {
         let placement_explicit = match &command.placement_bounds {
             Some(rect) => {
                 if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-                    return rejected(
+                    return snapshot_invalid(
                         ctx.request.correlation_id.clone(),
-                        "snapshot-invalid",
                         MSG_OBSERVATION,
+                        "placement-bounds-invalid",
                     );
                 }
                 Some(Rect {
@@ -1056,11 +1171,18 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "remove" || !is_opaque_id(&command.window) {
-            return rejected(
+        if command.op != "remove" {
+            return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OPAQUE_ID,
+                "remove-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "remove-window-invalid",
             );
         }
         let seed_order =
@@ -1125,11 +1247,18 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "move" || !is_opaque_id(&command.window) {
-            return rejected(
+        if command.op != "move" {
+            return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OPAQUE_ID,
+                "move-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "move-window-invalid",
             );
         }
         let Some(direction) = parse_direction(&command.direction) else {
@@ -1203,11 +1332,18 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "focus" || !is_opaque_id(&command.window) {
-            return rejected(
+        if command.op != "focus" {
+            return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OPAQUE_ID,
+                "focus-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "focus-window-invalid",
             );
         }
         let Some(direction) = parse_direction(&command.direction) else {
@@ -1281,11 +1417,18 @@ impl Planner {
                 return rejected(valid_correlation_echo(&ctx.raw), kind, message);
             }
         };
-        if command.op != "resize" || !is_opaque_id(&command.window) {
-            return rejected(
+        if command.op != "resize" {
+            return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
-                "snapshot-invalid",
                 MSG_OPAQUE_ID,
+                "resize-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "resize-window-invalid",
             );
         }
         let Some(direction) = parse_direction(&command.direction) else {
@@ -1412,15 +1555,32 @@ fn evaluate_admit(ctx: &Validated) -> String {
             return rejected(valid_correlation_echo(&ctx.raw), kind, message);
         }
     };
-    if command.op != "admit"
-        || !is_opaque_id(&command.window)
-        || !is_opaque_id(&command.output)
-        || !is_opaque_id(&command.workspace)
-    {
-        return rejected(
+    if command.op != "admit" {
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "admit-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "admit-window-invalid",
+        );
+    }
+    if !is_opaque_id(&command.output) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "admit-output-invalid",
+        );
+    }
+    if !is_opaque_id(&command.workspace) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "admit-workspace-invalid",
         );
     }
     if command.output != ctx.request.domain.output
@@ -1472,19 +1632,19 @@ fn evaluate_admit(ctx: &Validated) -> String {
         &ctx.domain,
         &seed_order,
     ) else {
-        return rejected(
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "seed-failed",
         );
     };
     let placement = match command.placement_bounds {
         Some(rect) => {
             if !valid_carried_rect(rect.x, rect.y, rect.w, rect.h) {
-                return rejected(
+                return snapshot_invalid(
                     ctx.request.correlation_id.clone(),
-                    "snapshot-invalid",
                     MSG_OBSERVATION,
+                    "placement-bounds-invalid",
                 );
             }
             Rect {
@@ -1549,11 +1709,18 @@ fn evaluate_remove(ctx: &Validated) -> String {
             return rejected(valid_correlation_echo(&ctx.raw), kind, message);
         }
     };
-    if command.op != "remove" || !is_opaque_id(&command.window) {
-        return rejected(
+    if command.op != "remove" {
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "remove-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "remove-window-invalid",
         );
     }
     let Some(seed_order) =
@@ -1572,10 +1739,10 @@ fn evaluate_remove(ctx: &Validated) -> String {
         &ctx.domain,
         &seed_order,
     ) else {
-        return rejected(
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OBSERVATION,
+            "seed-failed",
         );
     };
     let base_revision = session.accepted_revision();
@@ -1615,19 +1782,24 @@ struct DirectedCommand {
     direction: String,
 }
 
-fn build_full_session(ctx: &Validated) -> Option<(Session, SessionObservation)> {
-    let seed_order =
-        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)?;
-    let session = seed_session(
+fn build_full_session(ctx: &Validated) -> Result<(Session, SessionObservation), &'static str> {
+    let Some(seed_order) =
+        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)
+    else {
+        return Err("missing-seed-order");
+    };
+    let Some(session) = seed_session(
         &ctx.owner,
         &ctx.generation,
         ctx.request.fingerprint,
         &ctx.domain,
         &seed_order,
-    )?;
+    ) else {
+        return Err("seed-failed");
+    };
     let base_revision = session.accepted_revision();
     let observation = observation_for(base_revision, ctx);
-    Some((session, observation))
+    Ok((session, observation))
 }
 
 fn evaluate_move(ctx: &Validated) -> String {
@@ -1638,11 +1810,18 @@ fn evaluate_move(ctx: &Validated) -> String {
             return rejected(valid_correlation_echo(&ctx.raw), kind, message);
         }
     };
-    if command.op != "move" || !is_opaque_id(&command.window) {
-        return rejected(
+    if command.op != "move" {
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "move-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "move-window-invalid",
         );
     }
     let Some(direction) = parse_direction(&command.direction) else {
@@ -1652,12 +1831,11 @@ fn evaluate_move(ctx: &Validated) -> String {
             MSG_DIRECTION,
         );
     };
-    let Some((mut session, observation)) = build_full_session(ctx) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
-            MSG_OBSERVATION,
-        );
+    let (mut session, observation) = match build_full_session(ctx) {
+        Ok(built) => built,
+        Err(detail) => {
+            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
+        }
     };
     match session.propose_move(
         &ctx.domain_key,
@@ -1691,11 +1869,18 @@ fn evaluate_focus(ctx: &Validated) -> String {
             return rejected(valid_correlation_echo(&ctx.raw), kind, message);
         }
     };
-    if command.op != "focus" || !is_opaque_id(&command.window) {
-        return rejected(
+    if command.op != "focus" {
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "focus-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "focus-window-invalid",
         );
     }
     let Some(direction) = parse_direction(&command.direction) else {
@@ -1705,12 +1890,11 @@ fn evaluate_focus(ctx: &Validated) -> String {
             MSG_DIRECTION,
         );
     };
-    let Some((mut session, observation)) = build_full_session(ctx) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
-            MSG_OBSERVATION,
-        );
+    let (mut session, observation) = match build_full_session(ctx) {
+        Ok(built) => built,
+        Err(detail) => {
+            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
+        }
     };
     match session.propose_focus(
         &ctx.domain_key,
@@ -1754,11 +1938,18 @@ fn evaluate_resize(ctx: &Validated) -> String {
             return rejected(valid_correlation_echo(&ctx.raw), kind, message);
         }
     };
-    if command.op != "resize" || !is_opaque_id(&command.window) {
-        return rejected(
+    if command.op != "resize" {
+        return snapshot_invalid(
             ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
             MSG_OPAQUE_ID,
+            "resize-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "resize-window-invalid",
         );
     }
     let Some(direction) = parse_direction(&command.direction) else {
@@ -1775,12 +1966,11 @@ fn evaluate_resize(ctx: &Validated) -> String {
             MSG_DIRECTION,
         );
     };
-    let Some((mut session, observation)) = build_full_session(ctx) else {
-        return rejected(
-            ctx.request.correlation_id.clone(),
-            "snapshot-invalid",
-            MSG_OBSERVATION,
-        );
+    let (mut session, observation) = match build_full_session(ctx) {
+        Ok(built) => built,
+        Err(detail) => {
+            return snapshot_invalid(ctx.request.correlation_id.clone(), MSG_OBSERVATION, detail);
+        }
     };
     let capabilities = crate::contract::ResizeCapabilities {
         keyboard_resize: true,
@@ -2625,5 +2815,239 @@ mod tests {
                 "press_index {press_index} must cap at 20px like press_index 4: {reply} vs {capped}"
             );
         }
+    }
+
+    fn base_valid_value(cid: &str) -> serde_json::Value {
+        serde_json::from_str(&plan_request(
+            cid,
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "remove", "window": "win-2"}),
+        ))
+        .expect("valid base")
+    }
+
+    fn assert_stateless_detail(mut value: serde_json::Value, cid: &str, expected: &str) {
+        value["correlation_id"] = serde_json::json!(cid);
+        let reply = parse_reply(&evaluate_plan_json(&value.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+        assert_eq!(reply["detail"], expected, "{reply}");
+    }
+
+    #[test]
+    fn snapshot_validation_details_are_exact() {
+        let cases: Vec<(&str, fn(&mut serde_json::Value))> = vec![
+            ("domain-output-invalid", |v| {
+                v["domain"]["output"] = serde_json::json!("bad id!")
+            }),
+            ("domain-workspace-invalid", |v| {
+                v["domain"]["workspace"] = serde_json::json!("bad id!")
+            }),
+            ("focused-id-invalid", |v| {
+                v["focused_window"] = serde_json::json!("bad id!")
+            }),
+            ("observed-window-invalid", |v| {
+                v["windows"][0]["window"] = serde_json::json!("bad!")
+            }),
+            ("observed-output-invalid", |v| {
+                v["windows"][0]["output"] = serde_json::json!("bad!")
+            }),
+            ("observed-workspace-invalid", |v| {
+                v["windows"][0]["workspace"] = serde_json::json!("bad!")
+            }),
+            ("duplicate-window", |v| {
+                v["windows"][1]["window"] = serde_json::json!("win-1");
+                v["windows"][1]["rect"] = serde_json::json!({"x": 400, "y": 0, "w": 100, "h": 80});
+            }),
+            ("domain-bounds-invalid", |v| {
+                v["domain"]["bounds"]["w"] = serde_json::json!(0)
+            }),
+            ("gap-low", |v| v["domain"]["gap"] = serde_json::json!(-1)),
+            ("gap-high", |v| v["domain"]["gap"] = serde_json::json!(65)),
+            ("outer-gap-low", |v| {
+                v["domain"]["outer_gap"] = serde_json::json!(-1)
+            }),
+            ("outer-gap-high", |v| {
+                v["domain"]["outer_gap"] = serde_json::json!(65)
+            }),
+            ("window-rect-invalid", |v| {
+                v["windows"][0]["rect"]["w"] = serde_json::json!(0)
+            }),
+            ("window-out-of-bounds", |v| {
+                v["windows"][0]["rect"] = serde_json::json!({"x": 1100, "y": 0, "w": 200, "h": 80});
+            }),
+            ("focused-not-observed", |v| {
+                v["focused_window"] = serde_json::json!("win-9")
+            }),
+            ("inset-exhausted", |v| {
+                v["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 10, "h": 10});
+                v["domain"]["outer_gap"] = serde_json::json!(5);
+                v["windows"] = serde_json::json!([]);
+                v["focused_window"] = serde_json::json!("");
+            }),
+        ];
+        for (index, (expected, mutate)) in cases.into_iter().enumerate() {
+            let mut value = base_valid_value(&format!("snap-v-{index}"));
+            mutate(&mut value);
+            assert_stateless_detail(value, &format!("snap-v-{index}"), expected);
+        }
+        let mut many = base_valid_value("snap-v-limit");
+        let mut windows = Vec::new();
+        for i in 0..65 {
+            windows.push(serde_json::json!({
+                "window": format!("win-{i}"),
+                "output": "out-1", "workspace": "ws-1",
+                "rect": {"x": 0, "y": 0, "w": 10, "h": 10},
+            }));
+        }
+        many["windows"] = serde_json::Value::Array(windows);
+        many["focused_window"] = serde_json::json!("win-0");
+        assert_stateless_detail(many, "snap-v-limit", "window-limit");
+        let mut retained_value = base_valid_value("snap-v-ret");
+        retained_value["domain"]["gap"] = serde_json::json!(-1);
+        retained_value["correlation_id"] = serde_json::json!("snap-v-ret");
+        let mut planner = Planner::new();
+        let retained = parse_reply(&planner.evaluate(&retained_value.to_string()));
+        assert_eq!(retained["kind"], "snapshot-invalid", "{retained}");
+        assert_eq!(retained["detail"], "gap-low", "{retained}");
+    }
+    #[test]
+    fn command_and_construction_details_are_exact() {
+        let cases: Vec<(&str, serde_json::Value)> = vec![
+            (
+                "admit-window-invalid",
+                serde_json::json!({"op": "admit", "window": "bad!", "output": "out-1", "workspace": "ws-1"}),
+            ),
+            (
+                "admit-output-invalid",
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "bad!", "workspace": "ws-1"}),
+            ),
+            (
+                "admit-workspace-invalid",
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "bad!"}),
+            ),
+            (
+                "remove-window-invalid",
+                serde_json::json!({"op": "remove", "window": "bad!"}),
+            ),
+            (
+                "move-window-invalid",
+                serde_json::json!({"op": "move", "window": "bad!", "direction": "left"}),
+            ),
+            (
+                "focus-window-invalid",
+                serde_json::json!({"op": "focus", "window": "bad!", "direction": "left"}),
+            ),
+            (
+                "resize-window-invalid",
+                serde_json::json!({"op": "resize", "window": "bad!", "direction": "left", "mode": "outwards", "press_index": 0}),
+            ),
+            (
+                "placement-bounds-invalid",
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1", "placement_bounds": {"x": 0, "y": 0, "w": 0, "h": 80}}),
+            ),
+        ];
+        for (index, (expected, command)) in cases.into_iter().enumerate() {
+            let mut value = base_valid_value(&format!("snap-c-{index}"));
+            if expected == "placement-bounds-invalid" {
+                value["focused_window"] = serde_json::json!("win-1");
+            }
+            value["command"] = command;
+            assert_stateless_detail(value, &format!("snap-c-{index}"), expected);
+        }
+        let ambiguous = retained_request(
+            "snap-c-amb",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 200, 0, 100, 80),
+            ],
+            serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
+        );
+        let stateless = parse_reply(&evaluate_plan_json(&ambiguous));
+        assert_eq!(stateless["kind"], "snapshot-invalid", "{stateless}");
+        assert_eq!(stateless["detail"], "missing-seed-order", "{stateless}");
+        let mut planner = Planner::new();
+        let retained = parse_reply(&planner.evaluate(&ambiguous));
+        assert_eq!(retained["kind"], "snapshot-invalid", "{retained}");
+        assert_eq!(retained["detail"], "missing-seed-order", "{retained}");
+    }
+    #[test]
+    fn command_op_details_are_exact() {
+        let cases: Vec<(&str, serde_json::Value, fn(&Validated) -> String)> = vec![
+            (
+                "admit-op-invalid",
+                serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),
+                evaluate_admit,
+            ),
+            (
+                "remove-op-invalid",
+                serde_json::json!({"op": "remove", "window": "win-2"}),
+                evaluate_remove,
+            ),
+            (
+                "move-op-invalid",
+                serde_json::json!({"op": "move", "window": "win-1", "direction": "left"}),
+                evaluate_move,
+            ),
+            (
+                "focus-op-invalid",
+                serde_json::json!({"op": "focus", "window": "win-1", "direction": "left"}),
+                evaluate_focus,
+            ),
+            (
+                "resize-op-invalid",
+                serde_json::json!({"op": "resize", "window": "win-1", "direction": "left", "mode": "outwards", "press_index": 0}),
+                evaluate_resize,
+            ),
+        ];
+        for (index, (expected, command, eval)) in cases.into_iter().enumerate() {
+            let cid = format!("snap-o-{index}");
+            let mut ctx =
+                validate_request(&plan_request(&cid, "win-1", &["win-1", "win-2"], command))
+                    .expect("base valid");
+            ctx.request.command["op"] = serde_json::json!("bogus-op");
+            let text = eval(&ctx);
+            let reply = parse_reply(&text);
+            assert_eq!(reply["outcome"], "rejected", "{reply}");
+            assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+            assert_eq!(reply["detail"], expected, "{reply}");
+            assert_eq!(reply["correlation_id"], cid, "{reply}");
+            assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
+        }
+        let cid = "snap-o-ret";
+        let mut ctx = validate_request(&plan_request(cid, "win-1", &["win-1", "win-2"], serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}))).expect("base valid");
+        ctx.request.command["op"] = serde_json::json!("bogus-op");
+        let mut planner = Planner::new();
+        let text = planner.evaluate_admit_retained(&ctx);
+        let reply = parse_reply(&text);
+        assert_eq!(reply["detail"], "admit-op-invalid", "{reply}");
+        assert_eq!(reply["correlation_id"], cid, "{reply}");
+        assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{reply}");
+    }
+    #[test]
+    fn planner_snapshot_detail_registry_is_unique() {
+        use std::collections::HashSet;
+        let mut seen = HashSet::new();
+        for token in PLANNER_SNAPSHOT_DETAILS {
+            assert!(!token.is_empty(), "empty token");
+            assert!(token.len() <= 32, "token too long: {token}");
+            assert!(
+                token
+                    .bytes()
+                    .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'),
+                "token must be short lowercase-hyphenated ASCII: {token}"
+            );
+            assert!(
+                !token.contains("window-count-mismatch"),
+                "must not generalize existing producer"
+            );
+            assert!(seen.insert(*token), "duplicate token: {token}");
+        }
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 34, "closed registry size");
     }
 }
