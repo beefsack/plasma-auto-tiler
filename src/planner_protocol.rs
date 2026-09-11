@@ -147,6 +147,8 @@ struct DomainDto {
     workspace: String,
     bounds: RectDto,
     gap: i32,
+    #[serde(default)]
+    outer_gap: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -398,6 +400,8 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
         carried_bounds.h,
     ) || request.domain.gap < 0
         || request.domain.gap > GEOMETRY_MAX_GAP
+        || request.domain.outer_gap < 0
+        || request.domain.outer_gap > GEOMETRY_MAX_GAP
     {
         return Err(rejected(
             request.correlation_id.clone(),
@@ -451,10 +455,21 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
     let owner = OwnerId::parse(&request.owner).expect("validated");
     let generation = GenerationId::parse(&request.generation).expect("validated");
     let correlation = CorrelationId::parse(&request.correlation_id).expect("validated");
+    // Rust owns the outer inset: an exhausted inset fails closed here while
+    // segment overflow still fails in projection.
+    let Ok(projected_bounds) =
+        crate::geometry::inset_bounds(carried_bounds, request.domain.outer_gap)
+    else {
+        return Err(rejected(
+            request.correlation_id.clone(),
+            "snapshot-invalid",
+            MSG_OBSERVATION,
+        ));
+    };
     let domain = OutputDomain {
         id: OutputId(request.domain.output.clone()),
         workspace: WorkspaceId(request.domain.workspace.clone()),
-        bounds: carried_bounds,
+        bounds: projected_bounds,
         gap: request.domain.gap,
         adjacent: std::collections::BTreeMap::new(),
     };
@@ -1842,6 +1857,7 @@ mod tests {
                 "workspace": "ws-1",
                 "bounds": domain_bounds(),
                 "gap": 0,
+                "outer_gap": 0,
             },
             "focused_window": focused,
             "windows": entries,
@@ -1887,6 +1903,7 @@ mod tests {
                 "workspace": "ws-1",
                 "bounds": {"x": domain_rect.0, "y": domain_rect.1, "w": domain_rect.2, "h": domain_rect.3},
                 "gap": 0,
+                "outer_gap": 0,
             },
             "focused_window": focused,
             "windows": entries,
@@ -2223,6 +2240,7 @@ mod tests {
                 "workspace": "ws-1",
                 "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
                 "gap": 0,
+                "outer_gap": 0,
             },
             "focused_window": focused,
             "windows": entries,

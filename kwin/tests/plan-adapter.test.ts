@@ -16,7 +16,7 @@ import {
     planFingerprint,
 } from "../src/plan-adapter";
 import { planShortcutCatalog, startPlanAdapterEntry } from "../src/plan-adapter-entry";
-import { DOMAIN_GAP } from "../src/domain-gap";
+import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "../src/domain-gap";
 import type { PlanEntryOverrides } from "../src/plan-adapter-entry";
 
 function kwinSrcDir(): string {
@@ -82,6 +82,7 @@ function makeObserved(
         domainWorkspace: "ws-1",
         domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
         domainGap: 0,
+        domainOuterGap: 0,
         focusedId: focused === refs.a ? "win-a" : "win-b",
         windows,
         activeRef: focused,
@@ -252,6 +253,7 @@ describe("plan adapter route identity and request shape", () => {
             workspace: "ws-1",
             bounds: { x: 0, y: 0, w: 1200, h: 800 },
             gap: 0,
+            outer_gap: 0,
         });
         assert.equal(payload["focused_window"], "win-a");
         const windows = payload["windows"] as Array<Record<string, unknown>>;
@@ -482,6 +484,7 @@ describe("plan adapter recovery and fencing", () => {
                 domainWorkspace: "ws-1",
                 domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
                 domainGap: 0,
+                domainOuterGap: 0,
                 focusedId: "win-a",
                 windows: Object.freeze(wins),
                 activeRef: refs.a,
@@ -906,6 +909,17 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(mocks.dbusCalls.length, 1);
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
         assert.equal((payload["domain"] as Record<string, unknown>)["gap"], DOMAIN_GAP);
+        handle?.stop();
+    });
+
+    it("carries the distinct 8px outer domain inset in live DescribePlan requests", () => {
+        assert.equal(OUTER_DOMAIN_GAP, 8);
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        handle?.requestFocus("left");
+        const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.equal((payload["domain"] as Record<string, unknown>)["outer_gap"], OUTER_DOMAIN_GAP);
         handle?.stop();
     });
 });

@@ -151,6 +151,7 @@ export interface PointerResizeObserved {
     readonly domainWorkspace: string;
     readonly domainBounds: PointerResizeRect;
     readonly domainGap: number;
+    readonly domainOuterGap: number;
     readonly focusedId: string;
     readonly windows: ReadonlyArray<PointerResizeObservedWindow>;
     readonly activeRef: object | null;
@@ -727,6 +728,9 @@ function validateObserved(observed: PointerResizeObserved | null): observed is P
         return false;
     }
     if (!Number.isInteger(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
+        return false;
+    }
+    if (!Number.isInteger(observed.domainOuterGap) || observed.domainOuterGap < 0 || observed.domainOuterGap > 64) {
         return false;
     }
     const seen = new Set<string>();
@@ -1471,6 +1475,7 @@ export class PointerResizeAdapter {
                         h: observed.domainBounds.h,
                     },
                     gap: observed.domainGap,
+                    outer_gap: observed.domainOuterGap,
                 },
                 focused_window: observed.focusedId,
                 direction,

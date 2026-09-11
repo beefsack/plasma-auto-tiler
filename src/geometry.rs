@@ -6,6 +6,9 @@
 //! proportionally to its positive integer `shares`, preserving child order.
 //! Sibling segments are separated by exactly `gap` device units when the gap
 //! budget fits the parent extent; otherwise projection fails closed.
+//! [`inset_bounds`] owns the outer domain inset: it shrinks work-area bounds
+//! by `outer_gap` on every side before projection, failing closed when the
+//! outer gap is negative, overflows, or exhausts the bounds.
 
 use std::collections::HashSet;
 use std::fmt;
@@ -100,6 +103,41 @@ fn validate_tree(node: &Node, seen: &mut HashSet<NodeId>) -> Result<(), Projecti
             Ok(())
         }
     }
+}
+
+/// Shrink work-area `bounds` by `outer_gap` on every side.
+///
+/// Fails closed when `outer_gap` is negative, when the doubled inset
+/// overflows, or when the inset exhausts either extent; the returned rect
+/// always has positive `w`/`h`.
+pub fn inset_bounds(bounds: Rect, outer_gap: i32) -> Result<Rect, ProjectionError> {
+    if outer_gap < 0 {
+        return Err(error("outer gap must be non-negative"));
+    }
+    let doubled: i64 = i64::from(outer_gap)
+        .checked_mul(2)
+        .ok_or_else(|| error("outer gap exhausts bounds"))?;
+    if doubled >= i64::from(bounds.w) || doubled >= i64::from(bounds.h) {
+        return Err(error("outer gap exhausts bounds"));
+    }
+    let inset = Rect {
+        x: bounds
+            .x
+            .checked_add(outer_gap)
+            .ok_or_else(|| error("outer gap exhausts bounds"))?,
+        y: bounds
+            .y
+            .checked_add(outer_gap)
+            .ok_or_else(|| error("outer gap exhausts bounds"))?,
+        w: i32::try_from(i64::from(bounds.w) - doubled)
+            .map_err(|_| error("outer gap exhausts bounds"))?,
+        h: i32::try_from(i64::from(bounds.h) - doubled)
+            .map_err(|_| error("outer gap exhausts bounds"))?,
+    };
+    if !valid_rect(&inset) {
+        return Err(error("outer gap exhausts bounds"));
+    }
+    Ok(inset)
 }
 
 /// Project `tree` leaves into `bounds` separated by `gap`.
@@ -465,6 +503,27 @@ mod tests {
             )
             .is_err()
         );
+        // Outer inset fails closed without touching the segment budget.
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 60,
+        };
+        assert!(inset_bounds(bounds, -1).is_err());
+        assert!(inset_bounds(bounds, 50).is_err());
+        assert!(
+            inset_bounds(
+                Rect {
+                    x: 0,
+                    y: 0,
+                    w: 16,
+                    h: 16
+                },
+                8
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -537,6 +596,26 @@ mod tests {
                 );
             }
         }
+        // Outer inset shrinks every side before projection; leaves stay
+        // inside both the inset and the carried bounds, and an overflowing
+        // segment budget still fails closed after a valid inset.
+        let inset = inset_bounds(bounds, 8).expect("valid outer inset");
+        assert_eq!(
+            inset,
+            Rect {
+                x: 18,
+                y: 28,
+                w: 78,
+                h: 44
+            }
+        );
+        let outer = project(&tree, inset, gap).expect("valid projection");
+        assert_eq!(outer[1].rect.x, outer[0].rect.x + outer[0].rect.w + gap);
+        for leaf in &outer {
+            assert!(contained(&leaf.rect, &inset), "leaf escapes inset");
+            assert!(contained(&leaf.rect, &bounds), "leaf escapes bounds");
+        }
+        assert!(project(&tree, inset, 79).is_err());
     }
 
     #[test]

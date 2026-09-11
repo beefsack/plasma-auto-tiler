@@ -122,6 +122,15 @@ fn rect_contained(inner: Rect, outer: Rect) -> bool {
         && inner_bottom <= outer_bottom
 }
 
+/// Rust-owned outer inset for carried work-area bounds: a range-checked outer
+/// gap shrinks the bounds before projection; `None` fails every caller closed.
+fn inset_projected_bounds(carried: Rect, outer_gap: i32) -> Option<Rect> {
+    if outer_gap < 0 || outer_gap > GEOMETRY_MAX_GAP {
+        return None;
+    }
+    crate::geometry::inset_bounds(carried, outer_gap).ok()
+}
+
 /// Deterministic seed placement derived from the supplied work area (never a
 /// hardcoded work area): a small rect anchored at the work-area origin,
 /// clamped to the supplied bounds so admission never invents geometry. Wide
@@ -321,6 +330,8 @@ struct DomainDto {
     workspace: String,
     bounds: RectDto,
     gap: i32,
+    #[serde(default)]
+    outer_gap: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -970,6 +981,9 @@ impl ResizeService {
         if request.domain.gap < 0 || request.domain.gap > GEOMETRY_MAX_GAP {
             return Err(MSG_OBSERVATION.to_owned());
         }
+        let Some(projected) = inset_projected_bounds(bounds, request.domain.outer_gap) else {
+            return Err(MSG_OBSERVATION.to_owned());
+        };
         for entry in windows {
             if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
                 return Err(MSG_OBSERVATION.to_owned());
@@ -987,7 +1001,7 @@ impl ResizeService {
         let domain = OutputDomain {
             id: OutputId(domain_output.to_owned()),
             workspace: WorkspaceId(domain_workspace.to_owned()),
-            bounds,
+            bounds: projected,
             gap: request.domain.gap,
             adjacent: std::collections::BTreeMap::new(),
         };
@@ -1005,7 +1019,7 @@ impl ResizeService {
         let mut ordered: Vec<String> = Self::sorted_ids(windows);
         ordered.retain(|id| id != focused);
         ordered.push(focused.to_owned());
-        let placement = derived_seed_placement(bounds);
+        let placement = derived_seed_placement(projected);
         for (index, window) in ordered.iter().enumerate() {
             Self::admit_seed_window(
                 &mut session,
@@ -1243,6 +1257,15 @@ impl ResizeService {
                 MSG_OBSERVATION,
             );
         }
+        let Some(projected_bounds) =
+            inset_projected_bounds(carried_bounds, request.domain.outer_gap)
+        else {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        };
         for entry in &request.windows {
             if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
                 return rejected(
@@ -1348,7 +1371,7 @@ impl ResizeService {
                 .domains()
                 .iter()
                 .find(|d| d.key() == key)
-                .is_some_and(|d| d.bounds == carried_bounds && d.gap == request.domain.gap);
+                .is_some_and(|d| d.bounds == projected_bounds && d.gap == request.domain.gap);
             if !bounds_ok {
                 return rejected(
                     request.correlation_id.clone(),
@@ -1613,6 +1636,15 @@ impl ResizeService {
                 MSG_OBSERVATION,
             );
         }
+        let Some(projected_bounds) =
+            inset_projected_bounds(carried_bounds, request.domain.outer_gap)
+        else {
+            return rejected(
+                request.correlation_id.clone(),
+                "snapshot-invalid",
+                MSG_OBSERVATION,
+            );
+        };
         for entry in &request.windows {
             if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
                 return rejected(
@@ -1730,7 +1762,7 @@ impl ResizeService {
                 .domains()
                 .iter()
                 .find(|d| d.key() == key)
-                .is_some_and(|d| d.bounds == carried_bounds && d.gap == request.domain.gap);
+                .is_some_and(|d| d.bounds == projected_bounds && d.gap == request.domain.gap);
             if !bounds_ok {
                 return rejected(
                     request.correlation_id.clone(),

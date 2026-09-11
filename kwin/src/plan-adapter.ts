@@ -62,6 +62,7 @@ export interface PlanObserved {
     readonly domainWorkspace: string;
     readonly domainBounds: PlanRect;
     readonly domainGap: number;
+    readonly domainOuterGap: number;
     readonly focusedId: string;
     readonly windows: ReadonlyArray<PlanObservedWindow>;
     readonly activeRef: object;
@@ -381,6 +382,9 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         return false;
     }
     if (!isFiniteInt(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
+        return false;
+    }
+    if (!isFiniteInt(observed.domainOuterGap) || observed.domainOuterGap < 0 || observed.domainOuterGap > 64) {
         return false;
     }
     const seen = new Set<string>();
@@ -785,6 +789,7 @@ export class PlanAdapter {
                         h: observed.domainBounds.h,
                     },
                     gap: observed.domainGap,
+                    outer_gap: observed.domainOuterGap,
                 },
                 focused_window: observed.focusedId,
                 windows,

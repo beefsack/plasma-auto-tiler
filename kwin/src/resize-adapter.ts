@@ -98,6 +98,7 @@ export interface ResizeObserved {
     readonly domainWorkspace: string;
     readonly domainBounds: ResizeRect;
     readonly domainGap: number;
+    readonly domainOuterGap: number;
     readonly focusedId: string;
     readonly windows: ReadonlyArray<ResizeObservedWindow>;
     readonly activeRef: object | null;
@@ -581,6 +582,9 @@ function validateObserved(observed: ResizeObserved | null): observed is ResizeOb
     if (!Number.isInteger(observed.domainGap) || observed.domainGap < 0 || observed.domainGap > 64) {
         return false;
     }
+    if (!Number.isInteger(observed.domainOuterGap) || observed.domainOuterGap < 0 || observed.domainOuterGap > 64) {
+        return false;
+    }
     const seen = new Set<string>();
     let focusedFound = false;
     for (const entry of windows) {
@@ -983,6 +987,7 @@ export class ResizeAdapter {
                         h: current.domainBounds.h,
                     },
                     gap: current.domainGap,
+                    outer_gap: current.domainOuterGap,
                 },
                 focused_window: current.focusedId,
                 direction,

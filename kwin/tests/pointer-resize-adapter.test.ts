@@ -117,6 +117,7 @@ function buildObserved(mocks: Mocks): PointerResizeObserved {
         domainWorkspace: mocks.domainWorkspace,
         domainBounds: Object.freeze({ ...mocks.domainBounds }),
         domainGap: 0,
+        domainOuterGap: 0,
         focusedId: mocks.activeId,
         windows,
         activeRef,
@@ -524,6 +525,7 @@ describe("pointer resize adapter", () => {
             workspace: "ws-1",
             bounds: { x: 0, y: 0, w: 1920, h: 1080 },
             gap: 0,
+            outer_gap: 0,
         });
         // The native-driven source is never written by the adapter.
         assert.equal(mocks.geometryWrites.length, 0);
