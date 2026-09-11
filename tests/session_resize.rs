@@ -1008,13 +1008,13 @@ fn deterministic_replay() {
 fn bounded_property_matrix() {
     // Varied shares (via repeated resizes), COSMIC-scale work areas, gaps,
     // directions. Checks: positive dimensions, span/gap conservation, share
-    // validity, pair-sum conservation. Sub-minimum pairs refuse as Unchanged.
+    // validity, pair-sum conservation. Sub-minimum pairs refuse as PairBelowMinimum.
     let bounds_cases: Vec<(i32, i32, i32)> = vec![
         (800, 600, 0),
         (1440, 900, 2),
         (1600, 600, 4),
         (800, 900, 8),
-        // Below the COSMIC pair minima: every proposal refuses as Unchanged.
+        // Below the COSMIC pair minima: every proposal refuses as PairBelowMinimum.
         (200, 200, 0),
     ];
     let dir_cases: Vec<(bool, Vec<Direction>)> = vec![
@@ -1091,6 +1091,7 @@ fn bounded_property_matrix() {
                 ) {
                     Ok(p) => p,
                     Err(ProposeError::Refused(RefusalKind::Unchanged)) => continue,
+                    Err(ProposeError::Refused(RefusalKind::PairBelowMinimum)) => continue,
                     Err(e) => panic!("matrix {w}x{h} gap {gap} {dir:?}: {e:?}"),
                 };
                 // No zero shares, totals valid.
@@ -1795,7 +1796,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &correlation("gap-719"),
             &ResizeCapabilities::full(),
         ),
-        Err(ProposeError::Refused(RefusalKind::Unchanged))
+        Err(ProposeError::Refused(RefusalKind::PairBelowMinimum))
     );
     // Horizontal admit with gap (direct sum 792, union 800): plans.
     let mut s2 = session_with(800, 600, 8);
@@ -1835,7 +1836,7 @@ fn pair_threshold_uses_direct_sum_not_union_with_gap() {
             &correlation("gap-479"),
             &ResizeCapabilities::full(),
         ),
-        Err(ProposeError::Refused(RefusalKind::Unchanged))
+        Err(ProposeError::Refused(RefusalKind::PairBelowMinimum))
     );
     let mut v2 = session_with(800, 600, 8);
     admit_commit(&mut v2, "win-1", false, "v-1");
@@ -2009,4 +2010,65 @@ fn keyboard_one_sided_clamp_and_dedicated_reconcile_path() {
         ),
         Err(plasma_auto_tiler::reconcile::ProposeError::Diverged(_))
     ));
+}
+
+#[test]
+fn pair_minimum_refuses_distinct_kind() {
+    // Sub-minimum direct pair sums refuse as PairBelowMinimum with
+    // thresholds 720/480 unchanged; other no-change stays Unchanged.
+    let mut s = Session::new(
+        owner(),
+        generation(),
+        0,
+        7,
+        vec![domain("out-1", "ws-1", 727, 600, 8)],
+    )
+    .expect("session");
+    admit_commit(&mut s, "win-1", true, "t-1");
+    admit_commit(&mut s, "win-2", true, "t-2");
+    let k = key("out-1", "ws-1");
+    let w = focused_window(&s, &k);
+    let obs = complete_obs(&s, vec![]);
+    assert_eq!(
+        s.propose_resize(
+            &k,
+            &w,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &obs,
+            &correlation("t-pair-min"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(ProposeError::Refused(RefusalKind::PairBelowMinimum))
+    );
+    assert!(!s.has_pending());
+    assert_eq!(
+        ProposeError::Refused(RefusalKind::PairBelowMinimum).kind(),
+        "pair-below-minimum"
+    );
+    assert_eq!(
+        ProposeError::Refused(RefusalKind::PairBelowMinimum).message(),
+        "resize pair is below the minimum size"
+    );
+    // Other no-change is preserved: single leaf with no boundary stays Unchanged.
+    let mut e = single_session();
+    admit_commit(&mut e, "win-1", true, "t-e1");
+    let ek = key("out-1", "ws-1");
+    let ew = focused_window(&e, &ek);
+    let eobs = complete_obs(&e, vec![]);
+    assert_eq!(
+        e.propose_resize(
+            &ek,
+            &ew,
+            Direction::Left,
+            plasma_auto_tiler::contract::ResizeMode::Outwards,
+            0,
+            &eobs,
+            &correlation("t-edge"),
+            &ResizeCapabilities::full(),
+        ),
+        Err(ProposeError::Refused(RefusalKind::Unchanged))
+    );
+    assert!(!e.has_pending());
 }

@@ -225,9 +225,14 @@ prove live callbacks.
 ## Journal Line Forms
 
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
-(never `journalctl --system`). The adapter emits exactly two bounded,
-redacted line shapes with prefix `plasma-auto-tiler:plan` (no scope, signal,
-identity, or payload detail):
+(never `journalctl --system`). The adapter emits three bounded, redacted line
+shapes with prefix `plasma-auto-tiler:plan` (no scope, signal, identity, or
+payload detail):
+
+- Per failed shortcut registration:
+  `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>`
+  where `<action>` is a project action ID and `<sequence>` is its requested
+  chord. Registration continues so every failed chord is observable.
 
 - Per dispatched command (always exactly one line per `DescribePlan` flight):
   `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`

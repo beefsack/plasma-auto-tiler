@@ -869,4 +869,30 @@ describe("plan entry live observation and shortcuts", () => {
         }
         handle?.stop();
     });
+
+    it("logs a bounded shortcut-failed line naming the exact chord and continues", () => {
+        const world = fakeWorld();
+        const attempts: string[] = [];
+        const { handle, mocks } = startEntry(world, {
+            registerShortcutFn: (action, _text, sequence, callback): boolean => {
+                attempts.push(action);
+                void callback;
+                void sequence;
+                if (action === "plasma-auto-tiler-focus-left") {
+                    return false;
+                }
+                return true;
+            },
+        });
+        assert.ok(handle !== null);
+        assert.equal(attempts.length, 24);
+        assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
+        const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
+        assert.ok(line !== undefined);
+        assert.equal(
+            line,
+            "plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-focus-left sequence=Meta+H",
+        );
+        handle?.stop();
+    });
 });

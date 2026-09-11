@@ -278,6 +278,7 @@ pub enum RefusalKind {
     PartialObservation,
     ExceptionBehaviorUnselected,
     Unchanged,
+    PairBelowMinimum,
 }
 
 impl RefusalKind {
@@ -299,6 +300,7 @@ impl RefusalKind {
             Self::PartialObservation => "partial-observation",
             Self::ExceptionBehaviorUnselected => "exception-behavior-unselected",
             Self::Unchanged => "unchanged",
+            Self::PairBelowMinimum => "pair-below-minimum",
         }
     }
 
@@ -324,6 +326,7 @@ impl RefusalKind {
                 "exception window requires an explicit behavior selection"
             }
             Self::Unchanged => "command would not change session state",
+            Self::PairBelowMinimum => "resize pair is below the minimum size",
         }
     }
 }
@@ -1953,8 +1956,9 @@ impl Session {
     /// Complete geometry for every tiled window in the affected domain must
     /// project before any pending is staged; unprojectable/minimum-geometry
     /// failures refuse without pending. Source no-op pairs (direct sum under
-    /// the axis pair minimum) and exhausted/clamped-unchanged boundaries
-    /// refuse as [`RefusalKind::Unchanged`] with no plan and no pending.
+    /// the axis pair minimum) refuse as [`RefusalKind::PairBelowMinimum`];
+    /// exhausted/clamped-unchanged boundaries refuse as
+    /// [`RefusalKind::Unchanged`] with no plan and no pending.
     /// Stale, incomplete, malformed, pending, or unsupported-resize-capability
     /// inputs refuse or diverge fail-closed.
     #[allow(clippy::too_many_arguments)]
@@ -2081,6 +2085,9 @@ impl Session {
         let (target, new_shares) = match derived {
             PixelDerived::Unchanged => {
                 return Err(ProposeError::Refused(RefusalKind::Unchanged));
+            }
+            PixelDerived::BelowMinimum => {
+                return Err(ProposeError::Refused(RefusalKind::PairBelowMinimum));
             }
             PixelDerived::Planned { target, new_shares } => (target, new_shares),
         };
@@ -5297,10 +5304,12 @@ fn collect_pointer_group_leaves(node: &Node, group: &NodeId, out: &mut Vec<NodeI
 /// COSMIC pixel-share derivation outcome shared by keyboard and pointer
 /// resize. `None` from the drivers means malformed/unrepresentable (caller
 /// maps to `MalformedTopology`); `Unchanged` means no feasible boundary or a
-/// no-op proposing the current boundary.
+/// no-op proposing the current boundary; `BelowMinimum` means a candidate pair
+/// under the axis pair minimum prevented a plan with thresholds unchanged.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum PixelDerived {
     Unchanged,
+    BelowMinimum,
     Planned {
         target: PointerTarget,
         new_shares: Vec<u64>,
@@ -5413,8 +5422,9 @@ fn pixel_shares_for_clamped(
 /// neighbor side, and only the shrink side is clamped one-sided to the axis
 /// child minimum via [`crate::cosmic_v1::clamp_keyboard_shrink_pair`] (the
 /// grow side takes exactly the amount actually removed). `None` means
-/// malformed/unrepresentable; `Unchanged` means no feasible boundary or a
-/// clamped no-op at every candidate level.
+/// malformed/unrepresentable; `BelowMinimum` means a candidate pair was under
+/// the axis pair minimum; `Unchanged` means no feasible boundary or a clamped
+/// no-op at every other candidate level.
 fn derive_keyboard_pixel_shares(
     tree: &Node,
     focused_leaf: &NodeId,
@@ -5437,6 +5447,7 @@ fn derive_keyboard_pixel_shares(
         return Some(PixelDerived::Unchanged);
     }
     let mut feasible_exhausted = false;
+    let mut threshold_exhausted = false;
     for level in &levels {
         if level.axis != wanted {
             continue;
@@ -5468,8 +5479,8 @@ fn derive_keyboard_pixel_shares(
         let pair_sum = sizes[focused_index].checked_add(sizes[neighbor_index])?;
         if !crate::cosmic_v1::pair_admits_resize(pair_sum, pair_sum, wanted) {
             // Source no-op pair on direct sums sizes[i] + sizes[i+1]:
-            // skip outward, never plan through it.
-            feasible_exhausted = true;
+            // skip outward, never plan through it. Thresholds unchanged.
+            threshold_exhausted = true;
             continue;
         }
         let focused_size = sizes[focused_index];
@@ -5482,7 +5493,11 @@ fn derive_keyboard_pixel_shares(
         let Some((new_shrink, new_grow)) =
             crate::cosmic_v1::clamp_keyboard_shrink_pair(shrink, grow, i64::from(step_px), wanted)
         else {
-            feasible_exhausted = true;
+            if pair_sum < crate::cosmic_v1::pair_min_for_axis(wanted) {
+                threshold_exhausted = true;
+            } else {
+                feasible_exhausted = true;
+            }
             continue;
         };
         if new_shrink == shrink && new_grow == grow {
@@ -5538,6 +5553,9 @@ fn derive_keyboard_pixel_shares(
             },
             new_shares,
         });
+    }
+    if threshold_exhausted {
+        return Some(PixelDerived::BelowMinimum);
     }
     if feasible_exhausted {
         return Some(PixelDerived::Unchanged);

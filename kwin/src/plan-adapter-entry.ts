@@ -13,7 +13,8 @@
 // map to parameterized plan commands. Window and scope signals feed one
 // debounced fresh-snapshot resync owned by the adapter. No tiling, order,
 // membership, or rejection policy lives here and no diagnostic beyond the
-// adapter's two bounded line shapes is emitted.
+// adapter's two bounded line shapes plus one bounded shortcut-failed line
+// is emitted.
 
 import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { connectSignal, readSignal } from "./signal-capability";
@@ -754,9 +755,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     : op === "move"
                       ? registerFn(action, text, sequence, () => adapter.requestMove(direction))
                       : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
-            void ok;
+            if (ok !== true) {
+                try {
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                } catch (error) {
+                    void error;
+                }
+            }
         } catch (error) {
             void error;
+            try {
+                log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+            } catch (inner) {
+                void inner;
+            }
         }
     }
     return {
