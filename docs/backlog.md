@@ -675,6 +675,11 @@ Only meaningful pending or active work is listed.
   runtimes | [comparison](reference-wm-comparison.md)
 - P3 | parked | Publish the reproducible KPackage artifact to KDE Store and
   GitHub Release after MVP delivery dependencies are complete | [delivered foundations](changes/archive/delivered-foundations.md)
+- P2 | backlogged | Make window gaps user-configurable. Currently fixed at
+  `DOMAIN_GAP = 8` / `OUTER_DOMAIN_GAP = 8` in `kwin/src/domain-gap.ts`.
+  Needs a bounded `0..64` KCM schema key, KCM UI/native read-write mapping, and
+  a validated KWin `readConfig` binding to replace the constants. The basic
+  default is accepted for now. |
 - P1 | active | Restore window gap/spacing. The plumbing is intact end to end;
   only the observation hardcodes `domainGap: 0` at
   `kwin/src/plan-adapter-entry.ts:459`, with the same literal at

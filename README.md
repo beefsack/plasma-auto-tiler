@@ -441,6 +441,40 @@ when present, and (migration cleanup) also deletes any legacy
 above. See `docs/live-kwin-testing.md` for the full
 session-boundary contract.
 
+### Native effect development staging (`just build-native-effect`)
+
+Development-only alternative to `effect-install`. `just build-native-effect`
+stages both plugins at
+`target/kwin-native-effect-stage/kwin/effects/{plugins,configs}/` without
+touching KWin, D-Bus, config, or user paths. The setup below mutates host
+session delivery; it is documented, not run here, and remains pending live
+evidence.
+
+```sh
+devenv shell --impure -- just build-native-effect
+REPO_ROOT="$(pwd -P)"
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
+STAGE="$REPO_ROOT/target/kwin-native-effect-stage"
+mkdir -p "$CONFIG_ROOT/plasma-workspace/env"
+printf 'export QT_PLUGIN_PATH="%s${QT_PLUGIN_PATH:+:$QT_PLUGIN_PATH}"\n' "$STAGE" > "$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+kwriteconfig6 --file "$CONFIG_ROOT/kwinrc" --group Plugins --key plasma-auto-tiler-active-borderEnabled true
+```
+
+Undo:
+
+```sh
+REPO_ROOT="$(pwd -P)"
+CONFIG_ROOT="${XDG_CONFIG_HOME:-$HOME/.config}"
+rm -f "$CONFIG_ROOT/plasma-workspace/env/60-plasma-auto-tiler-native-effect.sh"
+kwriteconfig6 --file "$CONFIG_ROOT/kwinrc" --group Plugins --key plasma-auto-tiler-active-borderEnabled --delete
+rm -rf "$REPO_ROOT/target/kwin-native-effect-stage" "$REPO_ROOT/target/kwin-native-effect-build"
+```
+
+Log out and log back in after setup, and again after every effect rebuild.
+`just dev`, `just reload`, and controller reload cannot pick up a rebuilt
+native effect. Log out and log back in after undo too. With no OpenGL backend
+there is no border.
+
 ### Building without Nix/devenv
 
 This is an unsupported build fallback, not part of the supported Nix-managed

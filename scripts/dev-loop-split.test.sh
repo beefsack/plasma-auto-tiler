@@ -341,6 +341,7 @@ assert_contains "dev-off" "real justfile list dev-off"
 assert_contains "dev-status" "real justfile list dev-status"
 assert_contains "reload" "real justfile list reload"
 assert_contains "dev" "real justfile list dev"
+assert_contains "build-native-effect" "real justfile list build-native-effect"
 
 run_just_real --dry-run dev-status
 check_exit 0 "real justfile dry-run dev-status"
@@ -350,6 +351,9 @@ check_exit 0 "real justfile dry-run dev"
 
 run_just_real --dry-run dev verbose
 check_exit 0 "real justfile dry-run dev verbose"
+
+run_just_real --dry-run build-native-effect
+check_exit 0 "real justfile dry-run build-native-effect"
 
 # dev-on: both up reports already up and changes nothing.
 reset_state

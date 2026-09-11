@@ -384,6 +384,7 @@
           module-boundary = pkgs.runCommand "plasma-auto-tiler-module-boundary" { } ''
             touch "$out"
           '';
+          native-effect = nativeEffect;
         });
 
       packages = forAllSystems (system:

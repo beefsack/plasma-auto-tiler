@@ -949,3 +949,40 @@ dev mode="":
     tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" >"$DEV_FIFO" 2>/dev/null &
     FOLLOW_PID=$!
     wait
+
+# Build the native active-border effect + KCM against the pinned KWin CMake dir and stage both .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions.
+build-native-effect:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
+    BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"
+    STAGE="$REPO_ROOT/target/kwin-native-effect-stage"
+    EFFECT_SO="plasma-auto-tiler-active-border.so"
+    KCM_SO="plasma-auto-tiler-active-border_config.so"
+    KWIN_DEV_CMAKE_DIR="${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}"
+    [[ -n "$KWIN_DEV_CMAKE_DIR" ]] || { echo "error: PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR is not set; refusing (enter 'devenv shell --impure' so the pinned KWin CMake dir is exported)" >&2; exit 1; }
+    [[ -d "$KWIN_DEV_CMAKE_DIR" ]] || { echo "error: PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR is not a directory: $KWIN_DEV_CMAKE_DIR; refusing" >&2; exit 1; }
+    command -v cmake >/dev/null 2>&1 || { echo "error: required tool 'cmake' not found in PATH; refusing" >&2; exit 1; }
+    cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -DKWin_DIR="$KWIN_DEV_CMAKE_DIR" -DBUILD_TESTING=OFF || { echo "error: cmake configure failed for $SOURCE_DIR" >&2; exit 1; }
+    cmake --build "$BUILD_DIR" || { echo "error: cmake --build failed for $BUILD_DIR" >&2; exit 1; }
+    BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
+    BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"
+    [[ -f "$BUILT_SO" ]] || { echo "error: effect .so not found after build: $BUILT_SO" >&2; exit 1; }
+    [[ -f "$BUILT_KCM" ]] || { echo "error: KCM .so not found after build: $BUILT_KCM" >&2; exit 1; }
+    PAYLOAD="$(mktemp -d "$REPO_ROOT/target/.kwin-native-effect-stage.XXXXXX")" || { echo "error: could not create staging transaction directory under $REPO_ROOT/target" >&2; exit 1; }
+    cleanup() { [[ -n "${PAYLOAD:-}" && -d "${PAYLOAD:-}" ]] && rm -rf -- "$PAYLOAD"; }
+    trap cleanup EXIT
+    install -Dm0644 "$BUILT_SO" "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" || { echo "error: could not stage effect .so" >&2; exit 1; }
+    install -Dm0644 "$BUILT_KCM" "$PAYLOAD/kwin/effects/configs/$KCM_SO" || { echo "error: could not stage KCM .so" >&2; exit 1; }
+    [[ -f "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $PAYLOAD/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
+    [[ -f "$PAYLOAD/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $PAYLOAD/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
+    rm -rf -- "$STAGE" || { echo "error: could not remove stale staging root: $STAGE" >&2; exit 1; }
+    mv -- "$PAYLOAD" "$STAGE" || { echo "error: could not publish staging root: $STAGE" >&2; exit 1; }
+    PAYLOAD=""
+    trap - EXIT
+    [[ -f "$STAGE/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $STAGE/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
+    [[ -f "$STAGE/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $STAGE/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
+    echo "staged: $STAGE/kwin/effects/plugins/$EFFECT_SO"
+    echo "staged: $STAGE/kwin/effects/configs/$KCM_SO"
+    echo "QT_PLUGIN_PATH=$STAGE"
