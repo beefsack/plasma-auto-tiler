@@ -16,6 +16,7 @@ import {
     planFingerprint,
 } from "../src/plan-adapter";
 import { planShortcutCatalog, startPlanAdapterEntry } from "../src/plan-adapter-entry";
+import { DOMAIN_GAP } from "../src/domain-gap";
 import type { PlanEntryOverrides } from "../src/plan-adapter-entry";
 
 function kwinSrcDir(): string {
@@ -893,6 +894,18 @@ describe("plan entry live observation and shortcuts", () => {
             line,
             "plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-focus-left sequence=Meta+H",
         );
+        handle?.stop();
+    });
+
+    it("carries the bounded 8px domain gap in live DescribePlan requests", () => {
+        assert.equal(DOMAIN_GAP, 8);
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.equal((payload["domain"] as Record<string, unknown>)["gap"], DOMAIN_GAP);
         handle?.stop();
     });
 });

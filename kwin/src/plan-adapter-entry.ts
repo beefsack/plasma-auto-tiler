@@ -16,6 +16,7 @@
 // adapter's two bounded line shapes plus one bounded shortcut-failed line
 // is emitted.
 
+import { DOMAIN_GAP } from "./domain-gap";
 import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { connectSignal, readSignal } from "./signal-capability";
 
@@ -456,7 +457,7 @@ function observeNative(liveWorkspace: unknown, ids: OpaqueWindowIds): PlanObserv
             domainOutput,
             domainWorkspace,
             domainBounds: Object.freeze({ x: domainBounds.x, y: domainBounds.y, w: domainBounds.w, h: domainBounds.h }),
-            domainGap: 0,
+            domainGap: DOMAIN_GAP,
             focusedId: activeId,
             windows: frozenWindows,
             activeRef: activeRef,

@@ -675,6 +675,29 @@ Only meaningful pending or active work is listed.
   runtimes | [comparison](reference-wm-comparison.md)
 - P3 | parked | Publish the reproducible KPackage artifact to KDE Store and
   GitHub Release after MVP delivery dependencies are complete | [delivered foundations](changes/archive/delivered-foundations.md)
+- P1 | active | Restore window gap/spacing. The plumbing is intact end to end;
+  only the observation hardcodes `domainGap: 0` at
+  `kwin/src/plan-adapter-entry.ts:459`, with the same literal at
+  `resize-adapter-entry.ts:511` and `pointer-resize-adapter-entry.ts:515`.
+  Needs a configuration source for the value after the scope reduction removed
+  the old settings paths. |
+- P1 | active | Restore a visible focus indicator in the dev environment. The
+  native `plasma-auto-tiler-active-border.so` effect was removed from the host
+  Nix config and focus is now hard to track during live testing. A native
+  in-compositor effect can crash KWin (it appeared in a SIGSEGV core dump), so
+  prefer a zero-code or out-of-compositor indicator for the dev loop and keep
+  the native effect on its existing Nix-delivery track. |
+  [change](changes/archive/active-border-colour-override.md)
+- P1 | active | Generalize the KCM shortcut override from the fixed
+  `focus-right`/`Lock Session` pair to a table of conflict resolutions, and add
+  a clear operation alongside relocate, so `Meta+Alt+K`/`Meta+Alt+L` can be
+  taken from KDE Keyboard Layout Switcher. Amending the durable allowlist at
+  `docs/decisions.md:228-242` is user-approved. Live-prove the existing single
+  pair first. | [change](changes/shortcut-override.md)
+- P3 | parked | Keybind profiles: selectable presets such as "adopt COSMIC
+  keybinds" or "adopt Hyprland keybinds", built on the generalized shortcut
+  override. Needs a binding catalog, per-profile conflict sets, and switching
+  semantics. Not coupled to any current fix. |
 - P1 | active | Repair the `just dev` teardown/restart loop: Ctrl-C leaves a
   SPLIT session (controller unloaded, Planner alive) because `unloadScript`
   returns false while the script is in fact gone, so the next `just dev`

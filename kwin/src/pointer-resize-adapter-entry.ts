@@ -38,6 +38,7 @@
 // changed; the interactive source is never written and focus is never
 // steered. All logs are fixed redacted tokens.
 
+import { DOMAIN_GAP } from "./domain-gap";
 import {
     PointerResizeAdapter,
     PointerResizeObserved,
@@ -512,7 +513,7 @@ function observeNative(liveWorkspace: unknown, log?: (message: string) => void):
             domainOutput,
             domainWorkspace,
             domainBounds: Object.freeze({ ...domainBounds }),
-            domainGap: 0,
+            domainGap: DOMAIN_GAP,
             focusedId: activeId,
             windows: frozenWindows,
             activeRef,

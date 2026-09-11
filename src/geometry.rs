@@ -489,38 +489,38 @@ mod tests {
             w: 94,
             h: 60,
         };
-        let gap = 4;
+        let gap = 8;
         let first = project(&tree, bounds, gap).expect("valid projection");
         let second = project(&tree, bounds, gap).expect("valid projection");
         assert_eq!(first, second);
         assert_eq!(first.len(), 3);
-        // Root avail 94-4=90, halves of 45 each.
+        // Root avail 94-8=86, halves of 43 each.
         assert_eq!(
             first[0].rect,
             Rect {
                 x: 10,
                 y: 20,
-                w: 45,
+                w: 43,
                 h: 60
             }
         );
-        // Inner avail 60-4=56: floor(56*1/4)=14, remainder 42.
+        // Inner avail 60-8=52: reserve two, then floor(50*1/4)+1=13.
         assert_eq!(
             first[1].rect,
             Rect {
-                x: 59,
+                x: 61,
                 y: 20,
-                w: 45,
-                h: 14
+                w: 43,
+                h: 13
             }
         );
         assert_eq!(
             first[2].rect,
             Rect {
-                x: 59,
-                y: 38,
-                w: 45,
-                h: 42
+                x: 61,
+                y: 41,
+                w: 43,
+                h: 39
             }
         );
         // Internal gaps are exactly `gap`.
