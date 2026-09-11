@@ -680,35 +680,59 @@ Only meaningful pending or active work is listed.
   Needs a bounded `0..64` KCM schema key, KCM UI/native read-write mapping, and
   a validated KWin `readConfig` binding to replace the constants. The basic
   default is accepted for now. |
-- P1 | active | Restore window gap/spacing. The plumbing is intact end to end;
-  only the observation hardcodes `domainGap: 0` at
-  `kwin/src/plan-adapter-entry.ts:459`, with the same literal at
-  `resize-adapter-entry.ts:511` and `pointer-resize-adapter-entry.ts:515`.
-  Needs a configuration source for the value after the scope reduction removed
-  the old settings paths. |
-- P1 | active | Restore a visible focus indicator in the dev environment. The
-  native `plasma-auto-tiler-active-border.so` effect was removed from the host
-  Nix config and focus is now hard to track during live testing. A native
-  in-compositor effect can crash KWin (it appeared in a SIGSEGV core dump), so
-  prefer a zero-code or out-of-compositor indicator for the dev loop and keep
-  the native effect on its existing Nix-delivery track. |
+- P2 | active | Native active-border effect: the repo-local dev staging route is
+  live. The user ran `just build-native-effect`, the `QT_PLUGIN_PATH` env script,
+  the `kwinrc` `[Plugins]` enable key, and a logout/login, and confirms the
+  active border draws again. Remaining work is optional only: border tuning, and
+  the verified-but-uncommissioned same-session hot-reload staging loop
+  (`docs/changes/archive/native-effect-dev-staging.md`). The earlier claim that
+  this effect crashed KWin is retracted: read-only core-dump inspection places
+  `plasma-auto-tiler-active-border.so` in the loaded-module list only, never in a
+  faulting or backtrace frame of either retained dump (PID 2090 SIGSEGV through
+  Qt QML `QV4::WeakMapPrototype::method_get`; PID 3568836 SIGABRT through inbound
+  libdbus `QKeySequence` demarshalling). Do not reintroduce that framing. |
   [change](changes/archive/active-border-colour-override.md)
 - P1 | active | Generalize the KCM shortcut override from the fixed
   `focus-right`/`Lock Session` pair to a table of conflict resolutions, and add
   a clear operation alongside relocate, so `Meta+Alt+K`/`Meta+Alt+L` can be
   taken from KDE Keyboard Layout Switcher. Amending the durable allowlist at
-  `docs/decisions.md:228-242` is user-approved. Live-prove the existing single
-  pair first. | [change](changes/shortcut-override.md)
+  `docs/decisions.md:228-242` is user-approved. The static generalization
+  proceeds now with the existing `focus-right`/`Lock Session` relocation as the
+  first table row, so the pending single-pair live Apply/Revert/interrupted-
+  recovery gate still runs first and exercises the table path unchanged. |
+  [change](changes/shortcut-override.md)
+- P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
+  resize failure is the KDE Keyboard Layout Switcher double-claim. Verified
+  static fact: `~/.config/kglobalshortcutsrc:6-7` binds
+  `Switch to Last-Used Keyboard Layout=Meta+Alt+L` and
+  `Switch to Next Keyboard Layout=Meta+Alt+K`, exactly and only the two failing
+  chords; `H`/`J` have no competing claim and work in both directions. Test:
+  clear those two Keyboard Layout Switcher shortcuts, then retest `Meta+Alt+L`
+  from a LEFT pane and `Meta+Alt+K` from a BOTTOM pane, because grow-right on
+  the rightmost pane and grow-up on the topmost pane are legitimate COSMIC
+  no-ops and will be misread as failures. |
 - P3 | parked | Keybind profiles: selectable presets such as "adopt COSMIC
   keybinds" or "adopt Hyprland keybinds", built on the generalized shortcut
   override. Needs a binding catalog, per-profile conflict sets, and switching
   semantics. Not coupled to any current fix. |
-- P1 | active | Repair the `just dev` teardown/restart loop: Ctrl-C leaves a
-  SPLIT session (controller unloaded, Planner alive) because `unloadScript`
-  returns false while the script is in fact gone, so the next `just dev`
-  refuses. Also suppress the `busctl status` pager block that blocks
-  `just dev` on user input. |
+- P2 | shipped, live-unproven | `just dev` teardown/restart loop repair: strict
+  unloaded-postcondition plus receipt-matching KWin identity accepts a false
+  `unloadScript` reply, Planner teardown runs independently of controller
+  teardown, pagers are suppressed, and dev output is serialized to one combined
+  log. Static/hermetic coverage only; repeated Ctrl-C/restart cycles are
+  user-observed but not formally gated. |
   [change](changes/dev-loop-teardown.md)
+- P2 | active | Repair the pre-existing `nix flake check` failure. The
+  `assert builtins.attrNames plannerUnit.Service == [ "BusName" "ExecStart" "Restart" "Type" ];`
+  at `flake.nix:361` predates recent work and no longer matches the unit, which
+  now also carries `StandardError`/`StandardOutput` from earlier planner-logging
+  work. Unrelated to any shipped change; it only blocks the flake verification
+  gate. |
+- P2 | active | Capture `snapshot-invalid`. Still unreproduced after the resize
+  investigation deliberately excluded it. Correlations p44-p65 were all rejected
+  after moves, with a remove at p42 and an admit at p43. 14 producing conditions
+  live at `src/planner_protocol.rs:211-216,349-466,849-895,908-1274`. Needs its
+  own dedicated verbose capture. |
 - P2 | investigate KWin controller silent unload | Determine the actor or
   lifecycle event that unloads a manually loaded controller without a recorded
   `dev-off`; current KWin 6.7.4 APIs and retained journal evidence cannot
