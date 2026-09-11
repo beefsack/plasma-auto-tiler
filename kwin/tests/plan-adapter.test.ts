@@ -296,7 +296,38 @@ describe("plan adapter route identity and request shape", () => {
 });
 
 describe("plan adapter geometry application", () => {
-    it("applies complete reply geometries in grow-before-shrink order with focus", () => {
+    it("applies complete reply geometries in grow-before-shrink order with move", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 500 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 100, h: 100 } },
+                ],
+                "win-b-leaf",
+            ),
+        );
+        assert.equal(mocks.geometries.length, 2);
+        assert.equal(mocks.geometries[0]?.target, refs.a);
+        assert.equal(mocks.geometries[1]?.target, refs.b);
+        assert.deepEqual(mocks.actives, [refs.b]);
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+    });
+
+    it("focus never rewrites geometry and only moves the active window", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         mocks.observeImpl = () =>
@@ -320,9 +351,7 @@ describe("plan adapter geometry application", () => {
                 "win-b-leaf",
             ),
         );
-        assert.equal(mocks.geometries.length, 2);
-        assert.equal(mocks.geometries[0]?.target, refs.a);
-        assert.equal(mocks.geometries[1]?.target, refs.b);
+        assert.equal(mocks.geometries.length, 0);
         assert.deepEqual(mocks.actives, [refs.b]);
         assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
     });
@@ -736,6 +765,57 @@ describe("plan entry live observation and shortcuts", () => {
             assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left")?.mode, "outwards");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left")?.mode, "inwards");
         }
+    });
+
+    it("registers distinct Meta+Shift move sequences delivering op=move", () => {
+        const first = startEntry(fakeWorld());
+        assert.ok(first.handle !== null);
+        const moves = first.mocks.shortcuts.filter((row) => row.action.startsWith("plasma-auto-tiler-move-"));
+        assert.equal(moves.length, 8);
+        const sequences = moves.map((row) => row.sequence);
+        assert.equal(new Set(sequences).size, 8);
+        for (const row of moves) {
+            assert.ok(row.sequence.startsWith("Meta+Shift+"), row.action);
+        }
+        const letter = moves.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+            callback: () => void;
+        };
+        letter.callback();
+        assert.equal(first.mocks.dbusCalls.length, 1);
+        const letterPayload = JSON.parse(first.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(letterPayload["command"], { op: "move", window: "w-1", direction: "left" });
+        first.handle?.stop();
+        const second = startEntry(fakeWorld());
+        assert.ok(second.handle !== null);
+        const arrow = second.mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-right-arrow") as {
+            callback: () => void;
+        };
+        arrow.callback();
+        const arrowPayload = JSON.parse(second.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(arrowPayload["command"], { op: "move", window: "w-1", direction: "right" });
+        assert.equal(second.mocks.dbusCalls[0]?.method, "DescribePlan");
+        second.handle?.stop();
+    });
+
+    it("never registers Meta+digit or Meta+Shift+digit workspace sequences", () => {
+        for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
+            const catalog = planShortcutCatalog(profile);
+            for (const row of catalog) {
+                assert.ok(!row.action.includes("workspace"), `${profile}:${row.action}`);
+                assert.ok(!/Meta(\+Shift)?\+\d/.test(row.sequence), `${profile}:${row.action}:${row.sequence}`);
+                assert.ok(!/Meta\+\S*\d/.test(row.sequence), `${profile}:${row.action}:${row.sequence}`);
+            }
+        }
+        const live = startEntry(fakeWorld());
+        assert.ok(live.handle !== null);
+        for (const row of live.mocks.shortcuts) {
+            assert.ok(!row.action.includes("workspace"), row.action);
+            assert.ok(!/Meta(\+Shift)?\+\d/.test(row.sequence), `${row.action}:${row.sequence}`);
+        }
+        live.handle?.stop();
+        const entrySrc = readFileSync(join(kwinSrcDir(), "plan-adapter-entry.ts"), "utf8");
+        assert.ok(!entrySrc.includes("workspace-"), "no workspace shortcut ids");
+        assert.ok(!/Meta\+\$\{(index|digit|n)\}/.test(entrySrc), "no digit sequence template");
     });
 
     it("observes only normal windows with stable opaque ids", () => {

@@ -1,4 +1,4 @@
-//! Planner service boundary: stateless manually invoked D-Bus service.
+//! Planner service boundary: retained live-tree manually invoked D-Bus service.
 //!
 //! Contract identity: service `org.plasmaautotiler.Planner`, object
 //! `/org/plasmaautotiler/Planner`, interface `org.plasmaautotiler.Planner1`,
@@ -44,11 +44,12 @@ const MOVEMENT_MAX_REPLY: usize = 64 * 1024;
 const RESIZE_MAX_REPLY: usize = 64 * 1024;
 #[cfg(test)]
 const POINTER_RESIZE_MAX_REPLY: usize = 64 * 1024;
-/// Stage 4 stateless general-N planning route: complete normalized current
+/// Stage 4 retained general-N planning route: complete normalized current
 /// observation plus one parameterized command in, full target geometries or a
-/// bounded recoverable rejection kind out. Stateless per call (ephemeral
-/// session, no retained pending/divergence), so fresh observations recover
-/// after any rejection. Rust owns all policy via `crate::planner_protocol`.
+/// bounded recoverable rejection kind out. Retained live-tree state across
+/// calls (per-domain committed sessions, single discard-and-rebuild
+/// recovery), so fresh observations recover after any rejection. Rust owns
+/// all policy via `crate::planner_protocol`.
 pub const PLAN_METHOD: &str = "DescribePlan";
 /// Bounded plan request cap (mirrors the portable planner protocol bound).
 pub const PLAN_MAX_REQUEST: usize = crate::planner_protocol::PLAN_MAX_REQUEST_BYTES;
@@ -106,6 +107,7 @@ pub enum PlannerError {
 #[derive(Clone, Debug)]
 pub struct PlannerEndpoint {
     operation_lock: Arc<async_lock::Mutex<()>>,
+    planner: Arc<std::sync::Mutex<crate::planner_protocol::Planner>>,
 }
 
 impl PlannerEndpoint {
@@ -140,16 +142,27 @@ impl PlannerEndpoint {
     pub fn new() -> Self {
         Self {
             operation_lock: Arc::new(async_lock::Mutex::new(())),
+            planner: Arc::new(std::sync::Mutex::new(
+                crate::planner_protocol::Planner::new(),
+            )),
         }
     }
 
-    /// Stage 4 stateless planning route. Pure delegation to
-    /// `crate::planner_protocol::evaluate_plan_json` (ephemeral session per
-    /// call, no retained pending/divergence); application-level rejections
-    /// arrive as `Ok` JSON so fresh observations recover. Only an oversize
-    /// reply fails closed as `Unavailable`.
+    /// Stage 4 retained planning route. Delegates to the authoritative
+    /// live-tree [`crate::planner_protocol::Planner`] held across calls
+    /// (per-domain committed sessions, single discard-and-rebuild recovery);
+    /// application-level rejections arrive as `Ok` JSON so fresh observations
+    /// recover. Only an oversize reply or a poisoned planner lock fails
+    /// closed as `Unavailable`.
     fn evaluate_plan_request(&self, request: &str) -> Result<String, PlannerError> {
-        let reply = crate::planner_protocol::evaluate_plan_json(request);
+        let reply = match self.planner.lock() {
+            Ok(mut planner) => planner.evaluate(request),
+            Err(_) => {
+                return Err(PlannerError::Unavailable(
+                    "planner state is unavailable".to_owned(),
+                ));
+            }
+        };
         if reply.len() > PLAN_MAX_REPLY {
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
@@ -196,11 +209,11 @@ impl PlannerEndpoint {
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
-        // Stage 4 stateless planning route: same bounded non-queuing
+        // Stage 4 retained planning route: same bounded non-queuing
         // single-flight, same-UID verification, connection-loss, and
         // reply-size checks as the four legacy routes. Authorized requests
-        // delegate to the stateless planner protocol (ephemeral session per
-        // call over retained session/reconcile/directional/cosmic_v1 policy);
+        // delegate to the retained planner protocol (live-tree sessions per
+        // domain over session/reconcile/directional/cosmic_v1 policy);
         // application rejections arrive as `Ok` JSON and stay silent like
         // success, so fresh observations recover after any rejection.
         // Diagnostics are emitted only after the guard is released (see

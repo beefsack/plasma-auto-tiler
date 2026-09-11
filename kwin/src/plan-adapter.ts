@@ -985,22 +985,27 @@ export class PlanAdapter {
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
         const ordered = orderGeometryWrites(oldById, planned.geometry);
-        for (const entry of ordered) {
-            const target = byRef.get(entry.window);
-            if (target === undefined) {
-                this.failFlight(flightState, "precondition-mismatch");
-                return;
-            }
-            let written = false;
-            try {
-                written = this.env.setGeometry(target, entry.rect) === true;
-            } catch (error) {
-                void error;
-                written = false;
-            }
-            if (!written) {
-                this.failFlight(flightState, "write-failed");
-                return;
+        // Focus is focus-only: never rewrite geometry, only move the active
+        // window. Matches the standalone focus adapter single-write contract;
+        // move/admit/remove/resize still apply complete geometries above.
+        if (flightState.op !== "focus") {
+            for (const entry of ordered) {
+                const target = byRef.get(entry.window);
+                if (target === undefined) {
+                    this.failFlight(flightState, "precondition-mismatch");
+                    return;
+                }
+                let written = false;
+                try {
+                    written = this.env.setGeometry(target, entry.rect) === true;
+                } catch (error) {
+                    void error;
+                    written = false;
+                }
+                if (!written) {
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
             }
         }
         const focus = planned.focus;

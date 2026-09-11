@@ -491,5 +491,36 @@ check_exit 0 "dev-status unknown exit"
 assert_contains "dev mode: UNKNOWN" "dev-status unknown line"
 assert_not_contains "dev mode: UP" "dev-status unknown not up"
 
+# D5: stale (deleted) owner exe is refused by dev-on and never reported UP.
+reset_state
+make_planner_proc 4247 101010 "$PLASMA_AUTO_TILER_BIN (deleted)"
+set_planner_owned 4247
+set_controller true
+run_just dev-on
+check_exit 1 "dev-on stale deleted exit"
+assert_contains "stale" "dev-on stale deleted msg"
+assert_calls_missing "start-test start" "dev-on stale no start"
+assert_calls_missing "setsid" "dev-on stale no launch"
+assert_calls_missing "dogfood" "dev-on stale no dogfood"
+
+reset_state
+make_planner_proc 4248 202020 "$PLASMA_AUTO_TILER_BIN (deleted)"
+set_planner_owned 4248
+set_controller false
+run_just dev-on
+check_exit 1 "dev-on stale recovery exit"
+assert_contains "stale" "dev-on stale recovery msg"
+assert_calls_missing "start-test start" "dev-on stale recovery no start"
+assert_calls_missing "setsid" "dev-on stale recovery no launch"
+
+reset_state
+make_planner_proc 4249 303030 "$PLASMA_AUTO_TILER_BIN (deleted)"
+set_planner_owned 4249
+set_controller true
+run_just dev-status
+check_exit 0 "dev-status stale exit"
+assert_contains "dev mode: SPLIT" "dev-status stale split"
+assert_not_contains "dev mode: UP" "dev-status stale not up"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]

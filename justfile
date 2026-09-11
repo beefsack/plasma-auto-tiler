@@ -153,6 +153,19 @@ dev-on:
     CTRL_WORD="$(controller_loaded_word)" || exit 1
     CTRL_UP=0
     [[ "$CTRL_WORD" == "loaded" ]] && CTRL_UP=1
+    # D5: a worktree owner whose exe is the kernel "(deleted)" form is a
+    # pre-rebuild launch, not the current build. Refuse rather than reporting
+    # already-up or recovering a controller against it; `just reload` safely
+    # swaps exactly this case. Automatic restart here would terminate a live
+    # Planner the controller depends on, so fail closed with one line.
+    if [[ "$PLAN_UP" -eq 1 ]]; then
+      SPLIT_PLANNER_EXE="$(readlink "/proc/$SPLIT_PLANNER_PID/exe" 2>/dev/null || true)"
+      case "$SPLIT_PLANNER_EXE" in *" (deleted)")
+        echo "error: Planner owning $PLANNER_BUS is stale (exe '$SPLIT_PLANNER_EXE'); run 'just reload' for a current build, refusing" >&2
+        exit 1
+        ;;
+      esac
+    fi
     if [[ "$PLAN_UP" -eq 1 && "$CTRL_UP" -eq 1 ]]; then
       echo "dev-on: dev mode already up (planner pid $SPLIT_PLANNER_PID owns $PLANNER_BUS, controller '$PLUGIN_ID' loaded); making no changes"
       if [[ -f "$RECEIPT_PTR" ]] && command -v jq >/dev/null 2>&1; then
@@ -760,8 +773,16 @@ dev-status:
         PLANNER_DETAIL="empty owner name"
       elif OWNER_PID2="$(busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "$OWNER_NAME2" 2>/dev/null | jq -r '.data[0] // empty' 2>/dev/null)" && [[ "$OWNER_PID2" =~ ^[0-9]+$ ]]; then
         if VSTART="$(planner_verify_worktree "$OWNER_PID2" 2>/dev/null)"; then
-          PLANNER_FACT="verified"
-          PLANNER_DETAIL="pid $OWNER_PID2"
+          OWNER_EXE2="$(readlink "/proc/$OWNER_PID2/exe" 2>/dev/null || true)"
+          case "$OWNER_EXE2" in *" (deleted)")
+            PLANNER_FACT="owned-unverified"
+            PLANNER_DETAIL="pid $OWNER_PID2 exe is stale (deleted); run 'just reload'"
+            ;;
+          *)
+            PLANNER_FACT="verified"
+            PLANNER_DETAIL="pid $OWNER_PID2"
+            ;;
+          esac
         else
           PLANNER_FACT="owned-unverified"
           PLANNER_DETAIL="pid $OWNER_PID2 did not verify as worktree $BIN planner-service"
