@@ -732,5 +732,115 @@ assert_calls_contain "setsid-env VERBOSE=1" "dev passthrough exports opt-in"
 assert_calls_contain "start-test stop 7" "dev passthrough teardown stop"
 unset PLASMA_AUTO_TILER_PLANNER_VERBOSE 2>/dev/null || true
 
+# start-test.sh: unloadScript=false verifies only with strict post false + receipt identity.
+START_STATE="$WORK/start-false-state"
+START_PROC="$WORK/start-false-proc"
+START_FAKE="$WORK/start-false-fake"
+START_CALLS="$WORK/start-false-calls.log"
+rm -rf "$START_STATE" "$START_PROC" "$START_FAKE"
+mkdir -p "$START_STATE" "$START_PROC" "$START_FAKE/bin"
+: > "$START_CALLS"
+START_KWIN_PID=5151
+START_KWIN_START=777888
+printf '%s\n' "$START_KWIN_PID" > "$START_STATE/kwin-pid"
+mkdir -p "$START_PROC/$START_KWIN_PID"
+printf '%s (kwin_wayland) S 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 %s\n' "$START_KWIN_PID" "$START_KWIN_START" > "$START_PROC/$START_KWIN_PID/stat"
+cat > "$START_FAKE/bin/busctl" <<'FAKEEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+state="${FAKE_START_STATE:?}"
+calls="${FAKE_START_CALLS:?}"
+case "$*" in
+  *"GetNameOwner s org.kde.KWin"*)
+    printf '{"type":"s","data":[":1.99"]}\n' ;;
+  *"GetConnectionUnixProcessID s :1.99"*)
+    pid="$(cat "$state/kwin-pid")"
+    printf '{"type":"u","data":[%s]}\n' "$pid" ;;
+  *"isScriptLoaded"*)
+    printf 'isScriptLoaded\n' >> "$calls"
+    if [[ ! -f "$state/post-unload" ]]; then
+      printf '{"type":"b","data":[true]}\n'
+    elif [[ -f "$state/post-malformed" ]]; then
+      printf '{"type":"b","data":[true,false]}\n'
+    elif [[ -f "$state/post-fail" ]]; then
+      exit 1
+    else
+      printf '{"type":"b","data":[false]}\n'
+    fi ;;
+  *"introspect org.kde.KWin /Scripting/Script"*)
+    printf 'introspect\n' >> "$calls"
+    printf '[{"type":"interface","name":"org.kde.kwin.Script"}]\n' ;;
+  *"org.kde.kwin.Script stop"*)
+    printf 'stop\n' >> "$calls"
+    touch "$state/post-unload"
+    exit 0 ;;
+  *"unloadScript s plasma-auto-tiler-kwin"*)
+    printf 'unloadScript\n' >> "$calls"
+    printf '{"type":"b","data":[false]}\n' ;;
+  *"allComponents"*)
+    printf '{"type":"ao","data":[[]]}\n' ;;
+  *)
+    echo "fake busctl: unhandled: $*" >&2
+    exit 1 ;;
+esac
+FAKEEOF
+chmod +x "$START_FAKE/bin/busctl"
+START_RDIR="$WORK/start-false-receipt"
+rm -rf "$START_RDIR"
+mkdir -p "$START_RDIR"
+START_BUILD="controller-v1-$(printf 'a%.0s' $(seq 1 64))"
+START_RECEIPT="$START_RDIR/ownership"
+jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "plasma-auto-tiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
+set +e
+FAKE_START_STATE="$START_STATE" FAKE_START_CALLS="$START_CALLS" PROC_ROOT="$START_PROC" CONTROLLER_OWNERSHIP_FILE="$START_RECEIPT" PATH="$START_FAKE/bin:$PATH" bash "$REPO_ROOT/scripts/start-test.sh" stop 9 >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 0 "start-test false-verified exit"
+assert_contains "unloaded" "start-test false-verified msg"
+if [[ ! -e "$START_RECEIPT" ]]; then PASS=$((PASS + 1)); else echo "FAIL [start-test false-verified receipt not removed]" >&2; cat "$OUTPUT" >&2; FAIL=$((FAIL + 1)); fi
+START_UNLOAD_COUNT="$(grep -c '^unloadScript$' "$START_CALLS" || true)"
+if [[ "$START_UNLOAD_COUNT" -eq 1 ]]; then PASS=$((PASS + 1)); else echo "FAIL [start-test false-verified single unload, got $START_UNLOAD_COUNT]" >&2; cat "$START_CALLS" >&2; FAIL=$((FAIL + 1)); fi
+if grep -Fq "isScriptLoaded" "$START_CALLS"; then PASS=$((PASS + 1)); else echo "FAIL [start-test false-verified postcondition checked]" >&2; FAIL=$((FAIL + 1)); fi
+# Failed/malformed postcondition must remain unverified: same setup but malformed post.
+rm -f "$START_STATE/post-unload"
+touch "$START_STATE/post-malformed"
+jq -cn --arg nonce "testnonce-12345678" --arg build "$START_BUILD" --arg plugin "plasma-auto-tiler-kwin" --argjson sid 9 --argjson pid "$START_KWIN_PID" --arg start "$START_KWIN_START" '{kind:"controller",nonce:$nonce,build:$build,plugin:$plugin,script_id:$sid,pid:$pid,start_identity:$start}' > "$START_RECEIPT"
+: > "$START_CALLS"
+set +e
+FAKE_START_STATE="$START_STATE" FAKE_START_CALLS="$START_CALLS" PROC_ROOT="$START_PROC" CONTROLLER_OWNERSHIP_FILE="$START_RECEIPT" PATH="$START_FAKE/bin:$PATH" bash "$REPO_ROOT/scripts/start-test.sh" stop 9 >"$OUTPUT" 2>&1
+EXIT=$?
+set -e
+check_exit 1 "start-test false-malformed-post exit"
+assert_contains "remains unverified" "start-test false-malformed-post unverified"
+if [[ -f "$START_RECEIPT" ]]; then PASS=$((PASS + 1)); else echo "FAIL [start-test false-malformed-post receipt must be retained]" >&2; FAIL=$((FAIL + 1)); fi
+rm -f "$START_STATE/post-malformed" "$START_STATE/post-fail" "$START_STATE/post-unload"
+
+# dev-off: controller failure still terminates a verified Planner, then fails without re-enable.
+reset_state
+set_controller true
+mkdir -p "$WORK/runtime/plasma-auto-tiler-dev"
+CTRL_FAIL_RDIR="$(mktemp -d "$WORK/runtime/plasma-auto-tiler-controller.XXXXXX")"
+printf '{"script_id":7}\n' > "$CTRL_FAIL_RDIR/ownership"
+printf '%s\n' "$CTRL_FAIL_RDIR/ownership" > "$WORK/runtime/plasma-auto-tiler-dev/controller-receipt-path"
+sleep 300 &
+CTRL_FAIL_PID=$!
+make_planner_proc "$CTRL_FAIL_PID" 999888
+printf '%s\n' "$CTRL_FAIL_PID" > "$WORK/runtime/plasma-auto-tiler-dev/planner-pid"
+printf '%s\n' "$PLASMA_AUTO_TILER_BIN" > "$WORK/runtime/plasma-auto-tiler-dev/planner-exe"
+printf '999888\n' > "$WORK/runtime/plasma-auto-tiler-dev/planner-start"
+touch "$WORK/state/stop-fails"
+run_just dev-off
+check_exit 1 "dev-off controller-fail exit"
+assert_contains "teardown remains unverified" "dev-off controller-fail unverified"
+assert_contains "planner $CTRL_FAIL_PID stopped" "dev-off controller-fail planner stopped"
+assert_calls_contain "start-test stop 7" "dev-off controller-fail stop attempted"
+assert_calls_missing "dogfood enable" "dev-off controller-fail no enable"
+assert_not_contains "re-enabled" "dev-off controller-fail no re-enable claim"
+if kill -0 "$CTRL_FAIL_PID" 2>/dev/null; then echo "FAIL [dev-off controller-fail planner still running]" >&2; FAIL=$((FAIL + 1)); kill "$CTRL_FAIL_PID" 2>/dev/null || true; wait "$CTRL_FAIL_PID" 2>/dev/null || true; else PASS=$((PASS + 1)); fi
+if [[ -f "$WORK/runtime/plasma-auto-tiler-dev/planner-pid" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev-off controller-fail state retained]" >&2; FAIL=$((FAIL + 1)); fi
+kill "$CTRL_FAIL_PID" 2>/dev/null || true
+wait "$CTRL_FAIL_PID" 2>/dev/null || true
+rm -f "$WORK/state/stop-fails"
+
 echo "PASS=$PASS FAIL=$FAIL"
 [[ "$FAIL" -eq 0 ]]

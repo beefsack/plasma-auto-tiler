@@ -30,8 +30,9 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
    `Ctrl-C` stops the tails and runs the existing fail-closed receipt-bound
    `dev-off`; a `dev-off` failure exits non-zero loudly. Missing log,
    receipt, KWin pid, `tail`, or `journalctl` fails closed through the same
-   teardown trap rather than tailing silently. An unverified teardown never
-   retries unload; it directs recovery through logout/login.
+   teardown trap rather than tailing silently. An unverified controller teardown
+   never retries unload; a verified Planner is still stopped before recovery is
+   directed through logout/login.
 - `dev-on` disables the packaged KWin script, verifies `isScriptLoaded`
   `false`, requires `org.plasmaautotiler.Planner` to be unowned (it does not
   stop units for you), builds, launches exactly
@@ -77,8 +78,9 @@ just dev-off     # unload exact script, stop recorded Planner, re-enable package
 - `dev-off` independently checks both halves. A loaded controller still
   requires its exact receipt and `start-test.sh stop`; an already-unloaded
   controller is never stopped with its stale ID. It terminates only a recorded
-  worktree Planner that passes the existing identity checks, skips an absent or
-  unverified Planner without killing it, then re-enables the packaged script.
+  worktree Planner that passes the existing identity checks even if controller
+  teardown fails, skips an absent or unverified Planner without killing it, and
+  re-enables the packaged script only after verified controller teardown.
 - `dev-status` is read-only: name owner PID plus `/proc/<pid>/exe`,
   `isScriptLoaded`, recorded script ID, and installed unit state. It also
   reports `dev mode: UP`, `DOWN`, `SPLIT`, or `UNKNOWN`; `UP` requires both a
@@ -125,7 +127,7 @@ busctl --user call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DB
 busctl --user --json=short call org.freedesktop.DBus /org/freedesktop/DBus org.freedesktop.DBus GetConnectionUnixProcessID s "<owner-name-from-above>"
 readlink "/proc/<owner-pid>/exe"
 tr '\0' ' ' < "/proc/<owner-pid>/cmdline"
-busctl --user status org.plasmaautotiler.Planner
+busctl --user --no-pager status org.plasmaautotiler.Planner
 devenv shell --impure -- bash scripts/start-test.sh start
 # Retain the printed CONTROLLER_OWNERSHIP_FILE receipt path and script ID.
 # Every later stop must bind both: CONTROLLER_OWNERSHIP_FILE=<receipt> bash
@@ -161,7 +163,7 @@ devenv shell --impure -- bash scripts/start-test.sh start
   `{"type":"b","data":[true]}` envelope.
 - Confirm `just dev-status` reports `dev mode: UP`.
 - Confirm the single-engine journal shapes below appear under the recorded
-  KWin PID (`journalctl --user _PID=<kwin-pid>`); loaded state alone never
+   KWin PID (`journalctl --user --no-pager _PID=<kwin-pid>`); loaded state alone never
   proves callbacks.
 
 ### Restore
@@ -222,7 +224,7 @@ prove live callbacks.
 
 ## Journal Line Forms
 
-Filter by the recorded KWin PID only: `journalctl --user _PID=<kwin-pid>`
+Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
 (never `journalctl --system`). The adapter emits exactly two bounded,
 redacted line shapes with prefix `plasma-auto-tiler:plan` (no scope, signal,
 identity, or payload detail):

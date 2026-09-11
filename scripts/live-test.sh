@@ -240,7 +240,7 @@ capture_pid_cursor() {
   KWIN_PID="$(find_kwin_pid)" || fail "could not identify one KWin process"
   capture_kwin_start_identity || fail "could not capture KWin PID/start identity"
   local cursor_out
-  cursor_out="$("$JOURNALCTL_BIN" --user --quiet --show-cursor -n 1)" || fail "could not capture the journal cursor"
+  cursor_out="$("$JOURNALCTL_BIN" --user --no-pager --quiet --show-cursor -n 1)" || fail "could not capture the journal cursor"
   JOURNAL_CURSOR="${cursor_out##*-- cursor: }"
   if [[ -z "$JOURNAL_CURSOR" || "$JOURNAL_CURSOR" == "$cursor_out" ]]; then
     fail "journal cursor output did not contain an opaque cursor token"

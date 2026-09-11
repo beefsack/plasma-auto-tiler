@@ -376,23 +376,45 @@ kwin_identity_matches_receipt() {
 
 exact_cleanup() {
   local id="$1" plugin="$2" rc=0 out after receipt="${OWNED_RECEIPT:-}"
+  local stop_rc=0 unload_false=0 unload_bad=0 after_ok=0 identity_ok=0
   EXACT_CLEANUP_AFTER=""
   verify_exact_script "$id" "$plugin" || return 1
-  busctl $BUS_SCOPE call "$BUS_DEST" "/Scripting/Script$id" $BUS_SCRIPT_IFACE stop >/dev/null 2>&1 || rc=1
-  out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE unloadScript s "$plugin" 2>/dev/null)" || rc=1
-  if ! strict_json_matches "$unload_valid" "$out"; then
+  busctl $BUS_SCOPE call "$BUS_DEST" "/Scripting/Script$id" $BUS_SCRIPT_IFACE stop >/dev/null 2>&1 || { stop_rc=1; rc=1; }
+  if ! out="$(busctl $BUS_SCOPE --json=short call "$BUS_DEST" "$BUS_PATH" $BUS_SCRIPTING_IFACE unloadScript s "$plugin" 2>/dev/null)"; then
+    echo "error: unloadScript call failed; teardown remains unverified" >&2
+    rc=1
+    unload_bad=1
+    out=""
+  elif ! strict_json_matches "$unload_valid" "$out"; then
     echo "error: unloadScript reply was malformed; teardown remains unverified" >&2
     rc=1
+    unload_bad=1
   elif [[ "$(jq -r '.data[0]' <<<"$out")" != true ]]; then
-    echo "error: unloadScript returned false; teardown remains unverified" >&2
-    rc=1
+    unload_false=1
   fi
-  # A malformed/false unload reply is not success by itself. Only the strict
-  # postcondition can turn it into verified teardown.
+  # Strict postcondition plus receipt-bound KWin identity are the only
+  # positive proof. A failed/malformed isScriptLoaded call leaves after empty
+  # and therefore unverified. No plugin-name fallback, no unload retries.
   after="$(plugin_loaded_word 2>/dev/null || true)"
   EXACT_CLEANUP_AFTER="$after"
-  [[ "$after" == not-loaded ]] || rc=1
-  if [[ "$rc" -eq 0 ]] && ! kwin_identity_matches_receipt "$receipt"; then
+  [[ "$after" == not-loaded ]] && after_ok=1
+  if kwin_identity_matches_receipt "$receipt" 2>/dev/null; then
+    identity_ok=1
+  else
+    identity_ok=0
+  fi
+  if [[ "$unload_false" -eq 1 ]]; then
+    if [[ "$stop_rc" -eq 0 && "$unload_bad" -eq 0 && "$after_ok" -eq 1 && "$identity_ok" -eq 1 ]]; then
+      return 0
+    fi
+    echo "error: unloadScript returned false; teardown remains unverified" >&2
+    if [[ "$identity_ok" -eq 0 ]]; then
+      echo "error: KWin PID/start identity after unloadScript did not match the immutable ownership receipt; teardown remains unverified" >&2
+    fi
+    return 1
+  fi
+  [[ "$after_ok" -eq 1 ]] || rc=1
+  if [[ "$identity_ok" -eq 0 ]]; then
     echo "error: KWin PID/start identity after unloadScript did not match the immutable ownership receipt; teardown remains unverified" >&2
     rc=1
   fi

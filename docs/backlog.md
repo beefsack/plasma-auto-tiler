@@ -675,6 +675,12 @@ Only meaningful pending or active work is listed.
   runtimes | [comparison](reference-wm-comparison.md)
 - P3 | parked | Publish the reproducible KPackage artifact to KDE Store and
   GitHub Release after MVP delivery dependencies are complete | [delivered foundations](changes/archive/delivered-foundations.md)
+- P1 | active | Repair the `just dev` teardown/restart loop: Ctrl-C leaves a
+  SPLIT session (controller unloaded, Planner alive) because `unloadScript`
+  returns false while the script is in fact gone, so the next `just dev`
+  refuses. Also suppress the `busctl status` pager block that blocks
+  `just dev` on user input. |
+  [change](changes/dev-loop-teardown.md)
 - P2 | investigate KWin controller silent unload | Determine the actor or
   lifecycle event that unloads a manually loaded controller without a recorded
   `dev-off`; current KWin 6.7.4 APIs and retained journal evidence cannot

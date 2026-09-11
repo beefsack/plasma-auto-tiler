@@ -323,7 +323,7 @@ dev-on:
       echo "error: $PLANNER_BUS was not owned by a verified worktree Planner within the bounded window (launch hint ${LAUNCH_PID:-unknown}); see $PLANNER_LOG" >&2
       exit 1
     fi
-    busctl --user status "$PLANNER_BUS" || { echo "error: busctl status for $PLANNER_BUS failed" >&2; exit 1; }
+    busctl --user --no-pager status "$PLANNER_BUS" || { echo "error: busctl status for $PLANNER_BUS failed" >&2; exit 1; }
     # 7. Load the worktree KWin bundle. start-test.sh owns the duplicate
     # plugin guard; do not reimplement it here.
     CONTROLLER_OWNERSHIP_FILE="$RECEIPT" bash "$REPO_ROOT/scripts/start-test.sh" start || {
@@ -582,9 +582,14 @@ dev-off:
       PLANNER_REASON="no recorded planner start identity ($START_FILE missing)"
     fi
     # Controller teardown only when loaded is strictly known. A known false
-    # never runs the exact stop and never requires a receipt.
+    # never runs the exact stop and never requires a receipt. Exact
+    # receipt/script-ID ownership is retained: no plugin-name fallback, no
+    # unload retries. A controller failure is recorded but never prevents an
+    # independently verified Planner from being terminated below.
     RECEIPT=""
     SCRIPT_ID=""
+    CONTROLLER_RC=0
+    CONTROLLER_FAIL=""
     if [[ "$CTRL_STATE" == "loaded" ]]; then
       if [[ -f "$RECEIPT_PTR" ]]; then
         RECEIPT="$(cat "$RECEIPT_PTR")"
@@ -595,22 +600,29 @@ dev-off:
         if [[ "${#LIVE[@]}" -eq 1 ]]; then
           RECEIPT="${LIVE[0]}"
         elif [[ "${#LIVE[@]}" -eq 0 ]]; then
-          echo "error: controller is loaded but no controller receipt found under $RUNTIME_DIR (and $RECEIPT_PTR missing); refusing ambiguous teardown" >&2
-          exit 1
+          CONTROLLER_FAIL="controller is loaded but no controller receipt found under $RUNTIME_DIR (and $RECEIPT_PTR missing); refusing ambiguous teardown"
         else
-          echo "error: multiple controller receipts found; refusing ambiguous teardown:" >&2
+          CONTROLLER_FAIL="multiple controller receipts found; refusing ambiguous teardown"
           printf '  %s\n' "${LIVE[@]}" >&2
-          exit 1
         fi
       fi
-      [[ -n "$RECEIPT" ]] || { echo "error: empty controller receipt path" >&2; exit 1; }
-      [[ -f "$RECEIPT" && ! -L "$RECEIPT" ]] || { echo "error: controller receipt missing or symlinked: $RECEIPT" >&2; exit 1; }
-      SCRIPT_ID="$(jq -r '.script_id // empty' "$RECEIPT" 2>/dev/null || true)"
-      if [[ ! "$SCRIPT_ID" =~ ^[0-9]+$ ]] || [[ "$SCRIPT_ID" -gt 2147483647 ]]; then
-        echo "error: controller receipt has no valid script_id: $RECEIPT" >&2
-        exit 1
+      [[ -n "$CONTROLLER_FAIL" ]] || [[ -n "$RECEIPT" ]] || CONTROLLER_FAIL="empty controller receipt path"
+      [[ -n "$CONTROLLER_FAIL" ]] || [[ -f "$RECEIPT" && ! -L "$RECEIPT" ]] || CONTROLLER_FAIL="controller receipt missing or symlinked: $RECEIPT"
+      if [[ -z "$CONTROLLER_FAIL" ]]; then
+        SCRIPT_ID="$(jq -r '.script_id // empty' "$RECEIPT" 2>/dev/null || true)"
+        if [[ ! "$SCRIPT_ID" =~ ^[0-9]+$ ]] || [[ "$SCRIPT_ID" -gt 2147483647 ]]; then
+          CONTROLLER_FAIL="controller receipt has no valid script_id: $RECEIPT"
+        fi
       fi
-      CONTROLLER_OWNERSHIP_FILE="$RECEIPT" bash "$REPO_ROOT/scripts/start-test.sh" stop "$SCRIPT_ID" || { echo "error: start-test.sh stop failed; leaving Planner and packaged script untouched" >&2; exit 1; }
+      if [[ -n "$CONTROLLER_FAIL" ]]; then
+        echo "error: $CONTROLLER_FAIL" >&2
+        CONTROLLER_RC=1
+      elif CONTROLLER_OWNERSHIP_FILE="$RECEIPT" bash "$REPO_ROOT/scripts/start-test.sh" stop "$SCRIPT_ID"; then
+        CONTROLLER_RC=0
+      else
+        echo "error: start-test.sh stop failed; teardown remains unverified" >&2
+        CONTROLLER_RC=1
+      fi
     else
       echo "dev-off: controller '$PLUGIN_ID' already unloaded; skipping exact stop"
     fi
@@ -636,6 +648,14 @@ dev-off:
       PLANNER_STOPPED=1
     else
       echo "dev-off: no verified worktree Planner to stop ($PLANNER_REASON); skipping Planner kill"
+    fi
+    if [[ "$CTRL_STATE" == "loaded" && "$CONTROLLER_RC" -ne 0 ]]; then
+      if [[ "$PLANNER_STOPPED" -eq 1 ]]; then
+        echo "dev-off: controller teardown failed but planner $RECORDED_PID stopped; teardown remains unverified (package enable skipped, state retained)" >&2
+      else
+        echo "error: controller teardown failed; teardown remains unverified (package enable skipped, state retained)" >&2
+      fi
+      exit 1
     fi
     bash "$REPO_ROOT/scripts/dogfood-install.sh" enable || { echo "error: dogfood-install.sh enable failed" >&2; exit 1; }
     rm -f -- "$PID_FILE" "$EXE_FILE" "$START_FILE" "$RECEIPT_PTR" "$STATE_DIR/planner-log"
