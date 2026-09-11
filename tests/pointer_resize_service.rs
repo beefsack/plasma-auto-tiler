@@ -811,23 +811,17 @@ fn keyboard_request_for(
 }
 
 #[test]
-fn planner_pointer_method_is_distinct_and_bounded() {
-    use plasma_auto_tiler::planner_service::{
-        POINTER_RESIZE_MAX_REPLY, POINTER_RESIZE_METHOD, RESIZE_MAX_REPLY, RESIZE_METHOD,
-    };
-    assert_eq!(POINTER_RESIZE_METHOD, "DescribePointerResize");
-    assert_ne!(POINTER_RESIZE_METHOD, RESIZE_METHOD);
-    assert_eq!(POINTER_RESIZE_MAX_REPLY, RESIZE_MAX_REPLY);
-    assert_eq!(POINTER_RESIZE_MAX_REPLY, 64 * 1024);
-    // Distinct D-Bus signature check mirrors the keyboard route.
-    let message =
-        zbus::message::Message::method_call("/org/plasmaautotiler/Planner", POINTER_RESIZE_METHOD)
-            .unwrap()
-            .destination("org.plasmaautotiler.Planner")
-            .unwrap()
-            .interface("org.plasmaautotiler.Planner1")
-            .unwrap()
-            .build(&("{\"v\":1}".to_owned(),))
-            .unwrap();
+fn planner_uses_one_bounded_plan_method() {
+    use plasma_auto_tiler::planner_service::{PLAN_MAX_REPLY, PLAN_METHOD};
+    assert_eq!(PLAN_METHOD, "DescribePlan");
+    assert_eq!(PLAN_MAX_REPLY, 64 * 1024);
+    let message = zbus::message::Message::method_call("/org/plasmaautotiler/Planner", PLAN_METHOD)
+        .unwrap()
+        .destination("org.plasmaautotiler.Planner")
+        .unwrap()
+        .interface("org.plasmaautotiler.Planner1")
+        .unwrap()
+        .build(&("{\"v\":1}".to_owned(),))
+        .unwrap();
     assert_eq!(message.body().signature().to_string(), "s");
 }

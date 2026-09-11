@@ -7,7 +7,56 @@ import { createContext, runInContext } from "node:vm";
 import { describe, it } from "node:test";
 
 const SHIPPED_BUNDLE = "contents/code/main.js";
-const LEGACY_REMOVED_DIAGNOSTIC = "plasma-auto-tiler:legacy-engine-removed";
+const PLAN_METHOD_TOKEN = "DescribePlan";
+
+// Minimal KWin ambient surface for the Stage 4 plan entry: the tray
+// heartbeat plus the single DescribePlan adapter. The stub workspace carries
+// no windows, so observation fails closed and the entry stays silent.
+function makeKWinStub(): KWinStubResult {
+    const diagnostics: string[] = [];
+    const dbusCalls: string[] = [];
+
+    function QTimer(this: Record<string, unknown>): void {
+        const self = this as Record<string, unknown> & {
+            interval: number;
+            singleShot: boolean;
+            timeout: { connect: (callback: () => void) => void };
+        };
+        self.interval = 0;
+        self.singleShot = true;
+        self.timeout = { connect: () => {} };
+        (this as Record<string, unknown>)["start"] = () => {};
+        (this as Record<string, unknown>)["stop"] = () => {};
+    }
+
+    function inertSignal(): unknown {
+        return {
+            connect: (): void => {},
+            disconnect: (): void => {},
+        };
+    }
+
+    const context = createContext({
+        callDBus: (...args: unknown[]) => {
+            dbusCalls.push(String(args[3]));
+        },
+        registerShortcut: (): boolean => true,
+        readConfig: (): string => "cosmic",
+        QTimer: QTimer as unknown,
+        workspace: {
+            activeWindow: null,
+            windowList: (): unknown[] => [],
+            windowAdded: inertSignal(),
+            windowRemoved: inertSignal(),
+            windowActivated: inertSignal(),
+            screensChanged: inertSignal(),
+            currentDesktopChanged: inertSignal(),
+        },
+        console: { ...console, log: (message: string) => diagnostics.push(message) },
+    });
+
+    return { context, diagnostics, dbusCalls };
+}
 
 // Post-ES2017 syntax and non-transpiled built-ins this KWin QJSEngine (ES2017)
 // rejects. These are the confirmed-unsupported tokens; pre-ES2017 methods are
@@ -41,40 +90,8 @@ interface KWinStubResult {
     readonly dbusCalls: readonly string[];
 }
 
-// Minimal KWin ambient surface for the Group D inert entry: no TileController,
-// no shortcuts, no workspace or window signal subscriptions, no Custom Tile
-// actuation. The entry only starts the tray publisher heartbeat and logs the
-// legacy-removed marker. Group E: route-diag/build-identity lines are gone.
-function makeKWinStub(): KWinStubResult {
-    const diagnostics: string[] = [];
-    const dbusCalls: string[] = [];
-
-    function QTimer(this: Record<string, unknown>): void {
-        const self = this as Record<string, unknown> & {
-            interval: number;
-            singleShot: boolean;
-            timeout: { connect: (callback: () => void) => void };
-        };
-        self.interval = 0;
-        self.singleShot = true;
-        self.timeout = { connect: () => {} };
-        (this as Record<string, unknown>)["start"] = () => {};
-        (this as Record<string, unknown>)["stop"] = () => {};
-    }
-
-    const context = createContext({
-        callDBus: (...args: unknown[]) => {
-            dbusCalls.push(String(args[3]));
-        },
-        QTimer: QTimer as unknown,
-        console: { ...console, log: (message: string) => diagnostics.push(message) },
-    });
-
-    return { context, diagnostics, dbusCalls };
-}
-
 describe("shipped artifact smoke execution", () => {
-    it("executes the built contents/code/main.js inert entry through a KWin stub", () => {
+    it("executes the built contents/code/main.js plan entry through a KWin stub", () => {
         const bundle = readFileSync(SHIPPED_BUNDLE, "utf8");
         const stub = makeKWinStub();
         try {
@@ -82,14 +99,18 @@ describe("shipped artifact smoke execution", () => {
         } catch (error) {
             assert.fail(`evaluating ${SHIPPED_BUNDLE} threw ${String(error)}`);
         }
-        assert.ok(stub.diagnostics.includes(LEGACY_REMOVED_DIAGNOSTIC));
+        assert.ok(!stub.diagnostics.some((entry) => entry.includes("legacy-engine-removed")));
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("plasma-auto-tiler:route-diag")));
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));
-        assert.ok(!bundle.includes("registerShortcut"));
+        assert.ok(bundle.includes(PLAN_METHOD_TOKEN));
+        assert.ok(bundle.includes("registerShortcut"));
+        assert.ok(!bundle.includes("DescribeMovement"));
+        assert.ok(!bundle.includes("DescribeFocus"));
+        assert.ok(!bundle.includes("DescribeResize"));
     });
 
-    it("builds a fresh inert bundle with no legacy engine", () => {
+    it("builds a fresh plan bundle with the single DescribePlan route", () => {
         const outDir = mkdtempSync(join(tmpdir(), "pat-bundle-"));
         const outFile = join(outDir, "main.js");
         execFileSync("npx", ["esbuild", "src/entry.ts", "--bundle", "--format=iife", "--target=es2017", `--outfile=${outFile}`], {
@@ -97,16 +118,20 @@ describe("shipped artifact smoke execution", () => {
             stdio: "pipe",
         });
         const bundle = readFileSync(outFile, "utf8");
-        assert.ok(bundle.includes("legacy-engine-removed"));
+        assert.ok(bundle.includes(PLAN_METHOD_TOKEN));
         assert.ok(!bundle.includes("TileController"));
-        assert.ok(!bundle.includes("registerShortcut"));
+        assert.ok(bundle.includes("registerShortcut"));
+        assert.ok(!bundle.includes("legacy-engine-removed"));
+        assert.ok(!bundle.includes("DescribeMovement"));
+        assert.ok(!bundle.includes("DescribeFocus"));
+        assert.ok(!bundle.includes("DescribeResize"));
         const stub = makeKWinStub();
         try {
             runInContext(bundle, stub.context, { filename: outFile });
         } catch (error) {
             assert.fail(`evaluating temp bundle threw ${String(error)}`);
         }
-        assert.ok(stub.diagnostics.includes(LEGACY_REMOVED_DIAGNOSTIC));
+        assert.ok(!stub.diagnostics.some((entry) => entry.includes("legacy-engine-removed")));
     });
 
     it("keeps ordered module initialization without deferred CJS wrappers", () => {

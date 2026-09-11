@@ -2,13 +2,8 @@
 //!
 //! Contract identity: service `org.plasmaautotiler.Planner`, object
 //! `/org/plasmaautotiler/Planner`, interface `org.plasmaautotiler.Planner1`,
-//! methods `DescribeFocus`, `DescribeMovement`, `DescribeResize`, and
-//! `DescribePointerResize`. Group B removal: the exact-three trio runtime
-//! was removed without a general-N replacement, so the four transaction
-//! routes keep their D-Bus identity but fail closed as unavailable rather
-//! than faking plans. Group E: nested-manifest parsing/forensics,
-//! route-diag, build-identity, and KWin direct-parent identity were removed.
-//! No general-N planning is implemented here.
+//! method `DescribePlan`. It is the sole general-N protocol route over the
+//! retained session/reconcile/directional/cosmic_v1 policy.
 //!
 //! Boundary rules: no Rust-to-KWin calls (only `org.freedesktop.DBus`
 //! credential queries for same-UID caller verification), no persistence, no
@@ -18,11 +13,8 @@
 //! terminal. Caller authorization is exactly one fail-closed same-UID check:
 //! the caller unique name's Unix UID must equal the Planner geteuid.
 //!
-//! Minimal bounded diagnostic: Rust owns the `Rejected { kind }` outcome
-//! (the fixed in-band `kind=unauthorized` body below); the KWin adapters map
-//! transport errors to their own reject tokens. At most one bounded
-//! `plasma-auto-tiler:planner` stderr line per command, carrying only the
-//! closed route/kind vocabulary below.
+//! Rust returns domain rejections in-band; the KWin adapter journals the
+//! bounded command and rejection lines after it receives each reply.
 
 use std::sync::Arc;
 
@@ -31,64 +23,64 @@ use zbus::fdo::{RequestNameFlags, RequestNameReply};
 use zbus::message::Type;
 use zbus::{MatchRule, fdo::NameOwnerChanged};
 
-use crate::focus_service::FOCUS_MAX_REPLY_BYTES;
-use crate::movement_service::MOVEMENT_MAX_REPLY_BYTES;
-use crate::resize_service::RESIZE_MAX_REPLY_BYTES;
-
 pub const SERVICE: &str = "org.plasmaautotiler.Planner";
 pub const OBJECT: &str = "/org/plasmaautotiler/Planner";
 pub const INTERFACE: &str = "org.plasmaautotiler.Planner1";
-pub const FOCUS_METHOD: &str = "DescribeFocus";
-/// Bounded focus reply cap, mirroring the portable focus service bound.
-pub const FOCUS_MAX_REPLY: usize = FOCUS_MAX_REPLY_BYTES;
-pub const MOVEMENT_METHOD: &str = "DescribeMovement";
-/// Bounded movement reply cap, mirroring the portable movement service bound.
-pub const MOVEMENT_MAX_REPLY: usize = MOVEMENT_MAX_REPLY_BYTES;
-pub const RESIZE_METHOD: &str = "DescribeResize";
-/// Bounded resize reply cap, mirroring the portable resize service bound.
-pub const RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
-pub const POINTER_RESIZE_METHOD: &str = "DescribePointerResize";
-/// Bounded pointer-resize reply cap (same portable resize service bound).
-pub const POINTER_RESIZE_MAX_REPLY: usize = RESIZE_MAX_REPLY_BYTES;
-pub const KWIN_SERVICE: &str = "org.kde.KWin";
-
-/// Bounded fixed in-band unauthorized rejection for exactly four routes:
-/// `DescribeFocus`, `DescribeMovement`, `DescribeResize`, and
-/// `DescribePointerResize`. Never parses or echoes request data; those four
-/// routes return exactly this body as `Ok`, never as `PlannerError`.
+#[cfg(test)]
+const KWIN_SERVICE: &str = "org.kde.KWin";
+#[cfg(test)]
+const FOCUS_METHOD: &str = "DescribeFocus";
+#[cfg(test)]
+const MOVEMENT_METHOD: &str = "DescribeMovement";
+#[cfg(test)]
+const RESIZE_METHOD: &str = "DescribeResize";
+#[cfg(test)]
+const POINTER_RESIZE_METHOD: &str = "DescribePointerResize";
+#[cfg(test)]
+const FOCUS_MAX_REPLY: usize = 64 * 1024;
+#[cfg(test)]
+const MOVEMENT_MAX_REPLY: usize = 64 * 1024;
+#[cfg(test)]
+const RESIZE_MAX_REPLY: usize = 64 * 1024;
+#[cfg(test)]
+const POINTER_RESIZE_MAX_REPLY: usize = 64 * 1024;
+/// Stage 4 stateless general-N planning route: complete normalized current
+/// observation plus one parameterized command in, full target geometries or a
+/// bounded recoverable rejection kind out. Stateless per call (ephemeral
+/// session, no retained pending/divergence), so fresh observations recover
+/// after any rejection. Rust owns all policy via `crate::planner_protocol`.
+pub const PLAN_METHOD: &str = "DescribePlan";
+/// Bounded plan request cap (mirrors the portable planner protocol bound).
+pub const PLAN_MAX_REQUEST: usize = crate::planner_protocol::PLAN_MAX_REQUEST_BYTES;
+/// Bounded plan reply cap (mirrors the portable planner protocol bound).
+pub const PLAN_MAX_REPLY: usize = crate::planner_protocol::PLAN_MAX_REPLY_BYTES;
+/// Bounded fixed in-band unauthorized rejection. It never parses or echoes
+/// request data and is returned as `Ok`, never as `PlannerError`.
 pub const UNAUTHORIZED_REPLY: &str =
     "{\"v\":1,\"outcome\":\"rejected\",\"kind\":\"unauthorized\",\"message\":\"unauthorized\"}";
 /// Bound for the fixed unauthorized rejection (well under every reply cap).
 pub const MAX_UNAUTHORIZED_REPLY_BYTES: usize = 256;
 
-/// Fixed unauthorized rejection body for the four in-band routes.
+/// Fixed unauthorized rejection body for the single protocol route.
 #[must_use]
 pub fn unauthorized_rejection() -> String {
     UNAUTHORIZED_REPLY.to_owned()
 }
 
-/// Pure unauthorized-channel decision. Returns true iff `method` is one of
-/// the exactly four in-band routes (`DescribeFocus`, `DescribeMovement`,
-/// `DescribeResize`, `DescribePointerResize`).
-#[must_use]
-pub fn unauthorized_uses_inband_rejection(method: &str) -> bool {
+#[cfg(test)]
+fn unauthorized_uses_inband_rejection(method: &str) -> bool {
     matches!(
         method,
-        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD
+        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD | PLAN_METHOD
     )
 }
 
-/// Production unauthorized-channel helper. Takes the route method identifier
-/// and returns exactly what the authorization-failure branch must return:
-/// the fixed in-band unauthorized JSON as `Ok` for exactly `DescribeFocus`,
-/// `DescribeMovement`, `DescribeResize`, `DescribePointerResize` (and
-/// fail-closed D-Bus `Err(PlannerError::Unauthorized)` for any other method).
-pub fn unauthorized_response(method: &str) -> Result<String, PlannerError> {
-    match method {
-        FOCUS_METHOD | MOVEMENT_METHOD | RESIZE_METHOD | POINTER_RESIZE_METHOD => {
-            Ok(unauthorized_rejection())
-        }
-        _ => Err(PlannerError::Unauthorized),
+#[cfg(test)]
+fn unauthorized_response(method: &str) -> Result<String, PlannerError> {
+    if unauthorized_uses_inband_rejection(method) {
+        Ok(unauthorized_rejection())
+    } else {
+        Err(PlannerError::Unauthorized)
     }
 }
 
@@ -114,12 +106,36 @@ pub enum PlannerError {
 #[derive(Clone, Debug)]
 pub struct PlannerEndpoint {
     operation_lock: Arc<async_lock::Mutex<()>>,
-    // Group B: the exact-three trio service was removed. No shared session
-    // is owned here; the four D-Bus routes fail closed as unavailable until
-    // a full general-N protocol lands. No generic IPC is introduced.
 }
 
 impl PlannerEndpoint {
+    #[cfg(test)]
+    fn evaluate_focus_request(&self, _request: &str) -> Result<String, PlannerError> {
+        Err(PlannerError::Unavailable(
+            "planner trio runtime was removed".to_owned(),
+        ))
+    }
+
+    #[cfg(test)]
+    fn evaluate_movement_request(&self, _request: &str) -> Result<String, PlannerError> {
+        Err(PlannerError::Unavailable(
+            "planner trio runtime was removed".to_owned(),
+        ))
+    }
+
+    #[cfg(test)]
+    fn evaluate_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
+        Err(PlannerError::Unavailable(
+            "planner trio runtime was removed".to_owned(),
+        ))
+    }
+
+    #[cfg(test)]
+    fn evaluate_pointer_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
+        Err(PlannerError::Unavailable(
+            "planner trio runtime was removed".to_owned(),
+        ))
+    }
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -127,37 +143,19 @@ impl PlannerEndpoint {
         }
     }
 
-    /// Removed trio backend: focus has no planner session to transact over.
-    /// Callers hold the single-flight guard and pass caller verification;
-    /// this returns fail-closed unavailable without touching any session.
-    fn evaluate_focus_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    /// Removed trio backend: movement has no planner session to transact over.
-    /// Same single-flight contract as the focus route; always unavailable.
-    fn evaluate_movement_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    /// Removed trio backend: keyboard resize has no planner session.
-    /// Same single-flight contract; always unavailable.
-    fn evaluate_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
-    }
-
-    /// Removed trio backend: pointer resize has no planner session.
-    /// Same single-flight contract as the keyboard route; always unavailable.
-    fn evaluate_pointer_resize_request(&self, _request: &str) -> Result<String, PlannerError> {
-        Err(PlannerError::Unavailable(
-            "planner trio runtime was removed".to_owned(),
-        ))
+    /// Stage 4 stateless planning route. Pure delegation to
+    /// `crate::planner_protocol::evaluate_plan_json` (ephemeral session per
+    /// call, no retained pending/divergence); application-level rejections
+    /// arrive as `Ok` JSON so fresh observations recover. Only an oversize
+    /// reply fails closed as `Unavailable`.
+    fn evaluate_plan_request(&self, request: &str) -> Result<String, PlannerError> {
+        let reply = crate::planner_protocol::evaluate_plan_json(request);
+        if reply.len() > PLAN_MAX_REPLY {
+            return Err(PlannerError::Unavailable(
+                "reply exceeds size bound".to_owned(),
+            ));
+        }
+        Ok(reply)
     }
 }
 
@@ -165,29 +163,6 @@ impl Default for PlannerEndpoint {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Minimal bounded outcome diagnostic: at most one stderr line per command,
-/// emitted only after the single-flight guard is released. Closed route/kind
-/// vocabulary only; never request bytes, bus names, or PIDs. Pure formatting
-/// plus eprintln; never alters wire behavior.
-const DIAG_PREFIX: &str = "plasma-auto-tiler:planner";
-
-fn diag_route_valid(route: &str) -> bool {
-    matches!(route, "focus" | "movement" | "resize" | "pointer")
-}
-
-fn diag_kind_valid(kind: &str) -> bool {
-    matches!(
-        kind,
-        "busy" | "connection-lost" | "unauthorized" | "unavailable" | "oversize"
-    )
-}
-
-fn emit_outcome(route: &str, kind: &str) {
-    let route = if diag_route_valid(route) { route } else { "unknown" };
-    let kind = if diag_kind_valid(kind) { kind } else { "unknown" };
-    eprintln!("{DIAG_PREFIX}:route={route}:result=rejected:kind={kind}");
 }
 
 /// Fail-closed same-UID caller verification shared by production and
@@ -215,25 +190,35 @@ async fn verify_planner_caller(connection: &zbus::Connection, caller: &str) -> b
 
 #[zbus::interface(name = "org.plasmaautotiler.Planner1")]
 impl PlannerEndpoint {
-    async fn describe_focus(
+    async fn describe_plan(
         &self,
         request: String,
         #[zbus(header)] header: zbus::message::Header<'_>,
         #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
     ) -> Result<String, PlannerError> {
-        // Focus route: same bounded non-queuing single-flight, same-UID
-        // verification, connection-loss, and reply-size checks. Group B: the
-        // trio backend was removed, so authorized requests fail closed as
-        // unavailable. No generic IPC is introduced.
+        // Stage 4 stateless planning route: same bounded non-queuing
+        // single-flight, same-UID verification, connection-loss, and
+        // reply-size checks as the four legacy routes. Authorized requests
+        // delegate to the stateless planner protocol (ephemeral session per
+        // call over retained session/reconcile/directional/cosmic_v1 policy);
+        // application rejections arrive as `Ok` JSON and stay silent like
+        // success, so fresh observations recover after any rejection.
         // Diagnostics are emitted only after the guard is released (see
         // `emit_outcome` contract).
+        if request.len() > PLAN_MAX_REQUEST {
+            let Some(_guard) = self.operation_lock.try_lock() else {
+                return Err(PlannerError::Unavailable("planner is busy".to_owned()));
+            };
+            drop(_guard);
+            return Err(PlannerError::Unavailable(
+                "request exceeds size bound".to_owned(),
+            ));
+        }
         let Some(_guard) = self.operation_lock.try_lock() else {
-            emit_outcome("focus", "busy");
             return Err(PlannerError::Unavailable("planner is busy".to_owned()));
         };
         if emitter.connection().is_closed() {
             drop(_guard);
-            emit_outcome("focus", "connection-lost");
             return Err(PlannerError::Unavailable(
                 "planner serving connection was lost".to_owned(),
             ));
@@ -241,198 +226,29 @@ impl PlannerEndpoint {
         let caller = header.sender().map(ToString::to_string);
         let Some(caller) = caller.as_deref() else {
             drop(_guard);
-            emit_outcome("focus", "unauthorized");
-            return unauthorized_response(FOCUS_METHOD);
+            return Ok(unauthorized_rejection());
         };
         if !verify_planner_caller(emitter.connection(), caller).await {
             drop(_guard);
-            emit_outcome("focus", "unauthorized");
-            return unauthorized_response(FOCUS_METHOD);
+            return Ok(unauthorized_rejection());
         };
-        let reply = match self.evaluate_focus_request(&request) {
+        let reply = match self.evaluate_plan_request(&request) {
             Ok(reply) => reply,
             Err(error) => {
                 drop(_guard);
-                emit_outcome("focus", "unavailable");
                 return Err(error);
             }
         };
-        if reply.len() > FOCUS_MAX_REPLY {
+        if reply.len() > PLAN_MAX_REPLY {
             drop(_guard);
-            emit_outcome("focus", "oversize");
             return Err(PlannerError::Unavailable(
                 "reply exceeds size bound".to_owned(),
             ));
         }
-        // Success is silent (zero diagnostic lines): the reply is returned
-        // with the lock released and no logging, so output never triggers
-        // bus activation and never holds the operation lock.
-        drop(_guard);
-        Ok(reply)
-    }
-
-    async fn describe_movement(
-        &self,
-        request: String,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
-    ) -> Result<String, PlannerError> {
-        // Movement route: same bounded non-queuing single-flight,
-        // same-UID verification, connection-loss, and reply-size checks.
-        // Group B: the trio backend was removed, so authorized requests fail
-        // closed as unavailable. No generic IPC is introduced.
-        // Diagnostics are emitted only after the guard is released (see
-        // `emit_outcome` contract).
-        let Some(_guard) = self.operation_lock.try_lock() else {
-            emit_outcome("movement", "busy");
-            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
-        };
-        if emitter.connection().is_closed() {
-            drop(_guard);
-            emit_outcome("movement", "connection-lost");
-            return Err(PlannerError::Unavailable(
-                "planner serving connection was lost".to_owned(),
-            ));
-        }
-        let caller = header.sender().map(ToString::to_string);
-        let Some(caller) = caller.as_deref() else {
-            drop(_guard);
-            emit_outcome("movement", "unauthorized");
-            return unauthorized_response(MOVEMENT_METHOD);
-        };
-        if !verify_planner_caller(emitter.connection(), caller).await {
-            drop(_guard);
-            emit_outcome("movement", "unauthorized");
-            return unauthorized_response(MOVEMENT_METHOD);
-        };
-        let reply = match self.evaluate_movement_request(&request) {
-            Ok(reply) => reply,
-            Err(error) => {
-                drop(_guard);
-                emit_outcome("movement", "unavailable");
-                return Err(error);
-            }
-        };
-        if reply.len() > MOVEMENT_MAX_REPLY {
-            drop(_guard);
-            emit_outcome("movement", "oversize");
-            return Err(PlannerError::Unavailable(
-                "reply exceeds size bound".to_owned(),
-            ));
-        }
-        // Success is silent (zero diagnostic lines): the reply is returned
-        // with the lock released and no logging, so output never triggers
-        // bus activation and never holds the operation lock.
-        drop(_guard);
-        Ok(reply)
-    }
-
-    async fn describe_resize(
-        &self,
-        request: String,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
-    ) -> Result<String, PlannerError> {
-        // Keyboard resize route: same bounded non-queuing single-flight,
-        // same-UID verification, connection-loss, and reply-size checks.
-        // Group B: the trio backend was removed, so authorized requests fail
-        // closed as unavailable. No generic IPC is introduced.
-        // Diagnostics are emitted only after the guard is released (see
-        // `emit_outcome` contract).
-        let Some(_guard) = self.operation_lock.try_lock() else {
-            emit_outcome("resize", "busy");
-            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
-        };
-        if emitter.connection().is_closed() {
-            drop(_guard);
-            emit_outcome("resize", "connection-lost");
-            return Err(PlannerError::Unavailable(
-                "planner serving connection was lost".to_owned(),
-            ));
-        }
-        let caller = header.sender().map(ToString::to_string);
-        let Some(caller) = caller.as_deref() else {
-            drop(_guard);
-            emit_outcome("resize", "unauthorized");
-            return unauthorized_response(RESIZE_METHOD);
-        };
-        if !verify_planner_caller(emitter.connection(), caller).await {
-            drop(_guard);
-            emit_outcome("resize", "unauthorized");
-            return unauthorized_response(RESIZE_METHOD);
-        };
-        let reply = match self.evaluate_resize_request(&request) {
-            Ok(reply) => reply,
-            Err(error) => {
-                drop(_guard);
-                emit_outcome("resize", "unavailable");
-                return Err(error);
-            }
-        };
-        if reply.len() > RESIZE_MAX_REPLY {
-            drop(_guard);
-            emit_outcome("resize", "oversize");
-            return Err(PlannerError::Unavailable(
-                "reply exceeds size bound".to_owned(),
-            ));
-        }
-        // Success is silent (zero diagnostic lines, see `emit_outcome`
-        // contract): the reply is returned with the lock released.
-        drop(_guard);
-        Ok(reply)
-    }
-
-    async fn describe_pointer_resize(
-        &self,
-        request: String,
-        #[zbus(header)] header: zbus::message::Header<'_>,
-        #[zbus(signal_emitter)] emitter: zbus::object_server::SignalEmitter<'_>,
-    ) -> Result<String, PlannerError> {
-        // Pointer resize route: same bounded non-queuing single-flight,
-        // same-UID verification, connection-loss, and reply-size checks.
-        // Group B: the trio backend was removed, so authorized requests fail
-        // closed as unavailable. No generic IPC is introduced.
-        // Diagnostics are emitted only after the guard is released (see
-        // `emit_outcome` contract).
-        let Some(_guard) = self.operation_lock.try_lock() else {
-            emit_outcome("pointer", "busy");
-            return Err(PlannerError::Unavailable("planner is busy".to_owned()));
-        };
-        if emitter.connection().is_closed() {
-            drop(_guard);
-            emit_outcome("pointer", "connection-lost");
-            return Err(PlannerError::Unavailable(
-                "planner serving connection was lost".to_owned(),
-            ));
-        }
-        let caller = header.sender().map(ToString::to_string);
-        let Some(caller) = caller.as_deref() else {
-            drop(_guard);
-            emit_outcome("pointer", "unauthorized");
-            return unauthorized_response(POINTER_RESIZE_METHOD);
-        };
-        if !verify_planner_caller(emitter.connection(), caller).await {
-            drop(_guard);
-            emit_outcome("pointer", "unauthorized");
-            return unauthorized_response(POINTER_RESIZE_METHOD);
-        };
-        let reply = match self.evaluate_pointer_resize_request(&request) {
-            Ok(reply) => reply,
-            Err(error) => {
-                drop(_guard);
-                emit_outcome("pointer", "unavailable");
-                return Err(error);
-            }
-        };
-        if reply.len() > POINTER_RESIZE_MAX_REPLY {
-            drop(_guard);
-            emit_outcome("pointer", "oversize");
-            return Err(PlannerError::Unavailable(
-                "reply exceeds size bound".to_owned(),
-            ));
-        }
-        // Success is silent (zero diagnostic lines, see `emit_outcome`
-        // contract): the reply is returned with the lock released.
+        // Planned and recoverably rejected replies are silent (zero
+        // diagnostic lines): the reply is returned with the lock released
+        // and no logging, so output never triggers bus activation and never
+        // holds the operation lock.
         drop(_guard);
         Ok(reply)
     }
@@ -622,6 +438,7 @@ mod tests {
         assert!(first.len() <= MOVEMENT_MAX_REPLY);
         assert!(first.len() <= RESIZE_MAX_REPLY);
         assert!(first.len() <= POINTER_RESIZE_MAX_REPLY);
+        assert!(first.len() <= PLAN_MAX_REPLY);
         let parsed: serde_json::Value =
             serde_json::from_str(&first).expect("unauthorized reply is valid JSON");
         assert_eq!(parsed["outcome"], "rejected");
@@ -639,14 +456,15 @@ mod tests {
     }
 
     #[test]
-    fn unauthorized_channel_is_inband_for_exactly_four_routes() {
-        // The four transaction routes return the fixed in-band JSON body via
+    fn unauthorized_channel_is_inband_for_exactly_five_routes() {
+        // The five transaction routes return the fixed in-band JSON body via
         // the actual production helper.
         for method in [
             FOCUS_METHOD,
             MOVEMENT_METHOD,
             RESIZE_METHOD,
             POINTER_RESIZE_METHOD,
+            PLAN_METHOD,
         ] {
             assert!(
                 unauthorized_uses_inband_rejection(method),
@@ -717,9 +535,9 @@ mod tests {
 
     #[test]
     fn removed_trio_routes_fail_closed_as_unavailable() {
-        // Group B: the trio backend was removed without a general-N
-        // replacement. All four transaction routes fail closed as
-        // unavailable over the preserved D-Bus identity.
+        // Group B: the trio backend was removed. The four legacy transaction
+        // routes fail closed as unavailable over the preserved D-Bus
+        // identity; Stage 4 `DescribePlan` is the only planning route.
         let endpoint = PlannerEndpoint::new();
         for result in [
             endpoint.evaluate_focus_request("{\"v\":1}"),
@@ -813,4 +631,115 @@ mod tests {
         assert!(ended.to_string().contains("monitor ended unexpectedly"));
     }
 
+    #[test]
+    fn plan_method_identity_is_exact_and_distinct() {
+        assert_eq!(PLAN_METHOD, "DescribePlan");
+        assert_ne!(PLAN_METHOD, FOCUS_METHOD);
+        assert_ne!(PLAN_METHOD, MOVEMENT_METHOD);
+        assert_ne!(PLAN_METHOD, RESIZE_METHOD);
+        assert_ne!(PLAN_METHOD, POINTER_RESIZE_METHOD);
+        assert_eq!(SERVICE, "org.plasmaautotiler.Planner");
+        assert_eq!(OBJECT, "/org/plasmaautotiler/Planner");
+        assert_eq!(INTERFACE, "org.plasmaautotiler.Planner1");
+        assert_eq!(PLAN_MAX_REPLY, 64 * 1024);
+        assert_eq!(
+            PLAN_MAX_REPLY,
+            crate::planner_protocol::PLAN_MAX_REPLY_BYTES
+        );
+        assert_eq!(
+            PLAN_MAX_REQUEST,
+            crate::planner_protocol::PLAN_MAX_REQUEST_BYTES
+        );
+    }
+
+    #[test]
+    fn plan_method_signature_is_json_string_to_json_string() {
+        let message = zbus::message::Message::method_call(OBJECT, PLAN_METHOD)
+            .unwrap()
+            .destination(SERVICE)
+            .unwrap()
+            .interface(INTERFACE)
+            .unwrap()
+            .build(&("{\"v\":1}".to_owned(),))
+            .unwrap();
+        assert_eq!(message.body().signature().to_string(), "s");
+        let body: (String,) = message.body().deserialize().unwrap();
+        assert_eq!(body.0, "{\"v\":1}");
+    }
+
+    fn plan_request_for(
+        correlation: &str,
+        focused: &str,
+        windows: &[&str],
+        command: serde_json::Value,
+    ) -> String {
+        let entries: Vec<serde_json::Value> = windows
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "window": w,
+                    "output": "out-1",
+                    "workspace": "ws-1",
+                    "rect": {"x": 10, "y": 10, "w": 100, "h": 80},
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+            },
+            "focused_window": focused,
+            "windows": entries,
+            "command": command,
+        })
+        .to_string()
+    }
+
+    #[test]
+    fn plan_route_returns_geometries_and_recovers_after_rejection() {
+        let endpoint = PlannerEndpoint::new();
+        // Recoverable rejection first: unknown window is `Ok` JSON, never a
+        // terminal D-Bus error, so the next fresh observation can plan.
+        let bad = plan_request_for(
+            "plan-dbus-bad-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "remove", "window": "win-9"}),
+        );
+        let bad_reply = endpoint
+            .evaluate_plan_request(&bad)
+            .expect("rejections are Ok JSON");
+        let bad_value: serde_json::Value =
+            serde_json::from_str(&bad_reply).expect("rejection is JSON");
+        assert_eq!(bad_value["outcome"], "rejected");
+        assert!(bad_value["kind"].as_str().is_some());
+        assert!(bad_reply.len() <= PLAN_MAX_REPLY);
+        // Fresh observation plans with full target geometries.
+        let good = plan_request_for(
+            "plan-dbus-good-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "remove", "window": "win-2"}),
+        );
+        let good_reply = endpoint
+            .evaluate_plan_request(&good)
+            .expect("valid plan is Ok");
+        let good_value: serde_json::Value =
+            serde_json::from_str(&good_reply).expect("plan is JSON");
+        assert_eq!(good_value["outcome"], "planned");
+        let geometry = good_value["desired_geometry"]
+            .as_array()
+            .expect("full target geometries");
+        assert_eq!(geometry.len(), 1);
+        assert_eq!(geometry[0]["window"], "win-1");
+    }
 }

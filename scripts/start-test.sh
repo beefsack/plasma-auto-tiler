@@ -39,10 +39,6 @@ START_NONCE="${START_NONCE:-}"
 
 # The exact project action IDs this lifecycle interface owns.
 PROJECT_ACTIONS=(
-  plasma-auto-tiler-insert-right
-  plasma-auto-tiler-insert-left
-  plasma-auto-tiler-insert-up
-  plasma-auto-tiler-insert-down
   plasma-auto-tiler-focus-left
   plasma-auto-tiler-focus-down
   plasma-auto-tiler-focus-up
@@ -59,13 +55,14 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-move-down-arrow
   plasma-auto-tiler-move-up-arrow
   plasma-auto-tiler-move-right-arrow
-  plasma-auto-tiler-detach
-  plasma-auto-tiler-attach
-  plasma-auto-tiler-fill-scope
-  plasma-auto-tiler-apply-columns
-  plasma-auto-tiler-apply-rows
-  plasma-auto-tiler-apply-balanced-grid
-  plasma-auto-tiler-apply-dwindle
+  plasma-auto-tiler-resize-outwards-left
+  plasma-auto-tiler-resize-outwards-down
+  plasma-auto-tiler-resize-outwards-up
+  plasma-auto-tiler-resize-outwards-right
+  plasma-auto-tiler-resize-inwards-left
+  plasma-auto-tiler-resize-inwards-down
+  plasma-auto-tiler-resize-inwards-up
+  plasma-auto-tiler-resize-inwards-right
 )
 PROJECT_ACTIONS_JSON=""
 
@@ -75,10 +72,6 @@ PROJECT_ACTIONS_JSON=""
 # Provenance: controller action defaults, encoded with the pinned Qt 6
 # KeyboardModifier bits and verified against the live collector on 2026-08-12.
 declare -A EXPECTED_SEQUENCES=(
-  [plasma-auto-tiler-insert-right]="419430420"
-  [plasma-auto-tiler-insert-left]="419430418"
-  [plasma-auto-tiler-insert-up]="419430419"
-  [plasma-auto-tiler-insert-down]="419430421"
   [plasma-auto-tiler-focus-left]="268435528"
   [plasma-auto-tiler-focus-down]="268435530"
   [plasma-auto-tiler-focus-up]="268435531"
@@ -95,13 +88,14 @@ declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-move-down-arrow]="318767125"
   [plasma-auto-tiler-move-up-arrow]="318767123"
   [plasma-auto-tiler-move-right-arrow]="318767124"
-  [plasma-auto-tiler-detach]="301989920"
-  [plasma-auto-tiler-attach]="436207648"
-  [plasma-auto-tiler-fill-scope]="419430404"
-  [plasma-auto-tiler-apply-columns]="402653233"
-  [plasma-auto-tiler-apply-rows]="402653234"
-  [plasma-auto-tiler-apply-balanced-grid]="402653235"
-  [plasma-auto-tiler-apply-dwindle]="402653236"
+  [plasma-auto-tiler-resize-outwards-left]="402653256"
+  [plasma-auto-tiler-resize-outwards-down]="402653258"
+  [plasma-auto-tiler-resize-outwards-up]="402653259"
+  [plasma-auto-tiler-resize-outwards-right]="402653260"
+  [plasma-auto-tiler-resize-inwards-left]="436207688"
+  [plasma-auto-tiler-resize-inwards-down]="436207690"
+  [plasma-auto-tiler-resize-inwards-up]="436207691"
+  [plasma-auto-tiler-resize-inwards-right]="436207692"
 )
 
 # KGlobalAccelD::SetShortcutFlag values (pinned kglobalacceld 6.7.3 source):
@@ -782,7 +776,7 @@ cmd_stop() {
   echo "project action records still registered in KGlobalAccel: $count (stale; left untouched)"
   print_records "$records"
   echo "note: KGlobalAccel records do not prove live callbacks and are not unregistered by this command."
-  echo "note: stopping/unloading does not roll back Custom Tile topology changes the script already made."
+  echo "note: stopping/unloading does not roll back window geometries the single DescribePlan engine already applied."
 }
 
 # Prints one TSV line per unrelated KGlobalAccel record (any component) whose

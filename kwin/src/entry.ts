@@ -1,12 +1,14 @@
+import { startPlanAdapterEntry } from "./plan-adapter-entry";
 import { TrayPublisher } from "./tray-publisher";
 
-// Group D: the Legacy Custom Tile controller (src/controller*.ts,
-// src/logic.ts, src/boundary.ts Custom Tile actuation, layout/blueprint,
-// preset, topology-reset, managed-root, and the duplicated TypeScript COSMIC
-// planners) has been removed. This entry is intentionally inert: it performs
-// no tiling, registers no shortcuts, subscribes to no workspace or window
-// signals, and never touches Custom Tiles. The Stage 4 general-N engine is
-// not implemented here and no fallback is provided.
+// Stage 4 production entry: the single bounded DescribePlan adapter owns all
+// KWin observation and actuation. Only normal windows are observed with
+// stable opaque ids, frame rectangles, output, workspace, and focus; Rust
+// owns every tiling, order, membership, and rejection decision through the
+// stateless DescribePlan route and the adapter applies the complete reply
+// geometries in the shared canonical order. Directional focus/move and
+// direction-plus-mode resize shortcuts issue parameterized plan commands,
+// and window/scope signals feed one debounced fresh-snapshot resync.
 
 const trayTimers = new Set<QTimer>();
 const trayPublisher = new TrayPublisher({
@@ -45,4 +47,6 @@ const trayPublisher = new TrayPublisher({
 });
 
 trayPublisher.start();
-console.log("plasma-auto-tiler:legacy-engine-removed");
+
+const planHandle = startPlanAdapterEntry({ owner: "kwin-plan-adapter", generation: "plan-1" });
+void planHandle;
