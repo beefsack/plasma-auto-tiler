@@ -33,6 +33,10 @@ KCM Apply alone resolves only the closed compiled-in rows.
   Layout` clears from the exact preimage `Meta+Alt+L`.
 - Whole-table preflight fails closed for any unexpected row preimage or target
   conflict, before journal creation or mutation.
+- Every KGlobalAccel reply-validation failure emits one bounded, non-reflective
+  detail token identifying its exact condition. Empty cosmetic labels in a
+  valid `a(ssssssaiai)` shortcut-info record are accepted; identity and all
+  size/key bounds remain fail-closed.
 - Revert restores only bindings still owned by that override.
 - Live acceptance is one user-run Apply/Revert/interrupted-recovery gate:
   separately authorized, bounded, reversible manual confirmation with exact
@@ -101,6 +105,101 @@ KCM Apply alone resolves only the closed compiled-in rows.
   confirmed `org.kde.kglobalaccel` owner `:1.614`, UID `1000`, and the exact
   setter contract. No live Apply, setter, KWin, Plasma, or config mutation was
   run for this correction.
+- Resolved the fourth masked preflight refusal from real session data. The
+  `KDE Keyboard Layout Switcher` component supplied two valid shortcut-info
+  records whose action-friendly field was empty: `Switch to Next Keyboard
+  Layout` at `Meta+Alt+K`, and `Switch to Last-Used Keyboard Layout` at
+  `Meta+Alt+L`. The observed tuple order is exactly `action`, `friendly`,
+  `component`, `componentFriendly`, `contextUnique`, `contextFriendly`,
+  `active`, `defaults`, matching `a(ssssssaiai)`. `friendly` is cosmetic and
+  is not used for allowlisting, owner checks, or occupancy decisions, so it
+  may be empty while retaining the 256-character bound. `action` and
+  `component` remain nonempty and bounded; every key list remains bounded and
+  limited to nonnegative values. The capture had 20 components and 349 tuples;
+  maxima were 3 keys, key value 503316512, and string length 65, all within the
+  existing bounds. No session payload fixture is committed: the regression
+  test uses the captured `a(ssssssaiai)` shape with generic identifiers, so no
+  application/activity data needed redaction.
+- The raw all-shortcut-info read now validates its exact reply signature and
+  preserves a fail-fast 16,384-tuple wire bound. Owner pinning, exact write
+  allowlist, the setter validator, keyed `.desktop` occupancy checks, and the
+  six-write Apply cap are unchanged.
+- Verification for this correction: 78 of 78 bounded preflight detail tokens
+  have an exact-equality producing-condition test. The count is 50 static
+  production literals plus 14 field suffixes under each of the two reply
+  prefixes. The captured-shape fixture proves the empty-friendly record is
+  accepted; malformed type/signature/arity/shape, all key/string bounds,
+  wire/collection bounds, keyed consistency, and owner drift remain refusing.
+  CTest passed 21/21; `cargo fmt --check`, `cargo clippy --all-targets
+  --all-features -- -D warnings`, `nix flake check`, and the KWin TypeScript
+  suite passed (386 tests, 47 suites). No live mutation was run.
+
+## Diagnostic Token Map
+
+All details below are static ASCII text. `Shortcut state unavailable:` is the
+KCM wrapper; no token includes foreign reply values.
+
+| Token | Producing condition |
+| --- | --- |
+| `unexpected allComponents reply: wrong message type` | Reply is not a D-Bus reply message. |
+| `unexpected allComponents reply: wrong signature` | Reply signature is not `ao`. |
+| `unexpected allComponents reply: wrong arity` | Reply does not have exactly one argument. |
+| `unexpected allComponents reply: wrong variant shape` | Argument is neither the typed object-path list nor a D-Bus argument. |
+| `unexpected allComponents reply: wrong array framing` | D-Bus argument is not an array. |
+| `unexpected allComponents reply: empty object path in typed list` | Typed object-path list contains an empty path. |
+| `unexpected allComponents reply: empty object path in argument array` | D-Bus object-path array contains an empty path. |
+| `unexpected allComponents reply: too many components` | Component count exceeds 1024. |
+| `unexpected allShortcutInfos reply: wrong message type` | Per-component reply is not a reply message. |
+| `unexpected allShortcutInfos reply: wrong signature` | Per-component reply signature is not `a(ssssssaiai)`. |
+| `unexpected allShortcutInfos reply: wrong arity` | Per-component reply does not have exactly one argument. |
+| `unexpected allShortcutInfos reply: wrong variant shape` | Per-component argument is not a D-Bus argument. |
+| `unexpected allShortcutInfos reply: wrong array framing` | Per-component D-Bus argument is not an array. |
+| `unexpected allShortcutInfos reply: too many wire tuples` | One D-Bus array exceeds 16,384 decoded records. |
+| `unexpected allShortcutInfos reply: too many tuples` | Shared record mapping receives more than 16,384 records. |
+| `unexpected allShortcutInfos reply: too many collected tuples` | Cross-component collection exceeds 16,384 records. |
+| `unexpected globalShortcutsByKey reply: wrong message type` | Keyed reply is not a reply message. |
+| `unexpected globalShortcutsByKey reply: wrong signature` | Keyed reply signature is not `a(ssssssaiai)`. |
+| `unexpected globalShortcutsByKey reply: wrong arity` | Keyed reply does not have exactly one argument. |
+| `unexpected globalShortcutsByKey reply: wrong variant shape` | Keyed argument is not a D-Bus argument. |
+| `unexpected globalShortcutsByKey reply: wrong array framing` | Keyed D-Bus argument is not an array. |
+| `unexpected globalShortcutsByKey reply: too many wire holders` | One keyed D-Bus array exceeds 16,384 decoded records. |
+| `unexpected globalShortcutsByKey reply: too many holders` | Shared keyed-record mapping receives more than 16,384 records. |
+| `unexpected globalShortcutAvailable reply: wrong message type` | Availability reply is not a reply message. |
+| `unexpected globalShortcutAvailable reply: wrong signature` | Availability reply signature is not `b`. |
+| `unexpected globalShortcutAvailable reply: wrong arity` | Availability reply does not have exactly one argument. |
+| `unexpected globalShortcutAvailable reply: wrong variant shape` | Availability argument is not a bool. |
+
+The following field suffixes each produce two distinct full tokens, prefixed by
+either `unexpected allShortcutInfos reply: ` or `unexpected globalShortcutsByKey
+reply: `: `empty action`, `oversized action`, `empty component`, `oversized
+component`, `oversized friendly`, `oversized component friendly`, `oversized
+context unique`, `oversized context friendly`, `too many active keys`,
+`negative active key`, `oversized active key`, `too many default keys`,
+`negative default key`, and `oversized default key`. They identify the one
+failed field predicate in the fixed validation order.
+
+| Token | Producing condition |
+| --- | --- |
+| `unexpected globalShortcutsByKey reply: negative key` | Keyed lookup input is negative. |
+| `unexpected globalShortcutsByKey reply: non-positive key` | Keyed lookup input is zero. |
+| `unexpected globalShortcutsByKey reply: oversized key` | Keyed lookup input exceeds the key bound. |
+| `unexpected globalShortcutAvailable reply: negative key` | Availability input is negative. |
+| `unexpected globalShortcutAvailable reply: non-positive key` | Availability input is zero. |
+| `unexpected globalShortcutAvailable reply: oversized key` | Availability input exceeds the key bound. |
+| `unexpected globalShortcutAvailable reply: oversized component` | Availability component argument exceeds 256 characters. |
+| `unexpected globalShortcutsByKey reply: negative occupancy key` | Reconciler occupancy key is negative. |
+| `unexpected globalShortcutsByKey reply: non-positive occupancy key` | Reconciler occupancy key is zero. |
+| `unexpected globalShortcutsByKey reply: oversized occupancy key` | Reconciler occupancy key exceeds the key bound. |
+| `unexpected globalShortcutsByKey reply: too many occupancy holders` | Store returns more than 16,384 holders. |
+| `unexpected globalShortcutAvailable reply: empty holders report unavailable` | Empty holder list disagrees with availability. |
+| `unexpected globalShortcutAvailable reply: occupied holders report available` | Nonempty holder list disagrees with availability. |
+
+Holder revalidation likewise has one token per predicate: `empty holder
+component`, `oversized holder component`, `empty holder action`, `oversized
+holder action`, `too many holder active keys`, `negative holder active key`,
+`oversized holder active key`, `too many holder default keys`, `negative holder
+default key`, and `oversized holder default key`, each prefixed by `unexpected
+globalShortcutsByKey reply: `.
 
 ## Next Action
 

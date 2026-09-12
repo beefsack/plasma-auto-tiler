@@ -246,6 +246,30 @@ struct ShortcutKeyHolder
     QList<int> defaults;
 };
 
+// Plain KGlobalShortcutInfo fields (ssssss + ai + ai) shared by the
+// allShortcutInfos and globalShortcutsByKey reply parsers. The QDBusArgument
+// versions only extract this list from the wire struct array, then delegate
+// all field/bound mapping here, so hermetic tests cover the real field
+// branches without a live bus and without duplicating parsing.
+struct ShortcutInfoFields
+{
+    QString action;
+    QString friendly;
+    QString compUnique;
+    QString compFriendly;
+    QString contextUnique;
+    QString contextFriendly;
+    QList<int> active;
+    QList<int> defaults;
+};
+
+// Exact (ssssssaiai) struct framing for KGlobalShortcutInfo: 6 strings plus
+// active/default int arrays. In KWin namespace so ADL finds them from
+// qDBusRegisterMetaType helpers; tests encode a write-mode array through them
+// and assert the marshalled signature is exactly a(ssssssaiai).
+QDBusArgument &operator<<(QDBusArgument &argument, const ShortcutInfoFields &info);
+const QDBusArgument &operator>>(const QDBusArgument &argument, ShortcutInfoFields &info);
+
 // QKeySequence D-Bus framing is (ai); MatchType is (i): a struct holding one
 // int (0 == Equal). Registered for the keyed globalShortcutsByKey call.
 struct ShortcutMatchType
@@ -360,6 +384,33 @@ public:
     static QList<int> dedupKeys(const QList<int> &keys);
     static bool keysValid(const QList<int> &keys);
     static bool stringValid(const QString &value);
+    // Cosmetic labels/contexts: empty allowed (real captures leave friendly
+    // empty), only the length bound applies. Identity (action/compUnique)
+    // and keys stay strict via stringValid/keysValid.
+    static bool cosmeticValid(const QString &value);
+    // Pure field-category validator shared by allShortcutInfos and
+    // globalShortcutsByKey parsing (and mirrored by fakes): identity stays
+    // strict, cosmetic labels/contexts allow empty with only the length
+    // bound, active/default keys stay strict. Returns true when valid;
+    // otherwise sets *fieldError to a bounded non-reflective suffix for the
+    // caller to prefix. Each independently producing elementary predicate
+    // has its own suffix, in fixed order: "empty action",
+    // "oversized action", "empty component", "oversized component",
+    // "oversized friendly", "oversized component friendly",
+    // "oversized context unique", "oversized context friendly",
+    // "too many active keys", "negative active key",
+    // "oversized active key", "too many default keys",
+    // "negative default key", "oversized default key". The key classifier
+    // is one ordered scan (too-many, then negative, then oversized), so a
+    // list with both a negative and an over-max key reports negative.
+    // Full tokens add the per-parser prefix
+    // ("unexpected globalShortcutsByKey reply: " or
+    // "unexpected allShortcutInfos reply: "), so the same suffix under two
+    // prefixes is two distinct full tokens, each covered on both seams.
+    static bool keyedFieldsValid(const QString &action, const QString &friendly, const QString &compUnique,
+                                 const QString &compFriendly, const QString &contextUnique,
+                                 const QString &contextFriendly, const QList<int> &active,
+                                 const QList<int> &defaults, QString *fieldError);
     static bool uniqueNameValid(const QString &owner);
     static bool introspectionContractValid(const QString &xml);
     static bool parseAllComponentsReply(QDBusMessage::MessageType replyType, const QString &replySignature,
@@ -378,6 +429,48 @@ public:
     static bool parseGlobalShortcutsByKeyReply(QDBusMessage::MessageType replyType, const QString &replySignature,
                                                const QList<QVariant> &replyArgs,
                                                QList<ShortcutKeyHolder> *holders, QString *error);
+    // Pure allShortcutInfos reply parser shared with KGlobalAccelStore::readAll
+    // (no live D-Bus): exact ReplyMessage with signature "a(ssssssaiai)".
+    // Ordered type then signature then arity; field validation shares
+    // keyedFieldsValid; bound SHORTCUT_MAX_TUPLES. Lets hermetic tests cover
+    // the live read path without session services and without duplicating
+    // parsing in the backend.
+    static bool parseAllShortcutInfosReply(QDBusMessage::MessageType replyType, const QString &replySignature,
+                                           const QList<QVariant> &replyArgs, QList<ShortcutTuple> *tuples,
+                                           QString *error);
+    // Shared pure field-to-output mapping (no D-Bus): validates each fields
+    // record via keyedFieldsValid and maps to holders/tuples with the exact
+    // per-parser error prefix and bound ("too many holders" / "too many
+    // tuples"). The QDBusArgument reply parsers enforce their own independent
+    // fail-fast wire bound in the demarshal loop ("too many wire holders" /
+    // "too many wire tuples") immediately after every append, before further
+    // payload allocation, then delegate here, so hermetic tests of these functions cover the real field
+    // branches (a direct readable QDBusArgument is not constructible via the
+    // public Qt API outside a real bus reply).
+    static bool holdersFromInfoFields(const QList<ShortcutInfoFields> &infos,
+                                      QList<ShortcutKeyHolder> *holders, QString *error);
+    static bool tuplesFromInfoFields(const QList<ShortcutInfoFields> &infos, QList<ShortcutTuple> *tuples,
+                                     QString *error);
+    // Smallest pure seams covering otherwise unreachable wire/collected and
+    // defensive branches (no new capability, same tokens/bounds/order):
+    // appendComponentPath validates one ao path and appends on success,
+    // parameterized by the two actual representation provenances (false is
+    // the typed QList<QDBusObjectPath> list, true is the read-mode
+    // QDBusArgument array); checkTupleAppendBound is the shared size
+    // predicate called immediately after each real wire append and each
+    // real cross-component collected append; checkOccupancyKeyRange is the
+    // single-key range helper called by occupancy. Each returns false with
+    // the exact full bounded token for its failing predicate only.
+    enum class TupleAppendBound
+    {
+        ByKeyWire,
+        AllInfosWire,
+        Collected
+    };
+    static bool appendComponentPath(const QString &path, bool fromArgumentArray, QStringList *parsed,
+                                    QString *error);
+    static bool checkTupleAppendBound(int size, TupleAppendBound kind, QString *error);
+    static bool checkOccupancyKeyRange(int key, QString *error);
     static bool parseGlobalShortcutAvailableReply(QDBusMessage::MessageType replyType,
                                                   const QString &replySignature, const QList<QVariant> &replyArgs,
                                                   bool *available, QString *error);
@@ -403,5 +496,7 @@ QString defaultShortcutJournalPath();
 
 } // namespace KWin
 Q_DECLARE_METATYPE(KWin::ShortcutMatchType)
+Q_DECLARE_METATYPE(KWin::ShortcutInfoFields)
+Q_DECLARE_METATYPE(QList<KWin::ShortcutInfoFields>)
 QDBusArgument &operator<<(QDBusArgument &argument, const KWin::ShortcutMatchType &match);
 const QDBusArgument &operator>>(const QDBusArgument &argument, KWin::ShortcutMatchType &match);

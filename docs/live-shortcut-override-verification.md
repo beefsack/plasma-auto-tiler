@@ -18,8 +18,7 @@ This is the status-label vocabulary at
 `kwin/native-effect/activeborderconfig_module.cpp:274-412` at HEAD. Capture
 the `Shortcuts` group status label VERBATIM as the first instruction immediately
 after Apply, before retrying, closing the dialog, or anything else. Do not
-paraphrase. `%1` slots are dynamic; no concrete dynamic detail literal is
-claimed here. The separate error label can contain the reconciler result
+paraphrase. The separate error label can contain the reconciler result
 (`activeborderconfig_module.cpp:203-225`); preserve it too if displayed.
 
 - `Shortcut state unavailable: reconciler is not configured.`
@@ -28,7 +27,12 @@ claimed here. The separate error label can contain the reconciler result
   `activeborderconfig_module.cpp:284,291,298,304,363`. It covers journal-load,
   setter-contract, owner, read-all, and keyed-occupancy unavailable detail. The
   `:363` site is the unavailable branch of the same keyed gate as `Conflict` at
-  `:361`. Record the full rendered string; do not infer its source from text.
+  `:361`. KGlobalAccel malformed-reply details are now static bounded tokens,
+  including `unexpected allShortcutInfos reply: empty action`, `...: oversized
+  friendly`, and `...: wrong signature`; the complete token map is in
+  [Shortcut Override](changes/shortcut-override.md#diagnostic-token-map).
+  Record the full rendered string; it identifies the exact refusing condition
+  and never includes foreign reply data.
 - `Shortcut state unavailable: allowlisted bindings are missing.`
   (`activeborderconfig_module.cpp:339`)
 - `Shortcut state unavailable: unrelated tuple is unbounded.`

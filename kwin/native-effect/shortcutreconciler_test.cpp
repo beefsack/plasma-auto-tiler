@@ -151,25 +151,29 @@ public:
     {
         if (malformedRead) {
             if (error) {
-                *error = QStringLiteral("unexpected allShortcutInfos reply");
+                *error = QStringLiteral("unexpected allShortcutInfos reply: wrong message type");
             }
             return false;
         }
         // Bounded validation mirrors the real backend, unless explicitly
         // bypassed to exercise apply()'s independent structural check.
+        // Cosmetic labels allow empty with only the length bound.
         if (!allowUnboundedRead) {
             if (tuples.size() > SHORTCUT_MAX_TUPLES) {
                 if (error) {
-                    *error = QStringLiteral("unexpected allShortcutInfos reply");
+                    *error = QStringLiteral("unexpected allShortcutInfos reply: too many tuples");
                 }
                 return false;
             }
             for (const ShortcutTuple &tuple : tuples) {
-                if (!ShortcutReconciler::keysValid(tuple.active) || !ShortcutReconciler::stringValid(tuple.component)
-                    || !ShortcutReconciler::stringValid(tuple.action) || !ShortcutReconciler::stringValid(tuple.friendly)
-                    || !ShortcutReconciler::stringValid(tuple.componentFriendly)) {
+                QString fieldError;
+                // Tuples carry no context/defaults; mirror with empty
+                // cosmetic contexts and empty defaults (both valid).
+                if (!ShortcutReconciler::keyedFieldsValid(tuple.action, tuple.friendly, tuple.component,
+                                                          tuple.componentFriendly, QString(), QString(),
+                                                          tuple.active, QList<int>(), &fieldError)) {
                     if (error) {
-                        *error = QStringLiteral("unexpected allShortcutInfos reply");
+                        *error = QStringLiteral("unexpected allShortcutInfos reply: ") + fieldError;
                     }
                     return false;
                 }
@@ -183,9 +187,21 @@ public:
 
     bool shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error) override
     {
-        if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+        if (key < 0) {
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: negative key");
+            }
+            return false;
+        }
+        if (key == 0) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: non-positive key");
+            }
+            return false;
+        }
+        if (key > SHORTCUT_MAX_KEY_VALUE) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: oversized key");
             }
             return false;
         }
@@ -199,7 +215,7 @@ public:
         if (malformedByKey) {
             malformedByKey = false;
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: wrong message type");
             }
             return false;
         }
@@ -219,7 +235,7 @@ public:
         }
         if (combined.size() > SHORTCUT_MAX_TUPLES) {
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply: too many occupancy holders");
             }
             return false;
         }
@@ -231,15 +247,27 @@ public:
 
     bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) override
     {
-        if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+        if (key < 0) {
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply: negative key");
+            }
+            return false;
+        }
+        if (key == 0) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply: non-positive key");
+            }
+            return false;
+        }
+        if (key > SHORTCUT_MAX_KEY_VALUE) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply: oversized key");
             }
             return false;
         }
         if (component.size() > SHORTCUT_MAX_STRING_LEN) {
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply: oversized component");
             }
             return false;
         }
@@ -253,7 +281,7 @@ public:
         if (malformedAvailable) {
             malformedAvailable = false;
             if (error) {
-                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply: wrong message type");
             }
             return false;
         }
@@ -920,16 +948,47 @@ void strictOwnerAndIntrospection()
 
 void friendlyLabelsValidated()
 {
+    // Empty cosmetic friendly labels are accepted by readAll (real captures
+    // leave friendly empty) but writes stay strict.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.tuples[0].friendly = QString();
+        QList<ShortcutTuple> out;
+        QString readError;
+        CHECK(store.readAll(&out, &readError));
+        CHECK(out.at(0).friendly.isEmpty());
+    }
+    // Oversized cosmetic labels still fail closed.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.tuples[0].friendly = QString(SHORTCUT_MAX_STRING_LEN + 1, QChar('x'));
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error
+              == QStringLiteral("unexpected allShortcutInfos reply: oversized friendly"));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // Identity stays strict: empty action fails as empty action.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.tuples[0].action = QString();
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error == QStringLiteral("unexpected allShortcutInfos reply: empty action"));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    QString error;
     FakeShortcutStore store;
     seedReady6(store, QList<int>{1}, QList<int>{META_L});
-    // Empty friendly label is rejected by the fake mirroring the backend.
-    store.tuples[0].friendly = QString();
-    FakeJournal journal;
-    ShortcutReconciler reconciler(&store, &journal);
-    CHECK(!reconciler.apply().ok);
-    CHECK(store.writeLog.isEmpty());
-    CHECK(!journal.present);
-    QString error;
     CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QString(),
                            QStringLiteral("friendly"), QList<int>{META_L}, nullptr, &error));
     CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
@@ -1148,9 +1207,10 @@ void allComponentsStrictTransport()
     // Wrong arity is rejected.
     CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"), {}, nullptr,
                                                        &error));
-    // Empty object path is rejected.
+    // Empty object path in the typed list is rejected with its own token.
     CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"),
                                                        {objectPathArrayVariant({QString()})}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: empty object path in typed list"));
 }
 
 void introspectionStrictParsing()
@@ -2355,7 +2415,850 @@ void unrelatedUnboundedRefusesZeroWrites()
     CHECK(r.writes == 0);
 }
 
+QString oversizedString()
+{
+    return QString(SHORTCUT_MAX_STRING_LEN + 1, QChar('x'));
+}
+
+void preflightAllComponentsSplitTokens()
+{
+    QString error;
+    QStringList components;
+    // Wrong message type.
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("ao"),
+        {objectPathArrayVariant({QStringLiteral("/a")})}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: wrong message type"));
+    // Wrong signature.
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("as"),
+        {objectPathArrayVariant({QStringLiteral("/a")})}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: wrong signature"));
+    // Wrong arity.
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"), {},
+                                                       nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: wrong arity"));
+    // Wrong variant shape (QStringList is never ao, even with forged signature).
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("ao"),
+        {QVariant::fromValue(QStringList{QStringLiteral("/a")})}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: wrong variant shape"));
+    // Wrong array framing (default QDBusArgument is not an array).
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"),
+                                                       {QVariant::fromValue(QDBusArgument())}, nullptr,
+                                                       &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: wrong array framing"));
+    // Empty object path in the typed list branch.
+    CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"),
+                                                       {objectPathArrayVariant({QString()})}, nullptr,
+                                                       &error));
+    CHECK(error == QStringLiteral("unexpected allComponents reply: empty object path in typed list"));
+    // The argument-array branch carries its own token
+    // ("empty object path in argument array"): no public Qt API builds a
+    // read-mode QDBusArgument outside a real bus reply, so the real branch
+    // delegates to appendComponentPath and the exact token is triggered
+    // hermetically there (see boundedHelperSeamsExactTokens).
+    // Too many components (bound 1024).
+    {
+        QStringList many;
+        for (int i = 0; i < 1025; ++i) {
+            many.append(QStringLiteral("/c%1").arg(i));
+        }
+        CHECK(!ShortcutReconciler::parseAllComponentsReply(QDBusMessage::ReplyMessage, QStringLiteral("ao"),
+                                                           {objectPathArrayVariant(many)}, nullptr, &error));
+        CHECK(error == QStringLiteral("unexpected allComponents reply: too many components"));
+    }
+    // Acceptance still exact.
+    CHECK(ShortcutReconciler::parseAllComponentsReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("ao"),
+        {objectPathArrayVariant({QStringLiteral("/a")})}, &components, &error));
+    CHECK(components == (QStringList{QStringLiteral("/a")}));
+}
+
+void preflightAvailableSplitTokens()
+{
+    QString error;
+    bool available = false;
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("b"), {QVariant::fromValue(true)}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: wrong message type"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("s"), {QVariant::fromValue(QStringLiteral("x"))}, nullptr,
+        &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: wrong signature"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::ReplyMessage, QStringLiteral("b"),
+                                                                 {}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: wrong arity"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::ReplyMessage, QStringLiteral("b"),
+                                                                 {QVariant::fromValue(1)}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: wrong variant shape"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("b"), {QVariant::fromValue(QStringLiteral("true"))}, nullptr,
+        &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: wrong variant shape"));
+    CHECK(ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("b"), {QVariant::fromValue(true)}, &available, &error));
+    CHECK(available);
+}
+
+void preflightByKeyTransportSplitTokens()
+{
+    QString error;
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("x"))}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: wrong message type"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(QDBusMessage::ReplyMessage, QStringLiteral("as"),
+                                                              {QVariant::fromValue(QStringLiteral("x"))},
+                                                              nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: wrong signature"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"), {}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: wrong arity"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("not-an-argument"))}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: wrong variant shape"));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QDBusArgument())}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: wrong array framing"));
+}
+
+void preflightAllInfosSplitTokens()
+{
+    // Pure allShortcutInfos parser: ordered type then signature then arity,
+    // exact tokens per branch, no live D-Bus. Mirrors the readAll live path.
+    QString error;
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("x"))}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong message type"));
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(QDBusMessage::ReplyMessage, QStringLiteral("as"),
+                                                          {QVariant::fromValue(QStringLiteral("x"))}, nullptr,
+                                                          &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong signature"));
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"), {}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong arity"));
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("not-an-argument"))}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong variant shape"));
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QDBusArgument())}, nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong array framing"));
+    // Ordering: type beats signature, signature beats arity.
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(QDBusMessage::ErrorMessage, QStringLiteral("as"), {},
+                                                          nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong message type"));
+    CHECK(!ShortcutReconciler::parseAllShortcutInfosReply(QDBusMessage::ReplyMessage, QStringLiteral("as"), {},
+                                                          nullptr, &error));
+    CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: wrong signature"));
+}
+
+// Shared seam coverage: the QDBusArgument reply parsers only extract
+// QList<ShortcutInfoFields> from the wire array, then delegate all field and
+// bound mapping to holdersFromInfoFields / tuplesFromInfoFields. These tests
+// exercise those real field branches hermetically (no live bus).
+//
+// Why not a direct readable QDBusArgument: the public Qt API offers no way to
+// build a read-mode QDBusArgument outside a real bus reply (a write-mode
+// argument reports no ArrayType for const read access), and an in-process
+// private dbus-daemon service+client fixture was attempted but the service
+// never dispatched even basic ping/introspection calls in this environment
+// (connections up, service registered, object registered, yet NoReply), so a
+// bus fixture is not feasible here. Instead the wire encoding is proven by
+// marshalling a write-mode array through the real source operators and
+// asserting the signature is exactly a(ssssssaiai), and the field branches
+// run through the shared seam the real parsers delegate to. Transport
+// branches (type, signature, arity, variant shape, array framing) are covered
+// separately with exact tokens on the real QDBusArgument parsers.
+void ensureInfoFieldsTestMetaTypes()
+{
+    static bool registered = false;
+    if (registered) {
+        return;
+    }
+    qDBusRegisterMetaType<ShortcutInfoFields>();
+    qDBusRegisterMetaType<QList<ShortcutInfoFields>>();
+    registered = true;
+}
+
+ShortcutInfoFields makeSeamInfo(const QString &action, const QString &friendly, const QString &compUnique,
+                                const QList<int> &active, const QList<int> &defaults)
+{
+    ShortcutInfoFields info;
+    info.action = action;
+    info.friendly = friendly;
+    info.compUnique = compUnique;
+    info.compFriendly = QStringLiteral("KWin");
+    info.contextUnique = QStringLiteral("default");
+    info.contextFriendly = QStringLiteral("Default Context");
+    info.active = active;
+    info.defaults = defaults;
+    return info;
+}
+
+void infoFieldsWireEncodingProvesSignature()
+{
+    ensureInfoFieldsTestMetaTypes();
+    // The real source operators encode exactly a(ssssssaiai): build a
+    // write-mode array with them and read back the marshalled signature.
+    // (A readable QDBusArgument is only produced by a real bus reply, which
+    // is out of reach here; the field branches below run through the shared
+    // seam the wire parsers delegate to.)
+    QDBusArgument arg;
+    arg.beginArray(QMetaType::fromType<ShortcutInfoFields>());
+    const ShortcutInfoFields info =
+        makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"), QList<int>{META_L},
+                     QList<int>{META_ESC});
+    arg << info;
+    arg.endArray();
+    CHECK(arg.currentSignature() == QStringLiteral("a(ssssssaiai)"));
+}
+
+void seamHoldersAndTuplesFieldBranches()
+{
+    // Real-capture-shaped empty-friendly accepted record maps through both
+    // seam functions (the same code the wire parsers delegate to).
+    {
+        const QList<ShortcutInfoFields> infos = {
+            makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"), QList<int>{META_L},
+                         QList<int>{META_ESC}),
+        };
+        QList<ShortcutKeyHolder> holders;
+        QString error;
+        CHECK(ShortcutReconciler::holdersFromInfoFields(infos, &holders, &error));
+        CHECK(holders.size() == 1);
+        if (holders.size() == 1) {
+            CHECK(holders.at(0).component == QStringLiteral("kwin"));
+            CHECK(holders.at(0).action == QStringLiteral("walk"));
+            CHECK(holders.at(0).active == QList<int>{META_L});
+            CHECK(holders.at(0).defaults == QList<int>{META_ESC});
+        }
+        QList<ShortcutTuple> tuples;
+        CHECK(ShortcutReconciler::tuplesFromInfoFields(infos, &tuples, &error));
+        CHECK(tuples.size() == 1);
+        if (tuples.size() == 1) {
+            CHECK(tuples.at(0).component == QStringLiteral("kwin"));
+            CHECK(tuples.at(0).action == QStringLiteral("walk"));
+            CHECK(tuples.at(0).friendly.isEmpty());
+            CHECK(tuples.at(0).active == QList<int>{META_L});
+        }
+    }
+    // Each elementary predicate below reaches only its own full token on
+    // both seams (by-key prefix vs allShortcutInfos prefix). Triggers are
+    // pure: only the named field violates, all others valid.
+    auto checkBothSeams = [](const ShortcutInfoFields &info, const char *byKeyToken, const char *allInfosToken) {
+        const QList<ShortcutInfoFields> infos = {info};
+        QString error;
+        CHECK(!ShortcutReconciler::holdersFromInfoFields(infos, nullptr, &error));
+        CHECK(error == QString::fromUtf8(byKeyToken));
+        CHECK(!ShortcutReconciler::tuplesFromInfoFields(infos, nullptr, &error));
+        CHECK(error == QString::fromUtf8(allInfosToken));
+    };
+    {
+        ShortcutInfoFields info =
+            makeSeamInfo(QString(), QString(), QStringLiteral("kwin"), QList<int>{}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: empty action",
+                       "unexpected allShortcutInfos reply: empty action");
+    }
+    {
+        ShortcutInfoFields info =
+            makeSeamInfo(oversizedString(), QString(), QStringLiteral("kwin"), QList<int>{}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized action",
+                       "unexpected allShortcutInfos reply: oversized action");
+    }
+    {
+        ShortcutInfoFields info =
+            makeSeamInfo(QStringLiteral("walk"), QString(), QString(), QList<int>{}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: empty component",
+                       "unexpected allShortcutInfos reply: empty component");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), oversizedString(), QList<int>{},
+                                               QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized component",
+                       "unexpected allShortcutInfos reply: oversized component");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), oversizedString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized friendly",
+                       "unexpected allShortcutInfos reply: oversized friendly");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{});
+        info.compFriendly = oversizedString();
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized component friendly",
+                       "unexpected allShortcutInfos reply: oversized component friendly");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{});
+        info.contextUnique = oversizedString();
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized context unique",
+                       "unexpected allShortcutInfos reply: oversized context unique");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{});
+        info.contextFriendly = oversizedString();
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized context friendly",
+                       "unexpected allShortcutInfos reply: oversized context friendly");
+    }
+    {
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        ShortcutInfoFields info =
+            makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"), tooMany, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: too many active keys",
+                       "unexpected allShortcutInfos reply: too many active keys");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{-1}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: negative active key",
+                       "unexpected allShortcutInfos reply: negative active key");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{SHORTCUT_MAX_KEY_VALUE + 1}, QList<int>{});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized active key",
+                       "unexpected allShortcutInfos reply: oversized active key");
+    }
+    {
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        ShortcutInfoFields info =
+            makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"), QList<int>{}, tooMany);
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: too many default keys",
+                       "unexpected allShortcutInfos reply: too many default keys");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{-1});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: negative default key",
+                       "unexpected allShortcutInfos reply: negative default key");
+    }
+    {
+        ShortcutInfoFields info = makeSeamInfo(QStringLiteral("walk"), QString(), QStringLiteral("kwin"),
+                                               QList<int>{}, QList<int>{SHORTCUT_MAX_KEY_VALUE + 1});
+        checkBothSeams(info, "unexpected globalShortcutsByKey reply: oversized default key",
+                       "unexpected allShortcutInfos reply: oversized default key");
+    }
+    // Bound maps only to the per-parser bound token on both seams.
+    {
+        QList<ShortcutInfoFields> many;
+        many.reserve(SHORTCUT_MAX_TUPLES + 1);
+        for (int i = 0; i < SHORTCUT_MAX_TUPLES + 1; ++i) {
+            many.append(makeSeamInfo(QStringLiteral("a%1").arg(i), QString(),
+                                     QStringLiteral("c%1").arg(i), QList<int>{}, QList<int>{}));
+        }
+        QString error;
+        CHECK(!ShortcutReconciler::holdersFromInfoFields(many, nullptr, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: too many holders"));
+        CHECK(!ShortcutReconciler::tuplesFromInfoFields(many, nullptr, &error));
+        CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: too many tuples"));
+    }
+}
+
+void wireBoundTokensDistinctFromSeams()
+{
+    // Wire demarshal loops delegate their fail-fast SHORTCUT_MAX_TUPLES
+    // bound to the shared checkTupleAppendBound predicate immediately after
+    // each real append; the exact wire tokens are triggered hermetically via
+    // that predicate in boundedHelperSeamsExactTokens. Distinctness below is
+    // only a uniqueness guard, not coverage.
+    CHECK(QStringLiteral("unexpected globalShortcutsByKey reply: too many wire holders")
+          != QStringLiteral("unexpected globalShortcutsByKey reply: too many holders"));
+    CHECK(QStringLiteral("unexpected allShortcutInfos reply: too many wire tuples")
+          != QStringLiteral("unexpected allShortcutInfos reply: too many tuples"));
+    CHECK(QStringLiteral("unexpected globalShortcutsByKey reply: too many wire holders")
+          != QStringLiteral("unexpected allShortcutInfos reply: too many wire tuples"));
+}
+
+void boundedHelperSeamsExactTokens()
+{
+    // Smallest pure seams, each trigger pure (one predicate only) with exact
+    // full bounded tokens. Real branches call these helpers with the same
+    // mutation/order/check, so this is executable coverage of the real
+    // tokens, not string inequality or audit.
+    {
+        // (1) allComponents object-path validator: typed-list provenance.
+        QString error;
+        QStringList parsed;
+        CHECK(!ShortcutReconciler::appendComponentPath(QString(), false, &parsed, &error));
+        CHECK(error
+              == QStringLiteral("unexpected allComponents reply: empty object path in typed list"));
+        CHECK(parsed.isEmpty());
+        CHECK(ShortcutReconciler::appendComponentPath(QStringLiteral("/a"), false, &parsed, &error));
+        CHECK(parsed == (QStringList{QStringLiteral("/a")}));
+    }
+    {
+        // (1) allComponents object-path validator: argument-array provenance.
+        QString error;
+        QStringList parsed;
+        CHECK(!ShortcutReconciler::appendComponentPath(QString(), true, &parsed, &error));
+        CHECK(error
+              == QStringLiteral(
+                  "unexpected allComponents reply: empty object path in argument array"));
+        CHECK(parsed.isEmpty());
+        CHECK(ShortcutReconciler::appendComponentPath(QStringLiteral("/b"), true, &parsed, &error));
+        CHECK(parsed == (QStringList{QStringLiteral("/b")}));
+    }
+    {
+        // (2) by-key wire bound via the shared predicate.
+        QString error;
+        CHECK(!ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES + 1, ShortcutReconciler::TupleAppendBound::ByKeyWire, &error));
+        CHECK(error
+              == QStringLiteral("unexpected globalShortcutsByKey reply: too many wire holders"));
+        CHECK(ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES, ShortcutReconciler::TupleAppendBound::ByKeyWire, &error));
+        CHECK(ShortcutReconciler::checkTupleAppendBound(
+            0, ShortcutReconciler::TupleAppendBound::ByKeyWire, &error));
+    }
+    {
+        // (2) allShortcutInfos wire bound via the shared predicate.
+        QString error;
+        CHECK(!ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES + 1, ShortcutReconciler::TupleAppendBound::AllInfosWire, &error));
+        CHECK(error
+              == QStringLiteral("unexpected allShortcutInfos reply: too many wire tuples"));
+        CHECK(ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES, ShortcutReconciler::TupleAppendBound::AllInfosWire, &error));
+    }
+    {
+        // (3) cross-component collected-tuples bound via the shared predicate.
+        QString error;
+        CHECK(!ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES + 1, ShortcutReconciler::TupleAppendBound::Collected, &error));
+        CHECK(error
+              == QStringLiteral("unexpected allShortcutInfos reply: too many collected tuples"));
+        CHECK(ShortcutReconciler::checkTupleAppendBound(
+            SHORTCUT_MAX_TUPLES, ShortcutReconciler::TupleAppendBound::Collected, &error));
+    }
+    {
+        // (4) defensive occupancy-key range: negative only.
+        QString error;
+        CHECK(!ShortcutReconciler::checkOccupancyKeyRange(-1, &error));
+        CHECK(error
+              == QStringLiteral("unexpected globalShortcutsByKey reply: negative occupancy key"));
+    }
+    {
+        // (4) defensive occupancy-key range: zero (non-positive) only; passes
+        // the negative check, fails only the zero check.
+        QString error;
+        CHECK(!ShortcutReconciler::checkOccupancyKeyRange(0, &error));
+        CHECK(error
+              == QStringLiteral("unexpected globalShortcutsByKey reply: non-positive occupancy key"));
+    }
+    {
+        // (4) defensive occupancy-key range: oversized only; passes negative
+        // and zero checks, fails only the over-max check.
+        QString error;
+        CHECK(!ShortcutReconciler::checkOccupancyKeyRange(SHORTCUT_MAX_KEY_VALUE + 1, &error));
+        CHECK(error
+              == QStringLiteral("unexpected globalShortcutsByKey reply: oversized occupancy key"));
+        CHECK(ShortcutReconciler::checkOccupancyKeyRange(META_L, &error));
+    }
+}
+
+
+void preflightKeyedFieldsSplitTokens()
+{
+    // Real-capture-shaped fixture: action, empty friendly, component,
+    // componentFriendly, default, Default Context, ai, ai. Must be accepted.
+    {
+        QString fieldError = QStringLiteral("seed");
+        CHECK(ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"),
+            QStringLiteral("componentFriendly"), QStringLiteral("default"), QStringLiteral("Default Context"),
+            QList<int>{META_L}, QList<int>{META_ESC}, &fieldError));
+        CHECK(fieldError == QStringLiteral("seed"));
+    }
+    // All cosmetic fields empty is accepted for globalShortcutsByKey parsing.
+    {
+        QString fieldError;
+        CHECK(ShortcutReconciler::keyedFieldsValid(QStringLiteral("action"), QString(),
+                                                   QStringLiteral("component"), QString(), QString(), QString(),
+                                                   QList<int>{}, QList<int>{}, &fieldError));
+    }
+    // Cosmetic validator allows empty with only the length bound.
+    CHECK(ShortcutReconciler::cosmeticValid(QString()));
+    CHECK(ShortcutReconciler::cosmeticValid(QStringLiteral("Default Context")));
+    CHECK(!ShortcutReconciler::cosmeticValid(oversizedString()));
+    CHECK(!ShortcutReconciler::stringValid(QString()));
+    // Invalid identity: empty action.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(QString(), QStringLiteral("friendly"),
+                                                    QStringLiteral("component"), QStringLiteral("compFriendly"),
+                                                    QStringLiteral("default"), QStringLiteral("Default Context"),
+                                                    QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("empty action"));
+    }
+    // Invalid identity: oversized action (bound preserved).
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(oversizedString(), QString(),
+                                                    QStringLiteral("component"), QStringLiteral("compFriendly"),
+                                                    QStringLiteral("default"), QStringLiteral("Default Context"),
+                                                    QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized action"));
+    }
+    // Invalid identity: empty compUnique.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(QStringLiteral("action"), QString(),
+                                                    QString(), QStringLiteral("compFriendly"),
+                                                    QStringLiteral("default"), QStringLiteral("Default Context"),
+                                                    QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("empty component"));
+    }
+    // Invalid identity: oversized compUnique.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(QStringLiteral("action"), QString(),
+                                                    oversizedString(), QStringLiteral("compFriendly"),
+                                                    QStringLiteral("default"), QStringLiteral("Default Context"),
+                                                    QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized component"));
+    }
+    // Invalid cosmetic: oversized friendly.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), oversizedString(), QStringLiteral("component"),
+            QStringLiteral("compFriendly"), QStringLiteral("default"), QStringLiteral("Default Context"),
+            QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized friendly"));
+    }
+    // Invalid cosmetic: oversized compFriendly.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), oversizedString(),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized component friendly"));
+    }
+    // Invalid cosmetic: oversized contextUnique.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            oversizedString(), QStringLiteral("Default Context"), QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized context unique"));
+    }
+    // Invalid cosmetic: oversized contextFriendly.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), oversizedString(), QList<int>{}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized context friendly"));
+    }
+    // Invalid active keys: too many.
+    {
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), tooMany, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("too many active keys"));
+    }
+    // Invalid active keys: negative.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{-1}, QList<int>{},
+            &fieldError));
+        CHECK(fieldError == QStringLiteral("negative active key"));
+    }
+    // Invalid active keys: over-max.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"),
+            QList<int>{SHORTCUT_MAX_KEY_VALUE + 1}, QList<int>{}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized active key"));
+    }
+    // Invalid default keys: too many.
+    {
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{}, tooMany, &fieldError));
+        CHECK(fieldError == QStringLiteral("too many default keys"));
+    }
+    // Invalid default keys: negative.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{}, QList<int>{-1},
+            &fieldError));
+        CHECK(fieldError == QStringLiteral("negative default key"));
+    }
+    // Invalid default keys: over-max.
+    {
+        QString fieldError;
+        CHECK(!ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{},
+            QList<int>{SHORTCUT_MAX_KEY_VALUE + 1}, &fieldError));
+        CHECK(fieldError == QStringLiteral("oversized default key"));
+    }
+    // Empty friendly alone never reports an identity token.
+    {
+        QString fieldError;
+        CHECK(ShortcutReconciler::keyedFieldsValid(
+            QStringLiteral("action"), QString(), QStringLiteral("component"), QStringLiteral("compFriendly"),
+            QStringLiteral("default"), QStringLiteral("Default Context"), QList<int>{}, QList<int>{},
+            &fieldError));
+    }
+}
+
+void preflightStoreGuardsSplitTokens()
+{
+    // Pre-D-Bus keyed input guards fail closed without a bus. Each
+    // elementary single-key predicate has its own token: negative, zero
+    // (non-positive), over-max. List-bound is unreachable for one element.
+    {
+        KGlobalAccelStore store;
+        QList<ShortcutKeyHolder> holders;
+        QString error;
+        CHECK(!store.shortcutsByKey(-1, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: negative key"));
+        CHECK(!store.shortcutsByKey(0, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: non-positive key"));
+        CHECK(!store.shortcutsByKey(SHORTCUT_MAX_KEY_VALUE + 1, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: oversized key"));
+        // Fake mirrors the same split.
+        FakeShortcutStore fake;
+        CHECK(!fake.shortcutsByKey(-1, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: negative key"));
+        CHECK(!fake.shortcutsByKey(0, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: non-positive key"));
+        CHECK(!fake.shortcutsByKey(SHORTCUT_MAX_KEY_VALUE + 1, &holders, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutsByKey reply: oversized key"));
+    }
+    {
+        KGlobalAccelStore store;
+        bool available = false;
+        QString error;
+        CHECK(!store.shortcutAvailable(-1, QString(), &available, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: negative key"));
+        CHECK(!store.shortcutAvailable(0, QString(), &available, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: non-positive key"));
+        CHECK(!store.shortcutAvailable(SHORTCUT_MAX_KEY_VALUE + 1, QString(), &available, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: oversized key"));
+        CHECK(!store.shortcutAvailable(META_L, oversizedString(), &available, &error));
+        CHECK(error == QStringLiteral("unexpected globalShortcutAvailable reply: oversized component"));
+    }
+}
+
+void preflightReadAllFieldSplitTokens()
+{
+    // Negative active key via Fake readAll.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.tuples[0].active = QList<int>{-1};
+        QString error;
+        QList<ShortcutTuple> out;
+        CHECK(!store.readAll(&out, &error));
+        CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: negative active key"));
+    }
+    // Oversized active key via Fake readAll.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.tuples[0].active = QList<int>{SHORTCUT_MAX_KEY_VALUE + 1};
+        QString error;
+        QList<ShortcutTuple> out;
+        CHECK(!store.readAll(&out, &error));
+        CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: oversized active key"));
+    }
+    // Too many tuples via Fake readAll.
+    {
+        FakeShortcutStore store;
+        for (int i = 0; i < SHORTCUT_MAX_TUPLES + 1; ++i) {
+            ShortcutTuple tuple;
+            tuple.component = QStringLiteral("c%1").arg(i);
+            tuple.action = QStringLiteral("a%1").arg(i);
+            tuple.componentFriendly = QStringLiteral("cf");
+            tuple.friendly = QString();
+            store.tuples.append(tuple);
+        }
+        QString error;
+        QList<ShortcutTuple> out;
+        CHECK(!store.readAll(&out, &error));
+        CHECK(error == QStringLiteral("unexpected allShortcutInfos reply: too many tuples"));
+    }
+}
+
+void preflightOccupancyHolderSplitTokens()
+{
+    // Each holder predicate has its own token; triggers are pure. The
+    // "holder" qualifier keeps these distinct from the shared-seam field
+    // tokens under the same by-key prefix. Occupancy-key range tokens are
+    // defensive: relevantConflictKeys() constants are always valid, so the
+    // real occupancy branch delegates to checkOccupancyKeyRange and the
+    // exact tokens are triggered hermetically there (see
+    // boundedHelperSeamsExactTokens).
+    auto checkHolder = [](const ShortcutKeyHolder &bad, const char *token) {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        store.extraByKey[META_L].append(bad);
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Unavailable);
+        CHECK(outcome.detail == QString::fromUtf8(token));
+    };
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QString();
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{META_L};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: empty holder component");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = oversizedString();
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{META_L};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: oversized holder component");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QString();
+        bad.active = QList<int>{META_L};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: empty holder action");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = oversizedString();
+        bad.active = QList<int>{META_L};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: oversized holder action");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        bad.active = tooMany;
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: too many holder active keys");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{-1};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: negative holder active key");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{SHORTCUT_MAX_KEY_VALUE + 1};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: oversized holder active key");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{};
+        QList<int> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(i + 1);
+        }
+        bad.defaults = tooMany;
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: too many holder default keys");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{};
+        bad.defaults = QList<int>{-1};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: negative holder default key");
+    }
+    {
+        ShortcutKeyHolder bad;
+        bad.component = QStringLiteral("org.kde.unexpected");
+        bad.action = QStringLiteral("other");
+        bad.active = QList<int>{};
+        bad.defaults = QList<int>{SHORTCUT_MAX_KEY_VALUE + 1};
+        checkHolder(bad, "unexpected globalShortcutsByKey reply: oversized holder default key");
+    }
+    // Too many occupancy holders.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        for (int i = 0; i < SHORTCUT_MAX_TUPLES + 1; ++i) {
+            ShortcutKeyHolder holder;
+            holder.component = QStringLiteral("c%1").arg(i);
+            holder.action = QStringLiteral("a%1").arg(i);
+            store.extraByKey[META_L].append(holder);
+        }
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Unavailable);
+        CHECK(outcome.detail
+              == QStringLiteral("unexpected globalShortcutsByKey reply: too many occupancy holders"));
+    }
+    // Availability inconsistency both directions with exact tokens.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.active.contains(META_L)) {
+                tuple.active.removeAll(META_L);
+            }
+        }
+        store.extraByKey.clear();
+        store.availableOverride[META_L] = false;
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Unavailable);
+        CHECK(outcome.detail
+              == QStringLiteral(
+                  "unexpected globalShortcutAvailable reply: empty holders report unavailable"));
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.availableOverride[META_L] = true;
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Unavailable);
+        CHECK(outcome.detail
+              == QStringLiteral(
+                  "unexpected globalShortcutAvailable reply: occupied holders report available"));
+    }
+}
+
 } // namespace
+
 
 int main(int argc, char **argv)
 {
@@ -2377,6 +3280,7 @@ int main(int argc, char **argv)
         keyedTransportFailsClosed();
         keyedReplyParsingStrict();
         keyedAvailabilityConsistencyBothDirections();
+        preflightOccupancyHolderSplitTokens();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("malformed")) {
         malformedReplyFailsClosed();
@@ -2389,6 +3293,17 @@ int main(int argc, char **argv)
         introspectionAnnotationNamesStrict();
         keySequenceDbusRoundtripAndBounds();
         writeFailureControlsFailClosed();
+        preflightAllComponentsSplitTokens();
+        preflightAvailableSplitTokens();
+        preflightByKeyTransportSplitTokens();
+        preflightAllInfosSplitTokens();
+        preflightKeyedFieldsSplitTokens();
+        preflightStoreGuardsSplitTokens();
+        preflightReadAllFieldSplitTokens();
+        infoFieldsWireEncodingProvesSignature();
+        seamHoldersAndTuplesFieldBranches();
+        wireBoundTokensDistinctFromSeams();
+        boundedHelperSeamsExactTokens();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("owner")) {
         ownerDriftFailsClosed();

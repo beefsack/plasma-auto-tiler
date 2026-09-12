@@ -702,7 +702,9 @@ Only meaningful pending or active work is listed.
   `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
   Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. The strict
   setter validator accepts Qt's out-first XML contract, while keyed
-  KGlobalAccel conflict checks see .desktop-only defaults. Dynamic Qt D-Bus
+  KGlobalAccel conflict checks see .desktop-only defaults. Real-session
+  `a(ssssssaiai)` reads accept bounded empty cosmetic labels and emit distinct
+  fail-closed detail tokens for every reply-validation condition. Dynamic Qt D-Bus
    proxies are eliminated from this path: daemon owner/UID resolution uses the
    connection interface, reads and writes use raw calls, and owner pinning and
    pre-write drift refusal remain fail-closed. Row 1 explicitly authorizes
