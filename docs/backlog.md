@@ -702,6 +702,20 @@ Only meaningful pending or active work is listed.
   exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
+- P2 | user decision pending | Make the Planner `unauthorized` rejection
+  observable. `PlannerEndpoint::describe_plan` in `src/planner_service.rs`
+  returns the fixed unbound reply
+  `{"v":1,"outcome":"rejected","kind":"unauthorized","message":"unauthorized"}`
+  when `verify_same_uid_caller` fails or the caller is absent. Every adapter
+  requires an exact matching `correlation_id` before it inspects `kind`, so an
+  unauthorized rejection is discarded by the correlation fence and never
+  surfaces as a distinct signal. Making it observable needs a Rust contract
+  change to echo the caller's `correlation_id` in that reply, which means
+  echoing unvalidated caller input back across the same-UID authorization
+  boundary. That is a security-posture decision and must not be made without
+  the user. The alternative, loosening the adapter correlation fence, is
+  rejected. Audit:
+  [record](changes/archive/unauthorized-rejection-route-audit.md) |
 - P2 | user decision pending | The `interrupted-recovery` half of the shortcut
   override live acceptance criterion is unsatisfiable as written. Runbook
   authoring established that Apply is synchronous with no cancel point, so a
