@@ -222,9 +222,11 @@ Only meaningful pending or active work is listed.
                 focus/move/keyboard/pointer visual-jank smoke; add/remove,
                 collapse, drag/drop, settings, persistence, and default promotion
                  remain out of scope. Parked shadow transport/live cleanup remains
-                 unchanged. Deferred KWin bundle work must parse and emit the
-                 bounded `kind:"unauthorized"` rejection for those four Rust
-                 routes; it is blocked on a user-authorized script reload.
+                 unchanged. Deferred KWin bundle audit is static-complete: the
+                 four named Rust routes are test-only and do not produce the
+                 bounded `kind:"unauthorized"` reply; production `DescribePlan`
+                 emits an unbound fixed reply, so parse/emit requires a Rust
+                 contract change rather than only a user-authorized script reload.
                   The deferred `just` recipes wrapping the worktree dev-on,
                   Planner-only reload, and dev-off loop are complete; they
                   dynamically retain the controller receipt and exact Planner
