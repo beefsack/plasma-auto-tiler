@@ -538,6 +538,77 @@ describe("plan adapter recovery and fencing", () => {
         const removeWindows = plannerPayload(mocks, removeIndex)["windows"] as Array<Record<string, unknown>>;
         assert.ok(removeWindows.some((entry) => entry["window"] === "win-c"));
     });
+
+    it("keeps a cross-workspace duplicate admit fail-closed and recovers for a new window", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let workspace = "ws-a";
+        let ids = ["win-a"];
+        const byId: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
+        mocks.observeImpl = (): PlanObserved | null => {
+            const windows = ids.map((id) =>
+                Object.freeze({
+                    id,
+                    ref: byId[id] as object,
+                    rect: { x: 0, y: 0, w: 100, h: 100 },
+                    output: "out-1",
+                    workspace,
+                }),
+            );
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: workspace,
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: ids[0] as string,
+                windows: Object.freeze(windows),
+                activeRef: byId[ids[0] as string] as object,
+                fingerprint: `${workspace}-${ids.join(",")}`,
+                revalidate: () => true,
+            };
+        };
+        const adapter = enableAdapter(mocks);
+
+        fire(mocks, "added");
+        runTimers(mocks);
+        let correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(plannedReply(correlation, [{ window: "win-a", rect: { x: 0, y: 0, w: 1200, h: 800 } }], null));
+
+        workspace = "ws-b";
+        ids = ["win-c"];
+        fire(mocks, "scope");
+        runTimers(mocks);
+        correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation, [{ window: "win-c", rect: { x: 0, y: 0, w: 1200, h: 800 } }], null));
+
+        workspace = "ws-a";
+        ids = ["win-a"];
+        fire(mocks, "scope");
+        runTimers(mocks);
+        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "admit", window: "win-a", output: "out-1", workspace: "ws-a" });
+        mocks.callbacks[2]?.(rejectedReply(plannerPayload(mocks, 2)["correlation_id"] as string, "duplicate-window"));
+        assert.equal(adapter.isEnabled, true);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
+
+        workspace = "ws-b";
+        ids = ["win-b", "win-c"];
+        fire(mocks, "scope");
+        runTimers(mocks);
+        assert.deepEqual(plannerPayload(mocks, 3)["command"], { op: "admit", window: "win-b", output: "out-1", workspace: "ws-b" });
+        correlation = plannerPayload(mocks, 3)["correlation_id"] as string;
+        mocks.callbacks[3]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-b", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-c", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                null,
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("cmd=gen-1-p3") && line.includes("outcome=planned-applied")));
+    });
 });
 
 describe("plan adapter bounded diagnostics", () => {

@@ -757,6 +757,14 @@ Only meaningful pending or active work is listed.
   log. Static/hermetic coverage only; repeated Ctrl-C/restart cycles are
   user-observed but not formally gated. |
   [change](changes/dev-loop-teardown.md)
+- P3 | closed, correct benign behavior | `duplicate-window` rejections during
+  `just dev` scope changes predate `fca2f81`. Retained verbose logs show the
+  adapter probing a previously committed workspace after switching its single
+  baseline; the Planner correctly refuses the already-known window, the
+  adapter remains enabled, and a later fresh observation can admit a new
+  window. The current redacted `windows=1`/`windows=4` alternation lacks scope
+  IDs, so it is not asserted as a stronger live claim. No window drop is
+  evidenced. [verdict](changes/archive/duplicate-window-verdict.md)
 - P2 | user-owned live capture | Capture `snapshot-invalid`. Still unreproduced
   after the resize investigation deliberately excluded it. Correlations p44-p65
   were all rejected after moves, with a remove at p42 and an admit at p43. The
