@@ -259,6 +259,11 @@ pub enum SessionCommand {
     Remove {
         window: WindowId,
     },
+    MoveToWorkspace {
+        window: WindowId,
+        target_output: OutputId,
+        target_workspace: WorkspaceId,
+    },
 }
 
 /// Non-divergent session refusal reasons. Fixed redacted messages only.
@@ -561,6 +566,7 @@ struct PendingDesired {
     windows: BTreeMap<WindowId, WindowLink>,
     focused_domain: Option<DomainKey>,
     focused_leaf: Option<NodeId>,
+    last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
 }
 
@@ -601,6 +607,7 @@ pub struct Session {
     windows: BTreeMap<WindowId, WindowLink>,
     focused_domain: Option<DomainKey>,
     focused_leaf: Option<NodeId>,
+    last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     reconciler: Reconciler,
     pending_desired: Option<PendingDesired>,
@@ -657,6 +664,7 @@ impl Session {
             windows: BTreeMap::new(),
             focused_domain: None,
             focused_leaf: None,
+            last_active: BTreeMap::new(),
             exceptions: BTreeMap::new(),
             reconciler,
             pending_desired: None,
@@ -928,6 +936,18 @@ impl Session {
             SessionCommand::Remove { window } => {
                 self.propose_remove(window, session_observation, correlation_id, capabilities)
             }
+            SessionCommand::MoveToWorkspace {
+                window,
+                target_output,
+                target_workspace,
+            } => self.propose_move_to_workspace(
+                window,
+                target_output,
+                target_workspace,
+                session_observation,
+                correlation_id,
+                capabilities,
+            ),
         }
     }
 
@@ -945,6 +965,11 @@ impl Session {
                 }
             }
             SessionCommand::Remove { .. } => {}
+            // Same-output workspace transfer targets are validated precisely
+            // inside `propose_move_to_workspace` (`UnknownDomain` for unknown
+            // targets, `CrossDomainMismatch` for cross-output); only observed
+            // entries are checked here.
+            SessionCommand::MoveToWorkspace { .. } => {}
         }
         for entry in observed {
             if self.domain_for(&entry.output, &entry.workspace).is_none() {
@@ -1056,6 +1081,7 @@ impl Session {
                 windows: self.windows.clone(),
                 focused_domain: self.focused_domain.clone(),
                 focused_leaf: self.focused_leaf.clone(),
+                last_active: self.last_active.clone(),
                 exceptions: desired_exceptions,
             });
             return Ok(SessionPlan {
@@ -1161,6 +1187,12 @@ impl Session {
             windows: desired_windows.clone(),
             focused_domain: Some(key.clone()),
             focused_leaf: Some(leaf_id.clone()),
+            last_active: self.updated_last_active(
+                &Some(key.clone()),
+                &Some(leaf_id.clone()),
+                &desired_trees,
+                &desired_windows,
+            ),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionPlan {
@@ -1245,6 +1277,12 @@ impl Session {
                 windows: self.windows.clone(),
                 focused_domain: focus_domain.clone(),
                 focused_leaf: focus_leaf.clone(),
+                last_active: self.updated_last_active(
+                    &focus_domain,
+                    &focus_leaf,
+                    &self.trees,
+                    &self.windows,
+                ),
                 exceptions: desired_exceptions,
             });
             return Ok(SessionPlan {
@@ -1363,6 +1401,234 @@ impl Session {
             windows: desired_windows.clone(),
             focused_domain: desired_focus_domain.clone(),
             focused_leaf: desired_focus_leaf.clone(),
+            last_active: self.updated_last_active(
+                &desired_focus_domain,
+                &desired_focus_leaf,
+                &desired_trees,
+                &desired_windows,
+            ),
+            exceptions: self.exceptions.clone(),
+        });
+        Ok(SessionPlan {
+            dispatch,
+            desired_snapshot,
+            desired_focus_domain,
+            desired_focus_leaf,
+            desired_geometry,
+        })
+    }
+
+    /// Propose a portable same-output send-to-workspace transfer of the
+    /// keyboard-focused tiled window into an explicit target workspace domain.
+    ///
+    /// Source: `cosmic-comp` `SendToWorkspace` calls `Shell::move_current`
+    /// with no window id and moves only the focused element; `move_element`
+    /// unmaps the source (recursive collapse) then maps the tiled element in
+    /// the target and focuses it. The portable gate mirrors
+    /// [`Session::propose_move`]: unknown windows refuse as `UnknownWindow`,
+    /// exception windows or an unresolved focused leaf as `NotTiled`, and a
+    /// missing global focus or requested non-focused tile as `FocusMismatch`.
+    /// The source domain must equal the focused domain before mutation; no
+    /// source-side fallback focus is invented.
+    ///
+    /// Target placement follows `map_to_tree` (`direction=None`): the
+    /// remembered destination last-active leaf splits when still linked
+    /// there (axis from its projected rect), else the root/output-bounds
+    /// fallback applies; empty targets admit a lone root.
+    ///
+    /// Only same-output, distinct-workspace targets plan. Same-domain targets
+    /// refuse as [`RefusalKind::Unchanged`], cross-output targets as
+    /// [`RefusalKind::CrossDomainMismatch`], unknown targets as
+    /// [`RefusalKind::UnknownDomain`]. The mover keeps its leaf identity with
+    /// a retargeted link; focus ends at the moved leaf in the target domain.
+    /// Plans commit only via acknowledge-then-[`Session::verify_lifecycle`]
+    /// with complete source-plus-target geometry.
+    #[allow(clippy::too_many_lines)]
+    fn propose_move_to_workspace(
+        &mut self,
+        window: &WindowId,
+        target_output: &OutputId,
+        target_workspace: &WorkspaceId,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &LifecycleCapabilities,
+    ) -> Result<SessionPlan, ProposeError> {
+        // Completeness: observed must equal the known tiled-plus-exception
+        // set (the transfer adds/removes no window identity).
+        let known: BTreeSet<&WindowId> =
+            self.windows.keys().chain(self.exceptions.keys()).collect();
+        let observed_ids: BTreeSet<&WindowId> = session_observation
+            .windows
+            .iter()
+            .map(|w| &w.window)
+            .collect();
+        if observed_ids != known {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        if !self.observed_known_match(&session_observation.windows, None) {
+            return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+        }
+        // Exact propose_move-style focus gate: only the keyboard-focused
+        // tiled element moves.
+        if !self.windows.contains_key(window) && !self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::UnknownWindow));
+        }
+        if self.exceptions.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let link = self.windows.get(window).cloned().expect("tiled link");
+        let source_key = DomainKey {
+            output: link.output.clone(),
+            workspace: link.workspace.clone(),
+        };
+        let (Some(focused_domain), Some(focused_leaf)) =
+            (self.focused_domain.clone(), self.focused_leaf.clone())
+        else {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        };
+        if focused_domain != source_key {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let Some(focused_window) = self.focused_window_for(&focused_leaf, &source_key) else {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        };
+        if window != &focused_window {
+            return Err(ProposeError::Refused(RefusalKind::FocusMismatch));
+        }
+        let target_key = DomainKey {
+            output: target_output.clone(),
+            workspace: target_workspace.clone(),
+        };
+        if target_key == source_key {
+            return Err(ProposeError::Refused(RefusalKind::Unchanged));
+        }
+        let Some(target_domain) = self.domains.iter().find(|d| d.key() == target_key).cloned()
+        else {
+            return Err(ProposeError::Refused(RefusalKind::UnknownDomain));
+        };
+        if target_key.output != source_key.output {
+            return Err(ProposeError::Refused(RefusalKind::CrossDomainMismatch));
+        }
+        let base_revision = session_observation.observation.revision;
+        // Source removal with recursive collapse.
+        let source_tree = self.trees.get(&source_key).cloned().flatten();
+        let pre_leaves = source_tree.as_ref().map(collect_leaves).unwrap_or_default();
+        if !pre_leaves.contains(&link.leaf) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let new_source = remove_leaf_from_tree(source_tree, &link.leaf);
+        if let Some(ref tree) = new_source
+            && collect_leaves(tree).contains(&link.leaf)
+        {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        // COSMIC `map_to_tree` splits the destination last-active leaf when
+        // still linked there, else the root/output-geometry fallback applies.
+        let remembered = self.remembered_leaf(&target_key);
+        let target_tree = self.trees.get(&target_key).cloned().flatten();
+        let axis = remembered
+            .as_ref()
+            .and_then(|leaf| {
+                project_output_geometry(
+                    Some(&target_domain),
+                    target_tree.as_ref(),
+                    &self.windows,
+                    &target_key,
+                )
+                .ok()?
+                .into_iter()
+                .find(|g| &g.leaf == leaf)
+                .map(|g| crate::cosmic_v1::admission_axis_for_rect(&g.rect))
+            })
+            .unwrap_or_else(|| crate::cosmic_v1::admission_axis_for_rect(&target_domain.bounds));
+        let mut node_ids = self.all_node_ids();
+        let new_target = insert_tiled(
+            target_tree,
+            remembered.as_ref(),
+            link.leaf.clone(),
+            axis,
+            &mut node_ids,
+            window,
+            base_revision,
+        )
+        .ok_or(ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !collect_leaves(&new_target).contains(&link.leaf) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let mut desired_trees = self.trees.clone();
+        desired_trees.insert(source_key.clone(), new_source);
+        desired_trees.insert(target_key.clone(), Some(new_target));
+        let mut desired_windows = self.windows.clone();
+        desired_windows.insert(
+            window.clone(),
+            WindowLink {
+                window: window.clone(),
+                leaf: link.leaf.clone(),
+                output: target_key.output.clone(),
+                workspace: target_key.workspace.clone(),
+            },
+        );
+        let desired_focus_domain = Some(target_key.clone());
+        let desired_focus_leaf = Some(link.leaf.clone());
+        if !validate_topology(
+            &self.domains,
+            &desired_trees,
+            &desired_windows,
+            &self.exceptions,
+            &desired_focus_domain,
+            &desired_focus_leaf,
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let affected = vec![source_key.clone(), target_key.clone()];
+        let desired_geometry =
+            project_affected_geometry(&self.domains, &desired_trees, &desired_windows, &affected)
+                .map_err(|_| ProposeError::Refused(RefusalKind::MalformedTopology))?;
+        if !geometry_covers_affected(&desired_geometry, &desired_windows, &affected) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        }
+        let desired_snapshot = self.snapshot_for(&desired_trees, &desired_windows);
+        let intent = LifecycleIntent::MoveToWorkspace {
+            window: window.clone(),
+            target_output: target_key.output.clone(),
+            target_workspace: target_key.workspace.clone(),
+        };
+        let operation = LifecycleOperation::MoveTiled {
+            window: window.clone(),
+            leaf: link.leaf.clone(),
+            source_output: source_key.output.clone(),
+            source_workspace: source_key.workspace.clone(),
+            target_output: target_key.output.clone(),
+            target_workspace: target_key.workspace.clone(),
+        };
+        let plan = LifecyclePlan::for_operation(intent, operation);
+        let dispatch = match self.reconciler.propose_lifecycle(
+            &plan,
+            &session_observation.observation,
+            correlation_id,
+            capabilities,
+        ) {
+            Ok(dispatch) => dispatch,
+            Err(crate::reconcile::ProposeError::PendingExists) => {
+                return Err(ProposeError::PendingExists);
+            }
+            Err(crate::reconcile::ProposeError::Diverged(reason)) => {
+                self.pending_desired = None;
+                self.drag = None;
+                return Err(ProposeError::Diverged(reason));
+            }
+        };
+        self.pending_desired = Some(PendingDesired {
+            trees: desired_trees.clone(),
+            windows: desired_windows.clone(),
+            focused_domain: desired_focus_domain.clone(),
+            focused_leaf: desired_focus_leaf.clone(),
+            last_active: self.updated_last_active(
+                &desired_focus_domain,
+                &desired_focus_leaf,
+                &desired_trees,
+                &desired_windows,
+            ),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionPlan {
@@ -1452,6 +1718,38 @@ impl Session {
             .values()
             .find(|l| &l.leaf == leaf && l.output == key.output && l.workspace == key.workspace)
             .map(|l| l.window.clone())
+    }
+
+    fn remembered_leaf(&self, target: &DomainKey) -> Option<NodeId> {
+        let leaf = self.last_active.get(target)?.clone();
+        let tree = self.trees.get(target).cloned().flatten()?;
+        if !collect_leaves(&tree).contains(&leaf) {
+            return None;
+        }
+        self.windows
+            .values()
+            .any(|l| l.leaf == leaf && l.output == target.output && l.workspace == target.workspace)
+            .then_some(leaf)
+    }
+
+    fn updated_last_active(
+        &self,
+        focus_domain: &Option<DomainKey>,
+        focus_leaf: &Option<NodeId>,
+        trees: &BTreeMap<DomainKey, Option<Node>>,
+        windows: &BTreeMap<WindowId, WindowLink>,
+    ) -> BTreeMap<DomainKey, NodeId> {
+        let mut next = self.last_active.clone();
+        if let (Some(d), Some(l)) = (focus_domain, focus_leaf)
+            && let Some(tree) = trees.get(d).cloned().flatten()
+            && collect_leaves(&tree).contains(l)
+            && windows
+                .values()
+                .any(|w| &w.leaf == l && w.output == d.output && w.workspace == d.workspace)
+        {
+            next.insert(d.clone(), l.clone());
+        }
+        next
     }
 
     /// Same-workspace directional snapshot for movement: source plus every
@@ -1679,6 +1977,12 @@ impl Session {
             windows: desired_windows.clone(),
             focused_domain: Some(desired_focus_domain.clone()),
             focused_leaf: Some(desired_focus_leaf.clone()),
+            last_active: self.updated_last_active(
+                &Some(desired_focus_domain.clone()),
+                &Some(desired_focus_leaf.clone()),
+                &desired_trees,
+                &desired_windows,
+            ),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionMovePlan {
@@ -1702,6 +2006,7 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
@@ -1883,6 +2188,12 @@ impl Session {
             windows: self.windows.clone(),
             focused_domain: Some(domain.clone()),
             focused_leaf: Some(target_leaf.clone()),
+            last_active: self.updated_last_active(
+                &Some(domain.clone()),
+                &Some(target_leaf.clone()),
+                &self.trees,
+                &self.windows,
+            ),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionFocusPlan {
@@ -1909,6 +2220,7 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
@@ -2187,6 +2499,7 @@ impl Session {
             windows: self.windows.clone(),
             focused_domain: Some(domain.clone()),
             focused_leaf: Some(focused_leaf.clone()),
+            last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionResizePlan {
@@ -2214,6 +2527,7 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
@@ -2522,6 +2836,7 @@ impl Session {
             windows: self.windows.clone(),
             focused_domain: Some(domain.clone()),
             focused_leaf: Some(focused_leaf.clone()),
+            last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
         });
         Ok(SessionResizePlan {
@@ -2999,10 +3314,11 @@ impl Session {
         };
         let desired_snapshot = self.snapshot_for(&desired_trees, &self.windows);
         self.pending_desired = Some(PendingDesired {
-            trees: desired_trees,
+            trees: desired_trees.clone(),
             windows: self.windows.clone(),
             focused_domain: Some(capture.domain.clone()),
             focused_leaf: Some(capture.source_leaf.clone()),
+            last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
         });
         self.drag = None;
@@ -3086,6 +3402,7 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
@@ -5060,6 +5377,11 @@ fn valid_command_shapes(command: &SessionCommand) -> bool {
                 && valid_rect_shape(placement_bounds)
         }
         SessionCommand::Remove { window } => !window.0.is_empty(),
+        SessionCommand::MoveToWorkspace {
+            window,
+            target_output,
+            target_workspace,
+        } => !window.0.is_empty() && !target_output.0.is_empty() && !target_workspace.0.is_empty(),
     }
 }
 

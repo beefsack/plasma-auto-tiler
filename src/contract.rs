@@ -296,12 +296,13 @@ impl DivergenceKind {
 
 /// Adapter-facing lifecycle capability required to realize one lifecycle
 /// operation. Separate from [`Capability`] movement capabilities so the frozen
-/// R1-R4 movement surface stays unchanged; lifecycle admission and removal
-/// each gate on their own explicit capability.
+/// R1-R4 movement surface stays unchanged; lifecycle admission, removal, and
+/// same-output workspace transfer each gate on their own explicit capability.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum LifecycleCapability {
     AdmitTiled,
     RemoveTiled,
+    MoveTiled,
 }
 
 impl LifecycleCapability {
@@ -311,6 +312,7 @@ impl LifecycleCapability {
         match self {
             Self::AdmitTiled => "admit-tiled",
             Self::RemoveTiled => "remove-tiled",
+            Self::MoveTiled => "move-tiled",
         }
     }
 }
@@ -320,6 +322,7 @@ impl LifecycleCapability {
 pub struct LifecycleCapabilities {
     pub admit_tiled: bool,
     pub remove_tiled: bool,
+    pub move_tiled: bool,
 }
 
 impl LifecycleCapabilities {
@@ -329,6 +332,7 @@ impl LifecycleCapabilities {
         Self {
             admit_tiled: true,
             remove_tiled: true,
+            move_tiled: true,
         }
     }
 
@@ -338,6 +342,7 @@ impl LifecycleCapabilities {
         Self {
             admit_tiled: false,
             remove_tiled: false,
+            move_tiled: false,
         }
     }
 
@@ -347,6 +352,7 @@ impl LifecycleCapabilities {
         match capability {
             LifecycleCapability::AdmitTiled => self.admit_tiled,
             LifecycleCapability::RemoveTiled => self.remove_tiled,
+            LifecycleCapability::MoveTiled => self.move_tiled,
         }
     }
 }
@@ -361,11 +367,12 @@ pub enum LifecyclePrecondition {
     AdapterMustVerifyPostconditions,
 }
 
-/// Semantic lifecycle intent: admit a window into an output/workspace domain
-/// or remove a window from the session. Structural resolution (leaf identity,
-/// deferred exception handling) lives in [`LifecycleOperation`]; the intent
-/// records the originating request so a plan can be interpreted without
-/// retaining caller-side state.
+/// Semantic lifecycle intent: admit a window into an output/workspace domain,
+/// remove a window from the session, or move the focused tiled window to an
+/// explicit same-output target workspace domain. Structural resolution (leaf
+/// identity, deferred exception handling) lives in [`LifecycleOperation`];
+/// the intent records the originating request so a plan can be interpreted
+/// without retaining caller-side state.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LifecycleIntent {
     Admit {
@@ -375,6 +382,11 @@ pub enum LifecycleIntent {
     },
     Remove {
         window: WindowId,
+    },
+    MoveToWorkspace {
+        window: WindowId,
+        target_output: OutputId,
+        target_workspace: WorkspaceId,
     },
 }
 
@@ -405,6 +417,14 @@ pub enum LifecycleOperation {
         output: OutputId,
         workspace: WorkspaceId,
     },
+    MoveTiled {
+        window: WindowId,
+        leaf: NodeId,
+        source_output: OutputId,
+        source_workspace: WorkspaceId,
+        target_output: OutputId,
+        target_workspace: WorkspaceId,
+    },
 }
 
 impl LifecycleOperation {
@@ -414,6 +434,7 @@ impl LifecycleOperation {
         match self {
             Self::Admit { .. } | Self::AdmitDeferred { .. } => LifecycleCapability::AdmitTiled,
             Self::Remove { .. } | Self::RemoveDeferred { .. } => LifecycleCapability::RemoveTiled,
+            Self::MoveTiled { .. } => LifecycleCapability::MoveTiled,
         }
     }
 
@@ -435,7 +456,8 @@ impl LifecycleOperation {
             Self::Admit { window, .. }
             | Self::AdmitDeferred { window, .. }
             | Self::Remove { window, .. }
-            | Self::RemoveDeferred { window, .. } => window,
+            | Self::RemoveDeferred { window, .. }
+            | Self::MoveTiled { window, .. } => window,
         }
     }
 }

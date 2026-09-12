@@ -309,6 +309,14 @@ Historical implementation detail is recoverable in Git history.
   capability fails closed. Future Hyprland and other behavior belongs in a
   separate versioned policy mode sharing the portable engine, not in an
   unnamed generic fallback or a platform adapter.
+- COSMIC send-to-workspace is a portable same-output, distinct-workspace
+  lifecycle operation. It moves only the focused tiled window, recursively
+  collapses its source tree, and focuses it in the target. A validated
+  per-domain last-active leaf supplies COSMIC target admission; its absence
+  uses target `map_to_tree` root/output-geometry fallback. Empty targets are a
+  lone root. Cross-output R4 remains deferred: the audited COSMIC boundary
+  path escalates `MoveFurther` to workspace/output actions and does not
+  establish the project's frozen local R4 transfer rule.
 - A KWin fork or patch is rejected. The project must operate within existing
   KDE/Plasma/KWin. The Rust-engine/direct-geometry direction above is the
   selected replacement architecture; the bounded adapter remains active only
