@@ -240,11 +240,30 @@ Only meaningful pending or active work is listed.
               contracts. The project `1/16` resize, unit-share insertion,
               arbitrary pointer bounds, and center-snap-back semantics are
               removed. Remaining named parity gaps are compositor-native center
-              stack drops (portable split tree refuses closed), binary-source-to-
-              N-ary share adaptation with integer projection rounding. Group edge/interior
-               classification and placement are wired through portable Session
-               drag preview/drop; KWin drag-end delivery remains separate. |
+              stack drops (portable split tree refuses closed), source-N-ary-pixel-
+              size-to-portable-share adaptation with integer projection rounding.
+              COSMIC stores `Vec<i32>` pixel sizes per group, rounds at mutation
+              time, gives an add residual to the inserted child, corrects
+              remove/update residual at the final child, then lays out with running
+              integer offsets. The portable engine stores `Vec<u64>` shares, floors
+              non-final proportional allocations, and gives the projection-time
+              remainder to the final child. Faithful closure requires a new N-ary
+              pixel-size authority in the portable engine: an architecture change
+              pending user decision. See
+              `docs/changes/archive/cosmic-v1-source-parity.md` and `56d5cdf`'s
+              `docs/changes/archive/cosmic-geometry-parity.md` for source
+              citations. Group edge/interior classification and placement are
+              wired through portable Session
+              drag preview/drop; KWin drag-end delivery remains separate. |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
+- P1 | pending user decision | Map COSMIC workspaces to Plasma for portable
+  send-to-workspace. It exists in the portable engine (`2dfa679`, `907194f`) but
+  has no KWin adapter route and is unreachable by users. Portable `(output,
+  workspace)` domains are a selected abstraction, not a Plasma binding; see
+  `docs/decisions.md:289-290,312-319`. Choose Plasma virtual desktops, Activities,
+  or a project-owned workspace mechanism. The project vision commits to workspace
+  mechanisms where systems lack needed support, which may favor the latter, but no
+  choice is made; no adapter route may be added until the user selects. |
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
   drag/reflow and the existing float, fullscreen, maximize, and workspace
