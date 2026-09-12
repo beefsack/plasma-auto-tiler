@@ -748,11 +748,11 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(mocks.dbusCalls.length, 1);
         assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(payload["command"], { op: "focus", window: "w-1", direction: "left" });
+        assert.deepEqual(payload["command"], { op: "focus", window: "win-a", direction: "left" });
         const windows = payload["windows"] as Array<Record<string, unknown>>;
         assert.deepEqual(
             windows.map((entry) => entry["window"]),
-            ["w-1", "w-2"],
+            ["win-a", "win-b"],
         );
         handle?.stop();
     });
@@ -787,7 +787,7 @@ describe("plan entry live observation and shortcuts", () => {
         letter.callback();
         assert.equal(first.mocks.dbusCalls.length, 1);
         const letterPayload = JSON.parse(first.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(letterPayload["command"], { op: "move", window: "w-1", direction: "left" });
+        assert.deepEqual(letterPayload["command"], { op: "move", window: "win-a", direction: "left" });
         first.handle?.stop();
         const second = startEntry(fakeWorld());
         assert.ok(second.handle !== null);
@@ -796,7 +796,7 @@ describe("plan entry live observation and shortcuts", () => {
         };
         arrow.callback();
         const arrowPayload = JSON.parse(second.mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(arrowPayload["command"], { op: "move", window: "w-1", direction: "right" });
+        assert.deepEqual(arrowPayload["command"], { op: "move", window: "win-a", direction: "right" });
         assert.equal(second.mocks.dbusCalls[0]?.method, "DescribePlan");
         second.handle?.stop();
     });
@@ -822,7 +822,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(!/Meta\+\$\{(index|digit|n)\}/.test(entrySrc), "no digit sequence template");
     });
 
-    it("observes only normal windows with stable opaque ids", () => {
+    it("observes only normal windows with normalized bare UUID ids", () => {
         const world = fakeWorld();
         world.wins.push({
             normalWindow: false,
@@ -845,7 +845,7 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.requestFocus("right");
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
         const ids = (payload["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"]);
-        assert.deepEqual(ids, ["w-1", "w-2", "w-3"]);
+        assert.deepEqual(ids, ["win-a", "win-b", "12345678-1234-1234-1234-1234567890ab"]);
         handle?.stop();
     });
 
@@ -921,5 +921,309 @@ describe("plan entry live observation and shortcuts", () => {
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
         assert.equal((payload["domain"] as Record<string, unknown>)["outer_gap"], OUTER_DOMAIN_GAP);
         handle?.stop();
+    });
+
+    it("keeps normalized ids stable across re-observation", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        handle?.requestFocus("left");
+        handle?.requestFocus("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        const ids = (payload["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"]);
+        assert.deepEqual(ids, ["win-a", "win-b"]);
+        assert.deepEqual(payload["command"], { op: "focus", window: "win-a", direction: "left" });
+        handle?.stop();
+    });
+});
+
+describe("plan adapter destroyed-window reply boundary", () => {
+    it("drops a stale planned reply after a destroyed window without reading it and without writes", () => {
+        const liveA: object = {};
+        const liveC: object = {};
+        let destroyedReads = 0;
+        let revalidateCalls = 0;
+        const destroyedB = new Proxy(
+            {},
+            {
+                get(_target, _prop, _receiver): unknown {
+                    destroyedReads += 1;
+                    throw new Error("destroyed-window");
+                },
+            },
+        );
+        const refs = { a: liveA, b: destroyedB, c: liveC };
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                fingerprint: "fp-1",
+                revalidate: (): boolean => {
+                    revalidateCalls += 1;
+                    return true;
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, 1);
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        const survivor = Object.freeze({
+            id: "win-a",
+            ref: refs.a,
+            rect: { x: 0, y: 0, w: 100, h: 100 },
+            output: "out-1",
+            workspace: "ws-1",
+        });
+        mocks.observeImpl = (): PlanObserved | null => ({
+            domainOutput: "out-1",
+            domainWorkspace: "ws-1",
+            domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+            domainGap: 0,
+            domainOuterGap: 0,
+            focusedId: "win-a",
+            windows: Object.freeze([survivor]),
+            activeRef: refs.a,
+            fingerprint: "fp-2",
+            revalidate: (): boolean => {
+                revalidateCalls += 1;
+                return true;
+            },
+        });
+        const writesBefore = mocks.geometries.length;
+        assert.doesNotThrow(() => {
+            mocks.callbacks[0]?.(
+                plannedReply(
+                    correlation,
+                    [
+                        { window: "win-a", rect: { x: 0, y: 0, w: 200, h: 200 } },
+                        { window: "win-b", rect: { x: 200, y: 0, w: 100, h: 100 } },
+                    ],
+                    null,
+                ),
+            );
+        });
+        assert.equal(mocks.geometries.length, writesBefore);
+        assert.equal(mocks.actives.length, 0);
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=stale-scope")));
+        assert.equal(revalidateCalls, 0);
+        assert.equal(destroyedReads, 0);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("applies remove replies from a fresh observation covering survivors", () => {
+        const refs = makeRefs();
+        let ids: string[] = ["win-a", "win-b", "win-c"];
+        const byId: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = (): PlanObserved | null => {
+            const wins = ids.map((id) =>
+                Object.freeze({
+                    id,
+                    ref: byId[id] as object,
+                    rect: { x: 0, y: 0, w: 100, h: 100 },
+                    output: "out-1",
+                    workspace: "ws-1",
+                }),
+            );
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-a",
+                windows: Object.freeze(wins),
+                activeRef: refs.a,
+                fingerprint: `fp-${ids.join(",")}`,
+                revalidate: () => true,
+            };
+        };
+        const adapter = enableAdapter(mocks);
+        assert.equal(adapter.isEnabled, true);
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        const admitCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        const writesAfterAdmit = mocks.geometries.length;
+        assert.ok(writesAfterAdmit > 0);
+        ids = ["win-a", "win-b"];
+        fire(mocks, "removed");
+        runTimers(mocks);
+        const removeIndex = mocks.dbusCalls.length - 1;
+        const removeCmd = plannerPayload(mocks, removeIndex)["command"] as Record<string, unknown>;
+        assert.deepEqual(removeCmd, { op: "remove", window: "win-c" });
+        const removeCorr = plannerPayload(mocks, removeIndex)["correlation_id"] as string;
+        const writesBeforeRemove = mocks.geometries.length;
+        mocks.callbacks[removeIndex]?.(
+            plannedReply(
+                removeCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBeforeRemove);
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+    });
+
+    it("applies remove replies without reading the destroyed window while resolving live survivors", () => {
+        const liveA: object = {};
+        const liveB: object = {};
+        let destroyedReads = 0;
+        const destroyedC = new Proxy(
+            {},
+            {
+                get(_target, _prop, _receiver): unknown {
+                    destroyedReads += 1;
+                    throw new Error("destroyed-window");
+                },
+            },
+        );
+        const byId: Record<string, object> = { "win-a": liveA, "win-b": liveB, "win-c": destroyedC };
+        let ids: string[] = ["win-a", "win-b", "win-c"];
+        const refs = { a: liveA, b: liveB, c: destroyedC };
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = (): PlanObserved | null => {
+            const wins = ids.map((id) =>
+                Object.freeze({
+                    id,
+                    ref: byId[id] as object,
+                    rect: { x: 0, y: 0, w: 100, h: 100 },
+                    output: "out-1",
+                    workspace: "ws-1",
+                }),
+            );
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-a",
+                windows: Object.freeze(wins),
+                activeRef: liveA,
+                fingerprint: `fp-${ids.join(",")}`,
+                revalidate: () => true,
+            };
+        };
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        const admitCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > 0);
+        ids = ["win-a", "win-b"];
+        fire(mocks, "removed");
+        runTimers(mocks);
+        const removeIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual(plannerPayload(mocks, removeIndex)["command"], { op: "remove", window: "win-c" });
+        const removeCorr = plannerPayload(mocks, removeIndex)["correlation_id"] as string;
+        const writesBeforeRemove = mocks.geometries.length;
+        const activesBefore = mocks.actives.length;
+        assert.doesNotThrow(() => {
+            mocks.callbacks[removeIndex]?.(
+                plannedReply(
+                    removeCorr,
+                    [
+                        { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                        { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                    ],
+                    "win-a-leaf",
+                ),
+            );
+        });
+        assert.ok(mocks.geometries.length > writesBeforeRemove);
+        for (let index = writesBeforeRemove; index < mocks.geometries.length; index += 1) {
+            const target = mocks.geometries[index]?.target as object;
+            assert.ok(target === liveA || target === liveB);
+        }
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+        assert.equal(destroyedReads, 0);
+        assert.equal(mocks.actives.length, activesBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+});
+
+describe("plan native identity sharing and string-keyed cache", () => {
+    it("shares braced-UUID normalization across entries with no local copies", () => {
+        const dir = kwinSrcDir();
+        const shared = readFileSync(join(dir, "native-id.ts"), "utf8");
+        assert.ok(shared.includes("function normalizeNativeId"), "shared normalizer");
+        assert.ok(shared.includes("unwrapBraced"), "braced handling");
+        assert.ok(shared.includes("String("), "String(internalId)");
+        for (const file of [
+            "focus-adapter-entry.ts",
+            "movement-adapter-entry.ts",
+            "resize-adapter-entry.ts",
+            "pointer-resize-adapter-entry.ts",
+            "plan-adapter-entry.ts",
+        ]) {
+            const body = readFileSync(join(dir, file), "utf8");
+            assert.ok(body.includes("./native-id"), `${file} uses shared utility`);
+            assert.ok(body.includes("normalizeNativeId"), `${file} calls shared normalizer`);
+        }
+        for (const file of [
+            "focus-adapter-entry.ts",
+            "movement-adapter-entry.ts",
+            "resize-adapter-entry.ts",
+            "pointer-resize-adapter-entry.ts",
+        ]) {
+            const body = readFileSync(join(dir, file), "utf8");
+            assert.ok(!body.includes("function normalizeNativeId"), `${file} has no local copy`);
+            assert.ok(!body.includes("function unwrapBraced"), `${file} has no local unwrap`);
+        }
+        const planEntry = readFileSync(join(dir, "plan-adapter-entry.ts"), "utf8");
+        assert.ok(!planEntry.includes("function normalizeNativeId"), "plan entry uses shared, not a copy");
+        assert.ok(!planEntry.includes("function unwrapBraced"), "plan entry uses shared, not a copy");
+    });
+
+    it("keeps plan entry identity string-keyed with explicit eviction and no WeakMap", () => {
+        const dir = kwinSrcDir();
+        const entry = readFileSync(join(dir, "plan-adapter-entry.ts"), "utf8");
+        assert.ok(!entry.includes("WeakMap"), "no WeakMap");
+        assert.ok(!entry.includes("OpaqueWindowIds"), "no OpaqueWindowIds");
+        assert.ok(entry.includes("new Map<string, string>"), "Map<string, string> cache");
+        assert.ok(entry.includes(".delete("), "explicit deletion");
+        assert.ok(entry.includes("noteRemoved"), "eviction on adapter removed id");
+        assert.ok(!entry.includes("windowRemoved\") as"), "no removal payload id read");
+    });
+
+    it("retains only primitive snapshots across the plan D-Bus boundary", () => {
+        const dir = kwinSrcDir();
+        const src = readFileSync(join(dir, "plan-adapter.ts"), "utf8");
+        assert.ok(src.includes("snapshotOf"), "snapshot capture");
+        assert.ok(src.includes("snapshotsEqual"), "snapshot comparison");
+        assert.ok(src.includes("snapshot: PlanSnapshot"), "snapshot-typed flight/intent");
+        assert.ok(src.includes("lastGood: PlanSnapshot | null"), "snapshot-typed baseline");
+        assert.ok(src.includes("noteRemoved"), "removed-id eviction hook");
+        assert.ok(!src.includes("flightState.observed"), "no retained observed");
+        assert.ok(!src.includes("captured.revalidate"), "no retained revalidation call");
+        assert.ok(!src.includes("observed: previous"), "no retained previous observed");
+        assert.ok(!src.includes("observed: fresh"), "no retained fresh observed");
     });
 });

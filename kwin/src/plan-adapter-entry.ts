@@ -17,6 +17,7 @@
 // is emitted.
 
 import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
+import { normalizeNativeId } from "./native-id";
 import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { connectSignal, readSignal } from "./signal-capability";
 
@@ -85,22 +86,6 @@ function isOpaqueId(value: unknown): value is string {
         }
     }
     return true;
-}
-
-class OpaqueWindowIds {
-    private next = 1;
-    private readonly ids = new WeakMap<object, string>();
-
-    get(window: object): string {
-        const known = this.ids.get(window);
-        if (known !== undefined) {
-            return known;
-        }
-        const id = `w-${String(this.next)}`;
-        this.next += 1;
-        this.ids.set(window, id);
-        return id;
-    }
 }
 
 function decodeList(value: unknown, maxLength: number): ReadonlyArray<unknown> | null {
@@ -276,7 +261,27 @@ function readShortcutProfile(readProfileFn: (() => unknown) | undefined): string
     return "cosmic";
 }
 
-function observeNative(liveWorkspace: unknown, ids: OpaqueWindowIds): PlanObserved | null {
+function internNativeId(cache: Map<string, string>, native: string): string {
+    const known = cache.get(native);
+    if (known !== undefined) {
+        return known;
+    }
+    cache.set(native, native);
+    return native;
+}
+
+function readNativeId(ref: object): string | null {
+    let raw: unknown = undefined;
+    try {
+        raw = Reflect.get(ref, "internalId");
+    } catch (error) {
+        void error;
+        return null;
+    }
+    return normalizeNativeId(raw);
+}
+
+function observeNative(liveWorkspace: unknown, cache: Map<string, string>): PlanObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
             return null;
@@ -413,7 +418,14 @@ function observeNative(liveWorkspace: unknown, ids: OpaqueWindowIds): PlanObserv
             if (!onDesktop) {
                 continue;
             }
-            const id = ids.get(ref);
+            // Read and normalize the native id while the object is live;
+            // stable plan ids come from the string cache. Never read an id
+            // from a removal signal payload.
+            const native = readNativeId(ref);
+            if (native === null) {
+                return null;
+            }
+            const id = internNativeId(cache, native);
             if (seen.has(id)) {
                 return null;
             }
@@ -427,7 +439,11 @@ function observeNative(liveWorkspace: unknown, ids: OpaqueWindowIds): PlanObserv
         if (entries.length === 0) {
             return null;
         }
-        const activeNativeId = ids.get(activeRef);
+        const activeNative = readNativeId(activeRef);
+        if (activeNative === null) {
+            return null;
+        }
+        const activeNativeId = internNativeId(cache, activeNative);
         let activeId: string | null = null;
         for (const entry of entries) {
             if (entry.id === activeNativeId) {
@@ -465,7 +481,7 @@ function observeNative(liveWorkspace: unknown, ids: OpaqueWindowIds): PlanObserv
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, ids);
+                    const fresh = observeNative(liveWorkspace, cache);
                     if (fresh === null || fresh.fingerprint !== expected || fresh.activeRef !== capturedActive) {
                         return false;
                     }
@@ -624,12 +640,15 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
-    const ids = new OpaqueWindowIds();
+    // String-keyed native identity cache: normalized internalId to stable
+    // plan id (the same normalized string, interned). Never keyed by Window.
+    // Eviction is explicit when the adapter identifies a removed string id.
+    const nativeIds = new Map<string, string>();
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace, ids),
+        observe: () => observeNative(liveWorkspace, nativeIds),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -710,12 +729,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             return detach;
         },
+        noteRemoved: (id) => {
+            try {
+                nativeIds.delete(id);
+            } catch (error) {
+                void error;
+            }
+        },
     });
     const enabled = adapter.enable({ owner: overrides.owner, generation: overrides.generation });
     if (!enabled) {
         return null;
     }
-    if (observeNative(liveWorkspace, ids) === null) {
+    if (observeNative(liveWorkspace, nativeIds) === null) {
         adapter.disable();
         return null;
     }

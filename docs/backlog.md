@@ -689,9 +689,13 @@ Only meaningful pending or active work is listed.
   (`docs/changes/archive/native-effect-dev-staging.md`). The earlier claim that
   this effect crashed KWin is retracted: read-only core-dump inspection places
   `plasma-auto-tiler-active-border.so` in the loaded-module list only, never in a
-  faulting or backtrace frame of either retained dump (PID 2090 SIGSEGV through
-  Qt QML `QV4::WeakMapPrototype::method_get`; PID 3568836 SIGABRT through inbound
-  libdbus `QKeySequence` demarshalling). Do not reintroduce that framing. |
+   faulting or backtrace frame of either retained dump (PID 2090 SIGSEGV through
+   Qt QML `QV4::WeakMapPrototype::method_get`; PID 3568836 SIGABRT through inbound
+   libdbus `QKeySequence` demarshalling). The byte-identical PID 2336/PID 2090
+   SIGSEGV path in the bundled `DescribePlan` script is fixed: normalized native
+   string IDs and primitive flight snapshots replace Window-keyed identity, and
+   reply handling re-observes live targets before writes. Do not reintroduce the
+   native-effect framing. |
   [change](changes/archive/active-border-colour-override.md)
 - P1 | shipped, live-unproven | KCM shortcut override is now a closed
   compiled-in conflict-resolution table with `relocate` and `clear`; the

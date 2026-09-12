@@ -70,6 +70,97 @@ export interface PlanObserved {
     readonly revalidate: () => boolean;
 }
 
+// Primitive-only snapshot retained across the async D-Bus boundary. Never
+// holds Window objects, refs, or revalidation closures: ids, geometry values,
+// scope, and fingerprint only. Targets are always resolved from a fresh
+// synchronous observation while handling the reply.
+export interface PlanSnapshotWindow {
+    readonly id: string;
+    readonly rect: PlanRect;
+    readonly output: string;
+    readonly workspace: string;
+}
+
+export interface PlanSnapshot {
+    readonly domainOutput: string;
+    readonly domainWorkspace: string;
+    readonly domainBounds: PlanRect;
+    readonly domainGap: number;
+    readonly domainOuterGap: number;
+    readonly focusedId: string;
+    readonly windows: ReadonlyArray<PlanSnapshotWindow>;
+    readonly fingerprint: string;
+}
+
+export function snapshotOf(observed: PlanObserved): PlanSnapshot {
+    const windows = observed.windows.map((entry) => ({
+        id: entry.id,
+        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+        output: entry.output,
+        workspace: entry.workspace,
+    }));
+    return {
+        domainOutput: observed.domainOutput,
+        domainWorkspace: observed.domainWorkspace,
+        domainBounds: {
+            x: observed.domainBounds.x,
+            y: observed.domainBounds.y,
+            w: observed.domainBounds.w,
+            h: observed.domainBounds.h,
+        },
+        domainGap: observed.domainGap,
+        domainOuterGap: observed.domainOuterGap,
+        focusedId: observed.focusedId,
+        windows,
+        fingerprint: observed.fingerprint,
+    };
+}
+
+function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
+    if (
+        a.domainOutput !== b.domainOutput ||
+        a.domainWorkspace !== b.domainWorkspace ||
+        a.domainGap !== b.domainGap ||
+        a.domainOuterGap !== b.domainOuterGap ||
+        a.focusedId !== b.focusedId ||
+        a.fingerprint !== b.fingerprint
+    ) {
+        return false;
+    }
+    if (
+        a.domainBounds.x !== b.domainBounds.x ||
+        a.domainBounds.y !== b.domainBounds.y ||
+        a.domainBounds.w !== b.domainBounds.w ||
+        a.domainBounds.h !== b.domainBounds.h
+    ) {
+        return false;
+    }
+    if (a.windows.length !== b.windows.length) {
+        return false;
+    }
+    const byId = new Map<string, PlanSnapshotWindow>();
+    for (const entry of a.windows) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b.windows) {
+        const other = byId.get(entry.id);
+        if (other === undefined) {
+            return false;
+        }
+        if (
+            other.rect.x !== entry.rect.x ||
+            other.rect.y !== entry.rect.y ||
+            other.rect.w !== entry.rect.w ||
+            other.rect.h !== entry.rect.h ||
+            other.output !== entry.output ||
+            other.workspace !== entry.workspace
+        ) {
+            return false;
+        }
+    }
+    return true;
+}
+
 export interface PlanAdapterEnv {
     readonly callDbus: (
         service: string,
@@ -86,6 +177,7 @@ export interface PlanAdapterEnv {
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
     readonly subscribe: (kind: PlanSignal, handler: () => void) => () => void;
+    readonly noteRemoved?: (id: string) => void;
 }
 
 export interface PlanEnableAuth {
@@ -432,14 +524,14 @@ interface PendingFlight {
     readonly correlation: string;
     readonly op: PlanOp;
     readonly epoch: number;
-    readonly observed: PlanObserved;
+    readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly windowCount: number;
 }
 
 interface AutoIntent {
     readonly op: PlanOp;
-    readonly observed: PlanObserved;
+    readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly body: Record<string, unknown>;
 }
@@ -459,7 +551,7 @@ export class PlanAdapter {
     private deferredAuto: AutoIntent | null = null;
     private epoch = 0;
     private seq = 0;
-    private lastGood: PlanObserved | null = null;
+    private lastGood: PlanSnapshot | null = null;
     private repeatFocused: string | null = null;
     private repeatDirection: PlanDirection | null = null;
     private repeatMode: PlanResizeMode | null = null;
@@ -551,12 +643,13 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        this.noteObservation(observed.fingerprint);
+        const snapshot = snapshotOf(observed);
+        this.noteObservation(snapshot.fingerprint);
         this.dispatch({
             op: "focus",
-            observed,
+            snapshot,
             removed: null,
-            body: { op: "focus", window: observed.focusedId, direction },
+            body: { op: "focus", window: snapshot.focusedId, direction },
         });
     }
 
@@ -568,12 +661,13 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        this.noteObservation(observed.fingerprint);
+        const snapshot = snapshotOf(observed);
+        this.noteObservation(snapshot.fingerprint);
         this.dispatch({
             op: "move",
-            observed,
+            snapshot,
             removed: null,
-            body: { op: "move", window: observed.focusedId, direction },
+            body: { op: "move", window: snapshot.focusedId, direction },
         });
     }
 
@@ -585,24 +679,25 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        this.noteObservation(observed.fingerprint);
+        const snapshot = snapshotOf(observed);
+        this.noteObservation(snapshot.fingerprint);
         let pressIndex = 0;
         if (
-            this.repeatFocused === observed.focusedId &&
+            this.repeatFocused === snapshot.focusedId &&
             this.repeatDirection === direction &&
             this.repeatMode === mode
         ) {
             pressIndex = this.repeatNext;
         }
-        this.repeatFocused = observed.focusedId;
+        this.repeatFocused = snapshot.focusedId;
         this.repeatDirection = direction;
         this.repeatMode = mode;
         this.repeatNext = pressIndex + 1;
         this.dispatch({
             op: "resize",
-            observed,
+            snapshot,
             removed: null,
-            body: { op: "resize", window: observed.focusedId, direction, mode, press_index: pressIndex },
+            body: { op: "resize", window: snapshot.focusedId, direction, mode, press_index: pressIndex },
         });
     }
 
@@ -664,6 +759,8 @@ export class PlanAdapter {
     // fencing epoch) but defers the auto command while a flight is active.
     // Membership growth yields one admit, shrinkage yields one remove against
     // the pre-removal snapshot; anything else only refreshes the baseline.
+    // Only primitive snapshots are retained; the removed string id is handed
+    // to the entry cache for explicit eviction (never read from a signal).
     private refreshNow(): void {
         if (!this.enabled) {
             return;
@@ -672,20 +769,21 @@ export class PlanAdapter {
         if (fresh === null) {
             return;
         }
+        const freshSnapshot = snapshotOf(fresh);
         this.epoch += 1;
-        this.noteObservation(fresh.fingerprint);
+        this.noteObservation(freshSnapshot.fingerprint);
         const previous = this.lastGood;
         if (previous === null) {
-            this.lastGood = fresh;
+            this.lastGood = freshSnapshot;
             this.deferredAuto = {
                 op: "admit",
-                observed: fresh,
+                snapshot: freshSnapshot,
                 removed: null,
                 body: {
                     op: "admit",
-                    window: fresh.focusedId,
-                    output: fresh.domainOutput,
-                    workspace: fresh.domainWorkspace,
+                    window: freshSnapshot.focusedId,
+                    output: freshSnapshot.domainOutput,
+                    workspace: freshSnapshot.domainWorkspace,
                 },
             };
             if (!this.inFlight) {
@@ -702,17 +800,17 @@ export class PlanAdapter {
             before.add(entry.id);
         }
         const after = new Set<string>();
-        for (const entry of fresh.windows) {
+        for (const entry of freshSnapshot.windows) {
             after.add(entry.id);
         }
         let intent: AutoIntent | null = null;
-        for (const entry of fresh.windows) {
+        for (const entry of freshSnapshot.windows) {
             if (!before.has(entry.id)) {
                 intent = {
                     op: "admit",
-                    observed: fresh,
+                    snapshot: freshSnapshot,
                     removed: null,
-                    body: { op: "admit", window: entry.id, output: fresh.domainOutput, workspace: fresh.domainWorkspace },
+                    body: { op: "admit", window: entry.id, output: freshSnapshot.domainOutput, workspace: freshSnapshot.domainWorkspace },
                 };
                 break;
             }
@@ -722,7 +820,7 @@ export class PlanAdapter {
                 if (!after.has(entry.id)) {
                     intent = {
                         op: "remove",
-                        observed: previous,
+                        snapshot: previous,
                         removed: entry.id,
                         body: { op: "remove", window: entry.id },
                     };
@@ -730,7 +828,16 @@ export class PlanAdapter {
                 }
             }
         }
-        this.lastGood = fresh;
+        for (const entry of previous.windows) {
+            if (!after.has(entry.id)) {
+                try {
+                    this.env.noteRemoved?.(entry.id);
+                } catch (error) {
+                    void error;
+                }
+            }
+        }
+        this.lastGood = freshSnapshot;
         if (intent !== null) {
             this.deferredAuto = intent;
         }
@@ -744,7 +851,7 @@ export class PlanAdapter {
         }
     }
 
-    private dispatch(intent: { op: PlanOp; observed: PlanObserved; removed: string | null; body: Record<string, unknown> }): void {
+    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown> }): void {
         if (!this.enabled || this.inFlight) {
             return;
         }
@@ -756,15 +863,15 @@ export class PlanAdapter {
         if (!isCorrelationId(correlation)) {
             return;
         }
-        const observed = intent.observed;
-        const sortedIds = observed.windows.map((entry) => entry.id).sort();
+        const snapshot = intent.snapshot;
+        const sortedIds = snapshot.windows.map((entry) => entry.id).sort();
         const fingerprint = planFingerprint(
-            observed.domainOutput,
-            observed.domainWorkspace,
-            observed.focusedId,
+            snapshot.domainOutput,
+            snapshot.domainWorkspace,
+            snapshot.focusedId,
             sortedIds,
         );
-        const windows = observed.windows.map((entry) => ({
+        const windows = snapshot.windows.map((entry) => ({
             window: entry.id,
             output: entry.output,
             workspace: entry.workspace,
@@ -780,18 +887,18 @@ export class PlanAdapter {
                 revision: 0,
                 fingerprint,
                 domain: {
-                    output: observed.domainOutput,
-                    workspace: observed.domainWorkspace,
+                    output: snapshot.domainOutput,
+                    workspace: snapshot.domainWorkspace,
                     bounds: {
-                        x: observed.domainBounds.x,
-                        y: observed.domainBounds.y,
-                        w: observed.domainBounds.w,
-                        h: observed.domainBounds.h,
+                        x: snapshot.domainBounds.x,
+                        y: snapshot.domainBounds.y,
+                        w: snapshot.domainBounds.w,
+                        h: snapshot.domainBounds.h,
                     },
-                    gap: observed.domainGap,
-                    outer_gap: observed.domainOuterGap,
+                    gap: snapshot.domainGap,
+                    outer_gap: snapshot.domainOuterGap,
                 },
-                focused_window: observed.focusedId,
+                focused_window: snapshot.focusedId,
                 windows,
                 command: intent.body,
             });
@@ -807,7 +914,7 @@ export class PlanAdapter {
             correlation,
             op: intent.op,
             epoch: this.epoch,
-            observed,
+            snapshot,
             removed: intent.removed,
             windowCount: sortedIds.length,
         };
@@ -929,10 +1036,11 @@ export class PlanAdapter {
 
     // Complete-reply binding: the reply geometry must cover exactly the
     // request window set (admit/move/focus/resize) or exactly the survivors
-    // (remove). Unknown or partial windows never reach native writes.
+    // (remove). Unknown or partial windows never reach native writes. The
+    // wanted set is derived from the primitive dispatch snapshot only.
     private geometryCovers(planned: PlannedReply, flightState: PendingFlight): boolean {
         const wanted = new Set<string>();
-        for (const entry of flightState.observed.windows) {
+        for (const entry of flightState.snapshot.windows) {
             wanted.add(entry.id);
         }
         if (flightState.removed !== null) {
@@ -949,25 +1057,26 @@ export class PlanAdapter {
         return true;
     }
 
+    // Reply-boundary revalidation: never touch a possibly-destroyed Window
+    // observed before dispatch. Re-observe synchronously, compare the captured
+    // primitive snapshot, and resolve all geometry/focus targets only from the
+    // fresh observation.
     private applyPlanned(planned: PlannedReply, flightState: PendingFlight): void {
-        const captured = flightState.observed;
+        const fresh = this.freshObserved();
+        if (fresh === null) {
+            this.failFlight(flightState, "stale-scope");
+            return;
+        }
         if (flightState.removed === null) {
-            let ok = false;
-            try {
-                ok = captured.revalidate() === true;
-            } catch (error) {
-                void error;
-                ok = false;
-            }
-            if (!ok) {
+            const freshSnapshot = snapshotOf(fresh);
+            if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
-            this.writeGeometries(planned, flightState, captured);
+            this.writeGeometries(planned, flightState, fresh);
             return;
         }
-        const fresh = this.freshObserved();
-        if (fresh === null || fresh.fingerprint !== this.latestFingerprint()) {
+        if (fresh.fingerprint !== this.latestFingerprint()) {
             this.failFlight(flightState, "stale-scope");
             return;
         }
