@@ -7,9 +7,56 @@ This is the user-run acceptance procedure for the KCM shortcut override. Read
 only under the separately authorized live gate. No agent participates in any
 step. Use physical keys only: D-Bus `invokeShortcut` does not prove xkb delivery.
 
-The KCM has one whole-table `Apply Shortcuts`, not a row-selective Apply. Phase
-1 therefore observes row 1 only, but Apply necessarily reconciles all six entries.
-Do not test rows 2-3 until Phase 2, and Revert after Phase 1 before proceeding.
+The KCM has one whole-table `Apply Shortcuts`, not a row-selective Apply. Apply
+necessarily reconciles all three conflict rows (six managed action records, not
+six rows). Phase 1 observes row 1 only; do not test rows 2-3 until Phase 2, and
+Revert after Phase 1 before proceeding.
+
+## KCM Status Vocabulary
+
+This is the status-label vocabulary at
+`kwin/native-effect/activeborderconfig_module.cpp:274-412` at HEAD. Capture
+the `Shortcuts` group status label VERBATIM as the first instruction immediately
+after Apply, before retrying, closing the dialog, or anything else. Do not
+paraphrase. `%1` slots are dynamic; no concrete dynamic detail literal is
+claimed here. The separate error label can contain the reconciler result
+(`activeborderconfig_module.cpp:203-225`); preserve it too if displayed.
+
+- `Shortcut state unavailable: reconciler is not configured.`
+  (`activeborderconfig_module.cpp:274`)
+- `Shortcut state unavailable: %1` - dynamic wrapper at
+  `activeborderconfig_module.cpp:284,291,298,304,363`. It covers journal-load,
+  setter-contract, owner, read-all, and keyed-occupancy unavailable detail. The
+  `:363` site is the unavailable branch of the same keyed gate as `Conflict` at
+  `:361`. Record the full rendered string; do not infer its source from text.
+- `Shortcut state unavailable: allowlisted bindings are missing.`
+  (`activeborderconfig_module.cpp:339`)
+- `Shortcut state unavailable: unrelated tuple is unbounded.`
+  (`activeborderconfig_module.cpp:348`)
+- `Conflict: %1. Apply is refused.` (`activeborderconfig_module.cpp:361`) -
+  preflight refusal. Performs no write; see "Preflight Refusal" below. This is
+  legitimate and safe, not a test failure.
+- `Interrupted apply found (phase %1). Finish Apply or Restore.`
+  (`activeborderconfig_module.cpp:372`) -
+  interrupted phase; `%1` is the journal phase (e.g. apply-pending,
+  focus-applied). Only then are `Finish Apply` and `Restore` visible.
+- `Shortcuts applied (journal complete, 3 rows).`
+  (`activeborderconfig_module.cpp:381`) - full applied, journal-complete image
+  matches.
+- `Shortcuts drifted after apply-complete; live bindings differ from the recorded post image.`
+  (`activeborderconfig_module.cpp:383`)
+- `Shortcuts applied (3 rows): focus-right owns Meta+L, Lock Session owns Meta+Esc, resize-outwards-up owns Meta+Alt+K, Switch to Next cleared, resize-outwards-right owns Meta+Alt+L, Switch to Last-Used cleared.`
+  (`activeborderconfig_module.cpp:398-400`) - applied live image without a
+  matching complete journal.
+- `Ready (3 rows): Apply will assign focus-right to Meta+L and move Lock Session to Meta+Esc; assign resize-outwards-up to Meta+Alt+K clearing Switch to Next; assign resize-outwards-right to Meta+Alt+L clearing Switch to Last-Used.`
+  (`activeborderconfig_module.cpp:405-408`) - ready long string.
+- `Shortcuts differ from the allowed image.`
+  (`activeborderconfig_module.cpp:412`) - catch-all divergence.
+
+Apply confirmation (`activeborderconfig_module.cpp:205-209`) is titled `Apply
+Shortcuts` and names all three rows. Revert confirmation
+(`activeborderconfig_module.cpp:229-233`) is titled `Revert Shortcuts` and says
+external edits stay untouched. Ordinary Settings Apply never changes shortcuts.
 
 ## Preconditions And Baseline
 
@@ -68,10 +115,65 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
 ```
 
    The graphical route is System Settings `Desktop Effects`; the direct command
-   above is the verified project KCM route. In its `Shortcuts` group, `Ready (3
-   rows): ...` is valid. `Shortcuts differ from the allowed image.` is also valid
-   when the baseline already gives focus-right `Meta+L` while Lock Session still
-   has it. Do not use ordinary Settings Apply: it never changes shortcuts.
+   above is the verified project KCM route. In its `Shortcuts` group, the ready
+   long string (`Ready (3 rows): ...`) is valid. `Shortcuts differ from the
+   allowed image.` is also valid when the baseline already gives focus-right
+   `Meta+L` while Lock Session still has it. A `Conflict:` / `Shortcut state
+   unavailable:` preflight status is also valid and means Apply is refused
+   without mutation; follow "Preflight Refusal", not "Failures". Do not use
+   ordinary Settings Apply: it never changes shortcuts.
+
+## Override Scope
+
+Three compiled-in conflict rows at `kwin/native-effect/shortcutreconciler.cpp:322-334`
+(six managed action records: three project actions plus three foreign actions):
+
+- Row 1: focus-right (`kwin` / `plasma-auto-tiler-focus-right`) takes `Meta+L`;
+  Lock Session (`ksmserver` / `Lock Session`) moves its `Meta+L` to `Meta+Esc`.
+- Row 2: resize-outwards-up (`kwin` / `plasma-auto-tiler-resize-outwards-up`)
+  takes `Meta+Alt+K`; Switch to Next (`KDE Keyboard Layout Switcher` /
+  `Switch to Next Keyboard Layout`) is cleared.
+- Row 3: resize-outwards-right (`kwin` /
+  `plasma-auto-tiler-resize-outwards-right`) takes `Meta+Alt+L`; Switch to Last
+  (`KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard Layout`) is
+  cleared.
+
+Rows 2-3 have never succeeded live and are unproven. Verify after any
+successful Apply: project actions at `Meta+L`, `Meta+Alt+K`, `Meta+Alt+L`;
+Lock Session contains `Meta+Esc` and no `Meta+L`; both Switcher actions empty;
+`Meta+Esc` has no other claimant in the config output.
+
+## Preflight Refusal
+
+A `Conflict: ... Apply is refused.` or keyed `Shortcut state unavailable: ...`
+status shown before Apply writes is a legitimate safe refusal, not a test
+failure. It performs NO mutation and `kglobalshortcutsrc` remains byte-identical.
+
+Verified observed run (not a universal expected baseline): after one such
+refused preflight, the ledger showed `~/.config/kglobalshortcutsrc`, size
+20105, mtime 2026-09-11 23:10:02, sha256
+`57be857aa008a7ea45289dfcc0006e77dd11a726ea93be49146f102b43c86dc3`; no journal
+file anywhere under `~/.config`; nothing to restore.
+
+On a refused preflight: preserve the VERBATIM status first, then re-run the
+baseline ledger commands and the `JOURNAL` discovery command to confirm
+byte-identity and journal absence. Do not retry Apply, do not run Revert or
+Restore, do not run manual restoration. A refused preflight with no mutation
+needs no restore.
+
+## Intended System Monitor Impact
+
+After a successful Apply, `Meta+Esc` will no longer open System Monitor because
+the user authorized displacement of its `_launch` default. It instead locks the
+session. This is expected correct behavior, not a bug.
+
+The shipped default is `X-KDE-Shortcuts=Meta+Esc` at
+`/run/current-system/sw/share/applications/org.kde.plasma-systemmonitor.desktop:189`,
+held by `org.kde.plasma.systemmonitor` / `_launch`
+(`kwin/native-effect/shortcutreconciler.h:99-112`). Apply displaces that chord
+onto Lock Session without rebinding System Monitor itself
+(`shortcutreconciler.cpp:338-347,622-633,1141-1146`,
+`activeborderconfig_module.cpp:353-367`).
 
 ## Phase 1 - Row 1 Observation
 
@@ -79,11 +181,13 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
    names all three rows: focus-right/Lock Session, resize-outwards-up/Switch to
    Next, and resize-outwards-right/Switch to Last-Used. Select `Yes` only if it
    matches the baseline ledger.
-2. Expect `Shortcuts applied (journal complete, 3 rows).` or the equivalent
-   complete status spelling out that focus-right owns `Meta+L`, Lock Session
-   owns `Meta+Esc`, and both Switcher actions are cleared. Any conflict or
-   refusal is a failure: do not retry; go to "Failures" then "Manual
-   Restoration".
+2. Capture the status VERBATIM immediately, before anything else.
+   - If it is a preflight `Conflict:` / `Shortcut state unavailable:`, follow
+     "Preflight Refusal" above. Stop; this run is complete as a safe refusal.
+   - Otherwise expect `Shortcuts applied (journal complete, 3 rows).` or the
+     equivalent full applied long string spelling out that focus-right owns
+     `Meta+L`, Lock Session owns `Meta+Esc`, and both Switcher actions are
+     cleared. Any other unexpected status goes to "Failures"; do not retry.
 3. Re-run the six `kreadconfig6` commands plus the `grep` and `awk` commands
    from the baseline. Find and record the now-created journal with the `JOURNAL` command.
    It must show the project actions at `Meta+L`, `Meta+Alt+K`, and `Meta+Alt+L`;
@@ -93,7 +197,8 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
 4. With the left test window focused, physically press `Meta+L`. PASS: focus
    moves right without locking the session.
 5. Physically press `Meta+Esc`. This is intentionally part of the test. PASS:
-   the session locks. Authenticate normally to return, then verify the same
+   the session locks (System Monitor must not open; see "Intended System
+   Monitor Impact"). Authenticate normally to return, then verify the same
    disposable windows remain usable. Do not substitute another lock method.
 6. Physically test every captured non-`Meta+L` Lock Session key in its recorded
    order. PASS: each still locks the session; authenticate back in after each.
@@ -107,7 +212,8 @@ kcmshell6 kwin/effects/configs/plasma-auto-tiler-active-border_config
    `Meta+Esc` line, the `kglobalshortcutsrc` hash, and journal state match the
    ledger. The journal must be absent. The captured mtime is provenance only and
    may legitimately differ after a content-exact restore.
-3. The KCM must not report `Untouched:` here. If it does, or the config hash
+3. The KCM error label must not report `Untouched:`
+   (`activeborderconfig_module.cpp:244-247`). If it does, or the config hash
    differs, stop: restoration is not exact or it detected an external edit and
    deliberately left that entry alone.
 
@@ -117,12 +223,13 @@ There is no supported, user-inducible way to stop this Apply between its ordered
 writes. `Apply Shortcuts` blocks in synchronous D-Bus calls; the UI has no
 cancel/yield point. Do not attempt a timed close, kill, logout, power loss, or
 configuration edit: none is deterministic and each adds unrelated recovery risk.
+This recovery branch cannot presently be exercised live.
 
 The closest honest substitute is to verify the recovery routing only if an
 actual unexpected interruption leaves the journal. Reopen the project KCM. Its
-status must say `Interrupted apply found (phase apply-pending). Finish Apply or
-Restore.` or name `phase focus-applied`; only then are `Finish Apply` and
-`Restore` visible.
+status must say `Interrupted apply found (phase ...). Finish Apply or Restore.`
+naming the journal phase (e.g. `phase apply-pending`, `phase focus-applied`);
+only then are `Finish Apply` and `Restore` visible.
 
 1. `Finish Apply` repeats the Apply confirmation. After `Yes`, PASS means the
    complete three-row postimage in Phase 1 step 3 and status `Shortcuts applied
@@ -137,9 +244,12 @@ Restore.` or name `phase focus-applied`; only then are `Finish Apply` and
 ## Phase 2 - Clear Rows
 
 Run this only after Phase 1 Apply, locking checks, and Revert all pass.
+Rows 2-3 are unproven live; treat any success here as first evidence.
 
-1. Apply again through `Apply Shortcuts` and its same confirmation. Confirm the
-   complete three-row postimage and keep the combined log path.
+1. Apply again through `Apply Shortcuts` and its same confirmation. Capture the
+   status VERBATIM first; a preflight refusal ends this run per "Preflight
+   Refusal". Otherwise confirm the complete three-row postimage and keep the
+   combined log path.
 2. Arrange the three disposable windows as the normal `H[A,V[B,C]]` shape: a
    left pane `A`, and a right column with top `B` and bottom `C`. Keep focus on
    the indicated pane for each test.
@@ -161,8 +271,12 @@ Run this only after Phase 1 Apply, locking checks, and Revert all pass.
 
 ## Failures And Logs
 
+Applies only to unexpected post-Apply states, failed physical tests, or changed
+baselines after a write. A preflight refusal is not a failure; use "Preflight
+Refusal" instead.
+
 1. Do not retry Apply, Finish Apply, Revert, or Restore after an unexpected
-   status, conflict, missing key, or changed baseline. Capture the KCM status,
+   status, missing key, or changed baseline. Capture the VERBATIM KCM status,
    the baseline/postimage output, and the private journal path and hash.
 2. Preserve the exact file printed as `combined log:`. It contains `[planner]`
    and PID-filtered `[kwin]` output and persists after `just dev` tears down.
@@ -180,10 +294,13 @@ Run this only after Phase 1 Apply, locking checks, and Revert all pass.
 
 ## Manual Restoration
 
-Run this teardown on every abort, including a partial Apply, a missing recovery
-button, or an unavailable project KCM. First preference is always the project
-KCM's `Restore` (interrupted journal) or `Revert Shortcuts` (complete journal):
-both restore only entries whose live postimage is still project-owned.
+Run this teardown only when a write actually happened and the project KCM route
+is unavailable: a partial Apply, a missing recovery button, or an unavailable
+project KCM. A refused preflight with a byte-identical ledger and no journal
+needs no restore; do not run this section for it. First preference is always
+the project KCM's `Restore` (interrupted journal) or `Revert Shortcuts`
+(complete journal): both restore only entries whose live postimage is still
+project-owned.
 
 If that route is unavailable, open the verified system Shortcuts module:
 
@@ -191,8 +308,9 @@ If that route is unavailable, open the verified system Shortcuts module:
 systemsettings kcm_keys
 ```
 
-Restore only these exact component/action records from the baseline ledger, then
-save through that module and rerun all baseline commands until they match:
+Restore only these exact component/action records (six managed records across
+three rows) from the baseline ledger, then save through that module and rerun
+all baseline commands until they match:
 
 | Component | Action | Restore value |
 | --- | --- | --- |
