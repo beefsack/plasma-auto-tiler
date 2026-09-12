@@ -121,3 +121,18 @@ only.
   correction. It must route the already source-classified Session result and
   explicitly refuse unsupported center stacks without changing `cosmic_v1`
   policy.
+
+## Subsequent Geometry Audit
+
+- Outer-gap parity is settled by
+  [COSMIC Geometry Parity](cosmic-geometry-parity.md): COSMIC's raw default
+  `(outer, inner) = (0, 8)` still renders an 8px work-area edge margin because
+  unadjacent leaf edges take the full inner inset. The portable effective
+  `(outer, inner) = (8, 8)` remains faithful for default edge margins and
+  sibling spacing.
+- Source-N-ary-pixel-size-to-portable-share adaptation with integer projection
+  rounding remains open. COSMIC's stored pixel sizes, truncated new-group
+  halves, mutation-time `.round()`, add residual at the inserted child,
+  remove/update correction at the final child, and running-offset layout differ
+  from the portable share projector; no source-faithful representation change
+  was shipped here.

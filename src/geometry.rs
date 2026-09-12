@@ -619,6 +619,56 @@ mod tests {
     }
 
     #[test]
+    fn cosmic_default_nested_h_a_v_b_c_matches_effective_outer_8() {
+        // COSMIC default theme raw (outer,inner)=(0,8) renders effective
+        // work-area edge margin outer+inner=8. Keep portable outer_gap=8, not raw 0.
+        let tree = equal_group(
+            "root",
+            Axis::Horizontal,
+            vec![
+                leaf("A"),
+                equal_group("inner", Axis::Vertical, vec![leaf("B"), leaf("C")]),
+            ],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 100,
+            h: 100,
+        };
+        let inset = inset_bounds(bounds, 8).expect("valid outer inset");
+        let out = project(&tree, inset, 8).expect("valid projection");
+        assert_eq!(out.len(), 3);
+        assert_eq!(
+            out[0].rect,
+            Rect {
+                x: 8,
+                y: 8,
+                w: 38,
+                h: 84
+            }
+        );
+        assert_eq!(
+            out[1].rect,
+            Rect {
+                x: 54,
+                y: 8,
+                w: 38,
+                h: 38
+            }
+        );
+        assert_eq!(
+            out[2].rect,
+            Rect {
+                x: 54,
+                y: 54,
+                w: 38,
+                h: 38
+            }
+        );
+    }
+
+    #[test]
     fn bounded_share_axis_nesting_matrix_stays_deterministic() {
         let share_sets: &[Vec<u64>] = &[
             vec![1, 1],

@@ -18,4 +18,7 @@ Restore visible spacing between tiled windows and work-area edges.
   exhausted insets and sibling gap-budget overflow reject fail-closed.
 - COSMIC parity: `cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
   reads `(outer, inner)` from theme gaps and insets its non-exclusive work area;
-  the pinned `libcosmic` default is `(0, 8)`. This controller selects `(8, 8)`.
+  the pinned `libcosmic` default is `(0, 8)`. This controller's `(8, 8)` is the
+  effective rendered edge and sibling-gap geometry: source leaf-edge insets add
+  the inner 8px on unadjacent work-area edges. See
+  [COSMIC Geometry Parity](cosmic-geometry-parity.md).
