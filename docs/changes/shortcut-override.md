@@ -89,11 +89,25 @@ KCM Apply alone resolves only the closed compiled-in rows.
   `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
   `nix flake check`, and the KWin TypeScript suite (385 tests, 47 suites)
   passed. No live Apply, setter, KWin, Plasma, or config mutation was run.
+- Resolved the next masked preflight refusal: dynamic `QDBusInterface` objects
+  perform implicit owner tracking and introspection at construction. In the KCM,
+  that made the bus-daemon proxy invalid despite the connected session bus.
+  Owner resolution now uses `QDBusConnection::interface()->serviceOwner()` and
+  `serviceUid()`; KGlobalAccel reads and the pinned-owner setter use raw method
+  calls, avoiding every dynamic proxy. The owner pin remains immutable and the
+  write path still re-confirms it immediately before each write. Hermetic owner
+  coverage accepts a valid owner, rejects an absent service before any write,
+  and rejects owner drift without changing the pin. Read-only live inspection
+  confirmed `org.kde.kglobalaccel` owner `:1.614`, UID `1000`, and the exact
+  setter contract. No live Apply, setter, KWin, Plasma, or config mutation was
+  run for this correction.
 
 ## Next Action
 
 - Separate authorization remains required for the single user-run live
-  Apply/Revert/interrupted-recovery gate; follow the [verification runbook](../live-shortcut-override-verification.md). No live result is claimed.
+  Apply/Revert/interrupted-recovery gate; rebuild the native effect first, then
+  follow the [verification runbook](../live-shortcut-override-verification.md).
+  No live result is claimed.
 
 ## Retained Core Triage
 

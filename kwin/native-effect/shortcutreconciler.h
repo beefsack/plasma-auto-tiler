@@ -314,6 +314,15 @@ public:
     // Pure pin transition tested without D-Bus: first verified owner sets
     // the pin, the same owner confirms it, a different owner fails closed.
     static bool tryPinOwner(QString &pinned, const QString &candidate, QString *error);
+    // Pure daemon owner resolution tested without D-Bus: validates the
+    // serviceOwner/serviceUid values, pins on first success, and fails
+    // closed on absent service or drift. Live currentOwner() only fetches
+    // the values via QDBusConnection::interface() and delegates here.
+    static bool resolveOwnerReply(bool ownerValid, const QString &ownerValue, bool uidValid, uint uidValue,
+                                  QString &pinned, QString *ownerOut, uint *uidOut, QString *error);
+    // Pure pinned-owner drift check for the write path without D-Bus:
+    // invalid live owner or any mismatch fails closed as drift.
+    static bool checkPinnedDrift(bool liveValid, const QString &liveValue, const QString &pinned, QString *error);
 
 private:
     int m_writes = 0;

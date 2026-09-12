@@ -70,6 +70,7 @@ public:
         "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
         "</method></interface></node>");
     bool malformedRead = false;
+    bool serviceAbsent = false;
     bool driftAfterNextWrite = false;
     bool failNextWrite = false;
     bool badReplyNextWrite = false;
@@ -115,6 +116,14 @@ public:
 
     bool currentOwner(QString *outOwner, uint *outUid, QString *error) override
     {
+        // Genuinely absent service mirrors the live serviceOwner invalid
+        // reply: fail with the same malformed-owner error, no pin mutation.
+        if (serviceAbsent) {
+            if (error) {
+                *error = QStringLiteral("malformed KGlobalAccel service owner reply");
+            }
+            return false;
+        }
         if (!ShortcutReconciler::uniqueNameValid(owner)) {
             if (error) {
                 *error = QStringLiteral("malformed KGlobalAccel service owner reply");
@@ -599,6 +608,106 @@ void ownerDriftFailsClosed()
     CHECK(journal.present); // journal retained for recovery
     CHECK(store.uid == static_cast<uint>(::geteuid() + 1));
     CHECK(store.uid != static_cast<uint>(::geteuid()));
+}
+
+void ownerResolutionHermetic()
+{
+    // Pure KGlobalAccelStore owner seam, no live D-Bus: success, genuinely
+    // absent service, and drift all classify with the live error semantics.
+    {
+        QString pinned;
+        QString ownerOut;
+        uint uidOut = 0;
+        QString error;
+        CHECK(KGlobalAccelStore::resolveOwnerReply(true, QStringLiteral(":1.20"), true,
+                                                   static_cast<uint>(::geteuid()), pinned, &ownerOut, &uidOut,
+                                                   &error));
+        CHECK(pinned == QStringLiteral(":1.20"));
+        CHECK(ownerOut == QStringLiteral(":1.20"));
+        CHECK(uidOut == static_cast<uint>(::geteuid()));
+        CHECK(KGlobalAccelStore::resolveOwnerReply(true, QStringLiteral(":1.20"), true,
+                                                   static_cast<uint>(::geteuid()), pinned, nullptr, nullptr,
+                                                   &error));
+        CHECK(pinned == QStringLiteral(":1.20"));
+    }
+    {
+        QString pinned;
+        QString error;
+        CHECK(!KGlobalAccelStore::resolveOwnerReply(false, QString(), false, 0, pinned, nullptr, nullptr, &error));
+        CHECK(error.contains(QStringLiteral("malformed KGlobalAccel service owner reply")));
+        CHECK(pinned.isEmpty());
+    }
+    {
+        QString pinned;
+        QString error;
+        CHECK(!KGlobalAccelStore::resolveOwnerReply(true, QStringLiteral("not-unique"), false, 0, pinned, nullptr,
+                                                   nullptr, &error));
+        CHECK(error.contains(QStringLiteral("unique name")));
+        CHECK(pinned.isEmpty());
+    }
+    {
+        QString pinned;
+        QString error;
+        CHECK(!KGlobalAccelStore::resolveOwnerReply(true, QStringLiteral(":1.20"), false, 0, pinned, nullptr,
+                                                   nullptr, &error));
+        CHECK(error.contains(QStringLiteral("UID")));
+        CHECK(pinned.isEmpty());
+    }
+    {
+        QString pinned = QStringLiteral(":1.20");
+        QString error;
+        CHECK(!KGlobalAccelStore::resolveOwnerReply(true, QStringLiteral(":1.99"), true,
+                                                    static_cast<uint>(::geteuid()), pinned, nullptr, nullptr,
+                                                    &error));
+        CHECK(error.contains(QStringLiteral("drifted")));
+        CHECK(pinned == QStringLiteral(":1.20"));
+    }
+    {
+        QString error;
+        CHECK(KGlobalAccelStore::checkPinnedDrift(true, QStringLiteral(":1.20"), QStringLiteral(":1.20"), &error));
+        CHECK(!KGlobalAccelStore::checkPinnedDrift(false, QString(), QStringLiteral(":1.20"), &error));
+        CHECK(error.contains(QStringLiteral("drifted")));
+        CHECK(!KGlobalAccelStore::checkPinnedDrift(true, QStringLiteral(":1.99"), QStringLiteral(":1.20"), &error));
+        CHECK(error.contains(QStringLiteral("drifted")));
+    }
+}
+
+void ownerAbsentApplyZeroWrites()
+{
+    // High-level absent service: first owner resolution fails, zero writes
+    // and no journal, without live D-Bus.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    store.serviceAbsent = true;
+    FakeJournal journal;
+    ShortcutReconciler reconciler(&store, &journal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(!result.ok);
+    CHECK(result.error.contains(QStringLiteral("malformed KGlobalAccel service owner reply")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(result.writes == 0);
+    CHECK(!journal.present);
+}
+
+void ownerDriftApplyZeroWrites()
+{
+    // High-level pre-write drift: pin succeeds, owner changes before apply,
+    // first re-confirmation fails closed with zero writes and no journal.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    QString pinError;
+    CHECK(store.currentOwner(nullptr, nullptr, &pinError));
+    CHECK(store.pinned == QStringLiteral(":1.20"));
+    store.owner = QStringLiteral(":1.99");
+    FakeJournal journal;
+    ShortcutReconciler reconciler(&store, &journal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(!result.ok);
+    CHECK(result.error.contains(QStringLiteral("drifted")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(result.writes == 0);
+    CHECK(!journal.present);
+    CHECK(store.pinned == QStringLiteral(":1.20"));
 }
 
 void partialWriteRecovery()
@@ -2283,6 +2392,9 @@ int main(int argc, char **argv)
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("owner")) {
         ownerDriftFailsClosed();
+        ownerResolutionHermetic();
+        ownerAbsentApplyZeroWrites();
+        ownerDriftApplyZeroWrites();
         persistRejectsInvalidPhaseOwnerUid();
         pinImmutableFailsClosed();
     }

@@ -702,11 +702,14 @@ Only meaningful pending or active work is listed.
   `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
   Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. The strict
   setter validator accepts Qt's out-first XML contract, while keyed
-  KGlobalAccel conflict checks see .desktop-only defaults; row 1 explicitly
-  authorizes taking System Monitor `_launch`'s `Meta+Esc` default without
-  writing that action. Static coverage is complete. The remaining gate is the
-  existing single-pair user-run live Apply/Revert/interrupted-recovery
-  confirmation, which must run first and exercises the table path unchanged. |
+  KGlobalAccel conflict checks see .desktop-only defaults. Dynamic Qt D-Bus
+   proxies are eliminated from this path: daemon owner/UID resolution uses the
+   connection interface, reads and writes use raw calls, and owner pinning and
+   pre-write drift refusal remain fail-closed. Row 1 explicitly authorizes
+   taking System Monitor `_launch`'s `Meta+Esc` default without writing that
+   action. Static coverage is complete. The remaining gate is the existing
+   single-pair user-run live Apply/Revert/interrupted-recovery confirmation,
+   which must run first and exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
 - P2 | user decision pending | Make the Planner `unauthorized` rejection

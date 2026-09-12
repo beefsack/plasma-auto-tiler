@@ -6,7 +6,6 @@
 #include <QDBusArgument>
 #include <QDBusConnection>
 #include <QDBusConnectionInterface>
-#include <QDBusInterface>
 #include <QDBusMessage>
 #include <QDBusMetaType>
 #include <QDBusObjectPath>
@@ -943,51 +942,88 @@ bool KGlobalAccelStore::tryPinOwner(QString &pinned, const QString &candidate, Q
     return true;
 }
 
-bool KGlobalAccelStore::currentOwner(QString *owner, uint *uid, QString *error)
+bool KGlobalAccelStore::resolveOwnerReply(bool ownerValid, const QString &ownerValue, bool uidValid, uint uidValue,
+                                           QString &pinned, QString *ownerOut, uint *uidOut, QString *error)
 {
-    QDBusInterface bus(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
-                       QStringLiteral("org.freedesktop.DBus"), QDBusConnection::sessionBus());
-    if (!bus.isValid()) {
-        if (error) {
-            *error = QStringLiteral("D-Bus daemon interface is invalid");
-        }
-        return false;
-    }
-    const QDBusReply<QString> nameOwner = bus.call(QStringLiteral("GetNameOwner"), shortcutService());
-    if (!nameOwner.isValid()) {
+    if (!ownerValid) {
         if (error) {
             *error = QStringLiteral("malformed KGlobalAccel service owner reply");
         }
         return false;
     }
-    const QString ownerName = nameOwner.value();
-    if (!ShortcutReconciler::uniqueNameValid(ownerName)) {
+    if (!ShortcutReconciler::uniqueNameValid(ownerValue)) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel owner is not a unique name");
         }
         return false;
     }
-    const QDBusReply<uint> ownerUid = bus.call(QStringLiteral("GetConnectionUnixUser"), ownerName);
-    if (!ownerUid.isValid()) {
+    if (!uidValid) {
         if (error) {
             *error = QStringLiteral("malformed KGlobalAccel owner UID reply");
         }
         return false;
     }
-    // Verified pin is immutable for the store instance: the first verified
-    // unique owner sets it, the same owner confirms it, and a subsequent
-    // different owner fails closed without clobbering the pin. Normal
-    // apply/revert flows re-confirm the same owner on every call.
-    if (!tryPinOwner(m_pinnedOwner, ownerName, error)) {
+    // Verified pin is immutable: the first verified unique owner sets it,
+    // the same owner confirms it, and a subsequent different owner fails
+    // closed without clobbering the pin.
+    if (!tryPinOwner(pinned, ownerValue, error)) {
         return false;
     }
-    if (owner) {
-        *owner = ownerName;
+    if (ownerOut) {
+        *ownerOut = ownerValue;
     }
-    if (uid) {
-        *uid = ownerUid.value();
+    if (uidOut) {
+        *uidOut = uidValue;
     }
     return true;
+}
+
+bool KGlobalAccelStore::checkPinnedDrift(bool liveValid, const QString &liveValue, const QString &pinned,
+                                         QString *error)
+{
+    if (!liveValid || liveValue != pinned) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel service owner drifted");
+        }
+        return false;
+    }
+    return true;
+}
+
+bool KGlobalAccelStore::currentOwner(QString *owner, uint *uid, QString *error)
+{
+    // Robust daemon owner resolution without dynamic QDBusInterface: Qt 6
+    // dynamic QDBusInterface performs owner tracking/introspection at
+    // construction, which fails implicit owner resolution against the
+    // current bus daemon. QDBusConnection::interface()->serviceOwner/
+    // serviceUid avoids that construction entirely.
+    const QDBusConnection connection = QDBusConnection::sessionBus();
+    if (!connection.isConnected()) {
+        if (error) {
+            *error = QStringLiteral("D-Bus daemon interface is invalid");
+        }
+        return false;
+    }
+    QDBusConnectionInterface *bus = connection.interface();
+    if (!bus) {
+        if (error) {
+            *error = QStringLiteral("D-Bus daemon interface is invalid");
+        }
+        return false;
+    }
+    const QDBusReply<QString> nameOwner = bus->serviceOwner(shortcutService());
+    const bool ownerValid = nameOwner.isValid();
+    const QString ownerValue = ownerValid ? nameOwner.value() : QString();
+    bool uidValid = false;
+    uint uidValue = 0;
+    if (ownerValid && ShortcutReconciler::uniqueNameValid(ownerValue)) {
+        const QDBusReply<uint> ownerUid = bus->serviceUid(ownerValue);
+        uidValid = ownerUid.isValid();
+        if (uidValid) {
+            uidValue = ownerUid.value();
+        }
+    }
+    return resolveOwnerReply(ownerValid, ownerValue, uidValid, uidValue, m_pinnedOwner, owner, uid, error);
 }
 
 bool KGlobalAccelStore::readAll(QList<ShortcutTuple> *tuples, QString *error)
@@ -995,14 +1031,18 @@ bool KGlobalAccelStore::readAll(QList<ShortcutTuple> *tuples, QString *error)
     if (!tuples) {
         return false;
     }
-    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
-    if (!global.isValid()) {
+    // Raw method calls without dynamic QDBusInterface construction: the
+    // Qt 6 dynamic interface performs owner tracking/introspection at
+    // construction and fails implicit owner resolution here.
+    if (!QDBusConnection::sessionBus().isConnected()) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel interface is invalid");
         }
         return false;
     }
-    const QDBusMessage compsReply = global.call(shortcutAllComponentsMethod());
+    const QDBusMessage compsCall = QDBusMessage::createMethodCall(shortcutService(), shortcutPath(),
+                                                                 shortcutInterface(), shortcutAllComponentsMethod());
+    const QDBusMessage compsReply = QDBusConnection::sessionBus().call(compsCall);
     QStringList components;
     if (!ShortcutReconciler::parseAllComponentsReply(compsReply.type(), compsReply.signature(), compsReply.arguments(),
                                                      &components, error)) {
@@ -1010,14 +1050,10 @@ bool KGlobalAccelStore::readAll(QList<ShortcutTuple> *tuples, QString *error)
     }
     QList<ShortcutTuple> collected;
     for (const QString &componentPath : components) {
-        QDBusInterface component(shortcutService(), componentPath, shortcutComponentInterface(), QDBusConnection::sessionBus());
-        if (!component.isValid()) {
-            if (error) {
-                *error = QStringLiteral("unexpected allShortcutInfos reply");
-            }
-            return false;
-        }
-        const QDBusMessage infosReply = component.call(shortcutAllInfosMethod(), QStringLiteral("default"));
+        QDBusMessage infosCall = QDBusMessage::createMethodCall(shortcutService(), componentPath,
+                                                               shortcutComponentInterface(), shortcutAllInfosMethod());
+        infosCall.setArguments({QStringLiteral("default")});
+        const QDBusMessage infosReply = QDBusConnection::sessionBus().call(infosCall);
         if (infosReply.type() != QDBusMessage::ReplyMessage || infosReply.arguments().size() != 1) {
             if (error) {
                 *error = QStringLiteral("unexpected allShortcutInfos reply");
@@ -1087,8 +1123,7 @@ bool KGlobalAccelStore::shortcutsByKey(int key, QList<ShortcutKeyHolder> *holder
         }
         return false;
     }
-    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
-    if (!global.isValid()) {
+    if (!QDBusConnection::sessionBus().isConnected()) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel interface is invalid");
         }
@@ -1097,8 +1132,10 @@ bool KGlobalAccelStore::shortcutsByKey(int key, QList<ShortcutKeyHolder> *holder
     ensureKeySequenceMetaTypes();
     const QKeySequence sequence(key, 0, 0, 0);
     const ShortcutMatchType match{SHORTCUT_MATCH_EQUAL};
-    const QVariantList args{QVariant::fromValue(sequence), QVariant::fromValue(match)};
-    const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutByKeyMethod(), args);
+    QDBusMessage call = QDBusMessage::createMethodCall(shortcutService(), shortcutPath(), shortcutInterface(),
+                                                      shortcutByKeyMethod());
+    call.setArguments({QVariant::fromValue(sequence), QVariant::fromValue(match)});
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(call);
     return ShortcutReconciler::parseGlobalShortcutsByKeyReply(reply.type(), reply.signature(), reply.arguments(),
                                                               holders, error);
 }
@@ -1120,8 +1157,7 @@ bool KGlobalAccelStore::shortcutAvailable(int key, const QString &component, boo
         }
         return false;
     }
-    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
-    if (!global.isValid()) {
+    if (!QDBusConnection::sessionBus().isConnected()) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel interface is invalid");
         }
@@ -1129,8 +1165,10 @@ bool KGlobalAccelStore::shortcutAvailable(int key, const QString &component, boo
     }
     ensureKeySequenceMetaTypes();
     const QKeySequence sequence(key, 0, 0, 0);
-    const QVariantList args{QVariant::fromValue(sequence), QVariant::fromValue(component)};
-    const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutAvailableMethod(), args);
+    QDBusMessage call = QDBusMessage::createMethodCall(shortcutService(), shortcutPath(), shortcutInterface(),
+                                                      shortcutAvailableMethod());
+    call.setArguments({QVariant::fromValue(sequence), QVariant::fromValue(component)});
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(call);
     return ShortcutReconciler::parseGlobalShortcutAvailableReply(reply.type(), reply.signature(), reply.arguments(),
                                                                  available, error);
 }
@@ -1167,20 +1205,26 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
     }
     // Re-resolve without clobbering the pin: the write must target the
     // verified captured unique owner, never a re-resolved well-known name.
+    // Robust daemon query without dynamic QDBusInterface construction.
     {
-        QDBusInterface bus(QStringLiteral("org.freedesktop.DBus"), QStringLiteral("/org/freedesktop/DBus"),
-                           QStringLiteral("org.freedesktop.DBus"), QDBusConnection::sessionBus());
-        if (!bus.isValid()) {
+        const QDBusConnection connection = QDBusConnection::sessionBus();
+        if (!connection.isConnected()) {
             if (error) {
                 *error = QStringLiteral("D-Bus daemon interface is invalid");
             }
             return false;
         }
-        const QDBusReply<QString> liveOwner = bus.call(QStringLiteral("GetNameOwner"), shortcutService());
-        if (!liveOwner.isValid() || liveOwner.value() != m_pinnedOwner) {
+        QDBusConnectionInterface *bus = connection.interface();
+        if (!bus) {
             if (error) {
-                *error = QStringLiteral("KGlobalAccel service owner drifted");
+                *error = QStringLiteral("D-Bus daemon interface is invalid");
             }
+            return false;
+        }
+        const QDBusReply<QString> liveOwner = bus->serviceOwner(shortcutService());
+        const bool liveValid = liveOwner.isValid();
+        const QString liveValue = liveValid ? liveOwner.value() : QString();
+        if (!checkPinnedDrift(liveValid, liveValue, m_pinnedOwner, error)) {
             return false;
         }
     }
@@ -1193,15 +1237,16 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
     // Action ID is exactly [ComponentUnique, ActionUnique,
     // ComponentFriendly, ActionFriendly] from the live read tuples.
     const QStringList actionId{component, action, componentFriendly, friendly};
-    QDBusInterface global(m_pinnedOwner, shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
-    if (!global.isValid()) {
+    if (!QDBusConnection::sessionBus().isConnected()) {
         if (error) {
             *error = QStringLiteral("KGlobalAccel interface is invalid");
         }
         return false;
     }
-    const QVariantList args{actionId, QVariant::fromValue(keySet), QVariant::fromValue(SHORTCUT_SET_FLAGS)};
-    const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutSetMethod(), args);
+    QDBusMessage setCall = QDBusMessage::createMethodCall(m_pinnedOwner, shortcutPath(), shortcutInterface(),
+                                                         shortcutSetMethod());
+    setCall.setArguments({actionId, QVariant::fromValue(keySet), QVariant::fromValue(SHORTCUT_SET_FLAGS)});
+    const QDBusMessage reply = QDBusConnection::sessionBus().call(setCall);
     if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().size() != 1
         || reply.signature() != QStringLiteral("a(ai)")) {
         if (error) {
