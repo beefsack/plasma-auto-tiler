@@ -125,7 +125,7 @@ fn rect_contained(inner: Rect, outer: Rect) -> bool {
 /// Rust-owned outer inset for carried work-area bounds: a range-checked outer
 /// gap shrinks the bounds before projection; `None` fails every caller closed.
 fn inset_projected_bounds(carried: Rect, outer_gap: i32) -> Option<Rect> {
-    if outer_gap < 0 || outer_gap > GEOMETRY_MAX_GAP {
+    if !(0..=GEOMETRY_MAX_GAP).contains(&outer_gap) {
         return None;
     }
     crate::geometry::inset_bounds(carried, outer_gap).ok()

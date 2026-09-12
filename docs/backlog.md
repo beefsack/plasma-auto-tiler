@@ -395,8 +395,7 @@ Only meaningful pending or active work is listed.
         no `devenv.nix` change/system dependency/restart gate. Current full
          `cargo test`, diagnostic Clippy, manual/cleanup fixture suites
         (250/0 and 144/0), shell syntax, and diff check pass; full-target
-        Clippy remains blocked only by pre-existing unmodified `src/tray.rs`
-        lints. Independent review corrected configure ordering, diagnostic
+        Clippy is clean. Independent review corrected configure ordering, diagnostic
         exclusive creation, global versions/event loop, terminal/signal
          integrity, and cleanup snapshot validation. Final live proof remains
          pending authorization; disposable tooling only, no product architecture

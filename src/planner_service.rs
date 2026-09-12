@@ -506,10 +506,8 @@ mod tests {
         assert!(!first.contains("evil-correlation"));
         // Represents Ok rather than PlannerError.
         let as_result: Result<String, PlannerError> = Ok(unauthorized_rejection());
-        assert!(as_result.is_ok());
-        assert_ne!(
-            as_result.unwrap(),
-            String::new(),
+        assert!(
+            as_result.is_ok_and(|body| body != String::new()),
             "unauthorized body is non-empty fixed JSON"
         );
     }

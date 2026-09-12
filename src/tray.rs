@@ -565,6 +565,9 @@ mod tests {
 
     use super::*;
 
+    type IconPixmap = Vec<(i32, i32, Vec<u8>)>;
+    type ToolTip = (String, IconPixmap, String, String);
+
     fn projection(enabled: Option<bool>, started: Instant) -> TrayProjection {
         let state = Arc::new(Mutex::new(TrayState::default()));
         let mut guard = state.lock().unwrap();
@@ -796,7 +799,7 @@ mod tests {
         assert_eq!(pixmap.len(), 1);
         assert_eq!(pixmap[0].0, ICON_PIXMAP_WIDTH);
         assert_eq!(pixmap[0].1, ICON_PIXMAP_HEIGHT);
-        assert!(ICON_PIXMAP_WIDTH > 0 && ICON_PIXMAP_HEIGHT > 0);
+        const _: () = assert!(ICON_PIXMAP_WIDTH > 0 && ICON_PIXMAP_HEIGHT > 0);
         assert_eq!(
             pixmap[0].2.len(),
             4 * ICON_PIXMAP_WIDTH as usize * ICON_PIXMAP_HEIGHT as usize
@@ -849,8 +852,7 @@ mod tests {
             );
             let tooltip = changed.get("ToolTip").expect("ToolTip is signalled");
             assert_eq!(tooltip.value_signature().to_string(), "(sa(iiay)ss)");
-            let decoded: (String, Vec<(i32, i32, Vec<u8>)>, String, String) =
-                tooltip.downcast_ref().expect("ToolTip decodes");
+            let decoded: ToolTip = tooltip.downcast_ref().expect("ToolTip decodes");
             assert_eq!(decoded.0, ICON_NAME);
             assert_eq!(decoded.1, icon_pixmap());
             assert!(!decoded.1.is_empty());

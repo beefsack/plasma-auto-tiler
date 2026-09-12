@@ -373,7 +373,7 @@ impl TrayEndpoint {
     ) -> Result<(), TrayError> {
         // Group E: the best-effort route-diag lifecycle emission was removed.
         // State transition only; logging never changes the result below.
-        let result = {
+        {
             let mut state = self.state.lock().expect("tray state mutex poisoned");
             state.publish_snapshot_from(
                 Some(publisher),
@@ -382,8 +382,7 @@ impl TrayEndpoint {
                 snapshot,
                 self.started.elapsed().as_millis().min(u64::MAX as u128) as u64,
             )
-        };
-        result
+        }
     }
 }
 

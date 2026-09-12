@@ -2011,6 +2011,9 @@ fn evaluate_resize(ctx: &Validated) -> String {
 mod tests {
     use super::*;
 
+    type SnapshotMutator = fn(&mut serde_json::Value);
+    type OpEvaluator = fn(&Validated) -> String;
+
     fn domain_bounds() -> serde_json::Value {
         serde_json::json!({"x": 0, "y": 0, "w": 1200, "h": 800})
     }
@@ -2837,7 +2840,7 @@ mod tests {
 
     #[test]
     fn snapshot_validation_details_are_exact() {
-        let cases: Vec<(&str, fn(&mut serde_json::Value))> = vec![
+        let cases: Vec<(&str, SnapshotMutator)> = vec![
             ("domain-output-invalid", |v| {
                 v["domain"]["output"] = serde_json::json!("bad id!")
             }),
@@ -2978,7 +2981,7 @@ mod tests {
     }
     #[test]
     fn command_op_details_are_exact() {
-        let cases: Vec<(&str, serde_json::Value, fn(&Validated) -> String)> = vec![
+        let cases: Vec<(&str, serde_json::Value, OpEvaluator)> = vec![
             (
                 "admit-op-invalid",
                 serde_json::json!({"op": "admit", "window": "win-2", "output": "out-1", "workspace": "ws-1"}),

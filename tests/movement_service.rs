@@ -295,6 +295,8 @@ fn no_caps() -> serde_json::Value {
         "cross_output_transfer": false
     })
 }
+// Helper serializes the full request contract.
+#[allow(clippy::too_many_arguments)]
 fn request_json(
     session: &Session,
     corr: &str,
