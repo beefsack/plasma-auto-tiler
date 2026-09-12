@@ -133,6 +133,22 @@ KCM Apply alone resolves only the closed compiled-in rows.
   CTest passed 21/21; `cargo fmt --check`, `cargo clippy --all-targets
   --all-features -- -D warnings`, `nix flake check`, and the KWin TypeScript
   suite passed (386 tests, 47 suites). No live mutation was run.
+- A follow-up read-only capture re-queried all 20 KGlobalAccel components and
+  349 `a(ssssssaiai)` records. The same two Keyboard Layout Switcher records
+  have an empty `friendly` field; all identity fields are nonempty. The largest
+  record has 3 keys, the largest key is 503316512, and the longest string is
+  65 characters, so no configured bound refuses this session data. The tuple
+  order is `action`, `friendly`, `component`, `componentFriendly`,
+  `contextUnique`, `contextFriendly`, `active`, `defaults`, matching the
+  decoder.
+- The rows that clear Keyboard Layout Switcher intentionally send an empty
+  `QSet<QKeySequence>`, encoded as a well-formed empty `a(ai)` array. A
+  nonempty sequence is always encoded as `(ai)` with four integer slots,
+  including zero padding. Therefore this path cannot emit the malformed D-Bus
+  type framing from the retained KWin abort; no write guard is needed. This was
+  established without a setter or live Apply. Native CTest passed 21/21, and
+  `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D
+  warnings`, and `nix flake check` passed.
 
 ## Diagnostic Token Map
 

@@ -709,8 +709,11 @@ Only meaningful pending or active work is listed.
   setter validator accepts Qt's out-first XML contract, while keyed
   KGlobalAccel conflict checks see .desktop-only defaults. Real-session
   `a(ssssssaiai)` reads accept bounded empty cosmetic labels and emit distinct
-  fail-closed detail tokens for every reply-validation condition. Dynamic Qt D-Bus
-   proxies are eliminated from this path: daemon owner/UID resolution uses the
+  fail-closed detail tokens for every reply-validation condition. A read-only
+  20-component/349-record capture confirms the real tuple order and bounds;
+  the two clear writes encode a well-formed empty `a(ai)` array, not malformed
+  `QKeySequence` framing. Dynamic Qt D-Bus proxies are eliminated from this
+  path: daemon owner/UID resolution uses the
    connection interface, reads and writes use raw calls, and owner pinning and
    pre-write drift refusal remain fail-closed. Row 1 explicitly authorizes
    taking System Monitor `_launch`'s `Meta+Esc` default without writing that
