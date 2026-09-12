@@ -719,8 +719,12 @@ Only meaningful pending or active work is listed.
    taking System Monitor `_launch`'s `Meta+Esc` default without writing that
    action. Static coverage is complete. The remaining gate is the existing
    single-pair user-run live Apply/Revert/interrupted-recovery confirmation,
-   which must run first and exercises the table path unchanged. |
-  [change](changes/shortcut-override.md)
+   which must run first and exercises the table path unchanged. Read-only keyed
+   live data identifies the authorized System Monitor holder as
+   `org.kde.plasma-systemmonitor.desktop` / `_launch`; row 1 now matches that
+   exact identity, without making it writable. The live-empty Switcher friendly
+   fields are accepted consistently by read and write validation. |
+   [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
 - P2 | user decision pending | Make the Planner `unauthorized` rejection
   observable. `PlannerEndpoint::describe_plan` in `src/planner_service.rs`

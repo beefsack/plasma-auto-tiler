@@ -173,7 +173,7 @@ session. This is expected correct behavior, not a bug.
 
 The shipped default is `X-KDE-Shortcuts=Meta+Esc` at
 `/run/current-system/sw/share/applications/org.kde.plasma-systemmonitor.desktop:189`,
-held by `org.kde.plasma.systemmonitor` / `_launch`
+held by `org.kde.plasma-systemmonitor.desktop` / `_launch`
 (`kwin/native-effect/shortcutreconciler.h:99-112`). Apply displaces that chord
 onto Lock Session without rebinding System Monitor itself
 (`shortcutreconciler.cpp:338-347,622-633,1141-1146`,

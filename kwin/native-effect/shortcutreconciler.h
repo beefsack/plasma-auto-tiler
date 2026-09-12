@@ -102,7 +102,7 @@ inline const QString &shortcutAvailableMethod()
 // Do not select a different target and do not write to System Monitor.
 inline const QString &shortcutAuthorizedEscComponent()
 {
-    static const QString value = QStringLiteral("org.kde.plasma.systemmonitor");
+    static const QString value = QStringLiteral("org.kde.plasma-systemmonitor.desktop");
     return value;
 }
 inline const QString &shortcutAuthorizedEscAction()

@@ -1506,7 +1506,7 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
         return false;
     }
     if (!ShortcutReconciler::keysValid(keys) || !ShortcutReconciler::stringValid(component) || !ShortcutReconciler::stringValid(action)
-        || !ShortcutReconciler::stringValid(componentFriendly) || !ShortcutReconciler::stringValid(friendly)) {
+        || !ShortcutReconciler::cosmeticValid(componentFriendly) || !ShortcutReconciler::cosmeticValid(friendly)) {
         if (error) {
             *error = QStringLiteral("refusing write with unbounded tuple");
         }

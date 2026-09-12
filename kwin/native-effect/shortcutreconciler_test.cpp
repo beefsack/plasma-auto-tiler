@@ -318,8 +318,8 @@ public:
             return false;
         }
         if (!ShortcutReconciler::keysValid(keys) || !ShortcutReconciler::stringValid(component)
-            || !ShortcutReconciler::stringValid(action) || !ShortcutReconciler::stringValid(componentFriendly)
-            || !ShortcutReconciler::stringValid(friendly)) {
+            || !ShortcutReconciler::stringValid(action) || !ShortcutReconciler::cosmeticValid(componentFriendly)
+            || !ShortcutReconciler::cosmeticValid(friendly)) {
             if (error) {
                 *error = QStringLiteral("refusing write with unbounded tuple");
             }
@@ -537,6 +537,8 @@ public:
         return true;
     }
 };
+
+QString oversizedString();
 
 void seedReady6(FakeShortcutStore &store, const QList<int> &focusPre, const QList<int> &lockPre)
 {
@@ -949,7 +951,7 @@ void strictOwnerAndIntrospection()
 void friendlyLabelsValidated()
 {
     // Empty cosmetic friendly labels are accepted by readAll (real captures
-    // leave friendly empty) but writes stay strict.
+    // leave friendly empty) and by writes; identities and keys stay strict.
     {
         FakeShortcutStore store;
         seedReady6(store, QList<int>{1}, QList<int>{META_L});
@@ -986,13 +988,94 @@ void friendlyLabelsValidated()
         CHECK(store.writeLog.isEmpty());
         CHECK(!journal.present);
     }
-    QString error;
-    FakeShortcutStore store;
-    seedReady6(store, QList<int>{1}, QList<int>{META_L});
-    CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QString(),
-                           QStringLiteral("friendly"), QList<int>{META_L}, nullptr, &error));
-    CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
-                           QStringLiteral("KWin"), QString(), QList<int>{META_L}, nullptr, &error));
+    // Live Keyboard Layout Switcher clear targets carry empty
+    // action-friendly labels: Apply succeeds end to end with empty
+    // friendly on both Switcher rows (exact allowlist unchanged).
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.component == shortcutSwitchNextComponent() || tuple.component == shortcutSwitchLastComponent()) {
+                tuple.friendly = QString();
+            }
+        }
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(result.ok);
+        CHECK(result.writes == 6);
+        CHECK(store.writeLog.size() == 6);
+        CHECK(journal.present);
+    }
+    // Empty identity labels still fail closed end to end.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch to Next Keyboard Layout")) {
+                tuple.action = QString();
+            }
+        }
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error == QStringLiteral("unexpected allShortcutInfos reply: empty action"));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // Oversized cosmetics still fail closed end to end.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.action == QStringLiteral("Switch to Last-Used Keyboard Layout")) {
+                tuple.friendly = oversizedString();
+            }
+        }
+        FakeJournal journal;
+        ShortcutReconciler reconciler(&store, &journal);
+        const ShortcutApplyResult result = reconciler.apply();
+        CHECK(!result.ok);
+        CHECK(result.error == QStringLiteral("unexpected allShortcutInfos reply: oversized friendly"));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    // Write contract mirrors production: component/action strict
+    // nonempty/bounded, componentFriendly/friendly cosmetic bounded
+    // (empty accepted), keys bounds strict, allowlist exact.
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        QString error;
+        QList<int> confirmed;
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                              QString(), QStringLiteral("friendly"), QList<int>{META_L}, &confirmed, &error));
+        CHECK(confirmed == QList<int>{META_L});
+        CHECK(store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                              QStringLiteral("KWin"), QString(), QList<int>{META_L}, &confirmed, &error));
+        CHECK(confirmed == QList<int>{META_L});
+        CHECK(!store.writeKeys(QString(), QStringLiteral("plasma-auto-tiler-focus-right"),
+                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{META_L}, nullptr,
+                               &error));
+        CHECK(error == QStringLiteral("refusing write outside the exact allowlist"));
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QString(),
+                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{META_L}, nullptr,
+                               &error));
+        CHECK(error == QStringLiteral("refusing write outside the exact allowlist"));
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                               oversizedString(), QStringLiteral("friendly"), QList<int>{META_L}, nullptr, &error));
+        CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                               QStringLiteral("KWin"), oversizedString(), QList<int>{META_L}, nullptr, &error));
+        CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"),
+                               QStringLiteral("KWin"), QStringLiteral("friendly"), QList<int>{-1}, nullptr, &error));
+        CHECK(error == QStringLiteral("refusing write with unbounded tuple"));
+        CHECK(!store.writeKeys(QStringLiteral("kwin"), QStringLiteral("other-action"), QStringLiteral("KWin"),
+                               QStringLiteral("friendly"), QList<int>{META_L}, nullptr, &error));
+        CHECK(error == QStringLiteral("refusing write outside the exact allowlist"));
+    }
 }
 
 void duplicateMetaEscDeduped()
@@ -2229,6 +2312,54 @@ void keyedSystemMonitorEscAccepted()
     }
 }
 
+void keyedLiveSystemMonitorIdentity()
+{
+    // Live .desktop identity is the only authorized Meta+Esc occupant; the
+    // stale suffix-less component is a genuinely unauthorized target occupant.
+    CHECK(shortcutAuthorizedEscComponent() == QStringLiteral("org.kde.plasma-systemmonitor.desktop"));
+    CHECK(ShortcutReconciler::isAuthorizedDisplacement(
+        META_ESC, QStringLiteral("org.kde.plasma-systemmonitor.desktop"), QStringLiteral("_launch")));
+    CHECK(!ShortcutReconciler::isAuthorizedDisplacement(
+        META_ESC, QStringLiteral("org.kde.plasma.systemmonitor"), QStringLiteral("_launch")));
+    CHECK(!ShortcutReconciler::isAllowlisted(QStringLiteral("org.kde.plasma-systemmonitor.desktop"),
+                                             QStringLiteral("_launch")));
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        ShortcutKeyHolder live;
+        live.component = QStringLiteral("org.kde.plasma-systemmonitor.desktop");
+        live.action = QStringLiteral("_launch");
+        live.active = QList<int>{META_ESC};
+        store.extraByKey[META_ESC].append(live);
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(r.ok);
+        CHECK(store.writeLog.size() == 6);
+        CHECK(journal.present);
+        for (const auto &record : store.writeLog) {
+            CHECK(!(record.component == QStringLiteral("org.kde.plasma-systemmonitor.desktop")
+                    && record.action == QStringLiteral("_launch")));
+        }
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        ShortcutKeyHolder stale;
+        stale.component = QStringLiteral("org.kde.plasma.systemmonitor");
+        stale.action = QStringLiteral("_launch");
+        stale.active = QList<int>{META_ESC};
+        store.extraByKey[META_ESC].append(stale);
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("Meta+Esc")));
+        CHECK(r.error.contains(QStringLiteral("org.kde.plasma.systemmonitor")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+        CHECK(r.writes == 0);
+    }
+}
+
 void keyedTransportFailsClosed()
 {
     {
@@ -3281,6 +3412,7 @@ int main(int argc, char **argv)
         keyedDesktopOnlyBlocksClearTargets();
         keyedDesktopOnlyBlocksMetaL();
         keyedSystemMonitorEscAccepted();
+        keyedLiveSystemMonitorIdentity();
         keyedTransportFailsClosed();
         keyedReplyParsingStrict();
         keyedAvailabilityConsistencyBothDirections();

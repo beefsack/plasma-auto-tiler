@@ -125,8 +125,8 @@ public:
         }
         for (const ShortcutTuple &tuple : tuples) {
             if (!ShortcutReconciler::keysValid(tuple.active) || !ShortcutReconciler::stringValid(tuple.component)
-                || !ShortcutReconciler::stringValid(tuple.action) || !ShortcutReconciler::stringValid(tuple.friendly)
-                || !ShortcutReconciler::stringValid(tuple.componentFriendly)) {
+                || !ShortcutReconciler::stringValid(tuple.action) || !ShortcutReconciler::cosmeticValid(tuple.friendly)
+                || !ShortcutReconciler::cosmeticValid(tuple.componentFriendly)) {
                 if (error) {
                     *error = QStringLiteral("unexpected reply");
                 }
@@ -212,8 +212,8 @@ public:
             return false;
         }
         if (!ShortcutReconciler::keysValid(keys) || !ShortcutReconciler::stringValid(component)
-            || !ShortcutReconciler::stringValid(action) || !ShortcutReconciler::stringValid(componentFriendly)
-            || !ShortcutReconciler::stringValid(friendly)) {
+            || !ShortcutReconciler::stringValid(action) || !ShortcutReconciler::cosmeticValid(componentFriendly)
+            || !ShortcutReconciler::cosmeticValid(friendly)) {
             if (error) {
                 *error = QStringLiteral("refusing write with unbounded tuple");
             }

@@ -23,7 +23,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
 - Row 1: `kwin` / `plasma-auto-tiler-focus-right` takes `Meta+L`; `ksmserver`
   / `Lock Session` relocates `Meta+L` to `Meta+Esc`. Non-`Meta+L` lock keys
   keep their order. The row deliberately displaces System Monitor
-  `org.kde.plasma.systemmonitor` / `_launch`'s declared `Meta+Esc` default;
+  `org.kde.plasma-systemmonitor.desktop` / `_launch`'s declared `Meta+Esc`
+  default;
   that exact target occupant is compiled into the row and is never writable.
 - Row 2: `kwin` / `plasma-auto-tiler-resize-outwards-up` takes `Meta+Alt+K`;
   `KDE Keyboard Layout Switcher` / `Switch to Next Keyboard Layout` clears
@@ -149,6 +150,26 @@ KCM Apply alone resolves only the closed compiled-in rows.
   established without a setter or live Apply. Native CTest passed 21/21, and
   `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D
   warnings`, and `nix flake check` passed.
+- Read-only keyed KGlobalAccel getters confirmed the exact whole-key holders:
+  `Meta+Esc` has only `org.kde.plasma-systemmonitor.desktop` / `_launch`;
+  `Meta+L` has `kwin` / `plasma-auto-tiler-focus-right` and `ksmserver` /
+  `Lock Session`; `Meta+Alt+K` has its `kwin` project action and `KDE Keyboard
+  Layout Switcher` / `Switch to Next Keyboard Layout`; and `Meta+Alt+L` has
+  its `kwin` project action and `KDE Keyboard Layout Switcher` / `Switch to
+  Last-Used Keyboard Layout`. Every key reported unavailable, consistently
+  with its nonempty holder set. The System Monitor component is hyphenated and
+  has the `.desktop` suffix, so the row-owned authorized-target identity now
+  matches it exactly. It remains outside the write allowlist. The Switcher
+  action-friendly labels are empty in the same live payload; write validation
+  now treats both friendly fields as bounded cosmetic data, as read validation
+  already did. Component/action identity and key validation remain strict.
+- Current full read-only enumeration returned 20 components and 349 tuples.
+  Every identity was nonempty; maximum string length was 65, active/default
+  key-list maxima were 3, and the maximum key was 503316512, within all
+  configured bounds. The six allowlisted tuples have the closed-table expected
+  preimages. CTest passed 21/21; `cargo fmt --check`, `cargo clippy
+  --all-targets --all-features -- -D warnings`, and `nix flake check` passed.
+  No live mutation was run.
 
 ## Diagnostic Token Map
 
