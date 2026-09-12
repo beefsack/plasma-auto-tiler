@@ -697,6 +697,11 @@ Only meaningful pending or active work is listed.
    reply handling re-observes live targets before writes. Do not reintroduce the
    native-effect framing. |
   [change](changes/archive/active-border-colour-override.md)
+- P2 | backlogged | Attribute the recurring KWin inbound malformed
+  `QKeySequence` D-Bus abort. PID `294764` repeats PID `3568836`'s libdbus
+  demarshalling stack, but stripped cores retain neither sender nor method. Do
+  not attribute it to the native effect or bundled script without a fault-stack
+  frame. | [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
 - P1 | shipped, live-unproven | KCM shortcut override is now a closed
   compiled-in conflict-resolution table with `relocate` and `clear`; the
   `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
