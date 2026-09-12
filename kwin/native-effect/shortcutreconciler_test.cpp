@@ -3262,6 +3262,10 @@ void preflightOccupancyHolderSplitTokens()
 
 int main(int argc, char **argv)
 {
+    // Unit 1 hard gate: isolate from the live session bus before any
+    // QDBusConnection::sessionBus() initialization (this test constructs
+    // the live KGlobalAccelStore).
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-kcm-test-isolated-bus"));
     const QString scenario = argc == 2 ? QString::fromLocal8Bit(argv[1]) : QStringLiteral("all");
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("success")) {
         applySuccessAndOrder();

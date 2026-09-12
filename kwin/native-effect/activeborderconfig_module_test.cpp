@@ -522,6 +522,10 @@ void missingValueKeepsTheDefaultWithoutCreatingAKey()
 
 int main(int argc, char **argv)
 {
+    // Unit 1 hard gate: isolate from the live session bus before any
+    // QDBusConnection::sessionBus() initialization (ActiveBorderConfigModule
+    // creates the live KGlobalAccelStore in its constructor).
+    qputenv("DBUS_SESSION_BUS_ADDRESS", QByteArray("unix:path=/dev/null/plasma-auto-tiler-kcm-test-isolated-bus"));
     QTemporaryDir configHome;
     if (!configHome.isValid()) {
         std::fprintf(stderr, "failed to create temporary config directory\n");
