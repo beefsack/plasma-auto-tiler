@@ -547,7 +547,7 @@ fn vertical_selected_on_tie() {
 }
 
 #[test]
-fn removal_collapses_single_child_preserves_order_and_focuses_next() {
+fn focused_removal_uses_source_focus_recency_not_tree_sibling() {
     let mut session = single_domain_session();
     admit_and_commit(
         &mut session,
@@ -573,28 +573,33 @@ fn removal_collapses_single_child_preserves_order_and_focuses_next() {
         placement(120, 80),
         "corr-3",
     );
-    // Focus is win-3; move focus to win-2 by removing win-3 first? Instead
-    // remove the focused leaf win-3: focus must fall back to previous (win-2).
-    remove_and_commit(&mut session, "win-3", "corr-4");
+    let domain = DomainKey {
+        output: OutputId("out-1".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+    };
+    assert!(session.sync_focus_from_window(&domain, &WindowId("win-1".to_owned())));
+    assert!(session.sync_focus_from_window(&domain, &WindowId("win-2".to_owned())));
+    // Tree order would choose win-3, but the source focus stack's top after
+    // removing win-2 is win-1.
+    remove_and_commit(&mut session, "win-2", "corr-4");
     assert_eq!(
         leaves_of(&session, "out-1", "ws-1"),
-        vec!["leaf-win-1".to_string(), "leaf-win-2".to_string()]
+        vec!["leaf-win-1".to_string(), "leaf-win-3".to_string()]
     );
     let (_, focus) = session.focus();
-    assert_eq!(focus, Some(NodeId("leaf-win-2".to_owned())));
-    // Remove focused win-1 after refocusing? win-1 is not focused; removal of
-    // non-focused preserves focus on win-2.
-    remove_and_commit(&mut session, "win-1", "corr-5");
+    assert_eq!(focus, Some(NodeId("leaf-win-1".to_owned())));
+    // Removing an unfocused window preserves the active source focus.
+    remove_and_commit(&mut session, "win-3", "corr-5");
     assert_eq!(
         leaves_of(&session, "out-1", "ws-1"),
-        vec!["leaf-win-2".to_string()]
+        vec!["leaf-win-1".to_string()]
     );
     let (_, focus) = session.focus();
-    assert_eq!(focus, Some(NodeId("leaf-win-2".to_owned())));
+    assert_eq!(focus, Some(NodeId("leaf-win-1".to_owned())));
 }
 
 #[test]
-fn removal_next_sibling_then_first_remaining() {
+fn removal_prunes_unfocused_leaves_from_focus_recency() {
     let mut session = single_domain_session();
     admit_and_commit(
         &mut session,
@@ -620,11 +625,12 @@ fn removal_next_sibling_then_first_remaining() {
         placement(120, 80),
         "corr-3",
     );
-    // Focus win-3. Remove win-1 (non-focused): focus stays win-3.
+    // Focus win-3. Remove win-1 (non-focused): focus stays win-3 and win-1
+    // cannot be selected from recency later.
     remove_and_commit(&mut session, "win-1", "corr-4");
     let (_, focus) = session.focus();
     assert_eq!(focus, Some(NodeId("leaf-win-3".to_owned())));
-    // Remove focused win-3 (last): focus falls to previous win-2.
+    // Removing focused win-3 now selects the remaining MRU entry, win-2.
     remove_and_commit(&mut session, "win-3", "corr-5");
     let (_, focus) = session.focus();
     assert_eq!(focus, Some(NodeId("leaf-win-2".to_owned())));
@@ -632,7 +638,7 @@ fn removal_next_sibling_then_first_remaining() {
 
 #[test]
 fn removal_retains_empty_domains() {
-    let mut session = single_domain_session();
+    let mut session = two_domain_session();
     admit_and_commit(
         &mut session,
         "win-1",
@@ -641,11 +647,24 @@ fn removal_retains_empty_domains() {
         placement(120, 80),
         "corr-1",
     );
+    admit_and_commit(
+        &mut session,
+        "win-other",
+        "out-2",
+        "ws-2",
+        placement(120, 80),
+        "corr-other",
+    );
+    let source = DomainKey {
+        output: OutputId("out-1".to_owned()),
+        workspace: WorkspaceId("ws-1".to_owned()),
+    };
+    assert!(session.sync_focus_from_window(&source, &WindowId("win-1".to_owned())));
     remove_and_commit(&mut session, "win-1", "corr-2");
     let snapshot = session.snapshot();
-    assert_eq!(snapshot.domains.len(), 1);
+    assert_eq!(snapshot.domains.len(), 2);
     assert!(snapshot.domains[0].tree.is_none());
-    assert!(snapshot.windows.is_empty());
+    assert_eq!(snapshot.windows.len(), 1);
     assert_eq!(session.focus(), (None, None));
     // Domain still usable: admit again.
     admit_and_commit(

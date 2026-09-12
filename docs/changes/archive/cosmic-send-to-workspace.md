@@ -24,7 +24,8 @@ tiled window to another workspace on the same output.
   `src/input/actions.rs` `MoveToWorkspace`/`SendToWorkspace` (284-311) calls
   `Shell::move_current` with `direction=None`.
 - `src/shell/mod.rs` `move_element` (3448-3556) unmaps the source then maps
-  the tiled element in the target and selects it as the keyboard focus target.
+  the tiled element in the target. With `SendToWorkspace`'s `follow=false`, it
+  returns no focus target and does not call `Shell::set_focus`.
 - `src/shell/layout/tiling/mod.rs` `map_to_tree` (563-613) chooses the focused
   target leaf, or output/root geometry when none is focused; `unmap_internal`
   (1446-1492) recursively collapses the source tree. `Data::{new_group,
@@ -47,8 +48,9 @@ tiled window to another workspace on the same output.
 - Source removal collapses recursively; target admission is empty-root or an
   equal split of the target domain's valid last-active leaf, with root/output
   geometry fallback when none remains.
-- The focused moved window is focused in the target domain. The portable model
-  retains one validated last-active leaf per domain, not full stack history.
+- The focused moved window leaves focus in its source domain, falling back
+  through its MRU tiled stack. The portable model retains one validated
+  last-active leaf per target domain for admission and a source focus stack.
 - Source and target geometry are complete, and one-pending acknowledgement plus
   matching post-observation verification remains mandatory.
 - Same-output workspace isolation remains intact for directional R1-R4.
@@ -75,9 +77,11 @@ tiled window to another workspace on the same output.
 - The source gate accepts only the global focused tiled window. Empty targets
   become a lone root; occupied targets split their validated last-active leaf
   with equal shares using the source-evidenced geometry axis, falling back to
-  root/output geometry when needed. Source collapse, complete two-domain
-  geometry, link retargeting, focus, refusal, pending, capability-divergence,
-  and verification mismatch coverage are in `tests/session_send_to_workspace.rs`.
+  root/output geometry when needed. The later post-removal-focus correction
+  establishes that Send leaves focus in the source-domain MRU stack. Source
+  collapse, complete two-domain geometry, link retargeting, focus, refusal,
+  pending, capability-divergence, and verification mismatch coverage are in
+  `tests/session_send_to_workspace.rs`.
 - No lifecycle fixture lock exists because this portable lifecycle contract has
   no serialized fixture or selected adapter route. A fixture would be invented
   rather than lock an emitted public payload.

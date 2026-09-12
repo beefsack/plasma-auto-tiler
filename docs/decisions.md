@@ -298,11 +298,15 @@ Historical implementation detail is recoverable in Git history.
   retained. The portable split-tree representation fails closed for COSMIC
   center stack drops because stacks are unselected and compositor-owned; it
   names that source fact without emitting a false structural plan. Recursive
-  collapse is source-evidenced; deterministic post-removal focus and no-focus
-  root placement remain explicitly project fallbacks because the audited source
-  does not establish them. Floating, fullscreen, maximized, and sticky flags
-  remain explicit observed exceptions; only deferred tracking/removal is
-  selected while tiled exception behavior remains fail-closed and deferred.
+  collapse is source-evidenced. On a focused tiled removal, `cosmic_v1`
+  removes the leaf from its source-domain MRU focus stack and selects that
+  stack's remaining top; an unfocused removal preserves focus. Send with
+  `direction=None` leaves focus in the source rather than focusing the target.
+  The portable tiled model clears focus when no source tiled stack entry
+  remains. COSMIC's mapped-element and fullscreen fallback is not represented:
+  floating, fullscreen, maximized, and sticky flags remain explicit observed
+  exceptions; only deferred tracking/removal is selected while tiled exception
+  behavior remains fail-closed and deferred.
 - Durable policy-mode direction, authorized 2026-09-09: selected policy modes
   target strong source-evidenced behavioral parity. `cosmic_v1` may deviate
   only for an explicit, reviewable infeasible platform capability; a missing

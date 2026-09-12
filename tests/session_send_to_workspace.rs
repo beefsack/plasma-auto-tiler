@@ -200,7 +200,7 @@ fn p_leaves(p: &SessionPlan, o: &str, ws: &str) -> Vec<String> {
 }
 
 #[test]
-fn empty_target_collapses_source_and_lone_source_retained_empty() {
+fn send_keeps_focus_in_source_and_clears_when_source_becomes_empty() {
     let mut s = session();
     admit(&mut s, "win-1", "out-1", "ws-a", 120, 80, "corr-1");
     admit(&mut s, "win-2", "out-1", "ws-a", 120, 80, "corr-2");
@@ -223,25 +223,25 @@ fn empty_target_collapses_source_and_lone_source_retained_empty() {
         vec!["leaf-win-1", "leaf-win-2"]
     );
     assert_eq!(p_leaves(&plan, "out-1", "ws-b"), vec!["leaf-win-3"]);
-    assert_eq!(plan.desired_focus_domain, Some(dk("out-1", "ws-b")));
+    assert_eq!(plan.desired_focus_domain, Some(dk("out-1", "ws-a")));
     assert_eq!(
         plan.desired_focus_leaf,
-        Some(NodeId("leaf-win-3".to_owned()))
+        Some(NodeId("leaf-win-2".to_owned()))
     );
     assert_eq!(plan.desired_geometry.len(), 3);
     ack_verify(&mut s, &plan, "corr-4", 500);
     assert_eq!(s.snapshot(), plan.desired_snapshot);
-    // Lone source window moves out and its domain is retained but empty.
+    // A later ordinary activation makes the target window focused. Sending it
+    // back leaves its now-empty source unfocused instead of focusing the target.
+    assert!(s.sync_focus_from_window(&dk("out-1", "ws-b"), &WindowId("win-3".to_owned())));
     let lone = propose_mv(&mut s, "win-3", "out-1", "ws-a", "corr-5");
     assert!(at(&lone.desired_snapshot.domains, "out-1", "ws-b").is_none());
     assert_eq!(
         p_leaves(&lone, "out-1", "ws-a"),
         vec!["leaf-win-1", "leaf-win-2", "leaf-win-3"]
     );
-    assert_eq!(
-        lone.desired_focus_leaf,
-        Some(NodeId("leaf-win-3".to_owned()))
-    );
+    assert_eq!(lone.desired_focus_domain, None);
+    assert_eq!(lone.desired_focus_leaf, None);
     assert_eq!(lone.desired_geometry.len(), 3);
     ack_verify(&mut s, &lone, "corr-5", 502);
     assert!(s_leaves(&s, "out-1", "ws-b").is_empty());
@@ -290,10 +290,10 @@ fn occupied_target_splits_remembered_leaf() {
         other => panic!("expected root group, got {other:?}"),
     }
     assert_eq!(p_leaves(&plan, "out-1", "ws-a"), vec!["leaf-win-1"]);
-    assert_eq!(plan.desired_focus_domain, Some(dk("out-1", "ws-b")));
+    assert_eq!(plan.desired_focus_domain, Some(dk("out-1", "ws-a")));
     assert_eq!(
         plan.desired_focus_leaf,
-        Some(NodeId("leaf-win-2".to_owned()))
+        Some(NodeId("leaf-win-1".to_owned()))
     );
     assert_eq!(plan.desired_geometry.len(), 4);
     ack_verify(&mut s, &plan, "corr-5", 501);

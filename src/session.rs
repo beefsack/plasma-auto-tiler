@@ -48,16 +48,14 @@
 //!   focus fallback only, not source COSMIC parity.
 //! - Removal retains empty logical domains (trees become
 //!   `None`), removes empty groups, and collapses single-child groups
-//!   recursively (survivor promotion mirrors `unmap_internal` structurally;
-//!   focus selection below is deterministic project fallback, not COSMIC:
-//!   `unmap_internal` does not establish next/previous/first focus).
+//!   recursively (survivor promotion mirrors `unmap_internal` structurally).
 //!   Shares use [`crate::cosmic_v1::proportional_removal_shares`] before
 //!   collapse (portable N-ary adaptation of `remove_window` 255-283).
 //!   Unaffected subtree identity/order and shares are preserved
-//!   (a collapsed child inherits its collapsed parent slot). Focus moves to the
-//!   next sibling leaf, then the previous, then the first remaining leaf,
-//!   deterministically (project fallback, explicitly outside cosmic_v1
-//!   evidence); non-focused removals preserve focus.
+//!   (a collapsed child inherits its collapsed parent slot). A focused removal
+//!   falls back through the source domain's MRU tiled focus stack; an unfocused
+//!   removal preserves focus. Floating/fullscreen fallback is not represented
+//!   by this tiled-only focus type.
 //! - Floating/fullscreen/maximized/sticky exception flags are explicit. An
 //!   admission carrying any set flag without an explicit
 //!   [`ExceptionBehavior`] fails closed instead of silently tiling. An
@@ -607,6 +605,7 @@ pub struct Session {
     windows: BTreeMap<WindowId, WindowLink>,
     focused_domain: Option<DomainKey>,
     focused_leaf: Option<NodeId>,
+    focus_stack: BTreeMap<DomainKey, Vec<NodeId>>,
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
     reconciler: Reconciler,
@@ -664,6 +663,7 @@ impl Session {
             windows: BTreeMap::new(),
             focused_domain: None,
             focused_leaf: None,
+            focus_stack: BTreeMap::new(),
             last_active: BTreeMap::new(),
             exceptions: BTreeMap::new(),
             reconciler,
@@ -802,6 +802,12 @@ impl Session {
         }
         self.focused_domain = Some(domain.clone());
         self.focused_leaf = Some(link.leaf.clone());
+        self.focus_stack = self.updated_focus_stack(
+            &self.focused_domain,
+            &self.focused_leaf,
+            &self.trees,
+            &self.windows,
+        );
         true
     }
 
@@ -1301,8 +1307,6 @@ impl Session {
         let leaf = link.leaf.clone();
         let mut desired_trees = self.trees.clone();
         let target_tree = desired_trees.get(&key).cloned().flatten();
-        let pre_leaves = target_tree.as_ref().map(collect_leaves).unwrap_or_default();
-        let removed_pos = pre_leaves.iter().position(|id| id == &leaf);
         let new_target = remove_leaf_from_tree(target_tree, &leaf);
         desired_trees.insert(key.clone(), new_target.clone());
         let mut desired_windows = self.windows.clone();
@@ -1312,21 +1316,12 @@ impl Session {
         let was_focused =
             self.focused_leaf.as_ref() == Some(&leaf) && self.focused_domain.as_ref() == Some(&key);
         let (desired_focus_domain, desired_focus_leaf) = if was_focused {
-            let post_leaves = new_target.as_ref().map(collect_leaves).unwrap_or_default();
-            if post_leaves.is_empty() {
-                match first_leaf_global(&self.domains, &desired_trees) {
-                    Some((k, l)) => (Some(k), Some(l)),
-                    None => (None, None),
-                }
-            } else {
-                let next = removed_pos
-                    .filter(|pos| *pos < post_leaves.len())
-                    .map(|pos| post_leaves[pos].clone())
-                    .unwrap_or_else(|| post_leaves.last().expect("non-empty").clone());
-                (Some(key.clone()), Some(next))
+            match self.focus_stack_fallback(&key, &desired_trees, &desired_windows) {
+                Some(next) => (Some(key.clone()), Some(next)),
+                None => (None, None),
             }
         } else {
-            // Preserve focus if it still resolves, else deterministic fallback.
+            // Removing an unfocused window leaves the active focus unchanged.
             if self.focus_resolves(
                 &self.focused_domain,
                 &self.focused_leaf,
@@ -1335,10 +1330,7 @@ impl Session {
             ) {
                 (self.focused_domain.clone(), self.focused_leaf.clone())
             } else {
-                match first_leaf_global(&self.domains, &desired_trees) {
-                    Some((k, l)) => (Some(k), Some(l)),
-                    None => (None, None),
-                }
+                (None, None)
             }
         };
         if !validate_topology(
@@ -1424,12 +1416,12 @@ impl Session {
     /// Source: `cosmic-comp` `SendToWorkspace` calls `Shell::move_current`
     /// with no window id and moves only the focused element; `move_element`
     /// unmaps the source (recursive collapse) then maps the tiled element in
-    /// the target and focuses it. The portable gate mirrors
+    /// the target without selecting it as focus. The portable gate mirrors
     /// [`Session::propose_move`]: unknown windows refuse as `UnknownWindow`,
     /// exception windows or an unresolved focused leaf as `NotTiled`, and a
     /// missing global focus or requested non-focused tile as `FocusMismatch`.
     /// The source domain must equal the focused domain before mutation; no
-    /// source-side fallback focus is invented.
+    /// source-side focus falls back through the source-domain focus stack.
     ///
     /// Target placement follows `map_to_tree` (`direction=None`): the
     /// remembered destination last-active leaf splits when still linked
@@ -1440,7 +1432,8 @@ impl Session {
     /// refuse as [`RefusalKind::Unchanged`], cross-output targets as
     /// [`RefusalKind::CrossDomainMismatch`], unknown targets as
     /// [`RefusalKind::UnknownDomain`]. The mover keeps its leaf identity with
-    /// a retargeted link; focus ends at the moved leaf in the target domain.
+    /// a retargeted link; focus remains in the source domain when its stack has
+    /// a remaining tiled leaf, otherwise clears in this tiled-only model.
     /// Plans commit only via acknowledge-then-[`Session::verify_lifecycle`]
     /// with complete source-plus-target geometry.
     #[allow(clippy::too_many_lines)]
@@ -1512,8 +1505,10 @@ impl Session {
         let base_revision = session_observation.observation.revision;
         // Source removal with recursive collapse.
         let source_tree = self.trees.get(&source_key).cloned().flatten();
-        let pre_leaves = source_tree.as_ref().map(collect_leaves).unwrap_or_default();
-        if !pre_leaves.contains(&link.leaf) {
+        if !source_tree
+            .as_ref()
+            .is_some_and(|tree| collect_leaves(tree).contains(&link.leaf))
+        {
             return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
         }
         let new_source = remove_leaf_from_tree(source_tree, &link.leaf);
@@ -1568,8 +1563,11 @@ impl Session {
                 workspace: target_key.workspace.clone(),
             },
         );
-        let desired_focus_domain = Some(target_key.clone());
-        let desired_focus_leaf = Some(link.leaf.clone());
+        let (desired_focus_domain, desired_focus_leaf) =
+            match self.focus_stack_fallback(&source_key, &desired_trees, &desired_windows) {
+                Some(next) => (Some(source_key.clone()), Some(next)),
+                None => (None, None),
+            };
         if !validate_topology(
             &self.domains,
             &desired_trees,
@@ -1730,6 +1728,40 @@ impl Session {
             .values()
             .any(|l| l.leaf == leaf && l.output == target.output && l.workspace == target.workspace)
             .then_some(leaf)
+    }
+
+    fn focus_stack_fallback(
+        &self,
+        domain: &DomainKey,
+        trees: &BTreeMap<DomainKey, Option<Node>>,
+        windows: &BTreeMap<WindowId, WindowLink>,
+    ) -> Option<NodeId> {
+        self.focus_stack.get(domain)?.iter().rev().find_map(|leaf| {
+            self.focus_resolves(&Some(domain.clone()), &Some(leaf.clone()), trees, windows)
+                .then(|| leaf.clone())
+        })
+    }
+
+    fn updated_focus_stack(
+        &self,
+        focus_domain: &Option<DomainKey>,
+        focus_leaf: &Option<NodeId>,
+        trees: &BTreeMap<DomainKey, Option<Node>>,
+        windows: &BTreeMap<WindowId, WindowLink>,
+    ) -> BTreeMap<DomainKey, Vec<NodeId>> {
+        let mut next = self.focus_stack.clone();
+        next.retain(|domain, leaves| {
+            leaves.retain(|leaf| {
+                self.focus_resolves(&Some(domain.clone()), &Some(leaf.clone()), trees, windows)
+            });
+            !leaves.is_empty()
+        });
+        if let (Some(domain), Some(leaf)) = (focus_domain, focus_leaf) {
+            let leaves = next.entry(domain.clone()).or_default();
+            leaves.retain(|known| known != leaf);
+            leaves.push(leaf.clone());
+        }
+        next
     }
 
     fn updated_last_active(
@@ -2006,6 +2038,12 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.focus_stack = self.updated_focus_stack(
+                        &self.focused_domain,
+                        &self.focused_leaf,
+                        &self.trees,
+                        &self.windows,
+                    );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
@@ -2220,6 +2258,12 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.focus_stack = self.updated_focus_stack(
+                        &self.focused_domain,
+                        &self.focused_leaf,
+                        &self.trees,
+                        &self.windows,
+                    );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
@@ -2527,6 +2571,12 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.focus_stack = self.updated_focus_stack(
+                        &self.focused_domain,
+                        &self.focused_leaf,
+                        &self.trees,
+                        &self.windows,
+                    );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
@@ -2865,6 +2915,12 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.focus_stack = self.updated_focus_stack(
+                        &self.focused_domain,
+                        &self.focused_leaf,
+                        &self.trees,
+                        &self.windows,
+                    );
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
@@ -3402,6 +3458,12 @@ impl Session {
                     self.windows = desired.windows;
                     self.focused_domain = desired.focused_domain;
                     self.focused_leaf = desired.focused_leaf;
+                    self.focus_stack = self.updated_focus_stack(
+                        &self.focused_domain,
+                        &self.focused_leaf,
+                        &self.trees,
+                        &self.windows,
+                    );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
                     self.accepted_fingerprint = commit.fingerprint;

@@ -240,9 +240,8 @@ Only meaningful pending or active work is listed.
               contracts. The project `1/16` resize, unit-share insertion,
               arbitrary pointer bounds, and center-snap-back semantics are
               removed. Remaining named parity gaps are compositor-native center
-              stack drops (portable split tree refuses closed), source-unproven
-              removal/no-focus focus fallback, binary-source-to-N-ary share
-               adaptation with integer projection rounding. Group edge/interior
+              stack drops (portable split tree refuses closed), binary-source-to-
+              N-ary share adaptation with integer projection rounding. Group edge/interior
                classification and placement are wired through portable Session
                drag preview/drop; KWin drag-end delivery remains separate. |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
