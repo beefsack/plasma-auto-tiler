@@ -42,15 +42,27 @@ QDBusArgument &operator<<(QDBusArgument &argument, const QKeySequence &sequence)
 
 const QDBusArgument &operator>>(const QDBusArgument &argument, QKeySequence &sequence)
 {
-    // Strict exact four-slot decode via the shared pure validator: the live
-    // encoding always carries exactly four ints. Malformed (short) or long
-    // (>4) sequences fail closed to an empty sequence instead of silently
-    // truncating, so the caller's set comparison rejects the reply.
+    // Read-mode guarded exact four-slot decode: a container must never
+    // reach operator>>(int&). Check structure -> array -> basic before
+    // each descent/read; any unexpected framing fails closed to empty.
+    sequence = QKeySequence();
+    if (argument.currentType() != QDBusArgument::StructureType) {
+        return argument;
+    }
+    argument.beginStructure();
+    if (argument.currentType() != QDBusArgument::ArrayType) {
+        argument.endStructure();
+        return argument;
+    }
+    argument.beginArray();
     QList<int> values;
     int innerCount = 0;
-    argument.beginStructure();
-    argument.beginArray();
+    bool bad = false;
     while (!argument.atEnd()) {
+        if (argument.currentType() != QDBusArgument::BasicType) {
+            bad = true;
+            break;
+        }
         int value = 0;
         argument >> value;
         if (innerCount < 4) {
@@ -60,7 +72,7 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QKeySequence &seq
     }
     argument.endArray();
     argument.endStructure();
-    if (innerCount != 4 || !KWin::ShortcutReconciler::decodeKeySequenceSlots(values, &sequence)) {
+    if (bad || innerCount != 4 || !KWin::ShortcutReconciler::decodeKeySequenceSlots(values, &sequence)) {
         sequence = QKeySequence();
         return argument;
     }
@@ -70,15 +82,23 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QKeySequence &seq
 // Qt generic container extraction requires push_back, which QSet lacks
 // (it has insert). This exact overload provides a(ai) framing for
 // qDBusRegisterMetaType<QSet<QKeySequence>> and any direct extraction.
-// Bounded: more than SHORTCUT_MAX_KEYS_PER_TUPLE sequences leave an
-// oversized set so the caller fails closed; remaining elements are drained
-// to keep the framing consistent.
+// Bounded: malformed or oversized input becomes an unmatchable sentinel so
+// a clear-row reply cannot mistake it for a valid empty set. Read-mode
+// guarded: a non-array or non-structure element never reaches basic reads.
 const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence> &set)
 {
-    argument.beginArray();
     set.clear();
+    if (argument.currentType() != QDBusArgument::ArrayType) {
+        return argument;
+    }
+    argument.beginArray();
     int count = 0;
+    bool bad = false;
     while (!argument.atEnd()) {
+        if (argument.currentType() != QDBusArgument::StructureType) {
+            bad = true;
+            break;
+        }
         QKeySequence sequence;
         argument >> sequence;
         if (count <= KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
@@ -87,6 +107,10 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
         ++count;
         if (count > KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
             while (!argument.atEnd()) {
+                if (argument.currentType() != QDBusArgument::StructureType) {
+                    bad = true;
+                    break;
+                }
                 QKeySequence extra;
                 argument >> extra;
                 ++count;
@@ -95,6 +119,12 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
         }
     }
     argument.endArray();
+    if (bad || count > KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
+        set.clear();
+        // Preserve malformed/oversized wire input as unmatchable. An empty
+        // set would otherwise falsely confirm a clear-row reply.
+        set.insert(QKeySequence(KWin::SHORTCUT_MAX_KEY_VALUE + 1));
+    }
     return argument;
 }
 
@@ -109,7 +139,15 @@ QDBusArgument &operator<<(QDBusArgument &argument, const KWin::ShortcutMatchType
 
 const QDBusArgument &operator>>(const QDBusArgument &argument, KWin::ShortcutMatchType &match)
 {
+    match.value = 0;
+    if (argument.currentType() != QDBusArgument::StructureType) {
+        return argument;
+    }
     argument.beginStructure();
+    if (argument.currentType() != QDBusArgument::BasicType) {
+        argument.endStructure();
+        return argument;
+    }
     argument >> match.value;
     argument.endStructure();
     return argument;
@@ -129,10 +167,71 @@ QDBusArgument &operator<<(QDBusArgument &argument, const ShortcutInfoFields &inf
 
 const QDBusArgument &operator>>(const QDBusArgument &argument, ShortcutInfoFields &info)
 {
+    // Read-mode guarded: structure framing checked before descent; each
+    // basic string checked as BasicType and each int array checked as
+    // ArrayType with BasicType elements, so malformed containers fail
+    // closed instead of reaching basic extraction.
+    info = ShortcutInfoFields();
+    if (argument.currentType() != QDBusArgument::StructureType) {
+        return argument;
+    }
     argument.beginStructure();
-    argument >> info.action >> info.friendly >> info.compUnique >> info.compFriendly >> info.contextUnique
-        >> info.contextFriendly >> info.active >> info.defaults;
+    auto readString = [&](QString *out) {
+        if (argument.currentType() != QDBusArgument::BasicType) {
+            return false;
+        }
+        QString value;
+        argument >> value;
+        if (out) {
+            *out = value;
+        }
+        return true;
+    };
+    auto readIntList = [&](QList<int> *out) {
+        if (argument.currentType() != QDBusArgument::ArrayType) {
+            return false;
+        }
+        argument.beginArray();
+        QList<int> values;
+        while (!argument.atEnd()) {
+            if (argument.currentType() != QDBusArgument::BasicType) {
+                argument.endArray();
+                return false;
+            }
+            int value = 0;
+            argument >> value;
+            values.append(value);
+        }
+        argument.endArray();
+        if (out) {
+            *out = values;
+        }
+        return true;
+    };
+    QString action;
+    QString friendly;
+    QString compUnique;
+    QString compFriendly;
+    QString contextUnique;
+    QString contextFriendly;
+    QList<int> active;
+    QList<int> defaults;
+    if (!readString(&action) || !readString(&friendly) || !readString(&compUnique) || !readString(&compFriendly)
+        || !readString(&contextUnique) || !readString(&contextFriendly) || !readIntList(&active)
+        || !readIntList(&defaults)) {
+        argument.endStructure();
+        info = ShortcutInfoFields();
+        return argument;
+    }
     argument.endStructure();
+    info.action = action;
+    info.friendly = friendly;
+    info.compUnique = compUnique;
+    info.compFriendly = compFriendly;
+    info.contextUnique = contextUnique;
+    info.contextFriendly = contextFriendly;
+    info.active = active;
+    info.defaults = defaults;
     return argument;
 }
 
@@ -586,6 +685,25 @@ bool ShortcutReconciler::decodeKeySequenceSlots(const QList<int> &slotValues, QK
     }
     if (out) {
         *out = QKeySequence(slotValues.at(0), slotValues.at(1), slotValues.at(2), slotValues.at(3));
+    }
+    return true;
+}
+
+bool ShortcutReconciler::decodeSetterReplySlotSets(const QList<QList<int>> &slotGroups, QSet<QKeySequence> *out)
+{
+    if (slotGroups.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+        return false;
+    }
+    QSet<QKeySequence> set;
+    for (const QList<int> &group : slotGroups) {
+        QKeySequence decoded;
+        if (!decodeKeySequenceSlots(group, &decoded)) {
+            return false;
+        }
+        set.insert(decoded);
+    }
+    if (out) {
+        *out = set;
     }
     return true;
 }
@@ -1589,6 +1707,10 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
             return false;
         }
     } else if (replyVariant.canConvert<QDBusArgument>()) {
+        // Read-mode a(ai) decode: const access selects the read overloads.
+        // Guarded array -> structure -> inner array -> basic before each
+        // descent/read so a container can never reach operator>>(int&);
+        // every unexpected framing fails closed with the bounded error.
         const QDBusArgument arg = replyVariant.value<QDBusArgument>();
         if (arg.currentType() != QDBusArgument::ArrayType) {
             if (error) {
@@ -1596,49 +1718,71 @@ bool KGlobalAccelStore::writeKeys(const QString &component, const QString &actio
             }
             return false;
         }
-        QDBusArgument mutableArg = arg;
-        mutableArg.beginArray();
-        int replyCount = 0;
-        while (!mutableArg.atEnd()) {
-            // Strict exact four-slot (ai) decode: consume the full inner
-            // array and require exactly four ints. Long or short sequences
-            // fail closed; no truncation fallback.
-            mutableArg.beginStructure();
-            mutableArg.beginArray();
+        QList<QList<int>> slotGroups;
+        bool framingOk = true;
+        arg.beginArray();
+        while (!arg.atEnd() && framingOk) {
+            if (arg.currentType() != QDBusArgument::StructureType) {
+                framingOk = false;
+                break;
+            }
+            arg.beginStructure();
+            if (arg.currentType() != QDBusArgument::ArrayType) {
+                framingOk = false;
+                arg.endStructure();
+                break;
+            }
+            arg.beginArray();
             QList<int> values;
             int innerCount = 0;
-            while (!mutableArg.atEnd()) {
+            while (!arg.atEnd()) {
+                if (arg.currentType() != QDBusArgument::BasicType) {
+                    framingOk = false;
+                    break;
+                }
                 int value = 0;
-                mutableArg >> value;
-                if (innerCount < 4) {
+                arg >> value;
+                if (innerCount < 5) {
                     values.append(value);
                 }
                 ++innerCount;
             }
-            mutableArg.endArray();
-            mutableArg.endStructure();
+            if (!framingOk) {
+                arg.endArray();
+                arg.endStructure();
+                break;
+            }
+            // Bound inner growth before validation: more than five slots is
+            // already long; drain state stays consistent via atEnd loop above.
             if (innerCount != 4) {
-                if (error) {
-                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                }
-                return false;
+                framingOk = false;
+                arg.endArray();
+                arg.endStructure();
+                break;
             }
-            QKeySequence sequence;
-            if (!ShortcutReconciler::decodeKeySequenceSlots(values, &sequence)) {
-                if (error) {
-                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                }
-                return false;
+            slotGroups.append(values);
+            if (slotGroups.size() > SHORTCUT_MAX_KEYS_PER_TUPLE) {
+                framingOk = false;
+                arg.endArray();
+                arg.endStructure();
+                break;
             }
-            replySet.insert(sequence);
-            if (++replyCount > SHORTCUT_MAX_KEYS_PER_TUPLE) {
-                if (error) {
-                    *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
-                }
-                return false;
-            }
+            arg.endArray();
+            arg.endStructure();
         }
-        mutableArg.endArray();
+        arg.endArray();
+        if (!framingOk) {
+            if (error) {
+                *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+            }
+            return false;
+        }
+        if (!ShortcutReconciler::decodeSetterReplySlotSets(slotGroups, &replySet)) {
+            if (error) {
+                *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
+            }
+            return false;
+        }
     } else {
         if (error) {
             *error = QStringLiteral("setShortcutKeys reply did not confirm expected key");
@@ -1908,6 +2052,20 @@ ShortcutApplyResult ShortcutReconciler::apply()
         result.error = error;
         return result;
     }
+    auto checkOwner = [&](QString *ownerError) {
+        QString liveOwner;
+        uint liveUid = 0;
+        if (!m_store->currentOwner(&liveOwner, &liveUid, ownerError)) {
+            return false;
+        }
+        if (liveOwner != owner || liveUid != uid) {
+            if (ownerError) {
+                *ownerError = QStringLiteral("KGlobalAccel service owner drifted");
+            }
+            return false;
+        }
+        return true;
+    };
     QList<ShortcutTuple> tuples;
     if (!m_store->readAll(&tuples, &error)) {
         result.error = error;
@@ -1995,7 +2153,7 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.writes = usedWrites();
             return result;
         }
-        if (journal.owner != owner || journal.uid != uid) {
+        if (journal.uid != uid) {
             result.error = QStringLiteral("KGlobalAccel service owner drifted");
             result.writes = usedWrites();
             return result;
@@ -2005,6 +2163,22 @@ ShortcutApplyResult ShortcutReconciler::apply()
                 && resizeUpCurrent.active == journal.resizeUp.post && switchNextCurrent.active == journal.switchNext.post
                 && resizeRightCurrent.active == journal.resizeRight.post
                 && switchLastCurrent.active == journal.switchLast.post) {
+                // Stale unique names are volatile across a crashed KCM or
+                // service lifetime: same UID rebinds to the verified current
+                // owner before returning success.
+                if (journal.owner != owner) {
+                    if (!checkOwner(&error)) {
+                        result.error = error;
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                    journal.owner = owner;
+                    if (!m_journal->persist(journal, &error)) {
+                        result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+                        result.writes = usedWrites();
+                        return result;
+                    }
+                }
                 result.ok = true;
                 result.writes = usedWrites();
                 return result;
@@ -2028,6 +2202,24 @@ ShortcutApplyResult ShortcutReconciler::apply()
                 || switchLastCurrent.active == journal.switchLast.post;
             if (!known || !lockKnown || !upKnown || !nextKnown || !rightKnown || !lastKnown) {
                 result.error = QStringLiteral("current state matches neither the recorded pre nor post image");
+                result.writes = usedWrites();
+                return result;
+            }
+        }
+        // Stale-owner recovery: the old D-Bus unique name is volatile, so a
+        // different old name with the same UID rebinds to the verified
+        // current owner (pinned/reconfirmed throughout via checkOwner) and
+        // persists before any recovery write. UID mismatch still fails above
+        // and current-operation drift still fails below.
+        if (journal.owner != owner) {
+            if (!checkOwner(&error)) {
+                result.error = error;
+                result.writes = usedWrites();
+                return result;
+            }
+            journal.owner = owner;
+            if (!m_journal->persist(journal, &error)) {
+                result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
                 result.writes = usedWrites();
                 return result;
             }
@@ -2065,21 +2257,6 @@ ShortcutApplyResult ShortcutReconciler::apply()
             return result;
         }
     }
-
-    auto checkOwner = [&](QString *ownerError) {
-        QString liveOwner;
-        uint liveUid = 0;
-        if (!m_store->currentOwner(&liveOwner, &liveUid, ownerError)) {
-            return false;
-        }
-        if (liveOwner != owner || liveUid != uid) {
-            if (ownerError) {
-                *ownerError = QStringLiteral("KGlobalAccel service owner drifted");
-            }
-            return false;
-        }
-        return true;
-    };
 
     // Phase 1: focus must own Meta+L before lock drops it.
     const bool focusAlready = focusCurrent.active == journal.focus.post;
@@ -2350,6 +2527,11 @@ ShortcutApplyResult ShortcutReconciler::apply()
         result.error = QStringLiteral("tuple writes exceed the exact six writes max");
         return result;
     }
+    if (!checkOwner(&error)) {
+        result.error = error;
+        result.writes = usedWrites();
+        return result;
+    }
     journal.phase = shortcutJournalPhaseComplete();
     if (!m_journal->persist(journal, &error)) {
         result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
@@ -2392,7 +2574,21 @@ ShortcutRevertResult ShortcutReconciler::revert()
         result.error = error;
         return result;
     }
-    if (journal.owner != owner || journal.uid != uid) {
+    auto checkOwner = [&](QString *ownerError) {
+        QString liveOwner;
+        uint liveUid = 0;
+        if (!m_store->currentOwner(&liveOwner, &liveUid, ownerError)) {
+            return false;
+        }
+        if (liveOwner != owner || liveUid != uid) {
+            if (ownerError) {
+                *ownerError = QStringLiteral("KGlobalAccel service owner drifted");
+            }
+            return false;
+        }
+        return true;
+    };
+    if (journal.uid != uid) {
         result.error = QStringLiteral("KGlobalAccel service owner drifted");
         return result;
     }
@@ -2417,21 +2613,22 @@ ShortcutRevertResult ShortcutReconciler::revert()
         result.error = error;
         return result;
     }
-
-    auto checkOwner = [&](QString *ownerError) {
-        QString liveOwner;
-        uint liveUid = 0;
-        if (!m_store->currentOwner(&liveOwner, &liveUid, ownerError)) {
-            return false;
+    // Stale-owner recovery for Restore: same UID with a different old unique
+    // name rebinds to the verified current owner and persists before any
+    // restore write. Journal image/allowlist already validated by load;
+    // live tuples resolved above, so state is valid enough. Current drift
+    // and UID checks below stay strict.
+    if (journal.owner != owner) {
+        if (!checkOwner(&error)) {
+            result.error = error;
+            return result;
         }
-        if (liveOwner != owner || liveUid != uid) {
-            if (ownerError) {
-                *ownerError = QStringLiteral("KGlobalAccel service owner drifted");
-            }
-            return false;
+        journal.owner = owner;
+        if (!m_journal->persist(journal, &error)) {
+            result.error = error.isEmpty() ? QStringLiteral("journal persist failed") : error;
+            return result;
         }
-        return true;
-    };
+    }
 
     // Reverse ordered restore: only currently owned postimages, scoped.
     ShortcutJournalEntry *ordered[6] = {&journal.focus, &journal.lock, &journal.resizeUp, &journal.switchNext,
@@ -2528,6 +2725,10 @@ ShortcutRevertResult ShortcutReconciler::revert()
         }
     }
     if (allAtPre) {
+        if (!checkOwner(&error)) {
+            result.error = error;
+            return result;
+        }
         if (!m_journal->remove(&error)) {
             result.error = error.isEmpty() ? QStringLiteral("could not remove the journal") : error;
             return result;

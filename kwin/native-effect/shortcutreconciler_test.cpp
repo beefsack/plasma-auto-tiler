@@ -3388,6 +3388,166 @@ void preflightOccupancyHolderSplitTokens()
     }
 }
 
+void setterReplyAaiEncodingAndPureDecode()
+{
+    ensureKeySequenceTestMetaTypes();
+    // Actual a(ai) encoding: empty and multi-sequence QSet round-trips
+    // assert exact a(ai) framing via the real source operators.
+    {
+        QDBusArgument arg;
+        const QSet<QKeySequence> empty;
+        arg.beginArray(QMetaType::fromType<QKeySequence>());
+        for (const QKeySequence &seq : empty) {
+            arg << seq;
+        }
+        arg.endArray();
+        CHECK(arg.currentSignature() == QStringLiteral("a(ai)"));
+        QDBusMessage message =
+            QDBusMessage::createSignal(QStringLiteral("/test"), QStringLiteral("i.I"), QStringLiteral("keys"));
+        message << QVariant::fromValue(empty);
+        const QSet<QKeySequence> decoded = message.arguments().at(0).value<QSet<QKeySequence>>();
+        CHECK(decoded.isEmpty());
+        QSet<QKeySequence> out;
+        CHECK(ShortcutReconciler::decodeSetterReplySlotSets(QList<QList<int>>{}, &out));
+        CHECK(out.isEmpty());
+    }
+    {
+        QSet<QKeySequence> multi;
+        multi.insert(QKeySequence(META_L, 0, 0, 0));
+        multi.insert(QKeySequence(META_ESC, 0, 0, 0));
+        QDBusArgument arg;
+        arg.beginArray(QMetaType::fromType<QKeySequence>());
+        for (const QKeySequence &seq : multi) {
+            arg << seq;
+        }
+        arg.endArray();
+        CHECK(arg.currentSignature() == QStringLiteral("a(ai)"));
+        QDBusMessage message =
+            QDBusMessage::createSignal(QStringLiteral("/test"), QStringLiteral("i.I"), QStringLiteral("keys"));
+        message << QVariant::fromValue(multi);
+        const QSet<QKeySequence> decoded = message.arguments().at(0).value<QSet<QKeySequence>>();
+        CHECK(decoded == multi);
+        QList<QList<int>> groups;
+        groups.append(QList<int>{META_L, 0, 0, 0});
+        groups.append(QList<int>{META_ESC, 0, 0, 0});
+        QSet<QKeySequence> out;
+        CHECK(ShortcutReconciler::decodeSetterReplySlotSets(groups, &out));
+        CHECK(out.size() == 2);
+        CHECK(out.contains(QKeySequence(META_L)));
+        CHECK(out.contains(QKeySequence(META_ESC)));
+    }
+}
+
+void setterReplySlotShapesFailClosed()
+{
+    // Pure slot-set seam rejects malformed/unexpected per-sequence shapes
+    // and limits without abort.
+    {
+        QSet<QKeySequence> out;
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(QList<QList<int>>{QList<int>{1, 2, 3}}, &out));
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(QList<QList<int>>{QList<int>{1, 2, 3, 4, 5}}, &out));
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(QList<QList<int>>{QList<int>{}}, &out));
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(
+            QList<QList<int>>{QList<int>{-1, 0, 0, 0}}, &out));
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(
+            QList<QList<int>>{QList<int>{SHORTCUT_MAX_KEY_VALUE + 1, 0, 0, 0}}, &out));
+        QList<QList<int>> tooMany;
+        for (int i = 0; i < SHORTCUT_MAX_KEYS_PER_TUPLE + 1; ++i) {
+            tooMany.append(QList<int>{1000 + i, 0, 0, 0});
+        }
+        CHECK(!ShortcutReconciler::decodeSetterReplySlotSets(tooMany, &out));
+    }
+    // Guarded reply operators fail closed on unexpected framing, no abort:
+    // a default (non-array/structure) argument never reaches basic reads.
+    {
+        const QDBusArgument bad;
+        QKeySequence decodedSeq = QKeySequence(META_L);
+        bad >> decodedSeq;
+        CHECK(decodedSeq == QKeySequence());
+        QSet<QKeySequence> decodedSet;
+        decodedSet.insert(QKeySequence(META_L));
+        bad >> decodedSet;
+        CHECK(decodedSet.isEmpty());
+        KWin::ShortcutMatchType match{7};
+        bad >> match;
+        CHECK(match.value == 0);
+        KWin::ShortcutInfoFields info;
+        info.action = QStringLiteral("seed");
+        bad >> info;
+        CHECK(info.action.isEmpty());
+    }
+}
+
+void staleOwnerFinishApplyRecovers()
+{
+    // Stale old unique name :1.1191 with same UID recovers on the partial
+    // Finish Apply path with the current fake owner.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    CHECK(store.owner == QStringLiteral(":1.20"));
+    FakeJournal journal;
+    ShortcutJournal partial;
+    partial.schema = shortcutJournalSchema();
+    partial.phase = shortcutJournalPhaseFocusApplied();
+    partial.owner = QStringLiteral(":1.1191");
+    partial.uid = static_cast<uint>(::geteuid());
+    partial.focus = {QStringLiteral("kwin"), QStringLiteral("plasma-auto-tiler-focus-right"), QList<int>{419430420},
+                     QList<int>{META_L}};
+    partial.lock = {QStringLiteral("ksmserver"), QStringLiteral("Lock Session"), QList<int>{META_L},
+                    QList<int>{META_ESC}};
+    fillResizeReady(partial, QList<int>{7}, QList<int>{8});
+    QString persistError;
+    CHECK(journal.persist(partial, &persistError));
+    for (ShortcutTuple &tuple : store.tuples) {
+        if (tuple.component == QStringLiteral("kwin") && tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            tuple.active = QList<int>{META_L};
+        }
+    }
+    ShortcutReconciler reconciler(&store, &journal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(result.ok);
+    CHECK(store.writeLog.size() == 5);
+    if (store.writeLog.size() == 5) {
+        CHECK(store.writeLog.at(0).action == QStringLiteral("Lock Session"));
+    }
+    ShortcutJournal loaded;
+    QString loadError;
+    CHECK(journal.load(&loaded, &loadError));
+    CHECK(loaded.phase == shortcutJournalPhaseComplete());
+    CHECK(loaded.owner == QStringLiteral(":1.20"));
+    CHECK(loaded.uid == static_cast<uint>(::geteuid()));
+    CHECK(journal.stored.owner == QStringLiteral(":1.20"));
+}
+
+void staleOwnerRestoreRecovers()
+{
+    // Stale old unique name :1.1191 with same UID recovers on Restore with
+    // the current fake owner and restores pre state.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    FakeJournal journal;
+    CHECK(ShortcutReconciler(&store, &journal).apply().ok);
+    CHECK(journal.present);
+    CHECK(journal.stored.owner == store.owner);
+    // Simulate crash/restart volatility: old name differs, UID same.
+    journal.stored.owner = QStringLiteral(":1.1191");
+    CHECK(journal.stored.uid == static_cast<uint>(::geteuid()));
+    CHECK(store.owner == QStringLiteral(":1.20"));
+    ShortcutRevertResult reverted = ShortcutReconciler(&store, &journal).revert();
+    CHECK(reverted.ok);
+    CHECK(reverted.journalRemoved);
+    CHECK(!journal.present);
+    CHECK(reverted.writes == 6);
+    for (const ShortcutTuple &tuple : store.tuples) {
+        if (tuple.action == QStringLiteral("plasma-auto-tiler-focus-right")) {
+            CHECK(tuple.active == QList<int>{419430420});
+        }
+        if (tuple.action == QStringLiteral("Lock Session")) {
+            CHECK(tuple.active == QList<int>{META_L});
+        }
+    }
+}
+
 } // namespace
 
 
@@ -3440,6 +3600,8 @@ int main(int argc, char **argv)
         seamHoldersAndTuplesFieldBranches();
         wireBoundTokensDistinctFromSeams();
         boundedHelperSeamsExactTokens();
+        setterReplyAaiEncodingAndPureDecode();
+        setterReplySlotShapesFailClosed();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("owner")) {
         ownerDriftFailsClosed();
@@ -3454,6 +3616,8 @@ int main(int argc, char **argv)
         finishApplyDriftClassified();
         resumeGateFailsClosedZeroWrites();
         rowForeignGateAndMidCrossResume();
+        staleOwnerFinishApplyRecovers();
+        staleOwnerRestoreRecovers();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("external")) {
         externalEditsUntouchedAndJournalRetained();

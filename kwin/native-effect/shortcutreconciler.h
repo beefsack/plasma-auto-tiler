@@ -419,6 +419,10 @@ public:
     // ints in [0, SHORTCUT_MAX_KEY_VALUE]; the live encoding always writes
     // four slots with zero padding. Both reply-decode variants share it.
     static bool decodeKeySequenceSlots(const QList<int> &slotValues, QKeySequence *out);
+    // Pure setter-reply slot-set validation used by the real setShortcutKeys
+    // decoder: each group must be exactly four bounded slots; the outer
+    // count must not exceed SHORTCUT_MAX_KEYS_PER_TUPLE. Empty accepted.
+    static bool decodeSetterReplySlotSets(const QList<QList<int>> &slotGroups, QSet<QKeySequence> *out);
     static bool journalPathSafe(const QString &path, QString *error);
     static bool journalRolesValid(const ShortcutJournal &journal);
     static bool journalPostsValid(const ShortcutJournal &journal);

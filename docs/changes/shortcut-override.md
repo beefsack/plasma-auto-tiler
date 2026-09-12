@@ -58,8 +58,9 @@ KCM Apply alone resolves only the closed compiled-in rows.
   mutation, ordered six-write Apply, ownership-scoped Revert, and private
   project journal.
 - Focused static coverage in `shortcutreconciler_test.cpp` (Apply order,
-  `Meta+Esc` refusal without mutation, partial-write resume, external-edit
-  handling, journal/path safety) and `activeborderconfig_shortcut_test.cpp`
+  `Meta+Esc` refusal without mutation, partial-write resume, setter `a(ai)`
+  reply decoding, stale-owner recovery, external-edit handling, journal/path
+  safety) and `activeborderconfig_shortcut_test.cpp`
   (ordinary-save isolation, recovery routing, confirmation gates, state/error
   presentation). No live Apply/Revert/interrupted-recovery result is claimed.
 
@@ -149,7 +150,24 @@ KCM Apply alone resolves only the closed compiled-in rows.
   type framing from the retained KWin abort; no write guard is needed. This was
   established without a setter or live Apply. Native CTest passed 21/21, and
   `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D
-  warnings`, and `nix flake check` passed.
+   warnings`, and `nix flake check` passed.
+- Resolved the KCM crash during an actual Apply. `writeKeys` received the
+  setter reply as `a(ai)` (`QSet<QKeySequence>`) but put its reply argument in
+  write mode and read an `int` where the next value was the inner `ai` array.
+  It now reads the nested array in read mode with array, structure, inner-array,
+  and basic-type guards before each descent. Unexpected framing and invalid
+  slot sets refuse the write confirmation without reaching a basic read. The
+  same audit guarded every other reply decoder that descends from a container
+  to a basic value. Hermetic coverage encodes exact empty and two-sequence
+  `a(ai)` sets, accepts both decoded slot sets, and rejects short, long,
+  out-of-range, and over-limit shapes.
+- A journal records a D-Bus unique owner only as provenance. On Finish Apply or
+  Restore, a dead prior unique name with the same verified UID now rebinds to
+  the current pinned owner after the recorded image is validated and before
+  recovery writes. Owner drift during the current recovery remains fail-closed.
+  Focus-applied Finish Apply and Restore coverage both use stale `:1.1191` and
+  verify the expected postimage or restored preimage respectively. The real
+  crash left a `focus-applied` journal; no live recovery result is claimed yet.
 - Read-only keyed KGlobalAccel getters confirmed the exact whole-key holders:
   `Meta+Esc` has only `org.kde.plasma-systemmonitor.desktop` / `_launch`;
   `Meta+L` has `kwin` / `plasma-auto-tiler-focus-right` and `ksmserver` /

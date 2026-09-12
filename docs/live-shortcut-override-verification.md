@@ -223,17 +223,13 @@ onto Lock Session without rebinding System Monitor itself
 
 ## Interrupted Recovery
 
-There is no supported, user-inducible way to stop this Apply between its ordered
-writes. `Apply Shortcuts` blocks in synchronous D-Bus calls; the UI has no
-cancel/yield point. Do not attempt a timed close, kill, logout, power loss, or
-configuration edit: none is deterministic and each adds unrelated recovery risk.
-This recovery branch cannot presently be exercised live.
-
-The closest honest substitute is to verify the recovery routing only if an
-actual unexpected interruption leaves the journal. Reopen the project KCM. Its
+`Apply Shortcuts` remains synchronous with no supported user cancel point, but
+an actual KCM crash has produced a `focus-applied` journal. Do not attempt a
+timed close, kill, logout, power loss, or configuration edit to reproduce it.
+When an actual interruption leaves the journal, reopen the project KCM. Its
 status must say `Interrupted apply found (phase ...). Finish Apply or Restore.`
-naming the journal phase (e.g. `phase apply-pending`, `phase focus-applied`);
-only then are `Finish Apply` and `Restore` visible.
+naming the journal phase (for example, `phase apply-pending` or
+`phase focus-applied`); only then are `Finish Apply` and `Restore` visible.
 
 1. `Finish Apply` repeats the Apply confirmation. After `Yes`, PASS means the
    complete three-row postimage in Phase 1 step 3 and status `Shortcuts applied
@@ -241,9 +237,9 @@ only then are `Finish Apply` and `Restore` visible.
    baseline ledger exactly.
 2. `Restore` repeats the Revert confirmation. After `Yes`, PASS means all six
    allowlisted entries equal their recorded preimage and the journal is absent.
-3. If no actual interruption occurs, record `interrupted recovery: not
-   user-inducible; not live-executed`. Static coverage remains the only evidence
-   for partial-write recovery. Do not claim this branch passed.
+3. If no actual interruption exists, record `interrupted recovery: no journal;
+   not live-executed`. Static coverage is not a live result. Do not claim this
+   branch passed.
 
 ## Phase 2 - Clear Rows
 

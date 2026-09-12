@@ -740,16 +740,11 @@ Only meaningful pending or active work is listed.
   the user. The alternative, loosening the adapter correlation fence, is
   rejected. Audit:
   [record](changes/archive/unauthorized-rejection-route-audit.md) |
-- P2 | user decision pending | The `interrupted-recovery` half of the shortcut
-  override live acceptance criterion is unsatisfiable as written. Runbook
-  authoring established that Apply is synchronous with no cancel point, so a
-  user cannot deterministically interrupt it between its two ordered writes.
-  Interrupted recovery therefore has static coverage only, and the runbook
-  documents the honest unexpected-interruption route instead. Choose one:
-  accept static-only coverage and amend the acceptance criterion in
-  `docs/changes/shortcut-override.md`, or authorize a deliberate
-  fault-injection path to make the gate runnable. Do not decide this without
-  the user. |
+- P2 | user decision pending | An actual KCM crash during synchronous Apply
+  produced a `focus-applied` interrupted journal, proving interrupted recovery
+  is reachable without a user-inducible cancel point. The runbook now covers
+  this genuine recovery route. The user must still decide the live acceptance
+  criterion; do not induce another interruption or add fault injection. |
 - P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
   resize failure is the KDE Keyboard Layout Switcher double-claim. Verified
   static fact: `~/.config/kglobalshortcutsrc:6-7` binds
