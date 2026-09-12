@@ -657,8 +657,9 @@ Only meaningful pending or active work is listed.
   and lockfile evidence are accepted |
   [change](changes/archive/nix-current-host-delivery.md)
 
-- P1 | static complete, pending user-run live Apply/Revert/interrupted-recovery
-  | Explicit KCM shortcut override with recovery (`Meta+L`/`Meta+Esc`) |
+- P1 | Finish Apply and three-row postimage live-proven; pending Lock Session
+  checks, Revert, Phase 2 resize chords, and Restore branch | Explicit KCM
+  shortcut override with recovery (`Meta+L`/`Meta+Esc`) |
   [change](changes/shortcut-override.md)
 - P2 | parked | Retain the floor-ratio fallback unless a qualifying isolated
   nested KWin proof establishes a safe improvement | [change](changes/floor-ratio-feasibility.md)
@@ -702,7 +703,7 @@ Only meaningful pending or active work is listed.
   demarshalling stack, but stripped cores retain neither sender nor method. Do
   not attribute it to the native effect or bundled script without a fault-stack
   frame. | [record](changes/archive/kwin-qkeysequence-dbus-abort.md)
-- P1 | shipped, live-unproven | KCM shortcut override is now a closed
+- P1 | shipped, Finish Apply live-proven | KCM shortcut override is now a closed
   compiled-in conflict-resolution table with `relocate` and `clear`; the
   `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
   Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. The strict
@@ -717,44 +718,24 @@ Only meaningful pending or active work is listed.
    connection interface, reads and writes use raw calls, and owner pinning and
    pre-write drift refusal remain fail-closed. Row 1 explicitly authorizes
    taking System Monitor `_launch`'s `Meta+Esc` default without writing that
-   action. Static coverage is complete. The remaining gate is the existing
-   single-pair user-run live Apply/Revert/interrupted-recovery confirmation,
-   which must run first and exercises the table path unchanged. Read-only keyed
-   live data identifies the authorized System Monitor holder as
+    action. Static coverage is complete. Finish Apply completed the three-row
+    postimage; the remaining gates are Lock Session physical checks, Revert,
+    physical resize checks, and Restore. Read-only keyed live data identifies
+    the authorized System Monitor holder as
    `org.kde.plasma-systemmonitor.desktop` / `_launch`; row 1 now matches that
    exact identity, without making it writable. The live-empty Switcher friendly
    fields are accepted consistently by read and write validation. |
    [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
-- P2 | user decision pending | Make the Planner `unauthorized` rejection
-  observable. `PlannerEndpoint::describe_plan` in `src/planner_service.rs`
-  returns the fixed unbound reply
-  `{"v":1,"outcome":"rejected","kind":"unauthorized","message":"unauthorized"}`
-  when `verify_same_uid_caller` fails or the caller is absent. Every adapter
-  requires an exact matching `correlation_id` before it inspects `kind`, so an
-  unauthorized rejection is discarded by the correlation fence and never
-  surfaces as a distinct signal. Making it observable needs a Rust contract
-  change to echo the caller's `correlation_id` in that reply, which means
-  echoing unvalidated caller input back across the same-UID authorization
-  boundary. That is a security-posture decision and must not be made without
-  the user. The alternative, loosening the adapter correlation fence, is
-  rejected. Audit:
-  [record](changes/archive/unauthorized-rejection-route-audit.md) |
-- P2 | user decision pending | An actual KCM crash during synchronous Apply
-  produced a `focus-applied` interrupted journal, proving interrupted recovery
-  is reachable without a user-inducible cancel point. The runbook now covers
-  this genuine recovery route. The user must still decide the live acceptance
-  criterion; do not induce another interruption or add fault injection. |
-- P1 | user-owned live confirmation | Confirm the `Meta+Alt+K`/`Meta+Alt+L`
-  resize failure is the KDE Keyboard Layout Switcher double-claim. Verified
-  static fact: `~/.config/kglobalshortcutsrc:6-7` binds
-  `Switch to Last-Used Keyboard Layout=Meta+Alt+L` and
-  `Switch to Next Keyboard Layout=Meta+Alt+K`, exactly and only the two failing
-  chords; `H`/`J` have no competing claim and work in both directions. Test:
-  clear those two Keyboard Layout Switcher shortcuts, then retest `Meta+Alt+L`
-  from a LEFT pane and `Meta+Alt+K` from a BOTTOM pane, because grow-right on
-  the rightmost pane and grow-up on the topmost pane are legitimate COSMIC
-  no-ops and will be misread as failures. |
+- P1 | Finish Apply live-proven; Restore untested | An actual KCM crash
+  produced a `focus-applied` journal and the user completed `Finish Apply` to
+  the three-row postimage. Do not induce another interruption or add fault
+  injection; Restore remains unproven. |
+- P1 | user-owned physical confirmation | `Finish Apply` cleared the two KDE
+  Keyboard Layout Switcher records at `Meta+Alt+K`/`Meta+Alt+L`. Retest
+  `Meta+Alt+L` from a LEFT pane and `Meta+Alt+K` from a BOTTOM pane, because
+  grow-right on the rightmost pane and grow-up on the topmost pane are
+  legitimate COSMIC no-ops and will be misread as failures. |
 - P3 | parked | Keybind profiles: selectable presets such as "adopt COSMIC
   keybinds" or "adopt Hyprland keybinds", built on the generalized shortcut
   override. Needs a binding catalog, per-profile conflict sets, and switching

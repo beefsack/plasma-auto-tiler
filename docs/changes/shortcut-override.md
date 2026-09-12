@@ -39,10 +39,9 @@ KCM Apply alone resolves only the closed compiled-in rows.
   valid `a(ssssssaiai)` shortcut-info record are accepted; identity and all
   size/key bounds remain fail-closed.
 - Revert restores only bindings still owned by that override.
-- Live acceptance is one user-run Apply/Revert/interrupted-recovery gate:
-  separately authorized, bounded, reversible manual confirmation with exact
-  restoration under the live guide and standing live-test boundary; no live
-  result is claimed by static evidence.
+- One live Finish Apply completed the three-row postimage. Revert, the two
+  Lock Session physical checks, Phase 2 physical resize checks, and interrupted
+  recovery Restore remain separate unproven user-run gates.
 
 ## Approach And Dependencies
 
@@ -62,7 +61,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
   reply decoding, stale-owner recovery, external-edit handling, journal/path
   safety) and `activeborderconfig_shortcut_test.cpp`
   (ordinary-save isolation, recovery routing, confirmation gates, state/error
-  presentation). No live Apply/Revert/interrupted-recovery result is claimed.
+  presentation). One live Finish Apply is recorded below; its remaining
+  physical and recovery branches are unproven.
 
 ## Material Decisions And Accepted Evidence
 
@@ -70,8 +70,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
   non-`Meta+L` lock keys, and private project journal, is recorded in
   [decisions](../decisions.md#shortcuts); this record duplicates no decision.
 - Static KCM table/recovery implementation with the focused coverage above is
-  accepted as static-only. No live Apply/Revert/interrupted-recovery result is
-  claimed under this record.
+  accepted as static-only. One live Finish Apply is recorded below; no Revert,
+  Restore, or unrun physical path is claimed.
 - Resolved Plasma 6 KGlobalAccel compatibility defect: host Plasma/KWin 6.7.4
   exposes `setShortcutKeys` as an out-first XML method: `a(ai)` out, then
   `as`, `a(ai)`, `u` inputs, with direction-relative `Out0`/`In1`
@@ -167,7 +167,8 @@ KCM Apply alone resolves only the closed compiled-in rows.
   recovery writes. Owner drift during the current recovery remains fail-closed.
   Focus-applied Finish Apply and Restore coverage both use stale `:1.1191` and
   verify the expected postimage or restored preimage respectively. The real
-  crash left a `focus-applied` journal; no live recovery result is claimed yet.
+  crash left a `focus-applied` journal; Finish Apply is now live-proven, while
+  Restore remains unexecuted.
 - Read-only keyed KGlobalAccel getters confirmed the exact whole-key holders:
   `Meta+Esc` has only `org.kde.plasma-systemmonitor.desktop` / `_launch`;
   `Meta+L` has `kwin` / `plasma-auto-tiler-focus-right` and `ksmserver` /
@@ -188,6 +189,25 @@ KCM Apply alone resolves only the closed compiled-in rows.
   preimages. CTest passed 21/21; `cargo fmt --check`, `cargo clippy
   --all-targets --all-features -- -D warnings`, and `nix flake check` passed.
   No live mutation was run.
+- First successful live recovery/Apply: the KCM reported `Interrupted apply
+  found (phase focus-applied). Finish Apply or Restore.` before the user chose
+  `Finish Apply`, then `Shortcuts applied (journal complete, 3 rows).` The user
+  physically pressed `Meta+L`; focus moved right. The six previously masked
+  gates are closed through the real table path: setter contract, target
+  occupancy, raw-call owner resolution, cosmetic Switcher labels, setter reply
+  framing, and stale-owner recovery. The confirmed postimage is
+  `kglobalshortcutsrc` size 20191, sha256
+  `e412626d6f0d32d58e48c93a845cc4c7e713cf0caa3f775acfae4a55807f4614`:
+  Switcher Last/Next are `none,Meta+Alt+L,`/`none,Meta+Alt+K,`; Lock Session is
+  `Screensaver\tMeta+Esc,Screensaver\tMeta+L,Lock Session`; focus-right is
+  `Meta+L,none,Focus window right`; resize-outwards-right/up are
+  `Meta+Alt+L,none,Grow window towards right` and
+  `Meta+Alt+K,none,Grow window towards up`; `Meta+Esc` has exactly the
+  `[ksmserver]` Lock Session claimant. The journal is size 884, sha256
+  `bd7df5392509005ea7530ea5c1d4b8d7cd4f43fc8d6901a7ffaf32d852132787`, with
+  `Phase=apply-complete`, `Owner=:1.1191`, `Uid=1000`, and
+  `SchemaVersion=shortcut-override-v2`. Rows 2-3 are written live for the first
+  time but their physical chords are untested.
 
 ## Diagnostic Token Map
 
@@ -258,10 +278,9 @@ globalShortcutsByKey reply: `.
 
 ## Next Action
 
-- Separate authorization remains required for the single user-run live
-  Apply/Revert/interrupted-recovery gate; rebuild the native effect first, then
-  follow the [verification runbook](../live-shortcut-override-verification.md).
-  No live result is claimed.
+- Remain user-run: physically verify `Meta+Esc` locks, every other Lock Session
+  key still locks, Revert exact restoration, Phase 2 resize chords, and the
+  Restore branch of interrupted recovery. Restore cannot be safely induced.
 
 ## Retained Core Triage
 

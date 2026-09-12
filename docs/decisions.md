@@ -252,11 +252,18 @@ Historical implementation detail is recoverable in Git history.
   `kwin/plasma-auto-tiler-resize-outwards-right` taking `Meta+Alt+L` by clearing
   `KDE Keyboard Layout Switcher/Switch to Last-Used Keyboard Layout` from exact
   preimage `Meta+Alt+L`.
-- KCM table override/recovery is static-only complete: confirmed Apply/Revert
-  plus Finish Apply/Restore for interrupted applies; ordinary Settings Apply
-  never mutates shortcuts. The private project journal records each resolution
-  kind and exact prior keys. Focused reconciler/KCM static coverage exists; no
-  live Apply/Revert/interrupted-recovery result is claimed.
+- KCM table override/recovery has focused static coverage; ordinary Settings
+  Apply never mutates shortcuts. The private project journal records each
+  resolution kind and exact prior keys. One user-run Finish Apply completed the
+  three-row postimage; Revert, Restore, Lock Session physical checks, and
+  physical resize checks remain unproven.
+
+## Planner Unauthorized Reply Correlation
+
+- Do not echo caller-supplied `correlation_id` in the fixed unauthorized reply
+  from `PlannerEndpoint::describe_plan`. This preserves the same-UID caller
+  authorization boundary and each adapter's strict correlation fence; distinct
+  unauthorized observability is intentionally not selected.
 
 ## COSMIC Movement And Groups
 

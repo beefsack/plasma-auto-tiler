@@ -142,10 +142,11 @@ Three compiled-in conflict rows at `kwin/native-effect/shortcutreconciler.cpp:32
   (`KDE Keyboard Layout Switcher` / `Switch to Last-Used Keyboard Layout`) is
   cleared.
 
-Rows 2-3 have never succeeded live and are unproven. Verify after any
-successful Apply: project actions at `Meta+L`, `Meta+Alt+K`, `Meta+Alt+L`;
-Lock Session contains `Meta+Esc` and no `Meta+L`; both Switcher actions empty;
-`Meta+Esc` has no other claimant in the config output.
+Rows 2-3 were written by the first successful Finish Apply: both Switcher
+actions are cleared in the confirmed postimage. Their physical resize chords
+remain untested. The same postimage confirms project actions at `Meta+L`,
+`Meta+Alt+K`, and `Meta+Alt+L`; Lock Session contains `Meta+Esc` and no
+`Meta+L`; and `Meta+Esc` has no other claimant in the config output.
 
 ## Preflight Refusal
 
@@ -231,20 +232,20 @@ status must say `Interrupted apply found (phase ...). Finish Apply or Restore.`
 naming the journal phase (for example, `phase apply-pending` or
 `phase focus-applied`); only then are `Finish Apply` and `Restore` visible.
 
-1. `Finish Apply` repeats the Apply confirmation. After `Yes`, PASS means the
-   complete three-row postimage in Phase 1 step 3 and status `Shortcuts applied
-   (journal complete, 3 rows).` Then run `Revert Shortcuts` and require the
-   baseline ledger exactly.
-2. `Restore` repeats the Revert confirmation. After `Yes`, PASS means all six
-   allowlisted entries equal their recorded preimage and the journal is absent.
-3. If no actual interruption exists, record `interrupted recovery: no journal;
-   not live-executed`. Static coverage is not a live result. Do not claim this
-   branch passed.
+1. `Finish Apply` is live-proven once. The observed status was `Interrupted
+   apply found (phase focus-applied). Finish Apply or Restore.`; after the user
+   chose `Finish Apply`, it was `Shortcuts applied (journal complete, 3 rows).`
+   The complete three-row postimage was confirmed, and physical `Meta+L` moved
+   focus right. This does not prove the Lock Session checks or Revert.
+2. `Restore` remains unexecuted. It would repeat the Revert confirmation; PASS
+   would require all six allowlisted entries equal their recorded preimage and
+   the journal absent. Do not induce an interruption to test it.
 
 ## Phase 2 - Clear Rows
 
-Run this only after Phase 1 Apply, locking checks, and Revert all pass.
-Rows 2-3 are unproven live; treat any success here as first evidence.
+Run this only after the remaining Phase 1 locking checks and Revert pass.
+Rows 2-3 are written live but physically unproven; treat physical success here
+as first evidence.
 
 1. Apply again through `Apply Shortcuts` and its same confirmation. Capture the
    status VERBATIM first; a preflight refusal ends this run per "Preflight

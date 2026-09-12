@@ -101,6 +101,10 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
         }
         QKeySequence sequence;
         argument >> sequence;
+        if (sequence.isEmpty()) {
+            bad = true;
+            break;
+        }
         if (count <= KWin::SHORTCUT_MAX_KEYS_PER_TUPLE) {
             set.insert(sequence);
         }

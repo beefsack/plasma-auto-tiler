@@ -41,3 +41,11 @@
 - Static parse/emit is therefore not implementable under the approved
   constraints. Live validation remains blocked on a user-authorized KWin
   script reload and cannot validate this missing contract binding.
+
+## Outcome
+
+- Settled: do not echo `correlation_id` from `PlannerEndpoint::describe_plan`.
+  The value is unvalidated caller input crossing the same-UID authorization
+  boundary; preserving the fixed non-reflective rejection and strict adapter
+  correlation fence is the selected security posture. No observability change
+  is open.
