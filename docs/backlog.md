@@ -700,10 +700,13 @@ Only meaningful pending or active work is listed.
 - P1 | shipped, live-unproven | KCM shortcut override is now a closed
   compiled-in conflict-resolution table with `relocate` and `clear`; the
   `focus-right`/`Lock Session` relocation remains row 1, and the two KDE
-  Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. Static coverage
-  is complete. The remaining gate is the existing single-pair user-run live
-  Apply/Revert/interrupted-recovery confirmation, which must run first and
-  exercises the table path unchanged. |
+  Keyboard Layout Switcher rows clear `Meta+Alt+K`/`Meta+Alt+L`. The strict
+  setter validator accepts Qt's out-first XML contract, while keyed
+  KGlobalAccel conflict checks see .desktop-only defaults; row 1 explicitly
+  authorizes taking System Monitor `_launch`'s `Meta+Esc` default without
+  writing that action. Static coverage is complete. The remaining gate is the
+  existing single-pair user-run live Apply/Revert/interrupted-recovery
+  confirmation, which must run first and exercises the table path unchanged. |
   [change](changes/shortcut-override.md)
    [runbook](live-shortcut-override-verification.md)
 - P2 | user decision pending | Make the Planner `unauthorized` rejection

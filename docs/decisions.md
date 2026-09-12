@@ -236,10 +236,16 @@ Historical implementation detail is recoverable in Git history.
   arbitrary row is accepted. Recovery is explicit in the KCM, Revert restores
   only bindings still owned by that override, unexpected table preimages or
   target conflicts are refused before any mutation, and installation/startup
-  never mutate global shortcuts.
+  never mutate global shortcuts. The sole approved target-occupant exception
+  is row 1's `Meta+Esc`: System Monitor
+  `org.kde.plasma.systemmonitor` / `_launch` is deliberately displaced when
+  Lock Session relocates there. It is recorded in row 1's compiled-in target
+  exception, is not writable by the override, and no other foreign holder is
+  approved.
 - Table row 1 is `kwin/plasma-auto-tiler-focus-right` taking `Meta+L` from
   `ksmserver/Lock Session` by relocating `Meta+L` to `Meta+Esc`; other lock keys
-  retain order. Row 2 is
+  retain order, deliberately taking over System Monitor `_launch`'s declared
+  `Meta+Esc` default. Row 2 is
   `kwin/plasma-auto-tiler-resize-outwards-up` taking `Meta+Alt+K` by clearing
   `KDE Keyboard Layout Switcher/Switch to Next Keyboard Layout` from exact
   preimage `Meta+Alt+K`. Row 3 is

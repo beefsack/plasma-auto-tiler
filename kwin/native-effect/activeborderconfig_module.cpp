@@ -344,8 +344,24 @@ void ActiveBorderConfigModule::refreshShortcutState()
         if (ShortcutReconciler::isAllowlisted(tuple.component, tuple.action)) {
             continue;
         }
-        if (tuple.active.contains(SHORTCUT_META_ESC) || tuple.active.contains(SHORTCUT_META_ALT_K) || tuple.active.contains(SHORTCUT_META_ALT_L)) {
-            m_shortcutStatus = QStringLiteral("Conflict: Meta+Esc/Meta+Alt+K/Meta+Alt+L is claimed by %1/%2. Apply is refused.").arg(tuple.component, tuple.action);
+        if (!ShortcutReconciler::keysValid(tuple.active)) {
+            m_shortcutStatus = QStringLiteral("Shortcut state unavailable: unrelated tuple is unbounded.");
+            updateShortcutPresentation(false);
+            return;
+        }
+    }
+    // Authoritative keyed foreign-occupancy gate for Meta+L, Meta+Esc,
+    // Meta+Alt+K, and Meta+Alt+L, never tuple enumeration. Typed outcome
+    // keeps Conflict vs unavailable semantics without substring matching.
+    // The explicit System Monitor `_launch` Meta+Esc holder is user-authorized.
+    {
+        const KeyedOccupancyResult keyed = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(m_shortcutStore);
+        if (keyed.status != KeyedOccupancy::Clear) {
+            if (keyed.status == KeyedOccupancy::Conflict) {
+                m_shortcutStatus = QStringLiteral("Conflict: %1. Apply is refused.").arg(keyed.detail);
+            } else {
+                m_shortcutStatus = QStringLiteral("Shortcut state unavailable: %1").arg(keyed.detail);
+            }
             updateShortcutPresentation(false);
             return;
         }

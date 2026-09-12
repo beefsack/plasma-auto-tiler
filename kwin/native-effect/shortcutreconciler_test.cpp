@@ -73,6 +73,18 @@ public:
     bool driftAfterNextWrite = false;
     bool failNextWrite = false;
     bool badReplyNextWrite = false;
+    // When true, readAll returns tuples without bounds validation so the
+    // independent structural check in apply() is exercised directly.
+    bool allowUnboundedRead = false;
+    // Keyed lookup state (Defect B): derived from tuples plus explicit
+    // .desktop-only extras invisible to readAll. Tests prove the keyed path
+    // is authoritative by blocking on extras alone with zero writes.
+    QMap<int, QList<ShortcutKeyHolder>> extraByKey;
+    QMap<int, bool> availableOverride;
+    bool failByKey = false;
+    bool malformedByKey = false;
+    bool failAvailable = false;
+    bool malformedAvailable = false;
     // Mirrors KGlobalAccelStore::tryPinOwner: first verified owner pins,
     // the same owner confirms, a different owner fails closed.
     QString pinned;
@@ -134,25 +146,127 @@ public:
             }
             return false;
         }
-        // Bounded validation mirrors the real backend.
-        if (tuples.size() > SHORTCUT_MAX_TUPLES) {
-            if (error) {
-                *error = QStringLiteral("unexpected allShortcutInfos reply");
-            }
-            return false;
-        }
-        for (const ShortcutTuple &tuple : tuples) {
-            if (!ShortcutReconciler::keysValid(tuple.active) || !ShortcutReconciler::stringValid(tuple.component)
-                || !ShortcutReconciler::stringValid(tuple.action) || !ShortcutReconciler::stringValid(tuple.friendly)
-                || !ShortcutReconciler::stringValid(tuple.componentFriendly)) {
+        // Bounded validation mirrors the real backend, unless explicitly
+        // bypassed to exercise apply()'s independent structural check.
+        if (!allowUnboundedRead) {
+            if (tuples.size() > SHORTCUT_MAX_TUPLES) {
                 if (error) {
                     *error = QStringLiteral("unexpected allShortcutInfos reply");
                 }
                 return false;
             }
+            for (const ShortcutTuple &tuple : tuples) {
+                if (!ShortcutReconciler::keysValid(tuple.active) || !ShortcutReconciler::stringValid(tuple.component)
+                    || !ShortcutReconciler::stringValid(tuple.action) || !ShortcutReconciler::stringValid(tuple.friendly)
+                    || !ShortcutReconciler::stringValid(tuple.componentFriendly)) {
+                    if (error) {
+                        *error = QStringLiteral("unexpected allShortcutInfos reply");
+                    }
+                    return false;
+                }
+            }
         }
         if (out) {
             *out = tuples;
+        }
+        return true;
+    }
+
+    bool shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error) override
+    {
+        if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+            }
+            return false;
+        }
+        if (failByKey) {
+            failByKey = false;
+            if (error) {
+                *error = QStringLiteral("globalShortcutsByKey call failed");
+            }
+            return false;
+        }
+        if (malformedByKey) {
+            malformedByKey = false;
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+            }
+            return false;
+        }
+        QList<ShortcutKeyHolder> combined;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.active.contains(key)) {
+                ShortcutKeyHolder holder;
+                holder.component = tuple.component;
+                holder.action = tuple.action;
+                holder.active = tuple.active;
+                combined.append(holder);
+            }
+        }
+        const auto extra = extraByKey.value(key);
+        for (const ShortcutKeyHolder &holder : extra) {
+            combined.append(holder);
+        }
+        if (combined.size() > SHORTCUT_MAX_TUPLES) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+            }
+            return false;
+        }
+        if (holders) {
+            *holders = combined;
+        }
+        return true;
+    }
+
+    bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) override
+    {
+        if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+            }
+            return false;
+        }
+        if (component.size() > SHORTCUT_MAX_STRING_LEN) {
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+            }
+            return false;
+        }
+        if (failAvailable) {
+            failAvailable = false;
+            if (error) {
+                *error = QStringLiteral("globalShortcutAvailable call failed");
+            }
+            return false;
+        }
+        if (malformedAvailable) {
+            malformedAvailable = false;
+            if (error) {
+                *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+            }
+            return false;
+        }
+        if (availableOverride.contains(key)) {
+            if (available) {
+                *available = availableOverride.value(key);
+            }
+            return true;
+        }
+        QList<ShortcutKeyHolder> combined;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.active.contains(key)) {
+                ShortcutKeyHolder holder;
+                holder.component = tuple.component;
+                holder.action = tuple.action;
+                holder.active = tuple.active;
+                combined.append(holder);
+            }
+        }
+        combined.append(extraByKey.value(key));
+        if (available) {
+            *available = combined.isEmpty();
         }
         return true;
     }
@@ -1175,6 +1289,94 @@ void introspectionStrictParsing()
     CHECK(!journal.present);
 }
 
+void introspectionQtOutFirstVerbatim()
+{
+    // Exact captured Qt out-first ordering: out arg with its Out0
+    // annotation interleaved immediately after, then inputs as,
+    // a(ai) with In1 interleaved after its arg, then u. Must be accepted.
+    const QString verbatim = QStringLiteral(
+        "<node><interface name=\"org.kde.KGlobalAccel\">"
+        "<method name=\"setShortcutKeys\">"
+        "<arg type=\"a(ai)\" direction=\"out\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<arg type=\"as\" direction=\"in\"/>"
+        "<arg type=\"a(ai)\" direction=\"in\"/>"
+        "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+        "<arg type=\"u\" direction=\"in\"/>"
+        "</method></interface></node>");
+    CHECK(ShortcutReconciler::introspectionContractValid(verbatim));
+    // Omitted input directions on the out-first shape still default to in,
+    // annotations staying interleaved after their corresponding args.
+    CHECK(ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"as\"/>"
+                       "<arg type=\"a(ai)\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"u\"/>"
+                       "</method></interface></node>")));
+    // Absent method remains rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"other\"/>"
+                       "</interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\"></interface></node>")));
+    // Wrong signatures remain rejected: wrong out type, wrong input type,
+    // and missing key-set annotation on the out-first shape (interleaved).
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"s\" direction=\"in\"/>"
+                       "</method></interface></node>")));
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "</method></interface></node>")));
+    // Scrambled order (out not first, inputs out of order) stays rejected.
+    CHECK(!ShortcutReconciler::introspectionContractValid(
+        QStringLiteral("<node><interface name=\"org.kde.KGlobalAccel\">"
+                       "<method name=\"setShortcutKeys\">"
+                       "<arg type=\"as\" direction=\"in\"/>"
+                       "<arg type=\"a(ai)\" direction=\"out\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"a(ai)\" direction=\"in\"/>"
+                       "<annotation name=\"org.qtproject.QtDBus.QtTypeName.In1\" value=\"QSet&lt;QKeySequence&gt;\"/>"
+                       "<arg type=\"u\" direction=\"in\"/>"
+                       "</method></interface></node>")));
+    // End-to-end through the fake: verbatim out-first passes the contract.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{1}, QList<int>{META_L});
+    store.contractXml = verbatim;
+    FakeJournal journal;
+    ShortcutReconciler reconciler(&store, &journal);
+    const ShortcutApplyResult result = reconciler.apply();
+    CHECK(result.ok);
+    CHECK(store.writeLog.size() == 6);
+}
+
 void resumeGateFailsClosedZeroWrites()
 {
     // Pending journal, focus still at pre, lock drifted to neither pre nor
@@ -1731,6 +1933,319 @@ void unrelatedChordsAllRefuse()
     }
 }
 
+// Defect B: authoritative keyed lookup, not readAll enumeration.
+void keyedDesktopOnlyBlocksRelocator()
+{
+    // .desktop-declared-only holder on Meta+Esc: absent from readAll tuples,
+    // present via globalShortcutsByKey with empty active and defaults
+    // containing Meta+Esc (authoritative primitive sees defaults).
+    // Must block with zero writes/journals, independently of readAll.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    ShortcutKeyHolder foreign;
+    foreign.component = QStringLiteral("org.kde.unexpected");
+    foreign.action = QStringLiteral("other-launch");
+    foreign.active = QList<int>{};
+    foreign.defaults = QList<int>{META_ESC};
+    store.extraByKey[META_ESC].append(foreign);
+    // Prove independence from enumeration: readAll lacks the foreign holder.
+    {
+        QList<ShortcutTuple> enumerated;
+        QString readError;
+        CHECK(store.readAll(&enumerated, &readError));
+        bool found = false;
+        for (const ShortcutTuple &tuple : enumerated) {
+            if (tuple.component == foreign.component && tuple.action == foreign.action) {
+                found = true;
+            }
+        }
+        CHECK(!found);
+    }
+    {
+        QList<ShortcutKeyHolder> holders;
+        QString keyedError;
+        CHECK(store.shortcutsByKey(META_ESC, &holders, &keyedError));
+        CHECK(holders.size() == 1);
+        if (holders.size() == 1) {
+            CHECK(holders.at(0).component == foreign.component);
+            CHECK(holders.at(0).action == foreign.action);
+            CHECK(holders.at(0).active.isEmpty());
+            CHECK(holders.at(0).defaults == QList<int>{META_ESC});
+        }
+    }
+    FakeJournal journal;
+    const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!r.ok);
+    CHECK(r.error.contains(QStringLiteral("Meta+Esc")));
+    CHECK(r.error.contains(QStringLiteral("org.kde.unexpected")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.present);
+    CHECK(r.writes == 0);
+}
+
+void keyedDesktopOnlyBlocksClearTargets()
+{
+    for (int chord : {META_ALT_K, META_ALT_L}) {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        ShortcutKeyHolder foreign;
+        foreign.component = QStringLiteral("org.kde.unexpected");
+        foreign.action = QStringLiteral("other-action");
+        foreign.active = QList<int>{};
+        foreign.defaults = QList<int>{chord};
+        store.extraByKey[chord].append(foreign);
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+        CHECK(r.writes == 0);
+    }
+}
+
+void keyedDesktopOnlyBlocksMetaL()
+{
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    ShortcutKeyHolder foreign;
+    foreign.component = QStringLiteral("org.kde.unexpected");
+    foreign.action = QStringLiteral("steal-meta-l");
+    foreign.active = QList<int>{};
+    foreign.defaults = QList<int>{META_L};
+    store.extraByKey[META_L].append(foreign);
+    FakeJournal journal;
+    const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!r.ok);
+    CHECK(r.error.contains(QStringLiteral("Meta+L")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.present);
+}
+
+void keyedSystemMonitorEscAccepted()
+{
+    // Explicit user-authorized displacement: System Monitor `_launch` on
+    // Meta+Esc is structurally part of the compiled-in table and must not
+    // block. Never part of the write allowlist; no writes target it.
+    CHECK(ShortcutReconciler::isAuthorizedDisplacement(
+        META_ESC, shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction()));
+    CHECK(!ShortcutReconciler::isAuthorizedDisplacement(
+        META_ALT_K, shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction()));
+    CHECK(!ShortcutReconciler::isAllowlisted(shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction()));
+    {
+        bool found = false;
+        for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+            if (row.resolutionTarget.contains(META_ESC)
+                && row.authorizedTargetComponent == shortcutAuthorizedEscComponent()
+                && row.authorizedTargetAction == shortcutAuthorizedEscAction()) {
+                found = true;
+            }
+        }
+        CHECK(found);
+    }
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    ShortcutKeyHolder sysmon;
+    sysmon.component = shortcutAuthorizedEscComponent();
+    sysmon.action = shortcutAuthorizedEscAction();
+    sysmon.active = QList<int>{META_ESC};
+    store.extraByKey[META_ESC].append(sysmon);
+    FakeJournal journal;
+    const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+    CHECK(r.ok);
+    CHECK(store.writeLog.size() == 6);
+    CHECK(journal.present);
+    for (const auto &record : store.writeLog) {
+        CHECK(!(record.component == shortcutAuthorizedEscComponent() && record.action == shortcutAuthorizedEscAction()));
+        CHECK(ShortcutReconciler::isAllowlisted(record.component, record.action));
+    }
+}
+
+void keyedTransportFailsClosed()
+{
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.failByKey = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.malformedByKey = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("globalShortcutsByKey")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.failAvailable = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.malformedAvailable = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("globalShortcutAvailable")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+}
+
+void keyedReplyParsingStrict()
+{
+    QString error;
+    bool available = false;
+    CHECK(ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("b"), {QVariant::fromValue(true)}, &available, &error));
+    CHECK(available);
+    CHECK(ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("b"), {QVariant::fromValue(false)}, &available, &error));
+    CHECK(!available);
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("b"), {QVariant::fromValue(true)}, nullptr, &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("s"), {QVariant::fromValue(QStringLiteral("x"))}, nullptr,
+        &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::ReplyMessage, QStringLiteral("b"),
+                                                                 {}, nullptr, &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::ReplyMessage, QStringLiteral("b"),
+                                                                 {QVariant::fromValue(1)}, nullptr, &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::ReplyMessage, QStringLiteral("b"),
+                                                                 {QVariant::fromValue(QStringLiteral("true"))},
+                                                                 nullptr, &error));
+    QList<ShortcutKeyHolder> holders;
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ErrorMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("x"))}, nullptr, &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(QDBusMessage::ReplyMessage,
+                                                              QStringLiteral("as"),
+                                                              {QVariant::fromValue(QStringLiteral("x"))}, nullptr,
+                                                              &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(QDBusMessage::ReplyMessage,
+                                                              QStringLiteral("a(ssssssaiai)"), {}, nullptr, &error));
+    CHECK(!ShortcutReconciler::parseGlobalShortcutsByKeyReply(
+        QDBusMessage::ReplyMessage, QStringLiteral("a(ssssssaiai)"),
+        {QVariant::fromValue(QStringLiteral("not-an-argument"))}, nullptr, &error));
+    CHECK(ShortcutReconciler::relevantConflictKeys()
+          == (QList<int>{META_L, META_ESC, META_ALT_K, META_ALT_L}));
+    CHECK(ShortcutReconciler::keyDisplayName(META_L) == QStringLiteral("Meta+L"));
+    CHECK(ShortcutReconciler::keyDisplayName(META_ESC) == QStringLiteral("Meta+Esc"));
+}
+
+void keyedAvailabilityConsistencyBothDirections()
+{
+    // Whole-key invariant: empty holders must report available, non-empty
+    // must report unavailable. Both inconsistent directions fail closed
+    // with zero writes, without assuming component semantics beyond "".
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        // Force empty lookup to report unavailable: inconsistent.
+        for (int key : {META_L, META_ESC, META_ALT_K, META_ALT_L}) {
+            Q_UNUSED(key);
+        }
+        store.availableOverride[META_L] = false;
+        // META_L holders: focus tuple holds META_L? seedReady6 focus {1}, lock {META_L} so META_L non-empty.
+        // To test empty+unavailable, clear META_L holders and force unavailable.
+        for (ShortcutTuple &tuple : store.tuples) {
+            if (tuple.active.contains(META_L)) {
+                tuple.active.removeAll(META_L);
+            }
+        }
+        store.extraByKey.clear();
+        // Now META_L empty, override false -> inconsistent.
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("globalShortcutAvailable")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        // Non-empty holders reporting available: inconsistent.
+        store.availableOverride[META_L] = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("globalShortcutAvailable")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        // Authorized holder with inconsistent availability still fails.
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        ShortcutKeyHolder sysmon;
+        sysmon.component = shortcutAuthorizedEscComponent();
+        sysmon.action = shortcutAuthorizedEscAction();
+        sysmon.active = QList<int>{META_ESC};
+        store.extraByKey[META_ESC].append(sysmon);
+        store.availableOverride[META_ESC] = true;
+        FakeJournal journal;
+        const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+        CHECK(!r.ok);
+        CHECK(r.error.contains(QStringLiteral("globalShortcutAvailable")));
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.present);
+    }
+    {
+        // Typed outcome preserves semantics: Conflict vs Unavailable.
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+        ShortcutKeyHolder foreign;
+        foreign.component = QStringLiteral("org.kde.unexpected");
+        foreign.action = QStringLiteral("other-launch");
+        foreign.active = QList<int>{};
+        foreign.defaults = QList<int>{META_ESC};
+        store.extraByKey[META_ESC].append(foreign);
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Conflict);
+        CHECK(outcome.detail.contains(QStringLiteral("claimed by")));
+    }
+    {
+        FakeShortcutStore store;
+        seedReady6(store, QList<int>{1}, QList<int>{META_L});
+        store.failByKey = true;
+        const KeyedOccupancyResult outcome = ShortcutReconciler::checkKeyedForeignOccupancyDetailed(&store);
+        CHECK(outcome.status == KeyedOccupancy::Unavailable);
+        CHECK(!outcome.detail.contains(QStringLiteral("claimed by")));
+    }
+}
+
+void unrelatedUnboundedRefusesZeroWrites()
+{
+    // Independent structural validation (not conflict detection):
+    // unbounded unrelated enumerated state fails with zero writes.
+    FakeShortcutStore store;
+    seedReady6(store, QList<int>{419430420}, QList<int>{META_L});
+    store.allowUnboundedRead = true;
+    store.tuples.append(makeTuple(QStringLiteral("kwin"), QStringLiteral("other-action"), QList<int>{-1}));
+    FakeJournal journal;
+    const ShortcutApplyResult r = ShortcutReconciler(&store, &journal).apply();
+    CHECK(!r.ok);
+    CHECK(r.error.contains(QStringLiteral("unbounded")));
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.present);
+    CHECK(r.writes == 0);
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -1745,6 +2260,14 @@ int main(int argc, char **argv)
         metaEscConflictRefusesWithoutJournalOrMutation();
         tablePreimageRefusalZeroMutation();
         unrelatedChordsAllRefuse();
+        unrelatedUnboundedRefusesZeroWrites();
+        keyedDesktopOnlyBlocksRelocator();
+        keyedDesktopOnlyBlocksClearTargets();
+        keyedDesktopOnlyBlocksMetaL();
+        keyedSystemMonitorEscAccepted();
+        keyedTransportFailsClosed();
+        keyedReplyParsingStrict();
+        keyedAvailabilityConsistencyBothDirections();
     }
     if (scenario == QStringLiteral("all") || scenario == QStringLiteral("malformed")) {
         malformedReplyFailsClosed();
@@ -1753,6 +2276,7 @@ int main(int argc, char **argv)
         friendlyLabelsValidated();
         allComponentsStrictTransport();
         introspectionStrictParsing();
+        introspectionQtOutFirstVerbatim();
         introspectionAnnotationNamesStrict();
         keySequenceDbusRoundtripAndBounds();
         writeFailureControlsFailClosed();

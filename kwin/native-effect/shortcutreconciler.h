@@ -86,6 +86,31 @@ inline const QString &shortcutAllInfosMethod()
     static const QString value = QStringLiteral("allShortcutInfos");
     return value;
 }
+inline const QString &shortcutByKeyMethod()
+{
+    static const QString value = QStringLiteral("globalShortcutsByKey");
+    return value;
+}
+inline const QString &shortcutAvailableMethod()
+{
+    static const QString value = QStringLiteral("globalShortcutAvailable");
+    return value;
+}
+// User-authorized explicit displacement (auditable): System Monitor `_launch`
+// may hold Meta+Esc; Apply may displace it onto Lock Session without
+// rebinding System Monitor itself. No other foreign occupier is authorized.
+// Do not select a different target and do not write to System Monitor.
+inline const QString &shortcutAuthorizedEscComponent()
+{
+    static const QString value = QStringLiteral("org.kde.plasma.systemmonitor");
+    return value;
+}
+inline const QString &shortcutAuthorizedEscAction()
+{
+    static const QString value = QStringLiteral("_launch");
+    return value;
+}
+inline constexpr int SHORTCUT_MATCH_EQUAL = 0;
 inline const QString &shortcutFocusComponent()
 {
     static const QString value = QStringLiteral("kwin");
@@ -186,9 +211,47 @@ struct ShortcutConflictRow
     QList<int> foreignExpectedPre;
     QString resolution;
     QList<int> resolutionTarget;
+    // Exact foreign holder permitted on this row's resolution target. It is
+    // never writable and any other holder remains a conflict.
+    QString authorizedTargetComponent;
+    QString authorizedTargetAction;
 };
 
 const QList<ShortcutConflictRow> &shortcutConflictTable();
+
+// Typed keyed-occupancy outcome (no substring classification):
+// Clear means no foreign occupancy, Conflict means an unexpected holder
+// claims a relevant key, Unavailable means transport/parse/consistency
+// failure. globalShortcutAvailable(key, "") is whole-key availability.
+enum class KeyedOccupancy
+{
+    Clear,
+    Conflict,
+    Unavailable
+};
+
+struct KeyedOccupancyResult
+{
+    KeyedOccupancy status = KeyedOccupancy::Clear;
+    QString detail;
+};
+
+struct ShortcutKeyHolder
+{
+    QString component;
+    QString action;
+    // Authoritative primitive sees defaults: a .desktop-declared-only
+    // holder may have empty active with defaults containing the key.
+    QList<int> active;
+    QList<int> defaults;
+};
+
+// QKeySequence D-Bus framing is (ai); MatchType is (i): a struct holding one
+// int (0 == Equal). Registered for the keyed globalShortcutsByKey call.
+struct ShortcutMatchType
+{
+    int value = SHORTCUT_MATCH_EQUAL;
+};
 
 struct ShortcutApplyResult
 {
@@ -213,6 +276,11 @@ public:
     virtual bool checkSetterContract(QString *error) = 0;
     virtual bool currentOwner(QString *owner, uint *uid, QString *error) = 0;
     virtual bool readAll(QList<ShortcutTuple> *tuples, QString *error) = 0;
+    // Authoritative keyed primitives (Defect B): globalShortcutsByKey and
+    // globalShortcutAvailable. Foreign conflict detection must use these,
+    // never tuple/config enumeration, so .desktop-only holders are visible.
+    virtual bool shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error) = 0;
+    virtual bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) = 0;
     virtual bool writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
                            const QString &friendly, const QList<int> &keys, QList<int> *confirmed, QString *error) = 0;
     virtual int writeCount() const = 0;
@@ -235,6 +303,8 @@ public:
     bool checkSetterContract(QString *error) override;
     bool currentOwner(QString *owner, uint *uid, QString *error) override;
     bool readAll(QList<ShortcutTuple> *tuples, QString *error) override;
+    bool shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error) override;
+    bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) override;
     bool writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
                    const QString &friendly, const QList<int> &keys, QList<int> *confirmed, QString *error) override;
     int writeCount() const override
@@ -292,6 +362,24 @@ public:
     static bool journalPathSafe(const QString &path, QString *error);
     static bool journalRolesValid(const ShortcutJournal &journal);
     static bool journalPostsValid(const ShortcutJournal &journal);
+    // Defect B keyed conflict detection (authoritative, not enumeration).
+    static QList<int> relevantConflictKeys();
+    static QString keyDisplayName(int key);
+    static bool isAuthorizedDisplacement(int key, const QString &component, const QString &action);
+    static bool parseGlobalShortcutsByKeyReply(QDBusMessage::MessageType replyType, const QString &replySignature,
+                                               const QList<QVariant> &replyArgs,
+                                               QList<ShortcutKeyHolder> *holders, QString *error);
+    static bool parseGlobalShortcutAvailableReply(QDBusMessage::MessageType replyType,
+                                                  const QString &replySignature, const QList<QVariant> &replyArgs,
+                                                  bool *available, QString *error);
+    // Calls shortcutsByKey + shortcutAvailable for every relevant key.
+    // Skips allowlisted holders and the explicit System Monitor Meta+Esc
+    // displacement; any other holder fails closed with a "claimed by"
+    // error before any journal/write. Availability consistency fails
+    // closed in both directions: holders empty must report available,
+    // holders non-empty must report unavailable (whole-key semantics).
+    static KeyedOccupancyResult checkKeyedForeignOccupancyDetailed(ShortcutStore *store);
+    static bool checkKeyedForeignOccupancy(ShortcutStore *store, QString *error);
 
 private:
     ShortcutStore *m_store = nullptr;
@@ -305,3 +393,6 @@ JournalStore *createLiveShortcutJournal(const QString &filePath);
 QString defaultShortcutJournalPath();
 
 } // namespace KWin
+Q_DECLARE_METATYPE(KWin::ShortcutMatchType)
+QDBusArgument &operator<<(QDBusArgument &argument, const KWin::ShortcutMatchType &match);
+const QDBusArgument &operator>>(const QDBusArgument &argument, KWin::ShortcutMatchType &match);

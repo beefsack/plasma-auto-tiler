@@ -99,6 +99,23 @@ const QDBusArgument &operator>>(const QDBusArgument &argument, QSet<QKeySequence
     return argument;
 }
 
+// MatchType (i): single-int struct for globalShortcutsByKey Equal matching.
+QDBusArgument &operator<<(QDBusArgument &argument, const KWin::ShortcutMatchType &match)
+{
+    argument.beginStructure();
+    argument << match.value;
+    argument.endStructure();
+    return argument;
+}
+
+const QDBusArgument &operator>>(const QDBusArgument &argument, KWin::ShortcutMatchType &match)
+{
+    argument.beginStructure();
+    argument >> match.value;
+    argument.endStructure();
+    return argument;
+}
+
 namespace KWin
 {
 
@@ -274,6 +291,7 @@ void ensureKeySequenceMetaTypes()
     }
     qDBusRegisterMetaType<QKeySequence>();
     qDBusRegisterMetaType<QSet<QKeySequence>>();
+    qDBusRegisterMetaType<ShortcutMatchType>();
     registered = true;
 }
 
@@ -305,13 +323,14 @@ const QList<ShortcutConflictRow> &shortcutConflictTable()
 {
     static const QList<ShortcutConflictRow> table = {
         {shortcutFocusComponent(), shortcutFocusAction(), {SHORTCUT_META_L}, shortcutLockComponent(),
-         shortcutLockAction(), {SHORTCUT_META_L}, shortcutResolutionRelocate(), {SHORTCUT_META_ESC}},
+         shortcutLockAction(), {SHORTCUT_META_L}, shortcutResolutionRelocate(), {SHORTCUT_META_ESC},
+         shortcutAuthorizedEscComponent(), shortcutAuthorizedEscAction()},
         {shortcutResizeUpComponent(), shortcutResizeUpAction(), {SHORTCUT_META_ALT_K},
-         shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {SHORTCUT_META_ALT_K},
-         shortcutResolutionClear(), {}},
+          shortcutSwitchNextComponent(), shortcutSwitchNextAction(), {SHORTCUT_META_ALT_K},
+          shortcutResolutionClear(), {}, {}, {}},
         {shortcutResizeRightComponent(), shortcutResizeRightAction(), {SHORTCUT_META_ALT_L},
-         shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {SHORTCUT_META_ALT_L},
-         shortcutResolutionClear(), {}},
+          shortcutSwitchLastComponent(), shortcutSwitchLastAction(), {SHORTCUT_META_ALT_L},
+          shortcutResolutionClear(), {}, {}, {}},
     };
     return table;
 }
@@ -408,9 +427,14 @@ bool ShortcutReconciler::introspectionContractValid(const QString &xml)
         return false;
     }
     // Live Plasma 6.7.4 contract: exactly one
-    // org.kde.KGlobalAccel/setShortcutKeys method with four args:
-    //   as actionId (in), a(ai) keys (in, QSet<QKeySequence>),
-    //   u flags (in), a(ai) reply (out, QSet<QKeySequence>).
+    // org.kde.KGlobalAccel/setShortcutKeys method with four args.
+    // Qt D-Bus introspection emits the reply first (document order) with
+    // method-level annotations interleaved after their corresponding args:
+    //   a(ai) reply (out) + Out0, as actionId (in),
+    //   a(ai) keys (in) + In1, u flags (in).
+    // The logical in-last order (as, a(ai), u, then a(ai) out, annotations
+    // trailing) is also accepted for compatibility; any other permutation
+    // is rejected.
     // Omitted input direction is accepted only because the D-Bus
     // introspection default is "in"; the reply must be explicit "out".
     // Proven only as exact method-level annotations
@@ -483,27 +507,25 @@ bool ShortcutReconciler::introspectionContractValid(const QString &xml)
     if (firstArgs.size() != 4) {
         return false;
     }
-    if (firstArgs.at(0).type != QStringLiteral("as")) {
-        return false;
-    }
-    if (firstArgs.at(1).type != QStringLiteral("a(ai)")) {
-        return false;
-    }
-    if (firstArgs.at(2).type != QStringLiteral("u")) {
-        return false;
-    }
-    if (firstArgs.at(3).type != QStringLiteral("a(ai)")) {
-        return false;
-    }
+    auto isIn = [](const QString &direction) {
+        return direction == QStringLiteral("in") || direction.isEmpty();
+    };
+    auto isOut = [](const QString &direction) {
+        return direction == QStringLiteral("out");
+    };
     // D-Bus default direction is "in", so an omitted input direction is
-    // that default; anything else on an input is malformed.
-    for (int i = 0; i < 3; ++i) {
-        const QString direction = firstArgs.at(i).direction;
-        if (direction != QStringLiteral("in") && !direction.isEmpty()) {
-            return false;
-        }
-    }
-    if (firstArgs.at(3).direction != QStringLiteral("out")) {
+    // that default; anything else on an input is malformed. The reply
+    // must be explicit "out". Exactly two document orders are accepted:
+    // Qt out-first (live) and logical in-last (compatible).
+    const bool inLastOrder = firstArgs.at(0).type == QStringLiteral("as") && isIn(firstArgs.at(0).direction)
+        && firstArgs.at(1).type == QStringLiteral("a(ai)") && isIn(firstArgs.at(1).direction)
+        && firstArgs.at(2).type == QStringLiteral("u") && isIn(firstArgs.at(2).direction)
+        && firstArgs.at(3).type == QStringLiteral("a(ai)") && isOut(firstArgs.at(3).direction);
+    const bool outFirstOrder = firstArgs.at(0).type == QStringLiteral("a(ai)") && isOut(firstArgs.at(0).direction)
+        && firstArgs.at(1).type == QStringLiteral("as") && isIn(firstArgs.at(1).direction)
+        && firstArgs.at(2).type == QStringLiteral("a(ai)") && isIn(firstArgs.at(2).direction)
+        && firstArgs.at(3).type == QStringLiteral("u") && isIn(firstArgs.at(3).direction);
+    if (!inLastOrder && !outFirstOrder) {
         return false;
     }
     auto hasExactKeySet = [&](const QString &name) {
@@ -549,7 +571,7 @@ bool ShortcutReconciler::parseAllComponentsReply(QDBusMessage::MessageType reply
             parsed.append(path.path());
         }
     } else if (first.canConvert<QDBusArgument>()) {
-        QDBusArgument arg = first.value<QDBusArgument>();
+        const QDBusArgument arg = first.value<QDBusArgument>();
         if (arg.currentType() != QDBusArgument::ArrayType) {
             return fail(QStringLiteral("unexpected allComponents reply"));
         }
@@ -571,6 +593,211 @@ bool ShortcutReconciler::parseAllComponentsReply(QDBusMessage::MessageType reply
     }
     if (components) {
         *components = parsed;
+    }
+    return true;
+}
+
+QList<int> ShortcutReconciler::relevantConflictKeys()
+{
+    return {SHORTCUT_META_L, SHORTCUT_META_ESC, SHORTCUT_META_ALT_K, SHORTCUT_META_ALT_L};
+}
+
+QString ShortcutReconciler::keyDisplayName(int key)
+{
+    if (key == SHORTCUT_META_L) {
+        return QStringLiteral("Meta+L");
+    }
+    if (key == SHORTCUT_META_ESC) {
+        return QStringLiteral("Meta+Esc");
+    }
+    if (key == SHORTCUT_META_ALT_K) {
+        return QStringLiteral("Meta+Alt+K");
+    }
+    if (key == SHORTCUT_META_ALT_L) {
+        return QStringLiteral("Meta+Alt+L");
+    }
+    return QStringLiteral("key %1").arg(key);
+}
+
+bool ShortcutReconciler::isAuthorizedDisplacement(int key, const QString &component, const QString &action)
+{
+    // Row-owned target exception: never part of the write allowlist and
+    // never a permission to rebind System Monitor itself.
+    for (const ShortcutConflictRow &row : shortcutConflictTable()) {
+        if (row.resolutionTarget.contains(key) && component == row.authorizedTargetComponent
+            && action == row.authorizedTargetAction) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool ShortcutReconciler::parseGlobalShortcutsByKeyReply(QDBusMessage::MessageType replyType,
+                                                        const QString &replySignature,
+                                                        const QList<QVariant> &replyArgs,
+                                                        QList<ShortcutKeyHolder> *holders, QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error) {
+            *error = message;
+        }
+        return false;
+    };
+    // Exact transport only: ReplyMessage with signature "a(ssssssaiai)"
+    // carrying KGlobalShortcutInfo structs (6 strings + ai + ai). Any other
+    // type, signature, arity, or shape fails closed; no fallback.
+    if (replyType != QDBusMessage::ReplyMessage) {
+        return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+    }
+    if (replySignature != QStringLiteral("a(ssssssaiai)") || replyArgs.size() != 1) {
+        return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+    }
+    const QVariant first = replyArgs.at(0);
+    if (!first.canConvert<QDBusArgument>()) {
+        return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+    }
+    // Const read-mode access: non-const beginStructure/endStructure would
+    // select the write overloads and fail on a read-only argument.
+    const QDBusArgument arg = first.value<QDBusArgument>();
+    if (arg.currentType() != QDBusArgument::ArrayType) {
+        return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+    }
+    QList<ShortcutKeyHolder> parsed;
+    arg.beginArray();
+    while (!arg.atEnd()) {
+        QString action;
+        QString friendly;
+        QString compUnique;
+        QString compFriendly;
+        QString contextUnique;
+        QString contextFriendly;
+        QList<int> active;
+        QList<int> defaults;
+        arg.beginStructure();
+        arg >> action >> friendly >> compUnique >> compFriendly >> contextUnique >> contextFriendly >> active
+            >> defaults;
+        arg.endStructure();
+        if (!stringValid(action) || !stringValid(friendly) || !stringValid(compUnique) || !stringValid(compFriendly)
+            || !stringValid(contextUnique) || !stringValid(contextFriendly)) {
+            return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+        }
+        if (!keysValid(active) || !keysValid(defaults)) {
+            return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+        }
+        ShortcutKeyHolder holder;
+        holder.component = compUnique;
+        holder.action = action;
+        holder.active = active;
+        holder.defaults = defaults;
+        parsed.append(holder);
+        if (parsed.size() > SHORTCUT_MAX_TUPLES) {
+            return fail(QStringLiteral("unexpected globalShortcutsByKey reply"));
+        }
+    }
+    arg.endArray();
+    if (holders) {
+        *holders = parsed;
+    }
+    return true;
+}
+
+bool ShortcutReconciler::parseGlobalShortcutAvailableReply(QDBusMessage::MessageType replyType,
+                                                           const QString &replySignature,
+                                                           const QList<QVariant> &replyArgs, bool *available,
+                                                           QString *error)
+{
+    auto fail = [&](const QString &message) {
+        if (error) {
+            *error = message;
+        }
+        return false;
+    };
+    // Exact transport only: ReplyMessage with signature "b" carrying one bool.
+    if (replyType != QDBusMessage::ReplyMessage) {
+        return fail(QStringLiteral("unexpected globalShortcutAvailable reply"));
+    }
+    if (replySignature != QStringLiteral("b") || replyArgs.size() != 1) {
+        return fail(QStringLiteral("unexpected globalShortcutAvailable reply"));
+    }
+    const QVariant first = replyArgs.at(0);
+    if (first.userType() != QMetaType::Bool) {
+        return fail(QStringLiteral("unexpected globalShortcutAvailable reply"));
+    }
+    if (available) {
+        *available = first.toBool();
+    }
+    return true;
+}
+
+KeyedOccupancyResult ShortcutReconciler::checkKeyedForeignOccupancyDetailed(ShortcutStore *store)
+{
+    KeyedOccupancyResult result;
+    result.status = KeyedOccupancy::Clear;
+    auto unavailable = [&](const QString &message) {
+        result.status = KeyedOccupancy::Unavailable;
+        result.detail = message;
+        return result;
+    };
+    auto conflict = [&](const QString &message) {
+        result.status = KeyedOccupancy::Conflict;
+        result.detail = message;
+        return result;
+    };
+    if (!store) {
+        return unavailable(QStringLiteral("reconciler is not configured"));
+    }
+    const QList<int> keys = relevantConflictKeys();
+    for (int key : keys) {
+        if (!keysValid(QList<int>{key}) || key <= 0) {
+            return unavailable(QStringLiteral("unexpected globalShortcutsByKey reply"));
+        }
+        QList<ShortcutKeyHolder> holders;
+        QString storeError;
+        if (!store->shortcutsByKey(key, &holders, &storeError)) {
+            return unavailable(storeError.isEmpty() ? QStringLiteral("globalShortcutsByKey call failed") : storeError);
+        }
+        bool available = false;
+        if (!store->shortcutAvailable(key, QString(), &available, &storeError)) {
+            return unavailable(storeError.isEmpty() ? QStringLiteral("globalShortcutAvailable call failed") : storeError);
+        }
+        if (holders.size() > SHORTCUT_MAX_TUPLES) {
+            return unavailable(QStringLiteral("unexpected globalShortcutsByKey reply"));
+        }
+        for (const ShortcutKeyHolder &holder : holders) {
+            if (!stringValid(holder.component) || !stringValid(holder.action) || !keysValid(holder.active)
+                || !keysValid(holder.defaults)) {
+                return unavailable(QStringLiteral("unexpected globalShortcutsByKey reply"));
+            }
+            if (isAllowlisted(holder.component, holder.action)) {
+                continue;
+            }
+            if (isAuthorizedDisplacement(key, holder.component, holder.action)) {
+                continue;
+            }
+            return conflict(QStringLiteral("refusing to apply: %1 is claimed by %2/%3")
+                                .arg(keyDisplayName(key), holder.component, holder.action));
+        }
+        // Whole-key consistency, fail closed both directions:
+        // globalShortcutAvailable(key, "") reports whole-key availability,
+        // so empty holders must report available and non-empty holders
+        // must report unavailable. Allowlisted/authorized holders count
+        // as occupying the key, so they keep the non-empty/unavailable
+        // expectation and stay Clear after the skips above.
+        if (holders.isEmpty() != available) {
+            return unavailable(QStringLiteral("unexpected globalShortcutAvailable reply"));
+        }
+    }
+    return result;
+}
+
+bool ShortcutReconciler::checkKeyedForeignOccupancy(ShortcutStore *store, QString *error)
+{
+    const KeyedOccupancyResult detailed = checkKeyedForeignOccupancyDetailed(store);
+    if (detailed.status != KeyedOccupancy::Clear) {
+        if (error) {
+            *error = detailed.detail;
+        }
+        return false;
     }
     return true;
 }
@@ -847,6 +1074,65 @@ bool KGlobalAccelStore::readAll(QList<ShortcutTuple> *tuples, QString *error)
     }
     *tuples = collected;
     return true;
+}
+
+bool KGlobalAccelStore::shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error)
+{
+    if (!holders) {
+        return false;
+    }
+    if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+        if (error) {
+            *error = QStringLiteral("unexpected globalShortcutsByKey reply");
+        }
+        return false;
+    }
+    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
+    if (!global.isValid()) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel interface is invalid");
+        }
+        return false;
+    }
+    ensureKeySequenceMetaTypes();
+    const QKeySequence sequence(key, 0, 0, 0);
+    const ShortcutMatchType match{SHORTCUT_MATCH_EQUAL};
+    const QVariantList args{QVariant::fromValue(sequence), QVariant::fromValue(match)};
+    const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutByKeyMethod(), args);
+    return ShortcutReconciler::parseGlobalShortcutsByKeyReply(reply.type(), reply.signature(), reply.arguments(),
+                                                              holders, error);
+}
+
+bool KGlobalAccelStore::shortcutAvailable(int key, const QString &component, bool *available, QString *error)
+{
+    if (!available) {
+        return false;
+    }
+    if (!ShortcutReconciler::keysValid(QList<int>{key}) || key <= 0) {
+        if (error) {
+            *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+        }
+        return false;
+    }
+    if (component.size() > SHORTCUT_MAX_STRING_LEN) {
+        if (error) {
+            *error = QStringLiteral("unexpected globalShortcutAvailable reply");
+        }
+        return false;
+    }
+    QDBusInterface global(shortcutService(), shortcutPath(), shortcutInterface(), QDBusConnection::sessionBus());
+    if (!global.isValid()) {
+        if (error) {
+            *error = QStringLiteral("KGlobalAccel interface is invalid");
+        }
+        return false;
+    }
+    ensureKeySequenceMetaTypes();
+    const QKeySequence sequence(key, 0, 0, 0);
+    const QVariantList args{QVariant::fromValue(sequence), QVariant::fromValue(component)};
+    const QDBusMessage reply = global.callWithArgumentList(QDBus::Block, shortcutAvailableMethod(), args);
+    return ShortcutReconciler::parseGlobalShortcutAvailableReply(reply.type(), reply.signature(), reply.arguments(),
+                                                                 available, error);
 }
 
 bool KGlobalAccelStore::writeKeys(const QString &component, const QString &action, const QString &componentFriendly,
@@ -1293,8 +1579,9 @@ ShortcutApplyResult ShortcutReconciler::apply()
         result.error = QStringLiteral("allowlisted tuple is unbounded");
         return result;
     }
-    // Preflight: refuse when any exact claimed/replacement chord is held by non-allowlisted record.
-    // No journal and no mutation on this path.
+    // Independent structural validation of enumerated state (not conflict
+    // detection): unbounded unrelated tuples fail closed with zero writes.
+    // Foreign conflicts stay authoritative via the keyed lookup below.
     for (const ShortcutTuple &tuple : tuples) {
         if (isAllowlisted(tuple.component, tuple.action)) {
             continue;
@@ -1303,10 +1590,16 @@ ShortcutApplyResult ShortcutReconciler::apply()
             result.error = QStringLiteral("unrelated tuple is unbounded");
             return result;
         }
-        if (tuple.active.contains(SHORTCUT_META_ESC) || tuple.active.contains(SHORTCUT_META_ALT_K) || tuple.active.contains(SHORTCUT_META_ALT_L)) {
-            result.error = QStringLiteral("refusing to apply: Meta+Esc/Meta+Alt+K/Meta+Alt+L is claimed by %1/%2").arg(tuple.component, tuple.action);
-            return result;
-        }
+    }
+    // Authoritative keyed foreign-occupancy preflight (Defect B): keyed
+    // globalShortcutsByKey + globalShortcutAvailable for Meta+L, Meta+Esc,
+    // Meta+Alt+K, Meta+Alt+L. Not tuple/config enumeration, so
+    // .desktop-declared-only holders are visible. Fails closed before any
+    // journal/write. The explicit System Monitor `_launch` Meta+Esc holder
+    // is user-authorized and skipped; every other foreign occupier fails.
+    if (!checkKeyedForeignOccupancy(m_store, &error)) {
+        result.error = error;
+        return result;
     }
 
     const QList<int> focusPost = focusPostKeys();

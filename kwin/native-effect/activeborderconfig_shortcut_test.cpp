@@ -67,6 +67,10 @@ public:
         "<annotation name=\"org.qtproject.QtDBus.QtTypeName.Out0\" value=\"QSet&lt;QKeySequence&gt;\"/>"
         "</method></interface></node>");
     bool malformedRead = false;
+    QMap<int, QList<ShortcutKeyHolder>> extraByKey;
+    QMap<int, bool> availableOverride;
+    bool failByKey = false;
+    bool failAvailable = false;
     struct WriteRecord
     {
         QString component;
@@ -137,6 +141,63 @@ public:
         }
         if (out) {
             *out = tuples;
+        }
+        return true;
+    }
+
+    bool shortcutsByKey(int key, QList<ShortcutKeyHolder> *holders, QString *error) override
+    {
+        if (failByKey) {
+            if (error) {
+                *error = QStringLiteral("globalShortcutsByKey call failed");
+            }
+            return false;
+        }
+        QList<ShortcutKeyHolder> combined;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.active.contains(key)) {
+                ShortcutKeyHolder holder;
+                holder.component = tuple.component;
+                holder.action = tuple.action;
+                holder.active = tuple.active;
+                combined.append(holder);
+            }
+        }
+        combined.append(extraByKey.value(key));
+        if (holders) {
+            *holders = combined;
+        }
+        return true;
+    }
+
+    bool shortcutAvailable(int key, const QString &component, bool *available, QString *error) override
+    {
+        Q_UNUSED(component);
+        if (failAvailable) {
+            if (error) {
+                *error = QStringLiteral("globalShortcutAvailable call failed");
+            }
+            return false;
+        }
+        if (availableOverride.contains(key)) {
+            if (available) {
+                *available = availableOverride.value(key);
+            }
+            return true;
+        }
+        QList<ShortcutKeyHolder> combined;
+        for (const ShortcutTuple &tuple : tuples) {
+            if (tuple.active.contains(key)) {
+                ShortcutKeyHolder holder;
+                holder.component = tuple.component;
+                holder.action = tuple.action;
+                holder.active = tuple.active;
+                combined.append(holder);
+            }
+        }
+        combined.append(extraByKey.value(key));
+        if (available) {
+            *available = combined.isEmpty();
         }
         return true;
     }
@@ -749,6 +810,104 @@ void unrelatedChordConflictStatus()
     CHECK(!journal.hasJournal());
 }
 
+void keyedDesktopOnlyConflictStatus()
+{
+    // .desktop-only Meta+Esc holder invisible to readAll blocks via keyed
+    // lookup on both Apply and KCM status with zero writes. The holder is
+    // modeled with empty active and defaults {Meta+Esc} because the
+    // authoritative primitive sees defaults.
+    {
+        FakeShortcutStore store;
+        seedReady(store);
+        ShortcutKeyHolder foreign;
+        foreign.component = QStringLiteral("org.kde.unexpected");
+        foreign.action = QStringLiteral("other-launch");
+        foreign.active = QList<int>{};
+        foreign.defaults = QList<int>{META_ESC};
+        store.extraByKey[META_ESC].append(foreign);
+        FakeJournal journal;
+        ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+        module.setShortcutStores(&store, &journal);
+        module.load();
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Meta+Esc")));
+        module.requestShortcutApply();
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+        CHECK(module.shortcutErrorText().contains(QStringLiteral("Meta+Esc")));
+    }
+    // Clear-target .desktop-only holder on Meta+Alt+K likewise blocks.
+    {
+        FakeShortcutStore store;
+        seedReady(store);
+        ShortcutKeyHolder foreign;
+        foreign.component = QStringLiteral("org.kde.unexpected");
+        foreign.action = QStringLiteral("other-clear");
+        foreign.active = QList<int>{};
+        foreign.defaults = QList<int>{META_ALT_K};
+        store.extraByKey[META_ALT_K].append(foreign);
+        FakeJournal journal;
+        ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+        module.setShortcutStores(&store, &journal);
+        module.load();
+        CHECK(module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+        module.requestShortcutApply();
+        CHECK(store.writeLog.isEmpty());
+        CHECK(!journal.hasJournal());
+    }
+}
+
+void keyedSystemMonitorStatusAccepted()
+{
+    // Explicit System Monitor `_launch` Meta+Esc holder is user-authorized
+    // via the compiled-in table: status stays Ready (not Conflict) and
+    // Apply proceeds with no writes targeting System Monitor itself.
+    FakeShortcutStore store;
+    seedReady(store);
+    ShortcutKeyHolder sysmon;
+    sysmon.component = shortcutAuthorizedEscComponent();
+    sysmon.action = shortcutAuthorizedEscAction();
+    sysmon.active = QList<int>{META_ESC};
+    store.extraByKey[META_ESC].append(sysmon);
+    FakeJournal journal;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &journal);
+    module.load();
+    CHECK(!module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("Ready")));
+    module.requestShortcutApply();
+    CHECK(store.writeLog.size() == 6);
+    CHECK(journal.hasJournal());
+    CHECK(module.shortcutErrorText().isEmpty());
+    for (const auto &record : store.writeLog) {
+        CHECK(!(record.component == shortcutAuthorizedEscComponent() && record.action == shortcutAuthorizedEscAction()));
+    }
+}
+
+void keyedTransportFailureShowsUnavailable()
+{
+    // Keyed transport failure surfaces as unavailable (never Conflict)
+    // with zero writes, via the typed outcome (no substring matching).
+    FakeShortcutStore store;
+    seedReady(store);
+    store.failByKey = true;
+    FakeJournal journal;
+    ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+    module.setShortcutConfirmHandler([](const QString &, const QString &) { return true; });
+    module.setShortcutStores(&store, &journal);
+    module.load();
+    CHECK(!module.shortcutStatusText().contains(QStringLiteral("Conflict")));
+    CHECK(module.shortcutStatusText().contains(QStringLiteral("unavailable")));
+    module.requestShortcutApply();
+    CHECK(store.writeLog.isEmpty());
+    CHECK(!journal.hasJournal());
+    CHECK(!module.shortcutErrorText().contains(QStringLiteral("Conflict")));
+    CHECK(module.shortcutErrorText().contains(QStringLiteral("unavailable")) || module.shortcutErrorText().contains(QStringLiteral("globalShortcutsByKey")));
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -778,6 +937,9 @@ int main(int argc, char **argv)
         stateAndErrorPresentation();
         completeJournalStatusComparesExactPostimages();
         unrelatedChordConflictStatus();
+        keyedDesktopOnlyConflictStatus();
+        keyedSystemMonitorStatusAccepted();
+        keyedTransportFailureShowsUnavailable();
         contractRejectionSurfacesSplitSignatureWithoutStaleCombinedForm();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);

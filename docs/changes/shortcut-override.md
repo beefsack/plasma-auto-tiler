@@ -22,7 +22,9 @@ KCM Apply alone resolves only the closed compiled-in rows.
 
 - Row 1: `kwin` / `plasma-auto-tiler-focus-right` takes `Meta+L`; `ksmserver`
   / `Lock Session` relocates `Meta+L` to `Meta+Esc`. Non-`Meta+L` lock keys
-  keep their order.
+  keep their order. The row deliberately displaces System Monitor
+  `org.kde.plasma.systemmonitor` / `_launch`'s declared `Meta+Esc` default;
+  that exact target occupant is compiled into the row and is never writable.
 - Row 2: `kwin` / `plasma-auto-tiler-resize-outwards-up` takes `Meta+Alt+K`;
   `KDE Keyboard Layout Switcher` / `Switch to Next Keyboard Layout` clears
   from the exact preimage `Meta+Alt+K`.
@@ -65,12 +67,28 @@ KCM Apply alone resolves only the closed compiled-in rows.
   accepted as static-only. No live Apply/Revert/interrupted-recovery result is
   claimed under this record.
 - Resolved Plasma 6 KGlobalAccel compatibility defect: host Plasma/KWin 6.7.4
-  exposes `setShortcutKeys(as actionId, a(ai) keys, u flags) -> a(ai)` with
-  `QSet<QKeySequence>` annotations; old strict `asa(ai)u` validator failed
-  Apply/Revert before writes; backend now validates exact split shape and typed
-  `QSet`/`QKeySequence` marshalling/reply set semantics with pinned unique
-  owner; native/full static/Nix checks passed; read-only probe confirmed exact
-  affected current tuples unchanged; no live setter/Apply/Revert was run.
+  exposes `setShortcutKeys` as an out-first XML method: `a(ai)` out, then
+  `as`, `a(ai)`, `u` inputs, with direction-relative `Out0`/`In1`
+  `QSet<QKeySequence>` annotations. The validator incorrectly treated document
+  order as input-first call order, rejecting this exact contract before writes.
+  It now accepts the exact out-first contract and still rejects absent or
+  mismatched methods.
+- Resolved target-conflict blindness: Apply and KCM status now use strict
+  `globalShortcutsByKey((ai)(i))` and `globalShortcutAvailable((ai)s)` checks
+  for `Meta+L`, `Meta+Esc`, `Meta+Alt+K`, and `Meta+Alt+L`, including
+  .desktop-declared defaults absent from the tuple enumeration. The only
+  accepted foreign holder is the user-approved System Monitor `_launch` on
+  row 1's `Meta+Esc` target; all other holders, malformed replies, and
+  availability inconsistencies fail closed before journal creation or writes.
+- Hermetic evidence: the exact captured out-first XML is accepted while absent
+  and mismatched methods are rejected; keyed fake-store coverage makes a
+  default-only holder (empty active keys, default `Meta+Esc`) visible despite
+  its absence from `readAll`, and proves zero-write rejection for relocation
+  and clear targets. It also proves the authorized System Monitor case applies
+  six allowlisted writes without writing System Monitor. CTest passed 21/21;
+  `cargo fmt --check`, `cargo clippy --all-targets --all-features -- -D warnings`,
+  `nix flake check`, and the KWin TypeScript suite (385 tests, 47 suites)
+  passed. No live Apply, setter, KWin, Plasma, or config mutation was run.
 
 ## Next Action
 
