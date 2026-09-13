@@ -952,7 +952,7 @@ dev mode="":
     TEE_PID=$!
     tail -n +1 -F "$PLANNER_LOG" 2>/dev/null | sed -u 's/^/[planner] /' >>"$PLANNER_STREAM" &
     TAIL_PID=$!
-    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:plan" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
+    journalctl --user -f _PID="$KWIN_PID" -o cat --no-pager 2>/dev/null | grep --line-buffered -F "plasma-auto-tiler:" | sed -u 's/^/[kwin] /' >>"$KWIN_STREAM" &
     JOURNAL_PID=$!
     tail -q -n +1 -s 0.2 -F "$PLANNER_STREAM" "$KWIN_STREAM" >"$DEV_FIFO" 2>/dev/null &
     FOLLOW_PID=$!

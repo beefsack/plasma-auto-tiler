@@ -275,8 +275,55 @@ describe("drag-oracle pull transport", () => {
         assert.ok(pending !== null);
         (pending as (reply: unknown) => void)(movedVerdict());
         assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
         ]);
+    });
+
+    it("logs a bounded dispatch when the endpoint never answers", () => {
+        const logs: string[] = [];
+        const pull = new DragOraclePull({
+            callDbus: (): void => {},
+            log: (message): void => {
+                logs.push(message);
+            },
+        });
+        pull.pullVerdict();
+        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-pull action=dispatch"]);
+    });
+
+    it("logs dispatch before the verdict callback and remains bounded", () => {
+        const order: string[] = [];
+        const pull = new DragOraclePull({
+            callDbus: (_service, _path, _iface, _method, callback) => {
+                order.push("call");
+                callback(movedVerdict());
+            },
+            log: (message) => {
+                order.push(message);
+            },
+        });
+        pull.pullVerdict();
+        assert.deepEqual(order, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "call",
+            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+        ]);
+        assert.ok(order.every((line) => line.length <= 128));
+    });
+
+    it("still dispatches when diagnostic logging throws", () => {
+        let calls = 0;
+        const pull = new DragOraclePull({
+            callDbus: () => {
+                calls += 1;
+            },
+            log: () => {
+                throw new Error("log-failed");
+            },
+        });
+        assert.doesNotThrow(() => pull.pullVerdict());
+        assert.equal(calls, 1);
     });
 
     it("fails closed to one bounded token when the reply is malformed", () => {
@@ -290,7 +337,10 @@ describe("drag-oracle pull transport", () => {
             },
         });
         pull.pullVerdict();
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-unavailable"]);
+        assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "plasma-auto-tiler:route-diag:drag-unavailable",
+        ]);
     });
 
     it("fails closed without throwing when transport is unavailable", () => {
@@ -304,7 +354,10 @@ describe("drag-oracle pull transport", () => {
             },
         });
         pull.pullVerdict();
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-unavailable"]);
+        assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "plasma-auto-tiler:route-diag:drag-unavailable",
+        ]);
     });
 });
 
@@ -339,6 +392,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.equal(replies.length, 1);
         (replies[0] as (reply: unknown) => void)(cancelledVerdict());
         assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=true correlation=drag-4 reason=no-change",
         ]);
         (handle as { stop: () => void }).stop();
@@ -384,6 +438,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.equal(calls.length, 1);
         (replies[0] as (reply: unknown) => void)(movedVerdict());
         assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
         ]);
         (handle as { stop: () => void }).stop();

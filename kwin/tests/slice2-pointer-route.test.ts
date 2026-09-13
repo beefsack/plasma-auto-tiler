@@ -168,7 +168,10 @@ describe("slice 2 verdict routing contract", () => {
         });
         pull.pullVerdict();
         assert.equal(routed, 0);
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-unavailable"]);
+        assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "plasma-auto-tiler:route-diag:drag-unavailable",
+        ]);
     });
 });
 

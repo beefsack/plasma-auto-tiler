@@ -12,8 +12,9 @@
 - Slice 2 retains one correlation/source-keyed neighbour-write echo expectation.
   It is consumed only by same-scope planned neighbour rectangles; every other
   geometry mismatch follows bounded reconciliation.
-- No live KWin or Plasma action occurred. This change selects no push transport,
-  fallback, retry, timeout guess, or Planner pending-slot bypass.
+- The initial implementation used no live KWin or Plasma action. This change
+  selects no push transport, fallback, retry, timeout guess, or Planner
+  pending-slot bypass.
 
 ## Evidence
 
@@ -41,12 +42,31 @@
 - Slice 2: `cargo test`, `npm test --prefix kwin` (426 pass),
   `npm run typecheck --prefix kwin`, and `git diff --check`.
 
+## Follow-Up Diagnostics
+
+- Every dispatched pull now logs exactly
+  `plasma-auto-tiler:route-diag:drag-pull action=dispatch` before `callDBus`.
+  The line is constant, bounded, redacted, and best-effort. It changes neither
+  the no-timeout pull contract nor fail-closed routing; a dispatch without a
+  later `drag-verdict` or `drag-unavailable` directly identifies a
+  non-answering endpoint.
+- Hermetic pull coverage proves the no-answer line, dispatch-before-reply
+  ordering, bounded output, and that a throwing logger cannot prevent the
+  D-Bus call.
+- Follow-up static verification: `cargo test` (466 pass),
+  `npm test --prefix kwin` (429 pass), `npm run typecheck --prefix kwin`, and
+  `git diff --check` passed.
+
 ## Live-Unproven Claims
 
 - Slice 1 has not proved KWin loads the packaged effect, exposes its session
   D-Bus endpoint, or delivers authoritative start/final geometry to it.
 - Slice 2 has not proved real KWin D-Bus demarshalling/order, script-to-effect
   reply association, native neighbour writes, or physical share reflow.
+- The first edge-drag test did not load the disabled-by-default oracle effect.
+  It therefore did not exercise a verdict callback or the pointer route; the
+  new dispatch line distinguishes that non-answering case without inferring a
+  timeout.
 
 ## User-Owned Live Checks
 

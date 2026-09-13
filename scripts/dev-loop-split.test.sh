@@ -166,6 +166,7 @@ EOF
 set -euo pipefail
 printf 'journalctl %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
 echo "plasma-auto-tiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-applied"
+echo "plasma-auto-tiler:route-diag:drag-pull action=dispatch"
 exit 0
 EOF
   chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
@@ -769,6 +770,7 @@ check_exit 0 "dev down cycle exit"
 assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
 assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
+assert_contains "[kwin] plasma-auto-tiler:route-diag:drag-pull action=dispatch" "dev down kwin route diagnostic line"
 assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev down native warning"
 assert_calls_contain "cargo " "dev down cargo build"
 assert_calls_contain "npm " "dev down npm build"

@@ -46,6 +46,18 @@ independently editable component retains a cheap direct command.
 - Static-only: no `just dev`, `just dev-on`, `just dev-off`, `just reload`,
   KWin D-Bus call, effect operation, or session action was run.
 
+## Follow-Up Diagnostics
+
+- `just dev` now tails every KWin journal line containing the exact shared
+  prefix `plasma-auto-tiler:` rather than only `plasma-auto-tiler:plan`.
+  The existing `grep --line-buffered`, `[kwin]` label, FIFO streams, and
+  combined-log flow remain unchanged.
+- Hermetic dev-loop coverage feeds a
+  `plasma-auto-tiler:route-diag:drag-pull action=dispatch` line through the
+  journal fixture and proves it reaches the labelled KWin stream.
+- Follow-up static verification: `scripts/dev-loop-split.test.sh` passed
+  `PASS=277 FAIL=0`; `just --fmt --check` passed.
+
 ## User-Owned Checks
 
 - From a known DOWN state, run `just dev`, confirm the full-build output and

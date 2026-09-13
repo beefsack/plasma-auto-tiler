@@ -1,7 +1,7 @@
 import { connectSignal, isConnectableSignal, readSignal } from "./signal-capability";
 export const DRAG_ORACLE_SERVICE = "org.plasmaautotiler.DragOracle"; export const DRAG_ORACLE_OBJECT = "/org/plasmaautotiler/DragOracle"; export const DRAG_ORACLE_INTERFACE = "org.plasmaautotiler.DragOracle1"; export const DRAG_ORACLE_METHOD = "LastVerdict";
 export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_MAX_TOKEN_LEN = 128; export const DRAG_ORACLE_MAX_REASON_LEN = 64; export const DRAG_ORACLE_MAX_ID_LEN = 128;
-const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const UNAVAILABLE_LINE = `${ROUTE_DIAG}:drag-unavailable`; const ENTRY_REJECT = `${ROUTE_DIAG}:drag-entry-invalid`; const MAX_LIST = 1024;
+const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const UNAVAILABLE_LINE = `${ROUTE_DIAG}:drag-unavailable`; const ENTRY_REJECT = `${ROUTE_DIAG}:drag-entry-invalid`; const MAX_LIST = 1024;
 const EMPTY_IDENTITY_REASONS: ReadonlyArray<string> = ["no-observation", "oracle-unavailable", "oracle-panic", "empty-identity", "identity-invalid", "identity-too-long", "geometry-invalid", "geometry-out-of-range"];
 const VERDICT_REASONS: ReadonlyArray<string> = [...EMPTY_IDENTITY_REASONS, "no-change", "ok-moved"];
 export interface DragOracleFinishContext { readonly ref: object; readonly finishEpoch: number; }
@@ -76,6 +76,7 @@ export class DragOraclePull {
     pullVerdict(ctx?: DragOracleFinishContext): void {
         const call = this.env.callDbus;
         if (typeof call !== "function") { this.logUnavailable(); this.notifySettled(null, ctx); return; }
+        this.logPullDispatch();
         try { call(DRAG_ORACLE_SERVICE, DRAG_ORACLE_OBJECT, DRAG_ORACLE_INTERFACE, DRAG_ORACLE_METHOD, (reply) => { this.onReply(reply, ctx); }); } catch (_e) { this.logUnavailable(); this.notifySettled(null, ctx); }
     }
     private onReply(reply: unknown, ctx: DragOracleFinishContext | undefined): void {
@@ -104,6 +105,7 @@ export class DragOraclePull {
         } catch (_e) { /* fail-closed */ }
     }
     private logUnavailable(): void { try { this.env.log(UNAVAILABLE_LINE); } catch (_e) { /* fail-closed */ } }
+    private logPullDispatch(): void { try { this.env.log(PULL_DISPATCH_LINE); } catch (_e) { /* fail-closed */ } }
 }
 function resolveLexicalWorkspace(): unknown {
     try {
