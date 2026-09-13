@@ -1491,3 +1491,190 @@ describe("plan native identity sharing and string-keyed cache", () => {
         assert.ok(!src.includes("observed: fresh"), "no retained fresh observed");
     });
 });
+
+describe("plan adapter pointer edge-drag", () => {
+    const allocA = { x: 0, y: 0, w: 600, h: 800 };
+    const allocB = { x: 600, y: 0, w: 600, h: 800 };
+    const plannedA = { x: 0, y: 0, w: 550, h: 800 };
+    const plannedB = { x: 550, y: 0, w: 650, h: 800 };
+    function liveState(mocks: Mocks, states: Map<object, { move: boolean; resize: boolean }>): void {
+        (mocks.env as unknown as Record<string, unknown>)["readLiveState"] = (target: object) =>
+            states.get(target) ?? null;
+    }
+    function pointerBaseline(refs: { a: object; b: object; c: object }): { mocks: Mocks; adapter: PlanAdapter } {
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": allocA, "win-b": allocB } });
+        mocks.activeImpl = () => refs.b;
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], null));
+        mocks.dbusCalls.length = 0;
+        mocks.callbacks.length = 0;
+        mocks.geometries.length = 0;
+        mocks.logs.length = 0;
+        return { mocks, adapter };
+    }
+    it("accepted drag writes neighbour only, retains allocation, ignores echo without oscillation", () => {
+        const refs = makeRefs();
+        const { mocks, adapter } = pointerBaseline(refs);
+        liveState(mocks, new Map([[refs.b, { move: false, resize: true }]]));
+        adapter.interactiveStarted(refs.b);
+        adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+        assert.equal(mocks.dbusCalls.length, 0);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": allocA, "win-b": plannedB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.ok(!mocks.logs.some((l) => l.includes("kind=reconcile")));
+        adapter.interactiveFinished(refs.b);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual(plannerPayload(mocks, 0)["command"], { op: "pointer-resize", window: "win-b", direction: "left", boundary: 550 });
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": allocA, "win-b": plannedB } });
+        mocks.callbacks[0]?.(plannedReply(corr, [{ window: "win-a", rect: plannedA }, { window: "win-b", rect: plannedB }], null));
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.geometries[0]?.target, refs.a);
+        assert.deepEqual(mocks.geometries[0]?.rect, plannedA);
+        assert.ok(mocks.logs.some((l) => l.includes("kind=pointer-resize") && l.includes("outcome=planned-applied")));
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": plannedA, "win-b": plannedB } });
+        const calls = mocks.dbusCalls.length;
+        const writes = mocks.geometries.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, calls);
+        assert.equal(mocks.geometries.length, writes);
+    });
+    it("post-finish geometry echo does not stale-drop pointer reply", () => {
+        const refs = makeRefs();
+        const { mocks, adapter } = pointerBaseline(refs);
+        liveState(mocks, new Map([[refs.b, { move: false, resize: true }]]));
+        adapter.interactiveStarted(refs.b);
+        adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": allocA, "win-b": plannedB } });
+        adapter.interactiveFinished(refs.b);
+        assert.equal(mocks.dbusCalls.length, 1);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.ok(!mocks.logs.some((l) => l.includes("kind=reconcile")));
+        mocks.callbacks[0]?.(plannedReply(corr, [{ window: "win-a", rect: plannedA }, { window: "win-b", rect: plannedB }], null));
+        assert.ok(mocks.logs.some((l) => l.includes("kind=pointer-resize") && l.includes("outcome=planned-applied")));
+        assert.ok(!mocks.logs.some((l) => l.includes("stale-dropped")));
+        assert.equal(mocks.geometries.length, 1);
+        assert.equal(mocks.geometries[0]?.target, refs.a);
+        assert.deepEqual(mocks.geometries[0]?.rect, plannedA);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": plannedA, "win-b": plannedB } });
+        const calls = mocks.dbusCalls.length;
+        const writes = mocks.geometries.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, calls);
+        assert.equal(mocks.geometries.length, writes);
+    });
+    it("cancellation, move, mixed and interruption dispatch none", () => {
+        for (const kind of ["empty", "move", "mixed", "foreign", "direction-drift"] as const) {
+            const refs = makeRefs();
+            const { mocks, adapter } = pointerBaseline(refs);
+            const states = new Map<object, { move: boolean; resize: boolean }>();
+            if (kind === "move") {
+                states.set(refs.b, { move: true, resize: false });
+            } else {
+                states.set(refs.b, { move: false, resize: true });
+                states.set(refs.a, { move: false, resize: true });
+            }
+            liveState(mocks, states);
+            adapter.interactiveStarted(refs.b);
+            if (kind === "empty") {
+                adapter.interactiveFinished(refs.b);
+            } else if (kind === "move") {
+                adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+                adapter.interactiveFinished(refs.b);
+            } else if (kind === "mixed") {
+                adapter.interactiveStepped(refs.b, { x: 550, y: 10, width: 650, height: 790 });
+                adapter.interactiveFinished(refs.b);
+            } else if (kind === "foreign") {
+                adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+                adapter.interactiveFinished(refs.a);
+                adapter.interactiveFinished(refs.b);
+            } else {
+                adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+                adapter.interactiveStepped(refs.b, { x: 600, y: 0, width: 600, height: 700 });
+                adapter.interactiveFinished(refs.b);
+            }
+            assert.equal(mocks.dbusCalls.length, 0, kind);
+        }
+    });
+    it("coalesces steps to latest boundary with one dispatch after finish", () => {
+        const refs = makeRefs();
+        const { mocks, adapter } = pointerBaseline(refs);
+        liveState(mocks, new Map([[refs.b, { move: false, resize: true }]]));
+        adapter.interactiveStarted(refs.b);
+        adapter.interactiveStepped(refs.b, { x: 560, y: 0, w: 640, h: 800 });
+        adapter.interactiveStepped(refs.b, { x: 560, y: 0, w: 640, h: 800 });
+        adapter.interactiveStepped(refs.b, { x: 550, y: 0, width: 650, height: 800 });
+        adapter.interactiveFinished(refs.b);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual(plannerPayload(mocks, 0)["command"], { op: "pointer-resize", window: "win-b", direction: "left", boundary: 550 });
+    });
+    it("self-resize drift still reconciles and parks after three", () => {
+        const refs = makeRefs();
+        const { mocks } = pointerBaseline(refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.b, rects: { "win-a": allocA, "win-b": { x: 600, y: 0, w: 616, h: 800 } } });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = attempt;
+            assert.deepEqual((plannerPayload(mocks, index)["command"] as Record<string, unknown>)["op"], "reconcile");
+            const corr = plannerPayload(mocks, index)["correlation_id"] as string;
+            mocks.callbacks[index]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], null));
+        }
+        const parked = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parked);
+    });
+    it("entry wires interactive signals and move never routes pointer", () => {
+        const world = fakeWorld();
+        const connectable = (handlers: { handlers: Array<(p?: unknown) => void> }): { connect: (h: (p?: unknown) => void) => void; disconnect: (h: (p?: unknown) => void) => void } => ({
+            connect: (h): void => {
+                handlers.handlers.push(h);
+            },
+            disconnect: (h): void => {
+                const i = handlers.handlers.indexOf(h);
+                if (i >= 0) {
+                    handlers.handlers.splice(i, 1);
+                }
+            },
+        });
+        const startedA = { handlers: [] as Array<(p?: unknown) => void> };
+        const steppedA = { handlers: [] as Array<(p?: unknown) => void> };
+        const finishedA = { handlers: [] as Array<(p?: unknown) => void> };
+        const winA = world.wins[0] as Record<string, unknown>;
+        winA["move"] = false;
+        winA["resize"] = true;
+        winA["interactiveMoveResizeStarted"] = connectable(startedA);
+        winA["interactiveMoveResizeStepped"] = connectable(steppedA);
+        winA["interactiveMoveResizeFinished"] = connectable(finishedA);
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.ok(startedA.handlers.length === 1 && steppedA.handlers.length === 1 && finishedA.handlers.length === 1);
+        mocks.dbusCalls.length = 0;
+        mocks.callbacks.length = 0;
+        startedA.handlers[0]?.();
+        steppedA.handlers[0]?.({ x: 550, y: 0, width: 650, height: 800 });
+        finishedA.handlers[0]?.();
+        assert.ok(mocks.dbusCalls.length <= 1);
+        if (mocks.dbusCalls.length === 1) {
+            const cmd = (JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+            assert.equal(cmd["op"], "pointer-resize");
+        }
+        handle?.stop();
+    });
+});

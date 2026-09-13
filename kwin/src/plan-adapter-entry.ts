@@ -683,6 +683,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return null;
             }
         },
+        readLiveState: (target) => {
+            try {
+                const move = Reflect.get(target, "move");
+                const resize = Reflect.get(target, "resize");
+                if ((move !== true && move !== false) || (resize !== true && resize !== false)) {
+                    return null;
+                }
+                return { move, resize };
+            } catch (error) {
+                void error;
+                return null;
+            }
+        },
         subscribe: (kind, handler) => {
             if (kind === "geometry") {
                 const detach = subWindowGeometry(handler);
@@ -745,6 +758,93 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         adapter.disable();
         return null;
     }
+    // Production edge-drag wiring: per-Window public interactive signals.
+    // Best-effort per window so windows without them still tile; geometry
+    // classification stays in the adapter via readLiveState.
+    const interactiveSeen = new Set<object>();
+    const interactiveDetaches: Array<() => void> = [];
+    const attachInteractiveOne = (ref: object): void => {
+        if (interactiveSeen.has(ref)) {
+            return;
+        }
+        const started = readSignal(ref, "interactiveMoveResizeStarted");
+        const stepped = readSignal(ref, "interactiveMoveResizeStepped");
+        const finished = readSignal(ref, "interactiveMoveResizeFinished");
+        const startedDetach = connectSignal(started, () => {
+            try {
+                adapter.interactiveStarted(ref);
+            } catch (error) {
+                void error;
+            }
+        });
+        if (startedDetach === null) {
+            return;
+        }
+        const steppedDetach = connectSignal(stepped, (payload?: unknown) => {
+            try {
+                adapter.interactiveStepped(ref, payload);
+            } catch (error) {
+                void error;
+            }
+        });
+        if (steppedDetach === null) {
+            try {
+                startedDetach();
+            } catch (error) {
+                void error;
+            }
+            return;
+        }
+        const finishedDetach = connectSignal(finished, () => {
+            try {
+                adapter.interactiveFinished(ref);
+            } catch (error) {
+                void error;
+            }
+        });
+        if (finishedDetach === null) {
+            try {
+                startedDetach();
+            } catch (error) {
+                void error;
+            }
+            try {
+                steppedDetach();
+            } catch (error) {
+                void error;
+            }
+            return;
+        }
+        interactiveSeen.add(ref);
+        interactiveDetaches.push(startedDetach, steppedDetach, finishedDetach);
+    };
+    const attachInteractiveAll = (): void => {
+        try {
+            const lister = surface["windowList"];
+            if (typeof lister !== "function") {
+                return;
+            }
+            const raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+            const list = decodeList(raw, MAX_LIST);
+            if (list === null) {
+                return;
+            }
+            for (const item of list) {
+                if (typeof item === "object" && item !== null) {
+                    attachInteractiveOne(item as object);
+                }
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    attachInteractiveAll();
+    const interactiveAddedDetach = connectSignal(readSignal(surface, "windowAdded"), () => {
+        attachInteractiveAll();
+    });
+    if (interactiveAddedDetach !== null) {
+        interactiveDetaches.push(interactiveAddedDetach);
+    }
     adapter.requestResync();
     const profile = readShortcutProfile(overrides.readProfileFn);
     const catalog = planShortcutCatalog(profile);
@@ -805,6 +905,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 adapter.disable();
             } catch (error) {
                 void error;
+            }
+            for (const detach of interactiveDetaches) {
+                try {
+                    detach();
+                } catch (error) {
+                    void error;
+                }
             }
         },
         requestFocus: (direction) => {

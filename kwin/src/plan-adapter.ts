@@ -41,7 +41,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize";
 
 export interface PlanRect {
     readonly x: number;
@@ -216,6 +216,117 @@ function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
     return true;
 }
 
+// Edge-drag helpers: stepped payload only, never live geometry. Accepts the
+// public rect spellings ({x,y,w,h} and {x,y,width,height}); fractional values
+// round to integers. Exactly one edge must move with the opposite fixed.
+function normalizeStepRect(value: unknown): PlanRect | null {
+    if (typeof value !== "object" || value === null || Array.isArray(value)) {
+        return null;
+    }
+    const record = value as Record<string, unknown>;
+    const xRaw = record["x"];
+    const yRaw = record["y"];
+    const wRaw = record["width"] !== undefined ? record["width"] : record["w"];
+    const hRaw = record["height"] !== undefined ? record["height"] : record["h"];
+    if (
+        typeof xRaw !== "number" ||
+        typeof yRaw !== "number" ||
+        typeof wRaw !== "number" ||
+        typeof hRaw !== "number" ||
+        !Number.isFinite(xRaw) ||
+        !Number.isFinite(yRaw) ||
+        !Number.isFinite(wRaw) ||
+        !Number.isFinite(hRaw)
+    ) {
+        return null;
+    }
+    const candidate = { x: Math.round(xRaw), y: Math.round(yRaw), w: Math.round(wRaw), h: Math.round(hRaw) };
+    return isTargetRect(candidate) ? candidate : null;
+}
+
+function deriveDragEdge(
+    start: PlanRect,
+    stepped: PlanRect,
+): { direction: PlanDirection; boundary: number } | "mixed" | null {
+    const startRight = start.x + start.w;
+    const startBottom = start.y + start.h;
+    const steppedRight = stepped.x + stepped.w;
+    const steppedBottom = stepped.y + stepped.h;
+    const hSame = stepped.x === start.x && stepped.w === start.w;
+    const vSame = stepped.y === start.y && stepped.h === start.h;
+    if (hSame && vSame) {
+        return null;
+    }
+    if (!hSame && !vSame) {
+        return "mixed";
+    }
+    if (!hSame) {
+        if (stepped.x !== start.x && steppedRight === startRight) {
+            return { direction: "left", boundary: stepped.x };
+        }
+        if (stepped.x === start.x && steppedRight !== startRight) {
+            return { direction: "right", boundary: steppedRight };
+        }
+        return "mixed";
+    }
+    if (stepped.y !== start.y && steppedBottom === startBottom) {
+        return { direction: "up", boundary: stepped.y };
+    }
+    if (stepped.y === start.y && steppedBottom !== startBottom) {
+        return { direction: "down", boundary: steppedBottom };
+    }
+    return "mixed";
+}
+
+// Pointer-only tolerance: identical to snapshotsEqual except the drag
+// source rectangle may drift (final KWin echo before the D-Bus reply).
+// Scope, focus, fingerprint, membership, and non-source rects still fence.
+function rectsEqualExceptSource(a: PlanSnapshot, b: PlanSnapshot, sourceId: string): boolean {
+    if (
+        a.domainOutput !== b.domainOutput ||
+        a.domainWorkspace !== b.domainWorkspace ||
+        a.domainGap !== b.domainGap ||
+        a.domainOuterGap !== b.domainOuterGap ||
+        a.focusedId !== b.focusedId ||
+        a.fingerprint !== b.fingerprint
+    ) {
+        return false;
+    }
+    if (
+        a.domainBounds.x !== b.domainBounds.x ||
+        a.domainBounds.y !== b.domainBounds.y ||
+        a.domainBounds.w !== b.domainBounds.w ||
+        a.domainBounds.h !== b.domainBounds.h
+    ) {
+        return false;
+    }
+    if (a.windows.length !== b.windows.length) {
+        return false;
+    }
+    const byId = new Map<string, PlanSnapshotWindow>();
+    for (const entry of a.windows) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b.windows) {
+        const other = byId.get(entry.id);
+        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
+            return false;
+        }
+        if (entry.id === sourceId) {
+            continue;
+        }
+        if (
+            other.rect.x !== entry.rect.x ||
+            other.rect.y !== entry.rect.y ||
+            other.rect.w !== entry.rect.w ||
+            other.rect.h !== entry.rect.h
+        ) {
+            return false;
+        }
+    }
+    return byId.has(sourceId);
+}
+
 export interface PlanAdapterEnv {
     readonly callDbus: (
         service: string,
@@ -233,6 +344,7 @@ export interface PlanAdapterEnv {
     readonly active: () => object | null;
     readonly subscribe: (kind: PlanSignal, handler: () => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
+    readonly readLiveState?: (target: object) => { move: boolean; resize: boolean } | null;
 }
 
 export interface PlanEnableAuth {
@@ -582,6 +694,7 @@ interface PendingFlight {
     readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly windowCount: number;
+    readonly pointerSource: string | null;
 }
 
 interface AutoIntent {
@@ -589,6 +702,17 @@ interface AutoIntent {
     readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly body: Record<string, unknown>;
+    readonly pointerSource?: string | null;
+}
+
+interface PointerDrag {
+    readonly sourceRef: object;
+    readonly sourceId: string;
+    readonly startRect: PlanRect;
+    direction: PlanDirection | null;
+    valid: boolean;
+    isMove: boolean;
+    finished: boolean;
 }
 
 export class PlanAdapter {
@@ -614,6 +738,8 @@ export class PlanAdapter {
     private repeatMode: PlanResizeMode | null = null;
     private repeatNext = 0;
     private repeatFingerprint = "";
+    private pointerDrag: PointerDrag | null = null;
+    private pointerPending: { direction: PlanDirection; boundary: number } | null = null;
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -668,6 +794,8 @@ export class PlanAdapter {
         this.lastGood = null;
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.pointerDrag = null;
+        this.pointerPending = null;
         this.clearRepeat();
         return true;
     }
@@ -683,6 +811,8 @@ export class PlanAdapter {
         this.lastGood = null;
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.pointerDrag = null;
+        this.pointerPending = null;
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -766,6 +896,193 @@ export class PlanAdapter {
         this.onSignal();
     }
 
+    // Production edge-drag route: public per-Window interactive signals only.
+    // Classification reads Window move/resize: resize true + move false is a
+    // candidate; move true or any other state never routes pointer. Steps use
+    // the stepped payload only; the latest valid step is coalesced and one
+    // pointer-resize dispatches only after finish.
+    interactiveStarted(source: unknown): void {
+        if (!this.enabled || typeof source !== "object" || source === null) {
+            return;
+        }
+        this.pointerDrag = null;
+        this.pointerPending = null;
+        const observed = this.freshObserved();
+        if (observed === null) {
+            return;
+        }
+        let match: PlanObservedWindow | null = null;
+        for (const entry of observed.windows) {
+            if (entry.ref === source) {
+                match = entry;
+                break;
+            }
+        }
+        if (match === null) {
+            return;
+        }
+        let state: { move: boolean; resize: boolean } | null = null;
+        try {
+            state = this.env.readLiveState?.(source as object) ?? null;
+        } catch (error) {
+            void error;
+            state = null;
+        }
+        if (state === null || typeof state.move !== "boolean" || typeof state.resize !== "boolean") {
+            this.pointerDrag = {
+                sourceRef: source as object,
+                sourceId: match.id,
+                startRect: { x: match.rect.x, y: match.rect.y, w: match.rect.w, h: match.rect.h },
+                direction: null,
+                valid: false,
+                isMove: false,
+                finished: false,
+            };
+            return;
+        }
+        if (state.move === true) {
+            this.pointerDrag = {
+                sourceRef: source as object,
+                sourceId: match.id,
+                startRect: { x: match.rect.x, y: match.rect.y, w: match.rect.w, h: match.rect.h },
+                direction: null,
+                valid: false,
+                isMove: true,
+                finished: false,
+            };
+            return;
+        }
+        if (state.move === false && state.resize === true) {
+            this.pointerDrag = {
+                sourceRef: source as object,
+                sourceId: match.id,
+                startRect: { x: match.rect.x, y: match.rect.y, w: match.rect.w, h: match.rect.h },
+                direction: null,
+                valid: true,
+                isMove: false,
+                finished: false,
+            };
+            return;
+        }
+        this.pointerDrag = {
+            sourceRef: source as object,
+            sourceId: match.id,
+            startRect: { x: match.rect.x, y: match.rect.y, w: match.rect.w, h: match.rect.h },
+            direction: null,
+            valid: false,
+            isMove: false,
+            finished: false,
+        };
+    }
+
+    interactiveStepped(source: unknown, payload: unknown): void {
+        if (!this.enabled) {
+            return;
+        }
+        const drag = this.pointerDrag;
+        if (drag === null || drag.finished || source !== drag.sourceRef) {
+            if (drag !== null && source !== drag.sourceRef) {
+                drag.valid = false;
+                this.pointerPending = null;
+            }
+            return;
+        }
+        if (drag.isMove || !drag.valid) {
+            return;
+        }
+        let state: { move: boolean; resize: boolean } | null = null;
+        try {
+            state = this.env.readLiveState?.(drag.sourceRef) ?? null;
+        } catch (error) {
+            void error;
+            state = null;
+        }
+        if (state === null || state.move !== false || state.resize !== true) {
+            drag.valid = false;
+            this.pointerPending = null;
+            return;
+        }
+        const stepped = normalizeStepRect(payload);
+        if (stepped === null) {
+            drag.valid = false;
+            this.pointerPending = null;
+            return;
+        }
+        const edge = deriveDragEdge(drag.startRect, stepped);
+        if (edge === null) {
+            return;
+        }
+        if (edge === "mixed") {
+            drag.valid = false;
+            this.pointerPending = null;
+            return;
+        }
+        if (drag.direction === null) {
+            drag.direction = edge.direction;
+        } else if (drag.direction !== edge.direction) {
+            drag.valid = false;
+            this.pointerPending = null;
+            return;
+        }
+        const kept = this.pointerPending;
+        if (kept !== null && kept.direction === edge.direction && kept.boundary === edge.boundary) {
+            return;
+        }
+        this.pointerPending = { direction: edge.direction, boundary: edge.boundary };
+    }
+
+    interactiveFinished(source: unknown): void {
+        if (!this.enabled) {
+            return;
+        }
+        const drag = this.pointerDrag;
+        if (drag === null || drag.finished) {
+            return;
+        }
+        if (source !== drag.sourceRef) {
+            drag.valid = false;
+            this.pointerPending = null;
+            this.pointerDrag = null;
+            return;
+        }
+        drag.finished = true;
+        const step = this.pointerPending;
+        const valid = drag.valid && !drag.isMove && step !== null;
+        this.pointerDrag = null;
+        this.pointerPending = null;
+        if (!valid || step === null) {
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            return;
+        }
+        let found = false;
+        for (const entry of observed.windows) {
+            if (entry.id === drag.sourceId && entry.ref === drag.sourceRef) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return;
+        }
+        const snapshot = snapshotOf(observed);
+        this.noteObservation(snapshot.fingerprint);
+        const intent: AutoIntent = {
+            op: "pointer-resize",
+            snapshot,
+            removed: null,
+            body: { op: "pointer-resize", window: drag.sourceId, direction: step.direction, boundary: step.boundary },
+            pointerSource: drag.sourceId,
+        };
+        if (this.inFlight) {
+            this.deferredAuto = intent;
+            return;
+        }
+        this.dispatch(intent);
+    }
+
     private clearRepeat(): void {
         this.repeatFocused = null;
         this.repeatDirection = null;
@@ -825,8 +1142,25 @@ export class PlanAdapter {
             return;
         }
         const freshSnapshot = snapshotOf(fresh);
+        const pointerFlight = this.inFlight ? this.pending : null;
+        if (
+            pointerFlight !== null &&
+            pointerFlight.op === "pointer-resize" &&
+            pointerFlight.pointerSource !== null &&
+            rectsEqualExceptSource(freshSnapshot, pointerFlight.snapshot, pointerFlight.pointerSource)
+        ) {
+            this.noteObservation(freshSnapshot.fingerprint);
+            return;
+        }
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
+        const drag = this.pointerDrag;
+        if (drag !== null && !drag.finished && drag.valid && !drag.isMove) {
+            return;
+        }
+        if (this.inFlight && this.deferredAuto !== null && this.deferredAuto.op === "pointer-resize") {
+            return;
+        }
         const previous = this.lastGood;
         if (previous === null) {
             this.lastGood = freshSnapshot;
@@ -983,7 +1317,7 @@ export class PlanAdapter {
         }
     }
 
-    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown> }): void {
+    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown>; pointerSource?: string | null }): void {
         if (!this.enabled || this.inFlight) {
             return;
         }
@@ -1049,6 +1383,7 @@ export class PlanAdapter {
             snapshot,
             removed: intent.removed,
             windowCount: sortedIds.length,
+            pointerSource: intent.pointerSource ?? null,
         };
         this.callbackSeen = false;
         this.token += 1;
@@ -1204,6 +1539,20 @@ export class PlanAdapter {
             this.failFlight(flightState, "stale-scope");
             return;
         }
+        if (flightState.op === "pointer-resize") {
+            const source = flightState.pointerSource;
+            if (source === null) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            const freshSnapshot = snapshotOf(fresh);
+            if (!rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source)) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            this.writeGeometries(planned, flightState, fresh);
+            return;
+        }
         if (flightState.removed === null) {
             const freshSnapshot = snapshotOf(fresh);
             if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
@@ -1235,10 +1584,15 @@ export class PlanAdapter {
             byRef.set(entry.id, entry.ref);
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        const ordered = orderGeometryWrites(oldById, planned.geometry);
+        const effectiveGeometry =
+            flightState.op === "pointer-resize" && flightState.pointerSource !== null
+                ? planned.geometry.filter((entry) => entry.window !== flightState.pointerSource)
+                : planned.geometry;
+        const ordered = orderGeometryWrites(oldById, effectiveGeometry);
         // Focus is focus-only: never rewrite geometry, only move the active
         // window. Matches the standalone focus adapter single-write contract;
         // move/admit/remove/resize still apply complete geometries above.
+        // Pointer writes changed neighbours only, never the drag source.
         if (flightState.op !== "focus") {
             for (const entry of ordered) {
                 const target = byRef.get(entry.window);
