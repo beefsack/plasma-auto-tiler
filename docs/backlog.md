@@ -2,6 +2,7 @@
 
 Only meaningful pending or active work is listed.
 
+- P1 | pending native-oracle transport proof | Production interactive edge drag: use the KWin native final-geometry oracle to revive Rust-owned pointer-resize shares without own-write reconciliation echoes.
 - P1 | Rust-engine/direct-geometry migration | Rust owns topology, ordered N-ary
   groups/shares, logical workspaces/outputs, focus/navigation, movement, and
   reconciliation; thin adapters own native boundaries. KWin direct geometry is
