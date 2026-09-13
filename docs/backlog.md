@@ -7,6 +7,21 @@ Only meaningful pending or active work is listed.
   nested-test residue. Any recovery needs explicit user authorization and exact
   identity or hash verification. No stale POC2/POC3 harness or checkpoint retry
   is authorized.
+- P0 | Fullscreen exclusion and residual-cost gate | Exclude fullscreen normal
+  windows from the production Plan route and establish the fullscreen gaming
+  cost baseline. [investigation](changes/reliability-condition-investigation.md)
+- P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
+  reseed behavior for `(output, workspace)` state through unplug/replug.
+  [investigation](changes/reliability-condition-investigation.md)
+- P1 | Work-area change projection | Reproject one retained domain through
+  resolution, scale, and work-area changes without using the client-drift park
+  policy. [investigation](changes/reliability-condition-investigation.md)
+- P1 | Wake transport recovery | Select and gate bounded Planner/KWin recovery
+  across suspend, wake, and Planner-name loss.
+  [investigation](changes/reliability-condition-investigation.md)
+- P2 | Runtime configuration coherence | Select and gate script, KCM, `kwinrc`,
+  shortcut, and effect configuration behavior for a running session.
+  [investigation](changes/reliability-condition-investigation.md)
 - P1 | Rust-engine/direct-geometry migration live gate | Rust-mode exact-three
   focus, movement, keyboard resize, and pointer resize are static-complete behind
   disabled-by-default exclusive authority. Await a user rebuild/new session and
