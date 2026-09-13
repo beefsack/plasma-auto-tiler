@@ -611,6 +611,199 @@ describe("plan adapter recovery and fencing", () => {
     });
 });
 
+describe("plan adapter client self-resize reconcile", () => {
+    const allocA = { x: 0, y: 0, w: 600, h: 800 };
+    const allocB = { x: 600, y: 0, w: 600, h: 800 };
+    function baseline(mocks: Mocks, refs: { a: object; b: object; c: object }): PlanAdapter {
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        return adapter;
+    }
+    function driftRects(kind: string): Record<string, { x: number; y: number; w: number; h: number }> {
+        return kind === "increment"
+            ? { "win-a": { x: 0, y: 0, w: 616, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } }
+            : { "win-a": { x: 0, y: 0, w: 200, h: 200 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } };
+    }
+    function reconcileOnce(mocks: Mocks, index: number, drift: Record<string, { x: number; y: number; w: number; h: number }>): void {
+        const corr = plannerPayload(mocks, index)["correlation_id"] as string;
+        mocks.callbacks[index]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        void drift;
+    }
+    it("retains allocation on self-resize and resets on matching geometry", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        const writesAfterBaseline = mocks.geometries.length;
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
+        assert.deepEqual(cmd, { op: "reconcile" });
+        const wins = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual((wins.find((w) => w["window"] === "win-a") as Record<string, unknown>)["rect"], { x: 0, y: 0, w: 616, h: 800 });
+        reconcileOnce(mocks, 1, driftRects("increment"));
+        assert.ok(mocks.geometries.length > writesAfterBaseline);
+        assert.ok(mocks.logs.some((l) => l.includes("kind=reconcile") && l.includes("outcome=planned-applied")));
+        assert.ok(!mocks.logs.some((l) => l.includes("stale-dropped")));
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
+        const callsBefore = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+    it("reasserts allocation across a focus-only change while geometry has drifted", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        const writesAfterBaseline = mocks.geometries.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                fingerprint: "fp-2",
+                rects: driftRects("increment"),
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
+        assert.deepEqual(cmd, { op: "reconcile" });
+        const wins = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual((wins.find((w) => w["window"] === "win-a") as Record<string, unknown>)["rect"], { x: 0, y: 0, w: 616, h: 800 });
+        reconcileOnce(mocks, 1, driftRects("increment"));
+        assert.ok(mocks.geometries.length > writesAfterBaseline);
+        assert.ok(mocks.logs.some((l) => l.includes("kind=reconcile") && l.includes("outcome=planned-applied")));
+        assert.ok(!mocks.logs.some((l) => l.includes("stale-dropped")));
+        assert.equal(adapter.isEnabled, true);
+    });
+    it("reasserts allocation across a fingerprint-only change while geometry has drifted", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = baseline(mocks, refs);
+        const writesAfterBaseline = mocks.geometries.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                fingerprint: "fp-2",
+                rects: driftRects("increment"),
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        reconcileOnce(mocks, 1, driftRects("increment"));
+        assert.ok(mocks.geometries.length > writesAfterBaseline);
+        assert.ok(mocks.logs.some((l) => l.includes("kind=reconcile") && l.includes("outcome=planned-applied")));
+        assert.equal(adapter.isEnabled, true);
+    });
+    it("constrained drifts hit three writes then park without oscillation", () => {
+        for (const kind of ["increment", "minimum"]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            baseline(mocks, refs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects(kind) });
+            for (let attempt = 0; attempt < 3; attempt += 1) {
+                fire(mocks, "geometry");
+                runDebounce(mocks);
+                const index = 1 + attempt;
+                assert.equal(mocks.dbusCalls.length, index + 1);
+                assert.deepEqual((plannerPayload(mocks, index)["command"] as Record<string, unknown>)["op"], "reconcile");
+                reconcileOnce(mocks, index, driftRects(kind));
+                assert.ok(mocks.logs.some((l) => l.includes(`cmd=gen-1-p${String(index)}`) && l.includes("outcome=planned-applied")));
+            }
+            const parkedCalls = mocks.dbusCalls.length;
+            const parkedWrites = mocks.geometries.length;
+            const parkedLogs = mocks.logs.length;
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, parkedCalls);
+            assert.equal(mocks.geometries.length, parkedWrites);
+            assert.equal(mocks.logs.length, parkedLogs);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: { "win-a": allocA, "win-b": allocB } });
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, parkedCalls);
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects(kind) });
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            assert.equal(mocks.dbusCalls.length, parkedCalls + 1);
+            assert.deepEqual((plannerPayload(mocks, parkedCalls)["command"] as Record<string, unknown>)["op"], "reconcile");
+        }
+    });
+    it("reconcile rejected and planned paths emit one precise reason", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        const logsBefore = mocks.logs.length;
+        mocks.callbacks[1]?.(rejectedReply(corr, "snapshot-invalid"));
+        const freshLogs = mocks.logs.slice(logsBefore);
+        assert.equal(freshLogs.length, 2);
+        assert.ok(freshLogs[0]?.includes("kind=reconcile") && freshLogs[0]?.includes("outcome=rejected"));
+        assert.equal(freshLogs[1], "plasma-auto-tiler:plan:rejected kind=snapshot-invalid");
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const corr2 = plannerPayload(mocks, 2)["correlation_id"] as string;
+        const logsBefore2 = mocks.logs.length;
+        mocks.callbacks[2]?.(plannedReply(corr2, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
+        const fresh2 = mocks.logs.slice(logsBefore2);
+        assert.equal(fresh2.length, 1);
+        assert.ok(fresh2[0]?.includes("kind=reconcile") && fresh2[0]?.includes("outcome=planned-applied"));
+    });
+    it("parks repeated rejected reconcile signals after three with no further D-Bus", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("increment") });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = 1 + attempt;
+            assert.equal(mocks.dbusCalls.length, index + 1);
+            const corr = plannerPayload(mocks, index)["correlation_id"] as string;
+            mocks.callbacks[index]?.(rejectedReply(corr, "snapshot-invalid"));
+        }
+        const parkedCalls = mocks.dbusCalls.length;
+        const parkedLogs = mocks.logs.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parkedCalls);
+        assert.equal(mocks.logs.length, parkedLogs);
+    });
+    it("parks repeated stale reconcile signals after three with no further D-Bus", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        const drift = driftRects("increment");
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: drift });
+        for (let attempt = 0; attempt < 3; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = 1 + attempt;
+            const corr = plannerPayload(mocks, index)["correlation_id"] as string;
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: driftRects("minimum") });
+            mocks.callbacks[index]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], null));
+            mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: drift });
+        }
+        const parkedCalls = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, parkedCalls);
+    });
+});
+
 describe("plan adapter bounded diagnostics", () => {
     it("emits only the two redacted line shapes with no identity echo", () => {
         const refs = makeRefs();
@@ -634,7 +827,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile) windows=\d+ outcome=\S+|rejected kind=[a-z-]+)$/,
                 line,
             );
             assert.ok(!line.includes("win-a"), line);

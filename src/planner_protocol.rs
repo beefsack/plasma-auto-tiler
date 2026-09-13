@@ -282,6 +282,7 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "focus-window-invalid",
     "resize-op-invalid",
     "resize-window-invalid",
+    "reconcile-op-invalid",
 ];
 
 fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static str) {
@@ -661,6 +662,19 @@ fn planned_reply(
     })
 }
 
+fn snapshot_windows_leaf_map(
+    session: &Session,
+    domain_key: &DomainKey,
+) -> std::collections::BTreeMap<String, String> {
+    session
+        .snapshot()
+        .windows
+        .into_iter()
+        .filter(|l| l.output == domain_key.output && l.workspace == domain_key.workspace)
+        .map(|l| (l.leaf.0, l.window.0))
+        .collect()
+}
+
 /// Rebuild admission target for one seed step: the currently focused target
 /// leaf's projected rectangle, or the output geometry when the rebuilt domain
 /// is still empty (or focus does not resolve there). COSMIC `map_to_tree`
@@ -914,6 +928,7 @@ impl Planner {
             "move" => self.evaluate_move_retained(&ctx),
             "focus" => self.evaluate_focus_retained(&ctx),
             "resize" => self.evaluate_resize_retained(&ctx),
+            "reconcile" => self.evaluate_reconcile_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -1511,6 +1526,182 @@ impl Planner {
             },
         )
     }
+
+    fn evaluate_reconcile_retained(&self, ctx: &Validated) -> String {
+        let command: ReconcileCommand = match serde_json::from_value(ctx.request.command.clone()) {
+            Ok(command) => command,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if command.op != "reconcile" {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "reconcile-op-invalid",
+            );
+        }
+        let cid = ctx.request.correlation_id.clone();
+        let Some(session) = self.sessions.get(&ctx.domain_key) else {
+            return rejected(
+                cid,
+                RefusalKind::UnknownDomain.as_str(),
+                RefusalKind::UnknownDomain.message(),
+            );
+        };
+        if let Some(reason) = session.divergence() {
+            return rejected(cid, reason.as_str(), reason.message());
+        }
+        if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+            return rejected(
+                cid,
+                "pending-exists",
+                "complete the pending plan before proposing",
+            );
+        }
+        let Some(retained_domain) = session
+            .domains()
+            .iter()
+            .find(|d| d.key() == ctx.domain_key)
+            .cloned()
+        else {
+            return rejected(
+                cid,
+                RefusalKind::UnknownDomain.as_str(),
+                RefusalKind::UnknownDomain.message(),
+            );
+        };
+        if retained_domain.bounds != ctx.domain.bounds || retained_domain.gap != ctx.domain.gap {
+            return rejected(
+                cid,
+                "domain-mismatch",
+                "domain bounds or gap does not match retained state",
+            );
+        }
+        let snapshot = session.snapshot();
+        let mut known: std::collections::BTreeSet<String> = snapshot
+            .windows
+            .iter()
+            .map(|l| l.window.0.clone())
+            .collect();
+        for entry in session.exception_observed() {
+            known.insert(entry.window.0.clone());
+        }
+        let observed: std::collections::BTreeSet<String> = ctx
+            .request
+            .windows
+            .iter()
+            .map(|w| w.window.clone())
+            .collect();
+        if observed != known {
+            return rejected(
+                cid,
+                RefusalKind::PartialObservation.as_str(),
+                RefusalKind::PartialObservation.message(),
+            );
+        }
+        // Empty retained domain: no tree, no windows, no focus. Projecting
+        // nothing preserves allocation trivially without touching state.
+        let domain_view = snapshot.domains.into_iter().find(|d| {
+            d.output.0 == ctx.domain_key.output.0 && d.workspace.0 == ctx.domain_key.workspace.0
+        });
+        let tree = domain_view.and_then(|d| d.tree);
+        let Some(tree) = tree else {
+            if known.is_empty() && observed.is_empty() {
+                return planned_reply(
+                    &cid,
+                    session.accepted_revision(),
+                    serde_json::json!({
+                        "kind": "reconcile",
+                        "capability": "reconcile-geometry",
+                    }),
+                    &[],
+                    None,
+                );
+            }
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        };
+        let (focus_domain, focus_leaf) = session.focus();
+        let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+            return rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            );
+        };
+        if focus_domain != ctx.domain_key {
+            return rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            );
+        }
+        let Ok(projected) = project(&tree, retained_domain.bounds, retained_domain.gap) else {
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        };
+        let leaf_to_window: std::collections::BTreeMap<String, String> =
+            snapshot_windows_leaf_map(session, &ctx.domain_key);
+        // Rebuild authoritative desired geometry from retained topology only;
+        // observed client rectangles are never adopted and shares are untouched.
+        let mut geometry: Vec<crate::session::DesiredGeometry> =
+            Vec::with_capacity(projected.len());
+        for leaf in projected {
+            let Some(window) = leaf_to_window.get(&leaf.leaf.0) else {
+                return rejected(
+                    cid,
+                    RefusalKind::MalformedTopology.as_str(),
+                    RefusalKind::MalformedTopology.message(),
+                );
+            };
+            if leaf.rect.w <= 0 || leaf.rect.h <= 0 {
+                return rejected(
+                    cid,
+                    RefusalKind::MalformedTopology.as_str(),
+                    RefusalKind::MalformedTopology.message(),
+                );
+            }
+            geometry.push(crate::session::DesiredGeometry {
+                window: WindowId(window.clone()),
+                leaf: leaf.leaf.clone(),
+                output: ctx.domain_key.output.clone(),
+                workspace: ctx.domain_key.workspace.clone(),
+                rect: leaf.rect,
+            });
+        }
+        geometry.sort_by(|a, b| {
+            a.output
+                .0
+                .cmp(&b.output.0)
+                .then(a.workspace.0.cmp(&b.workspace.0))
+                .then(a.leaf.0.cmp(&b.leaf.0))
+        });
+        if geometry.len() != known.len() {
+            return rejected(
+                cid,
+                RefusalKind::MalformedTopology.as_str(),
+                RefusalKind::MalformedTopology.message(),
+            );
+        }
+        planned_reply(
+            &cid,
+            session.accepted_revision(),
+            serde_json::json!({
+                "kind": "reconcile",
+                "capability": "reconcile-geometry",
+            }),
+            &geometry,
+            Some((&focus_domain, &focus_leaf)),
+        )
+    }
 }
 
 /// Strict stateless Planner evaluation. Always returns a bounded reply:
@@ -1928,6 +2119,12 @@ struct ResizeCommand {
     direction: String,
     mode: String,
     press_index: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReconcileCommand {
+    op: String,
 }
 
 fn evaluate_resize(ctx: &Validated) -> String {
@@ -3051,6 +3248,191 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 34, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 35, "closed registry size");
+    }
+
+    fn geometry_by_window(
+        reply: &serde_json::Value,
+    ) -> std::collections::BTreeMap<String, (i32, i32, i32, i32)> {
+        reply["desired_geometry"]
+            .as_array()
+            .expect("planned geometry present")
+            .iter()
+            .map(|entry| {
+                let rect = &entry["rect"];
+                (
+                    entry["window"].as_str().expect("window").to_owned(),
+                    (
+                        rect["x"].as_i64().unwrap() as i32,
+                        rect["y"].as_i64().unwrap() as i32,
+                        rect["w"].as_i64().unwrap() as i32,
+                        rect["h"].as_i64().unwrap() as i32,
+                    ),
+                )
+            })
+            .collect()
+    }
+
+    fn seed_two_window_planner() -> Planner {
+        let mut planner = Planner::new();
+        for (correlation, focused, windows, command) in [
+            (
+                "rec-seed-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "rec-seed-2",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let request =
+                retained_request(correlation, "owner-1", "gen-1", focused, &windows, command);
+            let reply = parse_reply(&planner.evaluate(&request));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        assert_eq!(planner.retained_domains(), 1);
+        planner
+    }
+
+    #[test]
+    fn reconcile_retains_allocation_despite_changed_observed_rects() {
+        let mut planner = seed_two_window_planner();
+        let baseline = retained_request(
+            "rec-base-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let baseline_reply = parse_reply(&planner.evaluate(&baseline));
+        assert_eq!(baseline_reply["outcome"], "planned", "{baseline_reply}");
+        assert_eq!(
+            baseline_reply["detail"]["kind"], "reconcile",
+            "{baseline_reply}"
+        );
+        assert_geometry_covers(&baseline_reply, &["win-1", "win-2"]);
+        let before = geometry_by_window(&baseline_reply);
+        // Same membership with deliberately drifted client rectangles; the
+        // authoritative allocation must not move and shares/topology must not
+        // change. Observed rects stay within domain bounds so only allocation
+        // retention is exercised, never snapshot validation.
+        let drifted = retained_request(
+            "rec-drift-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 10, 10), ("win-2", 1100, 700, 50, 50)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let drifted_reply = parse_reply(&planner.evaluate(&drifted));
+        assert_eq!(drifted_reply["outcome"], "planned", "{drifted_reply}");
+        assert_eq!(
+            drifted_reply["detail"]["kind"], "reconcile",
+            "{drifted_reply}"
+        );
+        assert_geometry_covers(&drifted_reply, &["win-1", "win-2"]);
+        assert_eq!(
+            geometry_by_window(&drifted_reply),
+            before,
+            "{drifted_reply} vs {baseline_reply}"
+        );
+        assert_eq!(planner.retained_domains(), 1);
+        // No pending crosses calls and no topology rebuild: a follow-up
+        // directional command still plans on the retained tree.
+        let follow = retained_request(
+            "rec-follow-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "focus", "window": "win-1", "direction": "right"}),
+        );
+        let follow_reply = parse_reply(&planner.evaluate(&follow));
+        assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn reconcile_membership_mismatch_rejects_with_single_reason() {
+        let mut planner = seed_two_window_planner();
+        let mismatched = retained_request(
+            "rec-mismatch-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-3", 400, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let reply = parse_reply(&planner.evaluate(&mismatched));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "partial-observation", "{reply}");
+        assert_eq!(
+            reply["message"], "observation does not cover the known window set",
+            "{reply}"
+        );
+        assert!(reply.get("detail").is_none(), "{reply}");
+        assert_ne!(reply["kind"], "diverged", "{reply}");
+        // Preserved state: the next complete observation still reconciles.
+        assert_eq!(planner.retained_domains(), 1);
+        let recover = retained_request(
+            "rec-mismatch-2",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        );
+        let recovered = parse_reply(&planner.evaluate(&recover));
+        assert_eq!(recovered["outcome"], "planned", "{recovered}");
+        assert_geometry_covers(&recovered, &["win-1", "win-2"]);
+    }
+
+    #[test]
+    fn invalid_command_paths_have_single_precise_reason() {
+        let mut planner = seed_two_window_planner();
+        // Unknown op stays coarse-free with exactly one kind.
+        let unknown = retained_request(
+            "inv-unknown-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "bogus-op"}),
+        );
+        let unknown_reply = parse_reply(&planner.evaluate(&unknown));
+        assert_eq!(unknown_reply["outcome"], "rejected", "{unknown_reply}");
+        assert_eq!(unknown_reply["kind"], "unknown-value", "{unknown_reply}");
+        // Strict shape: extra fields reject without rebuilding.
+        let extra = retained_request(
+            "inv-extra-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile", "extra": 1}),
+        );
+        let extra_reply = parse_reply(&planner.evaluate(&extra));
+        assert_eq!(extra_reply["outcome"], "rejected", "{extra_reply}");
+        assert_eq!(extra_reply["kind"], "unknown-field", "{extra_reply}");
+        // Direct op-mismatch details are exact single tokens.
+        let cid = "inv-op-1";
+        let mut ctx = validate_request(&retained_request(
+            cid,
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        ))
+        .expect("base valid");
+        ctx.request.command["op"] = serde_json::json!("bogus-op");
+        let text = planner.evaluate_reconcile_retained(&ctx);
+        let reply = parse_reply(&text);
+        assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+        assert_eq!(reply["detail"], "reconcile-op-invalid", "{reply}");
     }
 }

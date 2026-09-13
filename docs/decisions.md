@@ -510,3 +510,13 @@ Historical implementation detail is recoverable in Git history.
 - Retain JavaScript for discrete window add/remove management. Group behavior,
   inactive borders, Steam-specific handling, and complete keyboard-layout
   support remain deferred.
+- Production self-resize reconciliation, authorized 2026-09-13: retained Rust
+  session allocation is authoritative over same-scope client geometry drift.
+  The KWin plan adapter sends strict `DescribePlan` `{ "op": "reconcile" }`,
+  applies the retained projection, and never derives sibling shares from an
+  actual client rectangle. It makes at most three terminal reassertion attempts
+  before parking that scope; this is an explicit KWin bounded-retry policy, not
+  a COSMIC threshold or KWin acknowledgement claim. Focus/fingerprint changes
+  do not permit drift adoption. Production interactive edge-drag share changes
+  remain deferred: current drags are reasserted then parked, and no production
+  pointer-route authority is selected by this decision.
