@@ -31,8 +31,8 @@
 - `src/planner_protocol.rs:1533-1628` evaluates retained pointer resize through
   the normal acknowledgement and post-observation boundary.
 - `kwin/src/plan-adapter.ts:1061-1131` consumes only the exact one-shot echo
-  before reconciliation. `kwin/src/plan-adapter.ts:1410-1500` writes only
-  changed neighbours and records that expectation.
+  before reconciliation. `kwin/src/plan-adapter.ts:1410-1500` writes the
+  retained projection and records a neighbour-only echo expectation.
 
 ## Static Verification
 
@@ -59,18 +59,27 @@
 
 ## Live Evidence
 
-- The native effect loaded, its session D-Bus endpoint answered, strict
-  demarshalling worked, and KWin remained stable during the first real-hardware
-  exercise.
+- One real-hardware KWin 6.7.4 session, in one three-window scope on one output,
+  proved `isEffectSupported` true, explicit one-time enable with
+  `EnabledByDefault: false`, effect load, endpoint response, strict
+  demarshalling, pull ordering, and no KWin crash.
 - Twelve committed drags each produced, in order,
-  `route-diag:drag-pull action=dispatch`, a non-cancelled `drag-verdict` with
-  `reason=ok-moved`, then one `pointer-resize` `planned-applied` plan for three
-  windows. This proves the pull ordering, reply association, neighbour writes,
-  and physical share reflow.
-- Esc produced `cancelled=true correlation=drag-11 reason=no-change` and no
-  pointer-resize plan. The strict cancellation no-op holds live.
+  `route-diag:drag-pull action=dispatch`, then
+  `route-diag:drag-verdict cancelled=false correlation=drag-N reason=ok-moved`,
+  then `plan:cmd=plan-1-pN kind=pointer-resize windows=3 outcome=planned-applied`.
+- One Esc-cancelled drag produced
+  `drag-verdict cancelled=true correlation=drag-11 reason=no-change` and no
+  pointer-resize plan. The strict no-op holds live.
+- This evidence does not prove multi-output, more than three windows,
+  non-horizontal splits, workspace/output boundaries, atomicity,
+  acknowledgement, or stock-KWin parity.
 
-## Echo-Fence Diagnosis
+## Later Static-Only Fixes
+
+- The live evidence above predates both the echo-fence fix and the source
+  reassertion fix. Neither has run live.
+
+### Echo Fence
 
 - The planned neighbour-write echo can equal `lastGood` exactly. The equality
   fast paths at `kwin/src/plan-adapter.ts:1016-1045` returned before the echo
@@ -83,14 +92,10 @@
   tolerance nor changes the mismatch reconciliation policy. Hermetic coverage
   proves that a source-only drift following an exact echo reaches reconcile
   instead of being swallowed by the stale expectation.
-- The reported visible gap loss is not caused by the spurious reconcile. Both
-  pointer-resize and reconcile project the retained domain's identical inset
-  bounds and gap; reconcile rejects domain/gap changes and never adopts client
-  rectangles. The static path therefore cannot reproject without the selected
-  `(DOMAIN_GAP, OUTER_DOMAIN_GAP) = (8, 8)`. The screenshot symptom remains
-  unestablished as a separate live issue.
+- The user reported visible gap loss before the source reassertion fix. It has
+  not been visually confirmed fixed.
 
-## Source Reassertion Diagnosis
+### Source Reassertion
 
 - The pointer-resize reply contains the complete retained projection, including
   the dragged source's gap-inset rectangle. `kwin/src/plan-adapter.ts:1412-1415`
@@ -110,10 +115,11 @@
 
 ## User-Owned Live Checks
 
-- After rebuilding and enabling the updated production bundle in a new session,
-  perform committed left, right, up, and down single-edge resizes in a stable
-  three-window scope and wait for geometry to settle. Each journal sequence
-  must end with one `pointer-resize` `planned-applied` and no immediate
-  reconcile. Verify each affected sibling gap and outer gap is visibly 8px. If
-  a gap is lost, capture the bounded plan diagnostics and geometry for a
-  separate cause.
+- One consolidated gate covers the static-only echo-fence and source-reassertion
+  fixes: after rebuilding and enabling the updated production bundle in a new
+  session, perform committed left, right, up, and down single-edge resizes in a
+  stable three-window scope and wait for geometry to settle. Each journal
+  sequence must end with one `pointer-resize` `planned-applied` and no immediate
+  reconcile. Verify each affected sibling and outer gap is visibly 8px. If a
+  gap is lost, capture the bounded plan diagnostics and geometry for a separate
+  cause.

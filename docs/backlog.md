@@ -783,11 +783,6 @@ Only meaningful pending or active work is listed.
   attribute it. A future explicitly authorized observation must bind each
   action to before/after `isScriptLoaded`, exact `Script<ID>` introspection, and
   KWin PID/start identity.
-- P1 | open, pending user architecture decision | Keep the KWin ABI-facing
-  effect as a minimal C++/Qt/moc shim and move only portable logic to Rust
-  through a POD C ABI; do not pursue a full Rust KWin plugin. Native access
-  does not safely unblock edge-drag cancellation. |
-  [investigation](changes/native-effect-rust-and-group-highlighting.md)
 - P1 | open | Extend group borders with group highlighting so moving a window
   makes its group obvious. Compute membership/intent in Rust and render a
   bounded pushed highlight set in the native effect; this can proceed in the

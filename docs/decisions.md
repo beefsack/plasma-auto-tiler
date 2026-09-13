@@ -427,6 +427,30 @@ Historical implementation detail is recoverable in Git history.
   KWin-origin authoritative snapshot, watcher-ordering/login-autostart, or
   update/rollback generation claim is made.
 
+## Production Interactive Edge Drag
+
+- Production interactive single-edge drag share adjustment is selected and
+  shipped. The disabled-by-default `plasma-auto-tiler-drag-oracle` native effect
+  records final drag geometry; after its explicit one-time enable, the
+  production script pulls its read-only session D-Bus verdict and routes a
+  non-cancelled verdict through `pointer-resize` shares. A cancelled or
+  no-change verdict makes no pointer-resize plan.
+- One real-hardware KWin 6.7.4 session proved only this route in one three-window
+  scope on one output: `isEffectSupported` returned true; the effect loaded and
+  its endpoint answered; strict D-Bus demarshalling and pull ordering worked;
+  and KWin did not crash. Twelve committed drags each logged
+  `route-diag:drag-pull action=dispatch`, then
+  `route-diag:drag-verdict cancelled=false correlation=drag-N reason=ok-moved`,
+  then `plan:cmd=plan-1-pN kind=pointer-resize windows=3 outcome=planned-applied`.
+  One Esc-cancelled drag logged
+  `drag-verdict cancelled=true correlation=drag-11 reason=no-change` and no
+  pointer-resize plan.
+- The later one-shot echo-fence and dragged-source reassertion fixes are
+  static-only. The user-reported gap loss before the source fix has not been
+  visually confirmed fixed. Nothing is proven for multi-output, more than three
+  windows, non-horizontal splits, or workspace/output boundaries, and this
+  selects no atomicity, acknowledgement, or stock-KWin parity claim.
+
 ## Deferred Scope
 
 - Session D-Bus is selected for the initial Rust/KWin migration transport only:
@@ -531,6 +555,4 @@ Historical implementation detail is recoverable in Git history.
   actual client rectangle. It makes at most three terminal reassertion attempts
   before parking that scope; this is an explicit KWin bounded-retry policy, not
   a COSMIC threshold or KWin acknowledgement claim. Focus/fingerprint changes
-  do not permit drift adoption. Production interactive edge-drag share changes
-  remain deferred: current drags are reasserted then parked, and no production
-  pointer-route authority is selected by this decision.
+  do not permit drift adoption.
