@@ -741,4 +741,29 @@ describe("slice 2 pointer echo fence", () => {
         const command = (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
         assert.deepEqual(command, { op: "reconcile" });
     });
+
+    it("disarms an exact echo before later source-only drift", () => {
+        const refs = makeRefs();
+        const mocks = echoMockEnv(refs);
+        seedPointerEcho(mocks);
+        // The complete planned geometry is already the current baseline.
+        mocks.current = {
+            "win-a": { x: 0, y: 0, w: 600, h: 800 },
+            "win-b": { x: 900, y: 0, w: 300, h: 800 },
+        };
+        fireEcho(mocks, "geometry");
+        runEchoDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        // A later source-only drift is not the neighbour-write echo and must
+        // reach bounded reconciliation.
+        mocks.current = {
+            "win-a": { x: 0, y: 0, w: 601, h: 800 },
+            "win-b": { x: 900, y: 0, w: 300, h: 800 },
+        };
+        fireEcho(mocks, "geometry");
+        runEchoDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        const command = (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.deepEqual(command, { op: "reconcile" });
+    });
 });

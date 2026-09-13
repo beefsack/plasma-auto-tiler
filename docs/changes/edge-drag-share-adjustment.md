@@ -57,28 +57,45 @@
   `npm test --prefix kwin` (429 pass), `npm run typecheck --prefix kwin`, and
   `git diff --check` passed.
 
-## Live-Unproven Claims
+## Live Evidence
 
-- Slice 1 has not proved KWin loads the packaged effect, exposes its session
-  D-Bus endpoint, or delivers authoritative start/final geometry to it.
-- Slice 2 has not proved real KWin D-Bus demarshalling/order, script-to-effect
-  reply association, native neighbour writes, or physical share reflow.
-- The first edge-drag test did not load the disabled-by-default oracle effect.
-  It therefore did not exercise a verdict callback or the pointer route; the
-  new dispatch line distinguishes that non-answering case without inferring a
-  timeout.
+- The native effect loaded, its session D-Bus endpoint answered, strict
+  demarshalling worked, and KWin remained stable during the first real-hardware
+  exercise.
+- Twelve committed drags each produced, in order,
+  `route-diag:drag-pull action=dispatch`, a non-cancelled `drag-verdict` with
+  `reason=ok-moved`, then one `pointer-resize` `planned-applied` plan for three
+  windows. This proves the pull ordering, reply association, neighbour writes,
+  and physical share reflow.
+- Esc produced `cancelled=true correlation=drag-11 reason=no-change` and no
+  pointer-resize plan. The strict cancellation no-op holds live.
+
+## Echo-Fence Diagnosis
+
+- The planned neighbour-write echo can equal `lastGood` exactly. The equality
+  fast paths at `kwin/src/plan-adapter.ts:1016-1045` returned before the echo
+  fence at `:1061-1085`, leaving its one-shot expectation armed. The next
+  same-scope geometry observation then consumed that stale expectation or
+  mismatched it and dispatched a reconcile. This timing-dependent ordering
+  explains why the live failure was intermittent.
+- The equality fast paths now clear the one-shot expectation. This retains the
+  exact neighbour-rectangle match and one-shot semantics; it neither adds a
+  tolerance nor changes the mismatch reconciliation policy. Hermetic coverage
+  proves that a source-only drift following an exact echo reaches reconcile
+  instead of being swallowed by the stale expectation.
+- The reported visible gap loss is not caused by the spurious reconcile. Both
+  pointer-resize and reconcile project the retained domain's identical inset
+  bounds and gap; reconcile rejects domain/gap changes and never adopts client
+  rectangles. The static path therefore cannot reproject without the selected
+  `(DOMAIN_GAP, OUTER_DOMAIN_GAP) = (8, 8)`. The screenshot symptom remains
+  unestablished as a separate live issue.
 
 ## User-Owned Live Checks
 
-- Slice 1: rebuild the KWin script and native effect in a new user session;
-  enable only `plasma-auto-tiler-drag-oracle`; perform one committed single-edge
-  resize and one Esc-cancelled resize; confirm one redacted `drag-verdict` line
-  for each and `cancelled=true reason=no-change` for Esc. Confirm neither drag
-  changes tile shares in Slice 1.
-- Slice 2: after the Slice 1 check, enable the production script and repeat a
-  deliberate single-edge resize in a stable tiled scope; confirm exactly one
-  `pointer-resize` plan and the neighbouring share reflows. Repeat with Esc;
-  confirm no `DescribePlan` pointer command and no share change. Confirm the
-  planned neighbour-write echo produces no reconcile, while a constrained or
-  mismatched neighbour write follows the existing maximum-three reconciliation
-  policy.
+- After the user rebuilds and enables the updated production bundle in a new
+  session, perform committed single-edge resizes in a stable three-window scope
+  and wait for geometry to settle. Each journal sequence must end with one
+  `pointer-resize` `planned-applied` and no immediate reconcile. Then verify
+  the affected sibling and outer gaps remain visibly 8px. If a gap is lost
+  without a reconcile, capture the bounded plan diagnostics and geometry for a
+  separate cause; this change does not establish that cause.

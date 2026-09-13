@@ -1014,6 +1014,7 @@ export class PlanAdapter {
             return;
         }
         if (snapshotsEqual(freshSnapshot, previous)) {
+            this.pointerEcho = null;
             this.reconcileAttempts = 0;
             this.parked = false;
             if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
@@ -1030,6 +1031,7 @@ export class PlanAdapter {
             return;
         }
         if (sameRects(previous, freshSnapshot)) {
+            this.pointerEcho = null;
             this.lastGood = freshSnapshot;
             this.reconcileAttempts = 0;
             this.parked = false;
