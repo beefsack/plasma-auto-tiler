@@ -1409,15 +1409,12 @@ export class PlanAdapter {
             byRef.set(entry.id, entry.ref);
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        const effectiveGeometry =
-            flightState.op === "pointer-resize" && flightState.pointerSource !== null
-                ? planned.geometry.filter((entry) => entry.window !== flightState.pointerSource)
-                : planned.geometry;
-        const ordered = orderGeometryWrites(oldById, effectiveGeometry);
+        const ordered = orderGeometryWrites(oldById, planned.geometry);
         // Focus is focus-only: never rewrite geometry, only move the active
         // window. Matches the standalone focus adapter single-write contract;
         // move/admit/remove/resize still apply complete geometries above.
-        // Pointer writes changed neighbours only, never the drag source.
+        // KWin leaves the drag source at its raw pointer rectangle. Reassert the
+        // retained projection so its inset sibling gap is restored too.
         if (flightState.op !== "focus") {
             for (const entry of ordered) {
                 const target = byRef.get(entry.window);
@@ -1489,10 +1486,12 @@ export class PlanAdapter {
             });
             this.lastGood = { ...base, windows: Object.freeze(windows) };
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
-                const neighbours = effectiveGeometry.map((entry) => ({
-                    window: entry.window,
-                    rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
-                }));
+                const neighbours = planned.geometry
+                    .filter((entry) => entry.window !== flightState.pointerSource)
+                    .map((entry) => ({
+                        window: entry.window,
+                        rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                    }));
                 this.pointerEcho = {
                     correlation: flightState.correlation,
                     source: flightState.pointerSource,

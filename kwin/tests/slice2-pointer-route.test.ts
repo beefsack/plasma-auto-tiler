@@ -94,7 +94,7 @@ function mockEnv(refs: { a: object; b: object }): Mocks {
     return state;
 }
 
-function plannedReply(correlation: string): string {
+function gapPlannedReply(correlation: string): string {
     return JSON.stringify({
         v: 1,
         correlation_id: correlation,
@@ -102,8 +102,8 @@ function plannedReply(correlation: string): string {
         base_revision: 2,
         detail: { kind: "pointer-resize" },
         desired_geometry: [
-            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 900, h: 800 } },
-            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 900, y: 0, w: 300, h: 800 } },
+            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 8, y: 8, w: 884, h: 784 } },
+            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 900, y: 8, w: 292, h: 784 } },
         ],
     });
 }
@@ -199,7 +199,7 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.equal(mocks.dbusCalls.length, 0);
     });
 
-    it("writes neighbours only and fences the echo before reconciliation", () => {
+    it("reasserts the drag source and preserves the planned sibling gap", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new PlanAdapter(mocks.env);
@@ -208,10 +208,14 @@ describe("slice 2 plan adapter pointer route", () => {
         (adapter as unknown as { requestResync: () => void }).requestResync();
         assert.equal(adapter.requestPointerResize("win-a", "right", 1000), true);
         const correlation = (JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>)["correlation_id"] as string;
-        mocks.callbacks[0]?.(plannedReply(correlation));
-        // Only win-b written, never the drag source win-a.
-        assert.equal(mocks.geometries.length, 1);
-        assert.equal(mocks.geometries[0]?.target, refs.b);
+        mocks.callbacks[0]?.(gapPlannedReply(correlation));
+        assert.equal(mocks.geometries.length, 2);
+        const geometries = new Map(mocks.geometries.map((entry) => [entry.target, entry.rect]));
+        const source = geometries.get(refs.a);
+        const neighbour = geometries.get(refs.b);
+        assert.ok(source !== undefined);
+        assert.ok(neighbour !== undefined);
+        assert.equal(neighbour.x - (source.x + source.w), 8);
         for (const line of mocks.logs) {
             assert.ok(!line.includes("win-a"));
             assert.ok(!line.includes("win-b"));

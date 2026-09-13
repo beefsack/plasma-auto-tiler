@@ -90,12 +90,30 @@
   `(DOMAIN_GAP, OUTER_DOMAIN_GAP) = (8, 8)`. The screenshot symptom remains
   unestablished as a separate live issue.
 
+## Source Reassertion Diagnosis
+
+- The pointer-resize reply contains the complete retained projection, including
+  the dragged source's gap-inset rectangle. `kwin/src/plan-adapter.ts:1412-1415`
+  previously removed that source from the native write set, although KWin leaves
+  it at its raw pointer rectangle after interactive resize. The adapter then
+  recorded the retained source in `lastGood` at `:1480-1501` without writing it.
+  This left the source flush against a correctly projected neighbour.
+- Pointer application now writes the complete retained projection. The one-shot
+  echo remains neighbour-only: it still expects only the geometry writes that
+  can arrive asynchronously after the source reassertion. Hermetic KWin coverage
+  applies a projection with an 8px sibling separation and asserts the applied
+  source and neighbour rectangles retain exactly that gap.
+- `deriveOracleEdge` correctly supplies the raw leading edge for left/up and
+  trailing edge for right/down as the planner's preceding-sibling boundary. The
+  retained projection applies the gap after that boundary, so no gap-coordinate
+  conversion is needed.
+
 ## User-Owned Live Checks
 
-- After the user rebuilds and enables the updated production bundle in a new
-  session, perform committed single-edge resizes in a stable three-window scope
-  and wait for geometry to settle. Each journal sequence must end with one
-  `pointer-resize` `planned-applied` and no immediate reconcile. Then verify
-  the affected sibling and outer gaps remain visibly 8px. If a gap is lost
-  without a reconcile, capture the bounded plan diagnostics and geometry for a
-  separate cause; this change does not establish that cause.
+- After rebuilding and enabling the updated production bundle in a new session,
+  perform committed left, right, up, and down single-edge resizes in a stable
+  three-window scope and wait for geometry to settle. Each journal sequence
+  must end with one `pointer-resize` `planned-applied` and no immediate
+  reconcile. Verify each affected sibling gap and outer gap is visibly 8px. If
+  a gap is lost, capture the bounded plan diagnostics and geometry for a
+  separate cause.
