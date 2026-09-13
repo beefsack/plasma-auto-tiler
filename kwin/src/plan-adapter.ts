@@ -40,7 +40,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
-export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope";
+export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen";
 export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize";
 
 export interface PlanRect {
@@ -56,6 +56,7 @@ export interface PlanObservedWindow {
     readonly rect: PlanRect;
     readonly output: string;
     readonly workspace: string;
+    readonly fullscreen: boolean;
 }
 
 export interface PlanObserved {
@@ -80,6 +81,7 @@ export interface PlanSnapshotWindow {
     readonly rect: PlanRect;
     readonly output: string;
     readonly workspace: string;
+    readonly fullscreen: boolean;
 }
 
 export interface PlanSnapshot {
@@ -99,6 +101,7 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
         output: entry.output,
         workspace: entry.workspace,
+        fullscreen: entry.fullscreen,
     }));
     return {
         domainOutput: observed.domainOutput,
@@ -114,6 +117,23 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         focusedId: observed.focusedId,
         windows,
         fingerprint: observed.fingerprint,
+    };
+}
+
+// Clamp a rect into the domain bounds, preserving size where it fits. The
+// result is always a valid contained carried rect; used only as the retained
+// representation for a fullscreen window observed before any retained
+// baseline exists (admitted while already fullscreen).
+function clampCarriedRect(rect: PlanRect, bounds: PlanRect): PlanRect {
+    const w = Math.min(rect.w, bounds.w);
+    const h = Math.min(rect.h, bounds.h);
+    const maxX = bounds.x + bounds.w - w;
+    const maxY = bounds.y + bounds.h - h;
+    return {
+        x: Math.min(Math.max(rect.x, bounds.x), maxX),
+        y: Math.min(Math.max(rect.y, bounds.y), maxY),
+        w,
+        h,
     };
 }
 
@@ -154,7 +174,8 @@ function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
             other.rect.w !== entry.rect.w ||
             other.rect.h !== entry.rect.h ||
             other.output !== entry.output ||
-            other.workspace !== entry.workspace
+            other.workspace !== entry.workspace ||
+            other.fullscreen !== entry.fullscreen
         ) {
             return false;
         }
@@ -192,7 +213,9 @@ function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
 // Geometry-only equality ignoring focus and fingerprint: true when the same
 // scope/window set carries identical rectangles. Used to separate a
 // focus/fingerprint-only change (adopt the new baseline, no reconcile) from
-// genuine same-scope geometry drift (reassert via reconcile).
+// genuine same-scope geometry drift (reassert via reconcile). A window that
+// is fullscreen in `b` is excluded: its rectangle is compositor-owned while
+// fullscreen, so it never counts as drift and never triggers a reflow.
 function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
     if (a.windows.length !== b.windows.length) {
         return false;
@@ -203,8 +226,13 @@ function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
     }
     for (const entry of b.windows) {
         const other = byId.get(entry.id);
+        if (other === undefined) {
+            return false;
+        }
+        if (entry.fullscreen) {
+            continue;
+        }
         if (
-            other === undefined ||
             other.rect.x !== entry.rect.x ||
             other.rect.y !== entry.rect.y ||
             other.rect.w !== entry.rect.w ||
@@ -250,6 +278,9 @@ function rectsEqualExceptSource(a: PlanSnapshot, b: PlanSnapshot, sourceId: stri
             return false;
         }
         if (entry.id === sourceId) {
+            continue;
+        }
+        if (entry.fullscreen) {
             continue;
         }
         if (
@@ -592,6 +623,9 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         if (!isOpaqueId(candidate.id) || typeof candidate.ref !== "object" || candidate.ref === null) {
             return false;
         }
+        if (typeof candidate.fullscreen !== "boolean") {
+            return false;
+        }
         if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
             return false;
         }
@@ -693,7 +727,7 @@ export class PlanAdapter {
         if (!isOwnerId(auth.owner) || !isGeneration(auth.generation)) {
             return false;
         }
-        const kinds: ReadonlyArray<PlanSignal> = ["added", "removed", "activated", "geometry", "scope"];
+        const kinds: ReadonlyArray<PlanSignal> = ["added", "removed", "activated", "geometry", "scope", "fullscreen"];
         const attached: Array<() => void> = [];
         for (const kind of kinds) {
             let detach: (() => void) | null = null;
@@ -764,7 +798,7 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        const snapshot = snapshotOf(observed);
+        const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         this.dispatch({
             op: "focus",
@@ -772,6 +806,51 @@ export class PlanAdapter {
             removed: null,
             body: { op: "focus", window: snapshot.focusedId, direction },
         });
+    }
+
+    // A fullscreen focused window keeps its planner-tree slot but is never
+    // actuated or reflowed: directional move/resize on it would change its
+    // retained position/share, so it is refused fail-closed before dispatch.
+    // Focus is exempt: it carries no geometry write.
+    private windowIsFullscreen(observed: PlanObserved, windowId: string): boolean {
+        for (const entry of observed.windows) {
+            if (entry.id === windowId && entry.fullscreen) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    // Carried snapshot for dispatch and baseline comparison: a fullscreen
+    // member carries its retained in-bounds rectangle (the last planned
+    // projection) in place of the compositor-owned fullscreen frame rect,
+    // which can exceed the work area and would otherwise be rejected as
+    // window-out-of-bounds. A fullscreen member with no retained projection
+    // yet is clamped into the domain bounds. The raw frame rect is never
+    // carried for a fullscreen member.
+    private carriedSnapshot(observed: PlanObserved): PlanSnapshot {
+        const snapshot = snapshotOf(observed);
+        if (!snapshot.windows.some((entry) => entry.fullscreen)) {
+            return snapshot;
+        }
+        const retainedById = new Map<string, PlanRect>();
+        if (this.lastGood !== null) {
+            for (const entry of this.lastGood.windows) {
+                retainedById.set(entry.id, entry.rect);
+            }
+        }
+        const windows = snapshot.windows.map((entry) => {
+            if (!entry.fullscreen) {
+                return entry;
+            }
+            const retained = retainedById.get(entry.id);
+            const rect =
+                retained !== undefined
+                    ? retained
+                    : clampCarriedRect(entry.rect, snapshot.domainBounds);
+            return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
+        });
+        return { ...snapshot, windows: Object.freeze(windows) };
     }
 
     requestMove(direction: unknown): void {
@@ -782,7 +861,10 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        const snapshot = snapshotOf(observed);
+        if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         this.dispatch({
             op: "move",
@@ -800,7 +882,10 @@ export class PlanAdapter {
         if (observed === null) {
             return;
         }
-        const snapshot = snapshotOf(observed);
+        if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         let pressIndex = 0;
         if (
@@ -848,7 +933,10 @@ export class PlanAdapter {
         if (!found) {
             return false;
         }
-        const snapshot = snapshotOf(observed);
+        if (this.windowIsFullscreen(observed, windowId as string)) {
+            return false;
+        }
+        const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         const intent: AutoIntent = {
             op: "pointer-resize",
@@ -927,7 +1015,7 @@ export class PlanAdapter {
         if (fresh === null) {
             return;
         }
-        const freshSnapshot = snapshotOf(fresh);
+        const freshSnapshot = this.carriedSnapshot(fresh);
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
         const previous = this.lastGood;
@@ -1370,7 +1458,7 @@ export class PlanAdapter {
                 this.failFlight(flightState, "stale-scope");
                 return;
             }
-            const freshSnapshot = snapshotOf(fresh);
+            const freshSnapshot = this.carriedSnapshot(fresh);
             if (!rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source)) {
                 this.failFlight(flightState, "stale-scope");
                 return;
@@ -1379,7 +1467,7 @@ export class PlanAdapter {
             return;
         }
         if (flightState.removed === null) {
-            const freshSnapshot = snapshotOf(fresh);
+            const freshSnapshot = this.carriedSnapshot(fresh);
             if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
                 this.failFlight(flightState, "stale-scope");
                 return;
@@ -1405,9 +1493,13 @@ export class PlanAdapter {
     ): void {
         const byRef = new Map<string, object>();
         const oldById = new Map<string, PlanRect>();
+        const fullscreenById = new Set<string>();
         for (const entry of current.windows) {
             byRef.set(entry.id, entry.ref);
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
+            if (entry.fullscreen) {
+                fullscreenById.add(entry.id);
+            }
         }
         const ordered = orderGeometryWrites(oldById, planned.geometry);
         // Focus is focus-only: never rewrite geometry, only move the active
@@ -1417,6 +1509,9 @@ export class PlanAdapter {
         // retained projection so its inset sibling gap is restored too.
         if (flightState.op !== "focus") {
             for (const entry of ordered) {
+                if (fullscreenById.has(entry.window)) {
+                    continue;
+                }
                 const target = byRef.get(entry.window);
                 if (target === undefined) {
                     this.failFlight(flightState, "precondition-mismatch");
@@ -1475,14 +1570,18 @@ export class PlanAdapter {
             }
         }
         if (flightState.op !== "focus") {
-            const base = snapshotOf(current);
+            const base = this.carriedSnapshot(current);
             const rectById = new Map<string, PlanRect>();
             for (const entry of planned.geometry) {
                 rectById.set(entry.window, entry.rect);
             }
             const windows = base.windows.map((entry) => {
+                // Every member (including a fullscreen one) records the
+                // planner's retained projection from the reply: the tree slot
+                // must survive enter/exit, and the carried baseline never
+                // stores the compositor-owned fullscreen frame rect.
                 const rect = rectById.get(entry.id) ?? entry.rect;
-                return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace };
+                return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen };
             });
             this.lastGood = { ...base, windows: Object.freeze(windows) };
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {

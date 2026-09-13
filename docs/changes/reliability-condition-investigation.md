@@ -85,25 +85,27 @@
    has an automatic, bounded recovery route and the first post-wake operation
    has selected topology semantics. Otherwise record the exact failing step.
 
-### Full-Screen And Gaming - NOT HANDLED
+### Full-Screen And Gaming - CODE ADDRESSED, LIVE GATE PENDING
 
-- `docs/decisions.md:233-235` says fullscreen is never tiled, resized, or
-  reflowed. The production adapter starts unconditionally from
-  `kwin/src/entry.ts:51-56`, observes every `normalWindow` with no `fullScreen`
-  exclusion at `kwin/src/plan-adapter-entry.ts:397-445`, and sends those windows
-  in every `DescribePlan` request: `kwin/src/plan-adapter.ts:1157-1195`.
-- The wire DTO has no exception fields, and the Planner constructs each observed
-  window with `fullscreen: false`: `src/planner_protocol.rs:170-175,648-661`.
-  Normal fullscreen windows can therefore be admitted and included in complete
-  geometry writes: `kwin/src/plan-adapter.ts:1401-1507`.
-- The production route's fullscreen behavior contradicts the current decision.
-  The separate, unwired adapters do exclude fullscreen windows:
-  `kwin/src/focus-adapter-entry.ts:131-132`,
-  `kwin/src/movement-adapter-entry.ts:252-253`,
-  `kwin/src/resize-adapter-entry.ts:192-193`,
-  `kwin/src/pointer-resize-adapter-entry.ts:197-198`, and
-  `kwin/src/workspace-send-adapter-entry.ts:347`. They are not production
-  evidence.
+- `kwin/src/plan-adapter-entry.ts` now observes the exact fail-closed
+  `readProp(ref, "fullScreen") !== false` state and subscribes to each window's
+  `fullScreenChanged`, including later additions. A fullscreen window remains in
+  the observation set and Planner tree; it is not deferred or removed.
+- `kwin/src/plan-adapter.ts` carries the last retained in-bounds planned rect for
+  fullscreen members instead of their compositor-owned fullscreen frame. This
+  keeps every Planner request valid when the fullscreen frame extends beyond the
+  work area, retains the member's tree position and share, and permits sibling
+  reflows.
+- Reply-time re-observation skips every fullscreen geometry target. Fullscreen
+  frame drift is excluded from the reassert-then-park policy, while fullscreen
+  exit compares the restored frame against the retained projection and reconciles
+  only if restoration is imperfect. Direct move, keyboard resize, and pointer
+  resize of a fullscreen target refuse fail-closed; the pointer route records
+  `drag-fullscreen-refused` rather than a shared derivation failure.
+- Hermetic KWin coverage proves admission with a fullscreen member, enter and
+  exit restoration, sibling reflow, reconciliation isolation, out-of-bounds
+  fullscreen frame containment, and later-window signal attachment. `npm test
+  --prefix kwin` passes 476 tests; no live KWin, Plasma, or D-Bus action was run.
 - The active-border effect hides its item for fullscreen:
   `kwin/native-effect/activeborderlogic.h:31-37` and
   `kwin/native-effect/activewindowborder.cpp:91-101`.
@@ -125,19 +127,24 @@
   measurable gaming cost, and the actual cadence of `paintScreen`, are not
   established statically.
 
-#### Live Experiment
+#### User-Owned Live Gate - Not Run
 
-1. Follow `docs/live-kwin-testing.md` with a disposable normal tiled scope and
+1. The user follows `docs/live-kwin-testing.md`, obtains its required session
+   authorization, and creates a disposable three-window normal tiled scope with
    journal capture enabled.
-2. Record 60 seconds of compositor frame-time data, project D-Bus traffic, and
-   `plasma-auto-tiler:plan` journal lines while idle, then repeat with one member
-   fullscreened by its normal fullscreen control. Do not inject project D-Bus
-   calls.
-3. Trigger one unrelated window activation and one existing tiling shortcut while
-   fullscreen remains foregrounded. Record all Plan requests and the fullscreen
-   window's frame geometry before and after each action.
-4. Exit fullscreen and restore the exact baseline. This settles both whether the
-   production route writes fullscreen geometry and the residual fullscreen cost.
+2. The user records 60 seconds of compositor frame-time data, project D-Bus
+   traffic, all `plasma-auto-tiler:plan` journal lines, and each frame geometry
+   while idle; the user then fullscreens one member using its normal fullscreen
+   control and repeats the same capture. No project D-Bus call is injected.
+3. While fullscreen remains active, the user triggers one unrelated activation,
+   one existing tiling shortcut on a non-fullscreen sibling, and one existing
+   tiling shortcut on the fullscreen member. The user records every Plan request
+   and all three frame geometries before and after each action.
+4. The user exits fullscreen and restores the exact baseline. Pass only if the
+   fullscreen member receives no geometry write while fullscreen, its sibling
+   command remains usable, it returns to its retained tree position on exit, and
+   the measured frame-time and project traffic are recorded against the idle
+   baseline. Record the exact failing observation otherwise.
 
 ### Underlying Configuration Changes - NOT HANDLED
 
@@ -166,11 +173,11 @@
 
 ## Proposed Slices
 
-- P0 | Fullscreen exclusion and residual-cost gate | Boundary: production Plan
-  observation, request, and geometry-write paths only. Gate: a fullscreen normal
-  application receives no Plan geometry write through fullscreen entry, idle,
-  unrelated activation, tiling input, and restore; capture frame-time and
-  project traffic against the recorded idle baseline.
+- P0 | Fullscreen residual-cost live gate | Code isolation is complete in the
+  production Plan observation, request, and geometry-write paths. Run the
+  user-owned fullscreen gate above to prove no fullscreen write through entry,
+  idle, unrelated activation, sibling tiling input, fullscreen-target tiling
+  input, and restore; capture frame-time and project traffic against idle.
 - P1 | Output hotplug domain lifecycle | Boundary: retire, retain, or reseed
   `(output, workspace)` state only under an explicit selected policy. Gate:
   unplug and replug a tiled secondary output while another output remains active;

@@ -66,6 +66,7 @@ function makeObserved(
     opts: {
         focused?: object;
         rects?: Record<string, { x: number; y: number; w: number; h: number }>;
+        fullscreen?: Record<string, boolean>;
         fingerprint?: string;
         revalidate?: () => boolean;
     } = {},
@@ -73,9 +74,10 @@ function makeObserved(
     const focused = opts.focused ?? refs.a;
     const rect = (id: string): { x: number; y: number; w: number; h: number } =>
         opts.rects?.[id] ?? { x: 0, y: 0, w: 100, h: 100 };
+    const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1" }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1" }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a") }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b") }),
     ]);
     return {
         domainOutput: "out-1",
@@ -477,7 +479,7 @@ describe("plan adapter recovery and fencing", () => {
         const byId: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
         mocks.observeImpl = (): PlanObserved | null => {
             const wins = ids.map((id) =>
-                Object.freeze({ id, ref: byId[id] as object, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1" }),
+                Object.freeze({ id, ref: byId[id] as object, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
             );
             return {
                 domainOutput: "out-1",
@@ -553,6 +555,7 @@ describe("plan adapter recovery and fencing", () => {
                     rect: { x: 0, y: 0, w: 100, h: 100 },
                     output: "out-1",
                     workspace,
+                    fullscreen: false,
                 }),
             );
             return {
@@ -907,6 +910,7 @@ interface FakeWorld {
     readonly output: Record<string, unknown>;
     readonly desktop: Record<string, unknown>;
     readonly added: FakeSignal;
+    readonly winFull: Map<object, FakeSignal>;
 }
 
 function fakeWorld(): FakeWorld {
@@ -917,23 +921,30 @@ function fakeWorld(): FakeWorld {
     const activated = fakeSignal();
     const screensChanged = fakeSignal();
     const desktopChanged = fakeSignal();
+    const winFull = new Map<object, FakeSignal>();
     const world: FakeWorld = {
         output,
         desktop,
         added,
         wins: [],
         workspace: {},
+        winFull,
     };
     const makeWin = (id: string, x: number): Record<string, unknown> => {
         const geo = fakeSignal();
-        return {
+        const full = fakeSignal();
+        const win = {
             normalWindow: true,
             internalId: id,
             output,
             desktops: [desktop],
             frameGeometry: { x, y: 0, width: 600, height: 800 },
             moveResizedChanged: geo.signal,
+            fullScreenChanged: full.signal,
+            fullScreen: false,
         };
+        winFull.set(win, full);
+        return win;
     };
     const winA = makeWin("win-a", 0);
     const winB = makeWin("win-b", 600);
@@ -1103,6 +1114,7 @@ describe("plan entry live observation and shortcuts", () => {
             desktops: [world.desktop],
             frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
             moveResizedChanged: fakeSignal().signal,
+            fullScreen: false,
         });
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
@@ -1200,6 +1212,41 @@ describe("plan entry live observation and shortcuts", () => {
         assert.deepEqual(payload["command"], { op: "focus", window: "win-a", direction: "left" });
         handle?.stop();
     });
+
+    it("subscribes fullScreenChanged per window after enable and for windows added later", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as object;
+        const winB = world.wins[1] as object;
+        const { handle } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.equal(world.winFull.get(winA)?.handlers.length, 1, "existing window subscribed on enable");
+        assert.equal(world.winFull.get(winB)?.handlers.length, 1, "existing window subscribed on enable");
+        const winCFull = fakeSignal();
+        const winC = {
+            normalWindow: true,
+            internalId: "win-c",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: winCFull.signal,
+            fullScreen: false,
+        };
+        world.wins.push(winC);
+        world.winFull.set(winC, winCFull);
+        const fireAdded = (win: object): void => {
+            for (const handler of world.added.handlers) {
+                (handler as (payload?: unknown) => void)(win);
+            }
+        };
+        fireAdded(winC);
+        assert.equal(winCFull.handlers.length, 1, "added window subscribed exactly once");
+        fireAdded(winC);
+        assert.equal(winCFull.handlers.length, 1, "no duplicate connection for the same window");
+        handle?.stop();
+        assert.equal(world.winFull.get(winA)?.handlers.length, 0, "stop detaches window subscriptions");
+        assert.equal(winCFull.handlers.length, 0, "stop detaches added-window subscription");
+    });
 });
 
 describe("plan adapter destroyed-window reply boundary", () => {
@@ -1238,6 +1285,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
             rect: { x: 0, y: 0, w: 100, h: 100 },
             output: "out-1",
             workspace: "ws-1",
+            fullscreen: false,
         });
         mocks.observeImpl = (): PlanObserved | null => ({
             domainOutput: "out-1",
@@ -1288,6 +1336,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
                     rect: { x: 0, y: 0, w: 100, h: 100 },
                     output: "out-1",
                     workspace: "ws-1",
+                    fullscreen: false,
                 }),
             );
             return {
@@ -1369,6 +1418,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
                     rect: { x: 0, y: 0, w: 100, h: 100 },
                     output: "out-1",
                     workspace: "ws-1",
+                    fullscreen: false,
                 }),
             );
             return {
@@ -1489,5 +1539,508 @@ describe("plan native identity sharing and string-keyed cache", () => {
         assert.ok(!src.includes("captured.revalidate"), "no retained revalidation call");
         assert.ok(!src.includes("observed: previous"), "no retained previous observed");
         assert.ok(!src.includes("observed: fresh"), "no retained fresh observed");
+    });
+});
+
+describe("plan adapter fullscreen isolation", () => {
+    function makeObserved3(
+        refs: { a: object; b: object; c: object },
+        opts: {
+            focused?: object;
+            rects: Record<string, { x: number; y: number; w: number; h: number }>;
+            fullscreen?: Record<string, boolean>;
+        },
+        bounds: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 1200, h: 800 },
+    ): PlanObserved {
+        const focused = opts.focused ?? refs.a;
+        const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
+        const refById: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
+        const windows = Object.freeze(
+            (["win-a", "win-b", "win-c"] as const)
+                .filter((id) => opts.rects[id] !== undefined)
+                .map((id) =>
+                    Object.freeze({
+                        id,
+                        ref: refById[id] as object,
+                        rect: opts.rects[id] as { x: number; y: number; w: number; h: number },
+                        output: "out-1",
+                        workspace: "ws-1",
+                        fullscreen: isFullscreen(id),
+                    }),
+                ),
+        );
+        return {
+            domainOutput: "out-1",
+            domainWorkspace: "ws-1",
+            domainBounds: { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h },
+            domainGap: 0,
+            domainOuterGap: 0,
+            focusedId: focused === refs.a ? "win-a" : focused === refs.b ? "win-b" : "win-c",
+            windows,
+            activeRef: focused,
+            fingerprint: "fp-fs",
+            revalidate: () => true,
+        };
+    }
+
+    function twoWindowBaseline(mocks: Mocks, refs: { a: object; b: object; c: object }): PlanAdapter {
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        return adapter;
+    }
+
+    it("subscribes the per-window fullScreenChanged signal kind", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        enableAdapter(mocks);
+        assert.ok(mocks.subscribes.some((entry) => entry.kind === "fullscreen"));
+    });
+
+    it("refuses directional move/resize/pointer-resize on a fullscreen focused window with no dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        adapter.requestResize("left", "outwards");
+        assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.geometries.length, 0);
+    });
+
+    it("admits a fullscreen member into the tree but never writes its geometry", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
+        assert.deepEqual(cmd, { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.ok(sent.some((entry) => entry["window"] === "win-c"), "fullscreen member stays observed");
+        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBefore, "siblings reflowed around the admission");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.a || entry.target === refs.b));
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "fullscreen member never actuated");
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+    });
+
+    it("entering fullscreen from tiled adopts the baseline with no reconcile and no write", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        const writesBefore = mocks.geometries.length;
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.geometries.length, writesBefore);
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("leaving fullscreen restores the retained tiled position via one reconcile", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        // KWin restores the window imperfectly: reconcile must reassert the
+        // retained slot rather than adopt the post-fullscreen position.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 100, y: 100, w: 400, h: 400 } },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        const reconcileIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, reconcileIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const corr = plannerPayload(mocks, reconcileIndex)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[reconcileIndex]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBefore);
+        assert.ok(
+            mocks.geometries.some((entry) => entry.target === refs.b && entry.rect.x === 600 && entry.rect.y === 0),
+            "retained position restored",
+        );
+        // The reconcile write restored the retained slot: adopt the converged
+        // observation and confirm no further dispatch.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const callsAfter = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfter);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("reflows siblings while one member is fullscreen without actuating it", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const admitCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+                fullscreen: { "win-a": true },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.b,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+                fullscreen: { "win-a": true },
+            });
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const moveCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                moveCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                ],
+                "win-b-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "sibling reflowed");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.c), "sibling reflowed");
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "fullscreen member not actuated");
+        assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")));
+    });
+
+    it("never targets a fullscreen member for reconcile and converges sibling drift in one attempt", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                fullscreen: { "win-a": true },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        const callsAfterEnter = mocks.dbusCalls.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 616, h: 800 } },
+                fullscreen: { "win-a": true },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterEnter + 1);
+        const reconcileIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, reconcileIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const corr = plannerPayload(mocks, reconcileIndex)["correlation_id"] as string;
+        mocks.callbacks[reconcileIndex]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "reconcile never writes fullscreen member");
+        // The write corrected the sibling: adopt the converged observation and
+        // confirm one reconcile converged with no further dispatch and no park.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                fullscreen: { "win-a": true },
+            });
+        const callsAfter = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfter, "one reconcile converges; no park from fullscreen member");
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("fullscreen-only rect drift adopts the baseline without dispatching reconcile", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+            });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 100, y: 50, w: 1000, h: 700 } },
+                fullscreen: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("carries a contained retained rect for an out-of-bounds fullscreen frame and reflows siblings", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        // Work area excludes a 24px top panel; the fullscreen frame spans the
+        // full physical area and exceeds these bounds.
+        const bounds = { x: 0, y: 24, w: 1200, h: 776 };
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 24, w: 600, h: 776 },
+                        "win-b": { x: 600, y: 24, w: 600, h: 776 },
+                    },
+                },
+                bounds,
+            );
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const admitCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 24, w: 600, h: 776 } },
+                    { window: "win-b", rect: { x: 600, y: 24, w: 600, h: 776 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                        "win-b": { x: 600, y: 24, w: 600, h: 776 },
+                    },
+                    fullscreen: { "win-a": true },
+                },
+                bounds,
+            );
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        const callsAfterEnter = mocks.dbusCalls.length;
+        // Sibling drift while the fullscreen frame is out of bounds must still
+        // reconcile, and every carried window rect must stay in-bounds.
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                        "win-b": { x: 600, y: 24, w: 560, h: 776 },
+                    },
+                    fullscreen: { "win-a": true },
+                },
+                bounds,
+            );
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfterEnter + 1);
+        const reconcileIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, reconcileIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const payload = plannerPayload(mocks, reconcileIndex);
+        const db = (payload["domain"] as Record<string, unknown>)["bounds"] as { x: number; y: number; w: number; h: number };
+        const carried = payload["windows"] as Array<Record<string, unknown>>;
+        for (const entry of carried) {
+            const rect = entry["rect"] as { x: number; y: number; w: number; h: number };
+            assert.ok(
+                rect.x >= db.x &&
+                    rect.y >= db.y &&
+                    rect.x + rect.w <= db.x + db.w &&
+                    rect.y + rect.h <= db.y + db.h,
+                `${String(entry["window"])} carried in-bounds`,
+            );
+        }
+        const fullscreenCarried = carried.find((entry) => entry["window"] === "win-a") as Record<string, unknown>;
+        assert.deepEqual(
+            fullscreenCarried["rect"],
+            { x: 0, y: 24, w: 600, h: 776 },
+            "retained rect carried, never the compositor frame rect",
+        );
+        const corr = plannerPayload(mocks, reconcileIndex)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[reconcileIndex]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 24, w: 600, h: 776 } },
+                    { window: "win-b", rect: { x: 600, y: 24, w: 600, h: 776 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBefore, "sibling reflowed around the fullscreen member");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "sibling written");
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "fullscreen member never actuated");
+        assert.ok(mocks.logs.some((line) => line.includes("kind=reconcile") && line.includes("outcome=planned-applied")));
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("admits a window already fullscreen out-of-bounds with a contained carried rect", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const bounds = { x: 0, y: 24, w: 1200, h: 776 };
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                        "win-b": { x: 600, y: 24, w: 600, h: 776 },
+                    },
+                    fullscreen: { "win-a": true },
+                },
+                bounds,
+            );
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        const payload = plannerPayload(mocks, 0);
+        const db = (payload["domain"] as Record<string, unknown>)["bounds"] as { x: number; y: number; w: number; h: number };
+        const carried = payload["windows"] as Array<Record<string, unknown>>;
+        for (const entry of carried) {
+            const rect = entry["rect"] as { x: number; y: number; w: number; h: number };
+            assert.ok(
+                rect.x >= db.x &&
+                    rect.y >= db.y &&
+                    rect.x + rect.w <= db.x + db.w &&
+                    rect.y + rect.h <= db.y + db.h,
+                `${String(entry["window"])} carried in-bounds`,
+            );
+        }
+        const fullscreenCarried = carried.find((entry) => entry["window"] === "win-a") as Record<string, unknown>;
+        assert.deepEqual(
+            fullscreenCarried["rect"],
+            { x: 0, y: 24, w: 1200, h: 776 },
+            "clamped into bounds on admission, never the frame rect",
+        );
+        assert.equal(adapter.isEnabled, true);
     });
 });

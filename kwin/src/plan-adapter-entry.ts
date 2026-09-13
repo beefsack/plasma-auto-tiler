@@ -393,6 +393,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             rect: { x: number; y: number; w: number; h: number };
             output: string;
             workspace: string;
+            fullscreen: boolean;
         }> = [];
         for (const item of windows) {
             if (typeof item !== "object" || item === null) {
@@ -442,7 +443,19 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             if (rect === null) {
                 return null;
             }
-            entries.push({ id, ref, rect, output: domainOutput, workspace: domainWorkspace });
+            // Fullscreen is a compositor-owned overlay state orthogonal to the
+            // tree: the window stays observed (identity/position/share
+            // retained) but must never be actuated or reflowed. Exact
+            // `!== false` check mirrors the standalone adapters; revalidation
+            // re-reads the property through this same observe path.
+            entries.push({
+                id,
+                ref,
+                rect,
+                output: domainOutput,
+                workspace: domainWorkspace,
+                fullscreen: readProp(ref, "fullScreen") !== false,
+            });
         }
         if (entries.length === 0) {
             return null;
@@ -472,6 +485,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                     rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
                     output: entry.output,
                     workspace: entry.workspace,
+                    fullscreen: entry.fullscreen,
                 }),
             ),
         );
@@ -499,6 +513,9 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                             if (candidate.id === entry.id) {
                                 matchFound = true;
                                 if (candidate.ref !== entry.ref) {
+                                    return false;
+                                }
+                                if (candidate.fullscreen !== entry.fullscreen) {
                                     return false;
                                 }
                                 if (
@@ -648,6 +665,108 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
+    // Best-effort per-window fullscreen-state subscription.
+    // `fullScreenChanged` is a documented per-window signal but is never
+    // assumed present: attach where the feature-detecting seam exposes a
+    // connectable signal, and keep per-window connections in sync with the
+    // live window set. `windowAdded` subscribes the new window (idempotent per
+    // object identity), `windowRemoved` detaches the removed window's signal
+    // so old subscriptions never accumulate, and the returned detach releases
+    // everything. enable() never fails when the source lacks the signal.
+    const subWindowFullscreen = (handler: () => void): (() => void) | null => {
+        try {
+            const lister = surface["windowList"];
+            if (typeof lister !== "function") {
+                return null;
+            }
+            const seen = new Set<object>();
+            const windowDetaches = new Map<object, () => void>();
+            const topDetaches: Array<() => void> = [];
+            const connectOne = (ref: object): void => {
+                if (seen.has(ref)) {
+                    return;
+                }
+                const detach = connectSignal(readSignal(ref, "fullScreenChanged"), handler);
+                if (detach === null) {
+                    return;
+                }
+                seen.add(ref);
+                windowDetaches.set(ref, detach);
+            };
+            const connectAll = (): void => {
+                let raw: unknown = undefined;
+                try {
+                    raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+                } catch (error) {
+                    void error;
+                    return;
+                }
+                const list = decodeList(raw, MAX_LIST);
+                if (list === null) {
+                    return;
+                }
+                for (const item of list) {
+                    if (typeof item === "object" && item !== null) {
+                        connectOne(item as object);
+                    }
+                }
+            };
+            const dropOne = (ref: object): void => {
+                const detach = windowDetaches.get(ref);
+                if (detach === undefined) {
+                    return;
+                }
+                windowDetaches.delete(ref);
+                seen.delete(ref);
+                try {
+                    detach();
+                } catch (error) {
+                    void error;
+                }
+            };
+            connectAll();
+            const addedDetach = connectSignal(readSignal(surface, "windowAdded"), (added) => {
+                if (typeof added === "object" && added !== null) {
+                    connectOne(added as object);
+                } else {
+                    connectAll();
+                }
+                handler();
+            });
+            if (addedDetach !== null) {
+                topDetaches.push(addedDetach);
+            }
+            const removedDetach = connectSignal(readSignal(surface, "windowRemoved"), (removed) => {
+                if (typeof removed === "object" && removed !== null) {
+                    dropOne(removed as object);
+                }
+            });
+            if (removedDetach !== null) {
+                topDetaches.push(removedDetach);
+            }
+            return (): void => {
+                for (const detach of windowDetaches.values()) {
+                    try {
+                        detach();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                windowDetaches.clear();
+                seen.clear();
+                for (const detach of topDetaches) {
+                    try {
+                        detach();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+            };
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
     // String-keyed native identity cache: normalized internalId to stable
     // plan id (the same normalized string, interned). Never keyed by Window.
     // Eviction is explicit when the adapter identifies a removed string id.
@@ -724,6 +843,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         void error;
                     }
                 };
+            }
+            if (kind === "fullscreen") {
+                const detach = subWindowFullscreen(handler);
+                if (detach === null) {
+                    return (): void => {};
+                }
+                return detach;
             }
             const name =
                 kind === "added"
@@ -932,7 +1058,25 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             const ok = adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
             if (!ok) {
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                // Exact bounded refusal reason: a fullscreen target is refused
+                // fail-closed before dispatch and carries no geometry write;
+                // every other refusal keeps the generic derive-invalid line.
+                let fullscreenRefused = false;
+                for (const entry of observed.windows) {
+                    if (entry.id === verdict.windowIdentity && entry.fullscreen) {
+                        fullscreenRefused = true;
+                        break;
+                    }
+                }
+                try {
+                    log(
+                        fullscreenRefused
+                            ? "plasma-auto-tiler:route-diag:drag-fullscreen-refused"
+                            : "plasma-auto-tiler:route-diag:drag-derive-invalid",
+                    );
+                } catch (error) {
+                    void error;
+                }
             }
         } catch (error) {
             void error;

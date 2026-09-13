@@ -38,8 +38,8 @@ function makeRefs(): { a: object; b: object } {
 
 function makeObserved(refs: { a: object; b: object }): PlanObserved {
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 1000, h: 800 }, output: "out-1", workspace: "ws-1" }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 1000, y: 0, w: 200, h: 800 }, output: "out-1", workspace: "ws-1" }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 1000, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 1000, y: 0, w: 200, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
     ]);
     return {
         domainOutput: "out-1",
@@ -341,7 +341,7 @@ interface OracleWorld {
     readonly signals: Record<string, OracleFireSignal>;
 }
 
-function oracleWorld(): OracleWorld {
+function oracleWorld(opts: { fullscreen?: ReadonlyArray<string> } = {}): OracleWorld {
     const output: Record<string, unknown> = { name: "out-1" };
     const desktop: Record<string, unknown> = { id: "ws-1" };
     const signals: Record<string, OracleFireSignal> = {
@@ -374,6 +374,7 @@ function oracleWorld(): OracleWorld {
         moveResizedChanged: geo.signal,
         interactiveMoveResizeStarted: started.signal,
         interactiveMoveResizeFinished: finished.signal,
+        fullScreen: opts.fullscreen?.includes(id) === true,
     });
     const wins: Record<string, Record<string, unknown>> = {
         "win-a": makeWin("win-a", 0, signals["startedA"] as OracleFireSignal, signals["finishedA"] as OracleFireSignal, signals["geoA"] as OracleFireSignal),
@@ -554,6 +555,25 @@ describe("slice 2 entry finish consumes the captured start", () => {
         assert.equal(mocks.planCalls.length, 0);
         stop();
     });
+
+    it("logs the exact bounded refusal diagnostic for a fullscreen pointer-resize target", () => {
+        const world = oracleWorld({ fullscreen: ["win-a"] });
+        const { stop, mocks } = startOracleEntry(world);
+        fireAll(world.signals["startedA"]);
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.equal(mocks.planCalls.length, 0, "fullscreen target never dispatched");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-fullscreen-refused"),
+            "exact bounded refusal reason",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
+            "no generic derive-invalid for the fullscreen refusal",
+        );
+        stop();
+    });
 });
 
 interface EchoMocks {
@@ -604,6 +624,7 @@ function echoMockEnv(refs: { a: object; b: object }): EchoMocks {
                     rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h },
                     output: "out-1",
                     workspace: "ws-1",
+                    fullscreen: false,
                 });
             });
             return {

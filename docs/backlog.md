@@ -7,9 +7,9 @@ Only meaningful pending or active work is listed.
   nested-test residue. Any recovery needs explicit user authorization and exact
   identity or hash verification. No stale POC2/POC3 harness or checkpoint retry
   is authorized.
-- P0 | Fullscreen exclusion and residual-cost gate | Exclude fullscreen normal
-  windows from the production Plan route and establish the fullscreen gaming
-  cost baseline. [investigation](changes/reliability-condition-investigation.md)
+- P0 | Fullscreen residual-cost live gate | Production Plan fullscreen isolation
+  is static-complete. User must run the exact fullscreen gate and establish the
+  gaming cost baseline. [investigation](changes/reliability-condition-investigation.md)
 - P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
   reseed behavior for `(output, workspace)` state through unplug/replug.
   [investigation](changes/reliability-condition-investigation.md)
