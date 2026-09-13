@@ -254,14 +254,14 @@ Only meaningful pending or active work is listed.
               wired through portable Session
               drag preview/drop; KWin drag-end delivery remains separate. |
         [change](changes/archive/rust-engine-direct-geometry-migration.md)
-- P1 | pending user decision | Map COSMIC workspaces to Plasma for portable
-  send-to-workspace. Investigation verdict: Plasma virtual desktops and Activities
-  do not map to COSMIC's default output-bound sets. KWin supplies a shared desktop
-  pool with per-output current-desktop pointers; Activities are global. Choose a
-  project-owned `N outputs x M logical workspaces` backing-desktop mechanism or
-  explicitly accept a non-faithful scope. It exists in the portable engine
-  (`2dfa679`, `907194f`) but has no KWin adapter route and is unreachable by users.
-  No adapter route may be added until the user selects. See
+- P1 | backlogged | Re-enable COSMIC-style dynamic workspaces on the settled KWin
+  virtual-desktop mapping. `be8e898` deleted the legacy controller lifecycle;
+  production `DescribePlan` has no workspace-lifecycle operation, so this is
+  moderate adapter work, not a Rust-mode gate. Define owned desktop mapping and
+  lifecycle observation; add create/select/retire and window-move routes; preserve
+  COSMIC trailing-empty, active-empty, pinned, activation-token, hotplug, and
+  output-isolation policy. KWin scripting exposes `createDesktop` and
+  `removeDesktop`, but neither supplies that policy. See
   `docs/changes/archive/cosmic-workspace-and-geometry-investigation.md`. |
 - P1 | static complete, residual manual/live acceptance; exhaustive harness
   recovery deferred | Retain stable Custom Tile runtime behavior, including
