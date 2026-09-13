@@ -15,3 +15,11 @@ Development process principles, approved by the user. Product goals live in
 - Bias towards action.
 - Avoid overthinking, overdesigning, and process overhead that does not provide
   more value than the effort it costs.
+
+## Scope, Not Arbitrary Limits
+
+- Do not impose arbitrary gates or numeric constraints on work. They cause
+  failures and worse implementations, because the work gets contorted to fit a
+  number rather than shaped to be correct.
+- Control effort by scoping the work down to a sensible level instead. Keep the
+  implementation the smallest one that is actually correct for that scope.

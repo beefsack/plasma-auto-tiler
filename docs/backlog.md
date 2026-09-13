@@ -227,10 +227,6 @@ Only meaningful pending or active work is listed.
                  bounded `kind:"unauthorized"` reply; production `DescribePlan`
                  emits an unbound fixed reply, so parse/emit requires a Rust
                  contract change rather than only a user-authorized script reload.
-                  The deferred `just` recipes wrapping the worktree dev-on,
-                  Planner-only reload, and dev-off loop are complete; they
-                  dynamically retain the controller receipt and exact Planner
-                  process identity, while live validation remains user-owned.
                  Source-parity
              correction is statically complete:
               `cosmic_v1` now executes audited `cosmic-comp`

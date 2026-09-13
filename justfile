@@ -22,8 +22,7 @@ planner_unit := "plasma-auto-tiler-planner.service"
 default:
     @just --list
 
-# Disable packaged script, verify unloaded, require Planner name unowned,
-# build, launch worktree Planner detached, load worktree KWin bundle.
+# Detached lifecycle: disable packaged script, verify unloaded, build and launch the worktree Planner, then load the KWin bundle.
 dev-on:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -838,9 +837,9 @@ dev-status:
       echo "dev mode: SPLIT (planner $PLANNER_FACT${PLANNER_DETAIL:+, $PLANNER_DETAIL}, controller $CTRL_FACT)"
     fi
 
-# Foreground dev session: refuse unless DOWN, bring up via dev-on, tail labeled logs, teardown via dev-off on exit/Ctrl-C.
 # Optional `verbose` arg enables Planner full request/reply logging to its own log file:
 # `just dev verbose` (or `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1 just dev` via env passthrough).
+# Foreground full-solution dev session: build all components, refuse unless DOWN, run dev-on, tail logs, and tear down on exit/Ctrl-C.
 dev mode="":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -870,6 +869,15 @@ dev mode="":
         exit 1
         ;;
     esac
+    # Full-solution build before any lifecycle mutation. Only DOWN reaches
+    # here; UP/SPLIT/UNKNOWN/bogus-mode already exited above.
+    JUST_BUILD_RC=0
+    just --justfile "$JUSTFILE" build || JUST_BUILD_RC=$?
+    if [[ "$JUST_BUILD_RC" -ne 0 ]]; then
+      echo "error: just dev: build failed (exit $JUST_BUILD_RC); refusing bring-up; no dev lifecycle changes made" >&2
+      exit "$JUST_BUILD_RC"
+    fi
+    echo "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login."
     # Bring-up composes the existing detached recipe. Its own fail-closed
     # rollback owns failures here; no extra teardown is attempted on failure
     # and no logs are tailed without success.
@@ -950,7 +958,31 @@ dev mode="":
     FOLLOW_PID=$!
     wait
 
-# Build the native active-border effect + KCM against the pinned KWin CMake dir and stage both .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions.
+# Build the Rust Planner binary via devenv-aware cargo build (subset build).
+build-rust:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"
+    if [[ -n "${IN_NIX_SHELL:-}${DEVENV_PROFILE:-}" ]]; then
+      ( cd "$REPO_ROOT" && cargo build ) || { echo "error: cargo build failed" >&2; exit 1; }
+    else
+      devenv shell --impure -- cargo build || { echo "error: cargo build failed (via devenv shell --impure)" >&2; exit 1; }
+    fi
+    [[ -x "$BIN" ]] || { echo "error: worktree Planner binary missing after build: $BIN" >&2; exit 1; }
+
+# Build the KWin script bundle via npm and verify the existing bundle (subset build).
+build-kwin-script:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    REPO_ROOT="{{ justfile_directory() }}"
+    KWIN_DIR="$REPO_ROOT/kwin"
+    BUNDLE="$KWIN_DIR/contents/code/main.js"
+    command -v npm >/dev/null 2>&1 || { echo "error: required tool 'npm' not found in PATH; refusing" >&2; exit 1; }
+    npm --prefix "$KWIN_DIR" run build || { echo "error: npm run build failed for $KWIN_DIR" >&2; exit 1; }
+    [[ -f "$BUNDLE" ]] || { echo "error: KWin bundle missing after build: $BUNDLE" >&2; exit 1; }
+
+# Build the native active-border + drag-oracle effects + KCM against the pinned KWin CMake dir and stage all three .so files under target/ for QT_PLUGIN_PATH use. No KWin, D-Bus, loading, config, user/system-path, or live actions (subset build, static only).
 build-native-effect:
     #!/usr/bin/env bash
     set -euo pipefail
@@ -958,7 +990,9 @@ build-native-effect:
     SOURCE_DIR="$REPO_ROOT/kwin/native-effect"
     BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"
     STAGE="$REPO_ROOT/target/kwin-native-effect-stage"
+    TARGET_DIR="$REPO_ROOT/target"
     EFFECT_SO="plasma-auto-tiler-active-border.so"
+    DRAG_SO="plasma-auto-tiler-drag-oracle.so"
     KCM_SO="plasma-auto-tiler-active-border_config.so"
     KWIN_DEV_CMAKE_DIR="${PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR:-}"
     [[ -n "$KWIN_DEV_CMAKE_DIR" ]] || { echo "error: PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR is not set; refusing (enter 'devenv shell --impure' so the pinned KWin CMake dir is exported)" >&2; exit 1; }
@@ -967,22 +1001,31 @@ build-native-effect:
     cmake -S "$SOURCE_DIR" -B "$BUILD_DIR" -DKWin_DIR="$KWIN_DEV_CMAKE_DIR" -DBUILD_TESTING=OFF || { echo "error: cmake configure failed for $SOURCE_DIR" >&2; exit 1; }
     cmake --build "$BUILD_DIR" || { echo "error: cmake --build failed for $BUILD_DIR" >&2; exit 1; }
     BUILT_SO="$BUILD_DIR/bin/kwin/effects/plugins/$EFFECT_SO"
+    BUILT_DRAG="$BUILD_DIR/bin/kwin/effects/plugins/$DRAG_SO"
     BUILT_KCM="$BUILD_DIR/bin/kwin/effects/configs/$KCM_SO"
     [[ -f "$BUILT_SO" ]] || { echo "error: effect .so not found after build: $BUILT_SO" >&2; exit 1; }
+    [[ -f "$BUILT_DRAG" ]] || { echo "error: drag-oracle .so not found after build: $BUILT_DRAG" >&2; exit 1; }
     [[ -f "$BUILT_KCM" ]] || { echo "error: KCM .so not found after build: $BUILT_KCM" >&2; exit 1; }
-    PAYLOAD="$(mktemp -d "$REPO_ROOT/target/.kwin-native-effect-stage.XXXXXX")" || { echo "error: could not create staging transaction directory under $REPO_ROOT/target" >&2; exit 1; }
+    PAYLOAD="$(mktemp -d "$TARGET_DIR/.kwin-native-effect-stage.XXXXXX")" || { echo "error: could not create staging transaction directory under $TARGET_DIR" >&2; exit 1; }
     cleanup() { [[ -n "${PAYLOAD:-}" && -d "${PAYLOAD:-}" ]] && rm -rf -- "$PAYLOAD"; }
     trap cleanup EXIT
     install -Dm0644 "$BUILT_SO" "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" || { echo "error: could not stage effect .so" >&2; exit 1; }
+    install -Dm0644 "$BUILT_DRAG" "$PAYLOAD/kwin/effects/plugins/$DRAG_SO" || { echo "error: could not stage drag-oracle .so" >&2; exit 1; }
     install -Dm0644 "$BUILT_KCM" "$PAYLOAD/kwin/effects/configs/$KCM_SO" || { echo "error: could not stage KCM .so" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $PAYLOAD/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
+    [[ -f "$PAYLOAD/kwin/effects/plugins/$DRAG_SO" ]] || { echo "error: staged drag-oracle .so missing: $PAYLOAD/kwin/effects/plugins/$DRAG_SO" >&2; exit 1; }
     [[ -f "$PAYLOAD/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $PAYLOAD/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
     rm -rf -- "$STAGE" || { echo "error: could not remove stale staging root: $STAGE" >&2; exit 1; }
     mv -- "$PAYLOAD" "$STAGE" || { echo "error: could not publish staging root: $STAGE" >&2; exit 1; }
     PAYLOAD=""
     trap - EXIT
     [[ -f "$STAGE/kwin/effects/plugins/$EFFECT_SO" ]] || { echo "error: staged effect .so missing: $STAGE/kwin/effects/plugins/$EFFECT_SO" >&2; exit 1; }
+    [[ -f "$STAGE/kwin/effects/plugins/$DRAG_SO" ]] || { echo "error: staged drag-oracle .so missing: $STAGE/kwin/effects/plugins/$DRAG_SO" >&2; exit 1; }
     [[ -f "$STAGE/kwin/effects/configs/$KCM_SO" ]] || { echo "error: staged KCM .so missing: $STAGE/kwin/effects/configs/$KCM_SO" >&2; exit 1; }
     echo "staged: $STAGE/kwin/effects/plugins/$EFFECT_SO"
+    echo "staged: $STAGE/kwin/effects/plugins/$DRAG_SO"
     echo "staged: $STAGE/kwin/effects/configs/$KCM_SO"
     echo "QT_PLUGIN_PATH=$STAGE"
+
+# Build the whole solution: Rust Planner + KWin script bundle + native effects (aggregate full build for just dev).
+build: build-rust build-kwin-script build-native-effect

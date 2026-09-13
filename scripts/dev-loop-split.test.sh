@@ -55,9 +55,65 @@ EOF
 #!/usr/bin/env bash
 set -euo pipefail
 printf 'cargo %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+if [[ -f "${FAKE_STATE_DIR:?}/cargo-fails" ]]; then
+  echo "fake cargo: simulated build failure" >&2
+  exit 1
+fi
 bin="${PLASMA_AUTO_TILER_BIN:?}"
 mkdir -p "${bin%/*}"
 [[ -x "$bin" ]] || { printf '#!/usr/bin/env bash\nexit 0\n' > "$bin"; chmod +x "$bin"; }
+exit 0
+EOF
+  cat > "$FAKE_BIN/bin/npm" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'npm %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+if [[ -f "${FAKE_STATE_DIR:?}/npm-fails" ]]; then
+  echo "fake npm: simulated build failure" >&2
+  exit 1
+fi
+kwin_dir="${PLASMA_AUTO_TILER_KWIN_DIR:-}"
+prev=""
+for a in "$@"; do
+  if [[ "$prev" == "--prefix" ]]; then
+    kwin_dir="$a"
+  fi
+  prev="$a"
+done
+if [[ -n "$kwin_dir" ]]; then
+  mkdir -p "$kwin_dir/contents/code"
+  [[ -f "$kwin_dir/contents/code/main.js" ]] || printf '// fake kwin bundle\n' > "$kwin_dir/contents/code/main.js"
+fi
+exit 0
+EOF
+  cat > "$FAKE_BIN/bin/cmake" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'cmake %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
+if [[ -f "${FAKE_STATE_DIR:?}/cmake-fails" ]]; then
+  echo "fake cmake: simulated build failure" >&2
+  exit 1
+fi
+build_dir="${PLASMA_AUTO_TILER_NATIVE_BUILD:-}"
+if [[ -z "$build_dir" ]]; then
+  prev=""
+  for a in "$@"; do
+    if [[ "$prev" == "-B" ]]; then
+      build_dir="$a"
+    fi
+    case "$a" in -B*) build_dir="${a#-B}" ;; esac
+    if [[ "$prev" == "--build" ]]; then
+      build_dir="$a"
+    fi
+    prev="$a"
+  done
+fi
+if [[ -n "$build_dir" ]]; then
+  mkdir -p "$build_dir/bin/kwin/effects/plugins" "$build_dir/bin/kwin/effects/configs"
+  [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]] || printf 'fake-effect' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
+  [[ -f "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]] || printf 'fake-drag' > "$build_dir/bin/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
+  [[ -f "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]] || printf 'fake-kcm' > "$build_dir/bin/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+fi
 exit 0
 EOF
   cat > "$FAKE_BIN/bin/devenv" <<'EOF'
@@ -112,7 +168,7 @@ printf 'journalctl %s\n' "$*" >> "${FAKE_CALL_LOG:?}"
 echo "plasma-auto-tiler:plan:cmd=plan-1-p1 kind=admit windows=1 outcome=planned-applied"
 exit 0
 EOF
-  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
+  chmod +x "$FAKE_BIN/bin/busctl" "$FAKE_BIN/bin/cargo" "$FAKE_BIN/bin/npm" "$FAKE_BIN/bin/cmake" "$FAKE_BIN/bin/devenv" "$FAKE_BIN/bin/setsid" "$FAKE_BIN/bin/systemctl" "$FAKE_BIN/bin/tail" "$FAKE_BIN/bin/journalctl"
   cat > "$WORK/fake-start-test.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -178,6 +234,11 @@ dst = os.environ.get("ISOLATED_DST", "")
 src = pathlib.Path(repo) / "justfile"
 text = src.read_text()
 text = text.replace('REPO_ROOT="{{ justfile_directory() }}"', f'REPO_ROOT="{repo}"')
+text = text.replace('KWIN_DIR="$REPO_ROOT/kwin"', 'KWIN_DIR="${PLASMA_AUTO_TILER_KWIN_DIR:-$REPO_ROOT/kwin}"')
+text = text.replace('SOURCE_DIR="$REPO_ROOT/kwin/native-effect"', 'SOURCE_DIR="${PLASMA_AUTO_TILER_NATIVE_SOURCE:-$REPO_ROOT/kwin/native-effect}"')
+text = text.replace('BUILD_DIR="$REPO_ROOT/target/kwin-native-effect-build"', 'BUILD_DIR="${PLASMA_AUTO_TILER_NATIVE_BUILD:-$REPO_ROOT/target/kwin-native-effect-build}"')
+text = text.replace('STAGE="$REPO_ROOT/target/kwin-native-effect-stage"', 'STAGE="${PLASMA_AUTO_TILER_NATIVE_STAGE:-$REPO_ROOT/target/kwin-native-effect-stage}"')
+text = text.replace('TARGET_DIR="$REPO_ROOT/target"', 'TARGET_DIR="${PLASMA_AUTO_TILER_TARGET_DIR:-$REPO_ROOT/target}"')
 text = text.replace('/proc', '$PROC_ROOT')
 text = text.replace(
   'BIN="$REPO_ROOT/target/debug/plasma-auto-tiler"',
@@ -207,16 +268,23 @@ PYEOF
 }
 
 reset_state() {
-  rm -rf "$WORK/state" "$WORK/proc" "$WORK/runtime" "$WORK/fakebin"
-  mkdir -p "$WORK/state" "$WORK/proc" "$WORK/runtime"
+  rm -rf "$WORK/state" "$WORK/proc" "$WORK/runtime" "$WORK/fakebin" "$WORK/fake-kwin" "$WORK/fake-native-source" "$WORK/fake-native-build" "$WORK/fake-native-stage" "$WORK/fake-target" "$WORK/fake-kwin-cmake"
+  mkdir -p "$WORK/state" "$WORK/proc" "$WORK/runtime" "$WORK/fake-kwin/contents/code" "$WORK/fake-native-source" "$WORK/fake-native-build" "$WORK/fake-target" "$WORK/fake-kwin-cmake"
   : > "$WORK/calls.log"
   : > "$OUTPUT"
   printf 'false\n' > "$WORK/state/loaded"
-  rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails"
+  rm -f "$WORK/state/planner-owned" "$WORK/state/owner-pid" "$WORK/state/loaded-malformed" "$WORK/state/loaded-call-fail" "$WORK/state/start-fails" "$WORK/state/stop-fails" "$WORK/state/cargo-fails" "$WORK/state/npm-fails" "$WORK/state/cmake-fails"
+  printf '// fake kwin bundle\n' > "$WORK/fake-kwin/contents/code/main.js"
   export FAKE_STATE_DIR="$WORK/state"
   export FAKE_CALL_LOG="$WORK/calls.log"
   export PROC_ROOT="$WORK/proc"
   export PLASMA_AUTO_TILER_BIN="$WORK/fakebin/plasma-auto-tiler"
+  export PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin"
+  export PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source"
+  export PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build"
+  export PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage"
+  export PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target"
+  export PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake"
   export XDG_RUNTIME_DIR="$WORK/runtime"
   export DEV_LOOP_START_TEST="$WORK/fake-start-test.sh"
   export DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh"
@@ -251,7 +319,7 @@ set_controller() {
 
 run_just() {
   set +e
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1
   EXIT=$?
   set -e
 }
@@ -259,7 +327,7 @@ run_just() {
 run_just_async() {
   set +e
   set -m
-  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
+  FAKE_STATE_DIR="$WORK/state" FAKE_CALL_LOG="$WORK/calls.log" PROC_ROOT="$WORK/proc" PLASMA_AUTO_TILER_BIN="$PLASMA_AUTO_TILER_BIN" PLASMA_AUTO_TILER_KWIN_DIR="$WORK/fake-kwin" PLASMA_AUTO_TILER_NATIVE_SOURCE="$WORK/fake-native-source" PLASMA_AUTO_TILER_NATIVE_BUILD="$WORK/fake-native-build" PLASMA_AUTO_TILER_NATIVE_STAGE="$WORK/fake-native-stage" PLASMA_AUTO_TILER_TARGET_DIR="$WORK/fake-target" PLASMA_AUTO_TILER_KWIN_DEV_CMAKE_DIR="$WORK/fake-kwin-cmake" XDG_RUNTIME_DIR="$WORK/runtime" DEV_LOOP_START_TEST="$WORK/fake-start-test.sh" DEV_LOOP_DOGFOOD="$WORK/fake-dogfood.sh" FAKE_TAIL_FOLLOW_BLOCK="${FAKE_TAIL_FOLLOW_BLOCK:-0}" PATH="$FAKE_BIN/bin:$PATH" just --justfile "$ISOLATED_JUSTFILE" "$@" >"$OUTPUT" 2>&1 &
   JUST_ASYNC_PID=$!
   set +m
   set -e
@@ -341,6 +409,9 @@ assert_contains "dev-off" "real justfile list dev-off"
 assert_contains "dev-status" "real justfile list dev-status"
 assert_contains "reload" "real justfile list reload"
 assert_contains "dev" "real justfile list dev"
+assert_contains "build" "real justfile list build"
+assert_contains "build-rust" "real justfile list build-rust"
+assert_contains "build-kwin-script" "real justfile list build-kwin-script"
 assert_contains "build-native-effect" "real justfile list build-native-effect"
 
 run_just_real --dry-run dev-status
@@ -352,8 +423,23 @@ check_exit 0 "real justfile dry-run dev"
 run_just_real --dry-run dev verbose
 check_exit 0 "real justfile dry-run dev verbose"
 
+run_just_real --dry-run build
+check_exit 0 "real justfile dry-run build"
+assert_contains "cargo build" "real justfile dry-run build rust"
+assert_contains "npm --prefix" "real justfile dry-run build kwin"
+assert_contains "cmake" "real justfile dry-run build native"
+
+run_just_real --dry-run build-rust
+check_exit 0 "real justfile dry-run build-rust"
+assert_contains "cargo build" "real justfile dry-run build-rust cargo"
+
+run_just_real --dry-run build-kwin-script
+check_exit 0 "real justfile dry-run build-kwin-script"
+assert_contains "npm --prefix" "real justfile dry-run build-kwin-script npm"
+
 run_just_real --dry-run build-native-effect
 check_exit 0 "real justfile dry-run build-native-effect"
+assert_contains "cmake" "real justfile dry-run build-native-effect cmake"
 
 # dev-on: both up reports already up and changes nothing.
 reset_state
@@ -594,6 +680,9 @@ assert_calls_missing "setsid" "dev up no launch"
 assert_calls_missing "dogfood" "dev up no dogfood"
 assert_calls_missing "tail " "dev up no tail"
 assert_calls_missing "journalctl " "dev up no journal"
+assert_calls_missing "cargo " "dev up no cargo"
+assert_calls_missing "npm " "dev up no npm"
+assert_calls_missing "cmake " "dev up no cmake"
 
 # dev: refuses SPLIT planner-up/controller-down without launching.
 reset_state
@@ -607,6 +696,9 @@ assert_calls_missing "start-test start" "dev split up/down no start"
 assert_calls_missing "setsid" "dev split up/down no launch"
 assert_calls_missing "dogfood" "dev split up/down no dogfood"
 assert_calls_missing "tail " "dev split up/down no tail"
+assert_calls_missing "cargo " "dev split up/down no cargo"
+assert_calls_missing "npm " "dev split up/down no npm"
+assert_calls_missing "cmake " "dev split up/down no cmake"
 
 # dev: refuses SPLIT planner-down/controller-up without duplicate.
 reset_state
@@ -617,6 +709,9 @@ assert_contains "refusing" "dev split down/up refuse msg"
 assert_calls_missing "start-test start" "dev split down/up no start"
 assert_calls_missing "setsid" "dev split down/up no launch"
 assert_calls_missing "dogfood" "dev split down/up no dogfood"
+assert_calls_missing "cargo " "dev split down/up no cargo"
+assert_calls_missing "npm " "dev split down/up no npm"
+assert_calls_missing "cmake " "dev split down/up no cmake"
 
 # dev: refuses stale (deleted) owner without mutating.
 reset_state
@@ -629,6 +724,9 @@ assert_contains "stale" "dev stale refuse msg"
 assert_calls_missing "start-test start" "dev stale no start"
 assert_calls_missing "setsid" "dev stale no launch"
 assert_calls_missing "dogfood" "dev stale no dogfood"
+assert_calls_missing "cargo " "dev stale no cargo"
+assert_calls_missing "npm " "dev stale no npm"
+assert_calls_missing "cmake " "dev stale no cmake"
 
 # dev: malformed isScriptLoaded fails closed before mutation.
 reset_state
@@ -639,6 +737,9 @@ assert_contains "dev mode: UNKNOWN" "dev malformed status"
 assert_calls_missing "start-test start" "dev malformed no start"
 assert_calls_missing "setsid" "dev malformed no launch"
 assert_calls_missing "dogfood" "dev malformed no dogfood"
+assert_calls_missing "cargo " "dev malformed no cargo"
+assert_calls_missing "npm " "dev malformed no npm"
+assert_calls_missing "cmake " "dev malformed no cmake"
 
 # dev: bring-up failure propagates without silent success and without tailing.
 reset_state
@@ -668,6 +769,10 @@ check_exit 0 "dev down cycle exit"
 assert_contains "[planner]" "dev down planner label"
 assert_contains "[kwin]" "dev down kwin label"
 assert_contains "plasma-auto-tiler:plan" "dev down kwin plugin line"
+assert_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev down native warning"
+assert_calls_contain "cargo " "dev down cargo build"
+assert_calls_contain "npm " "dev down npm build"
+assert_calls_contain "cmake " "dev down cmake build"
 assert_calls_contain "dogfood disable" "dev down disable"
 assert_calls_contain "setsid" "dev down launch"
 assert_calls_contain "start-test start" "dev down start"
@@ -676,11 +781,117 @@ assert_calls_contain "journalctl " "dev down journal"
 assert_calls_contain "start-test stop 7" "dev down teardown stop"
 assert_calls_contain "dogfood enable" "dev down teardown enable"
 assert_contains "combined log:" "dev down combined log printed"
+# Build steps must precede any dev-on lifecycle mutation.
+CARGO_LINE="$(grep -n -F "cargo " "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+NPM_LINE="$(grep -n -F "npm " "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+CMAKE_LINE="$(grep -n -F "cmake " "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+DOGFOOD_LINE="$(grep -n -F "dogfood disable" "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+SETSID_LINE="$(grep -n -F "setsid " "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+START_LINE="$(grep -n -F "start-test start" "$WORK/calls.log" | head -n 1 | cut -d: -f1)"
+if [[ -n "$CARGO_LINE" && -n "$NPM_LINE" && -n "$CMAKE_LINE" && -n "$DOGFOOD_LINE" && -n "$SETSID_LINE" && -n "$START_LINE" && "$CARGO_LINE" -lt "$DOGFOOD_LINE" && "$NPM_LINE" -lt "$DOGFOOD_LINE" && "$CMAKE_LINE" -lt "$DOGFOOD_LINE" && "$CARGO_LINE" -lt "$SETSID_LINE" && "$NPM_LINE" -lt "$SETSID_LINE" && "$CMAKE_LINE" -lt "$SETSID_LINE" && "$CARGO_LINE" -lt "$START_LINE" && "$NPM_LINE" -lt "$START_LINE" && "$CMAKE_LINE" -lt "$START_LINE" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down build before lifecycle]" >&2; cat "$WORK/calls.log" >&2; FAIL=$((FAIL + 1)); fi
 DEV_LOG_PATH="$(grep -F "combined log:" "$OUTPUT" | head -n 1 | sed 's/.*combined log: //;s/[[:space:]]*$//')"
 if [[ -n "${DEV_LOG_PATH:-}" && -f "$DEV_LOG_PATH" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log retained]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ -n "${DEV_LOG_PATH:-}" ]] && grep -Fq "[planner]" "$DEV_LOG_PATH" && grep -Fq "[kwin]" "$DEV_LOG_PATH"; then PASS=$((PASS + 1)); else echo "FAIL [dev down durable log labeled content]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ "$(grep -c -F "combined log:" "$OUTPUT" || true)" -ge 2 ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down combined log teardown reprint]" >&2; FAIL=$((FAIL + 1)); fi
 if [[ ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-log" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-planner-stream" && ! -e "$WORK/runtime/plasma-auto-tiler-dev/dev-kwin-stream" ]]; then PASS=$((PASS + 1)); else echo "FAIL [dev down stream state removed]" >&2; FAIL=$((FAIL + 1)); fi
+
+# Isolated justfile: list and dry-run include all four builds.
+reset_state
+run_just --list
+check_exit 0 "isolated list exit"
+assert_contains "build" "isolated list build"
+assert_contains "build-rust" "isolated list build-rust"
+assert_contains "build-kwin-script" "isolated list build-kwin-script"
+assert_contains "build-native-effect" "isolated list build-native-effect"
+
+run_just --dry-run build
+check_exit 0 "isolated dry-run build exit"
+assert_contains "cargo build" "isolated dry-run build rust"
+assert_contains "npm --prefix" "isolated dry-run build kwin"
+assert_contains "cmake" "isolated dry-run build native"
+
+run_just --dry-run build-rust
+check_exit 0 "isolated dry-run build-rust"
+run_just --dry-run build-kwin-script
+check_exit 0 "isolated dry-run build-kwin-script"
+run_just --dry-run build-native-effect
+check_exit 0 "isolated dry-run build-native-effect"
+
+# Isolated build aggregate stages all three native artifacts without live calls.
+reset_state
+run_just build
+check_exit 0 "isolated build exit"
+assert_calls_contain "cargo " "isolated build cargo"
+assert_calls_contain "npm " "isolated build npm"
+assert_calls_contain "cmake " "isolated build cmake"
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" && -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" && -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [isolated build 3 staged artifacts]" >&2; FAIL=$((FAIL + 1)); fi
+assert_calls_missing "dogfood" "isolated build no dogfood"
+assert_calls_missing "start-test" "isolated build no start-test"
+assert_calls_missing "setsid" "isolated build no setsid"
+assert_calls_missing "busctl " "isolated build no busctl"
+
+# Native build alone stages all three artifacts, static only.
+reset_state
+run_just build-native-effect
+check_exit 0 "native build exit"
+assert_contains "plasma-auto-tiler-active-border.so" "native build effect msg"
+assert_contains "plasma-auto-tiler-drag-oracle.so" "native build drag msg"
+assert_contains "plasma-auto-tiler-active-border_config.so" "native build kcm msg"
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-active-border.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged effect]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged drag]" >&2; FAIL=$((FAIL + 1)); fi
+if [[ -f "$WORK/fake-native-stage/kwin/effects/configs/plasma-auto-tiler-active-border_config.so" ]]; then PASS=$((PASS + 1)); else echo "FAIL [native staged kcm]" >&2; FAIL=$((FAIL + 1)); fi
+assert_calls_contain "cmake " "native build cmake"
+assert_calls_missing "dogfood" "native build no dogfood"
+assert_calls_missing "start-test" "native build no start-test"
+assert_calls_missing "setsid" "native build no setsid"
+assert_calls_missing "busctl " "native build no busctl"
+assert_calls_missing "journalctl " "native build no journal"
+assert_calls_missing "tail " "native build no tail"
+
+# dev DOWN with Rust build failure exits before dev-on lifecycle.
+reset_state
+set_controller false
+touch "$WORK/state/cargo-fails"
+run_just dev
+check_exit 1 "dev rust fail exit"
+assert_contains "build failed" "dev rust fail msg"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev rust fail no warning"
+assert_calls_contain "cargo " "dev rust fail cargo attempted"
+assert_calls_missing "dogfood disable" "dev rust fail no disable"
+assert_calls_missing "setsid" "dev rust fail no launch"
+assert_calls_missing "start-test start" "dev rust fail no start"
+assert_calls_missing "tail " "dev rust fail no tail"
+assert_calls_missing "journalctl " "dev rust fail no journal"
+
+# dev DOWN with TS build failure exits before dev-on lifecycle.
+reset_state
+set_controller false
+touch "$WORK/state/npm-fails"
+run_just dev
+check_exit 1 "dev ts fail exit"
+assert_contains "build failed" "dev ts fail msg"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev ts fail no warning"
+assert_calls_contain "npm " "dev ts fail npm attempted"
+assert_calls_missing "dogfood disable" "dev ts fail no disable"
+assert_calls_missing "setsid" "dev ts fail no launch"
+assert_calls_missing "start-test start" "dev ts fail no start"
+assert_calls_missing "tail " "dev ts fail no tail"
+assert_calls_missing "journalctl " "dev ts fail no journal"
+
+# dev DOWN with native build failure exits before dev-on lifecycle.
+reset_state
+set_controller false
+touch "$WORK/state/cmake-fails"
+run_just dev
+check_exit 1 "dev native fail exit"
+assert_contains "build failed" "dev native fail msg"
+assert_not_contains "warning: native effects staged under target/kwin-native-effect-stage are not live in this already-running KWin; plasma-auto-tiler-active-border.so and plasma-auto-tiler-drag-oracle.so remain stale until logout/login." "dev native fail no warning"
+assert_calls_contain "cmake " "dev native fail cmake attempted"
+assert_calls_missing "dogfood disable" "dev native fail no disable"
+assert_calls_missing "setsid" "dev native fail no launch"
+assert_calls_missing "start-test start" "dev native fail no start"
+assert_calls_missing "tail " "dev native fail no tail"
+assert_calls_missing "journalctl " "dev native fail no journal"
 
 # dev: Ctrl-C during streaming tears down via dev-off with exit 130.
 reset_state
@@ -757,6 +968,9 @@ assert_contains "unknown mode" "dev bogus mode msg"
 assert_calls_missing "start-test start" "dev bogus no start"
 assert_calls_missing "setsid " "dev bogus no launch"
 assert_calls_missing "dogfood" "dev bogus no dogfood"
+assert_calls_missing "cargo " "dev bogus no cargo"
+assert_calls_missing "npm " "dev bogus no npm"
+assert_calls_missing "cmake " "dev bogus no cmake"
 
 # dev verbose: DOWN bring-up exports exactly 1 to the Planner launch.
 reset_state
