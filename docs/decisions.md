@@ -29,6 +29,12 @@ Historical implementation detail is recoverable in Git history.
   sole scene exception is one effect-owned automatic-lifetime
   `KWin::OutlinedBorderItem`.
 
+## Native Integration Boundary
+
+> Any OS/DE-agnostic logic belongs in the central engine where tiling currently
+> resides. Logic requiring native integration with the OS/DE belongs alongside
+> the native effect.
+
 ## Settings And Distribution
 
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,

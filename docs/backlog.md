@@ -787,3 +787,8 @@ Only meaningful pending or active work is listed.
   attribute it. A future explicitly authorized observation must bind each
   action to before/after `isScriptLoaded`, exact `Script<ID>` introspection, and
   KWin PID/start identity.
+- P1 | pending investigation | Prefer Rust over C++ for the native effect and
+  investigate how to work with the KWin/KDE ABI without excessive pain and
+  papercuts.
+- P1 | pending | Extend group borders with group highlighting so moving a window
+  makes its group obvious. Dragging and window borders are critical to the project.

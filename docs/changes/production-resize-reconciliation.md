@@ -34,17 +34,18 @@
   `frameGeometry` requests, so the policy bounds visible retries rather than
   claiming convergence.
 
-## Deliberate Deferral
+## Interactive Edge Drag
 
-- Deliberate edge drags do not adjust split shares in this change. Production
-  does not consume the isolated interactive start/step/finish route, whose
-  removed `DescribePointerResize` backend required exclusive authority. A
-  production edge-drag feature needs one integrated signal, authority, and
-  `DescribePlan` contract; it was deferred to keep self-resize retention within
-  the approved bounded change.
-- Until that feature exists, a deliberate edge drag is handled as geometry drift:
-  the retained allocation is reasserted up to three times and then parked. This
-  is a known product limitation, not a claim that the drag changes shares.
+- Production edge-drag share adjustment is blocked by KWin scripting's missing
+  cancellation and drag-geometry API. The preserved, unshippable work is on
+  `wip/production-edge-drag-scripting-route` at
+  `5a760a09666c16ef36a70484446c4c6d96d9a1b6`; see the
+  [archived record](archive/production-edge-drag-scripting-route.md).
+- Until an unblocking route is selected, a deliberate edge drag remains
+  geometry drift: the retained allocation is reasserted up to three times and
+  then parked. It does not change shares.
+- Client self-resize retention in `2c35435` shipped and works. It is unaffected
+  by the production edge-drag blocker.
 
 ## COSMIC Reference
 
