@@ -36,16 +36,20 @@
 
 ## Interactive Edge Drag
 
-- Production edge-drag share adjustment is blocked by KWin scripting's missing
-  cancellation and drag-geometry API. The preserved, unshippable work is on
-  `wip/production-edge-drag-scripting-route` at
-  `5a760a09666c16ef36a70484446c4c6d96d9a1b6`; see the
-  [archived record](archive/production-edge-drag-scripting-route.md).
-- Until an unblocking route is selected, a deliberate edge drag remains
-  geometry drift: the retained allocation is reasserted up to three times and
-  then parked. It does not change shares.
-- Client self-resize retention in `2c35435` shipped and works. It is unaffected
-  by the production edge-drag blocker.
+- A separate inert native `dragoracle` effect supplies the authoritative final
+  move-resize rectangle and cancellation verdict over one read-only effect-owned
+  session D-Bus endpoint. The production script pulls it only after finish.
+- A non-cancelled single-edge verdict sends one retained `DescribePlan`
+  `pointer-resize` command. Esc cancellation and committed net-zero drags are
+  strict no-ops: no pointer command and no share change.
+- The adapter writes changed neighbours only and retains one exact one-shot
+  correlation/source-keyed echo expectation. Matching same-scope neighbour
+  echoes update `lastGood`; every mismatch continues through this document's
+  bounded reconciliation path.
+- The former scripting-only route remains historical reference at
+  `wip/production-edge-drag-scripting-route` commit
+  `5a760a09666c16ef36a70484446c4c6d96d9a1b6`. Runtime behavior remains pending
+  the user-owned checks in [edge-drag-share-adjustment.md](edge-drag-share-adjustment.md).
 
 ## COSMIC Reference
 
@@ -61,20 +65,14 @@
 ## Static Verification
 
 - `cargo test --lib planner_protocol`
-- `npm test --prefix kwin` - 393 passing
+- `npm test --prefix kwin` - 426 passing
 - `npm run typecheck --prefix kwin`
 - `cargo test`
 - `git diff --check`
 
 ## User-Owned Rebuild And Live Check
 
-- Rebuild the generated KWin bundle with
-  `devenv shell --impure -- npm run build --prefix kwin`.
-- Rebuild and swap the recorded worktree Planner with
-  `devenv shell --impure -- just reload`. This does not reload the KWin script.
-- Applying the new bundle to an already loaded script requires a user-authorized
-  exact controller lifecycle action. No agent lifecycle action occurred.
-- After the user applies the bundle, test a normal Wayland constrained client,
-  a client self-resize, and an edge drag. Confirm no more than three reconcile
-  writes occur for persistent drift, later drift produces no writes, and no
-  sibling-share change is claimed from the edge drag.
+- Follow the separate Slice 1 and Slice 2 user-owned checks in
+  [edge-drag-share-adjustment.md](edge-drag-share-adjustment.md). Applying a new
+  bundle/effect to an already loaded session remains a user-owned lifecycle
+  action; no agent lifecycle action occurred.

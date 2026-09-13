@@ -17,12 +17,20 @@
 // is emitted.
 
 import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
+import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
 import { normalizeNativeId } from "./native-id";
 import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { connectSignal, readSignal } from "./signal-capability";
 
 export interface PlanEntryOverrides {
     readonly workspace?: unknown;
+    readonly oracleCallDbus?: (
+        service: string,
+        path: string,
+        iface: string,
+        method: string,
+        callback: (reply: unknown) => void,
+    ) => void;
     readonly callDbus?: (
         service: string,
         path: string,
@@ -799,12 +807,236 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
         }
     }
+    // Slice 2 oracle route: preserve start rect plus move/resize classification
+    // at Started, then on a non-cancelled LastVerdict route exactly one strict
+    // pointer-resize derived from the authoritative final rect. Cancelled is a
+    // strict no-op; derive failures fail closed with exact bounded reasons.
+    // Every finish carries an opaque per-finish token (exact Window object
+    // plus finish epoch) from its signal through the D-Bus pull back to the
+    // route/settle callbacks. Route/settle consume only a start whose epoch
+    // is <= that finish token; an old reply faced with a newer start fails
+    // closed and never clears the newer start. Cancelled verdicts never reach
+    // the pointer route and never change a share.
+    const oracleStarts = new Map<object, { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean; epoch: number }>();
+    let oracleEpoch = 0;
+    const readLiveState = (target: object): { move: boolean; resize: boolean } | null => {
+        try {
+            const move = Reflect.get(target, "move");
+            const resize = Reflect.get(target, "resize");
+            if ((move !== true && move !== false) || (resize !== true && resize !== false)) return null;
+            return { move, resize };
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    const captureOracleStart = (ref: object): void => {
+        try {
+            const observed = observeNative(liveWorkspace, nativeIds);
+            if (observed === null) return;
+            for (const entry of observed.windows) {
+                if (entry.ref === ref) {
+                    const state = readLiveState(ref);
+                    if (state === null) {
+                        oracleStarts.delete(ref);
+                        return;
+                    }
+                    oracleStarts.set(ref, { id: entry.id, rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }, move: state.move, resize: state.resize, epoch: (oracleEpoch += 1) });
+                    return;
+                }
+            }
+            oracleStarts.delete(ref);
+        } catch (error) {
+            void error;
+        }
+    };
+    const makeOracleFinishContext = (ref: object): DragOracleFinishContext => {
+        oracleEpoch += 1;
+        return { ref, finishEpoch: oracleEpoch };
+    };
+    // Token-guarded consumption: delete the finish's own captured start only
+    // when it predates the finish token. A newer Started (larger epoch) that
+    // lands before the async reply is always kept. Never touches other
+    // windows and never broad-clears.
+    const takeOwnStart = (ctx: DragOracleFinishContext | undefined): { id: string; rect: { x: number; y: number; w: number; h: number }; move: boolean; resize: boolean } | null => {
+        try {
+            if (ctx === undefined) return null;
+            const start = oracleStarts.get(ctx.ref);
+            if (start === undefined) return null;
+            if (start.epoch > ctx.finishEpoch) return null;
+            oracleStarts.delete(ctx.ref);
+            return start;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
+    // Finish-token completion: runs after every parsed verdict (including
+    // cancelled) and for invalid/unavailable replies (null). Consumes only
+    // its own finish's associated start without routing, logging, or
+    // touching DescribePlan.
+    const settleOracleVerdict = (verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined): void => {
+        try {
+            void verdict;
+            takeOwnStart(ctx);
+        } catch (error) {
+            void error;
+        }
+    };
+    const routeOracleVerdict = (verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined): void => {
+        try {
+            if (ctx === undefined) {
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                return;
+            }
+            const observed = observeNative(liveWorkspace, nativeIds);
+            if (observed === null) {
+                takeOwnStart(ctx);
+                try { log("plasma-auto-tiler:route-diag:drag-scope-invalid"); } catch (error) { void error; }
+                return;
+            }
+            let ref: object | null = null;
+            for (const entry of observed.windows) {
+                if (entry.id === verdict.windowIdentity) {
+                    ref = entry.ref;
+                    break;
+                }
+            }
+            if (ref === null) {
+                takeOwnStart(ctx);
+                try { log("plasma-auto-tiler:route-diag:drag-unknown-window"); } catch (error) { void error; }
+                return;
+            }
+            if (ref !== ctx.ref) {
+                takeOwnStart(ctx);
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                return;
+            }
+            const start = takeOwnStart(ctx);
+            if (start === null || start.id !== verdict.windowIdentity) {
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                return;
+            }
+            if (start.move === true) {
+                try { log("plasma-auto-tiler:route-diag:drag-move-ignored"); } catch (error) { void error; }
+                return;
+            }
+            if (!(start.move === false && start.resize === true)) {
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                return;
+            }
+            const edge = deriveOracleEdge(start.rect, verdict.finalRect);
+            if (edge === null || edge === "mixed") {
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                return;
+            }
+            const ok = adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
+            if (!ok) {
+                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const oracleSeen = new Set<object>();
+    const oracleDetaches: Array<() => void> = [];
+    const oracleWindowDetaches = new Map<object, Array<() => void>>();
+    const trackOracleDetach = (ref: object, detach: () => void): void => {
+        try {
+            oracleDetaches.push(detach);
+            const owned = oracleWindowDetaches.get(ref);
+            if (owned === undefined) {
+                oracleWindowDetaches.set(ref, [detach]);
+            } else {
+                owned.push(detach);
+            }
+        } catch (error) {
+            void error;
+        }
+    };
+    const dropOracleWindow = (ref: object): void => {
+        // Removed-window cleanup keyed by object identity only: never reads an
+        // id from the removal payload. Runs the window's own Started detach
+        // so dead signals stop firing, then drops captured state.
+        try {
+            const owned = oracleWindowDetaches.get(ref);
+            if (owned !== undefined) {
+                oracleWindowDetaches.delete(ref);
+                for (const detach of owned) {
+                    try { detach(); } catch (error) { void error; }
+                }
+            }
+            oracleStarts.delete(ref);
+            oracleSeen.delete(ref);
+        } catch (error) {
+            void error;
+        }
+    };
+    const attachOracleStartOne = (ref: object): void => {
+        if (oracleSeen.has(ref)) return;
+        let started: unknown = null;
+        try {
+            started = readSignal(ref, "interactiveMoveResizeStarted");
+        } catch (error) { void error; return; }
+        let startedDetach: (() => void) | null = null;
+        try {
+            startedDetach = connectSignal(started, () => {
+                try { captureOracleStart(ref); } catch (error) { void error; }
+            });
+            if (startedDetach === null) return;
+        } catch (error) { void error; return; }
+        if (startedDetach === null) return;
+        oracleSeen.add(ref);
+        trackOracleDetach(ref, startedDetach);
+    };
+    const attachOracleStartAll = (): void => {
+        try {
+            const lister = surface["windowList"];
+            if (typeof lister !== "function") return;
+            const raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+            const list = decodeList(raw, MAX_LIST);
+            if (list === null) return;
+            for (const item of list) {
+                if (typeof item === "object" && item !== null) attachOracleStartOne(item as object);
+            }
+        } catch (error) { void error; }
+    };
+    attachOracleStartAll();
+    try {
+        const addedDetach = connectSignal(readSignal(surface, "windowAdded"), () => { attachOracleStartAll(); });
+        if (addedDetach !== null) oracleDetaches.push(addedDetach);
+    } catch (error) { void error; }
+    // Removed-window oracle cleanup within the exact existing signal APIs:
+    // windowRemoved carries the Window object, used here by identity only.
+    try {
+        const removedDetach = connectSignal(readSignal(surface, "windowRemoved"), (removed) => {
+            try {
+                if (typeof removed === "object" && removed !== null) dropOracleWindow(removed as object);
+            } catch (error) { void error; }
+        });
+        if (removedDetach !== null) oracleDetaches.push(removedDetach);
+    } catch (error) { void error; }
+    let oracleStop: (() => void) | null = null;
+    try {
+        const oracleOverrides: import("./drag-oracle-pull").DragOraclePullOverrides =
+            overrides.oracleCallDbus === undefined
+                ? { workspace: liveWorkspace, log, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: makeOracleFinishContext }
+                : { workspace: liveWorkspace, log, callDbus: overrides.oracleCallDbus, routePointer: routeOracleVerdict, onSettled: settleOracleVerdict, makeFinishContext: makeOracleFinishContext };
+        const oracleHandle = startDragOraclePullEntry(oracleOverrides);
+        if (oracleHandle !== null) oracleStop = () => { try { oracleHandle.stop(); } catch (error) { void error; } };
+    } catch (error) { void error; }
     return {
         stop: () => {
             try {
                 adapter.disable();
             } catch (error) {
                 void error;
+            }
+            for (const detach of oracleDetaches) {
+                try { detach(); } catch (error) { void error; }
+            }
+            if (oracleStop !== null) {
+                try { oracleStop(); } catch (error) { void error; }
             }
         },
         requestFocus: (direction) => {

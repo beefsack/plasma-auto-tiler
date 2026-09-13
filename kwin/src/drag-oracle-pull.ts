@@ -4,8 +4,9 @@ export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_M
 const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const UNAVAILABLE_LINE = `${ROUTE_DIAG}:drag-unavailable`; const ENTRY_REJECT = `${ROUTE_DIAG}:drag-entry-invalid`; const MAX_LIST = 1024;
 const EMPTY_IDENTITY_REASONS: ReadonlyArray<string> = ["no-observation", "oracle-unavailable", "oracle-panic", "empty-identity", "identity-invalid", "identity-too-long", "geometry-invalid", "geometry-out-of-range"];
 const VERDICT_REASONS: ReadonlyArray<string> = [...EMPTY_IDENTITY_REASONS, "no-change", "ok-moved"];
-export interface DragOraclePullEnv { readonly callDbus: (service: string, path: string, iface: string, method: string, callback: (reply: unknown) => void) => void; readonly log: (message: string) => void; }
-export interface DragOraclePullOverrides { readonly workspace?: unknown; readonly callDbus?: DragOraclePullEnv["callDbus"]; readonly log?: (message: string) => void; }
+export interface DragOracleFinishContext { readonly ref: object; readonly finishEpoch: number; }
+export interface DragOraclePullEnv { readonly callDbus: (service: string, path: string, iface: string, method: string, callback: (reply: unknown) => void) => void; readonly log: (message: string) => void; readonly routePointer?: ((verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined) => void) | undefined; readonly onSettled?: ((verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined) => void) | undefined; }
+export interface DragOraclePullOverrides { readonly workspace?: unknown; readonly callDbus?: DragOraclePullEnv["callDbus"] | undefined; readonly log?: ((message: string) => void) | undefined; readonly routePointer?: ((verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined) => void) | undefined; readonly onSettled?: ((verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined) => void) | undefined; readonly makeFinishContext?: ((ref: object) => DragOracleFinishContext) | undefined; }
 export interface DragOraclePullHandle { readonly stop: () => void; }
 export interface DragOracleFinalRect { readonly x: number; readonly y: number; readonly w: number; readonly h: number; }
 export interface DragOracleVerdict { readonly cancelled: boolean; readonly finalRect: DragOracleFinalRect; readonly windowIdentity: string; readonly correlation: string; readonly reason: string; }
@@ -50,18 +51,57 @@ export function parseDragOracleVerdict(reply: unknown): DragOracleVerdict | null
     return { cancelled: cancelled as boolean, finalRect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number }, windowIdentity: identity as string, correlation: parsed["correlation"] as string, reason: parsed["reason"] as string };
 }
 export function formatDragOracleVerdict(verdict: Pick<DragOracleVerdict, "cancelled" | "correlation" | "reason">): string { return `${VERDICT_PREFIX} cancelled=${verdict.cancelled === true ? "true" : "false"} correlation=${verdict.correlation} reason=${verdict.reason}`; }
+// Slice 2 edge helper: stepped payload only, never live geometry. Exactly one
+// edge must move with the opposite fixed; otherwise null (no-change) or mixed.
+export function deriveOracleEdge(start: DragOracleFinalRect, final: DragOracleFinalRect): { direction: string; boundary: number } | "mixed" | null {
+    const startRight = start.x + start.w;
+    const startBottom = start.y + start.h;
+    const finalRight = final.x + final.w;
+    const finalBottom = final.y + final.h;
+    const hSame = final.x === start.x && final.w === start.w;
+    const vSame = final.y === start.y && final.h === start.h;
+    if (hSame && vSame) return null;
+    if (!hSame && !vSame) return "mixed";
+    if (!hSame) {
+        if (final.x !== start.x && finalRight === startRight) return { direction: "left", boundary: final.x };
+        if (final.x === start.x && finalRight !== startRight) return { direction: "right", boundary: finalRight };
+        return "mixed";
+    }
+    if (final.y !== start.y && finalBottom === startBottom) return { direction: "up", boundary: final.y };
+    if (final.y === start.y && finalBottom !== startBottom) return { direction: "down", boundary: finalBottom };
+    return "mixed";
+}
 export class DragOraclePull {
     constructor(private readonly env: DragOraclePullEnv) {}
-    pullVerdict(): void {
+    pullVerdict(ctx?: DragOracleFinishContext): void {
         const call = this.env.callDbus;
-        if (typeof call !== "function") { this.logUnavailable(); return; }
-        try { call(DRAG_ORACLE_SERVICE, DRAG_ORACLE_OBJECT, DRAG_ORACLE_INTERFACE, DRAG_ORACLE_METHOD, (reply) => { this.onReply(reply); }); } catch (_e) { this.logUnavailable(); }
+        if (typeof call !== "function") { this.logUnavailable(); this.notifySettled(null, ctx); return; }
+        try { call(DRAG_ORACLE_SERVICE, DRAG_ORACLE_OBJECT, DRAG_ORACLE_INTERFACE, DRAG_ORACLE_METHOD, (reply) => { this.onReply(reply, ctx); }); } catch (_e) { this.logUnavailable(); this.notifySettled(null, ctx); }
     }
-    private onReply(reply: unknown): void {
+    private onReply(reply: unknown, ctx: DragOracleFinishContext | undefined): void {
         let verdict: DragOracleVerdict | null = null;
         try { verdict = parseDragOracleVerdict(reply); } catch (_e) { verdict = null; }
-        if (verdict === null) { this.logUnavailable(); return; }
+        if (verdict === null) { this.logUnavailable(); this.notifySettled(null, ctx); return; }
         try { this.env.log(formatDragOracleVerdict(verdict)); } catch (_e) { /* fail-closed */ }
+        // Cancelled verdicts (including Esc/no-change) are a strict no-op:
+        // no planner call, no share change. Non-cancelled verdicts route
+        // exactly once through the injected pointer route, which owns strict
+        // derivation and fail-closed reasons. No retry or fallback here.
+        // Every parsed verdict (including cancelled) notifies the optional
+        // finish-keyed completion exactly once so the entry can consume its
+        // per-window captured start; the notification runs after routing so
+        // the route still observes the captured start.
+        if (verdict.cancelled === true) { this.notifySettled(verdict, ctx); return; }
+        const route = this.env.routePointer;
+        if (typeof route !== "function") { this.notifySettled(verdict, ctx); return; }
+        try { route(verdict, ctx); } catch (_e) { /* fail-closed */ }
+        this.notifySettled(verdict, ctx);
+    }
+    private notifySettled(verdict: DragOracleVerdict | null, ctx: DragOracleFinishContext | undefined): void {
+        try {
+            const settled = this.env.onSettled;
+            if (typeof settled === "function") settled(verdict, ctx);
+        } catch (_e) { /* fail-closed */ }
     }
     private logUnavailable(): void { try { this.env.log(UNAVAILABLE_LINE); } catch (_e) { /* fail-closed */ } }
 }
@@ -139,7 +179,12 @@ export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}
     }
     const list = decodeList(raw, MAX_LIST);
     if (list === null) return fail();
-    const pull = new DragOraclePull({ callDbus, log });
+    const pullEnv: DragOraclePullEnv = { callDbus, log };
+    if (overrides.routePointer !== undefined) (pullEnv as { routePointer?: unknown }).routePointer = overrides.routePointer;
+    if (overrides.onSettled !== undefined) (pullEnv as { onSettled?: unknown }).onSettled = overrides.onSettled;
+    const pull = new DragOraclePull(pullEnv);
+    let localFinishEpoch = 0;
+    const makeCtx = overrides.makeFinishContext ?? ((ref: object): DragOracleFinishContext => ({ ref, finishEpoch: (localFinishEpoch += 1) }));
     const attached: Array<() => void> = [];
     const detachAll = (): void => {
         for (const done of attached) {
@@ -159,9 +204,16 @@ export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}
             return "skip";
         }
         if (!isConnectableSignal(finishedSurface)) return "skip";
+        const finishedRef = item as object;
         const onFinished = (): void => {
+            let ctx: DragOracleFinishContext | undefined = undefined;
             try {
-                pull.pullVerdict();
+                ctx = makeCtx(finishedRef);
+            } catch (_e) {
+                ctx = undefined;
+            }
+            try {
+                pull.pullVerdict(ctx);
             } catch (_e) {
                 // Pull never throws; guard fail-closed.
             }

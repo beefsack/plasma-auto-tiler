@@ -282,6 +282,8 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "focus-window-invalid",
     "resize-op-invalid",
     "resize-window-invalid",
+    "pointer-resize-op-invalid",
+    "pointer-resize-window-invalid",
     "reconcile-op-invalid",
 ];
 
@@ -928,6 +930,7 @@ impl Planner {
             "move" => self.evaluate_move_retained(&ctx),
             "focus" => self.evaluate_focus_retained(&ctx),
             "resize" => self.evaluate_resize_retained(&ctx),
+            "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "reconcile" => self.evaluate_reconcile_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
@@ -1496,6 +1499,103 @@ impl Planner {
                         "capability": "keyboard-resize",
                         "direction": direction_str(direction),
                         "mode": mode.as_str(),
+                        "target_group": plan.dispatch.operation.target_group.0,
+                        "focused_index": plan.dispatch.operation.focused_index,
+                        "neighbor_index": plan.dispatch.operation.neighbor_index,
+                        "old_shares": plan.dispatch.operation.old_shares,
+                        "new_shares": plan.dispatch.operation.new_shares,
+                    }),
+                    &plan.desired_geometry,
+                    Some((&plan.desired_focus_domain, &plan.desired_focus_leaf)),
+                )
+            },
+            |session, plan, c, base| {
+                if !acknowledge(session, c, base) {
+                    return false;
+                }
+                let post = crate::contract::ResizePostObservation::new(
+                    Observation::new(
+                        c.owner.clone(),
+                        c.generation.clone(),
+                        base,
+                        c.request.fingerprint,
+                    ),
+                    c.correlation.clone(),
+                    true,
+                    plan.dispatch.preconditions.clone(),
+                    plan.dispatch.operation.clone(),
+                );
+                session.verify_resize(&post).is_ok()
+            },
+        )
+    }
+
+    fn evaluate_pointer_resize_retained(&mut self, ctx: &Validated) -> String {
+        let command: PointerResizeCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "pointer-resize" {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "pointer-resize-op-invalid",
+            );
+        }
+        if !is_opaque_id(&command.window) {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "pointer-resize-window-invalid",
+            );
+        }
+        let Some(direction) = parse_direction(&command.direction) else {
+            return rejected(
+                ctx.request.correlation_id.clone(),
+                "direction-invalid",
+                MSG_DIRECTION,
+            );
+        };
+        let seed_order =
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+        let window = WindowId(command.window.clone());
+        let boundary = command.boundary;
+        let capabilities = crate::contract::ResizeCapabilities {
+            keyboard_resize: false,
+            pointer_resize: true,
+        };
+        self.run_retained(
+            ctx,
+            seed_order,
+            true,
+            |session, observation| {
+                let _ = session.sync_focus_from_window(
+                    &ctx.domain_key,
+                    &WindowId(ctx.request.focused_window.clone()),
+                );
+                session.propose_pointer_resize(
+                    &ctx.domain_key,
+                    &window,
+                    direction,
+                    boundary,
+                    observation,
+                    &ctx.correlation,
+                    &capabilities,
+                )
+            },
+            |plan| {
+                planned_reply(
+                    &ctx.request.correlation_id,
+                    plan.dispatch.base_revision,
+                    serde_json::json!({
+                        "kind": "pointer-resize",
+                        "capability": "pointer-resize",
+                        "direction": direction_str(direction),
+                        "boundary": boundary,
                         "target_group": plan.dispatch.operation.target_group.0,
                         "focused_index": plan.dispatch.operation.focused_index,
                         "neighbor_index": plan.dispatch.operation.neighbor_index,
@@ -2119,6 +2219,15 @@ struct ResizeCommand {
     direction: String,
     mode: String,
     press_index: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct PointerResizeCommand {
+    op: String,
+    window: String,
+    direction: String,
+    boundary: i32,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -3017,6 +3126,140 @@ mod tests {
         }
     }
 
+    fn seed_pointer_planner() -> Planner {
+        let mut planner = Planner::new();
+        for (correlation, focused, windows, command) in [
+            (
+                "ptr-seed-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "ptr-seed-2",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let request =
+                retained_request(correlation, "owner-1", "gen-1", focused, &windows, command);
+            assert_eq!(
+                parse_reply(&planner.evaluate(&request))["outcome"],
+                "planned"
+            );
+        }
+        planner
+    }
+
+    #[test]
+    fn retained_pointer_resize_reflows_allocation_and_shares() {
+        let mut planner = seed_pointer_planner();
+        let request = retained_request(
+            "ptr-ok-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-2",
+                "direction": "left",
+                "boundary": 550,
+            }),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "planned", "{reply}");
+        assert_eq!(reply["detail"]["kind"], "pointer-resize", "{reply}");
+        assert_eq!(reply["detail"]["capability"], "pointer-resize", "{reply}");
+        assert_eq!(reply["detail"]["direction"], "left", "{reply}");
+        assert_eq!(reply["detail"]["boundary"], 550, "{reply}");
+        assert_geometry_covers(&reply, &["win-1", "win-2"]);
+        let old = reply["detail"]["old_shares"]
+            .as_array()
+            .expect("old shares");
+        let new = reply["detail"]["new_shares"]
+            .as_array()
+            .expect("new shares");
+        assert_ne!(old, new, "{reply}");
+    }
+
+    #[test]
+    fn retained_pointer_resize_out_of_bounds_refuses_precisely() {
+        let mut planner = seed_pointer_planner();
+        let request = retained_request(
+            "ptr-bad-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-2",
+                "direction": "left",
+                "boundary": 5000,
+            }),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "malformed-input", "{reply}");
+        assert_eq!(
+            reply["message"],
+            "command or observation input is malformed",
+            "{reply}"
+        );
+        assert!(reply.get("detail").is_none(), "{reply}");
+        assert!(reply.get("desired_geometry").is_none(), "{reply}");
+    }
+
+    #[test]
+    fn retained_pointer_resize_refusal_details_are_exact() {
+        let mut planner = seed_pointer_planner();
+        // Unknown window: valid opaque id covered by the observation but not
+        // tiled in the session.
+        let request = retained_request(
+            "ptr-bad-2",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-zzz",
+                "direction": "left",
+                "boundary": 150,
+            }),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unknown-window", "{reply}");
+        assert_eq!(
+            reply["message"],
+            "window is not known to the session",
+            "{reply}"
+        );
+        assert!(reply.get("desired_geometry").is_none(), "{reply}");
+        // Invalid direction binds the exact direction refusal.
+        let request = retained_request(
+            "ptr-bad-3",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({
+                "op": "pointer-resize",
+                "window": "win-2",
+                "direction": "sideways",
+                "boundary": 150,
+            }),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "direction-invalid", "{reply}");
+        assert_eq!(reply["message"], "direction is invalid", "{reply}");
+        assert!(reply.get("desired_geometry").is_none(), "{reply}");
+    }
+
     fn base_valid_value(cid: &str) -> serde_json::Value {
         serde_json::from_str(&plan_request(
             cid,
@@ -3248,7 +3491,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 35, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 37, "closed registry size");
     }
 
     fn geometry_by_window(

@@ -1,4 +1,3 @@
-import { startDragOraclePullEntry } from "./drag-oracle-pull";
 import { startPlanAdapterEntry } from "./plan-adapter-entry";
 import { TrayPublisher } from "./tray-publisher";
 
@@ -49,10 +48,9 @@ const trayPublisher = new TrayPublisher({
 
 trayPublisher.start();
 
+// Slice 2 production route: the plan adapter owns the single finished-handler
+// LastVerdict pull and routes exactly one strict pointer-resize after a
+// non-cancelled verdict. Cancelled verdicts are a strict no-op; derive
+// failures fail closed with exact bounded reasons. No push, retry, or fallback.
 const planHandle = startPlanAdapterEntry({ owner: "kwin-plan-adapter", generation: "plan-1" });
 void planHandle;
-
-// Slice 1 inert observer: finished-handler LastVerdict pull with route-diag
-// logging only. No geometry write, no share change. Fail-closed, never throws.
-const dragOracleHandle = startDragOraclePullEntry();
-void dragOracleHandle;

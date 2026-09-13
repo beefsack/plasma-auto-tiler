@@ -426,10 +426,10 @@ describe("drag-oracle pull entry wiring", () => {
         assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-invalid"]);
     });
 
-    it("keeps production wiring inert with finished-handler pull and route-diag", () => {
+    it("keeps Slice 2 routing pull-based with strict no-op cancelled and no planner push", () => {
         const entry = readFileSync("src/entry.ts", "utf8");
-        assert.ok(entry.includes("drag-oracle-pull"));
-        assert.ok(entry.includes("startDragOraclePullEntry"));
+        assert.ok(entry.includes("startPlanAdapterEntry"));
+        assert.ok(!entry.includes("startDragOraclePullEntry"));
         const module = readFileSync("src/drag-oracle-pull.ts", "utf8");
         assert.ok(!module.includes("DescribePlan"));
         assert.ok(!module.includes("frameGeometry"));
@@ -440,5 +440,11 @@ describe("drag-oracle pull entry wiring", () => {
         assert.ok(module.includes("plasma-auto-tiler:route-diag"));
         assert.ok(module.includes("finalRect"));
         assert.ok(module.includes("windowIdentity"));
+        assert.ok(module.includes("routePointer"));
+        assert.ok(module.includes("deriveOracleEdge"));
+        const adapterEntry = readFileSync("src/plan-adapter-entry.ts", "utf8");
+        assert.ok(adapterEntry.includes("drag-oracle-pull"));
+        assert.ok(adapterEntry.includes("requestPointerResize"));
+        assert.ok(adapterEntry.includes("routePointer"));
     });
 });

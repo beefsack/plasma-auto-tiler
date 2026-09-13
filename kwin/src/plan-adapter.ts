@@ -41,7 +41,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize";
 
 export interface PlanRect {
     readonly x: number;
@@ -214,6 +214,54 @@ function sameRects(a: PlanSnapshot, b: PlanSnapshot): boolean {
         }
     }
     return true;
+}
+
+// Pointer-only tolerance: identical to snapshotsEqual except the drag
+// source rectangle may drift (final native echo before the D-Bus reply).
+function rectsEqualExceptSource(a: PlanSnapshot, b: PlanSnapshot, sourceId: string): boolean {
+    if (
+        a.domainOutput !== b.domainOutput ||
+        a.domainWorkspace !== b.domainWorkspace ||
+        a.domainGap !== b.domainGap ||
+        a.domainOuterGap !== b.domainOuterGap ||
+        a.focusedId !== b.focusedId ||
+        a.fingerprint !== b.fingerprint
+    ) {
+        return false;
+    }
+    if (
+        a.domainBounds.x !== b.domainBounds.x ||
+        a.domainBounds.y !== b.domainBounds.y ||
+        a.domainBounds.w !== b.domainBounds.w ||
+        a.domainBounds.h !== b.domainBounds.h
+    ) {
+        return false;
+    }
+    if (a.windows.length !== b.windows.length) {
+        return false;
+    }
+    const byId = new Map<string, PlanSnapshotWindow>();
+    for (const entry of a.windows) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b.windows) {
+        const other = byId.get(entry.id);
+        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
+            return false;
+        }
+        if (entry.id === sourceId) {
+            continue;
+        }
+        if (
+            other.rect.x !== entry.rect.x ||
+            other.rect.y !== entry.rect.y ||
+            other.rect.w !== entry.rect.w ||
+            other.rect.h !== entry.rect.h
+        ) {
+            return false;
+        }
+    }
+    return byId.has(sourceId);
 }
 
 export interface PlanAdapterEnv {
@@ -582,6 +630,7 @@ interface PendingFlight {
     readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly windowCount: number;
+    readonly pointerSource: string | null;
 }
 
 interface AutoIntent {
@@ -589,6 +638,14 @@ interface AutoIntent {
     readonly snapshot: PlanSnapshot;
     readonly removed: string | null;
     readonly body: Record<string, unknown>;
+    readonly pointerSource?: string | null;
+}
+
+interface PointerEcho {
+    readonly correlation: string;
+    readonly source: string;
+    readonly scope: PlanSnapshot;
+    readonly neighbours: ReadonlyArray<{ window: string; rect: PlanRect }>;
 }
 
 export class PlanAdapter {
@@ -614,6 +671,7 @@ export class PlanAdapter {
     private repeatMode: PlanResizeMode | null = null;
     private repeatNext = 0;
     private repeatFingerprint = "";
+    private pointerEcho: PointerEcho | null = null;
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -668,6 +726,7 @@ export class PlanAdapter {
         this.lastGood = null;
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.pointerEcho = null;
         this.clearRepeat();
         return true;
     }
@@ -683,6 +742,7 @@ export class PlanAdapter {
         this.lastGood = null;
         this.reconcileAttempts = 0;
         this.parked = false;
+        this.pointerEcho = null;
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -760,6 +820,49 @@ export class PlanAdapter {
             removed: null,
             body: { op: "resize", window: snapshot.focusedId, direction, mode, press_index: pressIndex },
         });
+    }
+
+    // Slice 2 oracle route: exactly one strict pointer-resize from the
+    // authoritative final rect. Strict decoding only; fail-closed false when
+    // the window, direction, or boundary cannot be safely bound. Defers
+    // through the single pending slot when a flight is active, never bypasses
+    // it, retries, or guesses.
+    requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown): boolean {
+        if (!this.enabled || !isOpaqueId(windowId) || !isDirection(direction)) {
+            return false;
+        }
+        if (!isFiniteInt(boundary) || (boundary as number) < -16384 || (boundary as number) > 16384) {
+            return false;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            return false;
+        }
+        let found = false;
+        for (const entry of observed.windows) {
+            if (entry.id === (windowId as string)) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            return false;
+        }
+        const snapshot = snapshotOf(observed);
+        this.noteObservation(snapshot.fingerprint);
+        const intent: AutoIntent = {
+            op: "pointer-resize",
+            snapshot,
+            removed: null,
+            body: { op: "pointer-resize", window: windowId as string, direction, boundary },
+            pointerSource: windowId as string,
+        };
+        if (this.inFlight) {
+            this.deferredAuto = intent;
+            return true;
+        }
+        this.dispatch(intent);
+        return this.inFlight;
     }
 
     requestResync(): void {
@@ -898,6 +1001,7 @@ export class PlanAdapter {
             this.lastGood = freshSnapshot;
             this.reconcileAttempts = 0;
             this.parked = false;
+            this.pointerEcho = null;
             this.deferredAuto = intent;
             if (this.inFlight) {
                 return;
@@ -943,6 +1047,7 @@ export class PlanAdapter {
             this.lastGood = freshSnapshot;
             this.reconcileAttempts = 0;
             this.parked = false;
+            this.pointerEcho = null;
             if (this.inFlight) {
                 return;
             }
@@ -952,6 +1057,32 @@ export class PlanAdapter {
                 this.dispatch(next);
             }
             return;
+        }
+        // Slice 2 echo fence: exactly one one-shot neighbour-write expectation
+        // keyed by pointer correlation and source. Consume only when same-scope
+        // fresh neighbour rectangles equal the planned rectangles; update
+        // lastGood and return. Any mismatch falls through to bounded
+        // reconciliation. Never applies to broad scope signals above.
+        const echo = this.pointerEcho;
+        if (echo !== null) {
+            this.pointerEcho = null;
+            if (this.echoMatches(freshSnapshot, echo)) {
+                this.lastGood = freshSnapshot;
+                this.reconcileAttempts = 0;
+                this.parked = false;
+                if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
+                    this.deferredAuto = null;
+                }
+                if (this.inFlight) {
+                    return;
+                }
+                const next = this.deferredAuto;
+                this.deferredAuto = null;
+                if (next !== null) {
+                    this.dispatch(next);
+                }
+                return;
+            }
         }
         if (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
             this.parked = true;
@@ -973,6 +1104,32 @@ export class PlanAdapter {
         }
     }
 
+    private echoMatches(fresh: PlanSnapshot, echo: PointerEcho): boolean {
+        if (!sameScope(fresh, echo.scope)) {
+            return false;
+        }
+        const byId = new Map<string, PlanRect>();
+        for (const entry of fresh.windows) {
+            byId.set(entry.id, entry.rect);
+        }
+        if (!byId.has(echo.source)) {
+            return false;
+        }
+        for (const expected of echo.neighbours) {
+            const actual = byId.get(expected.window);
+            if (
+                actual === undefined ||
+                actual.x !== expected.rect.x ||
+                actual.y !== expected.rect.y ||
+                actual.w !== expected.rect.w ||
+                actual.h !== expected.rect.h
+            ) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private noteReconcileTerminal(op: PlanOp): void {
         if (op !== "reconcile") {
             return;
@@ -983,7 +1140,7 @@ export class PlanAdapter {
         }
     }
 
-    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown> }): void {
+    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown>; pointerSource?: string | null }): void {
         if (!this.enabled || this.inFlight) {
             return;
         }
@@ -1049,6 +1206,7 @@ export class PlanAdapter {
             snapshot,
             removed: intent.removed,
             windowCount: sortedIds.length,
+            pointerSource: intent.pointerSource ?? null,
         };
         this.callbackSeen = false;
         this.token += 1;
@@ -1204,6 +1362,20 @@ export class PlanAdapter {
             this.failFlight(flightState, "stale-scope");
             return;
         }
+        if (flightState.op === "pointer-resize") {
+            const source = flightState.pointerSource;
+            if (source === null) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            const freshSnapshot = snapshotOf(fresh);
+            if (!rectsEqualExceptSource(freshSnapshot, flightState.snapshot, source)) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            this.writeGeometries(planned, flightState, fresh);
+            return;
+        }
         if (flightState.removed === null) {
             const freshSnapshot = snapshotOf(fresh);
             if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
@@ -1235,10 +1407,15 @@ export class PlanAdapter {
             byRef.set(entry.id, entry.ref);
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
         }
-        const ordered = orderGeometryWrites(oldById, planned.geometry);
+        const effectiveGeometry =
+            flightState.op === "pointer-resize" && flightState.pointerSource !== null
+                ? planned.geometry.filter((entry) => entry.window !== flightState.pointerSource)
+                : planned.geometry;
+        const ordered = orderGeometryWrites(oldById, effectiveGeometry);
         // Focus is focus-only: never rewrite geometry, only move the active
         // window. Matches the standalone focus adapter single-write contract;
         // move/admit/remove/resize still apply complete geometries above.
+        // Pointer writes changed neighbours only, never the drag source.
         if (flightState.op !== "focus") {
             for (const entry of ordered) {
                 const target = byRef.get(entry.window);
@@ -1309,6 +1486,18 @@ export class PlanAdapter {
                 return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace };
             });
             this.lastGood = { ...base, windows: Object.freeze(windows) };
+            if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
+                const neighbours = effectiveGeometry.map((entry) => ({
+                    window: entry.window,
+                    rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                }));
+                this.pointerEcho = {
+                    correlation: flightState.correlation,
+                    source: flightState.pointerSource,
+                    scope: flightState.snapshot,
+                    neighbours: Object.freeze(neighbours),
+                };
+            }
             if (flightState.op === "reconcile") {
                 this.noteReconcileTerminal(flightState.op);
             } else {
