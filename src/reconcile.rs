@@ -1465,6 +1465,16 @@ impl Reconciler {
         }
         self.diverge(DivergenceKind::AdapterLost)
     }
+
+    /// Explicit post-observation mismatch signal for the standalone
+    /// workspace-send route: terminal `PostconditionMismatch` divergence,
+    /// pending discarded.
+    pub fn note_postcondition_mismatch(&mut self) -> DivergenceKind {
+        if let Some(reason) = self.diverged {
+            return reason;
+        }
+        self.diverge(DivergenceKind::PostconditionMismatch)
+    }
 }
 
 fn resize_step_for(direction: crate::directional::Direction) -> i32 {

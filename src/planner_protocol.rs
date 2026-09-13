@@ -18,18 +18,32 @@
 //! so a fresh observation can always recover after any rejection. Native
 //! execution stays outside: replies carry full target geometries plus
 //! retained focus for the adapter to actuate.
+//!
+//! Workspace send route (standalone, dev-only): the `send-to-workspace`
+//! operation carries a same-output distinct-workspace target as an optional
+//! `target_domain` plus `target_windows` alongside the source `domain`/
+//! `windows`. It proposes once and retains one pending two-domain Session
+//! (owner/generation/correlation/base-revision bound) until an exact accepted
+//! `send-to-workspace-ack` and a matching verified `send-to-workspace-verify`
+//! post-observation commit it. No owner rebind during pending; pending
+//! mismatch, loss, refused ack, or failed verification is terminal
+//! `diverged` with no Legacy fallback. Legacy requests are unchanged.
 
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
-use crate::contract::{FocusCapabilities, LifecycleCapabilities, Observation};
+use crate::contract::{
+    AckOutcome, AdapterAck, FocusCapabilities, LifecycleCapabilities, LifecycleOperation,
+    LifecyclePostObservation, LifecyclePrecondition, Observation,
+};
 use crate::directional::{Capabilities, Direction, NodeId, OutputId, WindowId, WorkspaceId};
 use crate::geometry::{Rect, project};
 use crate::ids::{CorrelationId, GenerationId, OwnerId};
+use crate::reconcile::{AckError, VerifyError};
 use crate::session::{
-    DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError, RefusalKind, Session,
-    SessionCommand, SessionObservation,
+    DesiredGeometry, DomainKey, ExceptionFlags, ObservedWindow, OutputDomain, ProposeError,
+    RefusalKind, Session, SessionCommand, SessionObservation, SessionPlan,
 };
 
 /// Planner protocol contract version (JSON string v1).
@@ -170,6 +184,10 @@ struct RequestDto {
     revision: u64,
     fingerprint: u64,
     domain: DomainDto,
+    #[serde(default)]
+    target_domain: Option<DomainDto>,
+    #[serde(default)]
+    target_windows: Vec<ObservedDto>,
     focused_window: String,
     windows: Vec<ObservedDto>,
     command: serde_json::Value,
@@ -208,6 +226,10 @@ struct PlanReply {
     desired_geometry: Option<Vec<GeometryReply>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     desired_focus: Option<FocusReplyBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    preconditions: Option<Vec<&'static str>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    operation: Option<serde_json::Value>,
 }
 
 fn serialize_bounded(reply: &PlanReply) -> String {
@@ -229,6 +251,8 @@ fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
         detail: None,
         desired_geometry: None,
         desired_focus: None,
+        preconditions: None,
+        operation: None,
     })
 }
 
@@ -244,6 +268,8 @@ fn snapshot_invalid(correlation_id: String, message: &str, detail: &'static str)
         detail: Some(serde_json::Value::String(detail.to_owned())),
         desired_geometry: None,
         desired_focus: None,
+        preconditions: None,
+        operation: None,
     })
 }
 
@@ -278,6 +304,8 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "remove-window-invalid",
     "move-op-invalid",
     "move-window-invalid",
+    "move-output-invalid",
+    "move-workspace-invalid",
     "focus-op-invalid",
     "focus-window-invalid",
     "resize-op-invalid",
@@ -541,7 +569,19 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             ));
         }
     }
+    // Ack/verify phases carry the complete source+target post-observation
+    // where focus is not a planning input: after the mover leaves the source
+    // desktop the observed focus may be empty or a remaining source window, so
+    // the focus-membership gate is relaxed for those two ops only.
+    let focus_skipped_for_ack_verify = matches!(
+        request
+            .command
+            .get("op")
+            .and_then(serde_json::Value::as_str),
+        Some("send-to-workspace-ack") | Some("send-to-workspace-verify")
+    );
     if !request.windows.is_empty()
+        && !focus_skipped_for_ack_verify
         && !request
             .windows
             .iter()
@@ -661,6 +701,8 @@ fn planned_reply(
         detail: Some(detail),
         desired_geometry: Some(geometry.iter().map(geometry_reply).collect()),
         desired_focus: focus.map(|(domain, leaf)| focus_reply(domain, leaf)),
+        preconditions: None,
+        operation: None,
     })
 }
 
@@ -675,6 +717,63 @@ fn snapshot_windows_leaf_map(
         .filter(|l| l.output == domain_key.output && l.workspace == domain_key.workspace)
         .map(|l| (l.leaf.0, l.window.0))
         .collect()
+}
+
+/// Planned workspace-send reply: carries the full affected geometry plus the
+/// exact operation/preconditions the adapter must echo back in the verify
+/// post-observation.
+fn workspace_planned_reply(correlation_id: &str, plan: &SessionPlan) -> String {
+    let operation = match &plan.dispatch.operation {
+        LifecycleOperation::MoveTiled {
+            window,
+            leaf,
+            source_output,
+            source_workspace,
+            target_output,
+            target_workspace,
+        } => serde_json::json!({
+            "op": "move-tiled",
+            "window": window.0,
+            "leaf": leaf.0,
+            "source_output": source_output.0,
+            "source_workspace": source_workspace.0,
+            "target_output": target_output.0,
+            "target_workspace": target_workspace.0,
+        }),
+        _ => {
+            return snapshot_invalid(
+                correlation_id.to_owned(),
+                MSG_OBSERVATION,
+                "move-op-invalid",
+            );
+        }
+    };
+    let preconditions: Vec<&'static str> = plan
+        .dispatch
+        .preconditions
+        .iter()
+        .map(|p| lifecycle_precondition_str(*p))
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: Some("send-to-workspace".to_owned()),
+        message: None,
+        base_revision: Some(plan.dispatch.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "send-to-workspace",
+            "policy_version": plan.dispatch.policy_version,
+            "capability": "move-tiled",
+        })),
+        desired_geometry: Some(plan.desired_geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
+            (Some(d), Some(l)) => Some(focus_reply(d, l)),
+            _ => None,
+        },
+        preconditions: Some(preconditions),
+        operation: Some(operation),
+    })
 }
 
 /// Rebuild admission target for one seed step: the currently focused target
@@ -832,6 +931,314 @@ fn spatial_with_focus_last(
     Some(windows)
 }
 
+/// One retained pending two-domain workspace-send Session for the standalone
+/// dev-only route. Bound to owner/generation/correlation/base revision; no
+/// owner rebind during pending. Pending mismatch, loss, refused ack, or failed
+/// verification is terminal divergence with no Legacy fallback. The retained
+/// desired geometry is exactly the expected post-observation: a bare
+/// `verified: true` never commits unless every desired window is observed once
+/// with the expected output, workspace, and rectangle.
+#[derive(Debug)]
+struct WorkspacePending {
+    owner: OwnerId,
+    generation: GenerationId,
+    correlation: CorrelationId,
+    base_revision: u64,
+    session: Session,
+    desired_geometry: Vec<DesiredGeometry>,
+}
+
+/// Validated workspace-send route input: the target domain plus the exact
+/// mover binding. The source domain is the already-validated request domain.
+#[derive(Debug)]
+struct WorkspaceInput {
+    target_domain: OutputDomain,
+    target_key: DomainKey,
+    target_windows: Vec<ObservedDto>,
+    window: WindowId,
+}
+
+/// Stable lifecycle precondition token (mirrors the KWin wire tokens).
+#[must_use]
+fn lifecycle_precondition_str(value: LifecyclePrecondition) -> &'static str {
+    match value {
+        LifecyclePrecondition::WindowObserved => "window-observed",
+        LifecyclePrecondition::DesiredTopologyValid => "desired-topology-valid",
+        LifecyclePrecondition::AdapterMustVerifyPostconditions => {
+            "adapter-must-verify-postconditions"
+        }
+    }
+}
+
+/// Parse a lifecycle precondition token (fail-closed on unknown tokens).
+#[must_use]
+fn parse_lifecycle_precondition(value: &str) -> Option<LifecyclePrecondition> {
+    match value {
+        "window-observed" => Some(LifecyclePrecondition::WindowObserved),
+        "desired-topology-valid" => Some(LifecyclePrecondition::DesiredTopologyValid),
+        "adapter-must-verify-postconditions" => {
+            Some(LifecyclePrecondition::AdapterMustVerifyPostconditions)
+        }
+        _ => None,
+    }
+}
+
+fn observed_from_dto(entry: &ObservedDto) -> ObservedWindow {
+    ObservedWindow {
+        window: WindowId(entry.window.clone()),
+        output: OutputId(entry.output.clone()),
+        workspace: WorkspaceId(entry.workspace.clone()),
+        floating: false,
+        fullscreen: false,
+        maximized: false,
+        sticky: false,
+    }
+}
+
+/// Terminal divergence reply for the standalone workspace route: outcome
+/// `diverged`, exact bounded kind, no Legacy fallback.
+fn diverged_reply(correlation_id: &str, reason: crate::contract::DivergenceKind) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "diverged",
+        kind: Some(reason.as_str().to_owned()),
+        message: Some(reason.message().to_owned()),
+        base_revision: None,
+        detail: None,
+        desired_geometry: None,
+        desired_focus: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// One admission step of the two-domain workspace seed: propose/ack/verify
+/// one tiled window into its exact source or target domain.
+fn seed_workspace_admit(
+    session: &mut Session,
+    owner: &OwnerId,
+    generation: &GenerationId,
+    fingerprint: u64,
+    domain: &OutputDomain,
+    entry: &ObservedDto,
+    index: usize,
+) -> Option<()> {
+    let base = session.accepted_revision();
+    let mut observed: Vec<ObservedWindow> = session
+        .snapshot()
+        .windows
+        .iter()
+        .map(|l| ObservedWindow {
+            window: l.window.clone(),
+            output: l.output.clone(),
+            workspace: l.workspace.clone(),
+            floating: false,
+            fullscreen: false,
+            maximized: false,
+            sticky: false,
+        })
+        .collect();
+    observed.extend(session.exception_observed());
+    observed.push(observed_from_dto(entry));
+    let correlation = CorrelationId::parse(&format!("seed-{index:04}"))?;
+    let observation = SessionObservation {
+        observation: Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+        windows: observed,
+    };
+    let command = SessionCommand::Admit {
+        window: WindowId(entry.window.clone()),
+        output: OutputId(entry.output.clone()),
+        workspace: WorkspaceId(entry.workspace.clone()),
+        exceptions: ExceptionFlags::none(),
+        exception_behavior: None,
+        placement_bounds: seed_target_bounds(session, domain),
+    };
+    let plan = session
+        .propose(
+            &command,
+            &observation,
+            &correlation,
+            &LifecycleCapabilities::full(),
+        )
+        .ok()?;
+    let ack = AdapterAck::new(
+        correlation.clone(),
+        owner.clone(),
+        generation.clone(),
+        base,
+        AckOutcome::Accepted,
+    );
+    session.acknowledge(&ack).ok()?;
+    session
+        .verify_lifecycle(&LifecyclePostObservation::new(
+            Observation::new(owner.clone(), generation.clone(), base, fingerprint),
+            correlation,
+            true,
+            plan.dispatch.preconditions.clone(),
+            plan.dispatch.operation.clone(),
+        ))
+        .ok()?;
+    Some(())
+}
+
+/// Rebuild the authoritative two-domain workspace topology from the observed
+/// source and target spatial orders (source first, then target). Mirrors
+/// [`seed_session`]; the mover is admitted into its source domain and focus is
+/// synced to it by the caller before the workspace move proposes.
+fn seed_workspace_session(
+    owner: &OwnerId,
+    generation: &GenerationId,
+    fingerprint: u64,
+    source_domain: &OutputDomain,
+    target_domain: &OutputDomain,
+    source_order: &[ObservedDto],
+    target_order: &[ObservedDto],
+) -> Option<Session> {
+    let mut session = Session::new(
+        owner.clone(),
+        generation.clone(),
+        0,
+        fingerprint,
+        vec![source_domain.clone(), target_domain.clone()],
+    )
+    .ok()?;
+    for (index, entry) in source_order.iter().enumerate() {
+        seed_workspace_admit(
+            &mut session,
+            owner,
+            generation,
+            fingerprint,
+            source_domain,
+            entry,
+            index,
+        )?;
+    }
+    for (index, entry) in target_order.iter().enumerate() {
+        seed_workspace_admit(
+            &mut session,
+            owner,
+            generation,
+            fingerprint,
+            target_domain,
+            entry,
+            source_order.len() + index,
+        )?;
+    }
+    Some(session)
+}
+
+/// Complete workspace observation covering every known source and target
+/// window at the given base revision.
+fn workspace_observation(base: u64, ctx: &Validated, input: &WorkspaceInput) -> SessionObservation {
+    let mut windows: Vec<ObservedWindow> =
+        ctx.request.windows.iter().map(observed_from_dto).collect();
+    windows.extend(input.target_windows.iter().map(observed_from_dto));
+    SessionObservation {
+        observation: Observation::new(
+            ctx.owner.clone(),
+            ctx.generation.clone(),
+            base,
+            ctx.request.fingerprint,
+        ),
+        windows,
+    }
+}
+
+/// Complete post-observation validation against the retained plan: every
+/// desired window must be carried exactly once (source plus target) with the
+/// expected output, workspace, and rectangle. Any missing, duplicate, extra,
+/// mis-homed, or mis-sized window fails closed so a bare `verified: true`
+/// never commits a divergent state.
+fn workspace_post_matches(pending: &WorkspacePending, ctx: &Validated) -> bool {
+    let mut observed: std::collections::HashMap<&str, &ObservedDto> =
+        std::collections::HashMap::with_capacity(
+            ctx.request.windows.len() + ctx.request.target_windows.len(),
+        );
+    for entry in ctx
+        .request
+        .windows
+        .iter()
+        .chain(ctx.request.target_windows.iter())
+    {
+        if observed.insert(entry.window.as_str(), entry).is_some() {
+            return false;
+        }
+    }
+    if observed.len() != pending.desired_geometry.len() {
+        return false;
+    }
+    for desired in &pending.desired_geometry {
+        let Some(entry) = observed.get(desired.window.0.as_str()) else {
+            return false;
+        };
+        if entry.output != desired.output.0
+            || entry.workspace != desired.workspace.0
+            || entry.rect.x != desired.rect.x
+            || entry.rect.y != desired.rect.y
+            || entry.rect.w != desired.rect.w
+            || entry.rect.h != desired.rect.h
+        {
+            return false;
+        }
+    }
+    true
+}
+
+/// Parse a MoveTiled operation JSON body back to its typed lifecycle form.
+fn parse_move_tiled_operation(value: &serde_json::Value) -> Option<LifecycleOperation> {
+    if !value.is_object() {
+        return None;
+    }
+    let window = value.get("window").and_then(serde_json::Value::as_str)?;
+    let leaf = value.get("leaf").and_then(serde_json::Value::as_str)?;
+    let source_output = value
+        .get("source_output")
+        .and_then(serde_json::Value::as_str)?;
+    let source_workspace = value
+        .get("source_workspace")
+        .and_then(serde_json::Value::as_str)?;
+    let target_output = value
+        .get("target_output")
+        .and_then(serde_json::Value::as_str)?;
+    let target_workspace = value
+        .get("target_workspace")
+        .and_then(serde_json::Value::as_str)?;
+    if value.get("op").and_then(serde_json::Value::as_str) != Some("move-tiled") {
+        return None;
+    }
+    if !is_opaque_id(window)
+        || !is_opaque_id(leaf)
+        || !is_opaque_id(source_output)
+        || !is_opaque_id(source_workspace)
+        || !is_opaque_id(target_output)
+        || !is_opaque_id(target_workspace)
+    {
+        return None;
+    }
+    Some(LifecycleOperation::MoveTiled {
+        window: WindowId(window.to_owned()),
+        leaf: NodeId(leaf.to_owned()),
+        source_output: OutputId(source_output.to_owned()),
+        source_workspace: WorkspaceId(source_workspace.to_owned()),
+        target_output: OutputId(target_output.to_owned()),
+        target_workspace: WorkspaceId(target_workspace.to_owned()),
+    })
+}
+
+/// Parse the exact lifecycle precondition vector from the verify command.
+fn parse_lifecycle_preconditions(value: &serde_json::Value) -> Option<Vec<LifecyclePrecondition>> {
+    let values = value.as_array()?;
+    if values.is_empty() || values.len() > crate::contract::MAX_PRECONDITIONS {
+        return None;
+    }
+    let mut out = Vec::with_capacity(values.len());
+    for entry in values {
+        out.push(parse_lifecycle_precondition(entry.as_str()?)?);
+    }
+    Some(out)
+}
+
 fn session_domain_matches(session: &Session, domain: &OutputDomain) -> bool {
     session
         .domains()
@@ -867,11 +1274,17 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// (`ambiguous-placement`) reject rather than wedge. Each successful plan is
 /// acknowledged then verified in the same call, so no pending crosses calls
 /// and no stale data crosses domains/owner/generation.
+///
+/// Standalone workspace-send route: `send-to-workspace`/`-ack`/`-verify` keep
+/// one pending two-domain Session in [`WorkspacePending`], never crossing
+/// routes. No owner rebind during pending; pending mismatch/loss/refused
+/// ack/failed verification is terminal `diverged`.
 #[derive(Debug, Default)]
 pub struct Planner {
     owner: Option<OwnerId>,
     generation: Option<GenerationId>,
     sessions: BTreeMap<DomainKey, Session>,
+    workspace_pending: Option<WorkspacePending>,
 }
 
 impl Planner {
@@ -917,12 +1330,20 @@ impl Planner {
 
     /// Stateful evaluation across calls. Validation, bounds, and reply shapes
     /// match [`evaluate_plan_json`]; only topology sourcing differs (retained
-    /// vs rebuilt).
+    /// vs rebuilt). The standalone workspace-send route dispatches before the
+    /// legacy owner/generation binding sync so its one pending Session is never
+    /// discarded or rebound mid-flight; legacy requests are unchanged.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
             Err(reply) => return reply,
         };
+        match validated_op(&ctx).as_str() {
+            "send-to-workspace" => return self.evaluate_workspace_request(&ctx),
+            "send-to-workspace-ack" => return self.evaluate_workspace_ack(&ctx),
+            "send-to-workspace-verify" => return self.evaluate_workspace_verify(&ctx),
+            _ => {}
+        }
         self.sync_binding(&ctx.owner, &ctx.generation);
         match validated_op(&ctx).as_str() {
             "admit" => self.evaluate_admit_retained(&ctx),
@@ -1802,6 +2223,446 @@ impl Planner {
             Some((&focus_domain, &focus_leaf)),
         )
     }
+
+    /// Validate the standalone workspace-send target: optional `target_domain`
+    /// plus `target_windows` against the source `domain`/`windows`. Refuses
+    /// cross-output, same-workspace, absent/invalid focus, and malformed or
+    /// uncovered target windows fail-closed with bounded kinds.
+    fn validate_workspace_input(&self, ctx: &Validated) -> Result<WorkspaceInput, String> {
+        let cid = ctx.request.correlation_id.clone();
+        let Some(target_dto) = &ctx.request.target_domain else {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target workspace domain is missing",
+            ));
+        };
+        if !is_opaque_id(&target_dto.output) {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target output is invalid",
+            ));
+        }
+        if !is_opaque_id(&target_dto.workspace) {
+            return Err(rejected(
+                cid,
+                "workspace-target-invalid",
+                "target workspace is invalid",
+            ));
+        }
+        if target_dto.output != ctx.request.domain.output {
+            return Err(rejected(
+                cid,
+                "cross-output",
+                "target workspace is not on the focused output",
+            ));
+        }
+        if target_dto.workspace == ctx.request.domain.workspace {
+            return Err(rejected(
+                cid,
+                "unchanged-workspace",
+                "target workspace equals the source workspace",
+            ));
+        }
+        if ctx.request.focused_window.is_empty() {
+            return Err(rejected(
+                cid,
+                "absent-focus",
+                "no focused window is observed",
+            ));
+        }
+        let carried_bounds = Rect {
+            x: target_dto.bounds.x,
+            y: target_dto.bounds.y,
+            w: target_dto.bounds.w,
+            h: target_dto.bounds.h,
+        };
+        if !valid_carried_rect(
+            carried_bounds.x,
+            carried_bounds.y,
+            carried_bounds.w,
+            carried_bounds.h,
+        ) {
+            return Err(snapshot_invalid(
+                cid,
+                MSG_OBSERVATION,
+                "domain-bounds-invalid",
+            ));
+        }
+        if target_dto.gap < 0 {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "gap-low"));
+        }
+        if target_dto.gap > GEOMETRY_MAX_GAP {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "gap-high"));
+        }
+        if target_dto.outer_gap < 0 {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "outer-gap-low"));
+        }
+        if target_dto.outer_gap > GEOMETRY_MAX_GAP {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "outer-gap-high"));
+        }
+        {
+            let mut seen = std::collections::HashSet::new();
+            for entry in &ctx.request.target_windows {
+                if !is_opaque_id(&entry.window) {
+                    return Err(snapshot_invalid(
+                        cid,
+                        MSG_OPAQUE_ID,
+                        "observed-window-invalid",
+                    ));
+                }
+                if !is_opaque_id(&entry.output) {
+                    return Err(snapshot_invalid(
+                        cid,
+                        MSG_OPAQUE_ID,
+                        "observed-output-invalid",
+                    ));
+                }
+                if !is_opaque_id(&entry.workspace) {
+                    return Err(snapshot_invalid(
+                        cid,
+                        MSG_OPAQUE_ID,
+                        "observed-workspace-invalid",
+                    ));
+                }
+                if entry.output != target_dto.output || entry.workspace != target_dto.workspace {
+                    return Err(rejected(cid, "cross-domain-mismatch", MSG_CROSS_DOMAIN));
+                }
+                if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
+                    return Err(snapshot_invalid(
+                        cid,
+                        MSG_OBSERVATION,
+                        "window-rect-invalid",
+                    ));
+                }
+                if !rect_contained(
+                    Rect {
+                        x: entry.rect.x,
+                        y: entry.rect.y,
+                        w: entry.rect.w,
+                        h: entry.rect.h,
+                    },
+                    carried_bounds,
+                ) {
+                    return Err(snapshot_invalid(
+                        cid,
+                        MSG_OBSERVATION,
+                        "window-out-of-bounds",
+                    ));
+                }
+                if !seen.insert(entry.window.clone()) {
+                    return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "duplicate-window"));
+                }
+            }
+        }
+        let Ok(projected_target) =
+            crate::geometry::inset_bounds(carried_bounds, target_dto.outer_gap)
+        else {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "inset-exhausted"));
+        };
+        let target_domain = OutputDomain {
+            id: OutputId(target_dto.output.clone()),
+            workspace: WorkspaceId(target_dto.workspace.clone()),
+            bounds: projected_target,
+            gap: target_dto.gap,
+            adjacent: std::collections::BTreeMap::new(),
+        };
+        if !target_domain.validate() {
+            return Err(snapshot_invalid(cid, MSG_OBSERVATION, "domain-invalid"));
+        }
+        let command: WorkspaceSendCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return Err(rejected(valid_correlation_echo(&ctx.raw), kind, message));
+                }
+            };
+        if command.op != "send-to-workspace" {
+            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-op-invalid"));
+        }
+        if !is_opaque_id(&command.window) {
+            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-window-invalid"));
+        }
+        if !is_opaque_id(&command.target_output) {
+            return Err(snapshot_invalid(cid, MSG_OPAQUE_ID, "move-output-invalid"));
+        }
+        if !is_opaque_id(&command.target_workspace) {
+            return Err(snapshot_invalid(
+                cid,
+                MSG_OPAQUE_ID,
+                "move-workspace-invalid",
+            ));
+        }
+        if command.window != ctx.request.focused_window {
+            return Err(rejected(
+                cid,
+                "focus-mismatch",
+                "the moved window is not the focused window",
+            ));
+        }
+        if command.target_output != target_dto.output
+            || command.target_workspace != target_dto.workspace
+        {
+            return Err(rejected(
+                cid,
+                "target-mismatch",
+                "command target does not match the target domain",
+            ));
+        }
+        Ok(WorkspaceInput {
+            target_domain,
+            target_key: DomainKey {
+                output: OutputId(target_dto.output.clone()),
+                workspace: WorkspaceId(target_dto.workspace.clone()),
+            },
+            target_windows: ctx.request.target_windows.clone(),
+            window: WindowId(command.window.clone()),
+        })
+    }
+
+    /// Workspace-send request phase: rebuild the two-domain session from the
+    /// observation, propose the same-output distinct-workspace move, and retain
+    /// exactly one pending Session. Never auto-acknowledges: the adapter must
+    /// send an exact accepted ack and then a matching verified post-observation.
+    fn evaluate_workspace_request(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        if let Some(pending) = &self.workspace_pending {
+            if let Some(reason) = pending.session.divergence() {
+                return diverged_reply(&cid, reason);
+            }
+            if pending.owner != ctx.owner || pending.generation != ctx.generation {
+                return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+            }
+            return rejected(
+                cid,
+                "pending-exists",
+                "complete the pending workspace plan before proposing",
+            );
+        }
+        let input = match self.validate_workspace_input(ctx) {
+            Ok(input) => input,
+            Err(reply) => return reply,
+        };
+        let Some(source_order) =
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)
+        else {
+            return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
+        };
+        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "") else {
+            return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
+        };
+        let Some(mut session) = seed_workspace_session(
+            &ctx.owner,
+            &ctx.generation,
+            ctx.request.fingerprint,
+            &ctx.domain,
+            &input.target_domain,
+            &source_order,
+            &target_order,
+        ) else {
+            return snapshot_invalid(cid, MSG_OBSERVATION, "seed-failed");
+        };
+        let focused = WindowId(ctx.request.focused_window.clone());
+        if !session.sync_focus_from_window(&ctx.domain_key, &focused) {
+            return rejected(
+                cid,
+                RefusalKind::FocusMismatch.as_str(),
+                RefusalKind::FocusMismatch.message(),
+            );
+        }
+        let base = session.accepted_revision();
+        let observation = workspace_observation(base, ctx, &input);
+        let session_command = SessionCommand::MoveToWorkspace {
+            window: input.window.clone(),
+            target_output: input.target_key.output.clone(),
+            target_workspace: input.target_key.workspace.clone(),
+        };
+        match session.propose(
+            &session_command,
+            &observation,
+            &ctx.correlation,
+            &LifecycleCapabilities::full(),
+        ) {
+            Ok(plan) => {
+                let text = workspace_planned_reply(&ctx.request.correlation_id, &plan);
+                self.workspace_pending = Some(WorkspacePending {
+                    owner: ctx.owner.clone(),
+                    generation: ctx.generation.clone(),
+                    correlation: ctx.correlation.clone(),
+                    base_revision: base,
+                    session,
+                    desired_geometry: plan.desired_geometry.clone(),
+                });
+                text
+            }
+            Err(error) => propose_failure(error, cid),
+        }
+    }
+
+    /// Workspace-send acknowledgement phase: exact accepted acknowledgement
+    /// against the retained pending Session. Refused ack or binding mismatch is
+    /// terminal divergence.
+    fn evaluate_workspace_ack(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: WorkspaceAckCommand = match serde_json::from_value(ctx.request.command.clone())
+        {
+            Ok(command) => command,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if command.op != "send-to-workspace-ack" {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "ack-op-invalid");
+        }
+        let outcome = match command.ack_outcome.as_str() {
+            "accepted" => AckOutcome::Accepted,
+            "refused-capability" => AckOutcome::RefusedCapability,
+            "partial-application" => AckOutcome::PartialApplication,
+            "adapter-lost" => AckOutcome::AdapterLost,
+            _ => {
+                return rejected(cid, "ack-refused", "acknowledgement outcome is invalid");
+            }
+        };
+        let Some(pending) = &mut self.workspace_pending else {
+            return rejected(cid, "no-pending", "no workspace plan is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner || pending.generation != ctx.generation {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation != ctx.correlation {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+        }
+        if ctx.request.revision != pending.base_revision {
+            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+        }
+        let ack = AdapterAck::new(
+            ctx.correlation.clone(),
+            ctx.owner.clone(),
+            ctx.generation.clone(),
+            pending.base_revision,
+            outcome,
+        );
+        match pending.session.acknowledge(&ack) {
+            Ok(_) => serialize_bounded(&PlanReply {
+                v: PLAN_CONTRACT_VERSION,
+                correlation_id: cid,
+                outcome: "acknowledged",
+                kind: Some("send-to-workspace".to_owned()),
+                message: None,
+                base_revision: Some(pending.base_revision),
+                detail: None,
+                desired_geometry: None,
+                desired_focus: None,
+                preconditions: None,
+                operation: None,
+            }),
+            Err(AckError::Diverged(reason)) => diverged_reply(&cid, reason),
+            Err(AckError::NoPending) => rejected(cid, "no-pending", "no workspace plan is pending"),
+        }
+    }
+
+    /// Workspace-send verification phase: exact post-observation (preconditions
+    /// and operation echoed from the plan) plus a matching fresh observation
+    /// commits the pending Session and advances the revision by exactly one.
+    /// Pending mismatch or failed verification is terminal divergence.
+    fn evaluate_workspace_verify(&mut self, ctx: &Validated) -> String {
+        let cid = ctx.request.correlation_id.clone();
+        let command: WorkspaceVerifyCommand =
+            match serde_json::from_value(ctx.request.command.clone()) {
+                Ok(command) => command,
+                Err(error) => {
+                    let (kind, message) = classify_parse_error(&error);
+                    return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+                }
+            };
+        if command.op != "send-to-workspace-verify" {
+            return snapshot_invalid(cid, MSG_OPAQUE_ID, "verify-op-invalid");
+        }
+        if !command.verified {
+            return diverged_reply(
+                &cid,
+                crate::contract::DivergenceKind::PostconditionUnverified,
+            );
+        }
+        let Some(preconditions) = parse_lifecycle_preconditions(&command.preconditions) else {
+            return rejected(cid, "verify-invalid", "preconditions are invalid");
+        };
+        let Some(operation) = parse_move_tiled_operation(&command.operation) else {
+            return rejected(cid, "verify-invalid", "operation is invalid");
+        };
+        let Some(mut pending) = self.workspace_pending.take() else {
+            return rejected(cid, "no-pending", "no workspace plan is pending");
+        };
+        if let Some(reason) = pending.session.divergence() {
+            self.workspace_pending = Some(pending);
+            return diverged_reply(&cid, reason);
+        }
+        if pending.owner != ctx.owner || pending.generation != ctx.generation {
+            self.workspace_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::OwnerMismatch);
+        }
+        if pending.correlation != ctx.correlation {
+            self.workspace_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::CorrelationMismatch);
+        }
+        if ctx.request.revision != pending.base_revision {
+            self.workspace_pending = Some(pending);
+            return diverged_reply(&cid, crate::contract::DivergenceKind::StaleRevision);
+        }
+        // Complete source+target post-observation validation against the
+        // retained plan before any lifecycle commit. A bare `verified: true`
+        // must not commit; divergence here is terminal with the pending kept
+        // wedged exactly like a failed lifecycle verification.
+        if !workspace_post_matches(&pending, ctx) {
+            let reason = pending.session.note_postcondition_mismatch();
+            self.workspace_pending = Some(pending);
+            return diverged_reply(&cid, reason);
+        }
+        let post = LifecyclePostObservation::new(
+            Observation::new(
+                ctx.owner.clone(),
+                ctx.generation.clone(),
+                pending.base_revision,
+                ctx.request.fingerprint,
+            ),
+            ctx.correlation.clone(),
+            true,
+            preconditions,
+            operation,
+        );
+        match pending.session.verify_lifecycle(&post) {
+            Ok(commit) => {
+                self.workspace_pending = None;
+                serialize_bounded(&PlanReply {
+                    v: PLAN_CONTRACT_VERSION,
+                    correlation_id: cid,
+                    outcome: "committed",
+                    kind: Some("send-to-workspace".to_owned()),
+                    message: None,
+                    base_revision: Some(commit.revision),
+                    detail: None,
+                    desired_geometry: None,
+                    desired_focus: None,
+                    preconditions: None,
+                    operation: None,
+                })
+            }
+            Err(VerifyError::Diverged(reason)) => {
+                self.workspace_pending = Some(pending);
+                diverged_reply(&cid, reason)
+            }
+            Err(_) => {
+                self.workspace_pending = Some(pending);
+                rejected(cid, "verify-rejected", "workspace verification failed")
+            }
+        }
+    }
 }
 
 /// Strict stateless Planner evaluation. Always returns a bounded reply:
@@ -2234,6 +3095,31 @@ struct PointerResizeCommand {
 #[serde(deny_unknown_fields)]
 struct ReconcileCommand {
     op: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceSendCommand {
+    op: String,
+    window: String,
+    target_output: String,
+    target_workspace: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceAckCommand {
+    op: String,
+    ack_outcome: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceVerifyCommand {
+    op: String,
+    verified: bool,
+    preconditions: serde_json::Value,
+    operation: serde_json::Value,
 }
 
 fn evaluate_resize(ctx: &Validated) -> String {
@@ -3204,8 +4090,7 @@ mod tests {
         assert_eq!(reply["outcome"], "rejected", "{reply}");
         assert_eq!(reply["kind"], "malformed-input", "{reply}");
         assert_eq!(
-            reply["message"],
-            "command or observation input is malformed",
+            reply["message"], "command or observation input is malformed",
             "{reply}"
         );
         assert!(reply.get("detail").is_none(), "{reply}");
@@ -3234,8 +4119,7 @@ mod tests {
         assert_eq!(reply["outcome"], "rejected", "{reply}");
         assert_eq!(reply["kind"], "unknown-window", "{reply}");
         assert_eq!(
-            reply["message"],
-            "window is not known to the session",
+            reply["message"], "window is not known to the session",
             "{reply}"
         );
         assert!(reply.get("desired_geometry").is_none(), "{reply}");
@@ -3491,7 +4375,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 37, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 39, "closed registry size");
     }
 
     fn geometry_by_window(
@@ -3677,5 +4561,773 @@ mod tests {
         let reply = parse_reply(&text);
         assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
         assert_eq!(reply["detail"], "reconcile-op-invalid", "{reply}");
+    }
+
+    fn workspace_entry(window: &str, workspace: &str, x: i32) -> serde_json::Value {
+        serde_json::json!({
+            "window": window,
+            "output": "out-1",
+            "workspace": workspace,
+            "rect": {"x": x, "y": 0, "w": 100, "h": 80},
+        })
+    }
+
+    /// Full workspace-send request over source ws-1 and target ws-2. `focused`
+    /// names the observed focused window (empty when the source is empty) and
+    /// `revision` is the carried observation revision (0 on request, the
+    /// seeded base on ack/verify). Optional overrides mutate the request
+    /// before serialization so refusal routes share one builder.
+    #[allow(clippy::too_many_arguments)]
+    fn workspace_request(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        focused: &str,
+        source: Vec<serde_json::Value>,
+        target: Vec<serde_json::Value>,
+        command: serde_json::Value,
+    ) -> String {
+        let windows = if source.is_empty() {
+            serde_json::json!([])
+        } else {
+            serde_json::Value::Array(source)
+        };
+        let target_windows = serde_json::Value::Array(target);
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": generation,
+            "revision": revision,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "target_domain": {
+                "output": "out-1",
+                "workspace": "ws-2",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": windows,
+            "target_windows": target_windows,
+            "command": command,
+        })
+        .to_string()
+    }
+
+    fn workspace_send_body() -> serde_json::Value {
+        serde_json::json!({
+            "op": "send-to-workspace",
+            "window": "win-1",
+            "target_output": "out-1",
+            "target_workspace": "ws-2",
+        })
+    }
+
+    fn workspace_ack_body() -> serde_json::Value {
+        serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "accepted"})
+    }
+
+    fn workspace_verify_body(
+        preconditions: serde_json::Value,
+        operation: serde_json::Value,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "op": "send-to-workspace-verify",
+            "verified": true,
+            "preconditions": preconditions,
+            "operation": operation,
+        })
+    }
+
+    /// Split a planned `desired_geometry` into the exact source and target
+    /// post-observation the adapter must report back after applying the plan.
+    fn observation_from_geometry(
+        geometry: &serde_json::Value,
+    ) -> (Vec<serde_json::Value>, Vec<serde_json::Value>) {
+        let mut source = Vec::new();
+        let mut target = Vec::new();
+        for entry in geometry.as_array().expect("desired geometry array") {
+            let workspace = entry["workspace"].as_str().expect("workspace");
+            let rect = &entry["rect"];
+            let observed = serde_json::json!({
+                "window": entry["window"].as_str().expect("window"),
+                "output": entry["output"].as_str().expect("output"),
+                "workspace": workspace,
+                "rect": {
+                    "x": rect["x"], "y": rect["y"], "w": rect["w"], "h": rect["h"],
+                },
+            });
+            if workspace == "ws-1" {
+                source.push(observed);
+            } else {
+                target.push(observed);
+            }
+        }
+        (source, target)
+    }
+
+    /// Drive a full successful lifecycle: request, ack, verify. Returns the
+    /// verify reply plus the echoed operation/preconditions from the request
+    /// reply so mismatch tests can mutate them.
+    fn run_workspace_lifecycle(
+        planner: &mut Planner,
+    ) -> (serde_json::Value, serde_json::Value, serde_json::Value) {
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-ok-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        assert_eq!(planned["kind"], "send-to-workspace", "{planned}");
+        // The seeded two-domain session advances one revision per admitted
+        // window, so the proposal base is the seeded window count (3).
+        assert_eq!(planned["base_revision"], 3, "{planned}");
+        let preconditions = planned["preconditions"].clone();
+        let operation = planned["operation"].clone();
+        assert!(
+            planned["desired_geometry"]
+                .as_array()
+                .is_some_and(|g| g.len() == 3),
+            "{planned}"
+        );
+        assert!(
+            planned["desired_focus"]["leaf"].as_str().is_some(),
+            "{planned}"
+        );
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
+        // Ack phase carries the same complete post-observation.
+        let ack_request = workspace_request(
+            "ws-ok-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source,
+            ack_target,
+            workspace_ack_body(),
+        );
+        let acked = parse_reply(&planner.evaluate(&ack_request));
+        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+        assert_eq!(acked["kind"], "send-to-workspace", "{acked}");
+        assert_eq!(acked["base_revision"], base, "{acked}");
+        // Verify phase with the exact same post-observation.
+        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
+        let verify_request = workspace_request(
+            "ws-ok-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            verify_source,
+            verify_target,
+            workspace_verify_body(preconditions.clone(), operation.clone()),
+        );
+        let committed = parse_reply(&planner.evaluate(&verify_request));
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+        assert_eq!(committed["kind"], "send-to-workspace", "{committed}");
+        assert_eq!(committed["base_revision"], base + 1, "{committed}");
+        (committed, preconditions, operation)
+    }
+
+    #[test]
+    fn workspace_send_lifecycle_commits_only_after_ack_and_verify() {
+        let mut planner = Planner::new();
+        let (committed, _, _) = run_workspace_lifecycle(&mut planner);
+        assert_eq!(committed["outcome"], "committed", "{committed}");
+        // Pending released after commit: a fresh request plans again.
+        let source = vec![workspace_entry("win-1", "ws-1", 0)];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let second = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-ok-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(second["outcome"], "planned", "{second}");
+    }
+
+    #[test]
+    fn workspace_send_verify_after_pending_is_rejected_without_ack() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-noack-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let preconditions = planned["preconditions"].clone();
+        let operation = planned["operation"].clone();
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        // Verify before ack: the session is not yet acknowledged.
+        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
+        let verify = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-noack-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            verify_source,
+            verify_target,
+            workspace_verify_body(preconditions, operation),
+        )));
+        assert_eq!(verify["outcome"], "rejected", "{verify}");
+        assert_eq!(verify["kind"], "verify-rejected", "{verify}");
+    }
+
+    #[test]
+    fn workspace_send_refuses_cross_output() {
+        let mut planner = Planner::new();
+        let source = vec![workspace_entry("win-1", "ws-1", 0)];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let mut request: serde_json::Value = serde_json::from_str(&workspace_request(
+            "ws-cross-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        ))
+        .expect("json");
+        request["target_domain"]["output"] = serde_json::json!("out-2");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "cross-output", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_refuses_same_workspace() {
+        let mut planner = Planner::new();
+        let source = vec![workspace_entry("win-1", "ws-1", 0)];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let mut request: serde_json::Value = serde_json::from_str(&workspace_request(
+            "ws-same-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        ))
+        .expect("json");
+        request["target_domain"]["workspace"] = serde_json::json!("ws-1");
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "unchanged-workspace", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_refuses_absent_focus() {
+        let mut planner = Planner::new();
+        // No focused window and no source windows: no mover can exist.
+        let request = workspace_request(
+            "ws-absent-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "",
+            vec![],
+            vec![],
+            workspace_send_body(),
+        );
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "absent-focus", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_refuses_focus_not_observed() {
+        let mut planner = Planner::new();
+        let source = vec![workspace_entry("win-2", "ws-1", 0)];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-focus-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        // win-1 is named as focused but only win-2 is observed in the source.
+        let reply = parse_reply(&planner.evaluate(&request));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "snapshot-invalid", "{reply}");
+        assert_eq!(reply["detail"], "focused-not-observed", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_second_request_while_pending_is_rejected() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-pend-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&request))["outcome"],
+            "planned"
+        );
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-pend-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "pending-exists", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_owner_rebind_during_pending_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-owner-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&request))["outcome"],
+            "planned"
+        );
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-owner-2",
+            "owner-2",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        )));
+        assert_eq!(reply["outcome"], "diverged", "{reply}");
+        assert_eq!(reply["kind"], "owner-mismatch", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_refused_ack_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-refack-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let (ack_source, ack_target) = observation_from_geometry(&planned["desired_geometry"]);
+        let refused = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-refack-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source,
+            ack_target,
+            serde_json::json!({"op": "send-to-workspace-ack", "ack_outcome": "partial-application"}),
+        )));
+        assert_eq!(refused["outcome"], "diverged", "{refused}");
+        assert_eq!(refused["kind"], "partial-application", "{refused}");
+        // The wedged pending stays terminal: no recovery on the next request.
+        let again = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-refack-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(again["outcome"], "diverged", "{again}");
+    }
+
+    #[test]
+    fn workspace_send_ack_with_wrong_correlation_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-corr-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        assert_eq!(
+            parse_reply(&planner.evaluate(&request))["outcome"],
+            "planned"
+        );
+        let reply = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-corr-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_ack_body(),
+        )));
+        assert_eq!(reply["outcome"], "diverged", "{reply}");
+        assert_eq!(reply["kind"], "correlation-mismatch", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_verify_mismatch_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-badop-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let preconditions = planned["preconditions"].clone();
+        let mut operation = planned["operation"].clone();
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
+        // Ack the real pending with the complete post-observation.
+        let acked = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-badop-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source,
+            ack_target,
+            workspace_ack_body(),
+        )));
+        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+        if let serde_json::Value::Object(ref mut op) = operation {
+            op.insert("target_workspace".to_owned(), serde_json::json!("ws-9"));
+        } else {
+            panic!("operation must be an object");
+        }
+        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
+        let verify = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-badop-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            verify_source,
+            verify_target,
+            workspace_verify_body(preconditions, operation),
+        )));
+        assert_eq!(verify["outcome"], "diverged", "{verify}");
+        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
+    }
+
+    #[test]
+    fn workspace_send_stale_revision_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-stale-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source.clone(),
+            target.clone(),
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        let preconditions = planned["preconditions"].clone();
+        let operation = planned["operation"].clone();
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
+        let acked = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-stale-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source.clone(),
+            ack_target.clone(),
+            workspace_ack_body(),
+        )));
+        assert_eq!(acked["outcome"], "acknowledged", "{acked}");
+        // A verify request carrying a bumped revision is stale.
+        let mut stale_request: serde_json::Value = serde_json::from_str(&workspace_request(
+            "ws-stale-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            ack_source,
+            ack_target,
+            workspace_verify_body(preconditions, operation),
+        ))
+        .expect("json");
+        stale_request["revision"] = serde_json::json!(7);
+        let reply = parse_reply(&planner.evaluate(&stale_request.to_string()));
+        assert_eq!(reply["outcome"], "diverged", "{reply}");
+        assert_eq!(reply["kind"], "stale-revision", "{reply}");
+    }
+
+    #[test]
+    fn workspace_send_ack_with_wrong_revision_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-ackrev-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let (ack_source, ack_target) = observation_from_geometry(&planned["desired_geometry"]);
+        // Ack carries a bumped base revision: terminal stale-revision.
+        let ack = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-ackrev-1",
+            "owner-1",
+            "gen-1",
+            base + 1,
+            "",
+            ack_source,
+            ack_target,
+            workspace_ack_body(),
+        )));
+        assert_eq!(ack["outcome"], "diverged", "{ack}");
+        assert_eq!(ack["kind"], "stale-revision", "{ack}");
+    }
+
+    #[test]
+    fn workspace_send_verify_bad_geometry_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-geom-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let preconditions = planned["preconditions"].clone();
+        let operation = planned["operation"].clone();
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-geom-1",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                ack_source,
+                ack_target,
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        // One observed rectangle diverges from the retained desired geometry.
+        let (mut verify_source, verify_target) = observation_from_geometry(&desired_geometry);
+        verify_source[0]["rect"]["w"] = serde_json::json!(1);
+        let verify = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-geom-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            verify_source,
+            verify_target,
+            workspace_verify_body(preconditions, operation),
+        )));
+        assert_eq!(verify["outcome"], "diverged", "{verify}");
+        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
+        // Wedged pending stays terminal on a subsequent request.
+        let again = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-geom-2",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            vec![workspace_entry("win-1", "ws-1", 0)],
+            vec![workspace_entry("win-t1", "ws-2", 0)],
+            workspace_send_body(),
+        )));
+        assert_eq!(again["outcome"], "diverged", "{again}");
+        assert_eq!(again["kind"], "postcondition-mismatch", "{again}");
+    }
+
+    #[test]
+    fn workspace_send_verify_bad_membership_is_terminal() {
+        let mut planner = Planner::new();
+        let source = vec![
+            workspace_entry("win-1", "ws-1", 0),
+            workspace_entry("win-2", "ws-1", 100),
+        ];
+        let target = vec![workspace_entry("win-t1", "ws-2", 0)];
+        let request = workspace_request(
+            "ws-memb-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            source,
+            target,
+            workspace_send_body(),
+        );
+        let planned = parse_reply(&planner.evaluate(&request));
+        assert_eq!(planned["outcome"], "planned", "{planned}");
+        let preconditions = planned["preconditions"].clone();
+        let operation = planned["operation"].clone();
+        let base = planned["base_revision"].as_u64().expect("base revision");
+        let desired_geometry = planned["desired_geometry"].clone();
+        let (ack_source, ack_target) = observation_from_geometry(&desired_geometry);
+        assert_eq!(
+            parse_reply(&planner.evaluate(&workspace_request(
+                "ws-memb-1",
+                "owner-1",
+                "gen-1",
+                base,
+                "",
+                ack_source,
+                ack_target,
+                workspace_ack_body(),
+            )))["outcome"],
+            "acknowledged"
+        );
+        // The mover is reported in the source workspace instead of the target.
+        let (verify_source, verify_target) = observation_from_geometry(&desired_geometry);
+        let mut bad_source = verify_source;
+        let mut bad_target = verify_target;
+        bad_source.push(workspace_entry("win-1", "ws-1", 600));
+        if let Some(index) = bad_target
+            .iter()
+            .position(|entry| entry["window"] == "win-1")
+        {
+            bad_target.remove(index);
+        }
+        let verify = parse_reply(&planner.evaluate(&workspace_request(
+            "ws-memb-1",
+            "owner-1",
+            "gen-1",
+            base,
+            "",
+            bad_source,
+            bad_target,
+            workspace_verify_body(preconditions, operation),
+        )));
+        assert_eq!(verify["outcome"], "diverged", "{verify}");
+        assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
     }
 }

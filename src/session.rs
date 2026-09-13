@@ -3485,6 +3485,15 @@ impl Session {
         self.drag = None;
         self.reconciler.note_adapter_loss()
     }
+
+    /// Explicit post-observation mismatch signal for the standalone
+    /// workspace-send route: terminal `PostconditionMismatch` divergence,
+    /// pending desired state discarded.
+    pub fn note_postcondition_mismatch(&mut self) -> DivergenceKind {
+        self.pending_desired = None;
+        self.drag = None;
+        self.reconciler.note_postcondition_mismatch()
+    }
 }
 
 fn opposite_direction(direction: Direction) -> Direction {
