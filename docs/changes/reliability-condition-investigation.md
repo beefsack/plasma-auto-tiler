@@ -71,13 +71,16 @@
    records the same evidence. The user restores the exact baseline. No project
    D-Bus method is injected in either journey.
 4. The user repeats one resolution or scaling change with one member fullscreen,
-   records every geometry write and all member frames, then exits fullscreen and
-   restores the exact baseline.
+   records the Planner verbose request/reply, bounded plan diagnostics, and all
+   member frames, then exits fullscreen and restores the exact baseline. The
+   bounded diagnostics do not identify individual native geometry writes.
 5. Pass only if each bounds change issues one retained projection to the new
-   work area with the retained split/share structure and 8px gaps, no
-   reassert/park diagnostic, and exact restoration after reversal; while
-   fullscreen, that member receives no geometry write and retains its position
-   on exit. Record the exact failing observation otherwise.
+   work area with the retained split/share structure and 8px gaps, no second
+   `reconcile` plan after settlement, and exact restoration after reversal; while
+   fullscreen, that member remains fullscreen through the sibling action and
+   retains its position on exit. The direct no-native-write assertion is
+   source-level only unless a per-window native-write trace is added. Record
+   the exact failing observation otherwise.
 
 ### Sleep And Wake - UNKNOWABLE STATICALLY
 
@@ -149,30 +152,27 @@
   (`kwin/src/plan-adapter.ts:1218-1227`), but no polling loop. Drag-oracle
   handlers are interaction signals only:
   `kwin/src/plan-adapter-entry.ts:975-1027`.
-- Expected failure: a normal fullscreen application can be included in a later
-  Plan request and receive a geometry write, violating fullscreen and gaming
-  isolation. The recurring tray D-Bus work continues during fullscreen. Its
+- The reply can include a fullscreen member's retained geometry, but reply
+  actuation skips its native geometry write. The bounded KWin diagnostic omits
+  window identities and writes, so it cannot independently prove that skip in a
+  live log. The recurring tray D-Bus work continues during fullscreen. Its
   measurable gaming cost, and the actual cadence of `paintScreen`, are not
   established statically.
 
 #### User-Owned Live Gate - Not Run
 
-1. The user follows `docs/live-kwin-testing.md`, obtains its required session
-   authorization, and creates a disposable three-window normal tiled scope with
-   journal capture enabled.
-2. The user records 60 seconds of compositor frame-time data, project D-Bus
-   traffic, all `plasma-auto-tiler:plan` journal lines, and each frame geometry
-   while idle; the user then fullscreens one member using its normal fullscreen
-   control and repeats the same capture. No project D-Bus call is injected.
-3. While fullscreen remains active, the user triggers one unrelated activation,
-   one existing tiling shortcut on a non-fullscreen sibling, and one existing
-   tiling shortcut on the fullscreen member. The user records every Plan request
-   and all three frame geometries before and after each action.
+1. The user follows `docs/live-kwin-testing.md` and creates a disposable
+   three-window normal tiled scope with bounded journal capture enabled.
+2. The user records the member frames, then fullscreens one member using its
+   normal fullscreen control. No project D-Bus call is injected.
+3. While fullscreen remains active, the user triggers one existing tiling
+   shortcut on a non-fullscreen sibling and records the resulting bounded plan
+   diagnostic plus all three frames.
 4. The user exits fullscreen and restores the exact baseline. Pass only if the
-   fullscreen member receives no geometry write while fullscreen, its sibling
-   command remains usable, it returns to its retained tree position on exit, and
-   the measured frame-time and project traffic are recorded against the idle
-   baseline. Record the exact failing observation otherwise.
+   fullscreen member stays fullscreen during the sibling command, the sibling
+   command is applied, and it returns to its retained tree position on exit.
+   The current bounded diagnostics cannot directly identify a native write to
+   the fullscreen member. Record the exact failing observation otherwise.
 
 ### Underlying Configuration Changes - NOT HANDLED
 

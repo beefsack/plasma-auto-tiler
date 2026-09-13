@@ -25,13 +25,14 @@
 - `kwin/native-effect/drag_oracle.rs:28-63` catches unwinds at each C ABI entry
   and emits bounded exact verdict reasons. `kwin/src/drag-oracle-pull.ts:30-106`
   strictly decodes those verdicts and prevents a cancelled one from routing.
-- `kwin/src/plan-adapter-entry.ts:810-940` binds each asynchronous pull reply to
-  its exact finish token and rejects a stale reply against a newer drag start.
-  `kwin/src/plan-adapter.ts:825-865` constructs the one strict pointer command.
-- `src/planner_protocol.rs:1533-1628` evaluates retained pointer resize through
+- `kwin/src/plan-adapter-entry.ts:959-1084,1119-1170` binds each asynchronous
+  pull reply to its exact finish token and rejects a stale reply against a newer
+  drag start. `kwin/src/plan-adapter.ts:965-1008` constructs the one strict
+  pointer command.
+- `src/planner_protocol.rs:1972-2066` evaluates retained pointer resize through
   the normal acknowledgement and post-observation boundary.
-- `kwin/src/plan-adapter.ts:1061-1131` consumes only the exact one-shot echo
-  before reconciliation. `kwin/src/plan-adapter.ts:1410-1500` writes the
+- `kwin/src/plan-adapter.ts:1164-1179,1237-1306` consumes only the exact
+  one-shot echo before reconciliation. `kwin/src/plan-adapter.ts:1592-1717` writes the
   retained projection and records a neighbour-only echo expectation.
 
 ## Static Verification
@@ -82,8 +83,8 @@
 ### Echo Fence
 
 - The planned neighbour-write echo can equal `lastGood` exactly. The equality
-  fast paths at `kwin/src/plan-adapter.ts:1016-1045` returned before the echo
-  fence at `:1061-1085`, leaving its one-shot expectation armed. The next
+  fast paths at `kwin/src/plan-adapter.ts:1164-1179` returned before the echo
+  fence at `:1237-1262`, leaving its one-shot expectation armed. The next
   same-scope geometry observation then consumed that stale expectation or
   mismatched it and dispatched a reconcile. This timing-dependent ordering
   explains why the live failure was intermittent.
@@ -98,11 +99,11 @@
 ### Source Reassertion
 
 - The pointer-resize reply contains the complete retained projection, including
-  the dragged source's gap-inset rectangle. `kwin/src/plan-adapter.ts:1412-1415`
-  previously removed that source from the native write set, although KWin leaves
-  it at its raw pointer rectangle after interactive resize. The adapter then
-  recorded the retained source in `lastGood` at `:1480-1501` without writing it.
-  This left the source flush against a correctly projected neighbour.
+  the dragged source's gap-inset rectangle. `kwin/src/plan-adapter.ts:1611-1625`
+  now includes that source in the native write set, although KWin leaves it at
+  its raw pointer rectangle after interactive resize. The adapter records the
+  retained source in `lastGood` at `:1675-1703`, so it no longer remains flush
+  against a correctly projected neighbour.
 - Pointer application now writes the complete retained projection. The one-shot
   echo remains neighbour-only: it still expects only the geometry writes that
   can arrive asynchronously after the source reassertion. Hermetic KWin coverage
