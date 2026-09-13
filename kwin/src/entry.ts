@@ -1,3 +1,4 @@
+import { startDragOraclePullEntry } from "./drag-oracle-pull";
 import { startPlanAdapterEntry } from "./plan-adapter-entry";
 import { TrayPublisher } from "./tray-publisher";
 
@@ -50,3 +51,8 @@ trayPublisher.start();
 
 const planHandle = startPlanAdapterEntry({ owner: "kwin-plan-adapter", generation: "plan-1" });
 void planHandle;
+
+// Slice 1 inert observer: finished-handler LastVerdict pull with route-diag
+// logging only. No geometry write, no share change. Fail-closed, never throws.
+const dragOracleHandle = startDragOraclePullEntry();
+void dragOracleHandle;

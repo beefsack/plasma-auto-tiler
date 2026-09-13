@@ -1,0 +1,151 @@
+# Slice 1 drag-oracle validation: separate disabled-by-default inert effect.
+#
+# Required inputs:
+#   DRAG_METADATA_FILE - dragoracle-metadata.json
+#   DRAG_SOURCE_FILE   - dragoracle.h
+#   DRAG_IMPL_FILE     - dragoracle.cpp
+#   DRAG_FFI_FILE      - drag_oracle_ffi.h
+#   DRAG_RUST_FILE     - drag_oracle.rs
+#   EXPECTED_PLUGIN_ID - plasma-auto-tiler-drag-oracle
+
+if(NOT DEFINED DRAG_METADATA_FILE OR NOT DEFINED DRAG_SOURCE_FILE OR NOT DEFINED DRAG_IMPL_FILE OR NOT DEFINED DRAG_FFI_FILE OR NOT DEFINED DRAG_RUST_FILE OR NOT DEFINED EXPECTED_PLUGIN_ID)
+    message(FATAL_ERROR "usage: cmake -DDRAG_METADATA_FILE=<file> -DDRAG_SOURCE_FILE=<file> -DDRAG_IMPL_FILE=<file> -DDRAG_FFI_FILE=<file> -DDRAG_RUST_FILE=<file> -DEXPECTED_PLUGIN_ID=<id> -P validate-dragoracle.cmake")
+endif()
+
+file(READ "${DRAG_METADATA_FILE}" METADATA)
+file(READ "${DRAG_SOURCE_FILE}" HEADER)
+file(READ "${DRAG_IMPL_FILE}" IMPL)
+file(READ "${DRAG_FFI_FILE}" FFI)
+file(READ "${DRAG_RUST_FILE}" RUST)
+
+string(JSON PLUGIN_ID ERROR_VARIABLE ERROR GET "${METADATA}" "KPlugin" "Id")
+if(ERROR OR NOT PLUGIN_ID STREQUAL EXPECTED_PLUGIN_ID)
+    message(FATAL_ERROR "drag-oracle metadata validation failed: KPlugin/Id '${PLUGIN_ID}' does not match expected '${EXPECTED_PLUGIN_ID}'")
+endif()
+
+string(JSON ENABLED_BY_DEFAULT ERROR_VARIABLE ERROR GET "${METADATA}" "KPlugin" "EnabledByDefault")
+if(ERROR)
+    message(FATAL_ERROR "drag-oracle metadata validation failed: KPlugin/EnabledByDefault not readable: ${ERROR}")
+endif()
+if(ENABLED_BY_DEFAULT)
+    message(FATAL_ERROR "drag-oracle metadata validation failed: KPlugin/EnabledByDefault must be false")
+endif()
+
+foreach(FIELD Name Description Icon License)
+    string(JSON VALUE ERROR_VARIABLE ERROR GET "${METADATA}" "KPlugin" "${FIELD}")
+    if(ERROR OR VALUE STREQUAL "")
+        message(FATAL_ERROR "drag-oracle metadata validation failed: KPlugin/${FIELD} is missing or empty")
+    endif()
+endforeach()
+
+if(METADATA MATCHES "X-KDE-ConfigModule")
+    message(FATAL_ERROR "drag-oracle metadata validation failed: inert oracle must not route to a config module")
+endif()
+
+string(FIND "${IMPL}" "KWIN_EFFECT_FACTORY" FACTORY_POS)
+if(FACTORY_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle factory validation failed: KWIN_EFFECT_FACTORY macro not found")
+endif()
+string(FIND "${IMPL}" "DragOracleEffect" CLASS_POS)
+if(CLASS_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle factory validation failed: DragOracleEffect not found")
+endif()
+string(FIND "${IMPL}" "dragoracle-metadata.json" METADATA_REF_POS)
+if(METADATA_REF_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle factory validation failed: dragoracle-metadata.json reference not found")
+endif()
+
+# Inertness: isActive override returning false, no paint hooks.
+string(FIND "${HEADER}" "isActive" ACTIVE_POS)
+if(ACTIVE_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle inertness validation failed: isActive override missing in header")
+endif()
+string(FIND "${HEADER}" "return false" INACTIVE_POS)
+if(INACTIVE_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle inertness validation failed: isActive must return false")
+endif()
+foreach(HOOK "paintScreen" "drawWindow" "paintWindow" "prePaintScreen" "postPaintScreen")
+    string(FIND "${HEADER}" "${HOOK}" HOOK_POS)
+    if(NOT HOOK_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle inertness validation failed: paint hook '${HOOK}' must not exist in header")
+    endif()
+    string(FIND "${IMPL}" "${HOOK}" IMPL_HOOK_POS)
+    if(NOT IMPL_HOOK_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle inertness validation failed: paint hook '${HOOK}' must not exist in implementation")
+    endif()
+endforeach()
+
+# Exactly one read-only D-Bus method.
+string(REGEX MATCHALL "Q_SCRIPTABLE" SCRIPTABLE_MATCHES "${IMPL}")
+list(LENGTH SCRIPTABLE_MATCHES SCRIPTABLE_COUNT)
+if(NOT SCRIPTABLE_COUNT EQUAL 1)
+    message(FATAL_ERROR "drag-oracle D-Bus validation failed: expected exactly one Q_SCRIPTABLE method, found ${SCRIPTABLE_COUNT}")
+endif()
+string(FIND "${IMPL}" "LastVerdict" METHOD_POS)
+if(METHOD_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle D-Bus validation failed: LastVerdict method not found")
+endif()
+string(FIND "${IMPL}" "ExportScriptableContents" EXPORT_POS)
+if(EXPORT_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle D-Bus validation failed: ExportScriptableContents registration not found")
+endif()
+
+# Interactive drag observation surface only.
+foreach(SIGNAL_NAME "windowStartUserMovedResized" "windowFinishUserMovedResized")
+    string(FIND "${IMPL}" "${SIGNAL_NAME}" SIGNAL_POS)
+    if(SIGNAL_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle observation validation failed: ${SIGNAL_NAME} not connected")
+    endif()
+endforeach()
+string(FIND "${IMPL}" "moveResizeGeometry" MOVE_RESIZE_POS)
+if(MOVE_RESIZE_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle observation validation failed: moveResizeGeometry not used")
+endif()
+
+# FFI hygiene: no Qt/KWin type crosses into Rust.
+foreach(FORBIDDEN "QString" "QRect" "QUuid" "EffectWindow" "qreal" "QByteArray")
+    string(FIND "${FFI}" "${FORBIDDEN}" FFI_POS)
+    if(NOT FFI_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle FFI validation failed: '${FORBIDDEN}' must not cross into Rust")
+    endif()
+endforeach()
+foreach(SYMBOL "drag_oracle_record" "drag_oracle_last" "drag_oracle_last_copy")
+    string(FIND "${FFI}" "${SYMBOL}" SYMBOL_POS)
+    if(SYMBOL_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle FFI validation failed: '${SYMBOL}' missing from FFI header")
+    endif()
+    string(FIND "${RUST}" "${SYMBOL}" RUST_SYMBOL_POS)
+    if(RUST_SYMBOL_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle FFI validation failed: '${SYMBOL}' missing from Rust source")
+    endif()
+endforeach()
+string(FIND "${IMPL}" "drag_oracle_last_copy" COPY_POS)
+if(COPY_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle lifetime validation failed: LastVerdict must use drag_oracle_last_copy")
+endif()
+string(FIND "${IMPL}" "unregisterObject" UNREG_POS)
+if(UNREG_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle endpoint validation failed: unregisterObject missing (endpoint must unregister)")
+endif()
+string(FIND "${IMPL}" "frameGeometry" FRAME_POS)
+if(NOT FRAME_POS EQUAL -1)
+    message(FATAL_ERROR "drag-oracle observation validation failed: frameGeometry fallback must not exist; moveResizeGeometry only")
+endif()
+
+# Rust ownership: unwind guards, escaped JSON, correlation, specific reasons.
+# Missing/invalid data must surface a specific bounded reason token, never a
+# vague failure placeholder.
+foreach(REQUIRED "catch_unwind" "correlation" "cancelled" "finalRect" "windowIdentity" "no-change" "geometry-invalid")
+    string(FIND "${RUST}" "${REQUIRED}" RUST_POS)
+    if(RUST_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle Rust validation failed: '${REQUIRED}' not found in oracle source")
+    endif()
+endforeach()
+foreach(VAGUE "\"reason\":\"failure\"" "\"reason\":\"error\"" "\"reason\":\"unknown\"")
+    string(FIND "${RUST}" "${VAGUE}" VAGUE_POS)
+    if(NOT VAGUE_POS EQUAL -1)
+        message(FATAL_ERROR "drag-oracle Rust validation failed: oracle must not carry vague failure token ${VAGUE}")
+    endif()
+endforeach()
+
+message(STATUS "drag-oracle validation passed for ${DRAG_METADATA_FILE}")

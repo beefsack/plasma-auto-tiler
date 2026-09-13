@@ -35,6 +35,14 @@ Historical implementation detail is recoverable in Git history.
 > resides. Logic requiring native integration with the OS/DE belongs alongside
 > the native effect.
 
+- The drag-final-geometry oracle uses the minimal C++/moc KWin-effect shim and
+  POD-only C ABI required by KWin. Rust owns verdict policy; no Qt or KWin type
+  crosses the ABI, and every Rust callback catches panics before returning to
+  KWin.
+- The drag-final-geometry oracle owns a second read-only session D-Bus endpoint
+  for its last verdict. The KWin script pulls it after interactive drag finish;
+  the effect never pushes a verdict into the script.
+
 ## Settings And Distribution
 
 - One native QWidget effect-scoped KCM owns tiling, workspace, shortcut,

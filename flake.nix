@@ -58,6 +58,12 @@
           ./kwin/native-effect/activeborderconfig.kcfgc
           ./kwin/native-effect/shortcutreconciler.h
           ./kwin/native-effect/shortcutreconciler.cpp
+          ./kwin/native-effect/dragoracle.h
+          ./kwin/native-effect/dragoracle.cpp
+          ./kwin/native-effect/drag_oracle_ffi.h
+          ./kwin/native-effect/drag_oracle.rs
+          ./kwin/native-effect/dragoracle-metadata.json
+          ./kwin/native-effect/validate-dragoracle.cmake
         ];
       };
 
@@ -79,6 +85,7 @@
             pkgs.cmake
             pkgs.ninja
             pkgs.pkg-config
+            pkgs.rustc
             kde.extra-cmake-modules
           ];
           buildInputs = [
@@ -105,6 +112,7 @@
             runHook preInstallCheck
             test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-active-border.so"
             test -f "$out/lib/qt-6/plugins/kwin/effects/configs/plasma-auto-tiler-active-border_config.so"
+            test -f "$out/lib/qt-6/plugins/kwin/effects/plugins/plasma-auto-tiler-drag-oracle.so"
             runHook postInstallCheck
           '';
         };

@@ -1,0 +1,10 @@
+{
+    "KPlugin": {
+        "Id": "plasma-auto-tiler-drag-oracle",
+        "Name": "Drag Oracle (Slice 1)",
+        "Description": "Inert read-only observer that records interactive drag start/final geometry into the Rust oracle and serves the last verdict over D-Bus.",
+        "EnabledByDefault": false,
+        "Icon": "preferences-system-windows",
+        "License": "GPL-2.0-or-later"
+    }
+}

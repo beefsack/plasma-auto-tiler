@@ -40,9 +40,12 @@ stopping working, including across:
 
 ## Gaming And Full-Screen Applications
 
-Gaming and full-screen applications must not be impacted at all, especially by
-auto tiling and border highlights. They must work unimpeded, with absolutely no
-performance impact.
+Gaming and full-screen applications must not be impacted, especially by auto
+tiling and border highlights. They must work unimpeded.
+
+The target is aspirationally zero performance impact. Where a platform makes
+zero impossible, the residual cost must be provably minimal and imperceivable,
+and the project must be able to demonstrate what that cost is.
 
 ## Rust First
 

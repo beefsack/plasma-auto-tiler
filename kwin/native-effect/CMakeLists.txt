@@ -51,6 +51,46 @@ target_link_libraries(plasma-auto-tiler-active-border PRIVATE
 )
 target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -Werror)
 
+# Slice 1 drag/final-geometry oracle: std-only Rust source compiled hermetically
+# by rustc invoked from CMake. No Cargo, no crates, no network.
+find_program(RUSTC_PROGRAM rustc REQUIRED)
+# The Rust staticlib references pthread/dl (Mutex/LazyLock thread internals,
+# backtrace symbolization). Link them explicitly and portably so the shared
+# plugin does not rely on transitive linkage.
+find_package(Threads REQUIRED)
+set(DRAG_ORACLE_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libdrag_oracle.a")
+add_custom_command(
+    OUTPUT "${DRAG_ORACLE_STATICLIB}"
+    COMMAND "${RUSTC_PROGRAM}"
+        --crate-type=staticlib
+        -O
+        --crate-name=drag_oracle
+        "${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs"
+        -o "${DRAG_ORACLE_STATICLIB}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs"
+    COMMENT "Compiling std-only drag_oracle.rs with rustc"
+    VERBATIM
+)
+add_custom_target(plasma-auto-tiler-drag-oracle-rs DEPENDS "${DRAG_ORACLE_STATICLIB}")
+
+kcoreaddons_add_plugin(plasma-auto-tiler-drag-oracle
+    INSTALL_NAMESPACE "kwin/effects/plugins"
+    SOURCES
+        dragoracle.h
+        dragoracle.cpp
+)
+add_dependencies(plasma-auto-tiler-drag-oracle plasma-auto-tiler-drag-oracle-rs)
+target_link_libraries(plasma-auto-tiler-drag-oracle PRIVATE
+    "${DRAG_ORACLE_STATICLIB}"
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
+    KWin::kwin
+    Qt6::Core
+    Qt6::Gui
+    Qt6::DBus
+)
+target_compile_options(plasma-auto-tiler-drag-oracle PRIVATE -Wall -Wextra -Werror)
+
 set(kcm_SOURCES
     activeborderconfig_module.cpp
     activeborderconfig_module.h
@@ -230,4 +270,29 @@ if(BUILD_TESTING)
             -DKCM_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activeborderconfig_module.cpp
             -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-active-border
             -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake)
+
+    add_test(NAME native-effect-drag-oracle-validation
+        COMMAND ${CMAKE_COMMAND}
+            -DDRAG_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle-metadata.json
+            -DDRAG_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle.h
+            -DDRAG_IMPL_FILE=${CMAKE_CURRENT_SOURCE_DIR}/dragoracle.cpp
+            -DDRAG_FFI_FILE=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle_ffi.h
+            -DDRAG_RUST_FILE=${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs
+            -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-drag-oracle
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-dragoracle.cmake)
+
+    # Targeted Rust oracle unit tests: rustc --test on the std-only source.
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test"
+        COMMAND "${RUSTC_PROGRAM}"
+            --test
+            "${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs"
+            -o "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/drag_oracle.rs"
+        COMMENT "Building drag oracle unit tests with rustc --test"
+        VERBATIM
+    )
+    add_custom_target(plasma-auto-tiler-drag-oracle-test-bin ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test")
+    add_test(NAME native-effect-drag-oracle-rs
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test")
 endif()
