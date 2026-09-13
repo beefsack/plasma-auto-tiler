@@ -13,9 +13,10 @@ Only meaningful pending or active work is listed.
 - P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
   reseed behavior for `(output, workspace)` state through unplug/replug.
   [investigation](changes/reliability-condition-investigation.md)
-- P1 | Work-area change projection | Reproject one retained domain through
-  resolution, scale, and work-area changes without using the client-drift park
-  policy. [investigation](changes/reliability-condition-investigation.md)
+- P1 | Work-area change projection live gate | Static code projects one retained
+  existing domain through resolution, scaling, and work-area changes without the
+  client-drift park policy. User must run the exact gate, including fullscreen
+  isolation and restoration. [investigation](changes/reliability-condition-investigation.md)
 - P1 | Wake transport recovery | Select and gate bounded Planner/KWin recovery
   across suspend, wake, and Planner-name loss.
   [investigation](changes/reliability-condition-investigation.md)

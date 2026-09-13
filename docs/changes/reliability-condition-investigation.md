@@ -31,25 +31,53 @@
   of a new key clears every retained domain: `src/session.rs:101` and
   `src/planner_protocol.rs:1377-1384`.
 
-### Resolution And Scaling Changes - NOT HANDLED
+### Resolution And Scaling Changes - CODE ADDRESSED, LIVE GATE PENDING
 
-- Each observation obtains current work-area geometry from `clientArea`:
-  `kwin/src/plan-adapter-entry.ts:336-388`. A scope refresh compares that geometry
-  as part of `sameScope`: `kwin/src/plan-adapter.ts:165-190`.
-- Changed bounds make `sameScope` false. The adapter replaces `lastGood` and
-  sends no command: `kwin/src/plan-adapter.ts:1048-1062`. It does not project the
-  retained tree into the new work area.
-- This is not client geometry drift. The reassert-then-park path is reached only
-  after same-scope geometry difference: `kwin/src/plan-adapter.ts:1063-1106`.
-  A changed work area therefore neither reasserts nor parks.
-- A manually requested retained reconcile rejects changed bounds or gaps as
-  `domain-mismatch`: `src/planner_protocol.rs:2051-2102`. The next non-reconcile
-  command instead discards that domain and reseeds it:
-  `src/planner_protocol.rs:1242-1248,1364-1449`.
-- Expected failure: after a resolution, scale, or work-area change, the adapter
-  issues no immediate geometry write. The user can retain KWin's post-change
-  layout rather than a projection of the prior tree until a later tiling command
-  rebuilds the domain. The max-three policy does not bound this condition.
+- Each observation still obtains current work-area geometry from `clientArea`:
+  `kwin/src/plan-adapter-entry.ts:336-388`. When the logical domain, selected
+  `(DOMAIN_GAP, OUTER_DOMAIN_GAP) = (8, 8)`, and complete window set match but
+  bounds differ, the adapter now sends a retained `reconcile` projection rather
+  than replacing `lastGood`: `kwin/src/plan-adapter.ts:216-237,1149-1173`.
+- The Rust Planner projects the retained tree into the new bounds, then records
+  those bounds without replacing topology, shares, membership, focus, or
+  revision: `src/planner_protocol.rs:2060-2256` and
+  `src/session.rs:755-785`. Observed client rectangles do not supply shares.
+  Changed membership continues through admission/removal before this branch;
+  changed domain keys remain outside it.
+- A work-area projection is explicitly separate from client geometry drift.
+  Its terminal outcomes neither consume the max-three reassert budget nor park
+  the scope: `kwin/src/plan-adapter.ts:1276-1283,1685-1697`.
+- Fullscreen members stay in the retained tree and reply actuation still skips
+  their geometry writes: `kwin/src/plan-adapter.ts:1593-1636`. No generic
+  reprojection refusal was added. Existing validation refuses each invalid
+  condition before projection with its established exact cause; retained inner
+  and outer gap changes refuse as `domain-mismatch` with distinct messages:
+  `src/planner_protocol.rs:2085-2129`.
+- Hermetic Rust and KWin coverage proves grow, shrink, scale-style bounds,
+  selected gaps, reply actuation, fullscreen isolation, combined bounds and
+  membership change, and non-consumption of drift retries. Static checks only;
+  no live KWin, Plasma, or D-Bus action occurred.
+
+#### User-Owned Live Gate - Not Run
+
+1. The user follows `docs/live-kwin-testing.md`, obtains the required session
+   authorization, and records a restorable baseline for a disposable two-window
+   normal tiled scope on one existing output, including frame geometries,
+   active output/workspace, and `plasma-auto-tiler:plan` journal lines.
+2. The user changes only that output's resolution, waits for the debounced
+   refresh, and records all Plan requests, frame geometries, and journal lines.
+   The user restores the original resolution and records the same evidence.
+3. The user changes only that output's scaling, waits for the refresh, and
+   records the same evidence. The user restores the exact baseline. No project
+   D-Bus method is injected in either journey.
+4. The user repeats one resolution or scaling change with one member fullscreen,
+   records every geometry write and all member frames, then exits fullscreen and
+   restores the exact baseline.
+5. Pass only if each bounds change issues one retained projection to the new
+   work area with the retained split/share structure and 8px gaps, no
+   reassert/park diagnostic, and exact restoration after reversal; while
+   fullscreen, that member receives no geometry write and retains its position
+   on exit. Record the exact failing observation otherwise.
 
 ### Sleep And Wake - UNKNOWABLE STATICALLY
 
@@ -183,10 +211,11 @@
   unplug and replug a tiled secondary output while another output remains active;
   prove selected tree semantics, no writes to absent outputs, and no unrelated
   domain eviction.
-- P1 | Work-area change projection | Boundary: resolution, scale, and work-area
-  bounds changes within one existing logical domain. Gate: change resolution and
-  scale for a tiled output; prove one bounded projection to the new work area,
-  no client-drift retry/park misuse, and restore on return.
+- P1 | Work-area change projection live gate | Static implementation now projects
+  one retained existing domain through resolution, scaling, and work-area bounds
+  changes without client-drift retry/park misuse. Run the exact user-owned gate
+  above; output addition, removal, retirement, and all-domain reconciliation
+  remain the separate output-hotplug slice.
 - P1 | Wake transport recovery | Boundary: Planner name or connection loss and
   subsequent KWin adapter recovery. Gate: the sleep/wake experiment above proves
   the selected automatic recovery semantics, bounded failure behavior, and the

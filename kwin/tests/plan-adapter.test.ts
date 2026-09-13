@@ -69,6 +69,9 @@ function makeObserved(
         fullscreen?: Record<string, boolean>;
         fingerprint?: string;
         revalidate?: () => boolean;
+        bounds?: { x: number; y: number; w: number; h: number };
+        domainGap?: number;
+        domainOuterGap?: number;
     } = {},
 ): PlanObserved {
     const focused = opts.focused ?? refs.a;
@@ -82,9 +85,9 @@ function makeObserved(
     return {
         domainOutput: "out-1",
         domainWorkspace: "ws-1",
-        domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
-        domainGap: 0,
-        domainOuterGap: 0,
+        domainBounds: opts.bounds ?? { x: 0, y: 0, w: 1200, h: 800 },
+        domainGap: opts.domainGap ?? DOMAIN_GAP,
+        domainOuterGap: opts.domainOuterGap ?? OUTER_DOMAIN_GAP,
         focusedId: focused === refs.a ? "win-a" : "win-b",
         windows,
         activeRef: focused,
@@ -254,8 +257,8 @@ describe("plan adapter route identity and request shape", () => {
             output: "out-1",
             workspace: "ws-1",
             bounds: { x: 0, y: 0, w: 1200, h: 800 },
-            gap: 0,
-            outer_gap: 0,
+            gap: DOMAIN_GAP,
+            outer_gap: OUTER_DOMAIN_GAP,
         });
         assert.equal(payload["focused_window"], "win-a");
         const windows = payload["windows"] as Array<Record<string, unknown>>;
@@ -636,6 +639,97 @@ describe("plan adapter client self-resize reconcile", () => {
         mocks.callbacks[index]?.(plannedReply(corr, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         void drift;
     }
+    it("reprojects a scale-style work-area change through retained projection with selected gaps", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        const writesBeforeScale = mocks.geometries.length;
+        const scaled = { x: 0, y: 0, w: 1800, h: 1200 };
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds: scaled, rects: { "win-a": allocA, "win-b": allocB } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>), { op: "reconcile" });
+        assert.deepEqual(plannerPayload(mocks, 1)["domain"], {
+            output: "out-1",
+            workspace: "ws-1",
+            bounds: scaled,
+            gap: DOMAIN_GAP,
+            outer_gap: OUTER_DOMAIN_GAP,
+        });
+        const scaledCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                scaledCorrelation,
+                [
+                    { window: "win-a", rect: { x: 8, y: 8, w: 888, h: 1184 } },
+                    { window: "win-b", rect: { x: 904, y: 8, w: 888, h: 1184 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.deepEqual(mocks.geometries.slice(writesBeforeScale), [
+            { target: refs.a, rect: { x: 8, y: 8, w: 888, h: 1184 } },
+            { target: refs.b, rect: { x: 904, y: 8, w: 888, h: 1184 } },
+        ]);
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${scaledCorrelation}`) && line.includes("kind=reconcile") && line.includes("outcome=planned-applied")));
+
+        const shrunk = { x: 0, y: 0, w: 800, h: 600 };
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, bounds: shrunk, rects: { "win-a": { x: 0, y: 0, w: 800, h: 900 }, "win-b": { x: 800, y: 0, w: 800, h: 900 } } });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        const shrinkCorrelation = plannerPayload(mocks, 2)["correlation_id"] as string;
+        const carried = plannerPayload(mocks, 2)["windows"] as Array<Record<string, unknown>>;
+        for (const entry of carried) {
+            const rect = entry["rect"] as { x: number; y: number; w: number; h: number };
+            assert.ok(rect.x >= shrunk.x && rect.y >= shrunk.y);
+            assert.ok(rect.x + rect.w <= shrunk.x + shrunk.w);
+            assert.ok(rect.y + rect.h <= shrunk.y + shrunk.h);
+        }
+        assert.notDeepEqual(
+            carried.map((entry) => entry["rect"]),
+            [{ x: 0, y: 0, w: 800, h: 900 }, { x: 800, y: 0, w: 800, h: 900 }],
+            "reprojection must not send drifted client rectangles",
+        );
+        mocks.callbacks[2]?.(rejectedReply(shrinkCorrelation, "snapshot-invalid"));
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 4, "a rejected work-area reprojection does not park");
+        const retryCorrelation = plannerPayload(mocks, 3)["correlation_id"] as string;
+        const writesBeforeRetry = mocks.geometries.length;
+        mocks.callbacks[3]?.(
+            plannedReply(
+                retryCorrelation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 600 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 600 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.deepEqual(mocks.geometries.slice(writesBeforeRetry), [
+            { target: refs.a, rect: { x: 0, y: 0, w: 400, h: 600 } },
+            { target: refs.b, rect: { x: 400, y: 0, w: 400, h: 600 } },
+        ]);
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${retryCorrelation}`) && line.includes("outcome=planned-applied")));
+    });
+    it("does not classify an outer-gap change as work-area reprojection", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        const callsBefore = mocks.dbusCalls.length;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                domainOuterGap: 0,
+                rects: { "win-a": allocA, "win-b": allocB },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.geometries.length, 0);
+    });
     it("retains allocation on self-resize and resets on matching geometry", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -804,6 +898,79 @@ describe("plan adapter client self-resize reconcile", () => {
         fire(mocks, "geometry");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, parkedCalls);
+    });
+    it("clears drift parking when a deferred work-area reprojection supersedes a flight", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        baseline(mocks, refs);
+        const oldDrift = driftRects("increment");
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a, rects: oldDrift });
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+            fire(mocks, "geometry");
+            runDebounce(mocks);
+            const index = 1 + attempt;
+            const correlation = plannerPayload(mocks, index)["correlation_id"] as string;
+            mocks.callbacks[index]?.(rejectedReply(correlation, "snapshot-invalid"));
+        }
+
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 4);
+        const inFlightCorrelation = plannerPayload(mocks, 3)["correlation_id"] as string;
+
+        const translated = { x: 200, y: 100, w: 800, h: 600 };
+        const translatedDrift = {
+            "win-a": { x: 200, y: 100, w: 200, h: 300 },
+            "win-b": { x: 600, y: 100, w: 200, h: 300 },
+        };
+        mocks.observeImpl = () =>
+            makeObserved(refs, { focused: refs.a, bounds: translated, rects: translatedDrift });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 4, "work-area reprojection waits behind the flight");
+
+        mocks.callbacks[3]?.(
+            plannedReply(
+                inFlightCorrelation,
+                [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }],
+                "win-a-leaf",
+            ),
+        );
+        assert.equal(mocks.dbusCalls.length, 5);
+        const reprojection = plannerPayload(mocks, 4);
+        assert.deepEqual(reprojection["command"], { op: "reconcile" });
+        const carried = reprojection["windows"] as Array<Record<string, unknown>>;
+        for (const entry of carried) {
+            const rect = entry["rect"] as { x: number; y: number; w: number; h: number };
+            assert.ok(rect.x >= translated.x && rect.y >= translated.y);
+            assert.ok(rect.x + rect.w <= translated.x + translated.w);
+            assert.ok(rect.y + rect.h <= translated.y + translated.h);
+        }
+        const reprojectionCorrelation = reprojection["correlation_id"] as string;
+        mocks.callbacks[4]?.(
+            plannedReply(
+                reprojectionCorrelation,
+                [
+                    { window: "win-a", rect: { x: 208, y: 108, w: 384, h: 584 } },
+                    { window: "win-b", rect: { x: 608, y: 108, w: 384, h: 584 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                bounds: translated,
+                rects: {
+                    "win-a": { x: 200, y: 100, w: 100, h: 100 },
+                    "win-b": { x: 600, y: 100, w: 200, h: 200 },
+                },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 6, "a later drift is not parked by the old flight");
+        assert.deepEqual((plannerPayload(mocks, 5)["command"] as Record<string, unknown>)["op"], "reconcile");
     });
 });
 
@@ -1573,8 +1740,8 @@ describe("plan adapter fullscreen isolation", () => {
             domainOutput: "out-1",
             domainWorkspace: "ws-1",
             domainBounds: { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h },
-            domainGap: 0,
-            domainOuterGap: 0,
+            domainGap: DOMAIN_GAP,
+            domainOuterGap: OUTER_DOMAIN_GAP,
             focusedId: focused === refs.a ? "win-a" : focused === refs.b ? "win-b" : "win-c",
             windows,
             activeRef: focused,
@@ -1867,6 +2034,117 @@ describe("plan adapter fullscreen isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, callsAfter, "one reconcile converges; no park from fullscreen member");
         assert.equal(adapter.isEnabled, true);
+    });
+
+    it("reprojects a changed work area while retaining and not writing a fullscreen member", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        const writesBefore = mocks.geometries.length;
+        const grown = { x: 200, y: 100, w: 800, h: 600 };
+        const fullscreenObserved = (bounds: { x: number; y: number; w: number; h: number }): PlanObserved =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 0, w: 1600, h: 900 },
+                        "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    },
+                    fullscreen: { "win-a": true },
+                },
+                bounds,
+            );
+        mocks.observeImpl = () => fullscreenObserved({ x: 0, y: 0, w: 1200, h: 800 });
+        fire(mocks, "fullscreen");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 1, "entering fullscreen does not reproject");
+        mocks.observeImpl = () => fullscreenObserved(grown);
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>), { op: "reconcile" });
+        assert.deepEqual(plannerPayload(mocks, 1)["domain"], {
+            output: "out-1",
+            workspace: "ws-1",
+            bounds: grown,
+            gap: DOMAIN_GAP,
+            outer_gap: OUTER_DOMAIN_GAP,
+        });
+        const carried = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        for (const entry of carried) {
+            const rect = entry["rect"] as { x: number; y: number; w: number; h: number };
+            assert.ok(rect.x >= grown.x && rect.y >= grown.y);
+            assert.ok(rect.x + rect.w <= grown.x + grown.w);
+            assert.ok(rect.y + rect.h <= grown.y + grown.h);
+        }
+        const correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 208, y: 108, w: 384, h: 584 } },
+                    { window: "win-b", rect: { x: 608, y: 108, w: 384, h: 584 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        const applied = mocks.geometries.slice(writesBefore);
+        assert.equal(applied.some((entry) => entry.target === refs.a), false);
+        assert.deepEqual(applied, [{ target: refs.b, rect: { x: 608, y: 108, w: 384, h: 584 } }]);
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("outcome=planned-applied")));
+    });
+
+    it("routes simultaneous work-area and membership changes through admission", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        const grown = { x: 0, y: 0, w: 1600, h: 900 };
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                        "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                        "win-c": { x: 0, y: 0, w: 100, h: 100 },
+                    },
+                },
+                grown,
+            );
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const payload = plannerPayload(mocks, 1);
+        assert.deepEqual(payload["command"], { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        assert.deepEqual(payload["domain"], {
+            output: "out-1",
+            workspace: "ws-1",
+            bounds: grown,
+            gap: DOMAIN_GAP,
+            outer_gap: OUTER_DOMAIN_GAP,
+        });
+        const correlation = payload["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 900 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 500, h: 900 } },
+                    { window: "win-c", rect: { x: 1000, y: 0, w: 600, h: 900 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        const applied = mocks.geometries.slice(writesBefore);
+        assert.deepEqual(
+            new Set(applied.map((entry) => entry.target)),
+            new Set([refs.a, refs.b, refs.c]),
+        );
+        assert.ok(applied.some((entry) => entry.target === refs.c && entry.rect.w === 600));
+        assert.ok(mocks.logs.some((line) => line.includes(`cmd=${correlation}`) && line.includes("kind=admit") && line.includes("outcome=planned-applied")));
     });
 
     it("fullscreen-only rect drift adopts the baseline without dispatching reconcile", () => {

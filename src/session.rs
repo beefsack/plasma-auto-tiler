@@ -726,6 +726,14 @@ impl Session {
         &self.domains
     }
 
+    /// Update one retained domain's projected work area without changing its
+    /// topology, shares, membership, focus, or accepted revision.
+    pub(crate) fn reproject_domain(&mut self, key: &DomainKey, bounds: Rect) {
+        if let Some(domain) = self.domains.iter_mut().find(|domain| &domain.key() == key) {
+            domain.bounds = bounds;
+        }
+    }
+
     /// Current authoritative portable snapshot (domain order; windows sorted
     /// by window id). May repeat an `OutputId` across workspace domains.
     #[must_use]

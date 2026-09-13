@@ -1266,14 +1266,14 @@ fn needs_rebuild(error: &ProposeError) -> bool {
 /// calls. Observations validate membership/divergence against the retained
 /// topology but never rebuild it: a known domain proposes directly, so equal
 /// non-focused rectangles cannot force `ambiguous-placement` after the initial
-/// plan. Exactly one recovery rule exists: on owner/generation change
-/// (adapter restart), domain bounds/gap change, terminal divergence, pending
-/// residue, or membership divergence (`Diverged`/`partial-observation`),
-/// discard that domain's retained state and rebuild once via the
-/// [`seed_session`] path; if the rebuild cannot safely infer topology
-/// (`ambiguous-placement`) reject rather than wedge. Each successful plan is
-/// acknowledged then verified in the same call, so no pending crosses calls
-/// and no stale data crosses domains/owner/generation.
+/// plan. Domain bounds changes reproject the retained tree when the domain key
+/// and complete window set remain unchanged; owner/generation change (adapter
+/// restart), terminal divergence, pending residue, or membership divergence
+/// (`Diverged`/`partial-observation`) discard that domain's retained state and
+/// rebuild once via the [`seed_session`] path. If the rebuild cannot safely
+/// infer topology (`ambiguous-placement`), reject rather than wedge. Each
+/// successful plan is acknowledged then verified in the same call, so no
+/// pending crosses calls and no stale data crosses domains/owner/generation.
 ///
 /// Standalone workspace-send route: `send-to-workspace`/`-ack`/`-verify` keep
 /// one pending two-domain Session in [`WorkspacePending`], never crossing
@@ -1284,6 +1284,7 @@ pub struct Planner {
     owner: Option<OwnerId>,
     generation: Option<GenerationId>,
     sessions: BTreeMap<DomainKey, Session>,
+    domain_outer_gaps: BTreeMap<DomainKey, i32>,
     workspace_pending: Option<WorkspacePending>,
 }
 
@@ -1323,6 +1324,7 @@ impl Planner {
             .is_none_or(|g| g.as_str() != generation.as_str());
         if owner_changed || generation_changed {
             self.sessions.clear();
+            self.domain_outer_gaps.clear();
             self.owner = Some(owner.clone());
             self.generation = Some(generation.clone());
         }
@@ -1330,9 +1332,12 @@ impl Planner {
 
     /// Stateful evaluation across calls. Validation, bounds, and reply shapes
     /// match [`evaluate_plan_json`]; only topology sourcing differs (retained
-    /// vs rebuilt). The standalone workspace-send route dispatches before the
-    /// legacy owner/generation binding sync so its one pending Session is never
-    /// discarded or rebound mid-flight; legacy requests are unchanged.
+    /// vs rebuilt). Retained reconcile accepts work-area bounds changes only when
+    /// the domain key and complete window set remain unchanged, projecting the
+    /// existing tree without replacing shares or topology. The standalone
+    /// workspace-send route dispatches before the legacy owner/generation binding
+    /// sync so its one pending Session is never discarded or rebound mid-flight;
+    /// legacy requests are unchanged.
     pub fn evaluate(&mut self, request_json: &str) -> String {
         let ctx = match validate_request(request_json) {
             Ok(ctx) => ctx,
@@ -1369,17 +1374,20 @@ impl Planner {
         let session = self.sessions.get(domain_key)?;
         if !session_usable(session) || !session_domain_matches(session, domain) {
             self.sessions.remove(domain_key);
+            self.domain_outer_gaps.remove(domain_key);
             return None;
         }
         Some(session.clone())
     }
 
-    fn store_committed(&mut self, domain_key: DomainKey, session: Session) {
+    fn store_committed(&mut self, domain_key: DomainKey, session: Session, outer_gap: i32) {
         if self.sessions.len() >= crate::session::MAX_DOMAINS
             && !self.sessions.contains_key(&domain_key)
         {
             self.sessions.clear();
+            self.domain_outer_gaps.clear();
         }
+        self.domain_outer_gaps.insert(domain_key.clone(), outer_gap);
         self.sessions.insert(domain_key, session);
     }
 
@@ -1405,14 +1413,20 @@ impl Planner {
                 Ok(plan) => {
                     let text = reply(&plan);
                     if commit(&mut session, &plan, ctx, base) {
-                        self.store_committed(ctx.domain_key.clone(), session);
+                        self.store_committed(
+                            ctx.domain_key.clone(),
+                            session,
+                            ctx.request.domain.outer_gap,
+                        );
                         return text;
                     }
                     self.sessions.remove(&ctx.domain_key);
+                    self.domain_outer_gaps.remove(&ctx.domain_key);
                     return snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected");
                 }
                 Err(error) if needs_rebuild(&error) => {
                     self.sessions.remove(&ctx.domain_key);
+                    self.domain_outer_gaps.remove(&ctx.domain_key);
                 }
                 Err(error) => {
                     return propose_failure(error, cid.clone());
@@ -1440,7 +1454,11 @@ impl Planner {
             Ok(plan) => {
                 let text = reply(&plan);
                 if commit(&mut session, &plan, ctx, base) {
-                    self.store_committed(ctx.domain_key.clone(), session);
+                    self.store_committed(
+                        ctx.domain_key.clone(),
+                        session,
+                        ctx.request.domain.outer_gap,
+                    );
                     return text;
                 }
                 snapshot_invalid(cid, MSG_OBSERVATION, "commit-rejected")
@@ -2048,7 +2066,7 @@ impl Planner {
         )
     }
 
-    fn evaluate_reconcile_retained(&self, ctx: &Validated) -> String {
+    fn evaluate_reconcile_retained(&mut self, ctx: &Validated) -> String {
         let command: ReconcileCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
             Err(error) => {
@@ -2064,7 +2082,7 @@ impl Planner {
             );
         }
         let cid = ctx.request.correlation_id.clone();
-        let Some(session) = self.sessions.get(&ctx.domain_key) else {
+        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
             return rejected(
                 cid,
                 RefusalKind::UnknownDomain.as_str(),
@@ -2093,13 +2111,23 @@ impl Planner {
                 RefusalKind::UnknownDomain.message(),
             );
         };
-        if retained_domain.bounds != ctx.domain.bounds || retained_domain.gap != ctx.domain.gap {
+        if retained_domain.gap != ctx.domain.gap {
             return rejected(
                 cid,
                 "domain-mismatch",
-                "domain bounds or gap does not match retained state",
+                "domain gap does not match retained state",
             );
         }
+        if self.domain_outer_gaps.get(&ctx.domain_key).copied()
+            != Some(ctx.request.domain.outer_gap)
+        {
+            return rejected(
+                cid,
+                "domain-mismatch",
+                "domain outer gap does not match retained state",
+            );
+        }
+        let bounds_changed = retained_domain.bounds != ctx.domain.bounds;
         let snapshot = session.snapshot();
         let mut known: std::collections::BTreeSet<String> = snapshot
             .windows
@@ -2130,6 +2158,11 @@ impl Planner {
         let tree = domain_view.and_then(|d| d.tree);
         let Some(tree) = tree else {
             if known.is_empty() && observed.is_empty() {
+                if bounds_changed {
+                    if let Some(session) = self.sessions.get_mut(&ctx.domain_key) {
+                        session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
+                    }
+                }
                 return planned_reply(
                     &cid,
                     session.accepted_revision(),
@@ -2162,7 +2195,7 @@ impl Planner {
                 RefusalKind::FocusMismatch.message(),
             );
         }
-        let Ok(projected) = project(&tree, retained_domain.bounds, retained_domain.gap) else {
+        let Ok(projected) = project(&tree, ctx.domain.bounds, retained_domain.gap) else {
             return rejected(
                 cid,
                 RefusalKind::MalformedTopology.as_str(),
@@ -2170,7 +2203,7 @@ impl Planner {
             );
         };
         let leaf_to_window: std::collections::BTreeMap<String, String> =
-            snapshot_windows_leaf_map(session, &ctx.domain_key);
+            snapshot_windows_leaf_map(&session, &ctx.domain_key);
         // Rebuild authoritative desired geometry from retained topology only;
         // observed client rectangles are never adopted and shares are untouched.
         let mut geometry: Vec<crate::session::DesiredGeometry> =
@@ -2211,6 +2244,11 @@ impl Planner {
                 RefusalKind::MalformedTopology.as_str(),
                 RefusalKind::MalformedTopology.message(),
             );
+        }
+        if bounds_changed {
+            if let Some(session) = self.sessions.get_mut(&ctx.domain_key) {
+                session.reproject_domain(&ctx.domain_key, ctx.domain.bounds);
+            }
         }
         planned_reply(
             &cid,
@@ -3634,6 +3672,28 @@ mod tests {
         .to_string()
     }
 
+    fn retained_request_with_selected_gaps(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        focused: &str,
+        windows: &[(&str, i32, i32, i32, i32)],
+        command: serde_json::Value,
+    ) -> String {
+        let mut request: serde_json::Value = serde_json::from_str(&retained_request(
+            correlation,
+            owner,
+            generation,
+            focused,
+            windows,
+            command,
+        ))
+        .expect("valid retained request");
+        request["domain"]["gap"] = serde_json::json!(8);
+        request["domain"]["outer_gap"] = serde_json::json!(8);
+        request.to_string()
+    }
+
     fn admit_body(window: &str) -> serde_json::Value {
         serde_json::json!({
             "op": "admit",
@@ -4481,6 +4541,201 @@ mod tests {
         );
         let follow_reply = parse_reply(&planner.evaluate(&follow));
         assert_eq!(follow_reply["outcome"], "planned", "{follow_reply}");
+    }
+
+    #[test]
+    fn reconcile_reprojects_retained_tree_for_scale_style_work_area_change() {
+        let mut planner = Planner::new();
+        for (correlation, windows, command) in [
+            (
+                "rec-gap-seed-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "rec-gap-seed-2",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &windows,
+                command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        let mut request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "rec-grow-1",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid request");
+        request["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 1800, "h": 1200});
+        assert_eq!(request["domain"]["gap"], 8);
+        assert_eq!(request["domain"]["outer_gap"], 8);
+        let grown = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(grown["outcome"], "planned", "{grown}");
+        assert_eq!(
+            geometry_by_window(&grown),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (8, 8, 888, 1184)),
+                ("win-2".to_owned(), (904, 8, 888, 1184)),
+            ])
+        );
+
+        request["correlation_id"] = serde_json::json!("rec-shrink-1");
+        request["domain"]["bounds"] = serde_json::json!({"x": 0, "y": 0, "w": 800, "h": 600});
+        let shrunk = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(shrunk["outcome"], "planned", "{shrunk}");
+        assert_eq!(
+            geometry_by_window(&shrunk),
+            std::collections::BTreeMap::from([
+                ("win-1".to_owned(), (8, 8, 388, 584)),
+                ("win-2".to_owned(), (404, 8, 388, 584)),
+            ])
+        );
+    }
+
+    #[test]
+    fn reconcile_rejects_changed_outer_gap_as_a_domain_mismatch() {
+        let mut planner = Planner::new();
+        for (correlation, windows, command) in [
+            (
+                "rec-outer-seed-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "rec-outer-seed-2",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &windows,
+                command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        let mut request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "rec-outer-reproject-1",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid request");
+        request["domain"]["outer_gap"] = serde_json::json!(0);
+        let reply = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reply["outcome"], "rejected", "{reply}");
+        assert_eq!(reply["kind"], "domain-mismatch", "{reply}");
+        assert_eq!(
+            reply["message"],
+            "domain outer gap does not match retained state"
+        );
+        assert!(reply.get("detail").is_none(), "{reply}");
+    }
+
+    #[test]
+    fn reconcile_reprojects_unequal_nested_retained_shares_not_observed_rects() {
+        let mut planner = Planner::new();
+        for (correlation, windows, command) in [
+            (
+                "rec-nested-seed-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "rec-nested-seed-2",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+            (
+                "rec-nested-seed-3",
+                vec![
+                    ("win-1", 0, 0, 100, 80),
+                    ("win-2", 200, 0, 100, 80),
+                    ("win-3", 400, 0, 100, 80),
+                ],
+                admit_body("win-3"),
+            ),
+        ] {
+            let reply = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+                correlation,
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &windows,
+                command,
+            )));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        let resized = parse_reply(&planner.evaluate(&retained_request_with_selected_gaps(
+            "rec-nested-resize",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+            serde_json::json!({
+                "op": "resize",
+                "window": "win-1",
+                "direction": "right",
+                "mode": "outwards",
+                "press_index": 0,
+            }),
+        )));
+        assert_eq!(resized["outcome"], "planned", "{resized}");
+        let before = geometry_by_window(&resized);
+        assert_ne!(
+            before["win-1"].2, before["win-3"].2,
+            "resize must retain unequal nested shares"
+        );
+
+        let mut request: serde_json::Value =
+            serde_json::from_str(&retained_request_with_selected_gaps(
+                "rec-nested-reproject",
+                "owner-1",
+                "gen-1",
+                "win-1",
+                &[
+                    ("win-1", 100, 50, 100, 100),
+                    ("win-2", 500, 200, 200, 200),
+                    ("win-3", 700, 400, 100, 100),
+                ],
+                serde_json::json!({"op": "reconcile"}),
+            ))
+            .expect("valid request");
+        request["domain"]["bounds"] = serde_json::json!({"x": 100, "y": 50, "w": 1000, "h": 700});
+        let reprojected = parse_reply(&planner.evaluate(&request.to_string()));
+        assert_eq!(reprojected["outcome"], "planned", "{reprojected}");
+        let after = geometry_by_window(&reprojected);
+        assert_ne!(
+            after["win-1"].2, after["win-3"].2,
+            "nested retained shares must survive reprojection"
+        );
+        assert_ne!(
+            after["win-1"],
+            (108, 58, 100, 100),
+            "reprojection must not adopt observed client rectangles"
+        );
     }
 
     #[test]

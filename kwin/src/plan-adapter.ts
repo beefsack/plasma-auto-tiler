@@ -210,6 +210,42 @@ function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
     return true;
 }
 
+// Work-area reprojection is valid only when the logical domain and complete
+// window set are unchanged. Client rectangles are deliberately ignored here:
+// they are drift inputs, never a source of retained shares.
+function sameDomainAndWindowSet(a: PlanSnapshot, b: PlanSnapshot): boolean {
+    if (
+        a.domainOutput !== b.domainOutput ||
+        a.domainWorkspace !== b.domainWorkspace ||
+        a.domainGap !== b.domainGap ||
+        a.domainOuterGap !== b.domainOuterGap ||
+        a.windows.length !== b.windows.length
+    ) {
+        return false;
+    }
+    const byId = new Map<string, PlanSnapshotWindow>();
+    for (const entry of a.windows) {
+        byId.set(entry.id, entry);
+    }
+    for (const entry of b.windows) {
+        const other = byId.get(entry.id);
+        if (other === undefined || other.output !== entry.output || other.workspace !== entry.workspace) {
+            return false;
+        }
+    }
+    return true;
+}
+
+function sameReprojectionScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
+    return (
+        sameDomainAndWindowSet(a, b) &&
+        a.domainBounds.x === b.domainBounds.x &&
+        a.domainBounds.y === b.domainBounds.y &&
+        a.domainBounds.w === b.domainBounds.w &&
+        a.domainBounds.h === b.domainBounds.h
+    );
+}
+
 // Geometry-only equality ignoring focus and fingerprint: true when the same
 // scope/window set carries identical rectangles. Used to separate a
 // focus/fingerprint-only change (adopt the new baseline, no reconcile) from
@@ -665,6 +701,7 @@ interface PendingFlight {
     readonly removed: string | null;
     readonly windowCount: number;
     readonly pointerSource: string | null;
+    readonly workAreaReprojection: boolean;
 }
 
 interface AutoIntent {
@@ -673,6 +710,7 @@ interface AutoIntent {
     readonly removed: string | null;
     readonly body: Record<string, unknown>;
     readonly pointerSource?: string | null;
+    readonly workAreaReprojection?: boolean;
 }
 
 interface PointerEcho {
@@ -846,8 +884,25 @@ export class PlanAdapter {
             const retained = retainedById.get(entry.id);
             const rect =
                 retained !== undefined
-                    ? retained
+                    ? clampCarriedRect(retained, snapshot.domainBounds)
                     : clampCarriedRect(entry.rect, snapshot.domainBounds);
+            return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
+        });
+        return { ...snapshot, windows: Object.freeze(windows) };
+    }
+
+    // Reprojection carries the prior planner allocation for every member. The
+    // current client rectangles are drift inputs only, and are clamped solely
+    // to keep the transport representation inside the new work area.
+    private reprojectionSnapshot(observed: PlanObserved, retained: PlanSnapshot): PlanSnapshot {
+        const snapshot = snapshotOf(observed);
+        const retainedById = new Map<string, PlanRect>();
+        for (const entry of retained.windows) {
+            retainedById.set(entry.id, entry.rect);
+        }
+        const windows = snapshot.windows.map((entry) => {
+            const carried = retainedById.get(entry.id) ?? entry.rect;
+            const rect = clampCarriedRect(carried, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
         return { ...snapshot, windows: Object.freeze(windows) };
@@ -963,6 +1018,11 @@ export class PlanAdapter {
         this.repeatMode = null;
         this.repeatNext = 0;
         this.repeatFingerprint = "";
+    }
+
+    private resetReconcileState(): void {
+        this.reconcileAttempts = 0;
+        this.parked = false;
     }
 
     private noteObservation(fingerprint: string): void {
@@ -1118,6 +1178,32 @@ export class PlanAdapter {
             }
             return;
         }
+        if (
+            sameDomainAndWindowSet(previous, freshSnapshot) &&
+            (previous.domainBounds.x !== freshSnapshot.domainBounds.x ||
+                previous.domainBounds.y !== freshSnapshot.domainBounds.y ||
+                previous.domainBounds.w !== freshSnapshot.domainBounds.w ||
+                previous.domainBounds.h !== freshSnapshot.domainBounds.h)
+        ) {
+            this.pointerEcho = null;
+            this.resetReconcileState();
+            this.deferredAuto = {
+                op: "reconcile",
+                snapshot: this.reprojectionSnapshot(fresh, previous),
+                removed: null,
+                body: { op: "reconcile" },
+                workAreaReprojection: true,
+            };
+            if (this.inFlight) {
+                return;
+            }
+            const next = this.deferredAuto;
+            this.deferredAuto = null;
+            if (next !== null) {
+                this.dispatch(next);
+            }
+            return;
+        }
         if (sameRects(previous, freshSnapshot)) {
             this.pointerEcho = null;
             this.lastGood = freshSnapshot;
@@ -1220,8 +1306,12 @@ export class PlanAdapter {
         return true;
     }
 
-    private noteReconcileTerminal(op: PlanOp): void {
-        if (op !== "reconcile") {
+    private noteReconcileTerminal(op: PlanOp, workAreaReprojection = false): void {
+        if (
+            op !== "reconcile" ||
+            workAreaReprojection ||
+            this.deferredAuto?.workAreaReprojection === true
+        ) {
             return;
         }
         this.reconcileAttempts += 1;
@@ -1230,9 +1320,12 @@ export class PlanAdapter {
         }
     }
 
-    private dispatch(intent: { op: PlanOp; snapshot: PlanSnapshot; removed: string | null; body: Record<string, unknown>; pointerSource?: string | null }): void {
+    private dispatch(intent: AutoIntent): void {
         if (!this.enabled || this.inFlight) {
             return;
+        }
+        if (intent.workAreaReprojection === true) {
+            this.resetReconcileState();
         }
         if (this.seq < 0 || this.seq > PLAN_MAX_SEQ) {
             return;
@@ -1297,6 +1390,7 @@ export class PlanAdapter {
             removed: intent.removed,
             windowCount: sortedIds.length,
             pointerSource: intent.pointerSource ?? null,
+            workAreaReprojection: intent.workAreaReprojection === true,
         };
         this.callbackSeen = false;
         this.token += 1;
@@ -1310,7 +1404,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(intent.op, correlation, sortedIds.length, "timer-failed");
-            this.noteReconcileTerminal(intent.op);
+            this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
             this.finishFlight();
             return;
         }
@@ -1329,7 +1423,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(intent.op, correlation, sortedIds.length, "dbus-failed");
-            this.noteReconcileTerminal(intent.op);
+            this.noteReconcileTerminal(intent.op, intent.workAreaReprojection === true);
             this.finishFlight();
         }
     }
@@ -1344,7 +1438,7 @@ export class PlanAdapter {
         this.pending = null;
         if (lost !== null) {
             this.diag(lost.op, lost.correlation, lost.windowCount, "timeout");
-            this.noteReconcileTerminal(lost.op);
+            this.noteReconcileTerminal(lost.op, lost.workAreaReprojection);
         }
         this.finishFlight();
     }
@@ -1390,7 +1484,7 @@ export class PlanAdapter {
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
             this.rejectKind(kind);
-            this.noteReconcileTerminal(flightState.op);
+            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             this.finishFlight();
             return;
         }
@@ -1403,7 +1497,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "stale-dropped");
-            this.noteReconcileTerminal(flightState.op);
+            this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             this.finishFlight();
             return;
         }
@@ -1450,6 +1544,15 @@ export class PlanAdapter {
         const fresh = this.freshObserved();
         if (fresh === null) {
             this.failFlight(flightState, "stale-scope");
+            return;
+        }
+        if (flightState.workAreaReprojection) {
+            const freshSnapshot = this.carriedSnapshot(fresh);
+            if (!sameReprojectionScope(freshSnapshot, flightState.snapshot)) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            this.writeGeometries(planned, flightState, fresh);
             return;
         }
         if (flightState.op === "pointer-resize") {
@@ -1599,7 +1702,7 @@ export class PlanAdapter {
                 };
             }
             if (flightState.op === "reconcile") {
-                this.noteReconcileTerminal(flightState.op);
+                this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             } else {
                 this.reconcileAttempts = 0;
                 this.parked = false;
@@ -1618,7 +1721,7 @@ export class PlanAdapter {
         this.inFlight = false;
         this.pending = null;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, outcome);
-        this.noteReconcileTerminal(flightState.op);
+        this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
         this.finishFlight();
     }
 
@@ -1631,7 +1734,11 @@ export class PlanAdapter {
         const next = this.deferredAuto;
         this.deferredAuto = null;
         if (next !== null && !this.inFlight) {
-            if (next.op === "reconcile" && (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS)) {
+            if (
+                next.op === "reconcile" &&
+                next.workAreaReprojection !== true &&
+                (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS)
+            ) {
                 return;
             }
             this.dispatch(next);
