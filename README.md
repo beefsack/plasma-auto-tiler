@@ -320,10 +320,13 @@ treat live session behavior as unverified.
 Intentional floating is available only through the internal controller request
 path while physical binding is blocked. KWin Grid View owns `Meta+G`, so the
 controller does not register or replace that chord. The request floats an
-eligible active normal window at a centered 60% x 60% of its work area,
-removes it from the planner tree, and retains session-local non-tree geometry.
-Unfloat is fresh admission, never prior-leaf restoration. Fullscreen and
-maximized windows refuse. Sticky floating is deferred.
+eligible active normal window, removes it from the planner tree, and retains
+session-local non-tree geometry: a window that has floated before returns to
+its retained placement (the centered 60% x 60% work-area rectangle is only the
+first-time fallback), and a moved or resized float keeps its live placement
+across float, unfloat, and float again. Unfloat is fresh admission, never
+prior-leaf restoration. Fullscreen and maximized windows refuse. Sticky
+floating is deferred.
 
 `Meta+1..9` focuses the existing 1-based workspace; `Meta+0` focuses or creates
 the trailing empty workspace (idempotent when already trailing empty, no hard

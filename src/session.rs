@@ -576,6 +576,7 @@ struct PendingDesired {
     focused_leaf: Option<NodeId>,
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
+    retained_float_geometry: BTreeMap<WindowId, Rect>,
 }
 
 /// Transient drag capture: source identity plus the accepted
@@ -618,6 +619,7 @@ pub struct Session {
     focus_stack: BTreeMap<DomainKey, Vec<NodeId>>,
     last_active: BTreeMap<DomainKey, NodeId>,
     exceptions: BTreeMap<WindowId, ExceptionRecord>,
+    retained_float_geometry: BTreeMap<WindowId, Rect>,
     reconciler: Reconciler,
     pending_desired: Option<PendingDesired>,
     drag: Option<DragState>,
@@ -676,6 +678,7 @@ impl Session {
             focus_stack: BTreeMap::new(),
             last_active: BTreeMap::new(),
             exceptions: BTreeMap::new(),
+            retained_float_geometry: BTreeMap::new(),
             reconciler,
             pending_desired: None,
             drag: None,
@@ -846,6 +849,25 @@ impl Session {
     pub fn floating_geometry(&self, window: &WindowId) -> Option<Rect> {
         self.exceptions
             .get(window)
+            .and_then(|record| record.floating_geometry)
+    }
+
+    /// Durable retained intentional-float geometry that survives unfloat. A
+    /// window keeps its last floating placement here while tiled, so the next
+    /// float can select it instead of recomputing the centered fallback.
+    #[must_use]
+    pub fn retained_float_geometry(&self, window: &WindowId) -> Option<Rect> {
+        self.retained_float_geometry.get(window).copied()
+    }
+
+    /// The intentional-float rectangle staged by the pending plan, if any.
+    /// Non-empty only for a tiled-to-float transition; unfloat clears the
+    /// exception so this returns `None`.
+    #[must_use]
+    pub fn pending_float_geometry(&self, window: &WindowId) -> Option<Rect> {
+        self.pending_desired
+            .as_ref()
+            .and_then(|desired| desired.exceptions.get(window))
             .and_then(|record| record.floating_geometry)
     }
 
@@ -1127,6 +1149,7 @@ impl Session {
                 focused_leaf: self.focused_leaf.clone(),
                 last_active: self.last_active.clone(),
                 exceptions: desired_exceptions,
+                retained_float_geometry: self.retained_float_geometry.clone(),
             });
             return Ok(SessionPlan {
                 dispatch,
@@ -1238,6 +1261,7 @@ impl Session {
                 &desired_windows,
             ),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionPlan {
             dispatch,
@@ -1328,6 +1352,7 @@ impl Session {
                     &self.windows,
                 ),
                 exceptions: desired_exceptions,
+                retained_float_geometry: self.retained_float_geometry.clone(),
             });
             return Ok(SessionPlan {
                 dispatch,
@@ -1438,6 +1463,7 @@ impl Session {
                 &desired_windows,
             ),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionPlan {
             dispatch,
@@ -1464,8 +1490,6 @@ impl Session {
                     maximized: false,
                     sticky: false,
                 })
-                || record.floating_geometry.is_none()
-                || float_geometry.is_some()
             {
                 return Err(ProposeError::Refused(RefusalKind::NotTiled));
             }
@@ -1480,10 +1504,25 @@ impl Session {
             {
                 return Err(ProposeError::Refused(RefusalKind::PartialObservation));
             }
-            // Fresh admission uses the current domain bounds. The retained
-            // float rectangle is intentionally not a prior-leaf restoration.
+            // Track the live float geometry the adapter carried (the user may
+            // have moved or resized the float). A request without a rect keeps
+            // the already-retained placement. Fresh admission uses the current
+            // domain bounds; the retained float rectangle is intentionally not
+            // a prior-leaf restoration.
+            let retained = match float_geometry {
+                Some(rect) if valid_rect_shape(&rect) => Some(rect),
+                Some(_) => return Err(ProposeError::Refused(RefusalKind::MalformedInput)),
+                None => record
+                    .floating_geometry
+                    .or_else(|| self.retained_float_geometry.get(window).copied()),
+            };
             let mut candidate = self.clone();
             candidate.exceptions.remove(window);
+            if let Some(rect) = retained {
+                candidate
+                    .retained_float_geometry
+                    .insert(window.clone(), rect);
+            }
             let mut observation = session_observation.clone();
             if let Some(entry) = observation
                 .windows
@@ -1509,11 +1548,6 @@ impl Session {
             *self = candidate;
             return Ok(plan);
         }
-        if !valid_rect_shape(
-            &float_geometry.ok_or(ProposeError::Refused(RefusalKind::MalformedInput))?,
-        ) {
-            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
-        }
         let target = session_observation
             .windows
             .iter()
@@ -1522,6 +1556,20 @@ impl Session {
         if target.flags().any() || !self.windows.contains_key(window) {
             return Err(ProposeError::Refused(RefusalKind::NotTiled));
         }
+        // Select the effective placement: an explicit rect wins, else the
+        // durable retained geometry, else the centered 60% work-area fallback.
+        let effective = match float_geometry {
+            Some(rect) if valid_rect_shape(&rect) => rect,
+            Some(_) => return Err(ProposeError::Refused(RefusalKind::MalformedInput)),
+            None => match self.retained_float_geometry.get(window) {
+                Some(rect) if valid_rect_shape(rect) => *rect,
+                _ => centered_float_rect(
+                    self.domain_for(&target.output, &target.workspace)
+                        .ok_or(ProposeError::Refused(RefusalKind::UnknownDomain))?
+                        .bounds,
+                ),
+            },
+        };
         let plan =
             self.propose_remove(window, session_observation, correlation_id, capabilities)?;
         let Some(desired) = self.pending_desired.as_mut() else {
@@ -1539,9 +1587,12 @@ impl Session {
                     maximized: false,
                     sticky: false,
                 },
-                floating_geometry: float_geometry,
+                floating_geometry: Some(effective),
             },
         );
+        desired
+            .retained_float_geometry
+            .insert(window.clone(), effective);
         // The lifecycle operation remains Remove: the only native effect is
         // removing the target from tiled actuation while its separate state is
         // committed with the same acknowledgement/verification transition.
@@ -1766,6 +1817,7 @@ impl Session {
                 &desired_windows,
             ),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionPlan {
             dispatch,
@@ -2154,6 +2206,7 @@ impl Session {
                 &desired_windows,
             ),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionMovePlan {
             dispatch,
@@ -2184,6 +2237,7 @@ impl Session {
                     );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
+                    self.retained_float_geometry = desired.retained_float_geometry;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -2371,6 +2425,7 @@ impl Session {
                 &self.windows,
             ),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionFocusPlan {
             dispatch,
@@ -2404,6 +2459,7 @@ impl Session {
                     );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
+                    self.retained_float_geometry = desired.retained_float_geometry;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -2683,6 +2739,7 @@ impl Session {
             focused_leaf: Some(focused_leaf.clone()),
             last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionResizePlan {
             dispatch,
@@ -2717,6 +2774,7 @@ impl Session {
                     );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
+                    self.retained_float_geometry = desired.retained_float_geometry;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -3026,6 +3084,7 @@ impl Session {
             focused_leaf: Some(focused_leaf.clone()),
             last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         Ok(SessionResizePlan {
             dispatch,
@@ -3060,6 +3119,7 @@ impl Session {
                         &self.windows,
                     );
                     self.exceptions = desired.exceptions;
+                    self.retained_float_geometry = desired.retained_float_geometry;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -3514,6 +3574,7 @@ impl Session {
             focused_leaf: Some(capture.source_leaf.clone()),
             last_active: self.last_active.clone(),
             exceptions: self.exceptions.clone(),
+            retained_float_geometry: self.retained_float_geometry.clone(),
         });
         self.drag = None;
         Ok(DragRelease::Planned(Box::new(SessionDragPlan {
@@ -3604,6 +3665,7 @@ impl Session {
                     );
                     self.last_active = desired.last_active;
                     self.exceptions = desired.exceptions;
+                    self.retained_float_geometry = desired.retained_float_geometry;
                     self.accepted_fingerprint = commit.fingerprint;
                 }
                 Ok(commit)
@@ -5569,6 +5631,19 @@ fn valid_rect_shape(rect: &Rect) -> bool {
         && rect.h > 0
         && rect.x.checked_add(rect.w).is_some()
         && rect.y.checked_add(rect.h).is_some()
+}
+
+/// Centered 60% work-area rectangle, matching the adapter's previous static
+/// placement: `max(1, floor(0.6 * bounds))` size centered on the bounds.
+fn centered_float_rect(bounds: Rect) -> Rect {
+    let w = ((i64::from(bounds.w) * 6) / 10).max(1) as i32;
+    let h = ((i64::from(bounds.h) * 6) / 10).max(1) as i32;
+    Rect {
+        x: bounds.x + (bounds.w - w) / 2,
+        y: bounds.y + (bounds.h - h) / 2,
+        w,
+        h,
+    }
 }
 
 fn valid_command_shapes(command: &SessionCommand) -> bool {

@@ -110,6 +110,7 @@ interface Mocks {
     readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly actives: object[];
     readonly maximizeClears: object[];
+    readonly floatingCalls: Array<{ id: string; floating: boolean }>;
     observeImpl: () => PlanObserved | null;
     activeImpl: () => object | null;
     geometryImpl: (target: object, rect: { x: number; y: number; w: number; h: number }) => boolean;
@@ -127,6 +128,7 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         geometries: [],
         actives: [],
         maximizeClears: [],
+        floatingCalls: [],
         observeImpl: () => makeObserved(refs, { focused: refs.a }),
         activeImpl: () => refs.a,
         geometryImpl: (_target: object, _rect: { x: number; y: number; w: number; h: number }): boolean => true,
@@ -156,6 +158,9 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         setGeometry: (target, rect): boolean => {
             state.geometries.push({ target, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
             return state.geometryImpl(target, rect);
+        },
+        setFloating: (id, floating): void => {
+            state.floatingCalls.push({ id, floating });
         },
         setActive: (target): boolean => {
             state.actives.push(target);
@@ -814,6 +819,149 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 3, "a rejected admission in another workspace cannot discard this baseline");
         assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
         assert.equal(adapter.isEnabled, true);
+    });
+});
+
+describe("plan adapter explicit-only floating", () => {
+    it("never calls setFloating or emits toggle-float from automatic, admission, reconcile, or directional routes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        const allocations = [
+            { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+            { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+        ];
+
+        // Automatic admission from a signal-driven membership diff.
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 1);
+        assert.deepEqual((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        mocks.callbacks[0]?.(
+            plannedReply(plannerPayload(mocks, 0)["correlation_id"] as string, allocations, "win-a-leaf"),
+        );
+
+        // Directional focus, move, resize, and pointer-resize all complete
+        // their flights through writeGeometries without any float transition.
+        const directional = [
+            () => adapter.requestFocus("right"),
+            () => adapter.requestMove("right"),
+            () => adapter.requestResize("left", "outwards"),
+        ];
+        for (const request of directional) {
+            const before: number = mocks.dbusCalls.length;
+            request();
+            assert.equal(mocks.dbusCalls.length, before + 1);
+            const index = mocks.dbusCalls.length - 1;
+            assert.notEqual((plannerPayload(mocks, index)["command"] as Record<string, unknown>)["op"], "toggle-float");
+            mocks.callbacks[index]?.(
+                plannedReply(plannerPayload(mocks, index)["correlation_id"] as string, allocations, "win-a-leaf"),
+            );
+        }
+
+        // Automatic reconcile after client geometry drift.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 200, h: 200 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                },
+            });
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        const reconcileIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, reconcileIndex)["command"] as Record<string, unknown>), { op: "reconcile" });
+        mocks.callbacks[reconcileIndex]?.(
+            plannedReply(plannerPayload(mocks, reconcileIndex)["correlation_id"] as string, allocations, "win-a-leaf"),
+        );
+
+        // Automatic admission again after a fresh window appears, completing
+        // through writeGeometries rather than any float transition.
+        mocks.observeImpl = () => {
+            const wins = [
+                Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 600, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+                Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 600, y: 0, w: 600, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+                Object.freeze({ id: "win-c", ref: refs.c, rect: { x: 0, y: 800, w: 600, h: 400 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+            ];
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-a",
+                windows: Object.freeze(wins),
+                activeRef: refs.a,
+                fingerprint: "fp-a,b,c",
+                revalidate: () => true,
+            };
+        };
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const admitIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, admitIndex)["command"] as Record<string, unknown>), { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        mocks.callbacks[admitIndex]?.(
+            plannedReply(
+                plannerPayload(mocks, admitIndex)["correlation_id"] as string,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+
+        // Directional pointer-resize completes its flight too.
+        const pointerBefore = mocks.dbusCalls.length;
+        adapter.requestPointerResize("win-a", "left", 0);
+        assert.equal(mocks.dbusCalls.length, pointerBefore + 1);
+        const pointerIndex = mocks.dbusCalls.length - 1;
+        assert.notEqual((plannerPayload(mocks, pointerIndex)["command"] as Record<string, unknown>)["op"], "toggle-float");
+        mocks.callbacks[pointerIndex]?.(
+            plannedReply(
+                plannerPayload(mocks, pointerIndex)["correlation_id"] as string,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+
+        // None of the automatic, admission, reconcile, or directional routes
+        // may call or set floating state, nor dispatch a toggle-float command.
+        assert.deepEqual(mocks.floatingCalls, []);
+        for (let index = 0; index < mocks.dbusCalls.length; index += 1) {
+            assert.notEqual(
+                (plannerPayload(mocks, index)["command"] as Record<string, unknown>)["op"],
+                "toggle-float",
+                `dbus call ${index} must not be a float transition`,
+            );
+        }
+        assert.ok(!mocks.logs.some((line) => line.includes("float-written")));
+
+        // Only the explicit requestFloat route calls setFloating, and only
+        // after the validated planned reply carries the float geometry.
+        adapter.requestFloat();
+        const floatIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, floatIndex)["command"] as Record<string, unknown>), { op: "toggle-float", window: "win-a" });
+        mocks.callbacks[floatIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: plannerPayload(mocks, floatIndex)["correlation_id"],
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", leaf: "leaf-c", output: "out-1", workspace: "ws-1", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+            }),
+        );
+        assert.deepEqual(mocks.floatingCalls, [{ id: "win-a", floating: true }]);
+        assert.ok(mocks.logs.some((line) => line.includes("float-written")));
     });
 });
 
@@ -1516,7 +1664,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(handle !== null);
         handle?.requestFloat();
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 240, y: 160, w: 720, h: 480 } });
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a" });
         const correlation = payload["correlation_id"] as string;
         mocks.callbacks[0]?.(JSON.stringify({
             v: 1, correlation_id: correlation, outcome: "planned", desired_geometry: [{ window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
@@ -1528,7 +1676,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-floating"));
         handle?.requestFloat();
         const unfloat = JSON.parse(mocks.dbusCalls[1]?.payload as string) as Record<string, unknown>;
-        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a" });
+        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 240, y: 160, w: 720, h: 480 } });
         mocks.callbacks[1]?.(JSON.stringify({
             v: 1, correlation_id: unfloat["correlation_id"], outcome: "planned", desired_geometry: [
                 { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
@@ -1538,6 +1686,46 @@ describe("plan entry live observation and shortcuts", () => {
         assert.deepEqual(active["frameGeometry"], { x: 0, y: 0, width: 600, height: 800 });
         handle?.requestMove("left");
         assert.equal(mocks.dbusCalls[2]?.method, "DescribePlan");
+        handle?.stop();
+    });
+
+    it("selects session-retained geometry and carries live float geometry across float/unfloat/float", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const active = world.wins[0] as Record<string, unknown>;
+        // First float selects retained/centered geometry; the session replies
+        // with the applied placement.
+        handle?.requestFloat();
+        const first = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(first["command"], { op: "toggle-float", window: "win-a" });
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1, correlation_id: first["correlation_id"], outcome: "planned", desired_geometry: [{ window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
+        assert.deepEqual(active["frameGeometry"], { x: 240, y: 160, width: 720, height: 480 });
+        // User moves the floating window.
+        active["frameGeometry"] = { x: 300, y: 200, width: 500, height: 400 };
+        // Unfloat carries the live (moved) geometry so the session retains it.
+        handle?.requestFloat();
+        const unfloat = JSON.parse(mocks.dbusCalls[1]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 300, y: 200, w: 500, h: 400 } });
+        mocks.callbacks[1]?.(JSON.stringify({
+            v: 1, correlation_id: unfloat["correlation_id"], outcome: "planned", desired_geometry: [
+                { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        // Re-float again selects retained geometry (no rect request), and the
+        // session replies with the moved placement, not a recomputed center.
+        handle?.requestFloat();
+        const refloat = JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(refloat["command"], { op: "toggle-float", window: "win-a" });
+        mocks.callbacks[2]?.(JSON.stringify({
+            v: 1, correlation_id: refloat["correlation_id"], outcome: "planned", desired_geometry: [{ window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 300, y: 200, w: 500, h: 400 } },
+        }));
+        assert.deepEqual(active["frameGeometry"], { x: 300, y: 200, width: 500, height: 400 });
         handle?.stop();
     });
 

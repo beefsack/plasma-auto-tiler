@@ -1771,18 +1771,23 @@ impl Planner {
                 seed_order,
                 true,
                 |session, observation| {
-                    session.propose(
-                        &SessionCommand::ToggleFloat {
-                            window: window.clone(),
-                            float_geometry: float_rect,
-                        },
-                        observation,
-                        &ctx.correlation,
-                        &LifecycleCapabilities::full(),
-                    )
+                    session
+                        .propose(
+                            &SessionCommand::ToggleFloat {
+                                window: window.clone(),
+                                float_geometry: float_rect,
+                            },
+                            observation,
+                            &ctx.correlation,
+                            &LifecycleCapabilities::full(),
+                        )
+                        .map(|plan| {
+                            let effective = session.pending_float_geometry(&window);
+                            (plan, effective)
+                        })
                 },
-                |plan| float_planned_reply(&ctx.request.correlation_id, plan, float_rect),
-                |session, plan, c, base| {
+                |result| float_planned_reply(&ctx.request.correlation_id, &result.0, result.1),
+                |session, result, c, base| {
                     if !acknowledge(session, c, base) {
                         return false;
                     }
@@ -1796,8 +1801,8 @@ impl Planner {
                             ),
                             c.correlation.clone(),
                             true,
-                            plan.dispatch.preconditions.clone(),
-                            plan.dispatch.operation.clone(),
+                            result.0.dispatch.preconditions.clone(),
+                            result.0.dispatch.operation.clone(),
                         ))
                         .is_ok()
                 },
@@ -2883,9 +2888,10 @@ pub fn evaluate_plan_json(request_json: &str) -> String {
             };
             let base = session.accepted_revision();
             let observation = observation_for(base, &ctx);
+            let window = WindowId(command.window.clone());
             let plan = match session.propose(
                 &SessionCommand::ToggleFloat {
-                    window: WindowId(command.window.clone()),
+                    window: window.clone(),
                     float_geometry: float_rect,
                 },
                 &observation,
@@ -2895,7 +2901,8 @@ pub fn evaluate_plan_json(request_json: &str) -> String {
                 Ok(plan) => plan,
                 Err(error) => return propose_failure(error, ctx.request.correlation_id.clone()),
             };
-            float_planned_reply(&ctx.request.correlation_id, &plan, float_rect)
+            let effective = session.pending_float_geometry(&window);
+            float_planned_reply(&ctx.request.correlation_id, &plan, effective)
         }),
         _ => rejected(
             valid_correlation_echo(&ctx.raw),
@@ -3104,27 +3111,25 @@ fn evaluate_toggle_float_with(
             "toggle-float-window-invalid",
         );
     }
-    let Some(target) = ctx
+    if !ctx
         .request
         .windows
         .iter()
-        .find(|entry| entry.window == command.window)
-    else {
+        .any(|entry| entry.window == command.window)
+    {
         return rejected(
             ctx.request.correlation_id.clone(),
             "partial-observation",
             MSG_OBSERVATION,
         );
-    };
+    }
     let float_rect = match command.float_rect.as_ref() {
-        Some(rect) if !target.floating && valid_carried_rect(rect.x, rect.y, rect.w, rect.h) => {
-            Some(Rect {
-                x: rect.x,
-                y: rect.y,
-                w: rect.w,
-                h: rect.h,
-            })
-        }
+        Some(rect) if valid_carried_rect(rect.x, rect.y, rect.w, rect.h) => Some(Rect {
+            x: rect.x,
+            y: rect.y,
+            w: rect.w,
+            h: rect.h,
+        }),
         Some(_) => {
             return snapshot_invalid(
                 ctx.request.correlation_id.clone(),
@@ -3132,14 +3137,7 @@ fn evaluate_toggle_float_with(
                 "float-rect-invalid",
             );
         }
-        None if target.floating => None,
-        None => {
-            return snapshot_invalid(
-                ctx.request.correlation_id.clone(),
-                MSG_OBSERVATION,
-                "float-rect-invalid",
-            );
-        }
+        None => None,
     };
     evaluate(&command, float_rect)
 }
@@ -3623,6 +3621,72 @@ mod tests {
         assert_eq!(tiled["outcome"], "planned");
         assert_eq!(tiled["float_geometry"], serde_json::Value::Null);
         assert_eq!(tiled["desired_geometry"].as_array().map(Vec::len), Some(2));
+
+        // Re-float selects the durable retained placement: no rect is carried
+        // in the request, and the reply echoes the retained rectangle rather
+        // than a recomputed center.
+        let refloat = plan_request(
+            "float-3",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        );
+        let refloated = parse_reply(&planner.evaluate(&refloat));
+        assert_eq!(refloated["outcome"], "planned");
+        assert_eq!(refloated["float_geometry"]["window"], "win-1");
+        assert_eq!(
+            refloated["float_geometry"]["rect"],
+            serde_json::json!({"x": 240, "y": 160, "w": 720, "h": 480})
+        );
+    }
+
+    #[test]
+    fn retained_toggle_float_tracks_moved_live_geometry_across_cycle() {
+        let mut planner = Planner::new();
+        let float = plan_request(
+            "moved-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        );
+        let floated = parse_reply(&planner.evaluate(&float));
+        assert_eq!(floated["outcome"], "planned");
+        // No explicit rect: the session resolves the centered 60% placement.
+        assert_eq!(
+            floated["float_geometry"]["rect"],
+            serde_json::json!({"x": 240, "y": 160, "w": 720, "h": 480})
+        );
+
+        // Unfloat carries the user's moved live rectangle.
+        let mut unfloat: serde_json::Value = serde_json::from_str(&plan_request(
+            "moved-2",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({
+                "op": "toggle-float",
+                "window": "win-1",
+                "float_rect": {"x": 300, "y": 200, "w": 500, "h": 400},
+            }),
+        ))
+        .expect("request JSON");
+        unfloat["windows"][0]["floating"] = serde_json::Value::Bool(true);
+        let tiled = parse_reply(&planner.evaluate(&unfloat.to_string()));
+        assert_eq!(tiled["outcome"], "planned");
+        assert_eq!(tiled["float_geometry"], serde_json::Value::Null);
+
+        // Re-float selects the moved retained rectangle, not the center.
+        let refloat = plan_request(
+            "moved-3",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        );
+        let refloated = parse_reply(&planner.evaluate(&refloat));
+        assert_eq!(refloated["outcome"], "planned");
+        assert_eq!(
+            refloated["float_geometry"]["rect"],
+            serde_json::json!({"x": 300, "y": 200, "w": 500, "h": 400})
+        );
     }
 
     /// Admit request with explicit domain bounds and per-window rects, so

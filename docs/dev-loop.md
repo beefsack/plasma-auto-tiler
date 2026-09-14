@@ -224,7 +224,11 @@ changes arrive as the reply `desired_focus` applied after the writes.
    queues or retries.
 7. Intentional float is static-only. Its internal controller request floats an
    eligible active normal window at a centered 60% work-area rectangle and
-   removes it from the planner tree; toggling again is fresh admission.
+   removes it from the planner tree; toggling again is fresh admission. The
+   float request carries no rectangle, so the Session selects the durable
+   retained placement for a window that has floated before instead of
+   recomputing the center; the unfloat request carries the window's live frame
+   rect so a user moved/resized float is retained for the next float.
    Fullscreen and maximized targets refuse. Do not run this as a live journey
    without separate authorization. KWin Grid View owns `Meta+G`, so this
    controller does not register that chord and ships no substitute binding.
@@ -256,7 +260,7 @@ entry with `outcome=dispatch` and one terminal verdict line):
 - `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=dispatch`
 - `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
 
-where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize`,
+where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize|toggle-float`,
 `<correlation>` is `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>`
 is the observed window count, and terminal outcomes are `planned-applied`,
 `rejected`, or the local fail-closed values `timer-failed`, `dbus-failed`,
@@ -282,7 +286,7 @@ Per applied geometry command (every member exactly one line, non-focus ops;
 `<id>` is the stable opaque normalized window id, `<class>` is KWin's bounded
 non-sensitive resource class, and `<rect>` is `x,y,w,h`):
 
-- `plasma-auto-tiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed> rect=<rect>`
+- `plasma-auto-tiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-floating|skip-already-equal|write-failed|float-written|float-write-failed> rect=<rect>`
 
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
@@ -318,15 +322,18 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:focus-refused-disabled` (shortcut focus while the adapter is disabled)
 - `plasma-auto-tiler:plan:focus-refused-invalid-direction`
 - `plasma-auto-tiler:plan:focus-refused-observe`
+- `plasma-auto-tiler:plan:focus-refused-floating` (directional focus on an intentionally floating active window)
 - `plasma-auto-tiler:plan:move-refused-disabled`
 - `plasma-auto-tiler:plan:move-refused-invalid-direction`
 - `plasma-auto-tiler:plan:move-refused-observe`
+- `plasma-auto-tiler:plan:move-refused-floating` (directional move on an intentionally floating active window)
 - `plasma-auto-tiler:plan:move-refused-fullscreen` (directional move refused on a fullscreen focused window)
 - `plasma-auto-tiler:plan:move-refused-maximize` (directional move refused on a maximized focused window; fullscreen wins when both)
 - `plasma-auto-tiler:plan:resize-refused-disabled`
 - `plasma-auto-tiler:plan:resize-refused-invalid-direction`
 - `plasma-auto-tiler:plan:resize-refused-invalid-mode`
 - `plasma-auto-tiler:plan:resize-refused-observe`
+- `plasma-auto-tiler:plan:resize-refused-floating` (directional resize on an intentionally floating active window)
 - `plasma-auto-tiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
 - `plasma-auto-tiler:plan:resize-refused-maximize` (directional resize refused on a maximized focused window; fullscreen wins when both)
 - `plasma-auto-tiler:plan:pointer-refused-disabled`
@@ -338,9 +345,20 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
 - `plasma-auto-tiler:plan:pointer-refused-maximize` (pointer-resize target refused while maximized; fullscreen wins when both)
 - `plasma-auto-tiler:plan:maximize-refused-signal` (`maximizedChanged` cannot attach for any eligible observed normal window, at startup or on a window added later; maximize attachment is a hard requirement and the adapter fails closed)
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize>` (shortcut dropped while a flight is in flight)
+- `plasma-auto-tiler:plan:float-refused-disabled` (toggle-float while the adapter is disabled)
+- `plasma-auto-tiler:plan:float-refused-observe` (toggle-float target not found in the observation)
+- `plasma-auto-tiler:plan:float-refused-not-tiled` (toggle-float on an active-excluded or otherwise non-tiled target)
+- `plasma-auto-tiler:plan:float-refused-fullscreen` (toggle-float on a fullscreen focused window)
+- `plasma-auto-tiler:plan:float-refused-maximize` (toggle-float on a maximized focused window; fullscreen wins when both)
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float>` (shortcut dropped while a flight is in flight)
 - `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
+
+Intentional-float Planner snapshot-invalid details:
+
+- `toggle-float-op-invalid`
+- `toggle-float-window-invalid`
+- `float-rect-invalid`
 
 Per window excluded before admission (one line per unchanged exclusion state for
 an identified window; `<id>` is the normalized window id, or `unknown` when
@@ -385,6 +403,7 @@ Drag-oracle entry startup refusal (exactly one token per refused
 
 Map each journey step above to one command pair: add -> `kind=admit`,
 close -> `kind=remove`, directional focus -> `kind=focus`, directional move ->
-`kind=move`, resize -> `kind=resize`. Pointer focus change alone emits no
-command line. A rejection still emits the pair above and recovers on the next
-fresh observation; the adapter never disables itself after a reply.
+`kind=move`, resize -> `kind=resize`, intentional float toggle -> `kind=toggle-float`.
+Pointer focus change alone emits no command line. A rejection still emits the
+pair above and recovers on the next fresh observation; the adapter never
+disables itself after a reply.

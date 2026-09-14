@@ -1227,14 +1227,13 @@ export class PlanAdapter {
             return;
         }
         const snapshot = this.carriedSnapshot(observed);
+        // Float selects the session-retained placement (the request carries no
+        // rect, so the session never recomputes a center for a window that has
+        // floated before). Unfloat carries the live frame rect so a user
+        // moved/resized float is retained for the next float.
         const rect = floating
-            ? null
-            : {
-                  x: snapshot.domainBounds.x + Math.floor((snapshot.domainBounds.w - Math.max(1, Math.floor(snapshot.domainBounds.w * 0.6))) / 2),
-                  y: snapshot.domainBounds.y + Math.floor((snapshot.domainBounds.h - Math.max(1, Math.floor(snapshot.domainBounds.h * 0.6))) / 2),
-                  w: Math.max(1, Math.floor(snapshot.domainBounds.w * 0.6)),
-                  h: Math.max(1, Math.floor(snapshot.domainBounds.h * 0.6)),
-              };
+            ? { x: target.rect.x, y: target.rect.y, w: target.rect.w, h: target.rect.h }
+            : null;
         this.dispatch({
             op: "toggle-float",
             snapshot,

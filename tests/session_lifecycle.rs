@@ -209,6 +209,45 @@ fn remove_and_commit(session: &mut Session, window: &str, corr: &str) -> Session
     plan
 }
 
+fn toggle_float_and_commit(
+    session: &mut Session,
+    window: &str,
+    float_geometry: Option<Rect>,
+    corr: &str,
+) -> SessionPlan {
+    let obs = complete_observation(session, Vec::new());
+    let base = session.accepted_revision();
+    let plan = session
+        .propose(
+            &SessionCommand::ToggleFloat {
+                window: WindowId(window.to_owned()),
+                float_geometry,
+            },
+            &obs,
+            &correlation(corr),
+            &LifecycleCapabilities::full(),
+        )
+        .unwrap_or_else(|e| panic!("toggle-float {window} proposes: {e:?}"));
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation(corr),
+            owner(),
+            generation(),
+            base,
+            plasma_auto_tiler::contract::AckOutcome::Accepted,
+        ))
+        .expect("ack");
+    let post = plasma_auto_tiler::contract::LifecyclePostObservation::new(
+        Observation::new(owner(), generation(), base, 600 + base),
+        correlation(corr),
+        true,
+        plan.dispatch.preconditions.clone(),
+        plan.dispatch.operation.clone(),
+    );
+    session.verify_lifecycle(&post).expect("commit");
+    plan
+}
+
 fn leaves_of(session: &Session, output: &str, workspace: &str) -> Vec<String> {
     let snapshot = session.snapshot();
     let view = snapshot
@@ -1139,6 +1178,92 @@ fn intentional_float_is_transactional_non_tree_state_and_unfloats_by_fresh_admis
         .expect("unfloat commit");
     assert_eq!(leaves_of(&session, "out-1", "ws-1"), vec!["leaf-win-1"]);
     assert_eq!(session.exception_count(), 0);
+    // The float placement survives unfloat as durable retained geometry.
+    assert_eq!(
+        session.retained_float_geometry(&WindowId("win-1".to_owned())),
+        Some(float_rect)
+    );
+}
+
+#[test]
+fn intentional_float_retains_moved_geometry_across_float_unfloat_float() {
+    let mut session = single_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "retain-admit",
+    );
+    let first = Rect {
+        x: 24,
+        y: 16,
+        w: 72,
+        h: 48,
+    };
+    toggle_float_and_commit(&mut session, "win-1", Some(first), "retain-float-1");
+    assert_eq!(
+        session.floating_geometry(&WindowId("win-1".to_owned())),
+        Some(first)
+    );
+
+    // The user moves/resizes the float; unfloat carries the live rect.
+    let moved = Rect {
+        x: 30,
+        y: 20,
+        w: 50,
+        h: 40,
+    };
+    toggle_float_and_commit(&mut session, "win-1", Some(moved), "retain-unfloat");
+    assert_eq!(session.exception_count(), 0);
+    assert_eq!(
+        session.retained_float_geometry(&WindowId("win-1".to_owned())),
+        Some(moved)
+    );
+
+    // Re-float selects the retained placement instead of recomputing center.
+    toggle_float_and_commit(&mut session, "win-1", None, "retain-float-2");
+    assert_eq!(
+        session.floating_geometry(&WindowId("win-1".to_owned())),
+        Some(moved)
+    );
+    assert_eq!(
+        session.retained_float_geometry(&WindowId("win-1".to_owned())),
+        Some(moved)
+    );
+
+    // Fresh admission after a second unfloat still uses domain bounds, not the
+    // retained float rectangle.
+    let unfloated = toggle_float_and_commit(&mut session, "win-1", Some(moved), "retain-unfloat-2");
+    assert_eq!(unfloated.desired_geometry.len(), 1);
+    assert_eq!(leaves_of(&session, "out-1", "ws-1"), vec!["leaf-win-1"]);
+    assert_eq!(session.exception_count(), 0);
+}
+
+#[test]
+fn intentional_float_centered_fallback_matches_adapter_placement() {
+    let mut session = single_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "center-admit",
+    );
+    // No explicit rect and no retained geometry: the session resolves the
+    // centered 60% work-area placement itself.
+    toggle_float_and_commit(&mut session, "win-1", None, "center-float");
+    assert_eq!(
+        session.floating_geometry(&WindowId("win-1".to_owned())),
+        Some(Rect {
+            x: 24,
+            y: 16,
+            w: 72,
+            h: 48
+        })
+    );
 }
 
 #[test]

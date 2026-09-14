@@ -15,12 +15,11 @@ Only meaningful pending or active work is listed.
   post-admission isolation. A real KWin 6.7.4 session must establish that a
   session-restored maximized application restores, tiles, and cannot form an
   application re-maximize loop. No live result is claimed.
-- P1 | Intentional floating (`Meta+G`) | Select and implement the separate
-  COSMIC-grounded float toggle slice. COSMIC binds it in `data/keybindings.ron:83-92`;
-  unfloat is fresh admission through `tiling_layer.map` at
-  `src/shell/layout/tiling/mod.rs:396-435` and `src/shell/workspace.rs:1493-1498`,
-  not restoration of the prior tile slot. No floating placement state or
-  `toggle-floating` command is selected yet.
+- P1 | Intentional floating physical shortcut collision | The completed float
+  engine and internal `toggle-float` route intentionally leave `Meta+G`
+  unregistered because read-only KGlobalAccel enumeration found KWin Grid View
+  owns it. Select an explicit override or another user-authorized resolution
+  before physical delivery. [change](changes/archive/intentional-floating-repair.md)
 - P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
   reseed behavior for `(output, workspace)` state through unplug/replug.
   [investigation](changes/reliability-condition-investigation.md)

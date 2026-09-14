@@ -8,8 +8,11 @@
 ## Scope
 
 - `toggle-float` is an explicit Rust Session and protocol transition. Floating
-  state and its centered 60% work-area geometry are retained outside the tile
-  tree. Unfloat is a fresh tiled admission, never leaf restoration.
+  state is retained outside the tile tree; the durable Session-owned placement
+  survives unfloat, so a re-float selects the retained rectangle (a moved or
+  resized float carried by the unfloat request) rather than recomputing the
+  centered 60% work-area rectangle, which is only the first-time fallback.
+  Unfloat is a fresh tiled admission, never leaf restoration.
 - The KWin adapter writes float frame geometry only after a validated planned
   response. It does not write `Window.tile`. Fullscreen, maximized, busy,
   invalid, and non-tiled float targets refuse without a state transition.
@@ -21,7 +24,8 @@
 
 - Rust Session and protocol tests cover tiled-to-float, float-to-tiled,
   retained geometry, empty surviving trees, fresh admission, and refusal
-  transitions.
+  transitions. KWin coverage proves that automatic, admission, reconcile,
+  directional, and pointer routes cannot create float state.
 - KWin tests cover request/reply transport, exact frame-write diagnostics,
   floating tiled-command guards, no implicit float path, and no Meta+G
   registration.
@@ -40,9 +44,9 @@
 - Before (inherited archive evidence): `cargo test` reported 251 library tests
   plus existing integration suites; `npm test --prefix kwin` reported 523
   tests; `bash scripts/dev-loop-split.test.sh` reported `PASS=277`.
-- After: `cargo fmt --check`; `cargo test --no-fail-fast` (252 library and 235
+- After the retained-geometry repair: `cargo test` (253 library and 237
   integration tests); `npm run typecheck --prefix kwin`; `npm test --prefix
-  kwin` (525 tests); and `bash scripts/dev-loop-split.test.sh` (`PASS=277`)
-  passed.
+  kwin` (527 tests); `scripts/dev-loop-split.test.sh` (`PASS=277`); and
+  `just --fmt --check` passed.
 - No live KWin/Plasma mutation, lifecycle action, physical shortcut, or visual
   observation occurred. Runtime KWin behavior remains live-unproven.
