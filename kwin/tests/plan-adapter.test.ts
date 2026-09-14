@@ -1378,6 +1378,27 @@ describe("plan entry live observation and shortcuts", () => {
         }
     });
 
+    it("routes each inwards resize arrow through the existing resize adapter", () => {
+        for (const direction of ["left", "down", "up", "right"]) {
+            const { handle, mocks } = startEntry(fakeWorld());
+            assert.ok(handle !== null);
+            const shortcut = mocks.shortcuts.find(
+                (row) => row.action === `plasma-auto-tiler-resize-inwards-${direction}-arrow`,
+            ) as { callback: () => void };
+            shortcut.callback();
+            assert.equal(mocks.dbusCalls[0]?.method, "DescribePlan");
+            const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+            assert.deepEqual(payload["command"], {
+                op: "resize",
+                window: "win-a",
+                direction,
+                mode: "inwards",
+                press_index: 0,
+            });
+            handle?.stop();
+        }
+    });
+
     it("registers distinct Meta+Shift move sequences delivering op=move", () => {
         const first = startEntry(fakeWorld());
         assert.ok(first.handle !== null);
