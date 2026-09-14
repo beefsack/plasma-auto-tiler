@@ -213,12 +213,15 @@ changes arrive as the reply `desired_focus` applied after the writes.
    focus is restored to the moved window.
 6. Resize: focus one window, press `Meta+Alt+H/J/K/L` to grow toward that
    direction (outwards mode) or `Meta+Alt+Shift+H/J/K/L` to shrink from that
-   direction (inwards mode). Repeat presses step further (`press_index`
-   increments while focus/direction/mode/fingerprint are unchanged).
-   Expected visible outcome: the focused edge moves one step, neighbors
-   adjust to keep the work area covered, focus stays on the resized window.
-   Grow to 5-6 windows and repeat 4-6 to confirm convergence without queues
-   or retries.
+   direction (inwards mode). The inwards/shrink family also has arrow aliases
+   `Meta+Alt+Shift+Left/Down/Up/Right`; the outwards arrow chords
+   `Meta+Alt+Left/Down/Up/Right` are the documented project insert-* chords
+   and are deliberately not registered. Repeat presses step further
+   (`press_index` increments while focus/direction/mode/fingerprint are
+   unchanged). Expected visible outcome: the focused edge moves one step,
+   neighbors adjust to keep the work area covered, focus stays on the resized
+   window. Grow to 5-6 windows and repeat 4-6 to confirm convergence without
+   queues or retries.
 
 Physical shortcuts are required; `invokeShortcut` bypasses the xkb layer and
 cannot prove delivery. KGlobalAccel records persist after unload and do not

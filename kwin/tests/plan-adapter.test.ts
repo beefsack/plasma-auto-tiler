@@ -1302,18 +1302,19 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("starts with 24 parameterized directional shortcuts and observes stable ids", () => {
+    it("starts with 28 parameterized directional shortcuts and observes stable ids", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 24);
+        assert.equal(mocks.shortcuts.length, 28);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 24);
+        assert.equal(new Set(actions).size, 28);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-outwards-right"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down"));
+        assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down-arrow"));
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
             callback: () => void;
         };
@@ -1333,7 +1334,7 @@ describe("plan entry live observation and shortcuts", () => {
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            assert.equal(catalog.length, 24);
+            assert.equal(catalog.length, 28);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
@@ -1341,6 +1342,39 @@ describe("plan entry live observation and shortcuts", () => {
             assert.equal(byAction.get("plasma-auto-tiler-move-down-arrow")?.op, "move");
             assert.equal(byAction.get("plasma-auto-tiler-resize-outwards-left")?.mode, "outwards");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left")?.mode, "inwards");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.mode, "inwards");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.op, "resize");
+            assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.direction, "left");
+        }
+    });
+
+    it("adds only the non-colliding inwards arrow resize family", () => {
+        for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
+            const catalog = planShortcutCatalog(profile);
+            const byAction = new Map(catalog.map((row) => [row.action, row]));
+            const expected: ReadonlyArray<{ direction: string; arrow: string }> = [
+                { direction: "left", arrow: "Left" },
+                { direction: "down", arrow: "Down" },
+                { direction: "up", arrow: "Up" },
+                { direction: "right", arrow: "Right" },
+            ];
+            for (const entry of expected) {
+                const row = byAction.get(`plasma-auto-tiler-resize-inwards-${entry.direction}-arrow`);
+                assert.ok(row !== undefined, `${profile}:${entry.direction}`);
+                assert.equal(row?.mode, "inwards");
+                assert.equal(row?.op, "resize");
+                assert.equal(row?.direction, entry.direction);
+                assert.equal(row?.sequence, `Meta+Alt+Shift+${entry.arrow}`);
+                assert.equal(
+                    byAction.has(`plasma-auto-tiler-resize-outwards-${entry.direction}-arrow`),
+                    false,
+                    `${profile}: outwards arrow must stay unregistered for documented insert-* chord ownership`,
+                );
+                assert.ok(
+                    !catalog.some((candidate) => candidate.sequence === `Meta+Alt+${entry.arrow}`),
+                    `${profile}: Meta+Alt+${entry.arrow} must stay unregistered`,
+                );
+            }
         }
     });
 
@@ -1463,8 +1497,9 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 24);
+        assert.equal(attempts.length, 28);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
+        assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
         assert.ok(line !== undefined);
         assert.equal(

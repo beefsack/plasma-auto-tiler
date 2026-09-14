@@ -63,6 +63,10 @@ PROJECT_ACTIONS=(
   plasma-auto-tiler-resize-inwards-down
   plasma-auto-tiler-resize-inwards-up
   plasma-auto-tiler-resize-inwards-right
+  plasma-auto-tiler-resize-inwards-left-arrow
+  plasma-auto-tiler-resize-inwards-down-arrow
+  plasma-auto-tiler-resize-inwards-up-arrow
+  plasma-auto-tiler-resize-inwards-right-arrow
 )
 PROJECT_ACTIONS_JSON=""
 
@@ -96,6 +100,10 @@ declare -A EXPECTED_SEQUENCES=(
   [plasma-auto-tiler-resize-inwards-down]="436207690"
   [plasma-auto-tiler-resize-inwards-up]="436207691"
   [plasma-auto-tiler-resize-inwards-right]="436207692"
+  [plasma-auto-tiler-resize-inwards-left-arrow]="452984850"
+  [plasma-auto-tiler-resize-inwards-down-arrow]="452984853"
+  [plasma-auto-tiler-resize-inwards-up-arrow]="452984851"
+  [plasma-auto-tiler-resize-inwards-right-arrow]="452984852"
 )
 
 # KGlobalAccelD::SetShortcutFlag values (pinned kglobalacceld 6.7.3 source):
