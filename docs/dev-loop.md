@@ -222,16 +222,20 @@ changes arrive as the reply `desired_focus` applied after the writes.
    neighbors adjust to keep the work area covered, focus stays on the resized
    window. Grow to 5-6 windows and repeat 4-6 to confirm convergence without
    queues or retries.
-7. Intentional float is static-only. Its internal controller request floats an
+7. Intentional float, sticky, and maximize are static-only. The controller
+   request floats an
    eligible active normal window at a centered 60% work-area rectangle and
    removes it from the planner tree; toggling again is fresh admission. The
    float request carries no rectangle, so the Session selects the durable
    retained placement for a window that has floated before instead of
    recomputing the center; the unfloat request carries the window's live frame
    rect so a user moved/resized float is retained for the next float.
-   Fullscreen and maximized targets refuse. Do not run this as a live journey
-   without separate authorization. KWin Grid View owns `Meta+G`, so this
-   controller does not register that chord and ships no substitute binding.
+   Fullscreen and maximized targets refuse. `Meta+G` floats, `Meta+Shift+G`
+   toggles sticky float, and `Meta+M` toggles maximize. Do not run these as a
+   live journey without separate authorization. Grid View owns `Meta+G` and
+   Krohnkite Monocle owns `Meta+M` in the observed session, so KGlobalAccel
+   serial dispatch shadows the later project registrations until the user
+   resolves each conflict in System Settings.
 
 Physical shortcuts are required; `invokeShortcut` bypasses the xkb layer and
 cannot prove delivery. KGlobalAccel records persist after unload and do not
@@ -309,6 +313,14 @@ per live window identity, never a retry):
 - `plasma-auto-tiler:plan:maximize-admission-echo-mismatched`
 - `plasma-auto-tiler:plan:maximize-admission-echo-cleared-no-signal`
 
+Explicit native state writes arm before their native call, consume only the
+same Window object, and clear immediately when no synchronous echo arrives:
+
+- `plasma-auto-tiler:plan:maximize-toggle window=<id> resource_class=<class> target=<maximized|restored> outcome=<issued|invoked|missing|threw>`
+- `plasma-auto-tiler:plan:maximize-toggle-echo-armed|consumed|mismatched|cleared-no-signal`
+- `plasma-auto-tiler:plan:sticky-toggle window=<id> resource_class=<class> target=<all-desktops|current-desktop> outcome=<issued|invoked|missing|threw>`
+- `plasma-auto-tiler:plan:sticky-echo-armed|consumed|mismatched|cleared-no-signal`
+
 `observed-cleared` confirms that the immediate re-observation saw restore.
 `observed-maximized` records that KWin still reported maximize after the one
 call, including an application that immediately reasserted it; it is then the
@@ -350,9 +362,14 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:float-refused-not-tiled` (toggle-float on an active-excluded or otherwise non-tiled target)
 - `plasma-auto-tiler:plan:float-refused-fullscreen` (toggle-float on a fullscreen focused window)
 - `plasma-auto-tiler:plan:float-refused-maximize` (toggle-float on a maximized focused window; fullscreen wins when both)
-- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float>` (shortcut dropped while a flight is in flight)
+- `plasma-auto-tiler:plan:sticky-refused-disabled|observe`
+- `plasma-auto-tiler:plan:sticky-refused-fullscreen|maximize|untracked|attempted window=<id> resource_class=<class>`
+- `plasma-auto-tiler:plan:maximize-refused-disabled|observe`
+- `plasma-auto-tiler:plan:maximize-refused-fullscreen|attempted window=<id> resource_class=<class>`
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize|toggle-float|toggle-sticky|toggle-maximize>` (shortcut dropped while a flight is in flight)
 - `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
+- `plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=<action> sequence=<sequence> holder_component=<component> holder_action=<action>`
 
 Intentional-float Planner snapshot-invalid details:
 

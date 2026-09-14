@@ -237,12 +237,15 @@ Historical implementation detail is recoverable in Git history.
   unfloat is fresh planner admission, never prior-leaf restoration. Unfloat
   carries the window's live frame rect so a user moved/resized float is
   retained across float/unfloat/float. Fullscreen and maximized targets refuse
-  with `float-refused-fullscreen` and `float-refused-maximize`. KWin Grid View
-  owns `Meta+G`; the controller does not register, replace, or claim physical
-  delivery for that chord, and no substitute binding is selected.
-  `Meta+Shift+G` sticky is deferred: KWin source exposes writable
-  `Window.onAllDesktops`, but no static-only lifecycle claim is selected for
-  its desktop-membership restoration.
+  with `float-refused-fullscreen` and `float-refused-maximize`. The controller
+  registers `Meta+G` without changing Grid View's record. KGlobalAccel permits
+  both active records but dispatches the lower serial holder, so startup emits
+  `shortcut-dispatch-shadowed` until the user resolves that conflict in System
+  Settings. `Meta+Shift+G` toggles sticky floating: tiled members float first,
+  then set `Window.onAllDesktops=true`; sticky-off restores prior floating
+  placement or, for prior tiled members, fresh admission rather than an old
+  slot. The native write has one exact-reference `desktopsChanged` echo fence,
+  with no retry, timeout, fallback, or polling.
 - The selected fresh-admission behavior follows `pop-os/cosmic-comp`
   `81cd5fdbaa41c3973369ae85bccf829137836e20` source content:
   `data/keybindings.ron:83-92` binds Super+G to `ToggleWindowFloating`;
@@ -279,8 +282,16 @@ Historical implementation detail is recoverable in Git history.
   a tiled window; `Workspace::unmaximize_request`
   `src/shell/workspace.rs:996-1036` returns that member to tiling ("should
   still be mapped in tiling"). The product choice makes KWin session-restored
-  maximized applications tile on admission while preserving the selected
-  post-admission behavior.
+   maximized applications tile on admission while preserving the selected
+   post-admission behavior.
+- `Meta+M` toggles KWin maximize through `Window.setMaximize(bool, bool)`, never
+  `maximizeMode`. Fullscreen refuses first. Post-admission maximize retains its
+  tile slot and skips geometry writes; unmaximize restores its retained
+  allocation. The action has its own exact-reference `maximizedChanged` fence,
+  so a deliberate post-admission maximize is never affected by admission-time
+  clearing. Current read-only enumeration found `kwin/KrohnkiteMonocleLayout`
+  on `Meta+M`; registration preserves that record and emits the shadowed-
+  delivery diagnostic until the user resolves it.
 - H/V maximize is deliberately not modeled in the engine. Source:
   `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
   `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records

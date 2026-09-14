@@ -60,14 +60,16 @@ export interface PlanEntryHandle {
     readonly requestMove: (direction: unknown) => void;
     readonly requestResize: (direction: unknown, mode: unknown) => void;
     readonly requestFloat: () => void;
+    readonly requestSticky: () => void;
+    readonly requestMaximize: () => void;
 }
 
 export interface PlanShortcutRow {
     readonly action: string;
     readonly text: string;
     readonly sequence: string;
-    readonly op: "focus" | "move" | "resize";
-    readonly direction: PlanDirection;
+    readonly op: "focus" | "move" | "resize" | "float" | "sticky" | "maximize";
+    readonly direction: PlanDirection | null;
     readonly mode: PlanResizeMode | null;
 }
 
@@ -271,6 +273,32 @@ export function planShortcutCatalog(profile: unknown): ReadonlyArray<PlanShortcu
             mode: "inwards",
         });
     }
+    rows.push(
+        {
+            action: "plasma-auto-tiler-toggle-float",
+            text: "Toggle floating window",
+            sequence: "Meta+G",
+            op: "float",
+            direction: null,
+            mode: null,
+        },
+        {
+            action: "plasma-auto-tiler-toggle-sticky",
+            text: "Toggle sticky floating window",
+            sequence: "Meta+Shift+G",
+            op: "sticky",
+            direction: null,
+            mode: null,
+        },
+        {
+            action: "plasma-auto-tiler-toggle-maximize",
+            text: "Toggle maximize window",
+            sequence: "Meta+M",
+            op: "maximize",
+            direction: null,
+            mode: null,
+        },
+    );
     return Object.freeze(rows);
 }
 
@@ -439,6 +467,7 @@ function observeNative(
             fullscreen: boolean;
             maximized: boolean;
             floating: boolean;
+            sticky: boolean;
             resourceClass: string;
         }> = [];
         for (const item of windows) {
@@ -462,6 +491,7 @@ function observeNative(
                 reportEligibility?.(ref, "output-mismatch");
                 continue;
             }
+            const allDesktops = readProp(ref, "onAllDesktops") === true;
             const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
             if (membership === null) {
                 return null;
@@ -473,7 +503,7 @@ function observeNative(
                     break;
                 }
             }
-            if (!onDesktop) {
+            if (!onDesktop && !allDesktops) {
                 reportEligibility?.(ref, "desktop-mismatch");
                 continue;
             }
@@ -513,7 +543,8 @@ function observeNative(
                 workspace: domainWorkspace,
                 fullscreen: readProp(ref, "fullScreen") !== false,
                 maximized: readProp(ref, "maximizeMode") !== 0,
-                floating: floatingIds.has(id),
+                floating: floatingIds.has(id) || allDesktops,
+                sticky: allDesktops,
                 resourceClass: readResourceClass(ref),
             });
             reportEligibility?.(ref, null);
@@ -526,7 +557,7 @@ function observeNative(
             return null;
         }
         const activeNativeId = internNativeId(cache, activeNative);
-        const activeExcluded = floatingIds.has(activeNativeId);
+        const activeExcluded = floatingIds.has(activeNativeId) || readProp(activeRef, "onAllDesktops") === true;
         let activeId: string | null = null;
         for (const entry of entries) {
             if (entry.id === activeNativeId) {
@@ -550,6 +581,8 @@ function observeNative(
                     fullscreen: entry.fullscreen,
                     maximized: entry.maximized,
                     floating: entry.floating,
+                    sticky: entry.sticky,
+                    resourceClass: entry.resourceClass,
                 }),
             ),
         );
@@ -840,16 +873,14 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
-    // Hard per-window maximize-state subscription. Mirrors the fullscreen
-    // machinery (windowAdded subscribes the new window, windowRemoved detaches
-    // the removed window) but is a startup requirement: every eligible observed
-    // normal window must expose a connectable `maximizedChanged` signal or the
-    // attachment refuses fail-closed with an exact maximize-specific token
-    // rather than silently running unobservant of maximize state. Unlike
-    // best-effort fullscreen, an individual eligible normal window that lacks
-    // the signal is never skipped, and a window added after enable that lacks
-    // it fails the adapter closed instead of leaving it blind.
-    const subWindowMaximize = (handler: (target?: object) => void): (() => void) | null => {
+    // Native state writes require their exact notify signal. Unlike fullscreen,
+    // a missing signal cannot leave a state-write fence blind.
+    const subWindowRequiredSignal = (
+        signalName: string,
+        failureToken: string,
+        handler: (target?: object) => void,
+        hard: boolean,
+    ): (() => void) | null => {
         try {
             const lister = surface["windowList"];
             if (typeof lister !== "function") {
@@ -860,15 +891,14 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             const topDetaches: Array<() => void> = [];
             // Returns false only when an eligible normal window (the same
             // `normalWindow === true` classification observeNative uses) lacks
-            // a connectable `maximizedChanged`; non-normal windows are never
-            // observed so a missing signal there is skipped like fullscreen.
+            // this state signal; non-normal windows are never observed.
             const connectOne = (ref: object): boolean => {
                 if (seen.has(ref)) {
                     return true;
                 }
-                const detach = connectSignal(readSignal(ref, "maximizedChanged"), () => handler(ref));
+                const detach = connectSignal(readSignal(ref, signalName), () => handler(ref));
                 if (detach === null) {
-                    return readProp(ref, "normalWindow") !== true;
+                    return !hard || readProp(ref, "normalWindow") !== true;
                 }
                 seen.add(ref);
                 windowDetaches.set(ref, detach);
@@ -947,7 +977,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     // maximize subscription is released and the adapter is
                     // disabled.
                     try {
-                        log("plasma-auto-tiler:plan:maximize-refused-signal");
+                        log(failureToken);
                     } catch (error) {
                         void error;
                     }
@@ -1022,6 +1052,33 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     return "missing";
                 }
                 Reflect.apply(method as (...args: ReadonlyArray<unknown>) => unknown, target, [false, false]);
+                return "invoked";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
+        setMaximize: (target, maximized) => {
+            try {
+                const method = readProp(target, "setMaximize");
+                if (typeof method !== "function") {
+                    return "missing";
+                }
+                Reflect.apply(method as (...args: ReadonlyArray<unknown>) => unknown, target, [maximized, maximized]);
+                return "invoked";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
+        setAllDesktops: (target, allDesktops) => {
+            try {
+                const probe = connectSignal(readSignal(target, "desktopsChanged"), () => {});
+                if (probe === null) {
+                    return "missing";
+                }
+                probe();
+                Reflect.set(target, "onAllDesktops", allDesktops);
                 return "invoked";
             } catch (error) {
                 void error;
@@ -1111,7 +1168,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return detach;
             }
             if (kind === "maximize") {
-                const detach = subWindowMaximize(handler);
+                const detach = subWindowRequiredSignal("maximizedChanged", "plasma-auto-tiler:plan:maximize-refused-signal", handler, true);
                 if (detach === null) {
                     // Maximize observation is a hard startup requirement, unlike
                     // best-effort fullscreen: refuse fail-closed with the exact
@@ -1123,6 +1180,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         void error;
                     }
                     throw new Error("plan-entry-maximize-signal-failed");
+                }
+                return detach;
+            }
+            if (kind === "desktops") {
+                const detach = subWindowRequiredSignal("desktopsChanged", "plasma-auto-tiler:plan:sticky-refused-signal", handler, false);
+                if (detach === null) {
+                    return (): void => {};
                 }
                 return detach;
             }
@@ -1204,10 +1268,32 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     ? registerFn(action, text, sequence, () => adapter.requestResize(direction, mode))
                     : op === "move"
                       ? registerFn(action, text, sequence, () => adapter.requestMove(direction))
-                      : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
+                      : op === "float"
+                        ? registerFn(action, text, sequence, () => adapter.requestFloat())
+                        : op === "sticky"
+                          ? registerFn(action, text, sequence, () => adapter.requestSticky())
+                          : op === "maximize"
+                            ? registerFn(action, text, sequence, () => adapter.requestMaximize())
+                            : registerFn(action, text, sequence, () => adapter.requestFocus(direction));
             if (ok !== true) {
                 try {
                     log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                } catch (error) {
+                    void error;
+                }
+            } else if (action === "plasma-auto-tiler-toggle-float") {
+                // KGlobalAccel keeps both registrations and dispatches the
+                // earliest serial holder. Grid View is already registered by
+                // KWin, so this new action is visible in Settings but cannot
+                // receive Meta+G until the user resolves that conflict there.
+                try {
+                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid_View");
+                } catch (error) {
+                    void error;
+                }
+            } else if (action === "plasma-auto-tiler-toggle-maximize") {
+                try {
+                    log("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout");
                 } catch (error) {
                     void error;
                 }
@@ -1478,6 +1564,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         requestFloat: () => {
             try {
                 adapter.requestFloat();
+            } catch (error) {
+                void error;
+            }
+        },
+        requestSticky: () => {
+            try {
+                adapter.requestSticky();
+            } catch (error) {
+                void error;
+            }
+        },
+        requestMaximize: () => {
+            try {
+                adapter.requestMaximize();
             } catch (error) {
                 void error;
             }

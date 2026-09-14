@@ -15,11 +15,11 @@ Only meaningful pending or active work is listed.
   post-admission isolation. A real KWin 6.7.4 session must establish that a
   session-restored maximized application restores, tiles, and cannot form an
   application re-maximize loop. No live result is claimed.
-- P1 | Intentional floating physical shortcut collision | The completed float
-  engine and internal `toggle-float` route intentionally leave `Meta+G`
-  unregistered because read-only KGlobalAccel enumeration found KWin Grid View
-  owns it. Select an explicit override or another user-authorized resolution
-  before physical delivery. [change](changes/archive/intentional-floating-repair.md)
+- P1 | Float/maximize shortcut physical delivery live gate | `Meta+G` and
+  `Meta+M` actions register without changing Grid View or Krohnkite records.
+  Read-only enumeration found both held, so KGlobalAccel serial dispatch
+  shadows them until the user resolves each in System Settings. Verify physical
+  delivery after that manual resolution; `Meta+Shift+G` has no observed holder.
 - P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
   reseed behavior for `(output, workspace)` state through unplug/replug.
   [investigation](changes/reliability-condition-investigation.md)

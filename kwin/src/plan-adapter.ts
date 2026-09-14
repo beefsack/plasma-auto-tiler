@@ -46,9 +46,10 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
-export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize";
+export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize" | "desktops";
 export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize" | "toggle-float";
-export type MaximizeClearOutcome = "invoked" | "missing" | "threw";
+export type NativeStateWriteOutcome = "invoked" | "missing" | "threw";
+export type MaximizeClearOutcome = NativeStateWriteOutcome;
 
 export interface PlanRect {
     readonly x: number;
@@ -66,6 +67,7 @@ export interface PlanObservedWindow {
     readonly fullscreen: boolean;
     readonly maximized: boolean;
     readonly floating?: boolean;
+    readonly sticky?: boolean;
     readonly resourceClass?: string;
 }
 
@@ -408,6 +410,8 @@ export interface PlanAdapterEnv {
     readonly log: (message: string) => void;
     readonly observe: () => PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
+    readonly setMaximize?: (target: object, maximized: boolean) => NativeStateWriteOutcome;
+    readonly setAllDesktops?: (target: object, allDesktops: boolean) => NativeStateWriteOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
     readonly setFloating?: (id: string, floating: boolean) => void;
     readonly setActive: (target: object) => boolean;
@@ -806,6 +810,7 @@ interface PendingFlight {
     readonly workAreaReprojection: boolean;
     readonly admissionMaximizeClears: ReadonlyArray<string>;
     readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
+    readonly stickyTarget: { readonly window: string; readonly previousFloating: boolean } | null;
 }
 
 interface AutoIntent {
@@ -817,6 +822,7 @@ interface AutoIntent {
     readonly workAreaReprojection?: boolean;
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
     readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
+    readonly stickyTarget?: { readonly window: string; readonly previousFloating: boolean } | null;
 }
 
 interface PointerEcho {
@@ -898,6 +904,11 @@ export class PlanAdapter {
     private pointerEcho: PointerEcho | null = null;
     private maximizeAdmissionEcho: object | null = null;
     private maximizeAdmissionAttempts = new Set<string>();
+    private maximizeToggleEcho: { ref: object; id: string; resourceClass: string } | null = null;
+    private stickyEcho: { ref: object; id: string; resourceClass: string; allDesktops: boolean; previousFloating: boolean } | null = null;
+    private stickyPreviousFloating = new Map<string, boolean>();
+    private maximizeToggleAttempts = new Map<object, boolean>();
+    private stickyAttempts = new Map<object, boolean>();
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -919,7 +930,7 @@ export class PlanAdapter {
         if (!isOwnerId(auth.owner) || !isGeneration(auth.generation)) {
             return false;
         }
-        const kinds: ReadonlyArray<PlanSignal> = ["added", "removed", "activated", "geometry", "scope", "fullscreen", "maximize"];
+        const kinds: ReadonlyArray<PlanSignal> = ["added", "removed", "activated", "geometry", "scope", "fullscreen", "maximize", "desktops"];
         const attached: Array<() => void> = [];
         for (const kind of kinds) {
             let detach: (() => void) | null = null;
@@ -955,6 +966,11 @@ export class PlanAdapter {
         this.pointerEcho = null;
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
+        this.maximizeToggleEcho = null;
+        this.stickyEcho = null;
+        this.stickyPreviousFloating.clear();
+        this.maximizeToggleAttempts.clear();
+        this.stickyAttempts.clear();
         this.clearRepeat();
         return true;
     }
@@ -973,6 +989,11 @@ export class PlanAdapter {
         this.pointerEcho = null;
         this.maximizeAdmissionEcho = null;
         this.maximizeAdmissionAttempts.clear();
+        this.maximizeToggleEcho = null;
+        this.stickyEcho = null;
+        this.stickyPreviousFloating.clear();
+        this.maximizeToggleAttempts.clear();
+        this.stickyAttempts.clear();
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -1243,6 +1264,129 @@ export class PlanAdapter {
         });
     }
 
+    requestMaximize(): void {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:maximize-refused-disabled`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-maximize`);
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:maximize-refused-observe`);
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:maximize-refused-observe`);
+            return;
+        }
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        if (target.fullscreen) {
+            this.logToken(`${LOG_PREFIX}:maximize-refused-fullscreen window=${target.id} resource_class=${resourceClass}`);
+            return;
+        }
+        const wanted = !target.maximized;
+        if (this.maximizeToggleAttempts.get(target.ref) === wanted) {
+            this.logToken(`${LOG_PREFIX}:maximize-refused-attempted window=${target.id} resource_class=${resourceClass}`);
+            return;
+        }
+        this.maximizeToggleAttempts.set(target.ref, wanted);
+        this.maximizeToggleEcho = { ref: target.ref, id: target.id, resourceClass };
+        this.logToken(`${LOG_PREFIX}:maximize-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} outcome=issued`);
+        this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-armed`);
+        let outcome: NativeStateWriteOutcome = "threw";
+        try {
+            outcome = this.env.setMaximize === undefined ? "missing" : this.env.setMaximize(target.ref, wanted);
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`${LOG_PREFIX}:maximize-toggle window=${target.id} resource_class=${resourceClass} target=${wanted ? "maximized" : "restored"} outcome=${outcome}`);
+        if (this.maximizeToggleEcho !== null) {
+            this.maximizeToggleEcho = null;
+            this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-cleared-no-signal`);
+        }
+    }
+
+    requestSticky(): void {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-disabled`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-sticky`);
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-observe`);
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-observe`);
+            return;
+        }
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        if (target.fullscreen) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-fullscreen window=${target.id} resource_class=${resourceClass}`);
+            return;
+        }
+        if (target.maximized) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-maximize window=${target.id} resource_class=${resourceClass}`);
+            return;
+        }
+        if (target.sticky === true) {
+            const previousFloating = this.stickyPreviousFloating.get(target.id);
+            if (previousFloating === undefined) {
+                this.logToken(`${LOG_PREFIX}:sticky-refused-untracked window=${target.id} resource_class=${resourceClass}`);
+                return;
+            }
+            this.issueSticky(target, false, previousFloating);
+            return;
+        }
+        const previousFloating = target.floating === true;
+        this.stickyPreviousFloating.set(target.id, previousFloating);
+        if (previousFloating) {
+            this.issueSticky(target, true, previousFloating);
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
+        this.dispatch({
+            op: "toggle-float",
+            snapshot,
+            removed: target.id,
+            body: { op: "toggle-float", window: target.id },
+            floatTarget: { window: target.id, floating: true },
+            stickyTarget: { window: target.id, previousFloating },
+        });
+    }
+
+    private issueSticky(target: PlanObservedWindow, allDesktops: boolean, previousFloating: boolean): void {
+        const resourceClass = isOpaqueId(target.resourceClass) ? target.resourceClass : "unknown";
+        if (this.stickyAttempts.get(target.ref) === allDesktops) {
+            this.logToken(`${LOG_PREFIX}:sticky-refused-attempted window=${target.id} resource_class=${resourceClass}`);
+            return;
+        }
+        this.stickyAttempts.set(target.ref, allDesktops);
+        this.stickyEcho = { ref: target.ref, id: target.id, resourceClass, allDesktops, previousFloating };
+        this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=issued`);
+        this.logToken(`${LOG_PREFIX}:sticky-echo-armed`);
+        let outcome: NativeStateWriteOutcome = "threw";
+        try {
+            outcome = this.env.setAllDesktops === undefined ? "missing" : this.env.setAllDesktops(target.ref, allDesktops);
+        } catch (error) {
+            void error;
+        }
+        this.logToken(`${LOG_PREFIX}:sticky-toggle window=${target.id} resource_class=${resourceClass} target=${allDesktops ? "all-desktops" : "current-desktop"} outcome=${outcome}`);
+        if (this.stickyEcho !== null) {
+            this.stickyEcho = null;
+            this.logToken(`${LOG_PREFIX}:sticky-echo-cleared-no-signal`);
+        }
+    }
+
     // Slice 2 oracle route: exactly one strict pointer-resize from the
     // authoritative final rect. Strict decoding only; fail-closed false when
     // the window, direction, or boundary cannot be safely bound. Defers
@@ -1359,6 +1503,31 @@ export class PlanAdapter {
             }
             this.maximizeAdmissionEcho = null;
             this.logToken(`${LOG_PREFIX}:maximize-admission-echo-mismatched`);
+        }
+        if (kind === "maximize" && this.maximizeToggleEcho !== null) {
+            if (target === this.maximizeToggleEcho.ref) {
+                this.maximizeToggleEcho = null;
+                this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-consumed`);
+                return;
+            }
+            this.maximizeToggleEcho = null;
+            this.logToken(`${LOG_PREFIX}:maximize-toggle-echo-mismatched`);
+        }
+        if (kind === "desktops" && this.stickyEcho !== null) {
+            const echo = this.stickyEcho;
+            if (target === echo.ref) {
+                this.stickyEcho = null;
+                this.logToken(`${LOG_PREFIX}:sticky-echo-consumed`);
+                if (!echo.allDesktops) {
+                    this.stickyPreviousFloating.delete(echo.id);
+                    if (!echo.previousFloating) {
+                        this.requestFloat();
+                    }
+                }
+                return;
+            }
+            this.stickyEcho = null;
+            this.logToken(`${LOG_PREFIX}:sticky-echo-mismatched`);
         }
         if (this.debounceCancel !== null) {
             return;
@@ -1793,6 +1962,7 @@ export class PlanAdapter {
             workAreaReprojection: intent.workAreaReprojection === true,
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
             floatTarget: intent.floatTarget ?? null,
+            stickyTarget: intent.stickyTarget ?? null,
         };
         // Bounded route entry: every dispatched flight opens with the same
         // cmd line shape and `outcome=dispatch`, then closes with its terminal
@@ -2103,6 +2273,15 @@ export class PlanAdapter {
                 try { this.env.setFloating?.(transition.window, true); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
             } else if (transition !== null) {
                 try { this.env.setFloating?.(transition.window, false); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
+            }
+            const sticky = flightState.stickyTarget;
+            if (sticky !== null) {
+                const target = current.windows.find((entry) => entry.id === sticky.window);
+                if (target === undefined) {
+                    this.failFlight(flightState, "precondition-mismatch");
+                    return;
+                }
+                this.issueSticky(target, true, sticky.previousFloating);
             }
         }
         const focus = planned.focus;

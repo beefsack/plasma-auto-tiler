@@ -69,6 +69,8 @@ function makeObserved(
         rects?: Record<string, { x: number; y: number; w: number; h: number }>;
         fullscreen?: Record<string, boolean>;
         maximized?: Record<string, boolean>;
+        floating?: Record<string, boolean>;
+        sticky?: Record<string, boolean>;
         resourceClasses?: Record<string, string>;
         fingerprint?: string;
         revalidate?: () => boolean;
@@ -82,10 +84,12 @@ function makeObserved(
         opts.rects?.[id] ?? { x: 0, y: 0, w: 100, h: 100 };
     const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
     const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
+    const isFloating = (id: string): boolean => opts.floating?.[id] === true;
+    const isSticky = (id: string): boolean => opts.sticky?.[id] === true;
     const resourceClass = (id: string): string => opts.resourceClasses?.[id] ?? "unknown";
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a"), resourceClass: resourceClass("win-a") }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b"), resourceClass: resourceClass("win-b") }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a"), floating: isFloating("win-a"), sticky: isSticky("win-a"), resourceClass: resourceClass("win-a") }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b"), floating: isFloating("win-b"), sticky: isSticky("win-b"), resourceClass: resourceClass("win-b") }),
     ]);
     return {
         domainOutput: "out-1",
@@ -110,11 +114,15 @@ interface Mocks {
     readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly actives: object[];
     readonly maximizeClears: object[];
+    readonly maximizeToggles: Array<{ target: object; maximized: boolean }>;
+    readonly desktopToggles: Array<{ target: object; allDesktops: boolean }>;
     readonly floatingCalls: Array<{ id: string; floating: boolean }>;
     observeImpl: () => PlanObserved | null;
     activeImpl: () => object | null;
     geometryImpl: (target: object, rect: { x: number; y: number; w: number; h: number }) => boolean;
     maximizeClearImpl: (target: object) => MaximizeClearOutcome;
+    maximizeToggleImpl: (target: object, maximized: boolean) => MaximizeClearOutcome;
+    desktopToggleImpl: (target: object, allDesktops: boolean) => MaximizeClearOutcome;
     env: PlanAdapterEnv;
 }
 
@@ -128,11 +136,15 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         geometries: [],
         actives: [],
         maximizeClears: [],
+        maximizeToggles: [],
+        desktopToggles: [],
         floatingCalls: [],
         observeImpl: () => makeObserved(refs, { focused: refs.a }),
         activeImpl: () => refs.a,
         geometryImpl: (_target: object, _rect: { x: number; y: number; w: number; h: number }): boolean => true,
         maximizeClearImpl: (_target: object): MaximizeClearOutcome => "invoked",
+        maximizeToggleImpl: (_target: object, _maximized: boolean): MaximizeClearOutcome => "invoked",
+        desktopToggleImpl: (_target: object, _allDesktops: boolean): MaximizeClearOutcome => "invoked",
         env: null as unknown as PlanAdapterEnv,
     };
     const env: PlanAdapterEnv = {
@@ -154,6 +166,14 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         clearMaximize: (target): MaximizeClearOutcome => {
             state.maximizeClears.push(target);
             return state.maximizeClearImpl(target);
+        },
+        setMaximize: (target, maximized): MaximizeClearOutcome => {
+            state.maximizeToggles.push({ target, maximized });
+            return state.maximizeToggleImpl(target, maximized);
+        },
+        setAllDesktops: (target, allDesktops): MaximizeClearOutcome => {
+            state.desktopToggles.push({ target, allDesktops });
+            return state.desktopToggleImpl(target, allDesktops);
         },
         setGeometry: (target, rect): boolean => {
             state.geometries.push({ target, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
@@ -1432,6 +1452,111 @@ describe("plan adapter bounded diagnostics", () => {
     });
 });
 
+describe("plan adapter sticky and maximize toggles", () => {
+    it("maximizes and restores a tiled member through one fenced native write each", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = false;
+        mocks.observeImpl = () => makeObserved(refs, { maximized: { "win-a": maximized }, resourceClasses: { "win-a": "firefox" } });
+        mocks.maximizeToggleImpl = (target, value) => {
+            assert.equal(target, refs.a);
+            maximized = value;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        adapter.requestMaximize();
+        assert.deepEqual(mocks.maximizeToggles, [{ target: refs.a, maximized: true }, { target: refs.a, maximized: false }]);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-consumed"));
+        assert.equal(mocks.maximizeClears.length, 0, "post-admission explicit maximize never uses admission clearing");
+    });
+
+    it("refuses maximize and sticky independently for fullscreen and maximize overlays", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => makeObserved(refs, { fullscreen: { "win-a": true }, maximized: { "win-a": true }, resourceClasses: { "win-a": "steam" } });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        adapter.requestSticky();
+        assert.equal(mocks.maximizeToggles.length, 0);
+        assert.equal(mocks.desktopToggles.length, 0);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-fullscreen window=win-a resource_class=steam"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-refused-fullscreen window=win-a resource_class=steam"));
+    });
+
+    it("floats a tiled member before sticky and freshly admits it after the fenced unsticky echo", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = false;
+        let sticky = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky }, resourceClasses: { "win-a": "firefox" } });
+        mocks.desktopToggleImpl = (target, allDesktops) => {
+            assert.equal(target, refs.a);
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        const floatPayload = plannerPayload(mocks, 0);
+        assert.deepEqual(floatPayload["command"], { op: "toggle-float", window: "win-a" });
+        floating = true;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1,
+            correlation_id: floatPayload["correlation_id"],
+            outcome: "planned",
+            desired_geometry: [{ window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 100, y: 100, w: 600, h: 400 } },
+        }));
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }]);
+        adapter.requestSticky();
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }, { target: refs.a, allDesktops: false }]);
+        assert.equal(mocks.dbusCalls.length, 2, "unsticky restores prior tiled placement by fresh admission");
+        assert.deepEqual(plannerPayload(mocks, 1)["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 0, y: 0, w: 100, h: 100 } });
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:sticky-echo-consumed"));
+    });
+
+    it("keeps an already floating sticky member floating and makes a deliberate maximize block float", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let floating = true;
+        let sticky = false;
+        let maximized = false;
+        mocks.observeImpl = () => makeObserved(refs, { floating: { "win-a": floating }, sticky: { "win-a": sticky }, maximized: { "win-a": maximized }, resourceClasses: { "win-a": "firefox" } });
+        mocks.desktopToggleImpl = (_target, allDesktops) => {
+            sticky = allDesktops;
+            fire(mocks, "desktops", refs.a);
+            return "invoked";
+        };
+        mocks.maximizeToggleImpl = (_target, value) => {
+            maximized = value;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestSticky();
+        adapter.requestSticky();
+        assert.equal(mocks.dbusCalls.length, 0, "prior floating sticky never enters the tile tree");
+        assert.deepEqual(mocks.desktopToggles, [{ target: refs.a, allDesktops: true }, { target: refs.a, allDesktops: false }]);
+        floating = false;
+        adapter.requestMaximize();
+        adapter.requestFloat();
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:float-refused-maximize"));
+    });
+
+    it("clears a native-state fence without retry when its setter emits no echo", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+        adapter.requestMaximize();
+        adapter.requestMaximize();
+        assert.equal(mocks.maximizeToggles.length, 1);
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-toggle-echo-cleared-no-signal"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:maximize-refused-attempted window=win-a resource_class=unknown"));
+    });
+});
+
 describe("plan adapter source hygiene", () => {
     it("performs no tiling, shortcut, config, desktop, outline, or polling access", () => {
         const src = readFileSync(join(kwinSrcDir(), "plan-adapter.ts"), "utf8");
@@ -1504,6 +1629,7 @@ interface FakeWorld {
     readonly removed: FakeSignal;
     readonly winFull: Map<object, FakeSignal>;
     readonly winMax: Map<object, FakeSignal>;
+    readonly winDesktops: Map<object, FakeSignal>;
     readonly maximizeClears: object[];
 }
 
@@ -1517,6 +1643,7 @@ function fakeWorld(): FakeWorld {
     const desktopChanged = fakeSignal();
     const winFull = new Map<object, FakeSignal>();
     const winMax = new Map<object, FakeSignal>();
+    const winDesktops = new Map<object, FakeSignal>();
     const world: FakeWorld = {
         output,
         desktop,
@@ -1526,12 +1653,14 @@ function fakeWorld(): FakeWorld {
         workspace: {},
         winFull,
         winMax,
+        winDesktops,
         maximizeClears: [],
     };
     const makeWin = (id: string, x: number): Record<string, unknown> => {
         const geo = fakeSignal();
         const full = fakeSignal();
         const max = fakeSignal();
+        const desktopsChanged = fakeSignal();
         const win: Record<string, unknown> = {
             normalWindow: true,
             internalId: id,
@@ -1544,6 +1673,8 @@ function fakeWorld(): FakeWorld {
             fullScreen: false,
             maximizedChanged: max.signal,
             maximizeMode: 0,
+            desktopsChanged: desktopsChanged.signal,
+            onAllDesktops: false,
         };
         win["setMaximize"] = (vertically: unknown, horizontally: unknown): void => {
             if (vertically !== false || horizontally !== false) {
@@ -1557,6 +1688,7 @@ function fakeWorld(): FakeWorld {
         };
         winFull.set(win, full);
         winMax.set(win, max);
+        winDesktops.set(win, desktopsChanged);
         return win;
     };
     const winA = makeWin("win-a", 0);
@@ -1628,20 +1760,24 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("starts with 28 non-conflicting shortcuts and observes stable ids", () => {
+    it("registers the three MVP actions and observes stable ids", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 28);
+        assert.equal(mocks.shortcuts.length, 31);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 28);
+        assert.equal(new Set(actions).size, 31);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-outwards-right"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down-arrow"));
-        assert.ok(!actions.includes("plasma-auto-tiler-float-toggle"));
+        assert.ok(actions.includes("plasma-auto-tiler-toggle-float"));
+        assert.ok(actions.includes("plasma-auto-tiler-toggle-sticky"));
+        assert.ok(actions.includes("plasma-auto-tiler-toggle-maximize"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-float sequence=Meta+G holder_component=kwin holder_action=Grid_View"));
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:shortcut-dispatch-shadowed action=plasma-auto-tiler-toggle-maximize sequence=Meta+M holder_component=kwin holder_action=KrohnkiteMonocleLayout"));
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
             callback: () => void;
         };
@@ -1751,7 +1887,7 @@ describe("plan entry live observation and shortcuts", () => {
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
-            assert.equal(catalog.length, 28);
+            assert.equal(catalog.length, 31);
             const byAction = new Map(catalog.map((row) => [row.action, row]));
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.direction, "up");
             assert.equal(byAction.get("plasma-auto-tiler-focus-up")?.op, "focus");
@@ -1762,6 +1898,11 @@ describe("plan entry live observation and shortcuts", () => {
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.mode, "inwards");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.op, "resize");
             assert.equal(byAction.get("plasma-auto-tiler-resize-inwards-left-arrow")?.direction, "left");
+            assert.deepEqual(byAction.get("plasma-auto-tiler-toggle-float"), {
+                action: "plasma-auto-tiler-toggle-float", text: "Toggle floating window", sequence: "Meta+G", op: "float", direction: null, mode: null,
+            });
+            assert.equal(byAction.get("plasma-auto-tiler-toggle-sticky")?.sequence, "Meta+Shift+G");
+            assert.equal(byAction.get("plasma-auto-tiler-toggle-maximize")?.sequence, "Meta+M");
         }
     });
 
@@ -2006,7 +2147,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 28);
+        assert.equal(attempts.length, 31);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
