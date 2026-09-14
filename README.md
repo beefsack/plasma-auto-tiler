@@ -297,7 +297,6 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-detach | Meta+Shift+Space |
 | plasma-auto-tiler-attach | Meta+Alt+Shift+Space |
 | plasma-auto-tiler-float-toggle | Meta+G |
-| plasma-auto-tiler-sticky-toggle | Meta+Shift+G |
 | plasma-auto-tiler-fill-scope | Meta+Alt+Return |
 | plasma-auto-tiler-apply-columns | Meta+Alt+1 |
 | plasma-auto-tiler-apply-rows | Meta+Alt+2 |
@@ -321,15 +320,12 @@ the session unless it becomes inert. This is proven by static tests and
 nested-compositor probing only; live-host validation was not performed, so
 treat live session behavior as unverified.
 
-`Meta+G` floats the active window at a centered 60% x 60% of its current output
-work area (remembered per window for the session) or tiles it back;
-`Meta+Shift+G` pins a floating window across all workspaces (sticky implies
-floating, and disabling sticky leaves it floating). Floating windows are
-excluded from automatic placement, the tile-tree bijection, drag retiling, and
-reconstruction, and their vacated tile leaf is retained rather than collapsed.
-At startup, windows that are already on all desktops are treated as session-local
-sticky floating windows; this heuristic cannot distinguish a user-pinned window
-from an application-requested one, so it applies only within the session.
+`Meta+G` attempts to float the active eligible normal window at a centered 60%
+x 60% of its current output work area, removing it from the planner tree. A
+second toggle is fresh admission, not restoration of the previous leaf.
+Fullscreen and maximized windows refuse. The controller never displaces an
+existing global shortcut: a failed registration emits a bounded diagnostic.
+Sticky floating is deferred.
 
 `Meta+1..9` focuses the existing 1-based workspace; `Meta+0` focuses or creates
 the trailing empty workspace (idempotent when already trailing empty, no hard

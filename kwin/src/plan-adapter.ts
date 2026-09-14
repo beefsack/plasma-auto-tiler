@@ -75,6 +75,10 @@ export interface PlanObserved {
     readonly domainGap: number;
     readonly domainOuterGap: number;
     readonly focusedId: string;
+    // The active native window is intentionally floating and therefore not a
+    // planner member. A surviving tiled member may supply focusedId solely for
+    // the removal observation; interactive tiled commands must refuse.
+    readonly activeExcluded?: boolean;
     readonly windows: ReadonlyArray<PlanObservedWindow>;
     readonly activeRef: object;
     readonly fingerprint: string;
@@ -234,7 +238,9 @@ function matchesRemovalSnapshot(fresh: PlanSnapshot, before: PlanSnapshot, remov
             return false;
         }
     }
-    return fresh.windows.some((entry) => entry.id === fresh.focusedId);
+    return fresh.windows.length === 0
+        ? fresh.focusedId === ""
+        : fresh.windows.some((entry) => entry.id === fresh.focusedId);
 }
 
 function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
@@ -693,6 +699,12 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
     if (!isOpaqueId(observed.domainOutput) || !isOpaqueId(observed.domainWorkspace)) {
         return false;
     }
+    if (observed.activeExcluded !== undefined && typeof observed.activeExcluded !== "boolean") {
+        return false;
+    }
+    if (observed.windows.length === 0) {
+        return observed.activeExcluded === true && observed.focusedId === "";
+    }
     if (!isOpaqueId(observed.focusedId)) {
         return false;
     }
@@ -973,6 +985,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:focus-refused-observe`);
             return;
         }
+        if (observed.activeExcluded) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-floating`);
+            return;
+        }
         const snapshot = this.carriedSnapshot(observed);
         this.noteObservation(snapshot.fingerprint);
         this.dispatch({
@@ -1081,6 +1097,10 @@ export class PlanAdapter {
             this.logToken(`${LOG_PREFIX}:move-refused-observe`);
             return;
         }
+        if (observed.activeExcluded) {
+            this.logToken(`${LOG_PREFIX}:move-refused-floating`);
+            return;
+        }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {
             this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
             return;
@@ -1119,6 +1139,10 @@ export class PlanAdapter {
         const observed = this.freshObserved();
         if (observed === null) {
             this.logToken(`${LOG_PREFIX}:resize-refused-observe`);
+            return;
+        }
+        if (observed.activeExcluded) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-floating`);
             return;
         }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {

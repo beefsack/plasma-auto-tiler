@@ -1480,19 +1480,20 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("starts with 28 parameterized directional shortcuts and observes stable ids", () => {
+    it("starts with 29 shortcuts including the float toggle and observes stable ids", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 28);
+        assert.equal(mocks.shortcuts.length, 29);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 28);
+        assert.equal(new Set(actions).size, 29);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-outwards-right"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down-arrow"));
+        assert.ok(actions.includes("plasma-auto-tiler-float-toggle"));
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
             callback: () => void;
         };
@@ -1507,6 +1508,45 @@ describe("plan entry live observation and shortcuts", () => {
             ["win-a", "win-b"],
         );
         handle?.stop();
+    });
+
+    it("floats at a centered 60 percent work-area rectangle, refuses tiled commands, and toggles back", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-float-toggle") as {
+            callback: () => void;
+        };
+        toggle.callback();
+        const active = world.wins[0] as Record<string, unknown>;
+        assert.equal(active["tile"], null);
+        assert.deepEqual(active["frameGeometry"], { x: 240, y: 160, width: 720, height: 480 });
+        handle?.requestMove("left");
+        assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-floating"));
+        toggle.callback();
+        handle?.stop();
+    });
+
+    it("refuses float on fullscreen and maximized targets without native writes", () => {
+        for (const [property, value, token] of [
+            ["fullScreen", true, "plasma-auto-tiler:plan:float-refused-fullscreen"],
+            ["maximizeMode", 3, "plasma-auto-tiler:plan:float-refused-maximize"],
+        ] as const) {
+            const world = fakeWorld();
+            const active = world.wins[0] as Record<string, unknown>;
+            active[property] = value;
+            const before = active["frameGeometry"];
+            const { handle, mocks } = startEntry(world);
+            assert.ok(handle !== null);
+            const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-float-toggle") as {
+                callback: () => void;
+            };
+            toggle.callback();
+            assert.equal(active["tile"], undefined);
+            assert.equal(active["frameGeometry"], before);
+            assert.ok(mocks.logs.includes(token));
+            handle?.stop();
+        }
     });
 
     it("maps catalog rows to parameterized focus, move, and resize commands", () => {
@@ -1767,7 +1807,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 28);
+        assert.equal(attempts.length, 29);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));

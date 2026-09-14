@@ -59,6 +59,7 @@ export interface PlanEntryHandle {
     readonly requestFocus: (direction: unknown) => void;
     readonly requestMove: (direction: unknown) => void;
     readonly requestResize: (direction: unknown, mode: unknown) => void;
+    readonly requestFloat: () => void;
 }
 
 export interface PlanShortcutRow {
@@ -328,6 +329,7 @@ type EligibilityReporter = (ref: object, reason: string | null) => void;
 function observeNative(
     liveWorkspace: unknown,
     cache: Map<string, string>,
+    floatingIds: ReadonlySet<string>,
     reportEligibility?: EligibilityReporter,
 ): PlanObserved | null {
     try {
@@ -486,6 +488,10 @@ function observeNative(
                 return null;
             }
             seen.add(id);
+            if (floatingIds.has(id)) {
+                reportEligibility?.(ref, "floating");
+                continue;
+            }
             const frame = readFrameRect(ref);
             if (typeof frame === "string") {
                 reportEligibility?.(ref, frame);
@@ -522,12 +528,19 @@ function observeNative(
             return null;
         }
         const activeNativeId = internNativeId(cache, activeNative);
+        const activeExcluded = floatingIds.has(activeNativeId);
         let activeId: string | null = null;
         for (const entry of entries) {
             if (entry.id === activeNativeId) {
                 activeId = entry.id;
                 break;
             }
+        }
+        if (activeId === null && activeExcluded && entries.length > 0) {
+            activeId = entries[0]?.id ?? null;
+        }
+        if (activeId === null && activeExcluded && entries.length === 0) {
+            activeId = "";
         }
         if (activeId === null) {
             return null;
@@ -556,13 +569,19 @@ function observeNative(
             domainGap: DOMAIN_GAP,
             domainOuterGap: OUTER_DOMAIN_GAP,
             focusedId: activeId,
+            activeExcluded,
             windows: frozenWindows,
             activeRef: activeRef,
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, cache, reportEligibility);
-                    if (fresh === null || fresh.fingerprint !== expected || fresh.activeRef !== capturedActive) {
+                    const fresh = observeNative(liveWorkspace, cache, floatingIds, reportEligibility);
+                    if (
+                        fresh === null ||
+                        fresh.fingerprint !== expected ||
+                        fresh.activeRef !== capturedActive ||
+                        fresh.activeExcluded !== activeExcluded
+                    ) {
                         return false;
                     }
                     for (const entry of frozenWindows) {
@@ -970,6 +989,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // plan id (the same normalized string, interned). Never keyed by Window.
     // Eviction is explicit when the adapter identifies a removed string id.
     const nativeIds = new Map<string, string>();
+    const floatingIds = new Set<string>();
     const eligibilityReasons = new Map<string, string>();
     const reportEligibility: EligibilityReporter = (ref, reason): void => {
         const id = readNativeId(ref);
@@ -1001,7 +1021,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace, nativeIds, reportEligibility),
+        observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility),
         clearMaximize: (target) => {
             try {
                 const method = readProp(target, "setMaximize");
@@ -1131,7 +1151,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     if (!enabled) {
         return null;
     }
-    if (observeNative(liveWorkspace, nativeIds, reportEligibility) === null) {
+    const initial = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+    if (initial === null || initial.windows.length === 0) {
         adapter.disable();
         return null;
     }
@@ -1170,6 +1191,59 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     }
+    const requestFloat = (): void => {
+        const active = readProp(surface, "activeWindow");
+        if (typeof active !== "object" || active === null) {
+            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
+            return;
+        }
+        const activeId = readNativeId(active as object);
+        if (activeId === null) {
+            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
+            return;
+        }
+        if (floatingIds.has(activeId)) {
+            floatingIds.delete(activeId);
+            adapter.requestResync();
+            return;
+        }
+        const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+        if (observed === null || observed.activeExcluded || observed.focusedId === "") {
+            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
+            return;
+        }
+        if (target.fullscreen) {
+            try { log("plasma-auto-tiler:plan:float-refused-fullscreen"); } catch (error) { void error; }
+            return;
+        }
+        if (target.maximized) {
+            try { log("plasma-auto-tiler:plan:float-refused-maximize"); } catch (error) { void error; }
+            return;
+        }
+        const width = Math.max(1, Math.floor(observed.domainBounds.w * 0.6));
+        const height = Math.max(1, Math.floor(observed.domainBounds.h * 0.6));
+        floatingIds.add(target.id);
+        try {
+            Reflect.set(target.ref, "tile", null);
+            Reflect.set(target.ref, "frameGeometry", {
+                x: observed.domainBounds.x + Math.floor((observed.domainBounds.w - width) / 2),
+                y: observed.domainBounds.y + Math.floor((observed.domainBounds.h - height) / 2),
+                width,
+                height,
+            });
+        } catch (error) {
+            void error;
+            floatingIds.delete(target.id);
+            try { log("plasma-auto-tiler:plan:float-refused-native"); } catch (inner) { void inner; }
+            return;
+        }
+        adapter.requestResync();
+    };
     for (const row of catalog) {
         const action = row.action;
         const text = row.text;
@@ -1200,6 +1274,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
         }
     }
+    try {
+        const ok = registerFn(
+            "plasma-auto-tiler-float-toggle",
+            "Toggle floating window",
+            "Meta+G",
+            requestFloat,
+        );
+        if (ok !== true) {
+            try { log("plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-float-toggle sequence=Meta+G"); } catch (error) { void error; }
+        }
+    } catch (error) {
+        void error;
+        try { log("plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-float-toggle sequence=Meta+G"); } catch (inner) { void inner; }
+    }
     // Slice 2 oracle route: preserve start rect plus move/resize classification
     // at Started, then on a non-cancelled LastVerdict route exactly one strict
     // pointer-resize derived from the authoritative final rect. Cancelled is a
@@ -1225,7 +1313,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     };
     const captureOracleStart = (ref: object): void => {
         try {
-            const observed = observeNative(liveWorkspace, nativeIds, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
             if (observed === null) return;
             for (const entry of observed.windows) {
                 if (entry.ref === ref) {
@@ -1282,7 +1370,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 try { log("plasma-auto-tiler:route-diag:drag-context-invalid"); } catch (error) { void error; }
                 return;
             }
-            const observed = observeNative(liveWorkspace, nativeIds, reportEligibility);
+            const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
             if (observed === null) {
                 takeOwnStart(ctx);
                 try { log("plasma-auto-tiler:route-diag:drag-scope-invalid"); } catch (error) { void error; }
@@ -1454,5 +1542,6 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void error;
             }
         },
+        requestFloat,
     };
 }

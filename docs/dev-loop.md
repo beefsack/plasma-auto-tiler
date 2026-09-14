@@ -222,6 +222,13 @@ changes arrive as the reply `desired_focus` applied after the writes.
    neighbors adjust to keep the work area covered, focus stays on the resized
    window. Grow to 5-6 windows and repeat 4-6 to confirm convergence without
    queues or retries.
+7. Intentional float is static-only. Its controller action attempts `Meta+G`,
+   detaches an eligible active normal window, centers it at 60% of the work
+   area, and removes it from the planner tree; toggling again is fresh
+   admission. Fullscreen and maximized targets refuse. Do not run this as a
+   live journey without separate authorization. The current session's read-only
+   KGlobalAccel enumeration reports KWin Grid View on `Meta+G`, so registration
+   is expected to fail without an explicitly selected shortcut override.
 
 Physical shortcuts are required; `invokeShortcut` bypasses the xkb layer and
 cannot prove delivery. KGlobalAccel records persist after unload and do not

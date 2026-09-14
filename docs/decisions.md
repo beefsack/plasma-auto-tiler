@@ -229,8 +229,26 @@ Historical implementation detail is recoverable in Git history.
 
 - Pointer resize adjusts shared split boundaries or ratios and reflows
   neighbouring tiles.
-- Floating is per-window, retains its tile leaf, and renders above tiled
-  windows. `Meta+G` toggles it; `Meta+Shift+G` makes a floating window sticky.
+- Intentional floating is a session-local per-window state. `Meta+G` detaches
+  an eligible active normal window from its KWin tile, centers it at 60% of the
+  active work area, and removes it from the planner tree; a second toggle is
+  fresh planner admission, never prior-leaf restoration. Fullscreen and
+  maximized targets refuse with `float-refused-fullscreen` and
+  `float-refused-maximize`. The controller attempts a non-mutating shortcut
+  registration only; it never displaces an existing global shortcut. Current
+  read-only KGlobalAccel evidence finds `Meta+G` held by KWin Grid View, so the
+  binding is live-unproven until an explicitly selected shortcut override.
+  `Meta+Shift+G` sticky is deferred: KWin source exposes writable
+  `Window.onAllDesktops`, but no static-only lifecycle claim is selected for
+  its desktop-membership restoration.
+- The selected fresh-admission behavior follows `pop-os/cosmic-comp`
+  `81cd5fdbaa41c3973369ae85bccf829137836e20` source content:
+  `data/keybindings.ron:83-92` binds Super+G to `ToggleWindowFloating`;
+  `src/shell/workspace.rs:1485-1498` unmaps a tiled window to floating and
+  maps a floating window back through `tiling_layer.map`; and
+  `src/shell/layout/tiling/mod.rs:396-435` routes that map through
+  `map_to_tree`. The supplied checkout has no Git metadata, so the exact commit
+  identity could not be independently verified there.
 - Maximize (`Meta+M`) is workspace-local. Fullscreen (`Meta+F11`) is separate:
   it is never tiled, resized, or reflowed, and preserves the tree for restore.
 - Maximize isolation mirrors fullscreen, authorized 2026-09-14. A nonzero KWin
