@@ -41,9 +41,10 @@
 
 ## Accepted Evidence
 
-- Before (inherited archive evidence): `cargo test` reported 251 library tests
-  plus existing integration suites; `npm test --prefix kwin` reported 523
-  tests; `bash scripts/dev-loop-split.test.sh` reported `PASS=277`.
+- Before: `cargo test` reported 485 tests (251 library and 234 integration);
+  `npm test --prefix kwin` reported 523 tests; typecheck and
+  `just --fmt --check` passed; `scripts/dev-loop-split.test.sh` reported
+  `PASS=277`.
 - After the retained-geometry repair: `cargo test` (253 library and 237
   integration tests); `npm run typecheck --prefix kwin`; `npm test --prefix
   kwin` (527 tests); `scripts/dev-loop-split.test.sh` (`PASS=277`); and
