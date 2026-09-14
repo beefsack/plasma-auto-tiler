@@ -268,7 +268,7 @@ invalid request cause is directly observable:
 Per applied geometry command (every member exactly one line, non-focus ops;
 `<id>` is the stable opaque normalized window id, `<rect>` is `x,y,w,h`):
 
-- `plasma-auto-tiler:plan:write window=<id> disposition=<written|skip-fullscreen|skip-already-equal|write-failed> rect=<rect>`
+- `plasma-auto-tiler:plan:write window=<id> disposition=<written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed> rect=<rect>`
 
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
@@ -292,11 +292,13 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:move-refused-invalid-direction`
 - `plasma-auto-tiler:plan:move-refused-observe`
 - `plasma-auto-tiler:plan:move-refused-fullscreen` (directional move refused on a fullscreen focused window)
+- `plasma-auto-tiler:plan:move-refused-maximize` (directional move refused on a maximized focused window; fullscreen wins when both)
 - `plasma-auto-tiler:plan:resize-refused-disabled`
 - `plasma-auto-tiler:plan:resize-refused-invalid-direction`
 - `plasma-auto-tiler:plan:resize-refused-invalid-mode`
 - `plasma-auto-tiler:plan:resize-refused-observe`
 - `plasma-auto-tiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
+- `plasma-auto-tiler:plan:resize-refused-maximize` (directional resize refused on a maximized focused window; fullscreen wins when both)
 - `plasma-auto-tiler:plan:pointer-refused-disabled`
 - `plasma-auto-tiler:plan:pointer-refused-identity`
 - `plasma-auto-tiler:plan:pointer-refused-direction`
@@ -304,6 +306,8 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:pointer-refused-observe`
 - `plasma-auto-tiler:plan:pointer-refused-absent`
 - `plasma-auto-tiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
+- `plasma-auto-tiler:plan:pointer-refused-maximize` (pointer-resize target refused while maximized; fullscreen wins when both)
+- `plasma-auto-tiler:plan:maximize-refused-signal` (`maximizedChanged` cannot attach for any eligible observed normal window, at startup or on a window added later; maximize attachment is a hard requirement and the adapter fails closed)
 - `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize>` (shortcut dropped while a flight is in flight)
 - `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)

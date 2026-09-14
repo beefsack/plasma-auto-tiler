@@ -38,8 +38,8 @@ function makeRefs(): { a: object; b: object } {
 
 function makeObserved(refs: { a: object; b: object }): PlanObserved {
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 1000, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 1000, y: 0, w: 200, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: { x: 0, y: 0, w: 1000, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: { x: 1000, y: 0, w: 200, h: 800 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
     ]);
     return {
         domainOutput: "out-1",
@@ -265,6 +265,7 @@ describe("slice 2 plan adapter pointer route", () => {
             "pointer-refused-observe",
             "pointer-refused-absent",
             "pointer-refused-fullscreen",
+            "pointer-refused-maximize",
         ]) {
             assert.ok(src.includes(token), `adapter emits ${token}`);
         }
@@ -372,7 +373,7 @@ interface OracleWorld {
     readonly signals: Record<string, OracleFireSignal>;
 }
 
-function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; move?: Record<string, boolean>; resize?: Record<string, boolean> } = {}): OracleWorld {
+function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; maximized?: ReadonlyArray<string>; move?: Record<string, boolean>; resize?: Record<string, boolean> } = {}): OracleWorld {
     const output: Record<string, unknown> = { name: "out-1" };
     const desktop: Record<string, unknown> = { id: "ws-1" };
     const signals: Record<string, OracleFireSignal> = {
@@ -405,7 +406,10 @@ function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; move?: Record<s
         moveResizedChanged: geo.signal,
         interactiveMoveResizeStarted: started.signal,
         interactiveMoveResizeFinished: finished.signal,
+        fullScreenChanged: oracleFireSignal().signal,
         fullScreen: opts.fullscreen?.includes(id) === true,
+        maximizedChanged: oracleFireSignal().signal,
+        maximizeMode: opts.maximized?.includes(id) === true ? 3 : 0,
     });
     const wins: Record<string, Record<string, unknown>> = {
         "win-a": makeWin("win-a", 0, signals["startedA"] as OracleFireSignal, signals["finishedA"] as OracleFireSignal, signals["geoA"] as OracleFireSignal),
@@ -610,6 +614,25 @@ describe("slice 2 entry finish consumes the captured start", () => {
         stop();
     });
 
+    it("logs the exact bounded refusal diagnostic for a maximized pointer-resize target", () => {
+        const world = oracleWorld({ maximized: ["win-a"] });
+        const { stop, mocks } = startOracleEntry(world);
+        fireAll(world.signals["startedA"]);
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.equal(mocks.planCalls.length, 0, "maximized target never dispatched");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"),
+            "exact source-grounded refusal token from the adapter",
+        );
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
+            "no generic derive-invalid for the maximized refusal",
+        );
+        stop();
+    });
+
     it("logs drag-edge-invalid for a mixed two-edge verdict with no dispatch", () => {
         const world = oracleWorld();
         const { stop, mocks } = startOracleEntry(world);
@@ -705,6 +728,7 @@ function echoMockEnv(refs: { a: object; b: object }): EchoMocks {
                     output: "out-1",
                     workspace: "ws-1",
                     fullscreen: false,
+                    maximized: false,
                 });
             });
             return {

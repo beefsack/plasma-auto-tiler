@@ -10,10 +10,12 @@ Only meaningful pending or active work is listed.
 - P0 | Fullscreen residual-cost live gate | Production Plan fullscreen isolation
   is static-complete. User must run the exact fullscreen gate and establish the
   gaming cost baseline. [investigation](changes/reliability-condition-investigation.md)
-- P1 | Blocked: maximize behavior decision | Maximize is distinct from
-  fullscreen but the Plan adapter does not observe or isolate it. Select whether
-  it preserves and isolates the tree slot, is refused, or is untiled and
-  re-admitted on restore. The membership-baseline leak is fixed independently.
+- P1 | Intentional floating (`Meta+G`) | Select and implement the separate
+  COSMIC-grounded float toggle slice. COSMIC binds it in `data/keybindings.ron:83-92`;
+  unfloat is fresh admission through `tiling_layer.map` at
+  `src/shell/layout/tiling/mod.rs:396-435` and `src/shell/workspace.rs:1493-1498`,
+  not restoration of the prior tile slot. No floating placement state or
+  `toggle-floating` command is selected yet.
 - P1 | Output hotplug domain lifecycle | Select and gate retire, retain, or
   reseed behavior for `(output, workspace)` state through unplug/replug.
   [investigation](changes/reliability-condition-investigation.md)

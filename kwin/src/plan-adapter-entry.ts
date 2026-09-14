@@ -408,6 +408,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             output: string;
             workspace: string;
             fullscreen: boolean;
+            maximized: boolean;
         }> = [];
         for (const item of windows) {
             if (typeof item !== "object" || item === null) {
@@ -462,6 +463,11 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             // retained) but must never be actuated or reflowed. Exact
             // `!== false` check mirrors the standalone adapters; revalidation
             // re-reads the property through this same observe path.
+            // Maximize mirrors fullscreen: a nonzero `maximizeMode` (1 vertical,
+            // 2 horizontal, 3 full) collapses to one boolean, so horizontal and
+            // vertical maximize are deliberately not modeled in the engine. The
+            // exact `!== 0` check mirrors the standalone adapters; revalidation
+            // re-reads the property through this same observe path.
             entries.push({
                 id,
                 ref,
@@ -469,6 +475,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                 output: domainOutput,
                 workspace: domainWorkspace,
                 fullscreen: readProp(ref, "fullScreen") !== false,
+                maximized: readProp(ref, "maximizeMode") !== 0,
             });
         }
         if (entries.length === 0) {
@@ -500,6 +507,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                     output: entry.output,
                     workspace: entry.workspace,
                     fullscreen: entry.fullscreen,
+                    maximized: entry.maximized,
                 }),
             ),
         );
@@ -530,6 +538,9 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                                     return false;
                                 }
                                 if (candidate.fullscreen !== entry.fullscreen) {
+                                    return false;
+                                }
+                                if (candidate.maximized !== entry.maximized) {
                                     return false;
                                 }
                                 if (
@@ -781,6 +792,144 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     };
+    // Hard per-window maximize-state subscription. Mirrors the fullscreen
+    // machinery (windowAdded subscribes the new window, windowRemoved detaches
+    // the removed window) but is a startup requirement: every eligible observed
+    // normal window must expose a connectable `maximizedChanged` signal or the
+    // attachment refuses fail-closed with an exact maximize-specific token
+    // rather than silently running unobservant of maximize state. Unlike
+    // best-effort fullscreen, an individual eligible normal window that lacks
+    // the signal is never skipped, and a window added after enable that lacks
+    // it fails the adapter closed instead of leaving it blind.
+    const subWindowMaximize = (handler: () => void): (() => void) | null => {
+        try {
+            const lister = surface["windowList"];
+            if (typeof lister !== "function") {
+                return null;
+            }
+            const seen = new Set<object>();
+            const windowDetaches = new Map<object, () => void>();
+            const topDetaches: Array<() => void> = [];
+            // Returns false only when an eligible normal window (the same
+            // `normalWindow === true` classification observeNative uses) lacks
+            // a connectable `maximizedChanged`; non-normal windows are never
+            // observed so a missing signal there is skipped like fullscreen.
+            const connectOne = (ref: object): boolean => {
+                if (seen.has(ref)) {
+                    return true;
+                }
+                const detach = connectSignal(readSignal(ref, "maximizedChanged"), handler);
+                if (detach === null) {
+                    return readProp(ref, "normalWindow") !== true;
+                }
+                seen.add(ref);
+                windowDetaches.set(ref, detach);
+                return true;
+            };
+            const connectAll = (): { list: ReadonlyArray<unknown> | null; ok: boolean } => {
+                let raw: unknown = undefined;
+                try {
+                    raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+                } catch (error) {
+                    void error;
+                    return { list: null, ok: true };
+                }
+                const list = decodeList(raw, MAX_LIST);
+                if (list === null) {
+                    return { list: null, ok: true };
+                }
+                let ok = true;
+                for (const item of list) {
+                    if (typeof item === "object" && item !== null) {
+                        if (!connectOne(item as object)) {
+                            ok = false;
+                        }
+                    }
+                }
+                return { list, ok };
+            };
+            const dropOne = (ref: object): void => {
+                const detach = windowDetaches.get(ref);
+                if (detach === undefined) {
+                    return;
+                }
+                windowDetaches.delete(ref);
+                seen.delete(ref);
+                try {
+                    detach();
+                } catch (error) {
+                    void error;
+                }
+            };
+            const detachAll = (): void => {
+                for (const detach of windowDetaches.values()) {
+                    try {
+                        detach();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                windowDetaches.clear();
+                seen.clear();
+                for (const detach of topDetaches) {
+                    try {
+                        detach();
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                topDetaches.length = 0;
+            };
+            const initial = connectAll();
+            if (initial.list !== null && !initial.ok) {
+                // Startup refusal: an eligible observed normal window cannot
+                // expose a connectable `maximizedChanged`. Release every
+                // per-window subscription made before the failure so the failed
+                // enable leaves nothing attached, then fail closed.
+                detachAll();
+                return null;
+            }
+            const addedDetach = connectSignal(readSignal(surface, "windowAdded"), (added) => {
+                const ok =
+                    typeof added === "object" && added !== null ? connectOne(added as object) : connectAll().ok;
+                if (!ok) {
+                    // A window added after enable is an eligible normal window
+                    // lacking the signal: fail closed with the exact token
+                    // instead of leaving an enabled/blind adapter. Every
+                    // maximize subscription is released and the adapter is
+                    // disabled.
+                    try {
+                        log("plasma-auto-tiler:plan:maximize-refused-signal");
+                    } catch (error) {
+                        void error;
+                    }
+                    detachAll();
+                    try {
+                        adapter.disable();
+                    } catch (error) {
+                        void error;
+                    }
+                    return;
+                }
+                handler();
+            });
+            if (addedDetach !== null) {
+                topDetaches.push(addedDetach);
+            }
+            const removedDetach = connectSignal(readSignal(surface, "windowRemoved"), (removed) => {
+                if (typeof removed === "object" && removed !== null) {
+                    dropOne(removed as object);
+                }
+            });
+            if (removedDetach !== null) {
+                topDetaches.push(removedDetach);
+            }
+            return detachAll;
+        } catch (error) {
+            void error;
+            return null;
+        }
+    };
     // String-keyed native identity cache: normalized internalId to stable
     // plan id (the same normalized string, interned). Never keyed by Window.
     // Eviction is explicit when the adapter identifies a removed string id.
@@ -862,6 +1011,22 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 const detach = subWindowFullscreen(handler);
                 if (detach === null) {
                     return (): void => {};
+                }
+                return detach;
+            }
+            if (kind === "maximize") {
+                const detach = subWindowMaximize(handler);
+                if (detach === null) {
+                    // Maximize observation is a hard startup requirement, unlike
+                    // best-effort fullscreen: refuse fail-closed with the exact
+                    // maximize-specific token so a missing signal cannot leave
+                    // the adapter blind to maximize transitions.
+                    try {
+                        log("plasma-auto-tiler:plan:maximize-refused-signal");
+                    } catch (error) {
+                        void error;
+                    }
+                    throw new Error("plan-entry-maximize-signal-failed");
                 }
                 return detach;
             }
@@ -1083,8 +1248,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             // The adapter emits its exact source-grounded refusal token for
             // every distinct failure cause (disabled, identity, direction,
-            // boundary, observation failure, absent target, fullscreen target).
-            // No catch-all pointer-refused line is added here.
+            // boundary, observation failure, absent target, fullscreen or
+            // maximized target). No catch-all pointer-refused line is added here.
             adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
         } catch (error) {
             void error;

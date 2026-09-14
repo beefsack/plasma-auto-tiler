@@ -67,6 +67,7 @@ function makeObserved(
         focused?: object;
         rects?: Record<string, { x: number; y: number; w: number; h: number }>;
         fullscreen?: Record<string, boolean>;
+        maximized?: Record<string, boolean>;
         fingerprint?: string;
         revalidate?: () => boolean;
         bounds?: { x: number; y: number; w: number; h: number };
@@ -78,9 +79,10 @@ function makeObserved(
     const rect = (id: string): { x: number; y: number; w: number; h: number } =>
         opts.rects?.[id] ?? { x: 0, y: 0, w: 100, h: 100 };
     const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
+    const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a") }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b") }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a") }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b") }),
     ]);
     return {
         domainOutput: "out-1",
@@ -494,6 +496,7 @@ describe("plan adapter recovery and fencing", () => {
                     output: "out-1",
                     workspace: "ws-1",
                     fullscreen: false,
+                    maximized: false,
                 }),
             );
             return {
@@ -638,7 +641,7 @@ describe("plan adapter recovery and fencing", () => {
         const byId: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
         mocks.observeImpl = (): PlanObserved | null => {
             const wins = ids.map((id) =>
-                Object.freeze({ id, ref: byId[id] as object, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false }),
+                Object.freeze({ id, ref: byId[id] as object, rect: { x: 0, y: 0, w: 100, h: 100 }, output: "out-1", workspace: "ws-1", fullscreen: false, maximized: false }),
             );
             return {
                 domainOutput: "out-1",
@@ -715,6 +718,7 @@ describe("plan adapter recovery and fencing", () => {
                     output: "out-1",
                     workspace,
                     fullscreen: false,
+                    maximized: false,
                 }),
             );
             return {
@@ -1177,7 +1181,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ disposition=(written|skip-fullscreen|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);
@@ -1309,7 +1313,9 @@ interface FakeWorld {
     readonly output: Record<string, unknown>;
     readonly desktop: Record<string, unknown>;
     readonly added: FakeSignal;
+    readonly removed: FakeSignal;
     readonly winFull: Map<object, FakeSignal>;
+    readonly winMax: Map<object, FakeSignal>;
 }
 
 function fakeWorld(): FakeWorld {
@@ -1321,17 +1327,21 @@ function fakeWorld(): FakeWorld {
     const screensChanged = fakeSignal();
     const desktopChanged = fakeSignal();
     const winFull = new Map<object, FakeSignal>();
+    const winMax = new Map<object, FakeSignal>();
     const world: FakeWorld = {
         output,
         desktop,
         added,
+        removed,
         wins: [],
         workspace: {},
         winFull,
+        winMax,
     };
     const makeWin = (id: string, x: number): Record<string, unknown> => {
         const geo = fakeSignal();
         const full = fakeSignal();
+        const max = fakeSignal();
         const win = {
             normalWindow: true,
             internalId: id,
@@ -1341,8 +1351,11 @@ function fakeWorld(): FakeWorld {
             moveResizedChanged: geo.signal,
             fullScreenChanged: full.signal,
             fullScreen: false,
+            maximizedChanged: max.signal,
+            maximizeMode: 0,
         };
         winFull.set(win, full);
+        winMax.set(win, max);
         return win;
     };
     const winA = makeWin("win-a", 0);
@@ -1580,6 +1593,8 @@ describe("plan entry live observation and shortcuts", () => {
             frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
             moveResizedChanged: fakeSignal().signal,
             fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
         });
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
@@ -1688,6 +1703,7 @@ describe("plan entry live observation and shortcuts", () => {
         assert.equal(world.winFull.get(winA)?.handlers.length, 1, "existing window subscribed on enable");
         assert.equal(world.winFull.get(winB)?.handlers.length, 1, "existing window subscribed on enable");
         const winCFull = fakeSignal();
+        const winCMax = fakeSignal();
         const winC = {
             normalWindow: true,
             internalId: "win-c",
@@ -1697,9 +1713,12 @@ describe("plan entry live observation and shortcuts", () => {
             moveResizedChanged: fakeSignal().signal,
             fullScreenChanged: winCFull.signal,
             fullScreen: false,
+            maximizedChanged: winCMax.signal,
+            maximizeMode: 0,
         };
         world.wins.push(winC);
         world.winFull.set(winC, winCFull);
+        world.winMax.set(winC, winCMax);
         const fireAdded = (win: object): void => {
             for (const handler of world.added.handlers) {
                 (handler as (payload?: unknown) => void)(win);
@@ -1712,6 +1731,172 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
         assert.equal(world.winFull.get(winA)?.handlers.length, 0, "stop detaches window subscriptions");
         assert.equal(winCFull.handlers.length, 0, "stop detaches added-window subscription");
+    });
+
+    it("subscribes maximizedChanged per window after enable and for windows added later", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as object;
+        const winB = world.wins[1] as object;
+        const { handle } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.equal(world.winMax.get(winA)?.handlers.length, 1, "existing window subscribed on enable");
+        assert.equal(world.winMax.get(winB)?.handlers.length, 1, "existing window subscribed on enable");
+        const winCMax = fakeSignal();
+        const winC = {
+            normalWindow: true,
+            internalId: "win-c",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: winCMax.signal,
+            maximizeMode: 0,
+        };
+        world.wins.push(winC);
+        world.winMax.set(winC, winCMax);
+        const fireAdded = (win: object): void => {
+            for (const handler of world.added.handlers) {
+                (handler as (payload?: unknown) => void)(win);
+            }
+        };
+        fireAdded(winC);
+        assert.equal(winCMax.handlers.length, 1, "added window subscribed exactly once");
+        fireAdded(winC);
+        assert.equal(winCMax.handlers.length, 1, "no duplicate connection for the same window");
+        handle?.stop();
+        assert.equal(world.winMax.get(winA)?.handlers.length, 0, "stop detaches window subscriptions");
+        assert.equal(winCMax.handlers.length, 0, "stop detaches added-window subscription");
+    });
+
+    it("collapses maximize modes 1 and 2 to the same isolation as mode 3", () => {
+        for (const mode of [1, 2, 3]) {
+            const world = fakeWorld();
+            (world.wins[0] as Record<string, unknown>)["maximizeMode"] = mode;
+            const { handle, mocks } = startEntry(world);
+            assert.ok(handle !== null);
+            const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+                callback: () => void;
+            };
+            move.callback();
+            assert.equal(mocks.dbusCalls.length, 0, `mode ${String(mode)} never dispatches`);
+            assert.ok(
+                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"),
+                `mode ${String(mode)} refused with the maximize token`,
+            );
+            handle?.stop();
+        }
+        const world = fakeWorld();
+        (world.wins[0] as Record<string, unknown>)["maximizeMode"] = 0;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        const move = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-move-left") as {
+            callback: () => void;
+        };
+        move.callback();
+        assert.equal(mocks.dbusCalls.length, 1, "mode 0 dispatches normally");
+        handle?.stop();
+    });
+
+    it("refuses startup with an exact maximize-specific token when maximizedChanged cannot attach", () => {
+        const world = fakeWorld();
+        for (const win of world.wins) {
+            delete win["maximizedChanged"];
+        }
+        const { handle, mocks } = startEntry(world);
+        assert.equal(handle, null, "missing maximize attachment refuses the entry");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            "exact maximize-specific attachment refusal token",
+        );
+    });
+
+    it("refuses startup when only one of several eligible windows lacks maximizedChanged", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as object;
+        const winB = world.wins[1] as object;
+        delete (winB as Record<string, unknown>)["maximizedChanged"];
+        const { handle, mocks } = startEntry(world);
+        assert.equal(handle, null, "mixed availability refuses the entry");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            "exact maximize-specific attachment refusal token",
+        );
+        assert.equal(
+            world.winMax.get(winA)?.handlers.length,
+            0,
+            "subscription made before the startup refusal is released",
+        );
+    });
+
+    it("detaches maximizedChanged for a window removed after enable", () => {
+        const world = fakeWorld();
+        const { handle } = startEntry(world);
+        assert.ok(handle !== null);
+        const winCMax = fakeSignal();
+        const winC = {
+            normalWindow: true,
+            internalId: "win-c",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: winCMax.signal,
+            maximizeMode: 0,
+        };
+        world.wins.push(winC);
+        world.winMax.set(winC, winCMax);
+        for (const handler of world.added.handlers) {
+            (handler as (payload?: unknown) => void)(winC);
+        }
+        assert.equal(winCMax.handlers.length, 1, "added window subscribed");
+        for (const handler of world.removed.handlers) {
+            (handler as (payload?: unknown) => void)(winC);
+        }
+        assert.equal(winCMax.handlers.length, 0, "removed window detached");
+        handle?.stop();
+    });
+
+    it("fails closed when a window added after enable lacks maximizedChanged", () => {
+        const world = fakeWorld();
+        const winA = world.wins[0] as object;
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.equal(world.winMax.get(winA)?.handlers.length, 1, "existing window subscribed on enable");
+        const winC = {
+            normalWindow: true,
+            internalId: "win-c",
+            output: world.output,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+        };
+        world.wins.push(winC);
+        for (const handler of world.added.handlers) {
+            (handler as (payload?: unknown) => void)(winC);
+        }
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-refused-signal"),
+            "exact maximize-specific attachment refusal token",
+        );
+        assert.equal(
+            world.winMax.get(winA)?.handlers.length,
+            0,
+            "prior maximize subscriptions are released on the added-window refusal",
+        );
+        const callsBefore = mocks.dbusCalls.length;
+        handle?.requestFocus("left");
+        assert.equal(mocks.dbusCalls.length, callsBefore, "disabled adapter dispatches nothing");
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:focus-refused-disabled"),
+            "adapter is disabled, never left enabled and blind",
+        );
+        handle?.stop();
     });
 });
 
@@ -1752,6 +1937,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
             output: "out-1",
             workspace: "ws-1",
             fullscreen: false,
+            maximized: false,
         });
         mocks.observeImpl = (): PlanObserved | null => ({
             domainOutput: "out-1",
@@ -1803,6 +1989,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
                     output: "out-1",
                     workspace: "ws-1",
                     fullscreen: false,
+                    maximized: false,
                 }),
             );
             return {
@@ -1885,6 +2072,7 @@ describe("plan adapter destroyed-window reply boundary", () => {
                     output: "out-1",
                     workspace: "ws-1",
                     fullscreen: false,
+                    maximized: false,
                 }),
             );
             return {
@@ -2015,11 +2203,13 @@ describe("plan adapter fullscreen isolation", () => {
             focused?: object;
             rects: Record<string, { x: number; y: number; w: number; h: number }>;
             fullscreen?: Record<string, boolean>;
+            maximized?: Record<string, boolean>;
         },
         bounds: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 1200, h: 800 },
     ): PlanObserved {
         const focused = opts.focused ?? refs.a;
         const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
+        const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
         const refById: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
         const windows = Object.freeze(
             (["win-a", "win-b", "win-c"] as const)
@@ -2032,6 +2222,7 @@ describe("plan adapter fullscreen isolation", () => {
                         output: "out-1",
                         workspace: "ws-1",
                         fullscreen: isFullscreen(id),
+                        maximized: isMaximized(id),
                     }),
                 ),
         );
@@ -2629,5 +2820,383 @@ describe("plan adapter fullscreen isolation", () => {
             "clamped into bounds on admission, never the frame rect",
         );
         assert.equal(adapter.isEnabled, true);
+    });
+});
+
+describe("plan adapter maximize isolation", () => {
+    function makeObserved3(
+        refs: { a: object; b: object; c: object },
+        opts: {
+            focused?: object;
+            rects: Record<string, { x: number; y: number; w: number; h: number }>;
+            fullscreen?: Record<string, boolean>;
+            maximized?: Record<string, boolean>;
+        },
+        bounds: { x: number; y: number; w: number; h: number } = { x: 0, y: 0, w: 1200, h: 800 },
+    ): PlanObserved {
+        const focused = opts.focused ?? refs.a;
+        const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
+        const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
+        const refById: Record<string, object> = { "win-a": refs.a, "win-b": refs.b, "win-c": refs.c };
+        const windows = Object.freeze(
+            (["win-a", "win-b", "win-c"] as const)
+                .filter((id) => opts.rects[id] !== undefined)
+                .map((id) =>
+                    Object.freeze({
+                        id,
+                        ref: refById[id] as object,
+                        rect: opts.rects[id] as { x: number; y: number; w: number; h: number },
+                        output: "out-1",
+                        workspace: "ws-1",
+                        fullscreen: isFullscreen(id),
+                        maximized: isMaximized(id),
+                    }),
+                ),
+        );
+        return {
+            domainOutput: "out-1",
+            domainWorkspace: "ws-1",
+            domainBounds: { x: bounds.x, y: bounds.y, w: bounds.w, h: bounds.h },
+            domainGap: DOMAIN_GAP,
+            domainOuterGap: OUTER_DOMAIN_GAP,
+            focusedId: focused === refs.a ? "win-a" : focused === refs.b ? "win-b" : "win-c",
+            windows,
+            activeRef: focused,
+            fingerprint: "fp-max",
+            revalidate: () => true,
+        };
+    }
+
+    function twoWindowBaseline(mocks: Mocks, refs: { a: object; b: object; c: object }): PlanAdapter {
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const corr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        return adapter;
+    }
+
+    it("subscribes the per-window maximizedChanged signal kind", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        enableAdapter(mocks);
+        assert.ok(mocks.subscribes.some((entry) => entry.kind === "maximize"));
+    });
+
+    it("refuses directional move/resize/pointer-resize on a maximized focused window with no dispatch", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                maximized: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        adapter.requestResize("left", "outwards");
+        assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.geometries.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-maximize"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"));
+    });
+
+    it("prefers fullscreen over maximize for action refusal tokens", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+                maximized: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        adapter.requestMove("left");
+        adapter.requestResize("left", "outwards");
+        assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-maximize"));
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-maximize"));
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-maximize"));
+    });
+
+    it("admits a maximized member into the tree but never writes its geometry", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                maximized: { "win-c": true },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        const cmd = plannerPayload(mocks, 1)["command"] as Record<string, unknown>;
+        assert.deepEqual(cmd, { op: "admit", window: "win-c", output: "out-1", workspace: "ws-1" });
+        const sent = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.ok(sent.some((entry) => entry["window"] === "win-c"), "maximized member stays observed");
+        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBefore, "siblings reflowed around the admission");
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "maximized member never actuated");
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-maximized rect=800,0,400,800",
+            ),
+            "maximized member carries skip-maximized disposition with its retained target rect",
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+    });
+
+    it("prefers fullscreen over maximize for the write disposition", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                    "win-c": { x: 0, y: 0, w: 1200, h: 800 },
+                },
+                fullscreen: { "win-c": true },
+                maximized: { "win-c": true },
+            });
+        fire(mocks, "added");
+        runDebounce(mocks);
+        const corr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-leaf",
+            ),
+        );
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "overlay member never actuated");
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-fullscreen rect=800,0,400,800",
+            ),
+            "fullscreen disposition wins when both fullscreen and maximized",
+        );
+        assert.ok(!mocks.logs.some((line) => line.includes("disposition=skip-maximized")));
+    });
+
+    it("entering maximize from tiled adopts the baseline with no reconcile and no write", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                maximized: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        const writesBefore = mocks.geometries.length;
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(mocks.geometries.length, writesBefore);
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("leaving maximize restores the exact retained tiled position via one reconcile", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                maximized: { "win-b": true },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        // KWin restores the window imperfectly: reconcile must reassert the
+        // retained slot rather than adopt the post-maximize position.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 100, y: 100, w: 400, h: 400 } },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        const reconcileIndex = mocks.dbusCalls.length - 1;
+        assert.deepEqual((plannerPayload(mocks, reconcileIndex)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const corr = plannerPayload(mocks, reconcileIndex)["correlation_id"] as string;
+        const writesBefore = mocks.geometries.length;
+        mocks.callbacks[reconcileIndex]?.(
+            plannedReply(
+                corr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.length > writesBefore);
+        assert.ok(
+            mocks.geometries.some((entry) => entry.target === refs.b && entry.rect.x === 600 && entry.rect.y === 0),
+            "exact retained position restored",
+        );
+        // The reconcile write restored the retained slot: adopt the converged
+        // observation and confirm no further dispatch.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+            });
+        const callsAfter = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsAfter);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("maximized-only rect drift adopts the baseline without dispatching reconcile", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = twoWindowBaseline(mocks, refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                maximized: { "win-b": true },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 100, y: 50, w: 1000, h: 700 } },
+                maximized: { "win-b": true },
+            });
+        const callsBefore = mocks.dbusCalls.length;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("reflows siblings while one member is maximized without actuating it", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 400, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        const admitCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                admitCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+                maximized: { "win-a": true },
+            });
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        // Focus is exempt from maximize isolation: a move on a non-maximized
+        // sibling reflows around the maximized member without writing it.
+        mocks.observeImpl = () =>
+            makeObserved3(refs, {
+                focused: refs.b,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 1200, h: 800 },
+                    "win-b": { x: 400, y: 0, w: 400, h: 800 },
+                    "win-c": { x: 800, y: 0, w: 400, h: 800 },
+                },
+                maximized: { "win-a": true },
+            });
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 2);
+        const moveCorr = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                moveCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                    { window: "win-c", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                ],
+                "win-b-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.b), "sibling reflowed");
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.c), "sibling reflowed");
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "maximized member not actuated");
+        assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")));
     });
 });

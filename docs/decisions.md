@@ -233,6 +233,33 @@ Historical implementation detail is recoverable in Git history.
   windows. `Meta+G` toggles it; `Meta+Shift+G` makes a floating window sticky.
 - Maximize (`Meta+M`) is workspace-local. Fullscreen (`Meta+F11`) is separate:
   it is never tiled, resized, or reflowed, and preserves the tree for restore.
+- Maximize isolation mirrors fullscreen, authorized 2026-09-14. A nonzero KWin
+  `maximizeMode` (1 vertical, 2 horizontal, 3 full) is collapsed to one adapter
+  boolean; no horizontal or vertical maximize concept enters the Rust engine or
+  its protocol, and no Rust protocol/session state is added for maximize. A
+  maximized member keeps its observed identity, leaf/tree position, and share,
+  receives no geometry write, and on unmaximize is restored to its exact
+  retained allocation. Fullscreen takes precedence when a window is both
+  fullscreen and maximized: fullscreen refusal tokens and the `skip-fullscreen`
+  disposition win over maximize. A missing per-window `maximizedChanged`
+  attachment for any eligible observed normal window refuses fail-closed with
+  the exact `plasma-auto-tiler:plan:maximize-refused-signal` token, at startup
+  or when a later-added eligible window lacks the signal, unlike best-effort
+  fullscreen.
+- H/V maximize is deliberately not modeled in the engine. Source:
+  `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
+  `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records
+  `MaximizedState { original_geometry, original_layer, original_snapped }`
+  where `original_layer` retains `ManagedLayer::Tiling` for a tiled window, so
+  the maximized window keeps its tiling node; `unmaximize_request`
+  `src/shell/workspace.rs:996-1036` returns `ManagedLayer::Tiling` members to
+  the tiling layer ("should still be mapped in tiling") and others to the
+  floating layer; the `ManagedLayer` enum
+  `src/shell/workspace.rs:243-248` is only
+  `Fullscreen, Tiling, Floating, Sticky`, with no maximize variant. Maximize is
+  a recorded overlay state over the original layer, not a distinct topology or
+  managed layer, so the engine deliberately carries no horizontal/vertical
+  maximize concept.
 - A Plan adapter advances its retained membership baseline only after a matching
   `planned` reply is applied. A rejected, timed-out, stale, or failed
   membership command never changes the baseline used to derive later
