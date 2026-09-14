@@ -48,6 +48,7 @@ export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize";
 export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize";
+export type MaximizeClearOutcome = "invoked" | "missing" | "threw";
 
 export interface PlanRect {
     readonly x: number;
@@ -397,10 +398,11 @@ export interface PlanAdapterEnv {
     readonly scheduleOnce: (delayMs: number, callback: () => void) => () => void;
     readonly log: (message: string) => void;
     readonly observe: () => PlanObserved | null;
+    readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
-    readonly subscribe: (kind: PlanSignal, handler: () => void) => () => void;
+    readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
 }
 
@@ -773,6 +775,7 @@ interface PendingFlight {
     readonly windowCount: number;
     readonly pointerSource: string | null;
     readonly workAreaReprojection: boolean;
+    readonly admissionMaximizeClears: ReadonlyArray<string>;
 }
 
 interface AutoIntent {
@@ -782,6 +785,7 @@ interface AutoIntent {
     readonly body: Record<string, unknown>;
     readonly pointerSource?: string | null;
     readonly workAreaReprojection?: boolean;
+    readonly admissionMaximizeClears?: ReadonlyArray<string>;
 }
 
 interface PointerEcho {
@@ -789,6 +793,50 @@ interface PointerEcho {
     readonly source: string;
     readonly scope: PlanSnapshot;
     readonly neighbours: ReadonlyArray<{ window: string; rect: PlanRect }>;
+}
+
+function snapshotsEqualAllowingAdmissionMaximize(
+    fresh: PlanSnapshot,
+    expected: PlanSnapshot,
+    cleared: ReadonlyArray<string>,
+): boolean {
+    if (
+        fresh.domainOutput !== expected.domainOutput ||
+        fresh.domainWorkspace !== expected.domainWorkspace ||
+        fresh.domainGap !== expected.domainGap ||
+        fresh.domainOuterGap !== expected.domainOuterGap ||
+        fresh.focusedId !== expected.focusedId ||
+        fresh.fingerprint !== expected.fingerprint ||
+        fresh.domainBounds.x !== expected.domainBounds.x ||
+        fresh.domainBounds.y !== expected.domainBounds.y ||
+        fresh.domainBounds.w !== expected.domainBounds.w ||
+        fresh.domainBounds.h !== expected.domainBounds.h ||
+        fresh.windows.length !== expected.windows.length
+    ) {
+        return false;
+    }
+    const clearedIds = new Set(cleared);
+    const expectedById = new Map<string, PlanSnapshotWindow>();
+    for (const entry of expected.windows) {
+        expectedById.set(entry.id, entry);
+    }
+    for (const entry of fresh.windows) {
+        const other = expectedById.get(entry.id);
+        if (
+            other === undefined ||
+            entry.rect.x !== other.rect.x ||
+            entry.rect.y !== other.rect.y ||
+            entry.rect.w !== other.rect.w ||
+            entry.rect.h !== other.rect.h ||
+            entry.output !== other.output ||
+            entry.workspace !== other.workspace ||
+            entry.fullscreen !== other.fullscreen ||
+            (entry.maximized !== other.maximized && !(clearedIds.has(entry.id) && entry.maximized))
+        ) {
+            return false;
+        }
+    }
+    return true;
 }
 
 export class PlanAdapter {
@@ -817,6 +865,8 @@ export class PlanAdapter {
     private repeatNext = 0;
     private repeatFingerprint = "";
     private pointerEcho: PointerEcho | null = null;
+    private maximizeAdmissionEcho: object | null = null;
+    private maximizeAdmissionAttempts = new Set<string>();
 
     constructor(private readonly env: PlanAdapterEnv) {}
 
@@ -843,7 +893,7 @@ export class PlanAdapter {
         for (const kind of kinds) {
             let detach: (() => void) | null = null;
             try {
-                detach = this.env.subscribe(kind, () => this.onSignal());
+                detach = this.env.subscribe(kind, (target) => this.onSignal(kind, target));
             } catch (error) {
                 void error;
                 detach = null;
@@ -872,6 +922,8 @@ export class PlanAdapter {
         this.reconcileAttempts = 0;
         this.parked = false;
         this.pointerEcho = null;
+        this.maximizeAdmissionEcho = null;
+        this.maximizeAdmissionAttempts.clear();
         this.clearRepeat();
         return true;
     }
@@ -888,6 +940,8 @@ export class PlanAdapter {
         this.reconcileAttempts = 0;
         this.parked = false;
         this.pointerEcho = null;
+        this.maximizeAdmissionEcho = null;
+        this.maximizeAdmissionAttempts.clear();
         this.clearRepeat();
         this.clearTimer();
         this.clearDebounce();
@@ -1201,9 +1255,18 @@ export class PlanAdapter {
         return observed as PlanObserved;
     }
 
-    private onSignal(): void {
+    private onSignal(kind?: PlanSignal, target?: object): void {
         if (!this.enabled) {
             return;
+        }
+        if (kind === "maximize" && this.maximizeAdmissionEcho !== null) {
+            if (target === this.maximizeAdmissionEcho) {
+                this.maximizeAdmissionEcho = null;
+                this.logToken(`${LOG_PREFIX}:maximize-admission-echo-consumed`);
+                return;
+            }
+            this.maximizeAdmissionEcho = null;
+            this.logToken(`${LOG_PREFIX}:maximize-admission-echo-mismatched`);
         }
         if (this.debounceCancel !== null) {
             return;
@@ -1223,10 +1286,16 @@ export class PlanAdapter {
         if (!this.enabled) {
             return;
         }
-        const fresh = this.freshObserved();
+        let fresh = this.freshObserved();
         if (fresh === null) {
             return;
         }
+        const prior = this.lastGoodFor(snapshotOf(fresh));
+        const prepared = this.clearMaximizeAtAdmission(fresh, prior);
+        if (prepared === null) {
+            return;
+        }
+        fresh = prepared.observed;
         const freshSnapshot = this.carriedSnapshot(fresh);
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
@@ -1245,6 +1314,7 @@ export class PlanAdapter {
                     output: freshSnapshot.domainOutput,
                     workspace: freshSnapshot.domainWorkspace,
                 },
+                admissionMaximizeClears: prepared.cleared,
             };
             if (!this.inFlight) {
                 const next = this.deferredAuto;
@@ -1278,6 +1348,7 @@ export class PlanAdapter {
                     snapshot: freshSnapshot,
                     removed: null,
                     body: { op: "admit", window: entry.id, output: freshSnapshot.domainOutput, workspace: freshSnapshot.domainWorkspace },
+                    admissionMaximizeClears: prepared.cleared,
                 };
                 break;
             }
@@ -1297,6 +1368,7 @@ export class PlanAdapter {
         }
         for (const entry of previous.windows) {
             if (!after.has(entry.id)) {
+                this.maximizeAdmissionAttempts.delete(entry.id);
                 try {
                     this.env.noteRemoved?.(entry.id);
                 } catch (error) {
@@ -1449,6 +1521,69 @@ export class PlanAdapter {
         }
     }
 
+    private clearMaximizeAtAdmission(
+        observed: PlanObserved,
+        previous: PlanSnapshot | null,
+    ): { observed: PlanObserved; cleared: ReadonlyArray<string> } | null {
+        const known = new Set<string>();
+        if (previous !== null) {
+            for (const entry of previous.windows) {
+                known.add(entry.id);
+            }
+        }
+        const attempted: Array<{ id: string; ref: object; resourceClass: string }> = [];
+        for (const entry of observed.windows) {
+            if (entry.fullscreen || !entry.maximized || known.has(entry.id) || this.maximizeAdmissionAttempts.has(entry.id)) {
+                continue;
+            }
+            this.maximizeAdmissionAttempts.add(entry.id);
+            const resourceClass = isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown";
+            this.logToken(`${LOG_PREFIX}:maximize-admission-clear window=${entry.id} resource_class=${resourceClass} outcome=issued`);
+            this.maximizeAdmissionEcho = entry.ref;
+            this.logToken(`${LOG_PREFIX}:maximize-admission-echo-armed`);
+            let outcome: MaximizeClearOutcome = "threw";
+            try {
+                outcome = this.env.clearMaximize(entry.ref);
+            } catch (error) {
+                void error;
+            }
+            this.logToken(
+                `${LOG_PREFIX}:maximize-admission-clear window=${entry.id} resource_class=${resourceClass} outcome=${outcome}`,
+            );
+            if (this.maximizeAdmissionEcho !== null) {
+                this.maximizeAdmissionEcho = null;
+                this.logToken(`${LOG_PREFIX}:maximize-admission-echo-cleared-no-signal`);
+            }
+            attempted.push({ id: entry.id, ref: entry.ref, resourceClass });
+        }
+        if (attempted.length === 0) {
+            return { observed, cleared: Object.freeze([]) };
+        }
+        const fresh = this.freshObserved();
+        if (fresh === null) {
+            return null;
+        }
+        const byId = new Map<string, PlanObservedWindow>();
+        for (const entry of fresh.windows) {
+            byId.set(entry.id, entry);
+        }
+        const cleared: string[] = [];
+        for (const attempt of attempted) {
+            const entry = byId.get(attempt.id);
+            if (entry === undefined || entry.ref !== attempt.ref) {
+                this.logToken(`${LOG_PREFIX}:maximize-admission-clear window=${attempt.id} resource_class=${attempt.resourceClass} outcome=observed-absent`);
+            } else if (entry.maximized) {
+                this.logToken(`${LOG_PREFIX}:maximize-admission-clear window=${attempt.id} resource_class=${attempt.resourceClass} outcome=observed-maximized`);
+                cleared.push(attempt.id);
+            } else {
+                this.logToken(`${LOG_PREFIX}:maximize-admission-clear window=${attempt.id} resource_class=${attempt.resourceClass} outcome=observed-cleared`);
+                cleared.push(attempt.id);
+            }
+        }
+        const result = fresh;
+        return { observed: result, cleared: Object.freeze(cleared) };
+    }
+
     private echoMatches(fresh: PlanSnapshot, echo: PointerEcho): boolean {
         if (!sameScope(fresh, echo.scope)) {
             return false;
@@ -1563,6 +1698,7 @@ export class PlanAdapter {
             windowCount: sortedIds.length,
             pointerSource: intent.pointerSource ?? null,
             workAreaReprojection: intent.workAreaReprojection === true,
+            admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
         };
         // Bounded route entry: every dispatched flight opens with the same
         // cmd line shape and `outcome=dispatch`, then closes with its terminal
@@ -1749,7 +1885,10 @@ export class PlanAdapter {
         }
         if (flightState.removed === null) {
             const freshSnapshot = this.carriedSnapshot(fresh);
-            if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
+            if (
+                !snapshotsEqual(freshSnapshot, flightState.snapshot) &&
+                !(flightState.op === "admit" && snapshotsEqualAllowingAdmissionMaximize(freshSnapshot, flightState.snapshot, flightState.admissionMaximizeClears))
+            ) {
                 this.failFlight(flightState, "stale-scope");
                 return;
             }

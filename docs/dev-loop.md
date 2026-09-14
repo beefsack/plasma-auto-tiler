@@ -290,6 +290,22 @@ Per slice-2 pointer echo fence transition (one fixed token each):
 - `plasma-auto-tiler:plan:echo-fence-cleared-equality`
 - `plasma-auto-tiler:plan:echo-fence-mismatched`
 
+Per maximize-at-admission clear (non-fullscreen new members only; one attempt
+per live window identity, never a retry):
+
+- `plasma-auto-tiler:plan:maximize-admission-clear window=<id> resource_class=<class> outcome=<issued|invoked|missing|threw|observed-cleared|observed-maximized|observed-absent>`
+- `plasma-auto-tiler:plan:maximize-admission-echo-armed`
+- `plasma-auto-tiler:plan:maximize-admission-echo-consumed`
+- `plasma-auto-tiler:plan:maximize-admission-echo-mismatched`
+- `plasma-auto-tiler:plan:maximize-admission-echo-cleared-no-signal`
+
+`observed-cleared` confirms that the immediate re-observation saw restore.
+`observed-maximized` records that KWin still reported maximize after the one
+call, including an application that immediately reasserted it; it is then the
+ordinary post-admission maximize-isolation case, with no further clear.
+`missing` and `threw` distinguish an unavailable method from a native-call
+exception.
+
 Per refusal/rejection path (exact distinct tokens, one per cause; every
 shortcut and pointer-route refusal carries its own fixed token):
 

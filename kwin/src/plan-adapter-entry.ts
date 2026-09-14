@@ -837,7 +837,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // best-effort fullscreen, an individual eligible normal window that lacks
     // the signal is never skipped, and a window added after enable that lacks
     // it fails the adapter closed instead of leaving it blind.
-    const subWindowMaximize = (handler: () => void): (() => void) | null => {
+    const subWindowMaximize = (handler: (target?: object) => void): (() => void) | null => {
         try {
             const lister = surface["windowList"];
             if (typeof lister !== "function") {
@@ -854,7 +854,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 if (seen.has(ref)) {
                     return true;
                 }
-                const detach = connectSignal(readSignal(ref, "maximizedChanged"), handler);
+                const detach = connectSignal(readSignal(ref, "maximizedChanged"), () => handler(ref));
                 if (detach === null) {
                     return readProp(ref, "normalWindow") !== true;
                 }
@@ -1002,6 +1002,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         scheduleOnce,
         log,
         observe: () => observeNative(liveWorkspace, nativeIds, reportEligibility),
+        clearMaximize: (target) => {
+            try {
+                const method = readProp(target, "setMaximize");
+                if (typeof method !== "function") {
+                    return "missing";
+                }
+                Reflect.apply(method as (...args: ReadonlyArray<unknown>) => unknown, target, [false, false]);
+                return "invoked";
+            } catch (error) {
+                void error;
+                return "threw";
+            }
+        },
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {

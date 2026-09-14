@@ -10,6 +10,11 @@ Only meaningful pending or active work is listed.
 - P0 | Fullscreen residual-cost live gate | Production Plan fullscreen isolation
   is static-complete. User must run the exact fullscreen gate and establish the
   gaming cost baseline. [investigation](changes/reliability-condition-investigation.md)
+- P0 | Maximize-admission clear live gate | Static coverage proves the one-shot
+  `Window.setMaximize(false, false)` route, its synchronous echo fence, and
+  post-admission isolation. A real KWin 6.7.4 session must establish that a
+  session-restored maximized application restores, tiles, and cannot form an
+  application re-maximize loop. No live result is claimed.
 - P1 | Intentional floating (`Meta+G`) | Select and implement the separate
   COSMIC-grounded float toggle slice. COSMIC binds it in `data/keybindings.ron:83-92`;
   unfloat is fresh admission through `tiling_layer.map` at

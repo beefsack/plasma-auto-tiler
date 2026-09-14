@@ -82,6 +82,7 @@ function mockEnv(refs: { a: object; b: object }): Mocks {
             state.logs.push(message);
         },
         observe: (): PlanObserved | null => state.observeImpl(),
+        clearMaximize: (): "invoked" => "invoked",
         setGeometry: (target, rect): boolean => {
             state.geometries.push({ target, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
             return true;
@@ -718,6 +719,7 @@ function echoMockEnv(refs: { a: object; b: object }): EchoMocks {
         log: (message): void => {
             state.logs.push(message);
         },
+        clearMaximize: (): "invoked" => "invoked",
         observe: (): PlanObserved | null => {
             const wins = (["win-a", "win-b"] as const).map((id) => {
                 const rect = state.current[id] as { x: number; y: number; w: number; h: number };

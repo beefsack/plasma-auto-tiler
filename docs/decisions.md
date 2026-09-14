@@ -246,6 +246,21 @@ Historical implementation detail is recoverable in Git history.
   the exact `plasma-auto-tiler:plan:maximize-refused-signal` token, at startup
   or when a later-added eligible window lacks the signal, unlike best-effort
   fullscreen.
+- Admission-time maximize clearing is a deliberate, user-approved KWin-native
+  deviation from cosmic-comp parity, authorized 2026-09-14. For a non-fullscreen
+  window first observed without a retained tiled slot, the adapter calls KWin
+  `Window.setMaximize(false, false)` once before admission, then tiles the
+  restored window normally. It never retries the write. A later maximize of a
+  retained member keeps the existing isolation behavior: the leaf/share remain,
+  geometry writes are skipped, and unmaximize restores the retained allocation.
+  Fullscreen remains untouched and takes precedence. This is not COSMIC parity:
+  cosmic-comp `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records
+  `MaximizedState` with `original_layer`, retaining `ManagedLayer::Tiling` for
+  a tiled window; `Workspace::unmaximize_request`
+  `src/shell/workspace.rs:996-1036` returns that member to tiling ("should
+  still be mapped in tiling"). The product choice makes KWin session-restored
+  maximized applications tile on admission while preserving the selected
+  post-admission behavior.
 - H/V maximize is deliberately not modeled in the engine. Source:
   `pop-os/cosmic-comp` `81cd5fdbaa41c3973369ae85bccf829137836e20`
   `Shell::maximize_request` `src/shell/mod.rs:4393-4431` records

@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, it } from "node:test";
 
 import {
+    MaximizeClearOutcome,
     PLAN_CONTRACT_VERSION,
     PLAN_DEBOUNCE_MS,
     PLAN_INTERFACE,
@@ -105,12 +106,14 @@ interface Mocks {
     readonly callbacks: Array<(reply: unknown) => void>;
     readonly timers: Array<{ delayMs: number; callback: () => void; cancelled: boolean }>;
     readonly logs: string[];
-    readonly subscribes: Array<{ kind: string; handler: () => void }>;
+    readonly subscribes: Array<{ kind: string; handler: (target?: object) => void }>;
     readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly actives: object[];
+    readonly maximizeClears: object[];
     observeImpl: () => PlanObserved | null;
     activeImpl: () => object | null;
     geometryImpl: (target: object, rect: { x: number; y: number; w: number; h: number }) => boolean;
+    maximizeClearImpl: (target: object) => MaximizeClearOutcome;
     env: PlanAdapterEnv;
 }
 
@@ -123,9 +126,11 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
         subscribes: [],
         geometries: [],
         actives: [],
+        maximizeClears: [],
         observeImpl: () => makeObserved(refs, { focused: refs.a }),
         activeImpl: () => refs.a,
         geometryImpl: (_target: object, _rect: { x: number; y: number; w: number; h: number }): boolean => true,
+        maximizeClearImpl: (_target: object): MaximizeClearOutcome => "invoked",
         env: null as unknown as PlanAdapterEnv,
     };
     const env: PlanAdapterEnv = {
@@ -144,6 +149,10 @@ function mockEnv(refs: { a: object; b: object; c: object }): Mocks {
             state.logs.push(message);
         },
         observe: (): PlanObserved | null => state.observeImpl(),
+        clearMaximize: (target): MaximizeClearOutcome => {
+            state.maximizeClears.push(target);
+            return state.maximizeClearImpl(target);
+        },
         setGeometry: (target, rect): boolean => {
             state.geometries.push({ target, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } });
             return state.geometryImpl(target, rect);
@@ -201,10 +210,10 @@ function rejectedReply(correlation: string, kind: string): string {
     return JSON.stringify({ v: 1, correlation_id: correlation, outcome: "rejected", kind, message: "no" });
 }
 
-function fire(mocks: Mocks, kind: string): void {
+function fire(mocks: Mocks, kind: string, target?: object): void {
     for (const sub of mocks.subscribes) {
         if (sub.kind === kind) {
-            sub.handler();
+            sub.handler(target);
         }
     }
 }
@@ -1347,6 +1356,7 @@ interface FakeWorld {
     readonly removed: FakeSignal;
     readonly winFull: Map<object, FakeSignal>;
     readonly winMax: Map<object, FakeSignal>;
+    readonly maximizeClears: object[];
 }
 
 function fakeWorld(): FakeWorld {
@@ -1368,12 +1378,13 @@ function fakeWorld(): FakeWorld {
         workspace: {},
         winFull,
         winMax,
+        maximizeClears: [],
     };
     const makeWin = (id: string, x: number): Record<string, unknown> => {
         const geo = fakeSignal();
         const full = fakeSignal();
         const max = fakeSignal();
-        const win = {
+        const win: Record<string, unknown> = {
             normalWindow: true,
             internalId: id,
             resourceClass: "test-app",
@@ -1385,6 +1396,16 @@ function fakeWorld(): FakeWorld {
             fullScreen: false,
             maximizedChanged: max.signal,
             maximizeMode: 0,
+        };
+        win["setMaximize"] = (vertically: unknown, horizontally: unknown): void => {
+            if (vertically !== false || horizontally !== false) {
+                return;
+            }
+            world.maximizeClears.push(win);
+            win["maximizeMode"] = 0;
+            for (const handler of max.handlers) {
+                handler();
+            }
         };
         winFull.set(win, full);
         winMax.set(win, max);
@@ -2998,6 +3019,77 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(mocks.subscribes.some((entry) => entry.kind === "maximize"));
     });
 
+    it("clears maximize once at admission and tiles the restored window", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = true;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                maximized: { "win-a": maximized },
+                resourceClasses: { "win-a": "firefox" },
+            });
+        mocks.maximizeClearImpl = (target): MaximizeClearOutcome => {
+            assert.equal(target, refs.a);
+            maximized = false;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestResync();
+        runDebounce(mocks);
+        assert.deepEqual(mocks.maximizeClears, [refs.a]);
+        assert.equal((plannerPayload(mocks, 0)["command"] as Record<string, unknown>)["op"], "admit");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 800 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 700, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(mocks.geometries.some((entry) => entry.target === refs.a), "restored admission receives its tile geometry");
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:maximize-admission-clear window=win-a resource_class=firefox outcome=observed-cleared",
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:maximize-admission-echo-consumed"));
+    });
+
+    it("leaves fullscreen admission isolated even when maximize is also set", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: { "win-a": { x: 0, y: 0, w: 1200, h: 800 }, "win-b": { x: 600, y: 0, w: 600, h: 800 } },
+                fullscreen: { "win-a": true },
+                maximized: { "win-a": true },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestResync();
+        runDebounce(mocks);
+        assert.equal(mocks.maximizeClears.length, 0, "fullscreen takes precedence over admission clear");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a));
+        assert.ok(mocks.logs.some((line) => line.includes("window=win-a") && line.includes("disposition=skip-fullscreen")));
+    });
+
     it("refuses directional move/resize/pointer-resize on a maximized focused window with no dispatch", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -3210,9 +3302,50 @@ describe("plan adapter maximize isolation", () => {
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(mocks.geometries.length, writesBefore);
+        assert.equal(mocks.maximizeClears.length, 0, "post-admission maximize is never cleared");
         fire(mocks, "maximize");
         runDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, callsBefore);
+        assert.equal(adapter.isEnabled, true);
+    });
+
+    it("does not re-clear or loop when an admitted window immediately re-maximizes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let maximized = true;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": maximized ? { x: 0, y: 0, w: 1200, h: 800 } : { x: 0, y: 0, w: 600, h: 800 },
+                    "win-b": { x: 600, y: 0, w: 600, h: 800 },
+                },
+                maximized: { "win-a": maximized },
+            });
+        mocks.maximizeClearImpl = (): MaximizeClearOutcome => {
+            maximized = false;
+            fire(mocks, "maximize", refs.a);
+            return "invoked";
+        };
+        const adapter = enableAdapter(mocks);
+        adapter.requestResync();
+        runDebounce(mocks);
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        maximized = true;
+        fire(mocks, "maximize");
+        runDebounce(mocks);
+        assert.equal(mocks.maximizeClears.length, 1, "the admission clear is one-shot");
+        assert.equal(mocks.dbusCalls.length, 1, "post-admission maximize does not dispatch a loop");
         assert.equal(adapter.isEnabled, true);
     });
 

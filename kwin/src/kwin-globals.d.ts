@@ -150,11 +150,13 @@ interface Window {
     // Read-only in the KWin scripting API: `KWin::Window.maximizeMode`
     // (Q_PROPERTY `KWin::MaximizeMode maximizeMode READ maximizeMode NOTIFY
     // maximizedChanged`, window.h; a read-only `KWin::MaximizeMode` enum:
-    // 0=restore, 1=vertical, 2=horizontal, 3=full). Declared read-only here:
-    // the controller never writes native maximize (incompatible with tile
-    // retention) and only observes it at startup to preserve an
-    // already-maximized window's state.
+    // 0=restore, 1=vertical, 2=horizontal, 3=full). The property itself is
+    // read-only; restoration uses the separate Q_INVOKABLE `setMaximize`.
     readonly maximizeMode: number;
+    // src/window.h Q_INVOKABLE `setMaximize(bool vertically, bool
+    // horizontally, const RectF &restore = RectF())`. Calling false, false
+    // restores every nonzero maximize mode.
+    setMaximize(vertically: boolean, horizontally: boolean): void;
     // Read-only in the KWin scripting API at pinned v6.7.4 (window.h
     // Q_PROPERTY `bool minimized READ isMinimized NOTIFY minimizedChanged`;
     // scripting API -> KWin::Window -> Read-only Properties -> `minimized`).
