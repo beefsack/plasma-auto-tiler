@@ -68,6 +68,7 @@ function makeObserved(
         rects?: Record<string, { x: number; y: number; w: number; h: number }>;
         fullscreen?: Record<string, boolean>;
         maximized?: Record<string, boolean>;
+        resourceClasses?: Record<string, string>;
         fingerprint?: string;
         revalidate?: () => boolean;
         bounds?: { x: number; y: number; w: number; h: number };
@@ -80,9 +81,10 @@ function makeObserved(
         opts.rects?.[id] ?? { x: 0, y: 0, w: 100, h: 100 };
     const isFullscreen = (id: string): boolean => opts.fullscreen?.[id] === true;
     const isMaximized = (id: string): boolean => opts.maximized?.[id] === true;
+    const resourceClass = (id: string): string => opts.resourceClasses?.[id] ?? "unknown";
     const windows = Object.freeze([
-        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a") }),
-        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b") }),
+        Object.freeze({ id: "win-a", ref: refs.a, rect: rect("win-a"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-a"), maximized: isMaximized("win-a"), resourceClass: resourceClass("win-a") }),
+        Object.freeze({ id: "win-b", ref: refs.b, rect: rect("win-b"), output: "out-1", workspace: "ws-1", fullscreen: isFullscreen("win-b"), maximized: isMaximized("win-b"), resourceClass: resourceClass("win-b") }),
     ]);
     return {
         domainOutput: "out-1",
@@ -397,14 +399,14 @@ describe("plan adapter geometry application", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a disposition=skip-already-equal rect=0,0,100,100",
+                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=skip-already-equal rect=0,0,100,100",
             ),
             "unchanged member carries skip-already-equal disposition",
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-b disposition=written rect=100,0,400,500",
+                    line === "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=written rect=100,0,400,500",
             ),
             "changed member carries written disposition with the target rect",
         );
@@ -444,7 +446,7 @@ describe("plan adapter geometry application", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a disposition=write-failed rect=0,0,600,800",
+                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=write-failed rect=0,0,600,800",
             ),
             "failed member carries write-failed disposition",
         );
@@ -481,6 +483,7 @@ describe("plan adapter recovery and fencing", () => {
                     "win-a": { x: -8, y: 24, w: 600, h: 776 },
                     "win-b": { x: 600, y: 24, w: 600, h: 776 },
                 },
+                resourceClasses: { "win-a": "firefox" },
             });
         const adapter = enableAdapter(mocks);
         adapter.requestFocus("left");
@@ -499,7 +502,7 @@ describe("plan adapter recovery and fencing", () => {
             mocks.logs.some(
                 (line) =>
                     line ===
-                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=win-a rect=-8,24,600,776 bounds=0,24,1200,776",
+                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=win-a resource_class=firefox rect=-8,24,600,776 bounds=0,24,1200,776",
             ),
         );
     });
@@ -1058,8 +1061,8 @@ describe("plan adapter client self-resize reconcile", () => {
         mocks.callbacks[2]?.(plannedReply(corr2, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         const fresh2 = mocks.logs.slice(logsBefore2);
         assert.equal(fresh2.length, 3);
-        assert.equal(fresh2[0], "plasma-auto-tiler:plan:write window=win-b disposition=skip-already-equal rect=600,0,600,800");
-        assert.equal(fresh2[1], "plasma-auto-tiler:plan:write window=win-a disposition=written rect=0,0,600,800");
+        assert.equal(fresh2[0], "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=skip-already-equal rect=600,0,600,800");
+        assert.equal(fresh2[1], "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=0,0,600,800");
         assert.ok(fresh2[2]?.includes("kind=reconcile") && fresh2[2]?.includes("outcome=planned-applied"));
         assert.ok(
             mocks.logs.some(
@@ -1209,7 +1212,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ resource_class=\S+ disposition=(written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|maximize-refused-signal|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);
@@ -1373,6 +1376,7 @@ function fakeWorld(): FakeWorld {
         const win = {
             normalWindow: true,
             internalId: id,
+            resourceClass: "test-app",
             output,
             desktops: [desktop],
             frameGeometry: { x, y: 0, width: 600, height: 800 },
@@ -1608,10 +1612,22 @@ describe("plan entry live observation and shortcuts", () => {
         world.wins.push({
             normalWindow: false,
             internalId: "dock-1",
+            resourceClass: "org.kde.plasmashell",
             output: world.output,
             desktops: [world.desktop],
             frameGeometry: { x: 0, y: 0, width: 50, height: 50 },
             moveResizedChanged: fakeSignal().signal,
+        });
+        world.wins.push({
+            normalWindow: true,
+            internalId: "broken-frame",
+            resourceClass: "broken-app",
+            output: world.output,
+            desktops: [world.desktop],
+            moveResizedChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
         });
         world.wins.push({
             normalWindow: true,
@@ -1632,9 +1648,15 @@ describe("plan entry live observation and shortcuts", () => {
         assert.deepEqual(ids, ["win-a", "win-b", "12345678-1234-1234-1234-1234567890ab"]);
         assert.ok(
             mocks.logs.some(
-                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=normal-window window=dock-1",
+                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=normal-window window=dock-1 resource_class=org.kde.plasmashell",
             ),
             "a non-normal window is excluded with its exact reason",
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=frame-rect-missing window=broken-frame resource_class=broken-app",
+            ),
+            "an unhandleable member is refused independently while eligible members remain observed",
         );
         handle?.stop();
     });
@@ -1645,6 +1667,7 @@ describe("plan entry live observation and shortcuts", () => {
         const outputMismatch = {
             normalWindow: true,
             internalId: "other-output",
+            resourceClass: "org.mozilla.firefox",
             output: otherOutput,
             desktops: [world.desktop],
             frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
@@ -1657,6 +1680,7 @@ describe("plan entry live observation and shortcuts", () => {
         const desktopMismatch = {
             normalWindow: true,
             internalId: "other-desktop",
+            resourceClass: "ghostty",
             output: world.output,
             desktops: [],
             frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
@@ -1672,11 +1696,11 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.requestFocus("right");
         handle?.requestFocus("left");
         assert.equal(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=output-mismatch window=other-output").length,
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=output-mismatch window=other-output resource_class=org.mozilla.firefox").length,
             1,
         );
         assert.equal(
-            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=desktop-mismatch window=other-desktop").length,
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=desktop-mismatch window=other-desktop resource_class=ghostty").length,
             1,
         );
         handle?.stop();
@@ -2409,7 +2433,7 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-fullscreen rect=800,0,400,800",
+                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
             ),
             "fullscreen member carries skip-fullscreen disposition with its retained target rect",
         );
@@ -3058,7 +3082,7 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-maximized rect=800,0,400,800",
+                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-maximized rect=800,0,400,800",
             ),
             "maximized member carries skip-maximized disposition with its retained target rect",
         );
@@ -3163,7 +3187,7 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-fullscreen rect=800,0,400,800",
+                    line === "plasma-auto-tiler:plan:write window=win-c resource_class=unknown disposition=skip-fullscreen rect=800,0,400,800",
             ),
             "fullscreen disposition wins when both fullscreen and maximized",
         );

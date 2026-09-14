@@ -158,23 +158,38 @@ function toQuantizedInt(value: unknown): number | null {
     return rounded;
 }
 
-function readFrameRect(ref: object): { x: number; y: number; w: number; h: number } | null {
+type FrameRectFailure =
+    | "frame-rect-missing"
+    | "frame-rect-coordinate-invalid"
+    | "frame-rect-size-invalid"
+    | "frame-rect-coordinate-out-of-range"
+    | "frame-rect-size-out-of-range";
+
+type FrameRectRead = { x: number; y: number; w: number; h: number } | FrameRectFailure;
+
+function readFrameRect(ref: object): FrameRectRead {
     const geometry = readProp(ref, "frameGeometry");
     if (typeof geometry !== "object" || geometry === null) {
-        return null;
+        return "frame-rect-missing";
     }
     const record = geometry as Record<string, unknown>;
     const x = toQuantizedInt(record["x"]);
     const y = toQuantizedInt(record["y"]);
+    if (x === null || y === null) {
+        return "frame-rect-coordinate-invalid";
+    }
     const widthRaw = record["width"] !== undefined ? record["width"] : record["w"];
     const heightRaw = record["height"] !== undefined ? record["height"] : record["h"];
     const w = toQuantizedInt(widthRaw);
     const h = toQuantizedInt(heightRaw);
-    if (x === null || y === null || w === null || h === null) {
-        return null;
+    if (w === null || h === null || w <= 0 || h <= 0) {
+        return "frame-rect-size-invalid";
     }
-    if (w <= 0 || h <= 0 || x < -16384 || x > 16384 || y < -16384 || y > 16384 || w > 16384 || h > 16384) {
-        return null;
+    if (x < -16384 || x > 16384 || y < -16384 || y > 16384) {
+        return "frame-rect-coordinate-out-of-range";
+    }
+    if (w > 16384 || h > 16384) {
+        return "frame-rect-size-out-of-range";
     }
     return { x, y, w, h };
 }
@@ -303,6 +318,11 @@ function readNativeId(ref: object): string | null {
     return normalizeNativeId(raw);
 }
 
+function readResourceClass(ref: object): string {
+    const value = readProp(ref, "resourceClass");
+    return isOpaqueId(value) ? value : "unknown";
+}
+
 type EligibilityReporter = (ref: object, reason: string | null) => void;
 
 function observeNative(
@@ -416,6 +436,7 @@ function observeNative(
             workspace: string;
             fullscreen: boolean;
             maximized: boolean;
+            resourceClass: string;
         }> = [];
         for (const item of windows) {
             if (typeof item !== "object" || item === null) {
@@ -465,10 +486,12 @@ function observeNative(
                 return null;
             }
             seen.add(id);
-            const rect = readFrameRect(ref);
-            if (rect === null) {
-                return null;
+            const frame = readFrameRect(ref);
+            if (typeof frame === "string") {
+                reportEligibility?.(ref, frame);
+                continue;
             }
+            const rect = frame;
             // Fullscreen is a compositor-owned overlay state orthogonal to the
             // tree: the window stays observed (identity/position/share
             // retained) but must never be actuated or reflowed. Exact
@@ -487,6 +510,7 @@ function observeNative(
                 workspace: domainWorkspace,
                 fullscreen: readProp(ref, "fullScreen") !== false,
                 maximized: readProp(ref, "maximizeMode") !== 0,
+                resourceClass: readResourceClass(ref),
             });
             reportEligibility?.(ref, null);
         }
@@ -952,7 +976,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         if (id === null) {
             if (reason !== null) {
                 try {
-                    log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=unknown`);
+                    log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=unknown resource_class=unknown`);
                 } catch (error) {
                     void error;
                 }
@@ -968,7 +992,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         }
         eligibilityReasons.set(id, reason);
         try {
-            log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=${id}`);
+            log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=${id} resource_class=${readResourceClass(ref)}`);
         } catch (error) {
             void error;
         }

@@ -80,11 +80,6 @@ Only meaningful pending or active work is listed.
   N-ary/deep visual discrepancy or source-exact fixture justifies the cross-
   contract pixel-authority migration. Source N-ary pixel rounding remains an
   open portability gap.
-- P2 | Unknown out-of-bounds normal-window policy | A 2026-09-14 verbose capture
-  established that an unknown, non-overlay normal window outside the work area
-  makes its domain's `admit` fail closed with `window-out-of-bounds`, including
-  otherwise valid new windows. Decide whether to retain this safety policy or
-  explicitly exclude such windows before admission.
 - P2 | Planner log default silence | The per-run Planner log is intentionally
   empty unless `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1`; default diagnostics are
   KWin-journal-only. Use the opt-in capture when request/reply JSON is required.

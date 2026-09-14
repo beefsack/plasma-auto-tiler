@@ -225,13 +225,13 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-a disposition=written rect=8,8,884,784",
+                    line === "plasma-auto-tiler:plan:write window=win-a resource_class=unknown disposition=written rect=8,8,884,784",
             ),
         );
         assert.ok(
             mocks.logs.some(
                 (line) =>
-                    line === "plasma-auto-tiler:plan:write window=win-b disposition=written rect=900,8,292,784",
+                    line === "plasma-auto-tiler:plan:write window=win-b resource_class=unknown disposition=written rect=900,8,292,784",
             ),
         );
         // Neighbour echo with planned rectangles is consumed with no new D-Bus.

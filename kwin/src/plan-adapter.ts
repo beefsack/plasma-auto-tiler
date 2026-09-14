@@ -13,7 +13,7 @@
 // Diagnostics are always-on and bounded per discrete user action or state
 // change: a cmd route-entry line (`outcome=dispatch`) plus a terminal outcome
 // line per flight, one `rejected kind=` line per Rust rejection, one
-// per-member `write window=<id> disposition=... rect=...` line per applied
+// per-member `write window=<id> resource_class=<class> disposition=... rect=...` line per applied
 // geometry command, dedicated scope-transition/work-area-reprojection lines,
 // exact echo-fence transition tokens, an exact snapshot-invalid detail, and an
 // exact per-cause refusal token for every distinct request-route refusal. No
@@ -64,6 +64,7 @@ export interface PlanObservedWindow {
     readonly workspace: string;
     readonly fullscreen: boolean;
     readonly maximized: boolean;
+    readonly resourceClass?: string;
 }
 
 export interface PlanObserved {
@@ -81,8 +82,8 @@ export interface PlanObserved {
 
 // Primitive-only snapshot retained across the async D-Bus boundary. Never
 // holds Window objects, refs, or revalidation closures: ids, geometry values,
-// scope, and fingerprint only. Targets are always resolved from a fresh
-// synchronous observation while handling the reply.
+// resource classes, scope, and fingerprint only. Targets are resolved from a
+// fresh synchronous observation while handling the reply.
 export interface PlanSnapshotWindow {
     readonly id: string;
     readonly rect: PlanRect;
@@ -90,6 +91,7 @@ export interface PlanSnapshotWindow {
     readonly workspace: string;
     readonly fullscreen: boolean;
     readonly maximized: boolean;
+    readonly resourceClass: string;
 }
 
 export interface PlanSnapshot {
@@ -111,6 +113,7 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         workspace: entry.workspace,
         fullscreen: entry.fullscreen,
         maximized: entry.maximized,
+        resourceClass: isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown",
     }));
     return {
         domainOutput: observed.domainOutput,
@@ -1770,6 +1773,7 @@ export class PlanAdapter {
         const oldById = new Map<string, PlanRect>();
         const fullscreenById = new Set<string>();
         const maximizedById = new Set<string>();
+        const resourceClassById = new Map<string, string>();
         for (const entry of current.windows) {
             byRef.set(entry.id, entry.ref);
             oldById.set(entry.id, { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h });
@@ -1779,6 +1783,7 @@ export class PlanAdapter {
             if (entry.maximized) {
                 maximizedById.add(entry.id);
             }
+            resourceClassById.set(entry.id, isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown");
         }
         const ordered = orderGeometryWrites(oldById, planned.geometry);
         // Focus is focus-only: never rewrite geometry, only move the active
@@ -1799,11 +1804,11 @@ export class PlanAdapter {
             }
             for (const entry of planned.geometry) {
                 if (fullscreenById.has(entry.window)) {
-                    this.writeDiag(entry.window, "skip-fullscreen", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", entry.rect);
                 } else if (maximizedById.has(entry.window)) {
-                    this.writeDiag(entry.window, "skip-maximized", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-maximized", entry.rect);
                 } else if (!orderedById.has(entry.window)) {
-                    this.writeDiag(entry.window, "skip-already-equal", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-already-equal", entry.rect);
                 }
             }
             for (const entry of ordered) {
@@ -1823,11 +1828,11 @@ export class PlanAdapter {
                     written = false;
                 }
                 if (!written) {
-                    this.writeDiag(entry.window, "write-failed", entry.rect);
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "write-failed", entry.rect);
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
-                this.writeDiag(entry.window, "written", entry.rect);
+                this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "written", entry.rect);
             }
         }
         const focus = planned.focus;
@@ -1881,7 +1886,7 @@ export class PlanAdapter {
                 // tree slot must survive enter/exit, and the carried baseline
                 // never stores the compositor-owned frame rect.
                 const rect = rectById.get(entry.id) ?? entry.rect;
-                return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized };
+                return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized, resourceClass: entry.resourceClass };
             });
             this.setLastGood({ ...base, windows: Object.freeze(windows) });
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
@@ -1983,9 +1988,9 @@ export class PlanAdapter {
         }
     }
 
-    private writeDiag(window: string, disposition: string, rect: PlanRect): void {
+    private writeDiag(window: string, resourceClass: string, disposition: string, rect: PlanRect): void {
         this.logToken(
-            `${LOG_PREFIX}:write window=${window} disposition=${disposition} rect=${String(rect.x)},${String(rect.y)},${String(rect.w)},${String(rect.h)}`,
+            `${LOG_PREFIX}:write window=${window} resource_class=${resourceClass} disposition=${disposition} rect=${String(rect.x)},${String(rect.y)},${String(rect.w)},${String(rect.h)}`,
         );
     }
 
@@ -1996,7 +2001,7 @@ export class PlanAdapter {
                 const outside = snapshot.windows.find((entry) => !rectContained(entry.rect, snapshot.domainBounds));
                 if (outside !== undefined) {
                     this.env.log(
-                        `${LOG_PREFIX}:rejected kind=${kind}${suffix} window=${outside.id} rect=${String(outside.rect.x)},${String(outside.rect.y)},${String(outside.rect.w)},${String(outside.rect.h)} bounds=${String(snapshot.domainBounds.x)},${String(snapshot.domainBounds.y)},${String(snapshot.domainBounds.w)},${String(snapshot.domainBounds.h)}`,
+                        `${LOG_PREFIX}:rejected kind=${kind}${suffix} window=${outside.id} resource_class=${outside.resourceClass} rect=${String(outside.rect.x)},${String(outside.rect.y)},${String(outside.rect.w)},${String(outside.rect.h)} bounds=${String(snapshot.domainBounds.x)},${String(snapshot.domainBounds.y)},${String(snapshot.domainBounds.w)},${String(snapshot.domainBounds.h)}`,
                     );
                     return;
                 }

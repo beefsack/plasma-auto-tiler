@@ -233,7 +233,9 @@ Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-p
 (never `journalctl --system`). All emitted production diagnostics carry the
 fixed `plasma-auto-tiler:` prefix and are always-on (never verbose-gated).
 The complete reference below is bounded per discrete user action or state
-change; no line carries a caption or title.
+change; no line carries a caption or title. Window-bearing lines carry the
+stable `resource_class` application identifier as well as the opaque id; it is
+not a caption and cannot contain document or page content.
 
 Startup context (exactly one line per successful plan entry start, using the
 existing owner/generation provenance plus the compiled-in source revision;
@@ -264,16 +266,17 @@ invalid request cause is directly observable:
 
 - `plasma-auto-tiler:plan:rejected kind=<kind>`
 - `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=<detail>`
-- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=<id> rect=<rect> bounds=<rect>`
+- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=<id> resource_class=<class> rect=<rect> bounds=<rect>`
 
 The third form is emitted when the adapter can identify the invalid carried
-rectangle. It uses the same stable opaque id and integer geometry already
-emitted for applied writes.
+rectangle. It uses the same stable opaque id, resource class, and integer
+geometry already emitted for applied writes.
 
 Per applied geometry command (every member exactly one line, non-focus ops;
-`<id>` is the stable opaque normalized window id, `<rect>` is `x,y,w,h`):
+`<id>` is the stable opaque normalized window id, `<class>` is KWin's bounded
+non-sensitive resource class, and `<rect>` is `x,y,w,h`):
 
-- `plasma-auto-tiler:plan:write window=<id> disposition=<written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed> rect=<rect>`
+- `plasma-auto-tiler:plan:write window=<id> resource_class=<class> disposition=<written|skip-fullscreen|skip-maximized|skip-already-equal|write-failed> rect=<rect>`
 
 Per work-area/scope change (dedicated pair, never the generic reconcile line):
 
@@ -319,9 +322,10 @@ shortcut and pointer-route refusal carries its own fixed token):
 
 Per window excluded before admission (one line per unchanged exclusion state for
 an identified window; `<id>` is the normalized window id, or `unknown` when
-KWin cannot provide one):
+KWin cannot provide one. `<class>` is KWin's non-sensitive resource class, or
+`unknown` when unavailable):
 
-- `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch> window=<id>`
+- `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch|frame-rect-missing|frame-rect-coordinate-invalid|frame-rect-size-invalid|frame-rect-coordinate-out-of-range|frame-rect-size-out-of-range> window=<id> resource_class=<class>`
 
 Drag-oracle route lines (always-on; entry then verdict; the pointer route's
 adapter emits the exact `pointer-refused-*` token above per cause, never a

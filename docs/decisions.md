@@ -264,6 +264,14 @@ Historical implementation detail is recoverable in Git history.
   advances that domain's baseline only after a matching `planned` reply is
   applied. A rejected, timed-out, stale, or failed membership command never
   changes the baseline used to derive later admissions or removals.
+- Permissive admission, authorized 2026-09-14: an observed normal window's
+  incoming frame rectangle never decides whether it may join a tiled domain.
+  Admission assigns a new complete geometry for every member and may reflow
+  existing members. In particular, an older out-of-work-area window must not
+  prevent a later window from tiling or create a restart-persistent admission
+  deadlock. Bounds validation remains mandatory for non-admission operations,
+  where observed geometry is the client-drift input for the park policy and
+  echo fence.
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`.
   The active model maintains one structurally trailing empty workspace per
   relevant domain; `Meta+0` and `Meta+Shift+0` reuse it before creating one.

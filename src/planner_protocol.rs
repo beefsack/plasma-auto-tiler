@@ -376,8 +376,10 @@ struct Validated {
     domain_key: DomainKey,
 }
 
-/// Shared request validation: bounds, opaque ids, geometry containment, and
-/// domain binding. Returns the ready-made rejected reply on failure.
+/// Shared request validation: bounds, opaque ids, geometry containment for
+/// existing tiled-state operations, and domain binding. Admission assigns every
+/// member a new geometry, so carried member rectangles do not gate it.
+/// Returns the ready-made rejected reply on failure.
 fn validate_request(request_json: &str) -> Result<Validated, String> {
     if request_json.len() > PLAN_MAX_REQUEST_BYTES {
         return Err(rejected(String::new(), "oversized", MSG_OVERSIZED));
@@ -538,23 +540,26 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             "outer-gap-high",
         ));
     }
+    let admission = request.command.get("op").and_then(serde_json::Value::as_str) == Some("admit");
     for entry in &request.windows {
-        if !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
+        if !admission && !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
                 MSG_OBSERVATION,
                 "window-rect-invalid",
             ));
         }
-        if !rect_contained(
-            Rect {
-                x: entry.rect.x,
-                y: entry.rect.y,
-                w: entry.rect.w,
-                h: entry.rect.h,
-            },
-            carried_bounds,
-        ) {
+        if !admission
+            && !rect_contained(
+                Rect {
+                    x: entry.rect.x,
+                    y: entry.rect.y,
+                    w: entry.rect.w,
+                    h: entry.rect.h,
+                },
+                carried_bounds,
+            )
+        {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
                 MSG_OBSERVATION,
@@ -899,23 +904,29 @@ fn seed_session(
 fn spatial_with_focus_last(
     mut windows: Vec<ObservedDto>,
     focused: &str,
+    allow_tied_observations: bool,
 ) -> Option<Vec<ObservedDto>> {
-    // Equal frame rectangles provide no visible ordering signal. Reject rather
-    // than falling back to an opaque id or native enumeration order.
-    for (index, left) in windows.iter().enumerate() {
-        if left.window == focused {
-            continue;
-        }
-        if windows[index + 1..].iter().any(|right| {
-            right.window != focused
-                && left.rect.x == right.rect.x
-                && left.rect.y == right.rect.y
-                && left.rect.w == right.rect.w
-                && left.rect.h == right.rect.h
-        }) {
-            return None;
+    if !allow_tied_observations {
+        // Non-admission rebuilds reconstruct existing tiled state, so equal
+        // frame rectangles still lack a safe topology signal.
+        for (index, left) in windows.iter().enumerate() {
+            if left.window == focused {
+                continue;
+            }
+            if windows[index + 1..].iter().any(|right| {
+                right.window != focused
+                    && left.rect.x == right.rect.x
+                    && left.rect.y == right.rect.y
+                    && left.rect.w == right.rect.w
+                    && left.rect.h == right.rect.h
+            }) {
+                return None;
+            }
         }
     }
+    // Stable sorting preserves the adapter's observation order when carried
+    // rectangles tie during admission. Admission assigns new geometry, so an
+    // uninformative incoming rectangle must not reject the other members.
     windows.sort_by(
         |left, right| match (left.window == focused, right.window == focused) {
             (true, false) => std::cmp::Ordering::Greater,
@@ -1557,6 +1568,7 @@ impl Planner {
                 .cloned()
                 .collect(),
             &ctx.request.focused_window,
+            true,
         );
         let window = WindowId(command.window.clone());
         let output = OutputId(command.output.clone());
@@ -1643,7 +1655,7 @@ impl Planner {
             );
         }
         let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1726,7 +1738,7 @@ impl Planner {
             );
         };
         let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1811,7 +1823,7 @@ impl Planner {
             );
         };
         let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1903,7 +1915,7 @@ impl Planner {
             );
         };
         let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
         let window = WindowId(command.window.clone());
         let capabilities = crate::contract::ResizeCapabilities {
             keyboard_resize: true,
@@ -2000,7 +2012,7 @@ impl Planner {
             );
         };
         let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window);
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
         let window = WindowId(command.window.clone());
         let boundary = command.boundary;
         let capabilities = crate::contract::ResizeCapabilities {
@@ -2484,11 +2496,11 @@ impl Planner {
             Err(reply) => return reply,
         };
         let Some(source_order) =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)
+            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
         else {
             return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
         };
-        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "") else {
+        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "", false) else {
             return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
         };
         let Some(mut session) = seed_workspace_session(
@@ -2808,7 +2820,7 @@ fn evaluate_admit(ctx: &Validated) -> String {
         .filter(|w| w.window != command.window)
         .cloned()
         .collect();
-    let Some(seed_order) = spatial_with_focus_last(base, &ctx.request.focused_window) else {
+    let Some(seed_order) = spatial_with_focus_last(base, &ctx.request.focused_window, true) else {
         return rejected(
             ctx.request.correlation_id.clone(),
             "ambiguous-placement",
@@ -2914,7 +2926,7 @@ fn evaluate_remove(ctx: &Validated) -> String {
         );
     }
     let Some(seed_order) =
-        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)
+        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
     else {
         return rejected(
             ctx.request.correlation_id.clone(),
@@ -2974,7 +2986,7 @@ struct DirectedCommand {
 
 fn build_full_session(ctx: &Validated) -> Result<(Session, SessionObservation), &'static str> {
     let Some(seed_order) =
-        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window)
+        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
     else {
         return Err("missing-seed-order");
     };
@@ -3495,6 +3507,64 @@ mod tests {
     }
 
     #[test]
+    fn admit_reflows_an_out_of_bounds_member_after_planner_restart() {
+        let command = serde_json::json!({
+            "op": "admit",
+            "window": "firefox-new",
+            "output": "out-1",
+            "workspace": "ws-1",
+        });
+        // This is the reported shape: an older Firefox member extends 26px
+        // below the work area while a new Firefox window is admitted.
+        let request = custom_request(
+            "admit-oob-1",
+            "ghostty",
+            (0, 44, 1536, 980),
+            &[
+                ("ghostty", 0, 44, 504, 980),
+                ("firefox-old", 504, 44, 526, 1006),
+                ("firefox-new", 1030, 44, 506, 980),
+            ],
+            command,
+        );
+        let mut first_planner = Planner::new();
+        let first = parse_reply(&first_planner.evaluate(&request));
+        assert_eq!(first["outcome"], "planned", "{first}");
+        assert_geometry_covers(&first, &["ghostty", "firefox-old", "firefox-new"]);
+        for geometry in first["desired_geometry"].as_array().expect("geometry") {
+            let rect = &geometry["rect"];
+            assert!(rect["x"].as_i64().unwrap() >= 0, "{first}");
+            assert!(rect["y"].as_i64().unwrap() >= 44, "{first}");
+            assert!(rect["x"].as_i64().unwrap() + rect["w"].as_i64().unwrap() <= 1536, "{first}");
+            assert!(rect["y"].as_i64().unwrap() + rect["h"].as_i64().unwrap() <= 1024, "{first}");
+        }
+
+        // The raw out-of-bounds observation contains no state that can wedge
+        // a fresh Planner instance after an adapter or Planner restart.
+        let restarted_request = request.replace("admit-oob-1", "admit-oob-2");
+        let mut restarted_planner = Planner::new();
+        let restarted = parse_reply(&restarted_planner.evaluate(&restarted_request));
+        assert_eq!(restarted["outcome"], "planned", "{restarted}");
+        assert_geometry_covers(&restarted, &["ghostty", "firefox-old", "firefox-new"]);
+
+        // Existing tiled-state operations still reject an out-of-bounds drift.
+        let drift = custom_request(
+            "drift-oob-1",
+            "ghostty",
+            (0, 44, 1536, 980),
+            &[
+                ("ghostty", 0, 44, 504, 980),
+                ("firefox-old", 504, 44, 526, 1006),
+                ("firefox-new", 1030, 44, 506, 980),
+            ],
+            serde_json::json!({"op": "focus", "window": "ghostty", "direction": "left"}),
+        );
+        let drift_reply = parse_reply(&evaluate_plan_json(&drift));
+        assert_eq!(drift_reply["kind"], "snapshot-invalid", "{drift_reply}");
+        assert_eq!(drift_reply["detail"], "window-out-of-bounds", "{drift_reply}");
+    }
+
+    #[test]
     fn remove_collapses_2_to_6_preserving_survivors() {
         for total in 2..=6 {
             let windows: Vec<String> = (1..=total).map(|i| format!("win-{i}")).collect();
@@ -3904,7 +3974,8 @@ mod tests {
         let valid_reply = parse_reply(&planner.evaluate(&valid));
         assert_eq!(valid_reply["outcome"], "planned", "{valid_reply}");
         assert_geometry_covers(&valid_reply, &["win-1"]);
-        // Divergence that rebuilds to an ambiguous base also rejects.
+        // An admission may rebuild from tied carried rectangles because it
+        // assigns a fresh geometry to every member.
         let mut planner2 = Planner::new();
         let seed = retained_request(
             "d4-reject-3",
@@ -3941,8 +4012,8 @@ mod tests {
             admit_body("win-4"),
         );
         let bad = parse_reply(&planner2.evaluate(&divergent_ambiguous));
-        assert_eq!(bad["outcome"], "rejected", "{bad}");
-        assert_eq!(bad["kind"], "ambiguous-placement", "{bad}");
+        assert_eq!(bad["outcome"], "planned", "{bad}");
+        assert_geometry_covers(&bad, &["win-1", "win-2", "win-3", "win-4"]);
         // Still recoverable afterwards.
         let recover = retained_request(
             "d4-reject-6",
