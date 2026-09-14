@@ -317,6 +317,12 @@ shortcut and pointer-route refusal carries its own fixed token):
 - `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
 - `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
 
+Per window excluded before admission (one line per unchanged exclusion state for
+an identified window; `<id>` is the normalized window id, or `unknown` when
+KWin cannot provide one):
+
+- `plasma-auto-tiler:plan:observe-excluded reason=<active-normal-window|normal-window|output-missing|output-mismatch|desktop-mismatch> window=<id>`
+
 Drag-oracle route lines (always-on; entry then verdict; the pointer route's
 adapter emits the exact `pointer-refused-*` token above per cause, never a
 catch-all line):

@@ -303,7 +303,13 @@ function readNativeId(ref: object): string | null {
     return normalizeNativeId(raw);
 }
 
-function observeNative(liveWorkspace: unknown, cache: Map<string, string>): PlanObserved | null {
+type EligibilityReporter = (ref: object, reason: string | null) => void;
+
+function observeNative(
+    liveWorkspace: unknown,
+    cache: Map<string, string>,
+    reportEligibility?: EligibilityReporter,
+): PlanObserved | null {
     try {
         if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
             return null;
@@ -321,6 +327,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
         }
         const activeRef = active as object;
         if (readProp(activeRef, "normalWindow") !== true) {
+            reportEligibility?.(activeRef, "active-normal-window");
             return null;
         }
         const activeOutput = readProp(activeRef, "output");
@@ -418,14 +425,17 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             // Only normal windows are observed. Every other classification
             // is skipped before the snapshot; Rust owns all remaining policy.
             if (readProp(ref, "normalWindow") !== true) {
+                reportEligibility?.(ref, "normal-window");
                 continue;
             }
             const output = readProp(ref, "output");
             if (typeof output !== "object" || output === null) {
+                reportEligibility?.(ref, "output-missing");
                 continue;
             }
             const nameRaw = readProp(output as object, "name");
             if (nameRaw !== domainOutput) {
+                reportEligibility?.(ref, "output-mismatch");
                 continue;
             }
             const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
@@ -440,6 +450,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                 }
             }
             if (!onDesktop) {
+                reportEligibility?.(ref, "desktop-mismatch");
                 continue;
             }
             // Read and normalize the native id while the object is live;
@@ -477,6 +488,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
                 fullscreen: readProp(ref, "fullScreen") !== false,
                 maximized: readProp(ref, "maximizeMode") !== 0,
             });
+            reportEligibility?.(ref, null);
         }
         if (entries.length === 0) {
             return null;
@@ -525,7 +537,7 @@ function observeNative(liveWorkspace: unknown, cache: Map<string, string>): Plan
             fingerprint: expected,
             revalidate: () => {
                 try {
-                    const fresh = observeNative(liveWorkspace, cache);
+                    const fresh = observeNative(liveWorkspace, cache, reportEligibility);
                     if (fresh === null || fresh.fingerprint !== expected || fresh.activeRef !== capturedActive) {
                         return false;
                     }
@@ -934,11 +946,38 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     // plan id (the same normalized string, interned). Never keyed by Window.
     // Eviction is explicit when the adapter identifies a removed string id.
     const nativeIds = new Map<string, string>();
+    const eligibilityReasons = new Map<string, string>();
+    const reportEligibility: EligibilityReporter = (ref, reason): void => {
+        const id = readNativeId(ref);
+        if (id === null) {
+            if (reason !== null) {
+                try {
+                    log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=unknown`);
+                } catch (error) {
+                    void error;
+                }
+            }
+            return;
+        }
+        if (reason === null) {
+            eligibilityReasons.delete(id);
+            return;
+        }
+        if (eligibilityReasons.get(id) === reason) {
+            return;
+        }
+        eligibilityReasons.set(id, reason);
+        try {
+            log(`plasma-auto-tiler:plan:observe-excluded reason=${reason} window=${id}`);
+        } catch (error) {
+            void error;
+        }
+    };
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
         log,
-        observe: () => observeNative(liveWorkspace, nativeIds),
+        observe: () => observeNative(liveWorkspace, nativeIds, reportEligibility),
         setGeometry: (target, rect) => {
             try {
                 Reflect.set(target, "frameGeometry", {
@@ -1045,6 +1084,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         noteRemoved: (id) => {
             try {
                 nativeIds.delete(id);
+                eligibilityReasons.delete(id);
             } catch (error) {
                 void error;
             }
@@ -1054,7 +1094,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     if (!enabled) {
         return null;
     }
-    if (observeNative(liveWorkspace, nativeIds) === null) {
+    if (observeNative(liveWorkspace, nativeIds, reportEligibility) === null) {
         adapter.disable();
         return null;
     }
@@ -1148,7 +1188,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     };
     const captureOracleStart = (ref: object): void => {
         try {
-            const observed = observeNative(liveWorkspace, nativeIds);
+            const observed = observeNative(liveWorkspace, nativeIds, reportEligibility);
             if (observed === null) return;
             for (const entry of observed.windows) {
                 if (entry.ref === ref) {
@@ -1205,7 +1245,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 try { log("plasma-auto-tiler:route-diag:drag-context-invalid"); } catch (error) { void error; }
                 return;
             }
-            const observed = observeNative(liveWorkspace, nativeIds);
+            const observed = observeNative(liveWorkspace, nativeIds, reportEligibility);
             if (observed === null) {
                 takeOwnStart(ctx);
                 try { log("plasma-auto-tiler:route-diag:drag-scope-invalid"); } catch (error) { void error; }

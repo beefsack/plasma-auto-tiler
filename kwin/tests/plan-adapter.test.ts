@@ -1630,6 +1630,55 @@ describe("plan entry live observation and shortcuts", () => {
         const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
         const ids = (payload["windows"] as Array<Record<string, unknown>>).map((entry) => entry["window"]);
         assert.deepEqual(ids, ["win-a", "win-b", "12345678-1234-1234-1234-1234567890ab"]);
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:observe-excluded reason=normal-window window=dock-1",
+            ),
+            "a non-normal window is excluded with its exact reason",
+        );
+        handle?.stop();
+    });
+
+    it("logs exact output and desktop exclusion reasons once per unchanged window", () => {
+        const world = fakeWorld();
+        const otherOutput = { name: "out-2" };
+        const outputMismatch = {
+            normalWindow: true,
+            internalId: "other-output",
+            output: otherOutput,
+            desktops: [world.desktop],
+            frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
+        };
+        const desktopMismatch = {
+            normalWindow: true,
+            internalId: "other-desktop",
+            output: world.output,
+            desktops: [],
+            frameGeometry: { x: 0, y: 0, width: 10, height: 10 },
+            moveResizedChanged: fakeSignal().signal,
+            fullScreenChanged: fakeSignal().signal,
+            fullScreen: false,
+            maximizedChanged: fakeSignal().signal,
+            maximizeMode: 0,
+        };
+        world.wins.push(outputMismatch, desktopMismatch);
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        handle?.requestFocus("right");
+        handle?.requestFocus("left");
+        assert.equal(
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=output-mismatch window=other-output").length,
+            1,
+        );
+        assert.equal(
+            mocks.logs.filter((line) => line === "plasma-auto-tiler:plan:observe-excluded reason=desktop-mismatch window=other-desktop").length,
+            1,
+        );
         handle?.stop();
     });
 
