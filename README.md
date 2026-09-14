@@ -296,7 +296,6 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-move-right-arrow | Meta+Shift+Right |
 | plasma-auto-tiler-detach | Meta+Shift+Space |
 | plasma-auto-tiler-attach | Meta+Alt+Shift+Space |
-| plasma-auto-tiler-float-toggle | Meta+G |
 | plasma-auto-tiler-fill-scope | Meta+Alt+Return |
 | plasma-auto-tiler-apply-columns | Meta+Alt+1 |
 | plasma-auto-tiler-apply-rows | Meta+Alt+2 |
@@ -308,9 +307,7 @@ appear in the registered shortcut set below.
 | plasma-auto-tiler-move-workspace-append | Meta+Shift+0 |
 
 Sequences above are the `cosmic` profile default; `hyprland` and `bspwm`
-select different catalog rows for shared actions (for example
-`plasma-auto-tiler-float-toggle` is Meta+V on `hyprland` and Meta+S on
-`bspwm`).
+select different catalog rows for shared actions.
 
 ### What this does to your session
 
@@ -320,12 +317,13 @@ the session unless it becomes inert. This is proven by static tests and
 nested-compositor probing only; live-host validation was not performed, so
 treat live session behavior as unverified.
 
-`Meta+G` attempts to float the active eligible normal window at a centered 60%
-x 60% of its current output work area, removing it from the planner tree. A
-second toggle is fresh admission, not restoration of the previous leaf.
-Fullscreen and maximized windows refuse. The controller never displaces an
-existing global shortcut: a failed registration emits a bounded diagnostic.
-Sticky floating is deferred.
+Intentional floating is available only through the internal controller request
+path while physical binding is blocked. KWin Grid View owns `Meta+G`, so the
+controller does not register or replace that chord. The request floats an
+eligible active normal window at a centered 60% x 60% of its work area,
+removes it from the planner tree, and retains session-local non-tree geometry.
+Unfloat is fresh admission, never prior-leaf restoration. Fullscreen and
+maximized windows refuse. Sticky floating is deferred.
 
 `Meta+1..9` focuses the existing 1-based workspace; `Meta+0` focuses or creates
 the trailing empty workspace (idempotent when already trailing empty, no hard

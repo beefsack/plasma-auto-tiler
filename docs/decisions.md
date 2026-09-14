@@ -229,15 +229,14 @@ Historical implementation detail is recoverable in Git history.
 
 - Pointer resize adjusts shared split boundaries or ratios and reflows
   neighbouring tiles.
-- Intentional floating is a session-local per-window state. `Meta+G` detaches
-  an eligible active normal window from its KWin tile, centers it at 60% of the
-  active work area, and removes it from the planner tree; a second toggle is
-  fresh planner admission, never prior-leaf restoration. Fullscreen and
-  maximized targets refuse with `float-refused-fullscreen` and
-  `float-refused-maximize`. The controller attempts a non-mutating shortcut
-  registration only; it never displaces an existing global shortcut. Current
-  read-only KGlobalAccel evidence finds `Meta+G` held by KWin Grid View, so the
-  binding is live-unproven until an explicitly selected shortcut override.
+- Intentional floating is a session-local per-window state carried by the Rust
+  Session outside its tile tree. The internal `toggle-float` request centers an
+  eligible active normal window at 60% of the active work area and removes it
+  from the tree; a second request is fresh planner admission, never prior-leaf
+  restoration. Fullscreen and maximized targets refuse with
+  `float-refused-fullscreen` and `float-refused-maximize`. KWin Grid View owns
+  `Meta+G`; the controller does not register, replace, or claim physical
+  delivery for that chord, and no substitute binding is selected.
   `Meta+Shift+G` sticky is deferred: KWin source exposes writable
   `Window.onAllDesktops`, but no static-only lifecycle claim is selected for
   its desktop-membership restoration.

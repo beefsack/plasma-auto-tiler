@@ -438,6 +438,7 @@ function observeNative(
             workspace: string;
             fullscreen: boolean;
             maximized: boolean;
+            floating: boolean;
             resourceClass: string;
         }> = [];
         for (const item of windows) {
@@ -488,10 +489,6 @@ function observeNative(
                 return null;
             }
             seen.add(id);
-            if (floatingIds.has(id)) {
-                reportEligibility?.(ref, "floating");
-                continue;
-            }
             const frame = readFrameRect(ref);
             if (typeof frame === "string") {
                 reportEligibility?.(ref, frame);
@@ -516,6 +513,7 @@ function observeNative(
                 workspace: domainWorkspace,
                 fullscreen: readProp(ref, "fullScreen") !== false,
                 maximized: readProp(ref, "maximizeMode") !== 0,
+                floating: floatingIds.has(id),
                 resourceClass: readResourceClass(ref),
             });
             reportEligibility?.(ref, null);
@@ -536,12 +534,6 @@ function observeNative(
                 break;
             }
         }
-        if (activeId === null && activeExcluded && entries.length > 0) {
-            activeId = entries[0]?.id ?? null;
-        }
-        if (activeId === null && activeExcluded && entries.length === 0) {
-            activeId = "";
-        }
         if (activeId === null) {
             return null;
         }
@@ -557,6 +549,7 @@ function observeNative(
                     workspace: entry.workspace,
                     fullscreen: entry.fullscreen,
                     maximized: entry.maximized,
+                    floating: entry.floating,
                 }),
             ),
         );
@@ -1049,6 +1042,13 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return false;
             }
         },
+        setFloating: (id, floating) => {
+            if (floating) {
+                floatingIds.add(id);
+            } else {
+                floatingIds.delete(id);
+            }
+        },
         setActive: (target) => {
             try {
                 (liveWorkspace as { activeWindow: unknown }).activeWindow = target;
@@ -1191,59 +1191,6 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             return null;
         }
     }
-    const requestFloat = (): void => {
-        const active = readProp(surface, "activeWindow");
-        if (typeof active !== "object" || active === null) {
-            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
-            return;
-        }
-        const activeId = readNativeId(active as object);
-        if (activeId === null) {
-            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
-            return;
-        }
-        if (floatingIds.has(activeId)) {
-            floatingIds.delete(activeId);
-            adapter.requestResync();
-            return;
-        }
-        const observed = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
-        if (observed === null || observed.activeExcluded || observed.focusedId === "") {
-            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
-            return;
-        }
-        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
-        if (target === undefined) {
-            try { log("plasma-auto-tiler:plan:float-refused-observe"); } catch (error) { void error; }
-            return;
-        }
-        if (target.fullscreen) {
-            try { log("plasma-auto-tiler:plan:float-refused-fullscreen"); } catch (error) { void error; }
-            return;
-        }
-        if (target.maximized) {
-            try { log("plasma-auto-tiler:plan:float-refused-maximize"); } catch (error) { void error; }
-            return;
-        }
-        const width = Math.max(1, Math.floor(observed.domainBounds.w * 0.6));
-        const height = Math.max(1, Math.floor(observed.domainBounds.h * 0.6));
-        floatingIds.add(target.id);
-        try {
-            Reflect.set(target.ref, "tile", null);
-            Reflect.set(target.ref, "frameGeometry", {
-                x: observed.domainBounds.x + Math.floor((observed.domainBounds.w - width) / 2),
-                y: observed.domainBounds.y + Math.floor((observed.domainBounds.h - height) / 2),
-                width,
-                height,
-            });
-        } catch (error) {
-            void error;
-            floatingIds.delete(target.id);
-            try { log("plasma-auto-tiler:plan:float-refused-native"); } catch (inner) { void inner; }
-            return;
-        }
-        adapter.requestResync();
-    };
     for (const row of catalog) {
         const action = row.action;
         const text = row.text;
@@ -1273,20 +1220,6 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void inner;
             }
         }
-    }
-    try {
-        const ok = registerFn(
-            "plasma-auto-tiler-float-toggle",
-            "Toggle floating window",
-            "Meta+G",
-            requestFloat,
-        );
-        if (ok !== true) {
-            try { log("plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-float-toggle sequence=Meta+G"); } catch (error) { void error; }
-        }
-    } catch (error) {
-        void error;
-        try { log("plasma-auto-tiler:plan:shortcut-failed action=plasma-auto-tiler-float-toggle sequence=Meta+G"); } catch (inner) { void inner; }
     }
     // Slice 2 oracle route: preserve start rect plus move/resize classification
     // at Started, then on a non-cancelled LastVerdict route exactly one strict
@@ -1542,6 +1475,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void error;
             }
         },
-        requestFloat,
+        requestFloat: () => {
+            try {
+                adapter.requestFloat();
+            } catch (error) {
+                void error;
+            }
+        },
     };
 }

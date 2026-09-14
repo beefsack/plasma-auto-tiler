@@ -4,7 +4,8 @@
 //! propose/acknowledge/verify cycles. No live compositor state.
 
 use plasma_auto_tiler::contract::{
-    AdapterAck, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities, Observation,
+    AckOutcome, AdapterAck, DivergenceKind, LIFECYCLE_POLICY_VERSION, LifecycleCapabilities,
+    LifecyclePostObservation, Observation,
 };
 use plasma_auto_tiler::directional::{Axis, Node, NodeId, OutputId, WindowId, WorkspaceId};
 use plasma_auto_tiler::geometry::Rect;
@@ -1046,6 +1047,98 @@ fn exception_flags_fail_closed_until_behavior_selected() {
         "corr-3",
     );
     assert_eq!(session.exception_count(), 1);
+}
+
+#[test]
+fn intentional_float_is_transactional_non_tree_state_and_unfloats_by_fresh_admission() {
+    let mut session = single_domain_session();
+    admit_and_commit(
+        &mut session,
+        "win-1",
+        "out-1",
+        "ws-1",
+        placement(120, 80),
+        "float-admit",
+    );
+    let float_rect = Rect {
+        x: 24,
+        y: 16,
+        w: 72,
+        h: 48,
+    };
+    let base = session.accepted_revision();
+    let float = session
+        .propose(
+            &SessionCommand::ToggleFloat {
+                window: WindowId("win-1".to_owned()),
+                float_geometry: Some(float_rect),
+            },
+            &complete_observation(&session, Vec::new()),
+            &correlation("float-off"),
+            &LifecycleCapabilities::full(),
+        )
+        .expect("tiled window floats");
+    assert!(float.desired_geometry.is_empty());
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation("float-off"),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("float ack");
+    session
+        .verify_lifecycle(&LifecyclePostObservation::new(
+            Observation::new(owner(), generation(), base, 401),
+            correlation("float-off"),
+            true,
+            float.dispatch.preconditions.clone(),
+            float.dispatch.operation.clone(),
+        ))
+        .expect("float commit");
+    assert!(session.snapshot().windows.is_empty());
+    let record = session.exception_observed();
+    assert_eq!(record.len(), 1);
+    assert!(record[0].floating);
+    assert_eq!(
+        session.floating_geometry(&WindowId("win-1".to_owned())),
+        Some(float_rect)
+    );
+
+    let base = session.accepted_revision();
+    let tiled = session
+        .propose(
+            &SessionCommand::ToggleFloat {
+                window: WindowId("win-1".to_owned()),
+                float_geometry: None,
+            },
+            &complete_observation(&session, Vec::new()),
+            &correlation("float-on"),
+            &LifecycleCapabilities::full(),
+        )
+        .expect("floating window is freshly admitted");
+    assert_eq!(tiled.desired_geometry.len(), 1);
+    session
+        .acknowledge(&AdapterAck::new(
+            correlation("float-on"),
+            owner(),
+            generation(),
+            base,
+            AckOutcome::Accepted,
+        ))
+        .expect("unfloat ack");
+    session
+        .verify_lifecycle(&LifecyclePostObservation::new(
+            Observation::new(owner(), generation(), base, 402),
+            correlation("float-on"),
+            true,
+            tiled.dispatch.preconditions.clone(),
+            tiled.dispatch.operation.clone(),
+        ))
+        .expect("unfloat commit");
+    assert_eq!(leaves_of(&session, "out-1", "ws-1"), vec!["leaf-win-1"]);
+    assert_eq!(session.exception_count(), 0);
 }
 
 #[test]

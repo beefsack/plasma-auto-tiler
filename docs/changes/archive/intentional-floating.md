@@ -2,9 +2,9 @@
 
 ## Goal
 
-- Ship the intentional COSMIC-grounded floating toggle MVP without live KWin or
-  Plasma mutation. `Meta+G` toggles the active eligible window between the
-  planner's tiled membership and session-local floating state.
+- Superseded by `docs/changes/archive/intentional-floating-repair.md`. The original
+  slice was incomplete: it did not use the Rust Session/protocol transition
+  and incorrectly registered `Meta+G` despite the KWin Grid View collision.
 
 ## Scope
 
@@ -34,11 +34,8 @@
 
 ## Outcome
 
-- `kwin/src/plan-adapter-entry.ts` registers `plasma-auto-tiler-float-toggle`
-  for `Meta+G`, tracks session-local floating identities, detaches and centers
-  the target, then feeds the existing membership removal/admission path.
-  `kwin/src/plan-adapter.ts` supports an empty surviving tiled set and refuses
-  tiled commands while the active window is intentionally floating.
+- This outcome is superseded. The repaired implementation uses the Rust
+  Session/protocol `toggle-float` request and does not register `Meta+G`.
 - Static KGlobalAccel enumeration called `allComponents`, then
   `allShortcutInfos("default")` on every returned component. `Meta+G`
   (`268435527`) is held by `kwin` / `Grid View`; `Meta+Shift+G`

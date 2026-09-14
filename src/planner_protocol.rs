@@ -172,6 +172,8 @@ struct ObservedDto {
     output: String,
     workspace: String,
     rect: RectDto,
+    #[serde(default)]
+    floating: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -210,6 +212,12 @@ struct FocusReplyBody {
 }
 
 #[derive(Debug, Clone, Serialize)]
+struct FloatReplyBody {
+    window: String,
+    rect: RectDto,
+}
+
+#[derive(Debug, Clone, Serialize)]
 struct PlanReply {
     v: u32,
     correlation_id: String,
@@ -226,6 +234,8 @@ struct PlanReply {
     desired_geometry: Option<Vec<GeometryReply>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     desired_focus: Option<FocusReplyBody>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    float_geometry: Option<FloatReplyBody>,
     #[serde(skip_serializing_if = "Option::is_none")]
     preconditions: Option<Vec<&'static str>>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -251,6 +261,7 @@ fn rejected(correlation_id: String, kind: &str, message: &str) -> String {
         detail: None,
         desired_geometry: None,
         desired_focus: None,
+        float_geometry: None,
         preconditions: None,
         operation: None,
     })
@@ -268,6 +279,7 @@ fn snapshot_invalid(correlation_id: String, message: &str, detail: &'static str)
         detail: Some(serde_json::Value::String(detail.to_owned())),
         desired_geometry: None,
         desired_focus: None,
+        float_geometry: None,
         preconditions: None,
         operation: None,
     })
@@ -313,6 +325,9 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "pointer-resize-op-invalid",
     "pointer-resize-window-invalid",
     "reconcile-op-invalid",
+    "toggle-float-op-invalid",
+    "toggle-float-window-invalid",
+    "float-rect-invalid",
 ];
 
 fn classify_parse_error(error: &serde_json::Error) -> (&'static str, &'static str) {
@@ -540,9 +555,14 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             "outer-gap-high",
         ));
     }
-    let admission = request.command.get("op").and_then(serde_json::Value::as_str) == Some("admit");
+    let admission = request
+        .command
+        .get("op")
+        .and_then(serde_json::Value::as_str)
+        == Some("admit");
     for entry in &request.windows {
-        if !admission && !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h) {
+        if !admission && !valid_carried_rect(entry.rect.x, entry.rect.y, entry.rect.w, entry.rect.h)
+        {
             return Err(snapshot_invalid(
                 request.correlation_id.clone(),
                 MSG_OBSERVATION,
@@ -550,6 +570,7 @@ fn validate_request(request_json: &str) -> Result<Validated, String> {
             ));
         }
         if !admission
+            && !entry.floating
             && !rect_contained(
                 Rect {
                     x: entry.rect.x,
@@ -658,7 +679,7 @@ fn observed_windows(request: &RequestDto) -> Vec<ObservedWindow> {
             window: WindowId(entry.window.clone()),
             output: OutputId(entry.output.clone()),
             workspace: WorkspaceId(entry.workspace.clone()),
-            floating: false,
+            floating: entry.floating,
             fullscreen: false,
             maximized: false,
             sticky: false,
@@ -706,6 +727,7 @@ fn planned_reply(
         detail: Some(detail),
         desired_geometry: Some(geometry.iter().map(geometry_reply).collect()),
         desired_focus: focus.map(|(domain, leaf)| focus_reply(domain, leaf)),
+        float_geometry: None,
         preconditions: None,
         operation: None,
     })
@@ -776,6 +798,7 @@ fn workspace_planned_reply(correlation_id: &str, plan: &SessionPlan) -> String {
             (Some(d), Some(l)) => Some(focus_reply(d, l)),
             _ => None,
         },
+        float_geometry: None,
         preconditions: Some(preconditions),
         operation: Some(operation),
     })
@@ -999,7 +1022,7 @@ fn observed_from_dto(entry: &ObservedDto) -> ObservedWindow {
         window: WindowId(entry.window.clone()),
         output: OutputId(entry.output.clone()),
         workspace: WorkspaceId(entry.workspace.clone()),
-        floating: false,
+        floating: entry.floating,
         fullscreen: false,
         maximized: false,
         sticky: false,
@@ -1019,6 +1042,7 @@ fn diverged_reply(correlation_id: &str, reason: crate::contract::DivergenceKind)
         detail: None,
         desired_geometry: None,
         desired_focus: None,
+        float_geometry: None,
         preconditions: None,
         operation: None,
     })
@@ -1369,6 +1393,7 @@ impl Planner {
             "resize" => self.evaluate_resize_retained(&ctx),
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "reconcile" => self.evaluate_reconcile_retained(&ctx),
+            "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -1654,8 +1679,11 @@ impl Planner {
                 "remove-window-invalid",
             );
         }
-        let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
+        let seed_order = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        );
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1708,6 +1736,75 @@ impl Planner {
         )
     }
 
+    fn evaluate_toggle_float_retained(&mut self, ctx: &Validated) -> String {
+        if ctx
+            .request
+            .windows
+            .iter()
+            .find(|entry| {
+                entry.window
+                    == ctx
+                        .request
+                        .command
+                        .get("window")
+                        .and_then(serde_json::Value::as_str)
+                        .unwrap_or_default()
+            })
+            .is_some_and(|entry| entry.floating)
+            && !self.sessions.contains_key(&ctx.domain_key)
+        {
+            return rejected(
+                ctx.request.correlation_id.clone(),
+                RefusalKind::NotTiled.as_str(),
+                RefusalKind::NotTiled.message(),
+            );
+        }
+        evaluate_toggle_float_with(ctx, |command, float_rect| {
+            let seed_order = spatial_with_focus_last(
+                ctx.request.windows.clone(),
+                &ctx.request.focused_window,
+                false,
+            );
+            let window = WindowId(command.window.clone());
+            self.run_retained(
+                ctx,
+                seed_order,
+                true,
+                |session, observation| {
+                    session.propose(
+                        &SessionCommand::ToggleFloat {
+                            window: window.clone(),
+                            float_geometry: float_rect,
+                        },
+                        observation,
+                        &ctx.correlation,
+                        &LifecycleCapabilities::full(),
+                    )
+                },
+                |plan| float_planned_reply(&ctx.request.correlation_id, plan, float_rect),
+                |session, plan, c, base| {
+                    if !acknowledge(session, c, base) {
+                        return false;
+                    }
+                    session
+                        .verify_lifecycle(&LifecyclePostObservation::new(
+                            Observation::new(
+                                c.owner.clone(),
+                                c.generation.clone(),
+                                base,
+                                c.request.fingerprint,
+                            ),
+                            c.correlation.clone(),
+                            true,
+                            plan.dispatch.preconditions.clone(),
+                            plan.dispatch.operation.clone(),
+                        ))
+                        .is_ok()
+                },
+            )
+        })
+    }
+
     fn evaluate_move_retained(&mut self, ctx: &Validated) -> String {
         let command: DirectedCommand = match serde_json::from_value(ctx.request.command.clone()) {
             Ok(command) => command,
@@ -1737,8 +1834,11 @@ impl Planner {
                 MSG_DIRECTION,
             );
         };
-        let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
+        let seed_order = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        );
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1822,8 +1922,11 @@ impl Planner {
                 MSG_DIRECTION,
             );
         };
-        let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
+        let seed_order = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        );
         let window = WindowId(command.window.clone());
         self.run_retained(
             ctx,
@@ -1914,8 +2017,11 @@ impl Planner {
                 MSG_DIRECTION,
             );
         };
-        let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
+        let seed_order = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        );
         let window = WindowId(command.window.clone());
         let capabilities = crate::contract::ResizeCapabilities {
             keyboard_resize: true,
@@ -2011,8 +2117,11 @@ impl Planner {
                 MSG_DIRECTION,
             );
         };
-        let seed_order =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false);
+        let seed_order = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        );
         let window = WindowId(command.window.clone());
         let boundary = command.boundary;
         let capabilities = crate::contract::ResizeCapabilities {
@@ -2495,12 +2604,15 @@ impl Planner {
             Ok(input) => input,
             Err(reply) => return reply,
         };
-        let Some(source_order) =
-            spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
-        else {
+        let Some(source_order) = spatial_with_focus_last(
+            ctx.request.windows.clone(),
+            &ctx.request.focused_window,
+            false,
+        ) else {
             return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
         };
-        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "", false) else {
+        let Some(target_order) = spatial_with_focus_last(input.target_windows.clone(), "", false)
+        else {
             return rejected(cid, "ambiguous-placement", MSG_AMBIGUOUS);
         };
         let Some(mut session) = seed_workspace_session(
@@ -2609,6 +2721,7 @@ impl Planner {
                 detail: None,
                 desired_geometry: None,
                 desired_focus: None,
+                float_geometry: None,
                 preconditions: None,
                 operation: None,
             }),
@@ -2699,6 +2812,7 @@ impl Planner {
                     detail: None,
                     desired_geometry: None,
                     desired_focus: None,
+                    float_geometry: None,
                     preconditions: None,
                     operation: None,
                 })
@@ -2730,6 +2844,59 @@ pub fn evaluate_plan_json(request_json: &str) -> String {
         "move" => evaluate_move(&ctx),
         "focus" => evaluate_focus(&ctx),
         "resize" => evaluate_resize(&ctx),
+        "toggle-float" => evaluate_toggle_float_with(&ctx, |command, float_rect| {
+            if ctx
+                .request
+                .windows
+                .iter()
+                .any(|entry| entry.window == command.window && entry.floating)
+            {
+                return rejected(
+                    ctx.request.correlation_id.clone(),
+                    RefusalKind::NotTiled.as_str(),
+                    RefusalKind::NotTiled.message(),
+                );
+            }
+            let Some(seed_order) = spatial_with_focus_last(
+                ctx.request.windows.clone(),
+                &ctx.request.focused_window,
+                false,
+            ) else {
+                return rejected(
+                    ctx.request.correlation_id.clone(),
+                    "ambiguous-placement",
+                    MSG_AMBIGUOUS,
+                );
+            };
+            let Some(mut session) = seed_session(
+                &ctx.owner,
+                &ctx.generation,
+                ctx.request.fingerprint,
+                &ctx.domain,
+                &seed_order,
+            ) else {
+                return snapshot_invalid(
+                    ctx.request.correlation_id.clone(),
+                    MSG_OBSERVATION,
+                    "seed-failed",
+                );
+            };
+            let base = session.accepted_revision();
+            let observation = observation_for(base, &ctx);
+            let plan = match session.propose(
+                &SessionCommand::ToggleFloat {
+                    window: WindowId(command.window.clone()),
+                    float_geometry: float_rect,
+                },
+                &observation,
+                &ctx.correlation,
+                &LifecycleCapabilities::full(),
+            ) {
+                Ok(plan) => plan,
+                Err(error) => return propose_failure(error, ctx.request.correlation_id.clone()),
+            };
+            float_planned_reply(&ctx.request.correlation_id, &plan, float_rect)
+        }),
         _ => rejected(
             valid_correlation_echo(&ctx.raw),
             "unknown-value",
@@ -2903,6 +3070,119 @@ struct RemoveCommand {
     window: String,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ToggleFloatCommand {
+    op: String,
+    window: String,
+    #[serde(default)]
+    float_rect: Option<RectDto>,
+}
+
+fn evaluate_toggle_float_with(
+    ctx: &Validated,
+    evaluate: impl FnOnce(&ToggleFloatCommand, Option<Rect>) -> String,
+) -> String {
+    let command: ToggleFloatCommand = match serde_json::from_value(ctx.request.command.clone()) {
+        Ok(command) => command,
+        Err(error) => {
+            let (kind, message) = classify_parse_error(&error);
+            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        }
+    };
+    if command.op != "toggle-float" {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "toggle-float-op-invalid",
+        );
+    }
+    if !is_opaque_id(&command.window) {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OBSERVATION,
+            "toggle-float-window-invalid",
+        );
+    }
+    let Some(target) = ctx
+        .request
+        .windows
+        .iter()
+        .find(|entry| entry.window == command.window)
+    else {
+        return rejected(
+            ctx.request.correlation_id.clone(),
+            "partial-observation",
+            MSG_OBSERVATION,
+        );
+    };
+    let float_rect = match command.float_rect.as_ref() {
+        Some(rect) if !target.floating && valid_carried_rect(rect.x, rect.y, rect.w, rect.h) => {
+            Some(Rect {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            })
+        }
+        Some(_) => {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "float-rect-invalid",
+            );
+        }
+        None if target.floating => None,
+        None => {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OBSERVATION,
+                "float-rect-invalid",
+            );
+        }
+    };
+    evaluate(&command, float_rect)
+}
+
+fn float_planned_reply(
+    correlation_id: &str,
+    plan: &SessionPlan,
+    float_rect: Option<Rect>,
+) -> String {
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: correlation_id.to_owned(),
+        outcome: "planned",
+        kind: None,
+        message: None,
+        base_revision: Some(plan.dispatch.base_revision),
+        detail: Some(serde_json::json!({
+            "kind": "toggle-float",
+            "policy_version": plan.dispatch.policy_version,
+            "capability": "intentional-float",
+        })),
+        desired_geometry: Some(plan.desired_geometry.iter().map(geometry_reply).collect()),
+        desired_focus: match (&plan.desired_focus_domain, &plan.desired_focus_leaf) {
+            (Some(domain), Some(leaf)) => Some(focus_reply(domain, leaf)),
+            _ => None,
+        },
+        float_geometry: float_rect.map(|rect| FloatReplyBody {
+            window: match &plan.dispatch.operation {
+                LifecycleOperation::Remove { window, .. } => window.0.clone(),
+                _ => String::new(),
+            },
+            rect: RectDto {
+                x: rect.x,
+                y: rect.y,
+                w: rect.w,
+                h: rect.h,
+            },
+        }),
+        preconditions: None,
+        operation: None,
+    })
+}
+
 fn evaluate_remove(ctx: &Validated) -> String {
     let command: RemoveCommand = match serde_json::from_value(ctx.request.command.clone()) {
         Ok(command) => command,
@@ -2925,9 +3205,11 @@ fn evaluate_remove(ctx: &Validated) -> String {
             "remove-window-invalid",
         );
     }
-    let Some(seed_order) =
-        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
-    else {
+    let Some(seed_order) = spatial_with_focus_last(
+        ctx.request.windows.clone(),
+        &ctx.request.focused_window,
+        false,
+    ) else {
         return rejected(
             ctx.request.correlation_id.clone(),
             "ambiguous-placement",
@@ -2985,9 +3267,11 @@ struct DirectedCommand {
 }
 
 fn build_full_session(ctx: &Validated) -> Result<(Session, SessionObservation), &'static str> {
-    let Some(seed_order) =
-        spatial_with_focus_last(ctx.request.windows.clone(), &ctx.request.focused_window, false)
-    else {
+    let Some(seed_order) = spatial_with_focus_last(
+        ctx.request.windows.clone(),
+        &ctx.request.focused_window,
+        false,
+    ) else {
         return Err("missing-seed-order");
     };
     let Some(session) = seed_session(
@@ -3305,6 +3589,42 @@ mod tests {
         serde_json::from_str(reply).expect("reply is JSON")
     }
 
+    #[test]
+    fn retained_toggle_float_carries_geometry_then_freshly_admits() {
+        let mut planner = Planner::new();
+        let float = plan_request(
+            "float-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({
+                "op": "toggle-float",
+                "window": "win-1",
+                "float_rect": {"x": 240, "y": 160, "w": 720, "h": 480},
+            }),
+        );
+        let floated = parse_reply(&planner.evaluate(&float));
+        assert_eq!(floated["outcome"], "planned");
+        assert_eq!(
+            floated["desired_geometry"].as_array().map(Vec::len),
+            Some(1)
+        );
+        assert_eq!(floated["float_geometry"]["window"], "win-1");
+        assert_eq!(floated["float_geometry"]["rect"]["w"], 720);
+
+        let mut unfloat: serde_json::Value = serde_json::from_str(&plan_request(
+            "float-2",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "toggle-float", "window": "win-1"}),
+        ))
+        .expect("request JSON");
+        unfloat["windows"][0]["floating"] = serde_json::Value::Bool(true);
+        let tiled = parse_reply(&planner.evaluate(&unfloat.to_string()));
+        assert_eq!(tiled["outcome"], "planned");
+        assert_eq!(tiled["float_geometry"], serde_json::Value::Null);
+        assert_eq!(tiled["desired_geometry"].as_array().map(Vec::len), Some(2));
+    }
+
     /// Admit request with explicit domain bounds and per-window rects, so
     /// portrait/landscape/square targets can carry deliberately misleading
     /// (opposite-orientation) observed window geometry.
@@ -3535,8 +3855,14 @@ mod tests {
             let rect = &geometry["rect"];
             assert!(rect["x"].as_i64().unwrap() >= 0, "{first}");
             assert!(rect["y"].as_i64().unwrap() >= 44, "{first}");
-            assert!(rect["x"].as_i64().unwrap() + rect["w"].as_i64().unwrap() <= 1536, "{first}");
-            assert!(rect["y"].as_i64().unwrap() + rect["h"].as_i64().unwrap() <= 1024, "{first}");
+            assert!(
+                rect["x"].as_i64().unwrap() + rect["w"].as_i64().unwrap() <= 1536,
+                "{first}"
+            );
+            assert!(
+                rect["y"].as_i64().unwrap() + rect["h"].as_i64().unwrap() <= 1024,
+                "{first}"
+            );
         }
 
         // The raw out-of-bounds observation contains no state that can wedge
@@ -3561,7 +3887,10 @@ mod tests {
         );
         let drift_reply = parse_reply(&evaluate_plan_json(&drift));
         assert_eq!(drift_reply["kind"], "snapshot-invalid", "{drift_reply}");
-        assert_eq!(drift_reply["detail"], "window-out-of-bounds", "{drift_reply}");
+        assert_eq!(
+            drift_reply["detail"], "window-out-of-bounds",
+            "{drift_reply}"
+        );
     }
 
     #[test]
@@ -4506,7 +4835,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 39, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 42, "closed registry size");
     }
 
     fn geometry_by_window(

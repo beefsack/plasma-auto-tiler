@@ -262,6 +262,13 @@ pub enum SessionCommand {
         target_output: OutputId,
         target_workspace: WorkspaceId,
     },
+    /// Explicit, stateful intentional-float transition. A tiled target becomes
+    /// a non-tree floating exception; a tracked floating target is freshly
+    /// admitted back into the tree.
+    ToggleFloat {
+        window: WindowId,
+        float_geometry: Option<Rect>,
+    },
 }
 
 /// Non-divergent session refusal reasons. Fixed redacted messages only.
@@ -556,6 +563,9 @@ pub struct ExceptionRecord {
     pub output: OutputId,
     pub workspace: WorkspaceId,
     pub flags: ExceptionFlags,
+    /// Session-local floating placement. Never participates in tree geometry
+    /// or fresh admission.
+    pub floating_geometry: Option<Rect>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -831,6 +841,14 @@ impl Session {
         self.exceptions.contains_key(window)
     }
 
+    /// Retained intentional-float geometry, if this session owns that state.
+    #[must_use]
+    pub fn floating_geometry(&self, window: &WindowId) -> Option<Rect> {
+        self.exceptions
+            .get(window)
+            .and_then(|record| record.floating_geometry)
+    }
+
     /// Exception entries as observed windows (sorted by window id).
     #[must_use]
     pub fn exception_observed(&self) -> Vec<ObservedWindow> {
@@ -962,6 +980,16 @@ impl Session {
                 correlation_id,
                 capabilities,
             ),
+            SessionCommand::ToggleFloat {
+                window,
+                float_geometry,
+            } => self.propose_toggle_float(
+                window,
+                *float_geometry,
+                session_observation,
+                correlation_id,
+                capabilities,
+            ),
         }
     }
 
@@ -984,6 +1012,7 @@ impl Session {
             // targets, `CrossDomainMismatch` for cross-output); only observed
             // entries are checked here.
             SessionCommand::MoveToWorkspace { .. } => {}
+            SessionCommand::ToggleFloat { .. } => {}
         }
         for entry in observed {
             if self.domain_for(&entry.output, &entry.workspace).is_none() {
@@ -1057,6 +1086,7 @@ impl Session {
                     output: output.clone(),
                     workspace: workspace.clone(),
                     flags: exceptions,
+                    floating_geometry: None,
                 },
             );
             let desired_snapshot = self.snapshot_for(&self.trees, &self.windows);
@@ -1416,6 +1446,106 @@ impl Session {
             desired_focus_leaf,
             desired_geometry,
         })
+    }
+
+    fn propose_toggle_float(
+        &mut self,
+        window: &WindowId,
+        float_geometry: Option<Rect>,
+        session_observation: &SessionObservation,
+        correlation_id: &CorrelationId,
+        capabilities: &LifecycleCapabilities,
+    ) -> Result<SessionPlan, ProposeError> {
+        if let Some(record) = self.exceptions.get(window) {
+            if record.flags
+                != (ExceptionFlags {
+                    floating: true,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: false,
+                })
+                || record.floating_geometry.is_none()
+                || float_geometry.is_some()
+            {
+                return Err(ProposeError::Refused(RefusalKind::NotTiled));
+            }
+            let target = session_observation
+                .windows
+                .iter()
+                .find(|entry| &entry.window == window)
+                .ok_or(ProposeError::Refused(RefusalKind::PartialObservation))?;
+            if target.flags() != record.flags
+                || target.output != record.output
+                || target.workspace != record.workspace
+            {
+                return Err(ProposeError::Refused(RefusalKind::PartialObservation));
+            }
+            // Fresh admission uses the current domain bounds. The retained
+            // float rectangle is intentionally not a prior-leaf restoration.
+            let mut candidate = self.clone();
+            candidate.exceptions.remove(window);
+            let mut observation = session_observation.clone();
+            if let Some(entry) = observation
+                .windows
+                .iter_mut()
+                .find(|entry| &entry.window == window)
+            {
+                entry.floating = false;
+            }
+            let domain = candidate
+                .domain_for(&target.output, &target.workspace)
+                .ok_or(ProposeError::Refused(RefusalKind::UnknownDomain))?;
+            let plan = candidate.propose_admit(
+                window,
+                &target.output,
+                &target.workspace,
+                ExceptionFlags::none(),
+                None,
+                domain.bounds,
+                &observation,
+                correlation_id,
+                capabilities,
+            )?;
+            *self = candidate;
+            return Ok(plan);
+        }
+        if !valid_rect_shape(
+            &float_geometry.ok_or(ProposeError::Refused(RefusalKind::MalformedInput))?,
+        ) {
+            return Err(ProposeError::Refused(RefusalKind::MalformedInput));
+        }
+        let target = session_observation
+            .windows
+            .iter()
+            .find(|entry| &entry.window == window)
+            .ok_or(ProposeError::Refused(RefusalKind::PartialObservation))?;
+        if target.flags().any() || !self.windows.contains_key(window) {
+            return Err(ProposeError::Refused(RefusalKind::NotTiled));
+        }
+        let plan =
+            self.propose_remove(window, session_observation, correlation_id, capabilities)?;
+        let Some(desired) = self.pending_desired.as_mut() else {
+            return Err(ProposeError::Refused(RefusalKind::MalformedTopology));
+        };
+        desired.exceptions.insert(
+            window.clone(),
+            ExceptionRecord {
+                window: window.clone(),
+                output: target.output.clone(),
+                workspace: target.workspace.clone(),
+                flags: ExceptionFlags {
+                    floating: true,
+                    fullscreen: false,
+                    maximized: false,
+                    sticky: false,
+                },
+                floating_geometry: float_geometry,
+            },
+        );
+        // The lifecycle operation remains Remove: the only native effect is
+        // removing the target from tiled actuation while its separate state is
+        // committed with the same acknowledgement/verification transition.
+        Ok(plan)
     }
 
     /// Propose a portable same-output send-to-workspace transfer of the
@@ -5461,6 +5591,10 @@ fn valid_command_shapes(command: &SessionCommand) -> bool {
             target_output,
             target_workspace,
         } => !window.0.is_empty() && !target_output.0.is_empty() && !target_workspace.0.is_empty(),
+        SessionCommand::ToggleFloat {
+            window,
+            float_geometry,
+        } => !window.0.is_empty() && float_geometry.as_ref().is_none_or(valid_rect_shape),
     }
 }
 
@@ -8183,6 +8317,7 @@ mod tests {
                 output: OutputId("out-1".to_owned()),
                 workspace: WorkspaceId("ws-1".to_owned()),
                 flags: ExceptionFlags::none(),
+                floating_geometry: None,
             },
         );
         assert_eq!(

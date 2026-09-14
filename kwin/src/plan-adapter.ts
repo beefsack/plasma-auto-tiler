@@ -47,7 +47,7 @@ const LOG_PREFIX = "plasma-auto-tiler:plan";
 export type PlanDirection = "left" | "right" | "up" | "down";
 export type PlanResizeMode = "inwards" | "outwards";
 export type PlanSignal = "added" | "removed" | "activated" | "geometry" | "scope" | "fullscreen" | "maximize";
-export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize";
+export type PlanOp = "admit" | "remove" | "move" | "focus" | "resize" | "reconcile" | "pointer-resize" | "toggle-float";
 export type MaximizeClearOutcome = "invoked" | "missing" | "threw";
 
 export interface PlanRect {
@@ -65,6 +65,7 @@ export interface PlanObservedWindow {
     readonly workspace: string;
     readonly fullscreen: boolean;
     readonly maximized: boolean;
+    readonly floating?: boolean;
     readonly resourceClass?: string;
 }
 
@@ -96,6 +97,7 @@ export interface PlanSnapshotWindow {
     readonly workspace: string;
     readonly fullscreen: boolean;
     readonly maximized: boolean;
+    readonly floating: boolean;
     readonly resourceClass: string;
 }
 
@@ -118,6 +120,7 @@ export function snapshotOf(observed: PlanObserved): PlanSnapshot {
         workspace: entry.workspace,
         fullscreen: entry.fullscreen,
         maximized: entry.maximized,
+        floating: entry.floating === true,
         resourceClass: isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown",
     }));
     return {
@@ -406,6 +409,7 @@ export interface PlanAdapterEnv {
     readonly observe: () => PlanObserved | null;
     readonly clearMaximize: (target: object) => MaximizeClearOutcome;
     readonly setGeometry: (target: object, rect: PlanRect) => boolean;
+    readonly setFloating?: (id: string, floating: boolean) => void;
     readonly setActive: (target: object) => boolean;
     readonly active: () => object | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
@@ -597,6 +601,7 @@ interface PlannedReply {
     readonly correlationId: string;
     readonly geometry: ReadonlyArray<PlanGeometryEntry>;
     readonly focus: PlanFocusBody | null;
+    readonly floatGeometry: { readonly window: string; readonly rect: PlanRect } | null;
 }
 
 function validateGeometryEntry(value: unknown): PlanGeometryEntry | null {
@@ -668,7 +673,7 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedReply | 
         return null;
     }
     const geometryRaw = reply["desired_geometry"];
-    if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > PLAN_MAX_GEOMETRY) {
+    if (!Array.isArray(geometryRaw) || geometryRaw.length > PLAN_MAX_GEOMETRY) {
         return null;
     }
     const geometry: PlanGeometryEntry[] = [];
@@ -687,9 +692,18 @@ function validatePlanned(reply: unknown, correlationId: string): PlannedReply | 
         if (focus === null) {
             return null;
         }
-        return { correlationId, geometry: Object.freeze(geometry), focus };
+        const floatGeometry = validateFloatGeometry(reply["float_geometry"]);
+        return floatGeometry === undefined ? null : { correlationId, geometry: Object.freeze(geometry), focus, floatGeometry };
     }
-    return { correlationId, geometry: Object.freeze(geometry), focus: null };
+    const floatGeometry = validateFloatGeometry(reply["float_geometry"]);
+    return floatGeometry === undefined ? null : { correlationId, geometry: Object.freeze(geometry), focus: null, floatGeometry };
+}
+
+function validateFloatGeometry(value: unknown): { readonly window: string; readonly rect: PlanRect } | null | undefined {
+    if (value === undefined || value === null) return null;
+    if (!isRecord(value) || !hasExactKeys(value, ["window", "rect"]) || !isOpaqueId(value["window"]) || !isTargetRect(value["rect"])) return undefined;
+    const rect = value["rect"] as unknown as Record<string, unknown>;
+    return { window: value["window"] as string, rect: { x: rect["x"] as number, y: rect["y"] as number, w: rect["w"] as number, h: rect["h"] as number } };
 }
 
 function validateObserved(observed: PlanObserved | null): observed is PlanObserved {
@@ -747,6 +761,9 @@ function validateObserved(observed: PlanObserved | null): observed is PlanObserv
         if (typeof candidate.maximized !== "boolean") {
             return false;
         }
+        if (candidate.floating !== undefined && typeof candidate.floating !== "boolean") {
+            return false;
+        }
         if (candidate.output !== observed.domainOutput || candidate.workspace !== observed.domainWorkspace) {
             return false;
         }
@@ -788,6 +805,7 @@ interface PendingFlight {
     readonly pointerSource: string | null;
     readonly workAreaReprojection: boolean;
     readonly admissionMaximizeClears: ReadonlyArray<string>;
+    readonly floatTarget: { readonly window: string; readonly floating: boolean } | null;
 }
 
 interface AutoIntent {
@@ -798,6 +816,7 @@ interface AutoIntent {
     readonly pointerSource?: string | null;
     readonly workAreaReprojection?: boolean;
     readonly admissionMaximizeClears?: ReadonlyArray<string>;
+    readonly floatTarget?: { readonly window: string; readonly floating: boolean } | null;
 }
 
 interface PointerEcho {
@@ -1172,6 +1191,56 @@ export class PlanAdapter {
             snapshot,
             removed: null,
             body: { op: "resize", window: snapshot.focusedId, direction, mode, press_index: pressIndex },
+        });
+    }
+
+    requestFloat(): void {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:float-refused-disabled`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=toggle-float`);
+            return;
+        }
+        const observed = this.freshObserved();
+        if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:float-refused-observe`);
+            return;
+        }
+        const target = observed.windows.find((entry) => entry.id === observed.focusedId);
+        if (target === undefined) {
+            this.logToken(`${LOG_PREFIX}:float-refused-observe`);
+            return;
+        }
+        const floating = target.floating === true;
+        if (!floating && observed.activeExcluded) {
+            this.logToken(`${LOG_PREFIX}:float-refused-not-tiled`);
+            return;
+        }
+        if (!floating && target.fullscreen) {
+            this.logToken(`${LOG_PREFIX}:float-refused-fullscreen`);
+            return;
+        }
+        if (!floating && target.maximized) {
+            this.logToken(`${LOG_PREFIX}:float-refused-maximize`);
+            return;
+        }
+        const snapshot = this.carriedSnapshot(observed);
+        const rect = floating
+            ? null
+            : {
+                  x: snapshot.domainBounds.x + Math.floor((snapshot.domainBounds.w - Math.max(1, Math.floor(snapshot.domainBounds.w * 0.6))) / 2),
+                  y: snapshot.domainBounds.y + Math.floor((snapshot.domainBounds.h - Math.max(1, Math.floor(snapshot.domainBounds.h * 0.6))) / 2),
+                  w: Math.max(1, Math.floor(snapshot.domainBounds.w * 0.6)),
+                  h: Math.max(1, Math.floor(snapshot.domainBounds.h * 0.6)),
+              };
+        this.dispatch({
+            op: "toggle-float",
+            snapshot,
+            removed: floating ? null : target.id,
+            body: rect === null ? { op: "toggle-float", window: target.id } : { op: "toggle-float", window: target.id, float_rect: rect },
+            floatTarget: { window: target.id, floating: !floating },
         });
     }
 
@@ -1679,6 +1748,7 @@ export class PlanAdapter {
             output: entry.output,
             workspace: entry.workspace,
             rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+            ...(entry.floating === true ? { floating: true } : {}),
         }));
         let payload = "";
         try {
@@ -1723,6 +1793,7 @@ export class PlanAdapter {
             pointerSource: intent.pointerSource ?? null,
             workAreaReprojection: intent.workAreaReprojection === true,
             admissionMaximizeClears: intent.admissionMaximizeClears ?? Object.freeze([]),
+            floatTarget: intent.floatTarget ?? null,
         };
         // Bounded route entry: every dispatched flight opens with the same
         // cmd line shape and `outcome=dispatch`, then closes with its terminal
@@ -1858,10 +1929,18 @@ export class PlanAdapter {
     private geometryCovers(planned: PlannedReply, flightState: PendingFlight): boolean {
         const wanted = new Set<string>();
         for (const entry of flightState.snapshot.windows) {
-            wanted.add(entry.id);
+            if (entry.floating !== true || (flightState.floatTarget?.window === entry.id && flightState.floatTarget.floating === false)) {
+                wanted.add(entry.id);
+            }
         }
         if (flightState.removed !== null) {
             wanted.delete(flightState.removed);
+        }
+        if (flightState.op === "toggle-float") {
+            const target = flightState.floatTarget;
+            if (target === null || (target.floating && (planned.floatGeometry === null || planned.floatGeometry.window !== target.window)) || (!target.floating && planned.floatGeometry !== null)) {
+                return false;
+            }
         }
         if (planned.geometry.length !== wanted.size) {
             return false;
@@ -1907,6 +1986,15 @@ export class PlanAdapter {
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
+        if (flightState.op === "toggle-float") {
+            const freshSnapshot = this.carriedSnapshot(fresh);
+            if (!snapshotsEqual(freshSnapshot, flightState.snapshot)) {
+                this.failFlight(flightState, "stale-scope");
+                return;
+            }
+            this.writeGeometries(planned, flightState, fresh);
+            return;
+        }
         if (flightState.removed === null) {
             const freshSnapshot = this.carriedSnapshot(fresh);
             if (
@@ -1936,6 +2024,7 @@ export class PlanAdapter {
         const oldById = new Map<string, PlanRect>();
         const fullscreenById = new Set<string>();
         const maximizedById = new Set<string>();
+        const floatingById = new Set<string>();
         const resourceClassById = new Map<string, string>();
         for (const entry of current.windows) {
             byRef.set(entry.id, entry.ref);
@@ -1945,6 +2034,9 @@ export class PlanAdapter {
             }
             if (entry.maximized) {
                 maximizedById.add(entry.id);
+            }
+            if (entry.floating === true) {
+                floatingById.add(entry.id);
             }
             resourceClassById.set(entry.id, isOpaqueId(entry.resourceClass) ? entry.resourceClass : "unknown");
         }
@@ -1970,12 +2062,14 @@ export class PlanAdapter {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-fullscreen", entry.rect);
                 } else if (maximizedById.has(entry.window)) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-maximized", entry.rect);
+                } else if (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window) {
+                    this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-floating", entry.rect);
                 } else if (!orderedById.has(entry.window)) {
                     this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "skip-already-equal", entry.rect);
                 }
             }
             for (const entry of ordered) {
-                if (fullscreenById.has(entry.window) || maximizedById.has(entry.window)) {
+                if (fullscreenById.has(entry.window) || maximizedById.has(entry.window) || (floatingById.has(entry.window) && flightState.floatTarget?.window !== entry.window)) {
                     continue;
                 }
                 const target = byRef.get(entry.window);
@@ -1996,6 +2090,20 @@ export class PlanAdapter {
                     return;
                 }
                 this.writeDiag(entry.window, resourceClassById.get(entry.window) ?? "unknown", "written", entry.rect);
+            }
+            const transition = flightState.floatTarget;
+            if (transition !== null && transition.floating) {
+                const floatGeometry = planned.floatGeometry;
+                const target = byRef.get(transition.window);
+                if (floatGeometry === null || target === undefined || !this.env.setGeometry(target, floatGeometry.rect)) {
+                    this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-write-failed", floatGeometry?.rect ?? { x: 0, y: 0, w: 1, h: 1 });
+                    this.failFlight(flightState, "write-failed");
+                    return;
+                }
+                this.writeDiag(transition.window, resourceClassById.get(transition.window) ?? "unknown", "float-written", floatGeometry.rect);
+                try { this.env.setFloating?.(transition.window, true); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
+            } else if (transition !== null) {
+                try { this.env.setFloating?.(transition.window, false); } catch (error) { void error; this.failFlight(flightState, "write-failed"); return; }
             }
         }
         const focus = planned.focus;
@@ -2049,7 +2157,11 @@ export class PlanAdapter {
                 // tree slot must survive enter/exit, and the carried baseline
                 // never stores the compositor-owned frame rect.
                 const rect = rectById.get(entry.id) ?? entry.rect;
-                return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized, resourceClass: entry.resourceClass };
+                const transition = flightState.floatTarget;
+                const floating = transition !== null && transition.window === entry.id ? transition.floating : entry.floating;
+                const floatRect = transition !== null && transition.window === entry.id && transition.floating ? planned.floatGeometry?.rect : undefined;
+                const next = floatRect ?? rect;
+                return { id: entry.id, rect: { x: next.x, y: next.y, w: next.w, h: next.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized, floating, resourceClass: entry.resourceClass };
             });
             this.setLastGood({ ...base, windows: Object.freeze(windows) });
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {

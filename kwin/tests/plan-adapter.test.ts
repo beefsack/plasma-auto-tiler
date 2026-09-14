@@ -1480,20 +1480,20 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("starts with 29 shortcuts including the float toggle and observes stable ids", () => {
+    it("starts with 28 non-conflicting shortcuts and observes stable ids", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 29);
+        assert.equal(mocks.shortcuts.length, 28);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 29);
+        assert.equal(new Set(actions).size, 28);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-outwards-right"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down"));
         assert.ok(actions.includes("plasma-auto-tiler-resize-inwards-down-arrow"));
-        assert.ok(actions.includes("plasma-auto-tiler-float-toggle"));
+        assert.ok(!actions.includes("plasma-auto-tiler-float-toggle"));
         const focus = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-focus-left") as {
             callback: () => void;
         };
@@ -1510,20 +1510,34 @@ describe("plan entry live observation and shortcuts", () => {
         handle?.stop();
     });
 
-    it("floats at a centered 60 percent work-area rectangle, refuses tiled commands, and toggles back", () => {
+    it("routes the internal float request through DescribePlan, writes the replied rectangle, and toggles back", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-float-toggle") as {
-            callback: () => void;
-        };
-        toggle.callback();
+        handle?.requestFloat();
+        const payload = JSON.parse(mocks.dbusCalls[0]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(payload["command"], { op: "toggle-float", window: "win-a", float_rect: { x: 240, y: 160, w: 720, h: 480 } });
+        const correlation = payload["correlation_id"] as string;
+        mocks.callbacks[0]?.(JSON.stringify({
+            v: 1, correlation_id: correlation, outcome: "planned", desired_geometry: [{ window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } }],
+            float_geometry: { window: "win-a", rect: { x: 240, y: 160, w: 720, h: 480 } },
+        }));
         const active = world.wins[0] as Record<string, unknown>;
-        assert.equal(active["tile"], null);
         assert.deepEqual(active["frameGeometry"], { x: 240, y: 160, width: 720, height: 480 });
         handle?.requestMove("left");
         assert.ok(mocks.logs.includes("plasma-auto-tiler:plan:move-refused-floating"));
-        toggle.callback();
+        handle?.requestFloat();
+        const unfloat = JSON.parse(mocks.dbusCalls[1]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(unfloat["command"], { op: "toggle-float", window: "win-a" });
+        mocks.callbacks[1]?.(JSON.stringify({
+            v: 1, correlation_id: unfloat["correlation_id"], outcome: "planned", desired_geometry: [
+                { window: "win-a", leaf: "leaf-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "leaf-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+        }));
+        assert.deepEqual(active["frameGeometry"], { x: 0, y: 0, width: 600, height: 800 });
+        handle?.requestMove("left");
+        assert.equal(mocks.dbusCalls[2]?.method, "DescribePlan");
         handle?.stop();
     });
 
@@ -1538,11 +1552,8 @@ describe("plan entry live observation and shortcuts", () => {
             const before = active["frameGeometry"];
             const { handle, mocks } = startEntry(world);
             assert.ok(handle !== null);
-            const toggle = mocks.shortcuts.find((row) => row.action === "plasma-auto-tiler-float-toggle") as {
-                callback: () => void;
-            };
-            toggle.callback();
-            assert.equal(active["tile"], undefined);
+            handle?.requestFloat();
+            assert.equal(mocks.dbusCalls.length, 0);
             assert.equal(active["frameGeometry"], before);
             assert.ok(mocks.logs.includes(token));
             handle?.stop();
@@ -1807,7 +1818,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 29);
+        assert.equal(attempts.length, 28);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
