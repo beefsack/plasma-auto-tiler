@@ -264,6 +264,11 @@ invalid request cause is directly observable:
 
 - `plasma-auto-tiler:plan:rejected kind=<kind>`
 - `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=<detail>`
+- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=<id> rect=<rect> bounds=<rect>`
+
+The third form is emitted when the adapter can identify the invalid carried
+rectangle. It uses the same stable opaque id and integer geometry already
+emitted for applied writes.
 
 Per applied geometry command (every member exactly one line, non-focus ops;
 `<id>` is the stable opaque normalized window id, `<rect>` is `x,y,w,h`):

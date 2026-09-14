@@ -260,10 +260,10 @@ Historical implementation detail is recoverable in Git history.
   a recorded overlay state over the original layer, not a distinct topology or
   managed layer, so the engine deliberately carries no horizontal/vertical
   maximize concept.
-- A Plan adapter advances its retained membership baseline only after a matching
-  `planned` reply is applied. A rejected, timed-out, stale, or failed
-  membership command never changes the baseline used to derive later
-  admissions or removals.
+- A Plan adapter retains one membership baseline per `(output, workspace)` and
+  advances that domain's baseline only after a matching `planned` reply is
+  applied. A rejected, timed-out, stale, or failed membership command never
+  changes the baseline used to derive later admissions or removals.
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`.
   The active model maintains one structurally trailing empty workspace per
   relevant domain; `Meta+0` and `Meta+Shift+0` reuse it before creating one.

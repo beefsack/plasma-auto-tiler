@@ -73,4 +73,7 @@ Determine whether the high volume of `duplicate-window` rejections in the
 
 ## Next Action
 
-- None.
+- Superseded in part by the per-domain Plan adapter baseline: returning to a
+  previously applied `(output, workspace)` now compares against that domain's
+  applied membership instead of issuing a duplicate `admit` probe. The Planner
+  still correctly refuses genuinely already-known `admit` commands.

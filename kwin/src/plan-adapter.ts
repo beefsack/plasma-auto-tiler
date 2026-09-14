@@ -40,6 +40,7 @@ export const PLAN_MAX_ID_LEN = 128;
 export const PLAN_MAX_WINDOWS = 64;
 export const PLAN_MAX_GEOMETRY = 64;
 export const PLAN_MAX_SEQ = 1000000;
+export const PLAN_MAX_DOMAINS = 16;
 
 const LOG_PREFIX = "plasma-auto-tiler:plan";
 
@@ -143,6 +144,15 @@ function clampCarriedRect(rect: PlanRect, bounds: PlanRect): PlanRect {
         w,
         h,
     };
+}
+
+function rectContained(inner: PlanRect, outer: PlanRect): boolean {
+    return (
+        inner.x >= outer.x &&
+        inner.y >= outer.y &&
+        inner.x + inner.w <= outer.x + outer.w &&
+        inner.y + inner.h <= outer.y + outer.h
+    );
 }
 
 function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
@@ -793,7 +803,9 @@ export class PlanAdapter {
     private deferredAuto: AutoIntent | null = null;
     private epoch = 0;
     private seq = 0;
-    private lastGood: PlanSnapshot | null = null;
+    // The Planner retains one session per (output, workspace), so retain the
+    // matching applied projection for every live Planner domain as well.
+    private lastGoodByDomain = new Map<string, PlanSnapshot>();
     private reconcileAttempts = 0;
     private parked = false;
     private repeatFocused: string | null = null;
@@ -853,7 +865,7 @@ export class PlanAdapter {
         this.pending = null;
         this.deferredAuto = null;
         this.epoch = 0;
-        this.lastGood = null;
+        this.lastGoodByDomain.clear();
         this.reconcileAttempts = 0;
         this.parked = false;
         this.pointerEcho = null;
@@ -869,7 +881,7 @@ export class PlanAdapter {
         this.inFlight = false;
         this.pending = null;
         this.deferredAuto = null;
-        this.lastGood = null;
+        this.lastGoodByDomain.clear();
         this.reconcileAttempts = 0;
         this.parked = false;
         this.pointerEcho = null;
@@ -947,26 +959,30 @@ export class PlanAdapter {
     // maximized frame rect, which can exceed the work area and would otherwise
     // be rejected as window-out-of-bounds. A member with no retained
     // projection yet is clamped into the domain bounds. The raw frame rect is
-    // never carried for a fullscreen or maximized member.
+    // never carried for a fullscreen or maximized member. A known tiled member
+    // can transiently report an out-of-bounds frame while KWin applies a state
+    // change, so carry its applied projection rather than invalidating the
+    // complete snapshot. Unknown non-overlay windows still fail closed.
     private carriedSnapshot(observed: PlanObserved): PlanSnapshot {
         const snapshot = snapshotOf(observed);
-        if (!snapshot.windows.some((entry) => entry.fullscreen || entry.maximized)) {
+        const retained = this.lastGoodFor(snapshot);
+        if (retained === null && !snapshot.windows.some((entry) => entry.fullscreen || entry.maximized)) {
             return snapshot;
         }
         const retainedById = new Map<string, PlanRect>();
-        if (this.lastGood !== null) {
-            for (const entry of this.lastGood.windows) {
+        if (retained !== null) {
+            for (const entry of retained.windows) {
                 retainedById.set(entry.id, entry.rect);
             }
         }
         const windows = snapshot.windows.map((entry) => {
-            if (!entry.fullscreen && !entry.maximized) {
+            const retainedRect = retainedById.get(entry.id);
+            if (!entry.fullscreen && !entry.maximized && (retainedRect === undefined || rectContained(entry.rect, snapshot.domainBounds))) {
                 return entry;
             }
-            const retained = retainedById.get(entry.id);
             const rect =
-                retained !== undefined
-                    ? clampCarriedRect(retained, snapshot.domainBounds)
+                retainedRect !== undefined
+                    ? clampCarriedRect(retainedRect, snapshot.domainBounds)
                     : clampCarriedRect(entry.rect, snapshot.domainBounds);
             return { ...entry, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h } };
         });
@@ -1212,7 +1228,7 @@ export class PlanAdapter {
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
         // Membership baselines advance only after a planned reply is applied.
-        const previous = this.lastGood;
+        const previous = this.lastGoodFor(freshSnapshot);
         if (previous === null) {
             this.reconcileAttempts = 0;
             this.parked = false;
@@ -1236,6 +1252,13 @@ export class PlanAdapter {
             }
             return;
         }
+        const knownOutOfBounds = fresh.windows.some(
+            (entry) =>
+                !entry.fullscreen &&
+                !entry.maximized &&
+                previous.windows.some((retained) => retained.id === entry.id) &&
+                !rectContained(entry.rect, freshSnapshot.domainBounds),
+        );
         const before = new Set<string>();
         for (const entry of previous.windows) {
             before.add(entry.id);
@@ -1293,7 +1316,7 @@ export class PlanAdapter {
             }
             return;
         }
-        if (snapshotsEqual(freshSnapshot, previous)) {
+        if (snapshotsEqual(freshSnapshot, previous) && !knownOutOfBounds) {
             if (this.pointerEcho !== null) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-cleared-equality`);
             }
@@ -1345,9 +1368,9 @@ export class PlanAdapter {
             }
             return;
         }
-        if (sameRects(previous, freshSnapshot)) {
+        if (sameRects(previous, freshSnapshot) && !knownOutOfBounds) {
             this.pointerEcho = null;
-            this.lastGood = freshSnapshot;
+            this.setLastGood(freshSnapshot);
             this.reconcileAttempts = 0;
             this.parked = false;
             if (this.inFlight) {
@@ -1361,7 +1384,7 @@ export class PlanAdapter {
             return;
         }
         if (!sameScope(previous, freshSnapshot)) {
-            this.lastGood = freshSnapshot;
+            this.setLastGood(freshSnapshot);
             this.reconcileAttempts = 0;
             this.parked = false;
             this.pointerEcho = null;
@@ -1385,7 +1408,7 @@ export class PlanAdapter {
             this.pointerEcho = null;
             if (this.echoMatches(freshSnapshot, echo)) {
                 this.logToken(`${LOG_PREFIX}:echo-fence-consumed`);
-                this.lastGood = freshSnapshot;
+                this.setLastGood(freshSnapshot);
                 this.reconcileAttempts = 0;
                 this.parked = false;
                 if (this.deferredAuto !== null && this.deferredAuto.op === "reconcile") {
@@ -1635,7 +1658,7 @@ export class PlanAdapter {
             this.inFlight = false;
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
-            this.rejectKind(kind, detail);
+            this.rejectKind(kind, detail, flightState.snapshot);
             this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             this.finishFlight();
             return;
@@ -1860,7 +1883,7 @@ export class PlanAdapter {
                 const rect = rectById.get(entry.id) ?? entry.rect;
                 return { id: entry.id, rect: { x: rect.x, y: rect.y, w: rect.w, h: rect.h }, output: entry.output, workspace: entry.workspace, fullscreen: entry.fullscreen, maximized: entry.maximized };
             });
-            this.lastGood = { ...base, windows: Object.freeze(windows) };
+            this.setLastGood({ ...base, windows: Object.freeze(windows) });
             if (flightState.op === "pointer-resize" && flightState.pointerSource !== null) {
                 const neighbours = planned.geometry
                     .filter((entry) => entry.window !== flightState.pointerSource)
@@ -1966,12 +1989,39 @@ export class PlanAdapter {
         );
     }
 
-    private rejectKind(kind: string, detail: string | null): void {
+    private rejectKind(kind: string, detail: string | null, snapshot: PlanSnapshot | null = null): void {
         try {
             const suffix = kind === "snapshot-invalid" && detail !== null ? ` detail=${detail}` : "";
+            if (kind === "snapshot-invalid" && detail === "window-out-of-bounds" && snapshot !== null) {
+                const outside = snapshot.windows.find((entry) => !rectContained(entry.rect, snapshot.domainBounds));
+                if (outside !== undefined) {
+                    this.env.log(
+                        `${LOG_PREFIX}:rejected kind=${kind}${suffix} window=${outside.id} rect=${String(outside.rect.x)},${String(outside.rect.y)},${String(outside.rect.w)},${String(outside.rect.h)} bounds=${String(snapshot.domainBounds.x)},${String(snapshot.domainBounds.y)},${String(snapshot.domainBounds.w)},${String(snapshot.domainBounds.h)}`,
+                    );
+                    return;
+                }
+            }
             this.env.log(`${LOG_PREFIX}:rejected kind=${kind}${suffix}`);
         } catch (error) {
             void error;
         }
+    }
+
+    private domainKey(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): string {
+        return `${snapshot.domainOutput}\u0000${snapshot.domainWorkspace}`;
+    }
+
+    private lastGoodFor(snapshot: Pick<PlanSnapshot, "domainOutput" | "domainWorkspace">): PlanSnapshot | null {
+        return this.lastGoodByDomain.get(this.domainKey(snapshot)) ?? null;
+    }
+
+    private setLastGood(snapshot: PlanSnapshot): void {
+        const key = this.domainKey(snapshot);
+        if (!this.lastGoodByDomain.has(key) && this.lastGoodByDomain.size >= PLAN_MAX_DOMAINS) {
+            // Match the Planner's bounded-domain eviction before retaining the
+            // projection that committed the replacement domain.
+            this.lastGoodByDomain.clear();
+        }
+        this.lastGoodByDomain.set(key, snapshot);
     }
 }

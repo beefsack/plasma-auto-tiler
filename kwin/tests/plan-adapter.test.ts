@@ -470,6 +470,40 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 2);
     });
 
+    it("identifies the offending carried rectangle on an out-of-bounds rejection", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                bounds: { x: 0, y: 24, w: 1200, h: 776 },
+                rects: {
+                    "win-a": { x: -8, y: 24, w: 600, h: 776 },
+                    "win-b": { x: 600, y: 24, w: 600, h: 776 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestFocus("left");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "window-out-of-bounds",
+                message: "no",
+            }),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line ===
+                    "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds window=win-a rect=-8,24,600,776 bounds=0,24,1200,776",
+            ),
+        );
+    });
+
     it("keeps a rejected admission out of the committed baseline so a reopened window is admitted", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -703,7 +737,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.ok(removeWindows.some((entry) => entry["window"] === "win-c"));
     });
 
-    it("keeps a cross-workspace duplicate admit fail-closed and recovers for a new window", () => {
+    it("retains per-workspace baselines across a rejected admission without duplicate probes", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         let workspace = "ws-a";
@@ -714,7 +748,7 @@ describe("plan adapter recovery and fencing", () => {
                 Object.freeze({
                     id,
                     ref: byId[id] as object,
-                    rect: { x: 0, y: 0, w: 100, h: 100 },
+                    rect: { x: 0, y: 0, w: 1200, h: 800 },
                     output: "out-1",
                     workspace,
                     fullscreen: false,
@@ -752,28 +786,22 @@ describe("plan adapter recovery and fencing", () => {
         ids = ["win-a"];
         fire(mocks, "scope");
         runTimers(mocks);
-        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "admit", window: "win-a", output: "out-1", workspace: "ws-a" });
-        mocks.callbacks[2]?.(rejectedReply(plannerPayload(mocks, 2)["correlation_id"] as string, "duplicate-window"));
-        assert.equal(adapter.isEnabled, true);
-        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
+        assert.equal(mocks.dbusCalls.length, 2, "returning to an applied workspace does not re-admit known membership");
 
         workspace = "ws-b";
         ids = ["win-b", "win-c"];
         fire(mocks, "scope");
         runTimers(mocks);
-        assert.deepEqual(plannerPayload(mocks, 3)["command"], { op: "admit", window: "win-b", output: "out-1", workspace: "ws-b" });
-        correlation = plannerPayload(mocks, 3)["correlation_id"] as string;
-        mocks.callbacks[3]?.(
-            plannedReply(
-                correlation,
-                [
-                    { window: "win-b", rect: { x: 0, y: 0, w: 600, h: 800 } },
-                    { window: "win-c", rect: { x: 600, y: 0, w: 600, h: 800 } },
-                ],
-                null,
-            ),
-        );
-        assert.ok(mocks.logs.some((line) => line.includes("cmd=gen-1-p3") && line.includes("outcome=planned-applied")));
+        assert.deepEqual(plannerPayload(mocks, 2)["command"], { op: "admit", window: "win-b", output: "out-1", workspace: "ws-b" });
+        mocks.callbacks[2]?.(rejectedReply(plannerPayload(mocks, 2)["correlation_id"] as string, "snapshot-invalid"));
+
+        workspace = "ws-a";
+        ids = ["win-a"];
+        fire(mocks, "scope");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 3, "a rejected admission in another workspace cannot discard this baseline");
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:rejected kind=duplicate-window"));
+        assert.equal(adapter.isEnabled, true);
     });
 });
 
@@ -2187,7 +2215,7 @@ describe("plan native identity sharing and string-keyed cache", () => {
         assert.ok(src.includes("snapshotOf"), "snapshot capture");
         assert.ok(src.includes("snapshotsEqual"), "snapshot comparison");
         assert.ok(src.includes("snapshot: PlanSnapshot"), "snapshot-typed flight/intent");
-        assert.ok(src.includes("lastGood: PlanSnapshot | null"), "snapshot-typed baseline");
+        assert.ok(src.includes("lastGoodByDomain = new Map<string, PlanSnapshot>()"), "snapshot-typed baselines");
         assert.ok(src.includes("noteRemoved"), "removed-id eviction hook");
         assert.ok(!src.includes("flightState.observed"), "no retained observed");
         assert.ok(!src.includes("captured.revalidate"), "no retained revalidation call");
@@ -2986,6 +3014,71 @@ describe("plan adapter maximize isolation", () => {
             "maximized member carries skip-maximized disposition with its retained target rect",
         );
         assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+    });
+
+    it("carries a known member's retained rect when KWin transiently reports its frame out of bounds", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const bounds = { x: 0, y: 24, w: 1200, h: 776 };
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 24, w: 600, h: 776 },
+                        "win-b": { x: 600, y: 24, w: 600, h: 776 },
+                    },
+                },
+                bounds,
+            );
+        const adapter = enableAdapter(mocks);
+        fire(mocks, "added");
+        runTimers(mocks);
+        let correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 24, w: 600, h: 776 } },
+                    { window: "win-b", rect: { x: 600, y: 24, w: 600, h: 776 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        mocks.observeImpl = () =>
+            makeObserved3(
+                refs,
+                {
+                    focused: refs.a,
+                    rects: {
+                        "win-a": { x: 0, y: 24, w: 560, h: 776 },
+                        "win-b": { x: 0, y: 0, w: 1200, h: 800 },
+                    },
+                },
+                bounds,
+            );
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        assert.equal((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["op"], "reconcile");
+        const carried = plannerPayload(mocks, 1)["windows"] as Array<Record<string, unknown>>;
+        assert.deepEqual(
+            carried.find((entry) => entry["window"] === "win-b")?.["rect"],
+            { x: 600, y: 24, w: 600, h: 776 },
+            "the valid applied projection replaces the transient raw frame",
+        );
+        correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 24, w: 600, h: 776 } },
+                    { window: "win-b", rect: { x: 600, y: 24, w: 600, h: 776 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+        assert.equal(adapter.isEnabled, true);
     });
 
     it("prefers fullscreen over maximize for the write disposition", () => {

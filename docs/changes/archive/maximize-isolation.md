@@ -29,6 +29,10 @@
   reconcile targets, no geometry writes, and `skip-maximized` disposition
   (fullscreen wins). New refusal tokens `move-refused-maximize`,
   `resize-refused-maximize`, `pointer-refused-maximize`.
+- Follow-up: a previously applied non-overlay member whose transient KWin frame
+  lies outside the current domain carries its retained projection and triggers
+  a reconcile. An unretained non-overlay frame remains fail-closed; this does
+  not select a placement policy for genuinely off-domain new windows.
 - `kwin/src/plan-adapter-entry.ts` observes `maximizeMode !== 0`, subscribes
   `maximizedChanged` per window with windowAdded/windowRemoved sync, and refuses
   fail-closed whenever any eligible observed normal window lacks the signal,

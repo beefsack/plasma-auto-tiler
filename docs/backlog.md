@@ -84,6 +84,9 @@ Only meaningful pending or active work is listed.
   observed live on `admit windows=4`. Retain the paired bounded `detail` token
   in a dedicated verbose capture and distinguish it from recoverable
   `window-count-mismatch`. [record](changes/archive/snapshot-invalid-details.md)
+- P2 | Planner log default silence | The per-run Planner log is intentionally
+  empty unless `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1`; default diagnostics are
+  KWin-journal-only. Use the opt-in capture when request/reply JSON is required.
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin
   PID/start evidence.
