@@ -233,6 +233,10 @@ Historical implementation detail is recoverable in Git history.
   windows. `Meta+G` toggles it; `Meta+Shift+G` makes a floating window sticky.
 - Maximize (`Meta+M`) is workspace-local. Fullscreen (`Meta+F11`) is separate:
   it is never tiled, resized, or reflowed, and preserves the tree for restore.
+- A Plan adapter advances its retained membership baseline only after a matching
+  `planned` reply is applied. A rejected, timed-out, stale, or failed
+  membership command never changes the baseline used to derive later
+  admissions or removals.
 - `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`.
   The active model maintains one structurally trailing empty workspace per
   relevant domain; `Meta+0` and `Meta+Shift+0` reuse it before creating one.

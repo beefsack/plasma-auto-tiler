@@ -259,9 +259,11 @@ is the observed window count, and terminal outcomes are `planned-applied`,
 - `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=planned-applied`
 
 Per Rust rejection (one `rejected` kind line following the `outcome=rejected`
-command line):
+command line). `snapshot-invalid` includes its bounded Planner detail so the
+invalid request cause is directly observable:
 
 - `plasma-auto-tiler:plan:rejected kind=<kind>`
+- `plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=<detail>`
 
 Per applied geometry command (every member exactly one line, non-focus ops;
 `<id>` is the stable opaque normalized window id, `<rect>` is `x,y,w,h`):

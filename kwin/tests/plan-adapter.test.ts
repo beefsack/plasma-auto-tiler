@@ -468,6 +468,118 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 2);
     });
 
+    it("keeps a rejected admission out of the committed baseline so a reopened window is admitted", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let ids = ["win-a", "win-b"];
+        const byId: Record<string, object> = {
+            "win-a": refs.a,
+            "win-b": refs.b,
+            "win-c": refs.c,
+            "win-c-reopened": refs.c,
+        };
+        mocks.observeImpl = (): PlanObserved => {
+            const windows = ids.map((id) =>
+                Object.freeze({
+                    id,
+                    ref: byId[id] as object,
+                    rect:
+                        id === "win-a"
+                            ? { x: 0, y: 0, w: 600, h: 800 }
+                            : id === "win-b"
+                              ? { x: 600, y: 0, w: 600, h: 800 }
+                              : id === "win-c"
+                                ? { x: 0, y: 0, w: 1200, h: 800 }
+                                : { x: 800, y: 0, w: 400, h: 800 },
+                    output: "out-1",
+                    workspace: "ws-1",
+                    fullscreen: false,
+                }),
+            );
+            return {
+                domainOutput: "out-1",
+                domainWorkspace: "ws-1",
+                domainBounds: { x: 0, y: 0, w: 1200, h: 800 },
+                domainGap: 0,
+                domainOuterGap: 0,
+                focusedId: "win-a",
+                windows: Object.freeze(windows),
+                activeRef: refs.a,
+                fingerprint: `fp-${ids.join(",")}`,
+                revalidate: () => true,
+            };
+        };
+        const adapter = enableAdapter(mocks);
+
+        fire(mocks, "added");
+        runTimers(mocks);
+        let correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                "win-a-leaf",
+            ),
+        );
+
+        ids = ["win-a", "win-b", "win-c"];
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.deepEqual((plannerPayload(mocks, 1)["command"] as Record<string, unknown>)["window"], "win-c");
+        correlation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "snapshot-invalid",
+                detail: "window-out-of-bounds",
+                message: "no",
+            }),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) => line === "plasma-auto-tiler:plan:rejected kind=snapshot-invalid detail=window-out-of-bounds",
+            ),
+        );
+
+        ids = ["win-a", "win-b"];
+        fire(mocks, "removed");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 2, "the rejected window was never treated as committed");
+
+        ids = ["win-a", "win-b", "win-c-reopened"];
+        fire(mocks, "added");
+        runTimers(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(plannerPayload(mocks, 2)["command"], {
+            op: "admit",
+            window: "win-c-reopened",
+            output: "out-1",
+            workspace: "ws-1",
+        });
+        correlation = plannerPayload(mocks, 2)["correlation_id"] as string;
+        mocks.callbacks[2]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 400, h: 800 } },
+                    { window: "win-b", rect: { x: 400, y: 0, w: 400, h: 800 } },
+                    { window: "win-c-reopened", rect: { x: 800, y: 0, w: 400, h: 800 } },
+                ],
+                "win-c-reopened-leaf",
+            ),
+        );
+        assert.ok(
+            mocks.logs.some((line) => line.includes("cmd=gen-1-p2") && line.includes("outcome=planned-applied")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(adapter.isEnabled, true);
+    });
+
     it("fences stale replies against a newer debounced observation", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -1065,7 +1177,7 @@ describe("plan adapter bounded diagnostics", () => {
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+|write window=\S+ disposition=(written|skip-fullscreen|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+( detail=[a-z-]+)?|write window=\S+ disposition=(written|skip-fullscreen|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
             assert.ok(!line.includes("owner-1"), line);

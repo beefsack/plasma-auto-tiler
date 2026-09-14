@@ -15,9 +15,10 @@
 // line per flight, one `rejected kind=` line per Rust rejection, one
 // per-member `write window=<id> disposition=... rect=...` line per applied
 // geometry command, dedicated scope-transition/work-area-reprojection lines,
-// exact echo-fence transition tokens, and an exact per-cause refusal token for
-// every distinct request-route refusal. No captions or sensitive payload
-// detail is logged beyond the stable opaque window id.
+// exact echo-fence transition tokens, an exact snapshot-invalid detail, and an
+// exact per-cause refusal token for every distinct request-route refusal. No
+// captions or sensitive payload detail is logged beyond the stable opaque
+// window id.
 
 import { orderGeometryWrites } from "./geometry-order";
 
@@ -185,6 +186,37 @@ function snapshotsEqual(a: PlanSnapshot, b: PlanSnapshot): boolean {
         }
     }
     return true;
+}
+
+function matchesRemovalSnapshot(fresh: PlanSnapshot, before: PlanSnapshot, removed: string): boolean {
+    if (
+        fresh.domainOutput !== before.domainOutput ||
+        fresh.domainWorkspace !== before.domainWorkspace ||
+        fresh.domainGap !== before.domainGap ||
+        fresh.domainOuterGap !== before.domainOuterGap ||
+        fresh.domainBounds.x !== before.domainBounds.x ||
+        fresh.domainBounds.y !== before.domainBounds.y ||
+        fresh.domainBounds.w !== before.domainBounds.w ||
+        fresh.domainBounds.h !== before.domainBounds.h ||
+        fresh.windows.length + 1 !== before.windows.length
+    ) {
+        return false;
+    }
+    const beforeById = new Map<string, PlanSnapshotWindow>();
+    for (const entry of before.windows) {
+        if (entry.id !== removed) {
+            beforeById.set(entry.id, entry);
+        }
+    }
+    if (beforeById.size !== fresh.windows.length) {
+        return false;
+    }
+    for (const entry of fresh.windows) {
+        if (!beforeById.has(entry.id)) {
+            return false;
+        }
+    }
+    return fresh.windows.some((entry) => entry.id === fresh.focusedId);
 }
 
 function sameScope(a: PlanSnapshot, b: PlanSnapshot): boolean {
@@ -491,8 +523,8 @@ function hasExactKeys(value: Record<string, unknown>, keys: readonly string[]): 
     return true;
 }
 
-// Bounded rejection-kind token for the single rejection-kind line: lowercase
-// dashes only, otherwise redacted to `unknown`. Never echoes payload bytes.
+// Bounded rejection token fields: lowercase dashes only. Never echo payload
+// bytes other than the Planner's fixed token vocabulary.
 function sanitizeKind(value: unknown): string {
     if (typeof value !== "string" || value.length === 0 || value.length > 64) {
         return "unknown";
@@ -502,6 +534,20 @@ function sanitizeKind(value: unknown): string {
         const ok = (code >= 97 && code <= 122) || code === 45;
         if (!ok) {
             return "unknown";
+        }
+    }
+    return value;
+}
+
+function sanitizeDetail(value: unknown): string | null {
+    if (typeof value !== "string" || value.length === 0 || value.length > 64) {
+        return null;
+    }
+    for (let index = 0; index < value.length; index += 1) {
+        const code = value.charCodeAt(index);
+        const ok = (code >= 97 && code <= 122) || code === 45;
+        if (!ok) {
+            return null;
         }
     }
     return value;
@@ -1131,9 +1177,9 @@ export class PlanAdapter {
         const freshSnapshot = this.carriedSnapshot(fresh);
         this.epoch += 1;
         this.noteObservation(freshSnapshot.fingerprint);
+        // Membership baselines advance only after a planned reply is applied.
         const previous = this.lastGood;
         if (previous === null) {
-            this.lastGood = freshSnapshot;
             this.reconcileAttempts = 0;
             this.parked = false;
             this.deferredAuto = {
@@ -1199,7 +1245,6 @@ export class PlanAdapter {
             }
         }
         if (intent !== null) {
-            this.lastGood = freshSnapshot;
             this.reconcileAttempts = 0;
             this.parked = false;
             this.pointerEcho = null;
@@ -1552,10 +1597,11 @@ export class PlanAdapter {
         const outcome = parsed["outcome"];
         if (outcome === "rejected") {
             const kind = sanitizeKind(parsed["kind"]);
+            const detail = sanitizeDetail(parsed["detail"]);
             this.inFlight = false;
             this.pending = null;
             this.diag(flightState.op, flightState.correlation, flightState.windowCount, "rejected");
-            this.rejectKind(kind);
+            this.rejectKind(kind, detail);
             this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
             this.finishFlight();
             return;
@@ -1650,15 +1696,12 @@ export class PlanAdapter {
             this.writeGeometries(planned, flightState, fresh);
             return;
         }
-        if (fresh.fingerprint !== this.latestFingerprint()) {
+        const freshSnapshot = this.carriedSnapshot(fresh);
+        if (!matchesRemovalSnapshot(freshSnapshot, flightState.snapshot, flightState.removed)) {
             this.failFlight(flightState, "stale-scope");
             return;
         }
         this.writeGeometries(planned, flightState, fresh);
-    }
-
-    private latestFingerprint(): string {
-        return this.lastGood === null ? "" : this.lastGood.fingerprint;
     }
 
     private writeGeometries(
@@ -1882,9 +1925,10 @@ export class PlanAdapter {
         );
     }
 
-    private rejectKind(kind: string): void {
+    private rejectKind(kind: string, detail: string | null): void {
         try {
-            this.env.log(`${LOG_PREFIX}:rejected kind=${kind}`);
+            const suffix = kind === "snapshot-invalid" && detail !== null ? ` detail=${detail}` : "";
+            this.env.log(`${LOG_PREFIX}:rejected kind=${kind}${suffix}`);
         } catch (error) {
             void error;
         }
