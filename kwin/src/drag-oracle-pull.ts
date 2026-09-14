@@ -1,7 +1,7 @@
 import { connectSignal, isConnectableSignal, readSignal } from "./signal-capability";
 export const DRAG_ORACLE_SERVICE = "org.plasmaautotiler.DragOracle"; export const DRAG_ORACLE_OBJECT = "/org/plasmaautotiler/DragOracle"; export const DRAG_ORACLE_INTERFACE = "org.plasmaautotiler.DragOracle1"; export const DRAG_ORACLE_METHOD = "LastVerdict";
 export const DRAG_ORACLE_MAX_REPLY_BYTES = 64 * 1024; export const DRAG_ORACLE_MAX_TOKEN_LEN = 128; export const DRAG_ORACLE_MAX_REASON_LEN = 64; export const DRAG_ORACLE_MAX_ID_LEN = 128;
-const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const UNAVAILABLE_LINE = `${ROUTE_DIAG}:drag-unavailable`; const ENTRY_REJECT = `${ROUTE_DIAG}:drag-entry-invalid`; const MAX_LIST = 1024;
+const ROUTE_DIAG = "plasma-auto-tiler:route-diag"; const VERDICT_PREFIX = `${ROUTE_DIAG}:drag-verdict`; const PULL_DISPATCH_LINE = `${ROUTE_DIAG}:drag-pull action=dispatch`; const CALL_MISSING_LINE = `${ROUTE_DIAG}:drag-call-missing`; const CALL_THROWN_LINE = `${ROUTE_DIAG}:drag-call-thrown`; const REPLY_INVALID_LINE = `${ROUTE_DIAG}:drag-reply-invalid`; const ROUTE_MISSING_LINE = `${ROUTE_DIAG}:drag-route-missing`; const ENTRY_WORKSPACE_MISSING = `${ROUTE_DIAG}:drag-entry-workspace-missing`; const ENTRY_CALL_MISSING = `${ROUTE_DIAG}:drag-entry-call-missing`; const ENTRY_CALL_THROWN = `${ROUTE_DIAG}:drag-entry-call-thrown`; const ENTRY_LIST_MISSING = `${ROUTE_DIAG}:drag-entry-list-missing`; const ENTRY_LIST_THROWN = `${ROUTE_DIAG}:drag-entry-list-thrown`; const ENTRY_LIST_INVALID = `${ROUTE_DIAG}:drag-entry-list-invalid`; const ENTRY_FINISHED_INVALID = `${ROUTE_DIAG}:drag-entry-finished-invalid`; const ENTRY_NO_WINDOWS = `${ROUTE_DIAG}:drag-entry-no-windows`; const ENTRY_NO_FINISHED = `${ROUTE_DIAG}:drag-entry-no-finished`; const ENTRY_ADDED_INVALID = `${ROUTE_DIAG}:drag-entry-added-invalid`; const ENTRY_ADDED_CONNECT_FAILED = `${ROUTE_DIAG}:drag-entry-added-connect-failed`; const MAX_LIST = 1024;
 const EMPTY_IDENTITY_REASONS: ReadonlyArray<string> = ["no-observation", "oracle-unavailable", "oracle-panic", "empty-identity", "identity-invalid", "identity-too-long", "geometry-invalid", "geometry-out-of-range"];
 const VERDICT_REASONS: ReadonlyArray<string> = [...EMPTY_IDENTITY_REASONS, "no-change", "ok-moved"];
 export interface DragOracleFinishContext { readonly ref: object; readonly finishEpoch: number; }
@@ -75,14 +75,14 @@ export class DragOraclePull {
     constructor(private readonly env: DragOraclePullEnv) {}
     pullVerdict(ctx?: DragOracleFinishContext): void {
         const call = this.env.callDbus;
-        if (typeof call !== "function") { this.logUnavailable(); this.notifySettled(null, ctx); return; }
+        if (typeof call !== "function") { this.logToken(CALL_MISSING_LINE); this.notifySettled(null, ctx); return; }
         this.logPullDispatch();
-        try { call(DRAG_ORACLE_SERVICE, DRAG_ORACLE_OBJECT, DRAG_ORACLE_INTERFACE, DRAG_ORACLE_METHOD, (reply) => { this.onReply(reply, ctx); }); } catch (_e) { this.logUnavailable(); this.notifySettled(null, ctx); }
+        try { call(DRAG_ORACLE_SERVICE, DRAG_ORACLE_OBJECT, DRAG_ORACLE_INTERFACE, DRAG_ORACLE_METHOD, (reply) => { this.onReply(reply, ctx); }); } catch (_e) { this.logToken(CALL_THROWN_LINE); this.notifySettled(null, ctx); }
     }
     private onReply(reply: unknown, ctx: DragOracleFinishContext | undefined): void {
         let verdict: DragOracleVerdict | null = null;
         try { verdict = parseDragOracleVerdict(reply); } catch (_e) { verdict = null; }
-        if (verdict === null) { this.logUnavailable(); this.notifySettled(null, ctx); return; }
+        if (verdict === null) { this.logToken(REPLY_INVALID_LINE); this.notifySettled(null, ctx); return; }
         try { this.env.log(formatDragOracleVerdict(verdict)); } catch (_e) { /* fail-closed */ }
         // Cancelled verdicts (including Esc/no-change) are a strict no-op:
         // no planner call, no share change. Non-cancelled verdicts route
@@ -94,7 +94,7 @@ export class DragOraclePull {
         // the route still observes the captured start.
         if (verdict.cancelled === true) { this.notifySettled(verdict, ctx); return; }
         const route = this.env.routePointer;
-        if (typeof route !== "function") { this.notifySettled(verdict, ctx); return; }
+        if (typeof route !== "function") { this.logToken(ROUTE_MISSING_LINE); this.notifySettled(verdict, ctx); return; }
         try { route(verdict, ctx); } catch (_e) { /* fail-closed */ }
         this.notifySettled(verdict, ctx);
     }
@@ -104,7 +104,7 @@ export class DragOraclePull {
             if (typeof settled === "function") settled(verdict, ctx);
         } catch (_e) { /* fail-closed */ }
     }
-    private logUnavailable(): void { try { this.env.log(UNAVAILABLE_LINE); } catch (_e) { /* fail-closed */ } }
+    private logToken(line: string): void { try { this.env.log(line); } catch (_e) { /* fail-closed */ } }
     private logPullDispatch(): void { try { this.env.log(PULL_DISPATCH_LINE); } catch (_e) { /* fail-closed */ } }
 }
 function resolveLexicalWorkspace(): unknown {
@@ -148,39 +148,39 @@ export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}
             // Ignore console failures fail-closed.
         }
     };
-    const fail = (): null => {
+    const fail = (line: string): null => {
         try {
-            log(ENTRY_REJECT);
+            log(line);
         } catch (_e) {
             // Ignore console failures fail-closed.
         }
         return null;
     };
-    if (typeof liveWorkspace !== "object" || liveWorkspace === null) return fail();
+    if (typeof liveWorkspace !== "object" || liveWorkspace === null) return fail(ENTRY_WORKSPACE_MISSING);
     let callDbus = overrides.callDbus;
     if (callDbus === undefined) {
         try {
             const native: unknown = callDBus;
-            if (typeof native !== "function") return fail();
+            if (typeof native !== "function") return fail(ENTRY_CALL_MISSING);
             const bound = native as (...args: ReadonlyArray<unknown>) => void;
             callDbus = (service, path, iface, method, callback) => {
                 bound(service, path, iface, method, callback);
             };
         } catch (_e) {
-            return fail();
+            return fail(ENTRY_CALL_THROWN);
         }
     }
     const surface = liveWorkspace as Record<string, unknown>;
     const lister = surface["windowList"];
-    if (typeof lister !== "function") return fail();
+    if (typeof lister !== "function") return fail(ENTRY_LIST_MISSING);
     let raw: unknown = undefined;
     try {
         raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
     } catch (_e) {
-        return fail();
+        return fail(ENTRY_LIST_THROWN);
     }
     const list = decodeList(raw, MAX_LIST);
-    if (list === null) return fail();
+    if (list === null) return fail(ENTRY_LIST_INVALID);
     const pullEnv: DragOraclePullEnv = { callDbus, log };
     if (overrides.routePointer !== undefined) (pullEnv as { routePointer?: unknown }).routePointer = overrides.routePointer;
     if (overrides.onSettled !== undefined) (pullEnv as { onSettled?: unknown }).onSettled = overrides.onSettled;
@@ -233,17 +233,19 @@ export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}
         if (detach === "skip") continue;
         if (detach === null) {
             detachAll();
-            return fail();
+            return fail(ENTRY_FINISHED_INVALID);
         }
         attached.push(detach);
     }
-    if (attached.length === 0) return fail();
+    if (attached.length === 0) {
+        return fail(list.length === 0 ? ENTRY_NO_WINDOWS : ENTRY_NO_FINISHED);
+    }
     let addedDetach: (() => void) | null = null;
     try {
         const addedSurface = readSignal(surface, "windowAdded");
         if (!isConnectableSignal(addedSurface)) {
             detachAll();
-            return fail();
+            return fail(ENTRY_ADDED_INVALID);
         }
         addedDetach = connectSignal(addedSurface, (added) => {
             try {
@@ -259,7 +261,7 @@ export function startDragOraclePullEntry(overrides: DragOraclePullOverrides = {}
     }
     if (addedDetach === null) {
         detachAll();
-        return fail();
+        return fail(ENTRY_ADDED_CONNECT_FAILED);
     }
     const stopAdded: () => void = addedDetach;
     return {

@@ -12,14 +12,16 @@
 // direction-plus-mode resize shortcuts from the configured profile catalog
 // map to parameterized plan commands. Window and scope signals feed one
 // debounced fresh-snapshot resync owned by the adapter. No tiling, order,
-// membership, or rejection policy lives here and no diagnostic beyond the
-// adapter's two bounded line shapes plus one bounded shortcut-failed line
-// is emitted.
+// membership, or rejection policy lives here. Diagnostics are always-on and
+// bounded: the adapter's cmd route entry/terminal, rejected-kind, per-member
+// write, scope-transition, echo-fence, and refusal lines, plus one bounded
+// shortcut-failed line and one bounded plan-ready startup line.
 
 import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
 import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
 import { normalizeNativeId } from "./native-id";
 import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
+import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 
 export interface PlanEntryOverrides {
@@ -879,6 +881,17 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         adapter.disable();
         return null;
     }
+    // Startup session context from the existing owner/generation provenance
+    // plus the compiled-in source revision: one bounded ready line identifies
+    // the plan session for the whole journal so every later cmd/write/rejected
+    // line is attributable.
+    try {
+        log(
+            `plasma-auto-tiler:plan:ready owner=${String(overrides.owner)} generation=${String(overrides.generation)} source=${PLAN_SOURCE_REV}`,
+        );
+    } catch (error) {
+        void error;
+    }
     adapter.requestResync();
     const profile = readShortcutProfile(overrides.readProfileFn);
     const catalog = planShortcutCatalog(profile);
@@ -1012,7 +1025,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
     const routeOracleVerdict = (verdict: DragOracleVerdict, ctx: DragOracleFinishContext | undefined): void => {
         try {
             if (ctx === undefined) {
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                try { log("plasma-auto-tiler:route-diag:drag-context-invalid"); } catch (error) { void error; }
                 return;
             }
             const observed = observeNative(liveWorkspace, nativeIds);
@@ -1035,12 +1048,12 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             if (ref !== ctx.ref) {
                 takeOwnStart(ctx);
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                try { log("plasma-auto-tiler:route-diag:drag-ref-mismatch"); } catch (error) { void error; }
                 return;
             }
             const start = takeOwnStart(ctx);
             if (start === null || start.id !== verdict.windowIdentity) {
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                try { log("plasma-auto-tiler:route-diag:drag-start-missing"); } catch (error) { void error; }
                 return;
             }
             if (start.move === true) {
@@ -1048,36 +1061,19 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 return;
             }
             if (!(start.move === false && start.resize === true)) {
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                try { log("plasma-auto-tiler:route-diag:drag-start-invalid"); } catch (error) { void error; }
                 return;
             }
             const edge = deriveOracleEdge(start.rect, verdict.finalRect);
             if (edge === null || edge === "mixed") {
-                try { log("plasma-auto-tiler:route-diag:drag-derive-invalid"); } catch (error) { void error; }
+                try { log("plasma-auto-tiler:route-diag:drag-edge-invalid"); } catch (error) { void error; }
                 return;
             }
-            const ok = adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
-            if (!ok) {
-                // Exact bounded refusal reason: a fullscreen target is refused
-                // fail-closed before dispatch and carries no geometry write;
-                // every other refusal keeps the generic derive-invalid line.
-                let fullscreenRefused = false;
-                for (const entry of observed.windows) {
-                    if (entry.id === verdict.windowIdentity && entry.fullscreen) {
-                        fullscreenRefused = true;
-                        break;
-                    }
-                }
-                try {
-                    log(
-                        fullscreenRefused
-                            ? "plasma-auto-tiler:route-diag:drag-fullscreen-refused"
-                            : "plasma-auto-tiler:route-diag:drag-derive-invalid",
-                    );
-                } catch (error) {
-                    void error;
-                }
-            }
+            // The adapter emits its exact source-grounded refusal token for
+            // every distinct failure cause (disabled, identity, direction,
+            // boundary, observation failure, absent target, fullscreen target).
+            // No catch-all pointer-refused line is added here.
+            adapter.requestPointerResize(verdict.windowIdentity, edge.direction, edge.boundary);
         } catch (error) {
             void error;
         }

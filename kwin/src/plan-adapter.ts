@@ -10,10 +10,14 @@
 // the next command. Stale replies are fenced against newer observations by
 // epoch plus correlation.
 //
-// Diagnostics are bounded to exactly two redacted line shapes: one per
-// dispatched command (correlation, kind, window count, outcome) and one per
-// Rust rejection kind. No scope, signal, identity, or payload detail is
-// logged and no other log call exists in this module.
+// Diagnostics are always-on and bounded per discrete user action or state
+// change: a cmd route-entry line (`outcome=dispatch`) plus a terminal outcome
+// line per flight, one `rejected kind=` line per Rust rejection, one
+// per-member `write window=<id> disposition=... rect=...` line per applied
+// geometry command, dedicated scope-transition/work-area-reprojection lines,
+// exact echo-fence transition tokens, and an exact per-cause refusal token for
+// every distinct request-route refusal. No captions or sensitive payload
+// detail is logged beyond the stable opaque window id.
 
 import { orderGeometryWrites } from "./geometry-order";
 
@@ -829,11 +833,21 @@ export class PlanAdapter {
     }
 
     requestFocus(direction: unknown): void {
-        if (!this.enabled || this.inFlight || !isDirection(direction)) {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-disabled`);
+            return;
+        }
+        if (!isDirection(direction)) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-invalid-direction`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=focus`);
             return;
         }
         const observed = this.freshObserved();
         if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:focus-refused-observe`);
             return;
         }
         const snapshot = this.carriedSnapshot(observed);
@@ -909,14 +923,25 @@ export class PlanAdapter {
     }
 
     requestMove(direction: unknown): void {
-        if (!this.enabled || this.inFlight || !isDirection(direction)) {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:move-refused-disabled`);
+            return;
+        }
+        if (!isDirection(direction)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-invalid-direction`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=move`);
             return;
         }
         const observed = this.freshObserved();
         if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:move-refused-observe`);
             return;
         }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:move-refused-fullscreen`);
             return;
         }
         const snapshot = this.carriedSnapshot(observed);
@@ -930,14 +955,29 @@ export class PlanAdapter {
     }
 
     requestResize(direction: unknown, mode: unknown): void {
-        if (!this.enabled || this.inFlight || !isDirection(direction) || !isResizeMode(mode)) {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-disabled`);
+            return;
+        }
+        if (!isDirection(direction)) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-invalid-direction`);
+            return;
+        }
+        if (!isResizeMode(mode)) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-invalid-mode`);
+            return;
+        }
+        if (this.inFlight) {
+            this.logToken(`${LOG_PREFIX}:busy-refused kind=resize`);
             return;
         }
         const observed = this.freshObserved();
         if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-observe`);
             return;
         }
         if (this.windowIsFullscreen(observed, observed.focusedId)) {
+            this.logToken(`${LOG_PREFIX}:resize-refused-fullscreen`);
             return;
         }
         const snapshot = this.carriedSnapshot(observed);
@@ -968,14 +1008,25 @@ export class PlanAdapter {
     // through the single pending slot when a flight is active, never bypasses
     // it, retries, or guesses.
     requestPointerResize(windowId: unknown, direction: unknown, boundary: unknown): boolean {
-        if (!this.enabled || !isOpaqueId(windowId) || !isDirection(direction)) {
+        if (!this.enabled) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-disabled`);
+            return false;
+        }
+        if (!isOpaqueId(windowId)) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-identity`);
+            return false;
+        }
+        if (!isDirection(direction)) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-direction`);
             return false;
         }
         if (!isFiniteInt(boundary) || (boundary as number) < -16384 || (boundary as number) > 16384) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-boundary`);
             return false;
         }
         const observed = this.freshObserved();
         if (observed === null) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-observe`);
             return false;
         }
         let found = false;
@@ -986,9 +1037,11 @@ export class PlanAdapter {
             }
         }
         if (!found) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-absent`);
             return false;
         }
         if (this.windowIsFullscreen(observed, windowId as string)) {
+            this.logToken(`${LOG_PREFIX}:pointer-refused-fullscreen`);
             return false;
         }
         const snapshot = this.carriedSnapshot(observed);
@@ -1162,6 +1215,9 @@ export class PlanAdapter {
             return;
         }
         if (snapshotsEqual(freshSnapshot, previous)) {
+            if (this.pointerEcho !== null) {
+                this.logToken(`${LOG_PREFIX}:echo-fence-cleared-equality`);
+            }
             this.pointerEcho = null;
             this.reconcileAttempts = 0;
             this.parked = false;
@@ -1185,6 +1241,12 @@ export class PlanAdapter {
                 previous.domainBounds.w !== freshSnapshot.domainBounds.w ||
                 previous.domainBounds.h !== freshSnapshot.domainBounds.h)
         ) {
+            const oldBounds = previous.domainBounds;
+            const newBounds = freshSnapshot.domainBounds;
+            this.logToken(
+                `${LOG_PREFIX}:scope-transition old=${String(oldBounds.x)},${String(oldBounds.y)},${String(oldBounds.w)},${String(oldBounds.h)} new=${String(newBounds.x)},${String(newBounds.y)},${String(newBounds.w)},${String(newBounds.h)}`,
+            );
+            this.logToken(`${LOG_PREFIX}:work-area-reprojection selected=retained`);
             this.pointerEcho = null;
             this.resetReconcileState();
             this.deferredAuto = {
@@ -1243,6 +1305,7 @@ export class PlanAdapter {
         if (echo !== null) {
             this.pointerEcho = null;
             if (this.echoMatches(freshSnapshot, echo)) {
+                this.logToken(`${LOG_PREFIX}:echo-fence-consumed`);
                 this.lastGood = freshSnapshot;
                 this.reconcileAttempts = 0;
                 this.parked = false;
@@ -1259,6 +1322,7 @@ export class PlanAdapter {
                 }
                 return;
             }
+            this.logToken(`${LOG_PREFIX}:echo-fence-mismatched`);
         }
         if (this.parked || this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
             this.parked = true;
@@ -1317,6 +1381,9 @@ export class PlanAdapter {
         this.reconcileAttempts += 1;
         if (this.reconcileAttempts >= MAX_RECONCILE_ATTEMPTS) {
             this.parked = true;
+            // Bounded parking transition: exactly once per park, never per
+            // signal. A later work-area reprojection clears the park.
+            this.logToken(`${LOG_PREFIX}:reconcile-parked`);
         }
     }
 
@@ -1392,6 +1459,11 @@ export class PlanAdapter {
             pointerSource: intent.pointerSource ?? null,
             workAreaReprojection: intent.workAreaReprojection === true,
         };
+        // Bounded route entry: every dispatched flight opens with the same
+        // cmd line shape and `outcome=dispatch`, then closes with its terminal
+        // outcome line (planned-applied, rejected, timeout, ...). Together the
+        // two lines make every user action observable with entry and verdict.
+        this.diag(intent.op, correlation, sortedIds.length, "dispatch");
         this.callbackSeen = false;
         this.token += 1;
         const flight = this.token;
@@ -1611,6 +1683,22 @@ export class PlanAdapter {
         // KWin leaves the drag source at its raw pointer rectangle. Reassert the
         // retained projection so its inset sibling gap is restored too.
         if (flightState.op !== "focus") {
+            // Bounded per-member disposition lines: every member of the applied
+            // command carries its exact write outcome (skipped fullscreen,
+            // already equal, written, or write-failed) with the stable opaque
+            // window id and target rect. Fullscreen members take precedence
+            // over equality.
+            const orderedById = new Set<string>();
+            for (const entry of ordered) {
+                orderedById.add(entry.window);
+            }
+            for (const entry of planned.geometry) {
+                if (fullscreenById.has(entry.window)) {
+                    this.writeDiag(entry.window, "skip-fullscreen", entry.rect);
+                } else if (!orderedById.has(entry.window)) {
+                    this.writeDiag(entry.window, "skip-already-equal", entry.rect);
+                }
+            }
             for (const entry of ordered) {
                 if (fullscreenById.has(entry.window)) {
                     continue;
@@ -1628,9 +1716,11 @@ export class PlanAdapter {
                     written = false;
                 }
                 if (!written) {
+                    this.writeDiag(entry.window, "write-failed", entry.rect);
                     this.failFlight(flightState, "write-failed");
                     return;
                 }
+                this.writeDiag(entry.window, "written", entry.rect);
             }
         }
         const focus = planned.focus;
@@ -1700,6 +1790,7 @@ export class PlanAdapter {
                     scope: flightState.snapshot,
                     neighbours: Object.freeze(neighbours),
                 };
+                this.logToken(`${LOG_PREFIX}:echo-fence-armed`);
             }
             if (flightState.op === "reconcile") {
                 this.noteReconcileTerminal(flightState.op, flightState.workAreaReprojection);
@@ -1775,6 +1866,20 @@ export class PlanAdapter {
         } catch (error) {
             void error;
         }
+    }
+
+    private logToken(message: string): void {
+        try {
+            this.env.log(message);
+        } catch (error) {
+            void error;
+        }
+    }
+
+    private writeDiag(window: string, disposition: string, rect: PlanRect): void {
+        this.logToken(
+            `${LOG_PREFIX}:write window=${window} disposition=${disposition} rect=${String(rect.x)},${String(rect.y)},${String(rect.w)},${String(rect.h)}`,
+        );
     }
 
     private rejectKind(kind: string): void {

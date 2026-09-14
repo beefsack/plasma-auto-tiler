@@ -102,10 +102,10 @@ describe("shipped artifact smoke execution", () => {
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("legacy-engine-removed")));
         // Slice 1 inert observer is production-started: the empty-window stub
         // has no finished subscription, so the only permitted route-diag line
-        // is the single bounded fail-closed entry rejection.
+        // is the single bounded no-windows entry rejection.
         const routeDiag = stub.diagnostics.filter((entry) => entry.includes("plasma-auto-tiler:route-diag"));
         assert.ok(routeDiag.length <= 1);
-        assert.ok(routeDiag.every((entry) => entry === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+        assert.ok(routeDiag.every((entry) => entry === "plasma-auto-tiler:route-diag:drag-entry-no-windows"));
         assert.ok(!stub.diagnostics.some((entry) => entry.includes("drag-attach")));
         assert.ok(!bundle.includes("TileController"));
         assert.ok(bundle.includes(PLAN_METHOD_TOKEN));

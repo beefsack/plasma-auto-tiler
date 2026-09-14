@@ -73,14 +73,16 @@
 4. The user repeats one resolution or scaling change with one member fullscreen,
    records the Planner verbose request/reply, bounded plan diagnostics, and all
    member frames, then exits fullscreen and restores the exact baseline. The
-   bounded diagnostics do not identify individual native geometry writes.
+   per-member `plasma-auto-tiler:plan:write` lines prove the fullscreen member
+   carried `disposition=skip-fullscreen` while every sibling carried
+   `disposition=written`.
 5. Pass only if each bounds change issues one retained projection to the new
    work area with the retained split/share structure and 8px gaps, no second
    `reconcile` plan after settlement, and exact restoration after reversal; while
    fullscreen, that member remains fullscreen through the sibling action and
-   retains its position on exit. The direct no-native-write assertion is
-   source-level only unless a per-window native-write trace is added. Record
-   the exact failing observation otherwise.
+   retains its position on exit. The no-native-write assertion is proven by the
+   fullscreen member's `disposition=skip-fullscreen` write line in the live log.
+   Record the exact failing observation otherwise.
 
 ### Sleep And Wake - UNKNOWABLE STATICALLY
 
@@ -131,8 +133,9 @@
   frame drift is excluded from the reassert-then-park policy, while fullscreen
   exit compares the restored frame against the retained projection and reconciles
   only if restoration is imperfect. Direct move, keyboard resize, and pointer
-  resize of a fullscreen target refuse fail-closed; the pointer route records
-  `drag-fullscreen-refused` rather than a shared derivation failure.
+  resize of a fullscreen target refuse fail-closed; the pointer route's
+  adapter records the exact `plasma-auto-tiler:plan:pointer-refused-fullscreen`
+  token rather than a shared derivation failure.
 - Hermetic KWin coverage proves admission with a fullscreen member, enter and
   exit restoration, sibling reflow, reconciliation isolation, out-of-bounds
   fullscreen frame containment, and later-window signal attachment. `npm test
@@ -153,11 +156,12 @@
   handlers are interaction signals only:
   `kwin/src/plan-adapter-entry.ts:975-1027`.
 - The reply can include a fullscreen member's retained geometry, but reply
-  actuation skips its native geometry write. The bounded KWin diagnostic omits
-  window identities and writes, so it cannot independently prove that skip in a
-  live log. The recurring tray D-Bus work continues during fullscreen. Its
-  measurable gaming cost, and the actual cadence of `paintScreen`, are not
-  established statically.
+  actuation skips its native geometry write. The per-member
+  `plasma-auto-tiler:plan:write window=<id> disposition=skip-fullscreen
+  rect=<...>` line proves that skip in a live log for the fullscreen member,
+  while every applied sibling logs `disposition=written`. The recurring tray
+  D-Bus work continues during fullscreen. Its measurable gaming cost, and the
+  actual cadence of `paintScreen`, are not established statically.
 
 #### User-Owned Live Gate - Not Run
 
@@ -171,8 +175,9 @@
 4. The user exits fullscreen and restores the exact baseline. Pass only if the
    fullscreen member stays fullscreen during the sibling command, the sibling
    command is applied, and it returns to its retained tree position on exit.
-   The current bounded diagnostics cannot directly identify a native write to
-   the fullscreen member. Record the exact failing observation otherwise.
+   The fullscreen member's `disposition=skip-fullscreen` write line proves no
+   native write reached it, while the sibling's `disposition=written` line
+   proves the sibling write. Record the exact failing observation otherwise.
 
 ### Underlying Configuration Changes - NOT HANDLED
 

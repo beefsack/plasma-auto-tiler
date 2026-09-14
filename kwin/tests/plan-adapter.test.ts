@@ -392,6 +392,20 @@ describe("plan adapter geometry application", () => {
         assert.equal(mocks.geometries.length, 1);
         assert.equal(mocks.geometries[0]?.target, refs.b);
         assert.equal(mocks.actives.length, 0);
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-a disposition=skip-already-equal rect=0,0,100,100",
+            ),
+            "unchanged member carries skip-already-equal disposition",
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-b disposition=written rect=100,0,400,500",
+            ),
+            "changed member carries written disposition with the target rect",
+        );
     });
 
     it("rejects partial or unknown reply windows without native writes", () => {
@@ -406,6 +420,33 @@ describe("plan adapter geometry application", () => {
         assert.equal(mocks.geometries.length, 0);
         assert.ok(mocks.logs.some((line) => line.includes("outcome=precondition-mismatch")));
         assert.equal(adapter.isEnabled, true);
+    });
+
+    it("records a write-failed disposition with the attempted rect on setGeometry failure", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.geometryImpl = () => false;
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        const correlation = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                null,
+            ),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-a disposition=write-failed rect=0,0,600,800",
+            ),
+            "failed member carries write-failed disposition",
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=write-failed")));
     });
 });
 
@@ -463,7 +504,7 @@ describe("plan adapter recovery and fencing", () => {
         assert.equal(mocks.dbusCalls.length, 2);
     });
 
-    it("coalesces busy shortcut commands silently with one in flight", () => {
+    it("refuses busy shortcut commands with one bounded refusal line per kind", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -472,7 +513,10 @@ describe("plan adapter recovery and fencing", () => {
         adapter.requestMove("right");
         adapter.requestResize("left", "outwards");
         assert.equal(mocks.dbusCalls.length, 1);
-        assert.equal(mocks.logs.length, logsBefore);
+        assert.equal(mocks.logs.length, logsBefore + 2);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=move"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=resize"));
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:busy-refused kind=focus"));
     });
 
     it("drives admit and remove from debounced membership diffs", () => {
@@ -658,6 +702,17 @@ describe("plan adapter client self-resize reconcile", () => {
             outer_gap: OUTER_DOMAIN_GAP,
         });
         const scaledCorrelation = plannerPayload(mocks, 1)["correlation_id"] as string;
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:scope-transition old=0,0,1200,800 new=0,0,1800,1200",
+            ),
+            "dedicated old-bounds to new-bounds scope transition",
+        );
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:work-area-reprojection selected=retained"),
+            "distinct retained reprojection event, not the generic reconcile line",
+        );
         mocks.callbacks[1]?.(
             plannedReply(
                 scaledCorrelation,
@@ -813,6 +868,10 @@ describe("plan adapter client self-resize reconcile", () => {
                 reconcileOnce(mocks, index, driftRects(kind));
                 assert.ok(mocks.logs.some((l) => l.includes(`cmd=gen-1-p${String(index)}`) && l.includes("outcome=planned-applied")));
             }
+            assert.ok(
+                mocks.logs.some((line) => line === "plasma-auto-tiler:plan:reconcile-parked"),
+                "bounded parking transition token",
+            );
             const parkedCalls = mocks.dbusCalls.length;
             const parkedWrites = mocks.geometries.length;
             const parkedLogs = mocks.logs.length;
@@ -854,8 +913,17 @@ describe("plan adapter client self-resize reconcile", () => {
         const logsBefore2 = mocks.logs.length;
         mocks.callbacks[2]?.(plannedReply(corr2, [{ window: "win-a", rect: allocA }, { window: "win-b", rect: allocB }], "win-a-leaf"));
         const fresh2 = mocks.logs.slice(logsBefore2);
-        assert.equal(fresh2.length, 1);
-        assert.ok(fresh2[0]?.includes("kind=reconcile") && fresh2[0]?.includes("outcome=planned-applied"));
+        assert.equal(fresh2.length, 3);
+        assert.equal(fresh2[0], "plasma-auto-tiler:plan:write window=win-b disposition=skip-already-equal rect=600,0,600,800");
+        assert.equal(fresh2[1], "plasma-auto-tiler:plan:write window=win-a disposition=written rect=0,0,600,800");
+        assert.ok(fresh2[2]?.includes("kind=reconcile") && fresh2[2]?.includes("outcome=planned-applied"));
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line.includes(`cmd=${corr2}`) && line.includes("outcome=dispatch") && line.includes("kind=reconcile"),
+            ),
+            "route entry line for the dispatched reconcile",
+        );
     });
     it("parks repeated rejected reconcile signals after three with no further D-Bus", () => {
         const refs = makeRefs();
@@ -975,7 +1043,7 @@ describe("plan adapter client self-resize reconcile", () => {
 });
 
 describe("plan adapter bounded diagnostics", () => {
-    it("emits only the two redacted line shapes with no identity echo", () => {
+    it("emits only the bounded plan line shapes with exact tokens and no owner echo", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = enableAdapter(mocks);
@@ -993,18 +1061,70 @@ describe("plan adapter bounded diagnostics", () => {
                 null,
             ),
         );
-        assert.ok(mocks.logs.length >= 3);
+        assert.ok(mocks.logs.length >= 7);
         for (const line of mocks.logs) {
             assert.match(
                 line,
-                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile) windows=\d+ outcome=\S+|rejected kind=[a-z-]+)$/,
+                /^plasma-auto-tiler:plan:(cmd=\S+ kind=(admit|remove|move|focus|resize|reconcile|pointer-resize) windows=\d+ outcome=\S+|rejected kind=[a-z-]+|write window=\S+ disposition=(written|skip-fullscreen|skip-already-equal|write-failed) rect=[^ ]+|busy-refused kind=(focus|move|resize)|(focus|move|resize|pointer)-refused-[a-z-]+|scope-transition [^ ]+|work-area-reprojection selected=retained|echo-fence-(armed|consumed|cleared-equality|mismatched)|reconcile-parked)$/,
                 line,
             );
-            assert.ok(!line.includes("win-a"), line);
-            assert.ok(!line.includes("win-b"), line);
-            assert.ok(!line.includes("win-c"), line);
             assert.ok(!line.includes("owner-1"), line);
         }
+    });
+
+    it("emits an exact refusal token for every distinct request-route cause", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = enableAdapter(mocks);
+
+        adapter.disable();
+        adapter.requestFocus("left");
+        adapter.requestMove("right");
+        adapter.requestResize("left", "outwards");
+        adapter.requestPointerResize("win-a", "right", 1000);
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-disabled"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-disabled"));
+
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        adapter.requestFocus("sideways");
+        adapter.requestMove("sideways");
+        adapter.requestResize("sideways", "outwards");
+        adapter.requestResize("left", "sideways-mode");
+        adapter.requestPointerResize("win-a", "sideways", 1000);
+        adapter.requestPointerResize("win-a", "right", 999999);
+        adapter.requestPointerResize("bad-id-!@#", "right", 1000);
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-invalid-direction"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-invalid-mode"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-direction"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-boundary"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-identity"));
+
+        mocks.observeImpl = () => null;
+        adapter.requestFocus("left");
+        adapter.requestMove("right");
+        adapter.requestResize("left", "outwards");
+        adapter.requestPointerResize("win-a", "right", 1000);
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:focus-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:move-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:resize-refused-observe"));
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-observe"));
+
+        mocks.observeImpl = () => makeObserved(refs, { focused: refs.a });
+        adapter.requestPointerResize("win-zzz", "right", 1000);
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-absent"));
+
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.b,
+                rects: { "win-a": { x: 0, y: 0, w: 600, h: 800 }, "win-b": { x: 0, y: 0, w: 1200, h: 800 } },
+                fullscreen: { "win-b": true },
+            });
+        adapter.requestPointerResize("win-b", "left", 600);
+        assert.ok(mocks.logs.some((l) => l === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
     });
 });
 
@@ -1171,6 +1291,17 @@ function startEntry(
 }
 
 describe("plan entry live observation and shortcuts", () => {
+    it("logs a bounded ready line identifying the plan session from existing provenance", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:ready owner=owner-1 generation=gen-1 source=local-dev"),
+            "startup session-identifying context from the existing owner/generation provenance plus the local-dev source fallback",
+        );
+        handle?.stop();
+    });
+
     it("starts with 24 parameterized directional shortcuts and observes stable ids", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
@@ -1796,6 +1927,9 @@ describe("plan adapter fullscreen isolation", () => {
         assert.equal(adapter.requestPointerResize("win-b", "left", 600), false);
         assert.equal(mocks.dbusCalls.length, callsBefore);
         assert.equal(mocks.geometries.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:move-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:resize-refused-fullscreen"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"));
     });
 
     it("admits a fullscreen member into the tree but never writes its geometry", () => {
@@ -1836,6 +1970,13 @@ describe("plan adapter fullscreen isolation", () => {
         assert.ok(mocks.geometries.some((entry) => entry.target === refs.a || entry.target === refs.b));
         assert.ok(!mocks.geometries.some((entry) => entry.target === refs.c), "fullscreen member never actuated");
         assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-c disposition=skip-fullscreen rect=800,0,400,800",
+            ),
+            "fullscreen member carries skip-fullscreen disposition with its retained target rect",
+        );
     });
 
     it("entering fullscreen from tiled adopts the baseline with no reconcile and no write", () => {

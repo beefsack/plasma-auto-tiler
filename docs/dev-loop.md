@@ -227,35 +227,117 @@ prove live callbacks.
 ## Journal Line Forms
 
 Filter by the recorded KWin PID only: `journalctl --user --no-pager _PID=<kwin-pid>`
-(never `journalctl --system`). The adapter emits three bounded, redacted line
-shapes with prefix `plasma-auto-tiler:plan` (no scope, signal, identity, or
-payload detail):
+(never `journalctl --system`). All emitted production diagnostics carry the
+fixed `plasma-auto-tiler:` prefix and are always-on (never verbose-gated).
+The complete reference below is bounded per discrete user action or state
+change; no line carries a caption or title.
 
-- Per failed shortcut registration:
-  `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>`
-  where `<action>` is a project action ID and `<sequence>` is its requested
-  chord. Registration continues so every failed chord is observable.
+Startup context (exactly one line per successful plan entry start, using the
+existing owner/generation provenance plus the compiled-in source revision;
+`<source-rev>` is the installed build's bounded git revision, else
+`local-dev`):
 
-- Per dispatched command (always exactly one line per `DescribePlan` flight):
-  `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
-  where `<op>` is one of `admit|remove|move|focus|resize`, `<correlation>` is
-  `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>` is the observed
-  window count, and success is `outcome=planned-applied`.
-  Success example:
-  `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=planned-applied`
-  Local fail-closed outcomes (`timer-failed`, `dbus-failed`, `timeout`,
-  `service-fault`, `correlation-mismatch`, `stale-dropped`,
-  `precondition-mismatch`, `stale-scope`, `write-failed`) use the same single
-  line shape with no second line.
-- Per Rust rejection (exactly two lines: the command line above with
-  `outcome=rejected`, plus one kind line):
-  `plasma-auto-tiler:plan:rejected kind=<kind>`
-  where `<kind>` is the sanitized lowercase-dash token (otherwise `unknown`).
-  Rejection example:
-  `plasma-auto-tiler:plan:cmd=plan-1-p4 kind=move windows=4 outcome=rejected`
-  `plasma-auto-tiler:plan:rejected kind=snapshot-invalid`
+- `plasma-auto-tiler:plan:ready owner=<owner> generation=<generation> source=<source-rev>`
 
-Map each journey step above to one command line: add -> `kind=admit`,
+Per dispatched `DescribePlan` flight (exactly two `cmd=` lines: one route
+entry with `outcome=dispatch` and one terminal verdict line):
+
+- `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=dispatch`
+- `plasma-auto-tiler:plan:cmd=<correlation> kind=<op> windows=<N> outcome=<outcome>`
+
+where `<op>` is one of `admit|remove|move|focus|resize|reconcile|pointer-resize`,
+`<correlation>` is `<generation>-p<seq>` (production: `plan-1-p<seq>`), `<N>`
+is the observed window count, and terminal outcomes are `planned-applied`,
+`rejected`, or the local fail-closed values `timer-failed`, `dbus-failed`,
+`timeout`, `service-fault`, `correlation-mismatch`, `stale-dropped`,
+`precondition-mismatch`, `stale-scope`, `write-failed`. Example pair:
+
+- `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=dispatch`
+- `plasma-auto-tiler:plan:cmd=plan-1-p3 kind=admit windows=4 outcome=planned-applied`
+
+Per Rust rejection (one `rejected` kind line following the `outcome=rejected`
+command line):
+
+- `plasma-auto-tiler:plan:rejected kind=<kind>`
+
+Per applied geometry command (every member exactly one line, non-focus ops;
+`<id>` is the stable opaque normalized window id, `<rect>` is `x,y,w,h`):
+
+- `plasma-auto-tiler:plan:write window=<id> disposition=<written|skip-fullscreen|skip-already-equal|write-failed> rect=<rect>`
+
+Per work-area/scope change (dedicated pair, never the generic reconcile line):
+
+- `plasma-auto-tiler:plan:scope-transition old=<old-rect> new=<new-rect>`
+- `plasma-auto-tiler:plan:work-area-reprojection selected=retained`
+
+Per slice-2 pointer echo fence transition (one fixed token each):
+
+- `plasma-auto-tiler:plan:echo-fence-armed`
+- `plasma-auto-tiler:plan:echo-fence-consumed`
+- `plasma-auto-tiler:plan:echo-fence-cleared-equality`
+- `plasma-auto-tiler:plan:echo-fence-mismatched`
+
+Per refusal/rejection path (exact distinct tokens, one per cause; every
+shortcut and pointer-route refusal carries its own fixed token):
+
+- `plasma-auto-tiler:plan:focus-refused-disabled` (shortcut focus while the adapter is disabled)
+- `plasma-auto-tiler:plan:focus-refused-invalid-direction`
+- `plasma-auto-tiler:plan:focus-refused-observe`
+- `plasma-auto-tiler:plan:move-refused-disabled`
+- `plasma-auto-tiler:plan:move-refused-invalid-direction`
+- `plasma-auto-tiler:plan:move-refused-observe`
+- `plasma-auto-tiler:plan:move-refused-fullscreen` (directional move refused on a fullscreen focused window)
+- `plasma-auto-tiler:plan:resize-refused-disabled`
+- `plasma-auto-tiler:plan:resize-refused-invalid-direction`
+- `plasma-auto-tiler:plan:resize-refused-invalid-mode`
+- `plasma-auto-tiler:plan:resize-refused-observe`
+- `plasma-auto-tiler:plan:resize-refused-fullscreen` (directional resize refused on a fullscreen focused window)
+- `plasma-auto-tiler:plan:pointer-refused-disabled`
+- `plasma-auto-tiler:plan:pointer-refused-identity`
+- `plasma-auto-tiler:plan:pointer-refused-direction`
+- `plasma-auto-tiler:plan:pointer-refused-boundary`
+- `plasma-auto-tiler:plan:pointer-refused-observe`
+- `plasma-auto-tiler:plan:pointer-refused-absent`
+- `plasma-auto-tiler:plan:pointer-refused-fullscreen` (pointer-resize target refused while fullscreen)
+- `plasma-auto-tiler:plan:busy-refused kind=<focus|move|resize>` (shortcut dropped while a flight is in flight)
+- `plasma-auto-tiler:plan:reconcile-parked` (reconcile budget exhausted; bounded once per park transition)
+- `plasma-auto-tiler:plan:shortcut-failed action=<action> sequence=<sequence>` (per failed shortcut registration)
+
+Drag-oracle route lines (always-on; entry then verdict; the pointer route's
+adapter emits the exact `pointer-refused-*` token above per cause, never a
+catch-all line):
+
+- `plasma-auto-tiler:route-diag:drag-pull action=dispatch`
+- `plasma-auto-tiler:route-diag:drag-verdict cancelled=<true|false> correlation=<drag-N> reason=<reason>`
+- `plasma-auto-tiler:route-diag:drag-call-missing` (pull with no call binding)
+- `plasma-auto-tiler:route-diag:drag-call-thrown` (pull whose D-Bus call threw)
+- `plasma-auto-tiler:route-diag:drag-reply-invalid` (any malformed or unparseable reply)
+- `plasma-auto-tiler:route-diag:drag-route-missing` (non-cancelled verdict with no pointer route installed)
+- `plasma-auto-tiler:route-diag:drag-context-invalid`
+- `plasma-auto-tiler:route-diag:drag-scope-invalid`
+- `plasma-auto-tiler:route-diag:drag-unknown-window`
+- `plasma-auto-tiler:route-diag:drag-ref-mismatch`
+- `plasma-auto-tiler:route-diag:drag-start-missing`
+- `plasma-auto-tiler:route-diag:drag-move-ignored`
+- `plasma-auto-tiler:route-diag:drag-start-invalid`
+- `plasma-auto-tiler:route-diag:drag-edge-invalid`
+
+Drag-oracle entry startup refusal (exactly one token per refused
+`startDragOraclePullEntry` start, one per cause; the entry returns null):
+
+- `plasma-auto-tiler:route-diag:drag-entry-workspace-missing`
+- `plasma-auto-tiler:route-diag:drag-entry-call-missing`
+- `plasma-auto-tiler:route-diag:drag-entry-call-thrown`
+- `plasma-auto-tiler:route-diag:drag-entry-list-missing`
+- `plasma-auto-tiler:route-diag:drag-entry-list-thrown`
+- `plasma-auto-tiler:route-diag:drag-entry-list-invalid`
+- `plasma-auto-tiler:route-diag:drag-entry-finished-invalid` (a connectable finished signal that failed to attach)
+- `plasma-auto-tiler:route-diag:drag-entry-no-windows` (empty window list)
+- `plasma-auto-tiler:route-diag:drag-entry-no-finished` (windows exist but none expose a connectable finished signal)
+- `plasma-auto-tiler:route-diag:drag-entry-added-invalid` (missing or non-connectable windowAdded signal)
+- `plasma-auto-tiler:route-diag:drag-entry-added-connect-failed` (windowAdded attach returned null or threw)
+
+Map each journey step above to one command pair: add -> `kind=admit`,
 close -> `kind=remove`, directional focus -> `kind=focus`, directional move ->
 `kind=move`, resize -> `kind=resize`. Pointer focus change alone emits no
 command line. A rejection still emits the pair above and recovers on the next

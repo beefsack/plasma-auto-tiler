@@ -8,6 +8,7 @@ import {
     DRAG_ORACLE_OBJECT,
     DRAG_ORACLE_SERVICE,
     DragOraclePull,
+    DragOraclePullEnv,
     formatDragOracleVerdict,
     parseDragOracleVerdict,
     startDragOraclePullEntry,
@@ -277,7 +278,9 @@ describe("drag-oracle pull transport", () => {
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "plasma-auto-tiler:route-diag:drag-route-missing",
         ]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
     });
 
     it("logs a bounded dispatch when the endpoint never answers", () => {
@@ -308,6 +311,7 @@ describe("drag-oracle pull transport", () => {
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "call",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "plasma-auto-tiler:route-diag:drag-route-missing",
         ]);
         assert.ok(order.every((line) => line.length <= 128));
     });
@@ -326,7 +330,7 @@ describe("drag-oracle pull transport", () => {
         assert.equal(calls, 1);
     });
 
-    it("fails closed to one bounded token when the reply is malformed", () => {
+    it("fails closed to one bounded reply-invalid token when the reply is malformed", () => {
         const logs: string[] = [];
         const pull = new DragOraclePull({
             callDbus: (_service, _path, _iface, _method, callback) => {
@@ -339,11 +343,12 @@ describe("drag-oracle pull transport", () => {
         pull.pullVerdict();
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-unavailable",
+            "plasma-auto-tiler:route-diag:drag-reply-invalid",
         ]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
     });
 
-    it("fails closed without throwing when transport is unavailable", () => {
+    it("fails closed to one bounded call-thrown token when the transport throws", () => {
         const logs: string[] = [];
         const pull = new DragOraclePull({
             callDbus: () => {
@@ -356,8 +361,40 @@ describe("drag-oracle pull transport", () => {
         pull.pullVerdict();
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-unavailable",
+            "plasma-auto-tiler:route-diag:drag-call-thrown",
         ]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+    });
+
+    it("fails closed to one bounded call-missing token when no call binding exists", () => {
+        const logs: string[] = [];
+        const pull = new DragOraclePull({
+            log: (message) => {
+                logs.push(message);
+            },
+        } as DragOraclePullEnv);
+        pull.pullVerdict();
+        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-call-missing"]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
+    });
+
+    it("fails closed to one bounded route-missing token for a non-cancelled verdict without a route", () => {
+        const logs: string[] = [];
+        const pull = new DragOraclePull({
+            callDbus: (_service, _path, _iface, _method, callback) => {
+                callback(movedVerdict());
+            },
+            log: (message) => {
+                logs.push(message);
+            },
+        });
+        pull.pullVerdict();
+        assert.deepEqual(logs, [
+            "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
+            "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "plasma-auto-tiler:route-diag:drag-route-missing",
+        ]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
     });
 });
 
@@ -440,6 +477,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
             "plasma-auto-tiler:route-diag:drag-verdict cancelled=false correlation=drag-3 reason=ok-moved",
+            "plasma-auto-tiler:route-diag:drag-route-missing",
         ]);
         (handle as { stop: () => void }).stop();
         assert.equal(first.disconnects(), 1);
@@ -447,7 +485,7 @@ describe("drag-oracle pull entry wiring", () => {
         assert.equal(addedDisconnects, 1);
     });
 
-    it("fails closed when windowAdded is missing and detaches finished signals", () => {
+    it("fails closed with the added-invalid token when windowAdded is missing and detaches finished signals", () => {
         const first = connectable();
         const logs: string[] = [];
         const handle = startDragOraclePullEntry({
@@ -462,11 +500,12 @@ describe("drag-oracle pull entry wiring", () => {
             },
         });
         assert.equal(handle, null);
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-invalid"]);
+        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-added-invalid"]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
         assert.equal(first.disconnects(), 1);
     });
 
-    it("fails closed when no finished subscription exists", () => {
+    it("fails closed with the no-finished token when no window exposes a finished subscription", () => {
         const logs: string[] = [];
         const handle = startDragOraclePullEntry({
             workspace: { windowList: (): unknown[] => [{ caption: "no-signals" }] },
@@ -478,7 +517,107 @@ describe("drag-oracle pull entry wiring", () => {
             },
         });
         assert.equal(handle, null);
-        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-invalid"]);
+        assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-no-finished"]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+    });
+
+    it("refuses each distinct startup branch with its own exact drag-entry token", () => {
+        const reject = (workspace: unknown, logs: string[]): void => {
+            const handle = startDragOraclePullEntry({
+                workspace,
+                callDbus: (_s, _p, _i, _m, _c) => {
+                    assert.fail("must not call D-Bus on a refused start");
+                },
+                log: (message) => {
+                    logs.push(message);
+                },
+            });
+            assert.equal(handle, null);
+        };
+        const expectToken = (workspace: unknown, token: string): void => {
+            const logs: string[] = [];
+            reject(workspace, logs);
+            assert.deepEqual(logs, [token]);
+            assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-entry-invalid"));
+        };
+        expectToken(null, "plasma-auto-tiler:route-diag:drag-entry-workspace-missing");
+        expectToken({}, "plasma-auto-tiler:route-diag:drag-entry-list-missing");
+        expectToken(
+            {
+                windowList: (): unknown[] => {
+                    throw new Error("list-boom");
+                },
+            },
+            "plasma-auto-tiler:route-diag:drag-entry-list-thrown",
+        );
+        expectToken(
+            { windowList: (): unknown => "garbage" },
+            "plasma-auto-tiler:route-diag:drag-entry-list-invalid",
+        );
+        expectToken(
+            { windowList: (): unknown[] => [] },
+            "plasma-auto-tiler:route-diag:drag-entry-no-windows",
+        );
+        const connectThrows = {
+            connect: (): void => {
+                throw new Error("connect-boom");
+            },
+            disconnect: (): void => {},
+        };
+        expectToken(
+            {
+                windowList: (): unknown[] => [{ interactiveMoveResizeFinished: connectThrows }],
+            },
+            "plasma-auto-tiler:route-diag:drag-entry-finished-invalid",
+        );
+        const addedThrows = {
+            connect: (): void => {
+                throw new Error("added-boom");
+            },
+            disconnect: (): void => {},
+        };
+        const finished = connectable();
+        expectToken(
+            {
+                windowList: (): unknown[] => [{ interactiveMoveResizeFinished: finished.signal }],
+                windowAdded: addedThrows,
+            },
+            "plasma-auto-tiler:route-diag:drag-entry-added-connect-failed",
+        );
+    });
+
+    it("refuses a missing callDBus global with the entry-call token", () => {
+        (globalThis as Record<string, unknown>)["callDBus"] = "not-a-function";
+        try {
+            const logs: string[] = [];
+            const handle = startDragOraclePullEntry({
+                workspace: { windowList: (): unknown[] => [] },
+                log: (message) => {
+                    logs.push(message);
+                },
+            });
+            assert.equal(handle, null);
+            assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-call-missing"]);
+        } finally {
+            delete (globalThis as Record<string, unknown>)["callDBus"];
+        }
+    });
+
+    it("refuses an unavailable callDBus global with the entry-call-thrown token", () => {
+        delete (globalThis as Record<string, unknown>)["callDBus"];
+        try {
+            const logs: string[] = [];
+            const handle = startDragOraclePullEntry({
+                workspace: { windowList: (): unknown[] => [] },
+                log: (message) => {
+                    logs.push(message);
+                },
+            });
+            assert.equal(handle, null);
+            assert.deepEqual(logs, ["plasma-auto-tiler:route-diag:drag-entry-call-thrown"]);
+        } finally {
+            delete (globalThis as Record<string, unknown>)["callDBus"];
+        }
     });
 
     it("keeps Slice 2 routing pull-based with strict no-op cancelled and no planner push", () => {

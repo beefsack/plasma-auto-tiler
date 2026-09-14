@@ -170,8 +170,9 @@ describe("slice 2 verdict routing contract", () => {
         assert.equal(routed, 0);
         assert.deepEqual(logs, [
             "plasma-auto-tiler:route-diag:drag-pull action=dispatch",
-            "plasma-auto-tiler:route-diag:drag-unavailable",
+            "plasma-auto-tiler:route-diag:drag-reply-invalid",
         ]);
+        assert.ok(!logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-unavailable"));
     });
 });
 
@@ -188,7 +189,7 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.equal(payload["focused_window"], "win-a");
     });
 
-    it("rejects unknown window, direction, and boundary without a D-Bus call", () => {
+    it("rejects unknown window, direction, and boundary with exact refusal tokens and no D-Bus call", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new PlanAdapter(mocks.env);
@@ -197,6 +198,9 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.equal(adapter.requestPointerResize("win-a", "sideways", 1000), false);
         assert.equal(adapter.requestPointerResize("win-a", "right", 999999), false);
         assert.equal(mocks.dbusCalls.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-absent"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-direction"));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-boundary"));
     });
 
     it("reasserts the drag source and preserves the planned sibling gap", () => {
@@ -216,10 +220,20 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.ok(source !== undefined);
         assert.ok(neighbour !== undefined);
         assert.equal(neighbour.x - (source.x + source.w), 8);
-        for (const line of mocks.logs) {
-            assert.ok(!line.includes("win-a"));
-            assert.ok(!line.includes("win-b"));
-        }
+        // Every applied member carries a bounded write disposition with its
+        // stable id and target rect; the gap is visible in the retained rects.
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-a disposition=written rect=8,8,884,784",
+            ),
+        );
+        assert.ok(
+            mocks.logs.some(
+                (line) =>
+                    line === "plasma-auto-tiler:plan:write window=win-b disposition=written rect=900,8,292,784",
+            ),
+        );
         // Neighbour echo with planned rectangles is consumed with no new D-Bus.
         const callsBefore = mocks.dbusCalls.length;
         (adapter as unknown as { refreshNow: () => void });
@@ -233,10 +247,27 @@ describe("slice 2 plan adapter pointer route", () => {
         assert.ok(src.includes("pointerEcho"));
         assert.ok(!src.includes("fallback"));
         const entry = readFileSync("src/plan-adapter-entry.ts", "utf8");
-        assert.ok(entry.includes("drag-derive-invalid"));
+        assert.ok(entry.includes("drag-context-invalid"));
         assert.ok(entry.includes("drag-unknown-window"));
         assert.ok(entry.includes("drag-scope-invalid"));
         assert.ok(entry.includes("drag-move-ignored"));
+        assert.ok(entry.includes("drag-ref-mismatch"));
+        assert.ok(entry.includes("drag-start-missing"));
+        assert.ok(entry.includes("drag-start-invalid"));
+        assert.ok(entry.includes("drag-edge-invalid"));
+        assert.ok(!entry.includes("drag-pointer-refused"), "no catch-all pointer-refused line in the entry");
+        assert.ok(!entry.includes("drag-fullscreen-refused"), "no redundant fullscreen re-check in the entry");
+        for (const token of [
+            "pointer-refused-disabled",
+            "pointer-refused-identity",
+            "pointer-refused-direction",
+            "pointer-refused-boundary",
+            "pointer-refused-observe",
+            "pointer-refused-absent",
+            "pointer-refused-fullscreen",
+        ]) {
+            assert.ok(src.includes(token), `adapter emits ${token}`);
+        }
     });
 });
 
@@ -341,7 +372,7 @@ interface OracleWorld {
     readonly signals: Record<string, OracleFireSignal>;
 }
 
-function oracleWorld(opts: { fullscreen?: ReadonlyArray<string> } = {}): OracleWorld {
+function oracleWorld(opts: { fullscreen?: ReadonlyArray<string>; move?: Record<string, boolean>; resize?: Record<string, boolean> } = {}): OracleWorld {
     const output: Record<string, unknown> = { name: "out-1" };
     const desktop: Record<string, unknown> = { id: "ws-1" };
     const signals: Record<string, OracleFireSignal> = {
@@ -369,8 +400,8 @@ function oracleWorld(opts: { fullscreen?: ReadonlyArray<string> } = {}): OracleW
         output,
         desktops: [desktop],
         frameGeometry: { x, y: 0, width: 600, height: 800 },
-        move: false,
-        resize: true,
+        move: opts.move?.[id] ?? false,
+        resize: opts.resize?.[id] ?? true,
         moveResizedChanged: geo.signal,
         interactiveMoveResizeStarted: started.signal,
         interactiveMoveResizeFinished: finished.signal,
@@ -475,7 +506,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         for (const call of mocks.planCalls) {
             assert.ok(!call.payload.includes("pointer-resize"), call.payload);
         }
-        assert.ok(mocks.logs.some((line) => line.includes("drag-derive-invalid")));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-missing"));
         stop();
     });
 
@@ -522,7 +553,7 @@ describe("slice 2 entry finish consumes the captured start", () => {
         for (const call of mocks.planCalls) {
             assert.ok(!call.payload.includes("pointer-resize"), call.payload);
         }
-        assert.ok(mocks.logs.some((line) => line.includes("drag-derive-invalid")));
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-missing"));
         // The fresh reply routes exactly once from the newer start.
         (mocks.oracleCalls[1] as (reply: unknown) => void)(movedWinA("drag-2"));
         assert.equal(mocks.planCalls.length, 1);
@@ -565,13 +596,62 @@ describe("slice 2 entry finish consumes the captured start", () => {
         (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
         assert.equal(mocks.planCalls.length, 0, "fullscreen target never dispatched");
         assert.ok(
-            mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-fullscreen-refused"),
-            "exact bounded refusal reason",
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:pointer-refused-fullscreen"),
+            "exact source-grounded refusal token from the adapter",
         );
         assert.ok(
             !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-derive-invalid"),
             "no generic derive-invalid for the fullscreen refusal",
         );
+        assert.ok(
+            !mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-pointer-refused"),
+            "no catch-all pointer-refused line from the entry",
+        );
+        stop();
+    });
+
+    it("logs drag-edge-invalid for a mixed two-edge verdict with no dispatch", () => {
+        const world = oracleWorld();
+        const { stop, mocks } = startOracleEntry(world);
+        fireAll(world.signals["startedA"]);
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(
+            JSON.stringify({
+                v: 1,
+                cancelled: false,
+                finalRect: { x: 100, y: 100, w: 600, h: 800 },
+                windowIdentity: "win-a",
+                correlation: "drag-1",
+                reason: "ok-moved",
+            }),
+        );
+        assert.equal(mocks.planCalls.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-edge-invalid"));
+        stop();
+    });
+
+    it("logs drag-move-ignored for a move-gesture start with no dispatch", () => {
+        const world = oracleWorld({ move: { "win-a": true } });
+        const { stop, mocks } = startOracleEntry(world);
+        fireAll(world.signals["startedA"]);
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.equal(mocks.planCalls.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-move-ignored"));
+        stop();
+    });
+
+    it("logs drag-start-invalid for a start that is neither move nor resize", () => {
+        const world = oracleWorld({ move: { "win-a": false }, resize: { "win-a": false } });
+        const { stop, mocks } = startOracleEntry(world);
+        fireAll(world.signals["startedA"]);
+        fireAll(world.signals["finishedA"]);
+        assert.equal(mocks.oracleCalls.length, 1);
+        (mocks.oracleCalls[0] as (reply: unknown) => void)(movedWinA("drag-1"));
+        assert.equal(mocks.planCalls.length, 0);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:route-diag:drag-start-invalid"));
         stop();
     });
 });
@@ -724,6 +804,7 @@ describe("slice 2 pointer echo fence", () => {
         const refs = makeRefs();
         const mocks = echoMockEnv(refs);
         seedPointerEcho(mocks);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-armed"), "fence armed on apply");
         // Native neighbour rects never matched the planned ones.
         mocks.current = {
             "win-a": { x: 0, y: 0, w: 600, h: 800 },
@@ -734,13 +815,15 @@ describe("slice 2 pointer echo fence", () => {
         assert.equal(mocks.dbusCalls.length, 3);
         const command = (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"] as Record<string, unknown>;
         assert.deepEqual(command, { op: "reconcile" });
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-mismatched"));
     });
 
     it("consumes a matching echo one-shot and reconciles later drift", () => {
         const refs = makeRefs();
         const mocks = echoMockEnv(refs);
         seedPointerEcho(mocks);
-        // Native neighbour writes match the planned rectangles: silent.
+        // Native neighbour writes match the planned rectangles: the armed
+        // fence clears on equality (snapshotsEqual) with no reconcile.
         mocks.current = {
             "win-a": { x: 0, y: 0, w: 600, h: 800 },
             "win-b": { x: 900, y: 0, w: 300, h: 800 },
@@ -748,6 +831,10 @@ describe("slice 2 pointer echo fence", () => {
         fireEcho(mocks, "geometry");
         runEchoDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-cleared-equality"),
+            "armed fence cleared on equality",
+        );
         // The expectation was one-shot: repeating the same observation stays
         // silent through the updated baseline, not a lingering echo.
         fireEcho(mocks, "geometry");
@@ -767,6 +854,35 @@ describe("slice 2 pointer echo fence", () => {
         assert.deepEqual(command, { op: "reconcile" });
     });
 
+    it("consumes an armed echo on exact neighbour equality while the source drifts", () => {
+        const refs = makeRefs();
+        const mocks = echoMockEnv(refs);
+        seedPointerEcho(mocks);
+        // Source rect drifts but the neighbour lands exactly on the planned
+        // rect: the one-shot expectation is consumed, not mismatched.
+        mocks.current = {
+            "win-a": { x: 0, y: 0, w: 601, h: 800 },
+            "win-b": { x: 900, y: 0, w: 300, h: 800 },
+        };
+        fireEcho(mocks, "geometry");
+        runEchoDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 2);
+        assert.ok(mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-consumed"));
+        assert.ok(!mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-mismatched"));
+        // A later neighbour drift is no longer covered by the consumed fence.
+        mocks.current = {
+            "win-a": { x: 0, y: 0, w: 601, h: 800 },
+            "win-b": { x: 880, y: 0, w: 320, h: 800 },
+        };
+        fireEcho(mocks, "geometry");
+        runEchoDebounce(mocks);
+        assert.equal(mocks.dbusCalls.length, 3);
+        assert.deepEqual(
+            (JSON.parse(mocks.dbusCalls[2]?.payload as string) as Record<string, unknown>)["command"],
+            { op: "reconcile" },
+        );
+    });
+
     it("disarms an exact echo before later source-only drift", () => {
         const refs = makeRefs();
         const mocks = echoMockEnv(refs);
@@ -779,6 +895,10 @@ describe("slice 2 pointer echo fence", () => {
         fireEcho(mocks, "geometry");
         runEchoDebounce(mocks);
         assert.equal(mocks.dbusCalls.length, 2);
+        assert.ok(
+            mocks.logs.some((line) => line === "plasma-auto-tiler:plan:echo-fence-cleared-equality"),
+            "armed fence cleared on full equality",
+        );
         // A later source-only drift is not the neighbour-write echo and must
         // reach bounded reconciliation.
         mocks.current = {
