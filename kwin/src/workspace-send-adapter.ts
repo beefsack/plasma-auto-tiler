@@ -803,6 +803,9 @@ interface WorkspacePendingFlight {
     planned: WorkspacePlanned | null;
     verifiedObserved: WorkspaceSendObserved | null;
     acked: boolean;
+    // Armed geometry-fence size recorded after subscriptions succeed.
+    // Diagnostic only: never gates behavior.
+    fenceTotal: number;
 }
 
 // Source-grounded request-phase recovery rule: Planner::
@@ -1210,6 +1213,7 @@ export class WorkspaceSendAdapter {
             planned: null,
             verifiedObserved: null,
             acked: false,
+            fenceTotal: 0,
         };
         // True command-dispatch observation at the request boundary, using the
         // original dispatch observation and revision 0. Best-effort only.
@@ -1642,6 +1646,7 @@ export class WorkspaceSendAdapter {
                 this.geoPending.add(windowId);
             }
         }
+        pending.fenceTotal = this.geoPending.size;
         // Native writes: direct geometry in the shared grow-before-shrink
         // order, then only the mover's desktop membership. Desktop follow and
         // mover focus happen only after the verify commit (see onVerifyReply).
@@ -2513,12 +2518,42 @@ export class WorkspaceSendAdapter {
             isUniqueOwner(this.pinnedOwner)
         ) {
             const planned = pending.planned;
+            const armedTotal = pending.fenceTotal;
             const fresh = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
-            if (fresh !== null && this.verifyPlannedPost(planned, pending, fresh) === "") {
+            if (fresh === null) {
+                this.logTimeoutSettle({
+                    correlation,
+                    revision,
+                    outcome: "fresh-unavailable",
+                    verifyReason: "none",
+                    verifyGeoIdx: -1,
+                    fence: this.timeoutFenceDetail(planned, armedTotal),
+                });
+            } else if (this.verifyPlannedPost(planned, pending, fresh) !== "") {
+                const detail = this.timeoutVerifyDetail(planned, pending, fresh);
+                this.logTimeoutSettle({
+                    correlation,
+                    revision,
+                    outcome: "verify-failed",
+                    verifyReason: detail.reason,
+                    verifyGeoIdx: detail.geoIdx,
+                    fence: this.timeoutFenceDetail(planned, armedTotal),
+                });
+            } else {
+                const fencePre = this.timeoutFenceDetail(planned, armedTotal);
                 this.clearEcho();
                 pending.verifiedObserved = fresh;
                 const payload = this.buildAckPayload(fresh, correlation, planned.baseRevision);
-                if (payload !== null && payload.length <= WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+                if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+                    this.logTimeoutSettle({
+                        correlation,
+                        revision,
+                        outcome: "payload-invalid",
+                        verifyReason: "ok",
+                        verifyGeoIdx: -1,
+                        fence: fencePre,
+                    });
+                } else {
                     this.clearTimer();
                     this.deadlineToken += 1;
                     this.activeDeadline = this.deadlineToken;
@@ -2533,16 +2568,49 @@ export class WorkspaceSendAdapter {
                     }
                     this.timeoutDepth -= 1;
                     if (cancel !== null && isUniqueOwner(this.pinnedOwner)) {
+                        this.logTimeoutSettle({
+                            correlation,
+                            revision,
+                            outcome: "settled",
+                            verifyReason: "ok",
+                            verifyGeoIdx: -1,
+                            fence: fencePre,
+                        });
                         this.cancelTimer = cancel;
                         this.diag("request", correlation, planned.baseRevision, "plan", "planned");
                         this.sendAck(flight, correlation, payload);
                         return;
                     }
+                    this.logTimeoutSettle({
+                        correlation,
+                        revision,
+                        outcome: cancel === null ? "schedule-unavailable" : "owner-invalid",
+                        verifyReason: "ok",
+                        verifyGeoIdx: -1,
+                        fence: fencePre,
+                    });
                     // Settlement arming failed: retire the fresh deadline so the
                     // failed epoch can never fire later.
                     this.activeDeadline = 0;
                 }
             }
+        } else if (
+            pending !== null &&
+            pending.planned !== null &&
+            pending.verifiedObserved === null &&
+            !pending.acked
+        ) {
+            // The only pre-ack settlement guard that can fail after a valid
+            // planned flight exists is the pinned unique owner. Keep the
+            // established terminal path unchanged, but identify it.
+            this.logTimeoutSettle({
+                correlation,
+                revision,
+                outcome: "owner-invalid",
+                verifyReason: "none",
+                verifyGeoIdx: -1,
+                fence: this.timeoutFenceDetail(pending.planned, pending.fenceTotal),
+            });
         }
         this.clearTimer();
         // Post-plan timeout (ack/verify waiting on a valid planned reply) also
@@ -2680,5 +2748,196 @@ export class WorkspaceSendAdapter {
         } catch (error) {
             void error;
         }
+    }
+
+    // Best-effort redacted timeout-settlement diagnostic for the eligible
+    // pre-ack path only. One compact object call, one log line, one try/catch.
+    // Carries the settlement outcome, the verifier category (scope variants,
+    // geometry with plan-relative index, observed-count, mover membership,
+    // retained source/target membership), and the armed fence (armed total,
+    // pending count, plan-relative pending indices, mover-seen). Counts and
+    // indices only; never raw ids, geometry values, payloads, captions, focus
+    // data, owner, or native refs. Never affects behavior.
+    private logTimeoutSettle(detail: {
+        readonly correlation: string;
+        readonly revision: number;
+        readonly outcome: string;
+        readonly verifyReason: string;
+        readonly verifyGeoIdx: number;
+        readonly fence: { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string };
+    }): void {
+        try {
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=timeout correlation=${detail.correlation} generation=${this.generation} revision=${String(toDiagInt(detail.revision, -1, WORKSPACE_SEND_MAX_REVISION))} event=timeout-settle outcome=${sanitizeKind(detail.outcome)} verify_reason=${sanitizeKind(detail.verifyReason)} verify_geo_idx=${String(toDiagInt(detail.verifyGeoIdx, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_pending=${String(toDiagInt(detail.fence.pending, -1, WORKSPACE_SEND_MAX_GEOMETRY))} fence_total=${String(toDiagInt(detail.fence.total, -1, WORKSPACE_SEND_MAX_GEOMETRY))} mover_seen=${String(toDiagInt(detail.fence.moverSeen, -1, 1))} fence_idx=${detail.fence.idx}`,
+            );
+        } catch (error) {
+            void error;
+        }
+    }
+
+    // Armed fence snapshot: pending count from the live fence, total from the
+    // count recorded at arming, pending ids mapped to stable plan-relative
+    // indices. No logging, no state change.
+    private timeoutFenceDetail(
+        planned: WorkspacePlanned,
+        armedTotal: number,
+    ): { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string } {
+        try {
+            return this.timeoutFenceDetailUnchecked(planned, armedTotal);
+        } catch (error) {
+            void error;
+            return { pending: -1, total: -1, moverSeen: -1, idx: "-" };
+        }
+    }
+
+    private timeoutFenceDetailUnchecked(
+        planned: WorkspacePlanned,
+        armedTotal: number,
+    ): { readonly pending: number; readonly total: number; readonly moverSeen: number; readonly idx: string } {
+        const indices: number[] = [];
+        for (const id of this.geoPending) {
+            for (let index = 0; index < planned.geometry.length; index += 1) {
+                if (planned.geometry[index]?.window === id) {
+                    indices.push(index);
+                    break;
+                }
+            }
+        }
+        indices.sort((a, b) => a - b);
+        return {
+            pending: this.geoPending.size,
+            total: armedTotal,
+            moverSeen: this.moverSeen ? 1 : 0,
+            idx: indices.length === 0 ? "-" : indices.join(","),
+        };
+    }
+
+    // Diagnostic-only mirror of verifyPlannedPost categories. The verifier
+    // itself stays the single behavior gate; this only names the branch for
+    // the eligible-path log. First mismatch wins, same order as the verifier.
+    private timeoutVerifyDetail(
+        planned: WorkspacePlanned,
+        pending: WorkspacePendingFlight,
+        verified: WorkspaceSendObserved,
+    ): { readonly reason: string; readonly geoIdx: number } {
+        try {
+            return this.timeoutVerifyDetailUnchecked(planned, pending, verified);
+        } catch (error) {
+            void error;
+            return { reason: "unknown", geoIdx: -1 };
+        }
+    }
+
+    private timeoutVerifyDetailUnchecked(
+        planned: WorkspacePlanned,
+        pending: WorkspacePendingFlight,
+        verified: WorkspaceSendObserved,
+    ): { readonly reason: string; readonly geoIdx: number } {
+        const snapshot = pending.snapshot;
+        if (verified.sourceOutput !== snapshot.sourceOutput) {
+            return { reason: "scope-source-output", geoIdx: -1 };
+        }
+        if (verified.sourceWorkspace !== snapshot.sourceWorkspace) {
+            return { reason: "scope-source-workspace", geoIdx: -1 };
+        }
+        if (verified.targetOutput !== snapshot.targetOutput) {
+            return { reason: "scope-target-output", geoIdx: -1 };
+        }
+        if (verified.targetWorkspace !== snapshot.targetWorkspace) {
+            return { reason: "scope-target-workspace", geoIdx: -1 };
+        }
+        if (
+            verified.sourceBounds.x !== snapshot.sourceBounds.x ||
+            verified.sourceBounds.y !== snapshot.sourceBounds.y ||
+            verified.sourceBounds.w !== snapshot.sourceBounds.w ||
+            verified.sourceBounds.h !== snapshot.sourceBounds.h
+        ) {
+            return { reason: "scope-source-bounds", geoIdx: -1 };
+        }
+        if (
+            verified.targetBounds.x !== snapshot.targetBounds.x ||
+            verified.targetBounds.y !== snapshot.targetBounds.y ||
+            verified.targetBounds.w !== snapshot.targetBounds.w ||
+            verified.targetBounds.h !== snapshot.targetBounds.h
+        ) {
+            return { reason: "scope-target-bounds", geoIdx: -1 };
+        }
+        if (verified.targetDesktopRef !== pending.targetDesktopRef) {
+            return { reason: "scope-target-ref", geoIdx: -1 };
+        }
+        if (verified.targetExists !== true) {
+            return { reason: "scope-target-exists", geoIdx: -1 };
+        }
+        const byId = new Map<string, { rect: WorkspaceSendRect; inSource: boolean; inTarget: boolean }>();
+        for (const entry of verified.sourceWindows) {
+            byId.set(entry.id, { rect: entry.rect, inSource: true, inTarget: false });
+        }
+        for (const entry of verified.targetWindows) {
+            byId.set(entry.id, { rect: entry.rect, inSource: false, inTarget: true });
+        }
+        const planIndexOf = (windowId: string): number => {
+            for (let index = 0; index < planned.geometry.length; index += 1) {
+                if (planned.geometry[index]?.window === windowId) {
+                    return index;
+                }
+            }
+            return -1;
+        };
+        const seen = new Set<string>();
+        for (let index = 0; index < planned.geometry.length; index += 1) {
+            const entry = planned.geometry[index];
+            if (entry === undefined) {
+                continue;
+            }
+            if (seen.has(entry.window)) {
+                return { reason: "geometry-duplicate", geoIdx: index };
+            }
+            seen.add(entry.window);
+            const found = byId.get(entry.window);
+            if (found === undefined) {
+                return { reason: "geometry-missing", geoIdx: index };
+            }
+            if (
+                found.rect.x !== entry.rect.x ||
+                found.rect.y !== entry.rect.y ||
+                found.rect.w !== entry.rect.w ||
+                found.rect.h !== entry.rect.h
+            ) {
+                return { reason: "geometry-rect-mismatch", geoIdx: index };
+            }
+        }
+        if (seen.size !== byId.size) {
+            return { reason: "observed-count-mismatch", geoIdx: -1 };
+        }
+        const mover = byId.get(pending.moverId);
+        const moverIdx = planIndexOf(pending.moverId);
+        if (mover === undefined) {
+            return { reason: "mover-missing", geoIdx: moverIdx };
+        }
+        if (mover.inSource) {
+            return { reason: "mover-in-source", geoIdx: moverIdx };
+        }
+        if (!mover.inTarget) {
+            return { reason: "mover-not-in-target", geoIdx: moverIdx };
+        }
+        for (const entry of snapshot.sourceWindows) {
+            if (entry.id === pending.moverId) {
+                continue;
+            }
+            const found = byId.get(entry.id);
+            if (found === undefined || !found.inSource || found.inTarget) {
+                return { reason: "retained-source-membership", geoIdx: planIndexOf(entry.id) };
+            }
+        }
+        for (const entry of snapshot.targetWindows) {
+            if (entry.id === pending.moverId) {
+                continue;
+            }
+            const found = byId.get(entry.id);
+            if (found === undefined || found.inSource || !found.inTarget) {
+                return { reason: "retained-target-membership", geoIdx: planIndexOf(entry.id) };
+            }
+        }
+        return { reason: "ok", geoIdx: -1 };
     }
 }

@@ -49,11 +49,12 @@
   `kwin/src/plan-adapter-entry.ts:2035-2055`). Rust maps `adapter-lost` to
   divergent acknowledgement state (`src/planner_protocol.rs:2760-2808`,
   `src/reconcile.rs:906-908`).
-- No ordinary correction is causally supported. Acknowledging after only part
-  of the fence, relaxing exact post-verification, or re-enabling this divergent
-  instance would falsely commit post-plan uncertainty or select a new recovery
-  protocol. Current decisions deliberately retain this terminal boundary
-  (`docs/decisions.md:346-354`). No production change was made.
+- The established terminal policy remains: only an exact fresh post-observation
+  can settle this pre-ack flight, while uncertain post-plan state remains
+  terminal (`docs/decisions.md:346-354`). This policy does not explain why the
+  already-authorized exact settlement did not pass. The missing predicate is an
+  ordinary diagnostic boundary, not evidence that a recovery redesign is
+  required. No recovery behavior was selected or changed by this record.
 - Independent static review confirms the conclusion and existing
   product-shaped coverage: successful planned/acknowledged/verified/committed
   send, follow/focus, and a later same-instance send
@@ -67,23 +68,19 @@
   --lib` (17); and `cargo test --test session_send_to_workspace` (4). No live
   KWin, D-Bus, window, desktop, focus, or session action occurred.
 
-## Decision Needed
+## Product Decision
 
-- Retain the selected fail-closed terminal boundary. This is the recommended
-  outcome: it preserves truthful non-commit, but this divergent instance cannot
-  send again.
-- Alternatively, select an explicit post-plan divergence recovery protocol.
-  It would need a new authoritative state/baseline rule before same-instance
-  reuse and changes the current public failure behavior. Automatic replay,
-  reset, rebind, reseed, polling, or queue recovery remains excluded.
+- None. The known terminal policy is retained without a governance change.
+- The unresolved work is to identify why the exact pre-ack settlement rejected
+  its fresh observation or could not arm its acknowledgement continuation.
 
 ## Backlog Recommendation
 
-- Replace the first P0 backlog entry's historical visible-follow wording with:
-  `P0 | Workspace-send timeout recovery decision | WLS1RE proves a partial
-  echo-fenced pre-ack send reached terminal adapter-lost and permanent
-  same-instance refusal. The terminal fallback branch remains redacted, and
-  existing semantics correctly refuse uncertain reuse. Select an explicit
-  post-plan divergence recovery protocol only if same-instance availability
-  after this state is required. Visible display and border causation remain
-  unproven.` Retain the existing record link and leave P1 unchanged.
+- Proposed factual update for the parent-owned backlog:
+  `P0 | Workspace-send pre-ack timeout diagnosis | WLS1RE proves a partial
+  echo-fenced pre-ack send reached terminal adapter-lost and subsequent
+  same-instance refusal, but not why the authorized exact timeout settlement
+  failed. Preserve the existing terminal policy while one correlated
+  reproduction identifies the rejected settlement predicate and remaining
+  geometry fences. Visible display and border causation remain unproven.`
+  Retain the existing record link and leave P1 unchanged.

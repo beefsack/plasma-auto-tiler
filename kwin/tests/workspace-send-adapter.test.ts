@@ -3405,3 +3405,234 @@ describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
         harness.handle.stop();
     });
 });
+
+describe("cosmic send-to-workspace timeout settlement diagnostics", () => {
+    function startWithheld(refs: { a: object; b: object; t: object; desktop: object }): {
+        mocks: Mocks;
+        adapter: WorkspaceSendAdapter;
+        seam: EchoSeam;
+        correlation: string;
+    } {
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        return { mocks, adapter, seam, correlation };
+    }
+
+    function flagOf(line: string, name: string): string {
+        const marker = ` ${name}=`;
+        const at = line.indexOf(marker);
+        assert.ok(at >= 0, `${name} missing in:\n${line}`);
+        const rest = line.slice(at + marker.length);
+        const end = rest.search(/[\s]/);
+        return end < 0 ? rest : rest.slice(0, end);
+    }
+
+    function settleLines(logs: string[], correlation: string): string[] {
+        return logs.filter((l) => l.includes("event=timeout-settle") && l.includes(`correlation=${correlation}`));
+    }
+
+    function settleLine(logs: string[], correlation: string): string {
+        const lines = settleLines(logs, correlation);
+        assert.equal(lines.length, 1, `expected one timeout-settle for ${correlation}:\n${logs.join("\n")}`);
+        return lines[0] ?? "";
+    }
+
+    function assertNoRawLeak(line: string): void {
+        for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+            assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+        }
+        assert.ok(line.startsWith("plasma-auto-tiler:route-diag component=cosmic-send "), line);
+        assert.ok(line.includes("stage=timeout"), line);
+        assert.ok(line.includes("generation=gen-1"), line);
+    }
+
+    function assertTerminalTimeout(
+        mocks: Mocks,
+        adapter: WorkspaceSendAdapter,
+        correlation: string,
+    ): void {
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted")),
+            false,
+        );
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("send-to-workspace-verify")), false);
+        const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
+        assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
+        assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+    }
+
+    it("logs fresh-unavailable and stays terminal without commit", () => {
+        const refs = makeRefs();
+        const { mocks, adapter, seam, correlation } = startWithheld(refs);
+        void seam;
+        mocks.observeImpl = () => null;
+        mocks.timers[0]?.callback();
+        assertTerminalTimeout(mocks, adapter, correlation);
+        const line = settleLine(mocks.logs, correlation);
+        assert.ok(line.includes("outcome=fresh-unavailable"), line);
+        assert.equal(flagOf(line, "verify_reason"), "none");
+        assert.equal(flagOf(line, "fence_pending"), "3");
+        assert.equal(flagOf(line, "fence_total"), "3");
+        assert.equal(flagOf(line, "mover_seen"), "0");
+        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
+        assertNoRawLeak(line);
+    });
+
+    it("distinguishes scope drift with redacted category", () => {
+        const refs = makeRefs();
+        const { mocks, adapter, seam, correlation } = startWithheld(refs);
+        void seam;
+        mocks.observeImpl = () => makeObserved(refs, { sourceOutput: "out-9" });
+        mocks.timers[0]?.callback();
+        assertTerminalTimeout(mocks, adapter, correlation);
+        const line = settleLine(mocks.logs, correlation);
+        assert.ok(line.includes("outcome=verify-failed"), line);
+        assert.equal(flagOf(line, "verify_reason"), "scope-source-output");
+        assert.equal(flagOf(line, "verify_geo_idx"), "-1");
+        assert.equal(flagOf(line, "fence_pending"), "3");
+        assert.equal(flagOf(line, "fence_total"), "3");
+        assert.equal(flagOf(line, "mover_seen"), "0");
+        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
+        assertNoRawLeak(line);
+    });
+
+    it("distinguishes geometry mismatch with plan-relative index", () => {
+        const refs = makeRefs();
+        const { mocks, adapter, seam, correlation } = startWithheld(refs);
+        void seam;
+        mocks.observeImpl = () => {
+            const full = makeWorldObserved(mocks.world, refs);
+            const targetWindows = Object.freeze(
+                full.targetWindows.map((entry) =>
+                    entry.id === "win-t"
+                        ? Object.freeze({ id: entry.id, ref: entry.ref, rect: Object.freeze(rect(0, 0, 100, 100)) })
+                        : entry,
+                ),
+            );
+            return { ...full, sourceWindows: full.sourceWindows, targetWindows };
+        };
+        mocks.timers[0]?.callback();
+        assertTerminalTimeout(mocks, adapter, correlation);
+        const line = settleLine(mocks.logs, correlation);
+        assert.ok(line.includes("outcome=verify-failed"), line);
+        assert.equal(flagOf(line, "verify_reason"), "geometry-rect-mismatch");
+        assert.equal(flagOf(line, "verify_geo_idx"), "2");
+        assert.equal(flagOf(line, "fence_pending"), "3");
+        assert.equal(flagOf(line, "fence_total"), "3");
+        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
+        assertNoRawLeak(line);
+    });
+
+    it("distinguishes retained membership with plan-relative index", () => {
+        const refs = makeRefs();
+        const { mocks, adapter, seam, correlation } = startWithheld(refs);
+        void seam;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: "win-b",
+                sourceWindows: Object.freeze([
+                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(0, 0, 1200, 800)) }),
+                    Object.freeze({ id: "win-t", ref: refs.t, rect: Object.freeze(rect(600, 0, 600, 800)) }),
+                ]),
+                targetWindows: Object.freeze([
+                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 600, 800)) }),
+                ]),
+            });
+        mocks.timers[0]?.callback();
+        assertTerminalTimeout(mocks, adapter, correlation);
+        const line = settleLine(mocks.logs, correlation);
+        assert.ok(line.includes("outcome=verify-failed"), line);
+        assert.equal(flagOf(line, "verify_reason"), "retained-target-membership");
+        assert.equal(flagOf(line, "verify_geo_idx"), "2");
+        assert.equal(flagOf(line, "fence_pending"), "3");
+        assert.equal(flagOf(line, "fence_total"), "3");
+        assert.equal(flagOf(line, "fence_idx"), "0,1,2");
+        assertNoRawLeak(line);
+    });
+
+    it("logs settled success with armed fence and still commits", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        // Pre-converge one planned rect so the armed fence (2) differs from
+        // the full plan length (3): fence_total must report the armed count.
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-t") {
+                entry.rect = rect(600, 0, 600, 800);
+            }
+        }
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        const geosBefore = mocks.geometries.length;
+        const desksBefore = mocks.desktops.length;
+        mocks.timers[0]?.callback();
+        const line = settleLine(mocks.logs, correlation);
+        assert.ok(line.includes("outcome=settled"), line);
+        assert.equal(flagOf(line, "verify_reason"), "ok");
+        assert.equal(flagOf(line, "fence_pending"), "2");
+        assert.equal(flagOf(line, "fence_total"), "2");
+        assert.equal(flagOf(line, "mover_seen"), "0");
+        assert.equal(flagOf(line, "fence_idx"), "0,1");
+        assertNoRawLeak(line);
+        assert.equal(mocks.geometries.length, geosBefore, "settlement must not rewrite geometry");
+        assert.equal(mocks.desktops.length, desksBefore, "settlement must not rewrite membership");
+        mocks.callbacks[2]?.(ackReply(correlation));
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        void seam;
+    });
+
+    it("keeps exact settlement and commit when timeout diagnostics throw", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            log: (message: string) => {
+                if (message.includes("stage=timeout")) {
+                    throw new Error("timeout diagnostic lost");
+                }
+                mocks.logs.push(message);
+            },
+        });
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        mocks.timers[0]?.callback();
+        assert.ok(
+            mocks.dbusCalls.some((call) => call.payload.includes("send-to-workspace-ack") && call.payload.includes("accepted")),
+        );
+        mocks.callbacks[2]?.(ackReply(correlation));
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        void seam;
+    });
+});
