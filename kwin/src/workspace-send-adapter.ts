@@ -128,6 +128,24 @@ export interface WorkspaceSendObserved {
     readonly desktopCount: number;
     readonly sourceFingerprint: string;
     readonly targetFingerprint: string;
+    // Session-local redacted follow diagnostics only. tgt_* is the flight
+    // target native mapping (targetOrdinal: index in the live `desktops` list
+    // order, targetNumber: KWin native `x11DesktopNumber`, -1 when unreadable).
+    // cur_* is the live current desktop for the selected output at observation
+    // time (currentOrdinal/currentNumber likewise, currentIdEq: current stable
+    // id === target stable id, currentRefEq: current wrapper === target
+    // wrapper, diagnostic only). outputOrdinal is the index of the selected
+    // output in `screens` (-1 when unreadable). Populated by production
+    // observation; absent in dev harnesses and legacy isolated tests. Never
+    // validated for correctness: invalid values sanitize to -1 in diagnostics
+    // and never affect commit, follow, or enablement.
+    readonly targetOrdinal?: number;
+    readonly targetNumber?: number;
+    readonly outputOrdinal?: number;
+    readonly currentOrdinal?: number;
+    readonly currentNumber?: number;
+    readonly currentIdEq?: number;
+    readonly currentRefEq?: number;
 }
 
 // Primitive-only snapshot retained across the async D-Bus boundary. Never
@@ -344,6 +362,28 @@ function sanitizeKind(value: unknown): string {
     return value;
 }
 
+// Bounded redacted integer for follow diagnostics: a finite integer inside
+// [min, max] passes through, anything else (absent, wrong type,
+// out-of-range, log/observe exception residue) sanitizes to -1. Never throws.
+function toDiagInt(value: unknown, min: number, max: number): number {
+    try {
+        if (typeof value !== "number" || !Number.isInteger(value) || value < min || value > max) {
+            return -1;
+        }
+        return value;
+    } catch (error) {
+        void error;
+        return -1;
+    }
+}
+
+// Requested logical ordinal from requestWorkspaceMove (0 permitted for the
+// trailing target, 1..9 otherwise). Diagnostic only: anything else sanitizes
+// to -1 and never gates behavior. Never throws.
+function toDiagOrdinal(value: unknown): number {
+    return toDiagInt(value, 0, 9);
+}
+
 // Exact lifecycle precondition vector for a same-output move-tiled plan.
 const KNOWN_PRECONDITIONS: readonly string[] = Object.freeze([
     "window-observed",
@@ -375,6 +415,19 @@ interface WorkspaceFollowFocus {
     readonly output: string;
     readonly workspace: string;
     readonly leaf: string;
+}
+
+// Flight-pinned basis for follow diagnostics only. Carries the mover stable
+// id, the flight stable target id plus request target output, the flight
+// target wrapper for diagnostic equality, and the requested logical ordinal
+// from the plan entry (0 permitted for the trailing target, -1 when absent).
+// Never logged in raw form and never used for follow decisions.
+interface WorkspaceFollowDiagBasis {
+    readonly moverId: string;
+    readonly targetWorkspace: string;
+    readonly targetOutput: string;
+    readonly targetDesktopRef: object | null;
+    readonly requestedOrdinal: number;
 }
 
 interface WorkspacePlanned {
@@ -702,6 +755,10 @@ interface WorkspacePendingFlight {
     readonly windowCount: number;
     readonly requestPayload: string;
     readonly targetDesktopRef: object | null;
+    // Requested logical ordinal from the plan entry (0 permitted for the
+    // trailing target, -1 when absent/invalid). Diagnostic only: never gates
+    // request, commit, follow, or enablement.
+    readonly requestedOrdinal: number;
     baseRevision: number;
     preconditions: readonly string[];
     operation: Record<string, unknown> | null;
@@ -805,7 +862,7 @@ export class WorkspaceSendAdapter {
         this.clearEcho();
     }
 
-    requestSend(targetWorkspace: unknown): boolean {
+    requestSend(targetWorkspace: unknown, requestedOrdinal?: unknown): boolean {
         if (!this.enabled || this.inFlight) {
             return false;
         }
@@ -859,7 +916,17 @@ export class WorkspaceSendAdapter {
         if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
             return false;
         }
-        this.startFlight(correlation, snapshot, observed.targetWorkspace, observed.focusedId, observed.targetDesktopRef, payload);
+        // Diagnostic-only handoff: an invalid ordinal sanitizes to -1 in logs
+        // and never refuses or otherwise gates the send.
+        this.startFlight(
+            correlation,
+            snapshot,
+            observed.targetWorkspace,
+            observed.focusedId,
+            observed.targetDesktopRef,
+            payload,
+            toDiagOrdinal(requestedOrdinal),
+        );
         return this.inFlight;
     }
 
@@ -1080,6 +1147,7 @@ export class WorkspaceSendAdapter {
         moverId: string,
         targetDesktopRef: object | null,
         payload: string,
+        requestedOrdinal: number,
     ): void {
         this.inFlight = true;
         this.callbackSeen = false;
@@ -1092,6 +1160,7 @@ export class WorkspaceSendAdapter {
             windowCount: snapshot.sourceWindows.length + snapshot.targetWindows.length,
             requestPayload: payload,
             targetDesktopRef,
+            requestedOrdinal,
             baseRevision: 0,
             preconditions: [],
             operation: null,
@@ -1999,6 +2068,20 @@ export class WorkspaceSendAdapter {
         this.diag("verify", correlation, revision as number, "verify", "committed");
         this.followAfterCommit(flight, correlation, revision as number);
         this.inFlight = false;
+        // Settled-observation basis for the later follow-settled line below.
+        // Captured before teardown so the existing settlement edge stays
+        // correlated without a new subscription, timer, or poll.
+        const settledBasis: WorkspaceFollowDiagBasis | null =
+            this.pending === null
+                ? null
+                : {
+                      moverId: this.pending.moverId,
+                      targetWorkspace: this.pending.targetWorkspace,
+                      targetOutput: this.pending.snapshot.targetOutput,
+                      targetDesktopRef: this.pending.targetDesktopRef,
+                      requestedOrdinal: this.pending.requestedOrdinal,
+                  };
+        const settledSource: string | null = this.pending === null ? null : this.pending.snapshot.sourceWorkspace;
         this.pending = null;
         this.activationStep = 0;
         this.activeDeadline = 0;
@@ -2008,6 +2091,22 @@ export class WorkspaceSendAdapter {
         } catch (error) {
             void error;
         }
+        // Relevant existing later lifecycle observation boundary: one
+        // best-effort synchronous public re-observation after the settlement
+        // edge, correlated with this flight. Diagnostic only: a null/absent
+        // observation logs unknown fields and never affects commit, flight
+        // teardown, resync, or enablement.
+        let settled: WorkspaceSendObserved | null = null;
+        try {
+            settled =
+                settledBasis === null || settledSource === null
+                    ? null
+                    : this.freshObserved(settledBasis.targetWorkspace, settledSource);
+        } catch (error) {
+            void error;
+            settled = null;
+        }
+        this.emitFollowDiag(correlation, revision as number, "follow-settled", settled, settledBasis, -1, -1);
     }
 
     // Legacy follow after a fully committed send: switch to the Rust-planned
@@ -2054,6 +2153,18 @@ export class WorkspaceSendAdapter {
         if (moverRef === null) {
             return;
         }
+        // Flight-pinned diagnostic basis. The gates above stay the only
+        // correctness checks (stable-id binding plus the existing ref gate);
+        // current wrapper equality below is diagnostic only.
+        const basis: WorkspaceFollowDiagBasis = {
+            moverId: pending.moverId,
+            targetWorkspace: pending.snapshot.targetWorkspace,
+            targetOutput: pending.snapshot.targetOutput,
+            targetDesktopRef: pending.targetDesktopRef,
+            requestedOrdinal: pending.requestedOrdinal,
+        };
+        // Before-setter observation: the pre-switch `fresh` binding above.
+        this.emitFollowDiag(correlation, revision, "follow-pre", fresh, basis, -1, -1);
         let switched = false;
         try {
             switched = switchToTarget(fresh.targetDesktopRef) === true;
@@ -2061,6 +2172,25 @@ export class WorkspaceSendAdapter {
             void error;
             switched = false;
         }
+        // Immediate after-setter observation: one best-effort synchronous
+        // public re-read. A null observation logs unknown fields; the switch
+        // result below is unaffected.
+        let postSwitch: WorkspaceSendObserved | null = null;
+        try {
+            postSwitch = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        } catch (error) {
+            void error;
+            postSwitch = null;
+        }
+        this.emitFollowDiag(
+            correlation,
+            revision,
+            "follow-switched",
+            postSwitch,
+            basis,
+            switched ? 1 : 0,
+            -1,
+        );
         if (!switched) {
             return;
         }
@@ -2071,6 +2201,24 @@ export class WorkspaceSendAdapter {
             void error;
             focused = false;
         }
+        // After-focus observation: one best-effort synchronous public
+        // re-read. Diagnostic only; the focus result below is unaffected.
+        let postFocus: WorkspaceSendObserved | null = null;
+        try {
+            postFocus = this.freshObserved(pending.targetWorkspace, pending.snapshot.sourceWorkspace);
+        } catch (error) {
+            void error;
+            postFocus = null;
+        }
+        this.emitFollowDiag(
+            correlation,
+            revision,
+            "follow-focused",
+            postFocus,
+            basis,
+            1,
+            focused ? 1 : 0,
+        );
         if (!focused) {
             return;
         }
@@ -2081,6 +2229,107 @@ export class WorkspaceSendAdapter {
         // the immediate native current-map readback plus mover focus were
         // confirmed, never physical visible completion.
         this.diag("follow", correlation, revision, "follow", "state-confirmed");
+    }
+
+    // Best-effort redacted visible-follow observation. Emits one fixed
+    // `route-diag component=cosmic-send stage=follow` line carrying only
+    // session-local ordinals/counts plus 0/1/-1 equality flags (-1 unknown):
+    // req_ord (requested logical ordinal from the plan entry, 0 permitted for
+    // the trailing target), tgt_ord/tgt_num (flight target live list order and
+    // KWin native x11DesktopNumber), cur_ord/cur_num (live current desktop for
+    // the selected output), cur_id_eq (current stable id === flight target
+    // stable id), cur_ref_eq (current wrapper === flight target wrapper,
+    // diagnostic only), out_ord (selected output live screens index), out_eq
+    // (selected output === request target output), desktops (live desktop
+    // count), mover_in_target (mover by stable id present in live target
+    // windows), active_is_mover (live active wrapper === live mover wrapper),
+    // switched/focused (native hook results, -1 when not yet invoked).
+    // Together the correlated pre/switched/focused/settled lines distinguish
+    // the requested logical target from the target native mapping (req/tgt),
+    // live current divergence (cur_*), selected output mismatch (out_*), and
+    // state reversal after focus (mover/active flags across lines). Raw
+    // desktop ids, output identifiers, window native ids, object refs,
+    // captions, app data, payload, and environment never enter logs. Wrapper
+    // equality here is diagnostic only; existing follow gates stay unchanged.
+    // Never throws or affects follow result, commit, focus behavior,
+    // enablement, or flight state.
+    private emitFollowDiag(
+        correlation: string,
+        revision: number,
+        event: string,
+        current: WorkspaceSendObserved | null,
+        basis: WorkspaceFollowDiagBasis | null,
+        switched: number,
+        focused: number,
+    ): void {
+        try {
+            const outcome = current === null ? "unknown" : "observed";
+            const reqOrd = basis === null ? -1 : toDiagInt(basis.requestedOrdinal, 0, 9);
+            const tgtOrd = current === null ? -1 : toDiagInt(current.targetOrdinal, 0, WORKSPACE_SEND_MAX_DESKTOPS);
+            const tgtNum = current === null ? -1 : toDiagInt(current.targetNumber, 1, WORKSPACE_SEND_MAX_REVISION);
+            const curOrd = current === null ? -1 : toDiagInt(current.currentOrdinal, 0, WORKSPACE_SEND_MAX_DESKTOPS);
+            const curNum = current === null ? -1 : toDiagInt(current.currentNumber, 1, WORKSPACE_SEND_MAX_REVISION);
+            const curIdEq =
+                current === null ? -1 : current.currentIdEq === 0 || current.currentIdEq === 1 ? current.currentIdEq : -1;
+            const curRefEq =
+                current === null ? -1 : current.currentRefEq === 0 || current.currentRefEq === 1 ? current.currentRefEq : -1;
+            const outOrd = current === null ? -1 : toDiagInt(current.outputOrdinal, 0, 1024);
+            const desktops = current === null ? -1 : toDiagInt(current.desktopCount, 0, WORKSPACE_SEND_MAX_REVISION);
+            let outEq = -1;
+            try {
+                if (current !== null && basis !== null) {
+                    outEq =
+                        current.sourceOutput === basis.targetOutput && current.targetOutput === basis.targetOutput ? 1 : 0;
+                }
+            } catch (error) {
+                void error;
+                outEq = -1;
+            }
+            let moverInTarget = -1;
+            let moverWrapper: object | null = null;
+            try {
+                if (current !== null && basis !== null) {
+                    moverInTarget = 0;
+                    for (const entry of current.targetWindows) {
+                        if (entry.id === basis.moverId) {
+                            moverInTarget = 1;
+                            moverWrapper = entry.ref;
+                            break;
+                        }
+                    }
+                    if (moverWrapper === null) {
+                        for (const entry of current.sourceWindows) {
+                            if (entry.id === basis.moverId) {
+                                moverWrapper = entry.ref;
+                                break;
+                            }
+                        }
+                    }
+                }
+            } catch (error) {
+                void error;
+                moverInTarget = -1;
+                moverWrapper = null;
+            }
+            let activeIsMover = -1;
+            try {
+                if (current === null || moverWrapper === null) {
+                    activeIsMover = -1;
+                } else {
+                    activeIsMover = current.activeRef === moverWrapper ? 1 : 0;
+                }
+            } catch (error) {
+                void error;
+                activeIsMover = -1;
+            }
+            const switchedFlag = switched === 0 || switched === 1 ? switched : -1;
+            const focusedFlag = focused === 0 || focused === 1 ? focused : -1;
+            this.env.log(
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=follow correlation=${correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${outcome} req_ord=${String(reqOrd)} tgt_ord=${String(tgtOrd)} tgt_num=${String(tgtNum)} cur_ord=${String(curOrd)} cur_num=${String(curNum)} cur_id_eq=${String(curIdEq)} cur_ref_eq=${String(curRefEq)} out_ord=${String(outOrd)} out_eq=${String(outEq)} desktops=${String(desktops)} mover_in_target=${String(moverInTarget)} active_is_mover=${String(activeIsMover)} switched=${String(switchedFlag)} focused=${String(focusedFlag)}`,
+            );
+        } catch (error) {
+            void error;
+        }
     }
 
     private failFlight(flight: number, correlation: string, outcome: string): void {

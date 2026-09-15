@@ -925,6 +925,51 @@ describe("workspace production entry routing and handoff", () => {
         assert.ok(observed.sourceWindows.some((entry) => entry.id === "win-a"));
     });
 
+    it("observes live current-vs-target diagnostics while source is pinned", () => {
+        const built = fakeWorld("per-output-local", ["out-1"], ["ws-1", "ws-2"]);
+        const world = built.world;
+        const ws1 = world.desktops[0];
+        const ws2 = world.desktops[1];
+        assert.ok(ws1 !== undefined && ws2 !== undefined);
+        addWindow(world, "win-a", ws1);
+        addWindow(world, "win-t", ws2);
+        (world.workspace["activeWindow"] as unknown) = world.wins[0];
+        // Pinned source still reads live current for the selected output.
+        world.currentByOutput.set(world.outputs[0] as never, ws1 as never);
+        const before = observeSendTarget(world.workspace, new Map(), "ws-2", new Set(), "ws-1");
+        assert.ok(before !== null);
+        assert.equal(before.targetOrdinal, 1);
+        assert.equal(before.targetNumber, 2);
+        assert.equal(before.outputOrdinal, 0);
+        assert.equal(before.currentOrdinal, 0);
+        assert.equal(before.currentNumber, 1);
+        assert.equal(before.currentIdEq, 0);
+        assert.equal(before.currentRefEq, 0);
+        // Live current divergence after the setter takes effect.
+        world.currentByOutput.set(world.outputs[0] as never, ws2 as never);
+        const after = observeSendTarget(world.workspace, new Map(), "ws-2", new Set(), "ws-1");
+        assert.ok(after !== null);
+        assert.equal(after.targetOrdinal, 1);
+        assert.equal(after.currentOrdinal, 1);
+        assert.equal(after.currentNumber, 2);
+        assert.equal(after.currentIdEq, 1);
+        assert.equal(after.currentRefEq, 1);
+        // Fresh wrapper: stable-id equality holds while wrapper equality does
+        // not; the stable-id follow gate stays untouched.
+        world.currentByOutput.set(world.outputs[0] as never, { id: "ws-2", x11DesktopNumber: 2 } as never);
+        const fresh = observeSendTarget(world.workspace, new Map(), "ws-2", new Set(), "ws-1");
+        assert.ok(fresh !== null);
+        assert.equal(fresh.currentIdEq, 1);
+        assert.equal(fresh.currentRefEq, 0);
+        // Best-effort current read failure never fails pinned observation.
+        const broken = { ...world.workspace, currentDesktopForScreen: (): unknown => { throw new Error("lost"); } };
+        const degraded = observeSendTarget(broken, new Map(), "ws-2", new Set(), "ws-1");
+        assert.ok(degraded !== null);
+        assert.equal(degraded.currentOrdinal, -1);
+        assert.equal(degraded.currentIdEq, -1);
+        assert.equal(degraded.targetOrdinal, 1);
+    });
+
     it("treats unavailable or nonzero maximize as ineligible for send", () => {
         const built = fakeWorld("per-output-local", ["out-1"], ["ws-1", "ws-2"]);
         const world = built.world;

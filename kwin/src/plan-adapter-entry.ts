@@ -500,7 +500,9 @@ export function observeSendTarget(
         }
         let targetDesktopRef: object | null = null;
         let targetExists = false;
-        for (const item of desktops) {
+        let targetOrdinal = -1;
+        for (let index = 0; index < desktops.length; index += 1) {
+            const item = desktops[index];
             if (typeof item !== "object" || item === null) {
                 continue;
             }
@@ -508,7 +510,132 @@ export function observeSendTarget(
             if (readProp(desktop, "id") === targetWorkspace) {
                 targetDesktopRef = desktop;
                 targetExists = true;
+                targetOrdinal = index;
             }
+        }
+        // Session-local redacted follow-diagnostic ordinals only: target live
+        // list position plus the KWin native desktop number, the selected
+        // output live position, and the live current desktop for the selected
+        // output (order/number plus redacted current-vs-target equality).
+        // Best effort with -1 for anything unreadable; never raw ids and never
+        // a behavior input. The current read below always runs, even when the
+        // source is pinned, but never fails observation.
+        let outputOrdinal = -1;
+        try {
+            for (let index = 0; index < screens.length; index += 1) {
+                if (screens[index] === outputRef) {
+                    outputOrdinal = index;
+                    break;
+                }
+            }
+        } catch (error) {
+            void error;
+            outputOrdinal = -1;
+        }
+        let targetNumber = -1;
+        try {
+            if (targetDesktopRef !== null) {
+                const numRaw = readProp(targetDesktopRef, "x11DesktopNumber");
+                if (typeof numRaw === "number" && Number.isInteger(numRaw) && numRaw > 0 && numRaw <= 1000000) {
+                    targetNumber = numRaw;
+                }
+            }
+        } catch (error) {
+            void error;
+            targetNumber = -1;
+        }
+        let currentOrdinal = -1;
+        let currentNumber = -1;
+        let currentIdEq = -1;
+        let currentRefEq = -1;
+        try {
+            const resolveCurrent = (curRef: object | null): void => {
+                if (curRef === null) {
+                    return;
+                }
+                const curIdRaw = readProp(curRef, "id");
+                if (!isOpaqueId(curIdRaw)) {
+                    try {
+                        if (targetDesktopRef !== null) {
+                            currentRefEq = curRef === targetDesktopRef ? 1 : 0;
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                    return;
+                }
+                const curId = curIdRaw as string;
+                for (let index = 0; index < desktops.length; index += 1) {
+                    const item = desktops[index];
+                    if (typeof item !== "object" || item === null) {
+                        continue;
+                    }
+                    if (readProp(item as object, "id") === curId) {
+                        currentOrdinal = index;
+                        break;
+                    }
+                }
+                try {
+                    const numRaw = readProp(curRef, "x11DesktopNumber");
+                    if (typeof numRaw === "number" && Number.isInteger(numRaw) && numRaw > 0 && numRaw <= 1000000) {
+                        currentNumber = numRaw;
+                    }
+                } catch (error) {
+                    void error;
+                }
+                try {
+                    let flightTargetId: string | null = null;
+                    if (targetDesktopRef !== null) {
+                        const tgtRaw = readProp(targetDesktopRef, "id");
+                        if (isOpaqueId(tgtRaw)) {
+                            flightTargetId = tgtRaw as string;
+                        } else if (isOpaqueId(targetWorkspace)) {
+                            flightTargetId = targetWorkspace;
+                        }
+                    } else if (isOpaqueId(targetWorkspace)) {
+                        flightTargetId = targetWorkspace;
+                    }
+                    if (flightTargetId !== null) {
+                        currentIdEq = curId === flightTargetId ? 1 : 0;
+                    }
+                } catch (error) {
+                    void error;
+                }
+                try {
+                    if (targetDesktopRef !== null) {
+                        currentRefEq = curRef === targetDesktopRef ? 1 : 0;
+                    }
+                } catch (error) {
+                    void error;
+                }
+            };
+            if (pinnedSourceWorkspace !== undefined) {
+                const getter = readProp(surface, "currentDesktopForScreen");
+                if (typeof getter === "function") {
+                    let curRaw: unknown = undefined;
+                    try {
+                        curRaw = Reflect.apply(
+                            getter as (...args: ReadonlyArray<never>) => unknown,
+                            surface,
+                            [outputRef],
+                        );
+                    } catch (error) {
+                        void error;
+                        curRaw = undefined;
+                    }
+                    if (typeof curRaw === "object" && curRaw !== null) {
+                        resolveCurrent(curRaw as object);
+                    }
+                }
+            } else if (sourceDesktopRef !== null) {
+                resolveCurrent(sourceDesktopRef);
+            }
+        } catch (error) {
+            void error;
+            currentOrdinal = -1;
+            currentNumber = -1;
+            currentIdEq = -1;
+            currentRefEq = -1;
         }
         if (sourceDesktopRef === null) {
             return null;
@@ -693,6 +820,13 @@ export function observeSendTarget(
             desktopCount: desktops.length,
             sourceFingerprint,
             targetFingerprint,
+            targetOrdinal,
+            targetNumber,
+            outputOrdinal,
+            currentOrdinal,
+            currentNumber,
+            currentIdEq,
+            currentRefEq,
         };
     } catch (error) {
         void error;
@@ -1919,7 +2053,10 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 }
                 return;
             }
-            workspaceSend.requestSend(target);
+            // Diagnostic-only handoff: the validated logical ordinal (0
+            // permitted for the trailing target) travels into the send flight
+            // for follow logs and never gates request behavior.
+            workspaceSend.requestSend(target, index);
         } catch (error) {
             void error;
         }

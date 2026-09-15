@@ -2,15 +2,14 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send physical acceptance | F2A19Z completed Rust ack/verify
-  but the KWin follow path previously reported success after its void desktop
-  setter without reading its result. It now confirms the native current desktop
-  once and keeps a failed follow truthful while preserving the committed send.
-  Offline production-entry and Rust lifecycle coverage pass. User must verify a
-  first 3->2 send, rapid 3->2->1 sends, and a same-target refusal followed by a
-  distinct send, including visible follow/focus and later usability. Border
-  causation remains unconfirmed.
-  [record](changes/archive/workspace-send-rapid-lockup.md)
+- P0 | Workspace-send visible-follow failure | The latest first 3->2 send
+  committed and passed desktop readback, but the user still saw blank workspace
+  3 with the active border while the mover was on 2. Visible follow remains
+  broken; current-map confirmation is insufficient evidence. Source/log review
+  has not established the cause. Add bounded correlated mapping/output/focus
+  diagnostics before another user-owned reproduction. Preserve committed sends
+  and later usability; border causation remains unconfirmed.
+  [record](changes/archive/workspace-send-visible-follow-boundary.md)
 - P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
   well-formed request rejection paths are reusable. Sent request/lost callback,
   malformed reply, request timeout, owner loss, and other transport ambiguity

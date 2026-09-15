@@ -62,3 +62,37 @@
   (5 tests). No live KWin, D-Bus, window, focus, workspace, or session action
   occurred. Physical follow remains user-owned evidence; neither mocks nor
   current-map readback establish rendered acceptance.
+- The follow route now emits best-effort correlated redacted observations at
+  `event=follow-pre`, `follow-switched`, `follow-focused`, and
+  `follow-settled`. The first three bound the existing pre-setter, immediate
+  post-setter, and post-focus reads. `follow-settled` is one synchronous
+  re-observation after the existing committed-send resync edge; it adds no
+  signal, timer, poll, retry, or behavior gate.
+- Each observation carries only `req_ord` (requested logical ordinal),
+  `tgt_ord`/`tgt_num` (target native desktop list order and KWin desktop
+  number), `cur_ord`/`cur_num`, `cur_id_eq`, `cur_ref_eq`, `out_ord`,
+  `out_eq`, `desktops`, `mover_in_target`, `active_is_mover`, `switched`, and
+  `focused`. Ordinals, counts, and equality flags are session-local redacted
+  values. Raw desktop/output/window identifiers, wrapper references, captions,
+  application data, payloads, environment, and native raw identifiers remain
+  excluded. `cur_ref_eq` is diagnostic only; stable desktop-id equality remains
+  the native current-map comparison.
+- `req_ord` versus `tgt_ord`/`tgt_num` records the logical-to-native target
+  binding. `out_ord`/`out_eq` plus `cur_*` records whether the selected output
+  has the requested current desktop. A changed `cur_*`, `mover_in_target`, or
+  `active_is_mover` between `follow-switched` and `follow-focused`/`settled`
+  identifies a focus or later lifecycle reversal. These fields do not prove a
+  composited frame or physical visibility.
+- Focused offline checks pass: `npm run typecheck`; bundled
+  `workspace-send-adapter.test.ts` (82), `workspace-native.test.ts` (39), and
+  `plan-send-coordination.test.ts` (5). They cover logical-ordinal handoff,
+  current-target divergence, fresh-wrapper id-versus-reference evidence,
+  post-focus reversal, and observation/log failure without behavior change.
+
+## Next User Evidence
+
+- After one clean `just dev` restart, enable verbose diagnostics, select
+  workspace 3, open one terminal, and press `Meta+Shift+2` once. Preserve the
+  fresh `/tmp/dev.log` and report the visible workspace plus active-border
+  state. This is one user-owned physical reproduction, not a visible repair
+  claim.

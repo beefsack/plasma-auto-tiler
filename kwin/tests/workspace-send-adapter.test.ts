@@ -573,8 +573,12 @@ function startEntryForPlannedFlight(): EntryHarness {
 
 // Drive the full request -> planned -> ack -> verify -> committed lifecycle
 // against the mocked planner. Returns the mock state for assertions.
-function runLifecycle(mocks: Mocks, adapter: WorkspaceSendAdapter): Mocks {
-    assert.equal(adapter.requestSend("ws-2"), true);
+function runLifecycle(mocks: Mocks, adapter: WorkspaceSendAdapter, requestedOrdinal?: unknown): Mocks {
+    if (requestedOrdinal === undefined) {
+        assert.equal(adapter.requestSend("ws-2"), true);
+    } else {
+        assert.equal(adapter.requestSend("ws-2", requestedOrdinal), true);
+    }
     // Activation: GetNameOwner pins the owner immediately.
     const ownerCall = mocks.dbusCalls[0];
     assert.equal(ownerCall?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
@@ -683,6 +687,225 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.equal(adapter.isInFlight, false);
     });
 
+    it("carries the requested logical ordinal into follow diagnostics without gating", () => {
+        for (const ordinal of [2, 0]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => ({
+                ...makeWorldObserved(mocks.world, refs),
+                targetOrdinal: 1,
+                targetNumber: 2,
+                outputOrdinal: 0,
+                currentOrdinal: 0,
+                currentNumber: 1,
+                currentIdEq: 0,
+                currentRefEq: 0,
+            });
+            const adapter = new WorkspaceSendAdapter(mocks.env);
+            adapter.enable({ owner: "owner-1", generation: "gen-1" });
+            runLifecycle(mocks, adapter, ordinal);
+            const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+            const followLines = mocks.logs.filter(
+                (l) => l.includes("component=cosmic-send") && l.includes("stage=follow") && l.includes(`correlation=${correlation}`),
+            );
+            assert.ok(followLines.length >= 4, mocks.logs.join("\n"));
+            for (const line of followLines.filter((l) => l.includes("event=follow-"))) {
+                assert.ok(line.includes(`req_ord=${String(ordinal)}`), `req handoff missing in:\n${line}`);
+                for (const raw of ["win-a", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                    assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+                }
+            }
+            assert.deepEqual(mocks.switches, [refs.desktop]);
+            assert.deepEqual(mocks.focuses, [refs.a]);
+        }
+        // Invalid ordinals sanitize to -1 and never refuse the send.
+        for (const bad of [99, -1, "bad"]) {
+            const refs = makeRefs();
+            const mocks = mockEnv(refs);
+            mocks.observeImpl = () => ({
+                ...makeWorldObserved(mocks.world, refs),
+                targetOrdinal: 1,
+                targetNumber: 2,
+                outputOrdinal: 0,
+                currentOrdinal: 0,
+                currentNumber: 1,
+                currentIdEq: 0,
+                currentRefEq: 0,
+            });
+            const adapter = new WorkspaceSendAdapter(mocks.env);
+            adapter.enable({ owner: "owner-1", generation: "gen-1" });
+            runLifecycle(mocks, adapter, bad);
+            const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+            const pre = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-pre")) ?? "";
+            assert.ok(pre.includes("req_ord=-1"), `invalid ordinal must sanitize:\n${pre}`);
+            assert.deepEqual(mocks.switches, [refs.desktop]);
+        }
+    });
+
+    it("discriminates live current-desktop divergence from the target", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        mocks.observeImpl = () => {
+            calls += 1;
+            const live = makeWorldObserved(mocks.world, refs);
+            // Calls 1-5 cover request through the pre-switch gate while live
+            // current stays on the source; the immediate after-setter read and
+            // later reads see live current on the target.
+            if (calls >= 6) {
+                return {
+                    ...live,
+                    targetOrdinal: 1,
+                    targetNumber: 2,
+                    outputOrdinal: 0,
+                    currentOrdinal: 1,
+                    currentNumber: 2,
+                    currentIdEq: 1,
+                    currentRefEq: 1,
+                };
+            }
+            return {
+                ...live,
+                targetOrdinal: 1,
+                targetNumber: 2,
+                outputOrdinal: 0,
+                currentOrdinal: 0,
+                currentNumber: 1,
+                currentIdEq: 0,
+                currentRefEq: 0,
+            };
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter, 2);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        const pre = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-pre")) ?? "";
+        assert.ok(pre.includes("req_ord=2"), pre);
+        assert.ok(pre.includes("tgt_ord=1") && pre.includes("tgt_num=2"), pre);
+        assert.ok(pre.includes("cur_ord=0") && pre.includes("cur_num=1"), pre);
+        assert.ok(pre.includes("cur_id_eq=0") && pre.includes("cur_ref_eq=0"), pre);
+        assert.ok(pre.includes("out_ord=0") && pre.includes("out_eq=1"), pre);
+        assert.ok(pre.includes("switched=-1") && pre.includes("focused=-1"), pre);
+        const switched = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-switched")) ?? "";
+        assert.ok(switched.includes("cur_ord=1") && switched.includes("cur_num=2"), switched);
+        assert.ok(switched.includes("cur_id_eq=1") && switched.includes("cur_ref_eq=1"), switched);
+        assert.ok(switched.includes("switched=1") && switched.includes("focused=-1"), switched);
+        const focused = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-focused")) ?? "";
+        assert.ok(focused.includes("cur_id_eq=1") && focused.includes("switched=1") && focused.includes("focused=1"), focused);
+        const settled = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-settled")) ?? "";
+        assert.ok(settled.includes("cur_ord=1") && settled.includes("mover_in_target=1"), settled);
+        for (const line of [pre, switched, focused, settled]) {
+            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+            }
+        }
+    });
+
+    it("reports post-focus reversal while follow still completes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        mocks.observeImpl = () => {
+            calls += 1;
+            const live = makeWorldObserved(mocks.world, refs);
+            const base = {
+                ...live,
+                targetOrdinal: 1,
+                targetNumber: 2,
+                outputOrdinal: 0,
+            };
+            // Calls 1-6 cover request through the after-setter read with live
+            // current on the target and the mover active.
+            if (calls <= 6) {
+                const current = calls >= 6
+                    ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
+                    : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
+                return { ...base, ...current };
+            }
+            // Post-focus and settled reads reverse: live current falls back to
+            // the source and the active window is no longer the mover.
+            return {
+                ...base,
+                sourceWindows: live.sourceWindows,
+                targetWindows: live.targetWindows,
+                activeRef: refs.b,
+                currentOrdinal: 0,
+                currentNumber: 1,
+                currentIdEq: 0,
+                currentRefEq: 0,
+            };
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter, 2);
+        // Diagnostics never gate behavior: the native hooks still ran and the
+        // truthful follow line still reports the focus result.
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        const switched = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-switched")) ?? "";
+        assert.ok(switched.includes("cur_id_eq=1") && switched.includes("active_is_mover=1"), switched);
+        const focused = mocks.logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow-focused")) ?? "";
+        assert.ok(focused.includes("cur_ord=0") && focused.includes("cur_id_eq=0"), `reversal missing:\n${focused}`);
+        assert.ok(focused.includes("active_is_mover=0"), `active reversal missing:\n${focused}`);
+        assert.ok(focused.includes("switched=1") && focused.includes("focused=1"), focused);
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            mocks.logs.join("\n"),
+        );
+    });
+
+    it("leaves follow behavior unchanged when follow observations return null", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        const liveObserve = mocks.observeImpl;
+        mocks.observeImpl = () => {
+            calls += 1;
+            // Post-switch and post-focus re-reads fail; pre-switch, gates,
+            // and the settled boundary still observe.
+            if (calls === 6 || calls === 7) {
+                return null;
+            }
+            return liveObserve();
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        for (const event of ["event=follow-switched", "event=follow-focused"]) {
+            const line = mocks.logs.find((l) => l.includes(event)) ?? "";
+            assert.ok(line.includes("outcome=unknown"), `${event} must report unknown:\n${line}`);
+            assert.ok(line.includes("tgt_ord=-1") && line.includes("cur_ord=-1"), line);
+        }
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("leaves follow behavior unchanged when follow logging throws", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            log: (message: string) => {
+                if (message.includes("stage=follow")) {
+                    throw new Error("log lost");
+                }
+                mocks.logs.push(message);
+            },
+        });
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
     it("rejects a planned reply whose desired focus is not the Rust target mover", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
@@ -728,7 +951,21 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, []);
         assert.deepEqual(mocks.focuses, []);
-        assert.ok(!mocks.logs.some((l) => l.includes("event=follow")), mocks.logs.join("\n"));
+        // No success telemetry, but the correlated later-boundary observation
+        // still reports the drifted state instead of claiming a follow.
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            mocks.logs.join("\n"),
+        );
+        for (const event of ["event=follow-pre", "event=follow-switched", "event=follow-focused"]) {
+            assert.ok(!mocks.logs.some((l) => l.includes(event)), `${event} must not emit on drift:\n${mocks.logs.join("\n")}`);
+        }
+        const settled = mocks.logs.filter(
+            (l) => l.includes("stage=follow") && l.includes("event=follow-settled") && l.includes(`correlation=${correlation}`),
+        );
+        assert.equal(settled.length, 1, mocks.logs.join("\n"));
+        assert.ok(settled[0]?.includes("outcome=observed"), settled.join("\n"));
+        assert.ok(settled[0]?.includes("mover_in_target=0"), settled.join("\n"));
     });
 
     it("ignores a duplicate committed reply without a second follow", () => {
