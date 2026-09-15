@@ -107,3 +107,34 @@
   production-entry tests cover valid send, same-target no-op with no native
   writes or follow, then a usable distinct send; terminal post-plan divergence
   remains disabled. No live acceptance is claimed.
+
+## 2026-09-15 Rapid Send Follow-up
+
+- Exact `3o88jX` lines 124-136 show `plan-1-w3` planned, its mover echo and
+  two required geometry echoes consumed, later keys individually
+  `busy-refused`, then `adapter-lost` at timeout. The busy keys did not alter
+  the active flight. The logged plan has only two changed geometry members, so
+  it does not support a missing-third-echo diagnosis.
+- A focused synchronous KWin-shaped test of that exact changed/unchanged
+  geometry shape completes under current source. The current log cannot prove
+  its runtime loaded that source or identify why it did not complete. Both the
+  adapter and retained Rust workspace session intentionally remain terminal
+  after `adapter-lost`; changing that requires an explicit recovery policy, not
+  a blind reset or retry. No live claim is made.
+
+## 2026-09-15 Exact Pre-Ack Settlement
+
+- A planned flight that times out before its acknowledged post-observation now
+  takes one fresh complete source/target observation. Only exact
+  `verifyPlannedPost` equality retires the echo subscriptions and resumes its
+  original ack/verify transaction with the same owner, generation, correlation,
+  revision, preconditions, and operation. It performs no native rewrite,
+  replay, polling, or new plan.
+- Deadline epochs isolate the retired pre-ack timer, while token, echo, and ack
+  guards leave late callbacks and subscriptions unable to duplicate follow or
+  affect a later flight. Ack/verify timeout remains uncertain and terminal.
+- A request-phase, well-formed Rust rejection other than `pending-exists` now
+  stays usable because Rust stores `workspace_pending` only on its planned path.
+  Activation failures before dispatch also stay usable. Lost/malformed replies,
+  request timeout, owner loss, `pending-exists`, `diverged`, and all post-plan
+  outcomes remain terminal. No live acceptance is claimed.

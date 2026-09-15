@@ -702,7 +702,22 @@ interface WorkspacePendingFlight {
     operation: Record<string, unknown> | null;
     planned: WorkspacePlanned | null;
     verifiedObserved: WorkspaceSendObserved | null;
+    acked: boolean;
 }
+
+// Source-grounded request-phase recovery rule: Planner::
+// evaluate_workspace_request (src/planner_protocol.rs) stores
+// `workspace_pending` only on the Ok(plan) path, and its only
+// pre-existing-pending rejection is kind "pending-exists"; pre-existing
+// pending divergence is outcome "diverged". Therefore a well-formed request
+// reply (valid version/correlation, outcome "rejected", bounded valid kind
+// per sanitizeKind) with any kind other than "pending-exists" proves Rust
+// retained no pending and ran before any native write (planned === null here).
+// Only "pending-exists" and malformed "unknown" stay terminal on this path.
+// Version/correlation envelope mismatch, outcome "diverged", lost/timeout/
+// request-send ambiguity/owner loss, and every post-plan ack/verify response
+// stay terminal elsewhere. Post-plan/native-mutated phases never use this.
+const TERMINAL_REQUEST_REJECTION = "pending-exists";
 
 export class WorkspaceSendAdapter {
     private enabled = false;
@@ -712,6 +727,9 @@ export class WorkspaceSendAdapter {
     private inFlight = false;
     private token = 0;
     private activeToken = 0;
+    private deadlineToken = 0;
+    private activeDeadline = 0;
+    private timeoutDepth = 0;
     private callbackSeen = false;
     private cancelTimer: (() => void) | null = null;
     private pinnedOwner: string | null = null;
@@ -777,6 +795,7 @@ export class WorkspaceSendAdapter {
         this.pending = null;
         this.pinnedOwner = null;
         this.activationStep = 0;
+        this.activeDeadline = 0;
         this.clearTimer();
         this.clearEcho();
     }
@@ -1073,22 +1092,26 @@ export class WorkspaceSendAdapter {
             operation: null,
             planned: null,
             verifiedObserved: null,
+            acked: false,
         };
         this.pinnedOwner = null;
         this.activationStep = 1;
         this.token += 1;
         const flight = this.token;
         this.activeToken = flight;
+        this.deadlineToken += 1;
+        this.activeDeadline = this.deadlineToken;
+        const deadline = this.activeDeadline;
         let cancel: (() => void) | null = null;
         try {
-            cancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () => this.onTimeout(flight, "request"));
+            cancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () => this.onTimeout(flight, "request", deadline));
         } catch (error) {
             void error;
             this.inFlight = false;
             this.activationStep = 0;
             this.pending = null;
+            this.activeDeadline = 0;
             this.refuse("timeout");
-            this.disable();
             return;
         }
         this.cancelTimer = cancel;
@@ -1112,7 +1135,7 @@ export class WorkspaceSendAdapter {
             this.activationStep = 0;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
         }
     }
 
@@ -1147,7 +1170,7 @@ export class WorkspaceSendAdapter {
             this.pinnedOwner = null;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
         }
     }
 
@@ -1162,7 +1185,7 @@ export class WorkspaceSendAdapter {
             this.pinnedOwner = null;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
             return;
         }
         // Exactly one bounded post-activation owner resolution, then pin
@@ -1185,7 +1208,7 @@ export class WorkspaceSendAdapter {
             this.pinnedOwner = null;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
         }
     }
 
@@ -1200,7 +1223,7 @@ export class WorkspaceSendAdapter {
             this.pinnedOwner = null;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
             return;
         }
         this.pinnedOwner = reply;
@@ -1221,7 +1244,7 @@ export class WorkspaceSendAdapter {
             this.pinnedOwner = null;
             this.pending = null;
             this.diag("request", correlation, 0, "activate", "no-planner");
-            this.disable();
+            this.activeDeadline = 0;
             return;
         }
         this.callbackSeen = false;
@@ -1246,6 +1269,14 @@ export class WorkspaceSendAdapter {
         }
         const pending = this.pending;
         if (pending === null || !isUniqueOwner(this.pinnedOwner) || this.activationStep !== 4) {
+            return;
+        }
+        // Late duplicate request replies after the plan is bound (including
+        // after a pre-ack timeout settlement) must never replay native writes.
+        // Missing/malformed/lost replies, timeouts, owner loss, and transport
+        // ambiguity are never treated as no-pending: Rust may create pending
+        // before the client receives the reply.
+        if (pending.planned !== null) {
             return;
         }
         this.callbackSeen = true;
@@ -1276,8 +1307,25 @@ export class WorkspaceSendAdapter {
             return;
         }
         const outcome = parsed["outcome"];
-        if (outcome === "rejected" || outcome === "diverged") {
+        if (outcome === "diverged") {
+            this.failFlight(flight, correlation, sanitizeKind(parsed["kind"]));
+            return;
+        }
+        if (outcome === "rejected") {
             const kind = sanitizeKind(parsed["kind"]);
+            // Source-grounded remote-clean recovery: any well-formed
+            // request-phase rejection other than "pending-exists" proves Rust
+            // retained no pending (pending is only stored on the planned path
+            // after the pending-exists gate). No native write has occurred
+            // (planned === null checked above), so no adapter-lost is sent,
+            // the adapter stays enabled, and the next distinct send may
+            // proceed. "pending-exists", malformed "unknown", outcome
+            // "diverged", and every post-plan rejection with native mutation
+            // stay terminal.
+            if (kind !== "unknown" && kind !== TERMINAL_REQUEST_REJECTION) {
+                this.recoverClean(flight, correlation, kind);
+                return;
+            }
             this.failFlight(flight, correlation, kind);
             return;
         }
@@ -1816,6 +1864,13 @@ export class WorkspaceSendAdapter {
             this.failFlight(flight, correlation, "stale-scope");
             return;
         }
+        // Late duplicate ack replies (including after a pre-ack timeout
+        // settlement already consumed the ack) must never replay verify.
+        // Ack/verify timeouts stay uncertain and never re-interpret a
+        // well-formed no-pending rejection as success.
+        if (pending.acked) {
+            return;
+        }
         this.callbackSeen = true;
         // The single whole-flight timer stays armed through the verify phase.
         if (typeof reply !== "string" || reply.length > WORKSPACE_SEND_MAX_REPLY_BYTES) {
@@ -1847,6 +1902,7 @@ export class WorkspaceSendAdapter {
             this.failFlight(flight, correlation, "service-fault");
             return;
         }
+        pending.acked = true;
         this.diag("ack", correlation, pending.baseRevision, "ack", "acknowledged");
         // Scope may have changed between the ack and the verify: take a fresh
         // observation and rerun the strict post-observation binding so stale
@@ -1940,6 +1996,7 @@ export class WorkspaceSendAdapter {
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
+        this.activeDeadline = 0;
         this.clearEcho();
     }
 
@@ -2025,22 +2082,115 @@ export class WorkspaceSendAdapter {
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
+        this.activeDeadline = 0;
         this.clearEcho();
         this.diag("result", correlation, revision, "result", outcome);
         this.disable();
+    }
+
+    // Narrow remote-clean recovery: no plan/pending exists on either side, so
+    // no adapter-lost is reported, the adapter stays enabled with no flight,
+    // and the retired deadline can never touch a future flight. Used only for
+    // failures definitely before planner request dispatch (activation paths)
+    // and for well-formed request-phase rejections other than
+    // "pending-exists"/"unknown" (see rule above). Ambiguous send/timeout/
+    // lost/malformed/owner-loss and every post-write path stay terminal via
+    // failFlight.
+    private recoverClean(flight: number, correlation: string, outcome: string): void {
+        if (flight !== this.activeToken) {
+            return;
+        }
+        this.clearTimer();
+        this.clearEcho();
+        this.inFlight = false;
+        this.pending = null;
+        this.activationStep = 0;
+        this.pinnedOwner = null;
+        this.activeDeadline = 0;
+        this.callbackSeen = false;
+        this.diag("result", correlation, 0, "result", outcome);
     }
 
     private failTerminal(flight: number, correlation: string, outcome: string): void {
         this.failFlight(flight, correlation, outcome);
     }
 
-    private onTimeout(flight: number, stage: string): void {
-        if (!this.inFlight || flight !== this.activeToken) {
+    private onTimeout(flight: number, stage: string, deadline: number): void {
+        if (!this.inFlight || flight !== this.activeToken || deadline !== this.activeDeadline) {
+            return;
+        }
+        // Synchronous settlement-deadline reentrancy (scheduleOnce invoking
+        // its callback before returning) must never tear down the just-settled
+        // flight: ignore any reentrant timeout while settlement is arming.
+        if (this.timeoutDepth > 0) {
             return;
         }
         const pending = this.pending;
         const correlation = pending === null ? "" : pending.correlation;
         const revision = pending === null ? 0 : pending.baseRevision;
+        // Exact pre-ack settlement only: a valid planned flight that has not
+        // yet verified (verifiedObserved === null) may have converged locally
+        // while its geometry/membership echoes were withheld or missed. Make
+        // one fresh complete source/target observation and run the existing
+        // exact verifyPlannedPost. If exact, safely retire the exhausted
+        // subscriptions and enter the original ack/verify continuation with
+        // the same owner/generation/correlation/base revision/preconditions/
+        // operation and one normal bounded deadline. No new native write,
+        // replay, new transaction, polling, false ack, or busy-key change.
+        // Ack/verify timeouts (verifiedObserved !== null) stay uncertain and
+        // never replay or re-interpret no-pending success. Owner validation is
+        // preserved; late events/callbacks/timers cannot duplicate ack/follow
+        // or touch a future flight via token, deadline epoch, echo, and acked
+        // guards.
+        // Permanent disablement stays for uncertain divergence; only provably
+        // safe pre-dispatch failures (no valid plan, no native write) and
+        // well-formed request-phase rejections other than
+        // "pending-exists"/"unknown" are treated as Rust-clean.
+        // Missing/malformed/lost planned replies, request timeouts, owner
+        // loss, and transport ambiguity are never treated as no-pending
+        // because Rust can create pending before the client receives a reply.
+        // Outcome diverged is never remote-clean: Rust retains the wedged
+        // pending. Explicit well-formed rejections after a plan/ack stay
+        // terminal because native writes already mutated KWin state.
+        if (
+            pending !== null &&
+            pending.planned !== null &&
+            pending.verifiedObserved === null &&
+            !pending.acked &&
+            isUniqueOwner(this.pinnedOwner)
+        ) {
+            const planned = pending.planned;
+            const fresh = this.freshObserved(pending.targetWorkspace);
+            if (fresh !== null && this.verifyPlannedPost(planned, pending, fresh) === "") {
+                this.clearEcho();
+                pending.verifiedObserved = fresh;
+                const payload = this.buildAckPayload(fresh, correlation, planned.baseRevision);
+                if (payload !== null && payload.length <= WORKSPACE_SEND_MAX_REQUEST_BYTES) {
+                    this.clearTimer();
+                    this.deadlineToken += 1;
+                    this.activeDeadline = this.deadlineToken;
+                    const nextDeadline = this.activeDeadline;
+                    let cancel: (() => void) | null = null;
+                    this.timeoutDepth += 1;
+                    try {
+                        cancel = this.env.scheduleOnce(WORKSPACE_SEND_TIMEOUT_MS, () => this.onTimeout(flight, "ack", nextDeadline));
+                    } catch (error) {
+                        void error;
+                        cancel = null;
+                    }
+                    this.timeoutDepth -= 1;
+                    if (cancel !== null && isUniqueOwner(this.pinnedOwner)) {
+                        this.cancelTimer = cancel;
+                        this.diag("request", correlation, planned.baseRevision, "plan", "planned");
+                        this.sendAck(flight, correlation, payload);
+                        return;
+                    }
+                    // Settlement arming failed: retire the fresh deadline so the
+                    // failed epoch can never fire later.
+                    this.activeDeadline = 0;
+                }
+            }
+        }
         this.clearTimer();
         // Post-plan timeout (ack/verify waiting on a valid planned reply) also
         // reports one best-effort adapter-lost to the pinned owner. The
@@ -2051,6 +2201,7 @@ export class WorkspaceSendAdapter {
         this.pending = null;
         this.activationStep = 0;
         this.pinnedOwner = null;
+        this.activeDeadline = 0;
         this.clearEcho();
         this.diag("result", correlation, revision, `timeout-${stage}`, "timeout");
         this.disable();

@@ -343,6 +343,15 @@ Historical implementation detail is recoverable in Git history.
   do not follow. The standard US shifted aliases `Meta+!` through `Meta+)` are
   registered alongside the digit sends; registration preserves foreign shortcut
   records and does not establish physical delivery.
+- A planned send that reaches its original pre-ack deadline may settle only from
+  one fresh complete exact post-observation, then uses its original ack/verify
+  transaction and one normal bounded deadline. It never rewrites, replays,
+  polls, or creates a new plan. Late events cannot duplicate completion. A
+  provably pre-dispatch failure or a well-formed request rejection other than
+  `pending-exists` stays available because Rust has no retained pending; sent or
+  malformed/lost request replies, request timeout, owner loss, `diverged`, and
+  post-plan ack/verify uncertainty remain terminal pending an explicit recovery
+  design.
 
 ## Shortcuts
 

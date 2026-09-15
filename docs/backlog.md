@@ -2,12 +2,20 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send same-target live gate | User confirmed many successful
-  round trips; YlYhh5 shows eight successful flights followed by same-workspace
-  refusal and subsequent busy refusals. Pre-flight refusals now preserve adapter
-  availability; post-plan divergence remains terminal. Focused static checks
-  pass. Verify 2->3, 3->3, 3->2 and further round trips with follow/focus.
-  [record](changes/archive/workspace-send-echo-fence.md)
+- P0 | Rapid workspace-send lockup live gate | Static completion settles a
+  planned pre-ack timeout only after one exact fresh post-observation, then
+  follows the original ack/verify route. User must manually test rapid 3->2->1,
+  then same-target refusal followed by a distinct send; the busy second command
+  may be declined and is not queued or claimed executed. Follow/focus and later
+  usability remain live-unproven; border causation remains unestablished.
+  [record](changes/archive/workspace-send-rapid-lockup.md)
+- P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
+  well-formed request rejection paths are reusable. Sent request/lost callback,
+  malformed reply, request timeout, owner loss, and other transport ambiguity
+  can leave Rust pending; partial native mutation plus ack/verify timeout can
+  also be uncertain. Selecting discard/reseed or another generation/protocol
+  recovery remains a material decision; no blind reset, replay, or topology
+  reconstruction is selected.
 - P1 | Temporary active-group highlight live gate | Named-log diagnosis found
   retained-focus lookup and missing completed-geometry refresh defects; both are
   corrected and statically verified. Restart the foreground dev session and
