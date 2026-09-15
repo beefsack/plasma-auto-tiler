@@ -86,3 +86,24 @@
   no unrelated trailing-empty cleanup is reopened. User pickup: clean Rust/TS
   teardown with Ctrl-C, then `just dev verbose` without logout; reproduce the
   unchanged workspace 2 -> 3 -> 2 -> 3 send/follow sequence.
+
+## 2026-09-15 Later Lockup Outcome
+
+- The exact `YlYhh5` incident records eight accepted, verified, and followed
+  sends (`w0` through `w7`) before the first failure: a pre-flight
+  `same-workspace` refusal at line 337, followed only by
+  `workspace-move` busy refusals at lines 338-343 and 378-382. No later send
+  activation, plan, acknowledgement, or verify appears. This confirms the
+  same-target shortcut as the trigger for this lockup, not a geometry-fence
+  regression.
+- The KWin adapter had treated every pre-flight ineligible request as terminal:
+  `refuse()` logged then disabled its one-shot startup instance. The entry then
+  reported the disabled adapter as busy. Rust's same-domain `Unchanged` refusal
+  creates no pending lifecycle state, so no Rust policy or transaction change
+  was needed.
+- Pre-flight refusal now records its exact token and returns without changing
+  adapter availability. Bound-flight planner, stale, owner, generation,
+  partial, and timeout divergence remains terminal. Offline adapter and
+  production-entry tests cover valid send, same-target no-op with no native
+  writes or follow, then a usable distinct send; terminal post-plan divergence
+  remains disabled. No live acceptance is claimed.

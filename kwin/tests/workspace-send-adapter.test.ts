@@ -753,7 +753,18 @@ describe("cosmic send-to-workspace refusal routes", () => {
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         assert.equal(adapter.requestSend("ws-2"), false);
-        assert.equal(adapter.isEnabled, false, "refusal must disable");
+        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 0, "pre-flight refusal must not touch D-Bus");
+        assert.equal(mocks.timers.length, 0, "pre-flight refusal must not arm a timer");
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(
+            mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")),
+            false,
+        );
         const line = mocks.logs[mocks.logs.length - 1] ?? "";
         assert.ok(line.includes("event=refuse"), line);
         return line.split("outcome=")[1] ?? "";
@@ -789,6 +800,107 @@ describe("cosmic send-to-workspace refusal routes", () => {
         // window-count claim.
         const outcome = refusalOutcome({ desktopCount: 26 });
         assert.equal(outcome, "desktop-cap");
+    });
+
+    it("refuses scope-invalid without disabling when observation is absent", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => null;
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), false);
+        assert.equal(adapter.isEnabled, true, "pre-flight refusal must stay enabled");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.dbusCalls.length, 0);
+        assert.equal(mocks.timers.length, 0);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(mocks.logs.some((l) => l.includes("event=refuse") && l.includes("outcome=scope-invalid")), mocks.logs.join("\n"));
+    });
+
+    it("stays enabled across valid, same-workspace no-op, then valid sends", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        runLifecycle(mocks, adapter);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 1);
+        const afterFirst = {
+            dbus: mocks.dbusCalls.length,
+            timers: mocks.timers.length,
+            geometries: mocks.geometries.length,
+            desktops: mocks.desktops.length,
+            switches: mocks.switches.length,
+            focuses: mocks.focuses.length,
+        };
+        assert.equal(afterFirst.dbus, 4);
+        assert.equal(afterFirst.timers, 1);
+        mocks.observeImpl = () => makeObserved(refs, { targetWorkspace: "ws-1" });
+        assert.equal(adapter.requestSend("ws-1"), false);
+        assert.equal(adapter.isEnabled, true, "same-workspace no-op must stay enabled");
+        assert.equal(adapter.isInFlight, false);
+        assert.ok(mocks.logs.some((l) => l.includes("event=refuse") && l.includes("outcome=same-workspace")), mocks.logs.join("\n"));
+        assert.equal(mocks.dbusCalls.length, afterFirst.dbus, "no-op must not touch D-Bus");
+        assert.equal(mocks.timers.length, afterFirst.timers, "no-op must not arm a timer");
+        assert.equal(mocks.geometries.length, afterFirst.geometries);
+        assert.equal(mocks.desktops.length, afterFirst.desktops);
+        assert.equal(mocks.switches.length, afterFirst.switches);
+        assert.equal(mocks.focuses.length, afterFirst.focuses);
+        assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 1);
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-a") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(0, 0, 100, 100);
+            } else if (entry.id === "win-b") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(100, 0, 100, 100);
+            } else if (entry.id === "win-t") {
+                entry.workspace = "ws-2";
+                entry.rect = rect(0, 0, 100, 100);
+            }
+        }
+        mocks.observeImpl = () => makeWorldObserved(mocks.world, refs);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = afterFirst.dbus;
+        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
+        mocks.callbacks[base]?.(":1.7");
+        const requestCall = mocks.dbusCalls[base + 1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[base + 1]?.(plannedReply(correlation));
+        mocks.callbacks[base + 2]?.(ackReply(correlation));
+        mocks.callbacks[base + 3]?.(committedReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 2);
+    });
+
+    it("keeps post-plan divergence terminal and disabled", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "diverged",
+                kind: "stale-revision",
+            }),
+        );
+        assert.equal(adapter.isEnabled, false, "post-plan divergence stays terminal");
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(adapter.requestSend("ws-2"), false, "terminal adapter stays fail-closed");
     });
 
     it("accepts exactly 25 desktops (the KWin cap is inclusive)", () => {

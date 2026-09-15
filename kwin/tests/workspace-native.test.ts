@@ -870,26 +870,49 @@ describe("workspace production entry routing and handoff", () => {
         handle?.stop();
     });
 
-    it("stays fail-closed after a terminal send refusal with no shortcut revival", () => {
+    it("same-target refusal stays usable without writes or busy-refused", () => {
         const { handle, world, mocks } = startRichEntry("per-output-local");
         assert.ok(handle !== null);
+        const activeBefore = world.workspace["activeWindow"];
+        const mover = activeBefore as { desktops: unknown[]; frameGeometry: unknown };
+        const moverDesktopsBefore = [...(mover.desktops as unknown[])];
+        const geometryBefore = JSON.stringify(mover.frameGeometry);
+        const currentBefore = world.currentByOutput.get(world.outputs[0] as never);
+        const callsBefore = mocks.dbusCalls.length;
         const byAction = new Map(mocks.shortcuts.map((row) => [row.action, row]));
-        // Force a terminal refusal: only one desktop remains, so the send
-        // refuses last-desktop and disables fail-closed.
-        (world.workspace as Record<string, unknown>)["desktops"] = [world.desktops[0]];
+        // Same-target no-op through shortcut routing: logical 1 is ws-1, the
+        // current workspace holding the focused mover.
         byAction.get("plasma-auto-tiler-move-workspace-1")?.callback();
-        const refusedCalls = mocks.dbusCalls.length;
-        // Restore the target so a revival attempt would have something to send.
-        const { world: fresh } = fakeWorld("per-output-local", ["out-1"], ["ws-1", "ws-2"]);
-        void fresh;
-        (world.workspace as Record<string, unknown>)["desktops"] = world.desktops;
-        byAction.get("plasma-auto-tiler-move-workspace-1")?.callback();
-        handle?.requestWorkspaceMove(1);
-        assert.equal(mocks.dbusCalls.length, refusedCalls, "no normal shortcut restores terminal send");
+        assert.ok(
+            mocks.logs.some((line) => line.includes("event=refuse") && line.includes("outcome=same-workspace")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(mocks.dbusCalls.length, callsBefore, "same-target no-op must not touch D-Bus");
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("busy-refused") && line.includes("workspace-move")),
+            "same-target refusal must not emit entry busy-refused",
+        );
+        assert.equal(world.workspace["activeWindow"], activeBefore, "no follow refocus from no-op");
+        assert.equal(world.currentByOutput.get(world.outputs[0] as never), currentBefore, "no follow switch from no-op");
+        assert.deepEqual(mover.desktops as unknown[], moverDesktopsBefore, "no native membership write from no-op");
+        assert.equal(JSON.stringify(mover.frameGeometry), geometryBefore, "no native geometry write from no-op");
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("event=follow")),
+            "no follow from same-target no-op",
+        );
+        // A valid distinct target through the production entry must begin a
+        // normal workspace-send transport rather than entry busy-refused.
+        handle?.requestWorkspaceMove(2);
+        mocks.callbacks[0]?.(":1.7");
+        const request = mocks.dbusCalls.find((call) => call.payload.includes("\"op\":\"send-to-workspace\""));
+        assert.ok(request !== undefined, "distinct target begins transport after same-target no-op");
+        const command = (JSON.parse(request.payload) as Record<string, unknown>)["command"] as Record<string, unknown>;
+        assert.equal(command["target_workspace"], "ws-2");
+        assert.ok(
+            !mocks.logs.some((line) => line.includes("busy-refused") && line.includes("workspace-move")),
+            "distinct target must not busy-refuse after same-target no-op",
+        );
         handle?.stop();
-        const callsAfterStop = mocks.dbusCalls.length;
-        byAction.get("plasma-auto-tiler-move-workspace-1")?.callback();
-        assert.equal(mocks.dbusCalls.length, callsAfterStop);
     });
 
     it("excludes intentional floats from send observation", () => {

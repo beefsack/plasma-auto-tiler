@@ -36,8 +36,12 @@
 // Refusal routes are exact bounded tokens: no-planner, owner-loss,
 // stale-revision, cross-output, same-workspace, absent-focus, non-tiled-focus,
 // desktop-cap (observed desktop count above the KWin cap of 25), and
-// last-desktop (no distinct target desktop can exist). Every failure disables
-// the adapter and emits one structured best-effort
+// last-desktop (no distinct target desktop can exist). Pre-flight refusals
+// (scope-invalid plus the requestSend validation tokens above) log one
+// structured best-effort `plasma-auto-tiler:route-diag` line and return false
+// with the adapter still enabled, so a later valid send can proceed. Every
+// post-flight/planner/stale/owner/generation/partial/timeout divergence
+// disables the adapter and emits one structured best-effort
 // `plasma-auto-tiler:route-diag` line with fixed fields (component, stage,
 // correlation, generation, revision, event, outcome) carrying no sensitive,
 // native, or payload data. A post-plan failure additionally sends one bounded
@@ -2157,10 +2161,11 @@ export class WorkspaceSendAdapter {
     }
 
     // Refusal during pre-flight (no correlation yet): one structured route
-    // diagnostic with an exact bounded token, then disable fail-closed.
+    // diagnostic with an exact bounded token. Pre-flight refusals stay
+    // enabled with no flight, timer, D-Bus, native, follow, or loss report so
+    // a subsequent valid send can proceed.
     private refuse(outcome: string): void {
         this.diag("request", "", 0, "refuse", outcome);
-        this.disable();
     }
 
     private diag(stage: string, correlation: string, revision: number, event: string, outcome: string): void {

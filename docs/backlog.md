@@ -2,12 +2,11 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send frame-geometry live gate | The plC3QN run exposed an
-  interactive-only signal used to await programmatic geometry. Both send entries
-  now fence `frameGeometryChanged`; static repeated-send and delayed production
-  round-trip tests pass. User must verify 2->3->2->3 with follow/focus. Dynamic
-  workspace lifecycle has partial improved manual evidence; repeated send
-  acceptance remains the dogfooding blocker.
+- P0 | Workspace-send same-target live gate | User confirmed many successful
+  round trips; YlYhh5 shows eight successful flights followed by same-workspace
+  refusal and subsequent busy refusals. Pre-flight refusals now preserve adapter
+  availability; post-plan divergence remains terminal. Focused static checks
+  pass. Verify 2->3, 3->3, 3->2 and further round trips with follow/focus.
   [record](changes/archive/workspace-send-echo-fence.md)
 - P1 | Temporary active-group highlight live gate | Named-log diagnosis found
   retained-focus lookup and missing completed-geometry refresh defects; both are
@@ -84,6 +83,11 @@ Only meaningful pending or active work is listed.
   after startup without weakening one-shot transaction fencing.
 - P2 | Bootstrap ordering decision | Decide whether lexical opaque-ID ordering
   is load-bearing or replaceable without changing `H[A,V[B,C]]` seeding.
+- P2 | Placement-aware startup adoption design | User observes dev restart
+  rearranging windows that already form a good or near-good tiling. Discuss
+  estimating a split tree and shares from existing window rectangles to minimize
+  movement on adoption, including ambiguity and imperfect layouts. Design only;
+  implementation and policy remain unselected.
 - P2 | Pixel/share parity decision | Retain `Vec<u64>` shares unless a reproduced
   N-ary/deep visual discrepancy or source-exact fixture justifies the cross-
   contract pixel-authority migration. Source N-ary pixel rounding remains an
