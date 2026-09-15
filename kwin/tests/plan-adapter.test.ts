@@ -1764,9 +1764,9 @@ describe("plan entry live observation and shortcuts", () => {
         const world = fakeWorld();
         const { handle, mocks } = startEntry(world);
         assert.ok(handle !== null);
-        assert.equal(mocks.shortcuts.length, 31);
+        assert.equal(mocks.shortcuts.length, 61);
         const actions = mocks.shortcuts.map((row) => row.action);
-        assert.equal(new Set(actions).size, 31);
+        assert.equal(new Set(actions).size, 61);
         assert.ok(actions.includes("plasma-auto-tiler-focus-left"));
         assert.ok(actions.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(actions.includes("plasma-auto-tiler-move-up"));
@@ -1960,7 +1960,9 @@ describe("plan entry live observation and shortcuts", () => {
     it("registers distinct Meta+Shift move sequences delivering op=move", () => {
         const first = startEntry(fakeWorld());
         assert.ok(first.handle !== null);
-        const moves = first.mocks.shortcuts.filter((row) => row.action.startsWith("plasma-auto-tiler-move-"));
+        const moves = first.mocks.shortcuts.filter(
+            (row) => row.action.startsWith("plasma-auto-tiler-move-") && !row.action.includes("workspace") && !row.action.includes("append"),
+        );
         assert.equal(moves.length, 8);
         const sequences = moves.map((row) => row.sequence);
         assert.equal(new Set(sequences).size, 8);
@@ -1987,7 +1989,7 @@ describe("plan entry live observation and shortcuts", () => {
         second.handle?.stop();
     });
 
-    it("never registers Meta+digit or Meta+Shift+digit workspace sequences", () => {
+    it("registers production workspace number chords alongside the directional core", () => {
         for (const profile of ["cosmic", "hyprland", "bspwm", "unknown"]) {
             const catalog = planShortcutCatalog(profile);
             for (const row of catalog) {
@@ -1998,14 +2000,24 @@ describe("plan entry live observation and shortcuts", () => {
         }
         const live = startEntry(fakeWorld());
         assert.ok(live.handle !== null);
-        for (const row of live.mocks.shortcuts) {
-            assert.ok(!row.action.includes("workspace"), row.action);
-            assert.ok(!/Meta(\+Shift)?\+\d/.test(row.sequence), `${row.action}:${row.sequence}`);
+        const byAction = new Map(live.mocks.shortcuts.map((row) => [row.action, row]));
+        assert.equal(live.mocks.shortcuts.length, 61);
+        for (let index = 1; index <= 9; index += 1) {
+            assert.equal(byAction.get(`plasma-auto-tiler-workspace-${String(index)}`)?.sequence, `Meta+${String(index)}`);
+            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(index)}`)?.sequence, `Meta+Shift+${String(index)}`);
         }
+        assert.equal(byAction.get("plasma-auto-tiler-workspace-0")?.sequence, "Meta+0");
+        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append")?.sequence, "Meta+Shift+0");
+        const symbols: ReadonlyArray<[number, string]> = [[1, "!"], [2, "@"], [3, "#"], [4, "$"], [5, "%"], [6, "^"], [7, "&"], [8, "*"], [9, "("]];
+        for (const [digit, symbol] of symbols) {
+            assert.equal(byAction.get(`plasma-auto-tiler-move-workspace-${String(digit)}-symbol`)?.sequence, `Meta+${symbol}`);
+        }
+        assert.equal(byAction.get("plasma-auto-tiler-move-workspace-append-symbol")?.sequence, "Meta+)");
         live.handle?.stop();
         const entrySrc = readFileSync(join(kwinSrcDir(), "plan-adapter-entry.ts"), "utf8");
-        assert.ok(!entrySrc.includes("workspace-"), "no workspace shortcut ids");
-        assert.ok(!/Meta\+\$\{(index|digit|n)\}/.test(entrySrc), "no digit sequence template");
+        assert.ok(entrySrc.includes("workspace-native"), "native lifecycle wiring");
+        assert.ok(entrySrc.includes("WorkspaceSendAdapter"), "send transport reference");
+        assert.ok(entrySrc.includes("workspaceShortcutCatalog"), "number chord catalog wiring");
     });
 
     it("observes only normal windows with normalized bare UUID ids", () => {
@@ -2147,7 +2159,7 @@ describe("plan entry live observation and shortcuts", () => {
             },
         });
         assert.ok(handle !== null);
-        assert.equal(attempts.length, 31);
+        assert.equal(attempts.length, 61);
         assert.ok(attempts.includes("plasma-auto-tiler-focus-right-arrow"));
         assert.ok(attempts.includes("plasma-auto-tiler-resize-inwards-right-arrow"));
         const line = mocks.logs.find((entry) => entry.includes("shortcut-failed"));
@@ -2398,6 +2410,70 @@ describe("plan entry live observation and shortcuts", () => {
             mocks.logs.some((line) => line === "plasma-auto-tiler:plan:focus-refused-disabled"),
             "adapter is disabled, never left enabled and blind",
         );
+        handle?.stop();
+    });
+
+    it("refreshes the highlight exactly once after a completed move, never on focus or rejection", () => {
+        const world = fakeWorld();
+        const { handle, mocks } = startEntry(world, {
+            highlightCallDbus: (): void => {},
+        });
+        assert.ok(handle !== null);
+        const activeGroupCalls = (): number =>
+            mocks.dbusCalls.filter((call) => {
+                try {
+                    return (JSON.parse(call.payload) as Record<string, unknown>)["command"] !== undefined
+                        && ((JSON.parse(call.payload) as Record<string, unknown>)["command"] as Record<string, unknown>)["op"] === "active-group";
+                } catch (error) {
+                    void error;
+                    return false;
+                }
+            }).length;
+        assert.equal(activeGroupCalls(), 1, "highlight startup query");
+        handle?.requestMove("right");
+        const moveIndex = mocks.dbusCalls.length - 1;
+        const movePayload = JSON.parse(mocks.dbusCalls[moveIndex]?.payload as string) as Record<string, unknown>;
+        assert.deepEqual(movePayload["command"], { op: "move", window: "win-a", direction: "right" });
+        const moveCorr = movePayload["correlation_id"] as string;
+        mocks.callbacks[moveIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: moveCorr,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-a-leaf" },
+            }),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")));
+        assert.equal(activeGroupCalls(), 2, "exactly one observational refresh after completed move");
+        handle?.requestFocus("left");
+        const focusIndex = mocks.dbusCalls.length - 1;
+        const focusPayload = JSON.parse(mocks.dbusCalls[focusIndex]?.payload as string) as Record<string, unknown>;
+        const focusCorr = focusPayload["correlation_id"] as string;
+        mocks.callbacks[focusIndex]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: focusCorr,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "win-b-leaf" },
+            }),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("kind=focus") && line.includes("outcome=planned-applied")));
+        assert.equal(activeGroupCalls(), 2, "focus-only plans never refresh via the geometry edge");
+        handle?.requestMove("left");
+        const rejIndex = mocks.dbusCalls.length - 1;
+        const rejPayload = JSON.parse(mocks.dbusCalls[rejIndex]?.payload as string) as Record<string, unknown>;
+        mocks.callbacks[rejIndex]?.(
+            JSON.stringify({ v: 1, correlation_id: rejPayload["correlation_id"], outcome: "rejected", kind: "snapshot-invalid", message: "no" }),
+        );
+        assert.equal(activeGroupCalls(), 2, "rejected boundaries never refresh");
         handle?.stop();
     });
 });
@@ -3877,5 +3953,163 @@ describe("plan adapter maximize isolation", () => {
         assert.ok(mocks.geometries.some((entry) => entry.target === refs.c), "sibling reflowed");
         assert.ok(!mocks.geometries.some((entry) => entry.target === refs.a), "maximized member not actuated");
         assert.ok(mocks.logs.some((line) => line.includes("kind=move") && line.includes("outcome=planned-applied")));
+    });
+});
+
+describe("plan adapter observational highlight refresh edge", () => {
+    function mockEnvWithApplied(
+        refs: { a: object; b: object; c: object },
+        applied: string[],
+    ): Mocks {
+        const mocks = mockEnv(refs);
+        (mocks.env as unknown as Record<string, unknown>)["onPlannedApplied"] = (op: unknown): void => {
+            applied.push(op as string);
+        };
+        return mocks;
+    }
+
+    function succeedMove(mocks: Mocks, focusLeaf: string): string {
+        const correlation = plannerPayload(mocks, mocks.dbusCalls.length - 1)["correlation_id"] as string;
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            plannedReply(
+                correlation,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 500 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 100, h: 100 } },
+                ],
+                focusLeaf,
+            ),
+        );
+        return correlation;
+    }
+
+    it("refreshes exactly once after a successful move even when focus is unchanged", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        mocks.activeImpl = () => refs.a;
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 1);
+        // Focus leaf matches the already-active window: no focus write, but
+        // the geometry plan still applies and must refresh once.
+        succeedMove(mocks, "win-a-leaf");
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+        assert.deepEqual(applied, ["move"]);
+        assert.equal(adapter.isInFlight, false);
+        // Foreground commands are not blocked: the next dispatch proceeds.
+        adapter.requestMove("right");
+        assert.equal(mocks.dbusCalls.length, 2);
+    });
+
+    it("refreshes after resize but never for focus-only plans", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestResize("left", "outwards");
+        succeedMove(mocks, "win-a-leaf");
+        assert.deepEqual(applied, ["resize"]);
+        adapter.requestFocus("right");
+        const focusCorr = plannerPayload(mocks, mocks.dbusCalls.length - 1)["correlation_id"] as string;
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            plannedReply(
+                focusCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 500, h: 500 } },
+                    { window: "win-b", rect: { x: 500, y: 0, w: 100, h: 100 } },
+                ],
+                "win-b-leaf",
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("kind=focus") && line.includes("outcome=planned-applied")));
+        assert.deepEqual(applied, ["resize"]);
+    });
+
+    it("never refreshes on rejected or stale boundaries", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        const rejectedCorr = plannerPayload(mocks, 0)["correlation_id"] as string;
+        mocks.callbacks[0]?.(rejectedReply(rejectedCorr, "snapshot-invalid"));
+        assert.deepEqual(applied, []);
+        // Stale: a newer debounced observation fences the reply.
+        let version = 0;
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                fingerprint: version === 0 ? "fp-1" : "fp-2",
+                rects:
+                    version === 0
+                        ? { "win-a": { x: 0, y: 0, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 100, h: 100 } }
+                        : { "win-a": { x: 5, y: 5, w: 100, h: 100 }, "win-b": { x: 100, y: 0, w: 100, h: 100 } },
+            });
+        adapter.requestMove("right");
+        const staleCorr = plannerPayload(mocks, mocks.dbusCalls.length - 1)["correlation_id"] as string;
+        version = 1;
+        fire(mocks, "geometry");
+        runDebounce(mocks);
+        mocks.callbacks[mocks.callbacks.length - 1]?.(
+            plannedReply(
+                staleCorr,
+                [
+                    { window: "win-a", rect: { x: 0, y: 0, w: 200, h: 200 } },
+                    { window: "win-b", rect: { x: 200, y: 0, w: 100, h: 100 } },
+                ],
+                null,
+            ),
+        );
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=stale-dropped")));
+        assert.deepEqual(applied, []);
+    });
+
+    it("a throwing refresh hook never wedges foreground commands", () => {
+        const refs = makeRefs();
+        const applied: string[] = [];
+        const mocks = mockEnvWithApplied(refs, applied);
+        (mocks.env as unknown as Record<string, unknown>)["onPlannedApplied"] = (): void => {
+            throw new Error("hook-failed");
+        };
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                focused: refs.a,
+                rects: {
+                    "win-a": { x: 0, y: 0, w: 100, h: 100 },
+                    "win-b": { x: 100, y: 0, w: 500, h: 500 },
+                },
+            });
+        const adapter = enableAdapter(mocks);
+        adapter.requestMove("right");
+        succeedMove(mocks, "win-a-leaf");
+        assert.ok(mocks.logs.some((line) => line.includes("outcome=planned-applied")));
+        assert.deepEqual(applied, []);
+        adapter.requestMove("right");
+        assert.equal(adapter.isInFlight, true);
     });
 });

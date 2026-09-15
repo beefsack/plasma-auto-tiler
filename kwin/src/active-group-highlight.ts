@@ -800,7 +800,9 @@ export class ActiveGroupHighlight {
         this.lastRevision = parsed.baseRevision;
         this.lastCorrelation = parsed.correlationId;
         this.requestRevision = parsed.baseRevision;
-        this.logToken(`${LOG_PREFIX}:applied correlation=${parsed.correlationId} revision=${String(parsed.baseRevision)}`);
+        // The effect setter has no callback: this line records only that the
+        // setter call was submitted, never effect acceptance or rendering.
+        this.logToken(`${LOG_PREFIX}:setter-submitted correlation=${parsed.correlationId} revision=${String(parsed.baseRevision)}`);
     }
 
     private clearFlight(line: string): void {

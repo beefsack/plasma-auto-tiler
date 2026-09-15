@@ -2,13 +2,20 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Temporary active-group highlight live gate | Rust engine/effect policy
-  and minimal native shim are implemented and offline-verified. Group outline
-  coexists with the active border while Meta is held. User-owned live evidence
-  remains for modifier delivery, effect endpoint ownership/demarshalling,
-  fullscreen suppression, rendering, and cost. Native build passed; new binaries
-  require the established session delivery and full logout/login.
-  [record](changes/archive/active-group-highlight-design.md#user-pickup)
+- P0 | Dynamic workspace dogfooding live gate | Trailing-empty lifecycle,
+  selected workspace modes, and `Meta+0..9` / `Meta+Shift+0..9` are restored
+  and statically verified. Successful sends follow the moved window to the
+  destination and focus it, as explicitly selected by the user. Restart the
+  foreground dev session and verify physical selection, sends, and trailing-empty
+  lifecycle. Remains the immediate dogfooding priority until live acceptance.
+  [record](changes/archive/rust-workspace-lifecycle.md)
+- P1 | Temporary active-group highlight live gate | Named-log diagnosis found
+  retained-focus lookup and missing completed-geometry refresh defects; both are
+  corrected and statically verified. Restart the foreground dev session and
+  recheck the separate group outline while holding Meta. Setter submission does
+  not prove effect receipt or rendering. User-owned evidence remains for native
+  transport, modifier delivery, fullscreen suppression, rendering, and cost.
+  [record](changes/archive/active-group-highlight-held-refresh.md)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or
   nested-test residue. Any recovery needs explicit user authorization and exact
@@ -48,10 +55,6 @@ Only meaningful pending or active work is listed.
   atomicity, stock-KWin parity, and latency remain unproven. The halted advisory
   transport route needs a user-provided exact receipt/lifecycle record before any
   recovery.
-- P1 | Dynamic workspaces | Re-enable COSMIC workspace lifecycle on the settled
-  KWin virtual-desktop mapping, including owned desktop mapping, lifecycle
-  observation, create/select/retire, window moves, and COSMIC policy.
-  [investigation](changes/archive/cosmic-workspace-and-geometry-investigation.md)
 - P1 | Custom Tile acceptance | Perform the separately authorized manual runtime
   check with exact restoration. Drag/reflow and host acceptance remain unproven;
   do not recover stale harnesses. [change](changes/custom-tile-runtime.md)

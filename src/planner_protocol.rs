@@ -2410,11 +2410,12 @@ impl Planner {
     /// membership or projection. Membership comes solely from the retained
     /// split tree via [`crate::active_group::describe_active_group`],
     /// projection from retained bounds/gap plus the engine projector. The
-    /// carried `focused_window` is bound to the retained focus leaf's window,
-    /// and the carried domain bounds/gap are bound to the retained domain, so
-    /// drifted rects, extra/missing carried entries, or lagging revisions
-    /// cannot corrupt the highlight: worst case is fail-closed `no-group`
-    /// via `focus-unmapped`/`domain-mismatch`/pending/diverged.
+    /// carried `focused_window` may update retained focus only through its
+    /// guarded focus-sync path, while carried domain bounds/gap are bound to
+    /// the retained domain. Drifted rects, extra/missing carried entries, or
+    /// lagging revisions cannot corrupt topology or geometry: worst case is
+    /// fail-closed `no-group` via `focus-unmapped`/`domain-mismatch`/pending/
+    /// diverged.
     fn evaluate_active_group_retained(&mut self, ctx: &Validated) -> String {
         let command: ActiveGroupCommand = match serde_json::from_value(ctx.request.command.clone())
         {
@@ -2431,9 +2432,32 @@ impl Planner {
                 "active-group-op-invalid",
             );
         }
-        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+        let Some(mut session) = self.sessions.get(&ctx.domain_key).cloned() else {
             return no_group_reply(ctx, None, "no-session");
         };
+        // Align retained focus from the valid observed snapshot before
+        // resolving the immediate parent group. Focus-only sync: no topology
+        // or geometry mutation. Fails closed on divergence, pending/drag
+        // residue, unknown/exception/cross-domain windows, or domain
+        // bounds/gap mismatch (then the resolver still replies fail-closed
+        // `no-group` without persisting).
+        let focused = WindowId(ctx.request.focused_window.clone());
+        if !focused.0.is_empty()
+            && let Some(retained_domain) = session
+                .domains()
+                .iter()
+                .find(|domain| domain.key() == ctx.domain_key)
+            && retained_domain.bounds == ctx.domain.bounds
+            && retained_domain.gap == ctx.domain.gap
+        {
+            let before = session.focus();
+            if session.sync_focus_from_window(&ctx.domain_key, &focused)
+                && session.focus() != before
+                && let Some(stored) = self.sessions.get_mut(&ctx.domain_key)
+            {
+                *stored = session.clone();
+            }
+        }
         active_group_response(&session, ctx)
     }
 
@@ -6609,6 +6633,153 @@ mod tests {
         assert_eq!(
             rotated_reply["detail"]["generation"], "gen-2",
             "{rotated_reply}"
+        );
+    }
+
+    #[test]
+    fn retained_active_group_aligns_focus_and_resolves_nested_after_move() {
+        // Real admitted/planned lifecycle producing H[win-1, V[win-2, win-3]]:
+        // two landscape admits build root H, the third admit nests V under
+        // the tall focused leaf. No hand-seeded sessions.
+        let mut planner = Planner::new();
+        for (correlation, focused, windows, command) in [
+            (
+                "ag-nested-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "ag-nested-2",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+            (
+                "ag-nested-3",
+                "win-2",
+                vec![
+                    ("win-1", 0, 0, 100, 80),
+                    ("win-2", 200, 0, 100, 80),
+                    ("win-3", 400, 0, 100, 80),
+                ],
+                admit_body("win-3"),
+            ),
+        ] {
+            let request =
+                retained_request(correlation, "owner-1", "gen-1", focused, &windows, command);
+            let reply = parse_reply(&planner.evaluate(&request));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        // Retained focus is now win-3. An ordinary activation observes win-2
+        // (a known tiled window in the same domain). The query must align
+        // retained focus from this valid snapshot and resolve the immediate
+        // parent inner V[win-2, win-3], not fail-closed `focus-unmapped`.
+        let aligned = active_group_request(
+            "ag-nested-4",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-2",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+        );
+        let aligned_reply = parse_reply(&planner.evaluate(&aligned));
+        assert_eq!(aligned_reply["outcome"], "active-group", "{aligned_reply}");
+        assert_eq!(aligned_reply["base_revision"], 3, "{aligned_reply}");
+        assert_eq!(
+            aligned_reply["detail"]["focused_window"], "win-2",
+            "{aligned_reply}"
+        );
+        let mut members: Vec<String> = aligned_reply["detail"]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|m| m["window"].as_str().expect("window").to_owned())
+            .collect();
+        members.sort();
+        assert_eq!(members, vec!["win-2".to_owned(), "win-3".to_owned()], "{aligned_reply}");
+        // Root H proof: focusing win-1 resolves the 3-member root group.
+        let root = active_group_request(
+            "ag-nested-5",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-1",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+        );
+        let root_reply = parse_reply(&planner.evaluate(&root));
+        assert_eq!(root_reply["outcome"], "active-group", "{root_reply}");
+        assert_eq!(
+            root_reply["detail"]["members"].as_array().map(Vec::len),
+            Some(3),
+            "{root_reply}"
+        );
+        // Move the inner member down (swap within V). Focus must remain win-2
+        // and the post-move query must still yield the inner active group.
+        let moved = retained_request(
+            "ag-nested-6",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+            serde_json::json!({"op": "move", "window": "win-2", "direction": "down"}),
+        );
+        let moved_reply = parse_reply(&planner.evaluate(&moved));
+        assert_eq!(moved_reply["outcome"], "planned", "{moved_reply}");
+        let focus_leaf = moved_reply["desired_focus"]["leaf"]
+            .as_str()
+            .expect("focus leaf");
+        let mut focus_window = String::new();
+        for entry in moved_reply["desired_geometry"]
+            .as_array()
+            .expect("geometry")
+        {
+            if entry["leaf"].as_str() == Some(focus_leaf) {
+                focus_window = entry["window"].as_str().expect("window").to_owned();
+            }
+        }
+        assert_eq!(focus_window, "win-2", "{moved_reply}");
+        let after = active_group_request(
+            "ag-nested-7",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-2",
+            &[
+                ("win-1", 0, 0, 100, 80),
+                ("win-2", 200, 0, 100, 80),
+                ("win-3", 400, 0, 100, 80),
+            ],
+        );
+        let after_reply = parse_reply(&planner.evaluate(&after));
+        assert_eq!(after_reply["outcome"], "active-group", "{after_reply}");
+        assert_eq!(
+            after_reply["detail"]["focused_window"], "win-2",
+            "{after_reply}"
+        );
+        let mut after_members: Vec<String> = after_reply["detail"]["members"]
+            .as_array()
+            .expect("members")
+            .iter()
+            .map(|m| m["window"].as_str().expect("window").to_owned())
+            .collect();
+        after_members.sort();
+        assert_eq!(
+            after_members,
+            vec!["win-2".to_owned(), "win-3".to_owned()],
+            "{after_reply}"
         );
     }
 

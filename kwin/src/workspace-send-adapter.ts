@@ -10,12 +10,15 @@
 //
 // This adapter carries the existing portable COSMIC same-output
 // distinct-workspace send operation over the ONE existing DescribePlan D-Bus
-// transport. Rust owns all planning, topology, membership, and rejection
+// transport. Rust owns all planning, topology, membership, focus, and rejection
 // policy. This module owns KWin observation of the focused output's source and
 // target desktops, owner activation/pinning, the request/ack/verify phases,
 // exact source+target re-validation, sequential native frameGeometry writes
-// plus the mover's Window.desktops membership write (no focus/desktop switch),
-// signals, and structured route diagnostics.
+// plus the mover's Window.desktops membership write, then the legacy follow
+// (switch to the target desktop and focus the moved window) only after an
+// exact validated accepted/applied send and a verified correct
+// target/object/domain post-observation, signals, and structured route
+// diagnostics.
 //
 // Activation mirrors the movement/focus/resize adapters exactly: one bounded
 // GetNameOwner, an absent owner runs exactly one StartServiceByName(service,0)
@@ -160,6 +163,8 @@ export interface WorkspaceSendAdapterEnv {
     readonly observe: (targetWorkspace: string) => WorkspaceSendObserved | null;
     readonly setGeometry: (target: object, rect: WorkspaceSendRect) => boolean;
     readonly setDesktops: (target: object, refs: ReadonlyArray<object>) => boolean;
+    readonly switchToTarget?: (desktopRef: object) => boolean;
+    readonly focusWindow?: (windowRef: object) => boolean;
 }
 
 export interface WorkspaceSendEnableAuth {
@@ -344,12 +349,19 @@ interface WorkspaceGeometryEntry {
     readonly rect: WorkspaceSendRect;
 }
 
+interface WorkspaceFollowFocus {
+    readonly output: string;
+    readonly workspace: string;
+    readonly leaf: string;
+}
+
 interface WorkspacePlanned {
     readonly correlationId: string;
     readonly baseRevision: number;
     readonly geometry: ReadonlyArray<WorkspaceGeometryEntry>;
     readonly preconditions: readonly string[];
     readonly operation: Record<string, unknown>;
+    readonly followFocus: WorkspaceFollowFocus;
 }
 
 function validateGeometryEntry(value: unknown): WorkspaceGeometryEntry | null {
@@ -441,6 +453,27 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
     if (operation === null) {
         return null;
     }
+    // Legacy follow is Rust-owned: the planned desired focus must name the
+    // moved leaf in the operation target domain. Any other focus is a
+    // mismatched reply and never follows.
+    const focusRaw = reply["desired_focus"];
+    if (!isRecord(focusRaw) || !hasExactKeys(focusRaw, ["domain_output", "domain_workspace", "leaf"])) {
+        return null;
+    }
+    if (
+        !isOpaqueId(focusRaw["domain_output"]) ||
+        !isOpaqueId(focusRaw["domain_workspace"]) ||
+        !isOpaqueId(focusRaw["leaf"])
+    ) {
+        return null;
+    }
+    if (
+        (focusRaw["domain_output"] as string) !== (operation["target_output"] as string) ||
+        (focusRaw["domain_workspace"] as string) !== (operation["target_workspace"] as string) ||
+        (focusRaw["leaf"] as string) !== (operation["leaf"] as string)
+    ) {
+        return null;
+    }
     const geometryRaw = reply["desired_geometry"];
     if (!Array.isArray(geometryRaw) || geometryRaw.length === 0 || geometryRaw.length > WORKSPACE_SEND_MAX_GEOMETRY) {
         return null;
@@ -461,6 +494,11 @@ function validatePlanned(reply: unknown, correlationId: string): WorkspacePlanne
         geometry: Object.freeze(geometry),
         preconditions: Object.freeze([...(preconditions as string[])]),
         operation,
+        followFocus: Object.freeze({
+            output: focusRaw["domain_output"] as string,
+            workspace: focusRaw["domain_workspace"] as string,
+            leaf: focusRaw["leaf"] as string,
+        }),
     };
 }
 
@@ -651,6 +689,7 @@ interface WorkspacePendingFlight {
 
 export class WorkspaceSendAdapter {
     private enabled = false;
+    private startupEnabled = false;
     private owner = "";
     private generation = "";
     private inFlight = false;
@@ -675,7 +714,7 @@ export class WorkspaceSendAdapter {
     }
 
     enable(auth: WorkspaceSendEnableAuth): boolean {
-        if (this.enabled) {
+        if (this.enabled || this.startupEnabled) {
             return false;
         }
         if (!isRecord(auth as unknown as Record<string, unknown>)) {
@@ -687,6 +726,7 @@ export class WorkspaceSendAdapter {
         this.owner = auth.owner as string;
         this.generation = auth.generation as string;
         this.enabled = true;
+        this.startupEnabled = true;
         this.inFlight = false;
         this.pending = null;
         this.seq = 0;
@@ -1225,6 +1265,10 @@ export class WorkspaceSendAdapter {
             this.failFlight(flight, correlation, "precondition-mismatch");
             return;
         }
+        if (!this.operationMatchesSnapshot(planned, pending)) {
+            this.failFlight(flight, correlation, "precondition-mismatch");
+            return;
+        }
         this.applyPlanned(planned, flight, correlation);
     }
 
@@ -1246,6 +1290,32 @@ export class WorkspaceSendAdapter {
             if (!wanted.has(entry.window)) {
                 return false;
             }
+        }
+        return true;
+    }
+
+    // Operation-to-snapshot binding from Rust's established intent: the
+    // move-tiled operation must name the flight mover plus the exact captured
+    // source/target domains. Any other target/object is a mismatched reply
+    // and never follows.
+    private operationMatchesSnapshot(planned: WorkspacePlanned, flightState: WorkspacePendingFlight): boolean {
+        const operation = planned.operation;
+        const snapshot = flightState.snapshot;
+        if (
+            (operation["window"] as string) !== flightState.moverId ||
+            (operation["source_output"] as string) !== snapshot.sourceOutput ||
+            (operation["source_workspace"] as string) !== snapshot.sourceWorkspace ||
+            (operation["target_output"] as string) !== snapshot.targetOutput ||
+            (operation["target_workspace"] as string) !== snapshot.targetWorkspace
+        ) {
+            return false;
+        }
+        if (
+            planned.followFocus.output !== snapshot.targetOutput ||
+            planned.followFocus.workspace !== snapshot.targetWorkspace ||
+            planned.followFocus.leaf !== (operation["leaf"] as string)
+        ) {
+            return false;
         }
         return true;
     }
@@ -1278,8 +1348,8 @@ export class WorkspaceSendAdapter {
         pending.operation = planned.operation;
         pending.planned = planned;
         // Native writes: direct geometry in the shared grow-before-shrink
-        // order, then only the mover's desktop membership. No focus/desktop
-        // switch (the engine keeps focus in the source domain).
+        // order, then only the mover's desktop membership. Desktop follow and
+        // mover focus happen only after the verify commit (see onVerifyReply).
         if (!this.writeGeometries(planned, pending, fresh)) {
             this.failFlight(flight, correlation, "write-failed");
             return;
@@ -1618,9 +1688,77 @@ export class WorkspaceSendAdapter {
             return;
         }
         this.diag("verify", correlation, revision as number, "verify", "committed");
+        this.followAfterCommit(flight, correlation, revision as number);
         this.inFlight = false;
         this.pending = null;
         this.activationStep = 0;
+    }
+
+    // Legacy follow after a fully committed send: switch to the Rust-planned
+    // target desktop and focus the moved window. Runs only for the current
+    // fenced flight after an exact validated accepted/applied send plus a
+    // verified correct target/object/domain post-observation. Rejected, stale,
+    // mismatched, or duplicate echoes never reach here (they fail or ignore
+    // the flight before commit). A fresh post-commit observation re-runs the
+    // strict planned-post binding; any drift skips follow silently without a
+    // second admit/remove, without adapter-lost (Rust already committed and
+    // holds no pending), and without retry. Missing follow hooks also skip
+    // silently so unit harnesses without a desktop surface still commit.
+    private followAfterCommit(flight: number, correlation: string, revision: number): void {
+        if (!this.inFlight || flight !== this.activeToken) {
+            return;
+        }
+        const pending = this.pending;
+        const planned = pending?.planned ?? null;
+        if (pending === null || planned === null) {
+            return;
+        }
+        const switchToTarget = this.env.switchToTarget;
+        const focusWindow = this.env.focusWindow;
+        if (typeof switchToTarget !== "function" || typeof focusWindow !== "function") {
+            return;
+        }
+        const fresh = this.freshObserved(pending.targetWorkspace);
+        if (fresh === null) {
+            return;
+        }
+        if (this.verifyPlannedPost(planned, pending, fresh) !== "") {
+            return;
+        }
+        if (fresh.targetDesktopRef === null || fresh.targetDesktopRef !== pending.targetDesktopRef) {
+            return;
+        }
+        let moverRef: object | null = null;
+        for (const entry of fresh.targetWindows) {
+            if (entry.id === pending.moverId) {
+                moverRef = entry.ref;
+                break;
+            }
+        }
+        if (moverRef === null) {
+            return;
+        }
+        let switched = false;
+        try {
+            switched = switchToTarget(fresh.targetDesktopRef) === true;
+        } catch (error) {
+            void error;
+            switched = false;
+        }
+        if (!switched) {
+            return;
+        }
+        let focused = false;
+        try {
+            focused = focusWindow(moverRef) === true;
+        } catch (error) {
+            void error;
+            focused = false;
+        }
+        if (!focused) {
+            return;
+        }
+        this.diag("follow", correlation, revision, "follow", "completed");
     }
 
     private failFlight(flight: number, correlation: string, outcome: string): void {

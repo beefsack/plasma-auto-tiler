@@ -270,7 +270,7 @@ describe("active-group highlight bridge behavior", () => {
         assert.equal(forwarded["group"], "group-1");
         assert.deepEqual(forwarded["bounds"], { x: 0, y: 0, w: 1200, h: 800 });
         assert.ok(
-            f.logs.some((line) => line === `plasma-auto-tiler:group-highlight:applied correlation=${CORRELATION} revision=2`),
+            f.logs.some((line) => line === `plasma-auto-tiler:group-highlight:setter-submitted correlation=${CORRELATION} revision=2`),
         );
     });
 

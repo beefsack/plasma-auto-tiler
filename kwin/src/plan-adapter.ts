@@ -418,6 +418,12 @@ export interface PlanAdapterEnv {
     readonly active: () => object | null;
     readonly subscribe: (kind: PlanSignal, handler: (target?: object) => void) => () => void;
     readonly noteRemoved?: (id: string) => void;
+    // Observational active-group refresh after exactly one successful
+    // geometry-plan boundary (admit/move/remove/resize `planned-applied`).
+    // Synchronous, single call, no retries/polling; must never block
+    // foreground logical commands. Never invoked on stale/rejected/error
+    // or unfinished boundaries.
+    readonly onPlannedApplied?: (op: PlanOp) => void;
 }
 
 export interface PlanEnableAuth {
@@ -2370,6 +2376,28 @@ export class PlanAdapter {
         this.inFlight = false;
         this.pending = null;
         this.diag(flightState.op, flightState.correlation, flightState.windowCount, "planned-applied");
+        // Exactly one observational active-group refresh after an actual
+        // successful geometry-plan boundary, even when focus is unchanged.
+        // Geometry writes emit no highlight signal, so without this edge the
+        // entry-owned highlight would stay stale. Only admit/move/remove/
+        // resize qualify; focus/reconcile/pointer-resize/toggle-float never
+        // refresh here (focus already re-queries via its signal). Stale,
+        // rejected, error, and unfinished boundaries return through
+        // failFlight or earlier exits and never reach this edge. The callback
+        // is best-effort and non-blocking: it must not delay the deferred
+        // foreground command below.
+        if (
+            flightState.op === "admit" ||
+            flightState.op === "move" ||
+            flightState.op === "remove" ||
+            flightState.op === "resize"
+        ) {
+            try {
+                this.env.onPlannedApplied?.(flightState.op);
+            } catch (error) {
+                void error;
+            }
+        }
         this.finishFlight();
     }
 

@@ -328,16 +328,17 @@ across float, unfloat, and float again. Unfloat is fresh admission, never
 prior-leaf restoration. Fullscreen and maximized windows refuse. Sticky
 floating is deferred.
 
-`Meta+1..9` focuses the existing 1-based workspace; `Meta+0` focuses or creates
-the trailing empty workspace (idempotent when already trailing empty, no hard
-count bound); `Meta+Shift+1..9` moves the focused window to the existing
-workspace and follows it; `Meta+Shift+0` appends a workspace, moves the focused
-window, and follows it. Workspaces appended by the controller are
-session-local script-owned desktops: on a session restart no desktop is treated
-as owned and existing desktops are never removed. Cleanup only ever removes an
-owned trailing empty desktop after the highest occupied workspace, keeping
-exactly one trailing empty desktop, and never removes a non-owned, current, or
-per-output-visible desktop.
+`Meta+1..9` focuses an existing 1-based workspace; `Meta+0` focuses or creates
+the trailing empty workspace (idempotent when already there). `Meta+Shift+1..9`
+sends the focused tiled window to an existing same-output workspace;
+`Meta+Shift+0` reuses or appends the trailing empty target before sending. Sends
+switch to the target desktop and focus the moved window only after Rust accepts
+and verifies the exact send; rejected, stale, or mismatched replies do not
+follow. Floating, sticky, fullscreen, and maximized windows are excluded.
+Standard US `Meta+!` through `Meta+)` aliases cover shifted number sends.
+Appended desktops are session-local and script-owned. Cleanup removes only
+owned, empty, non-current, non-visible desktops and retains at least two global
+desktops.
 
 The config key `workspaceMode` selects the multi-output workspace model
 (default `per-output-local`; invalid values fall back to it with a diagnostic):

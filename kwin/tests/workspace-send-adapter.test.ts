@@ -212,10 +212,14 @@ interface Mocks {
     readonly logs: string[];
     readonly geometries: Array<{ target: object; rect: { x: number; y: number; w: number; h: number } }>;
     readonly desktops: Array<{ target: object; refs: ReadonlyArray<object> }>;
+    readonly switches: object[];
+    readonly focuses: object[];
     readonly world: World;
     observeImpl: () => WorkspaceSendObserved | null;
     geometryImpl: (target: object, r: { x: number; y: number; w: number; h: number }) => boolean;
     desktopsImpl: (target: object, refs: ReadonlyArray<object>) => boolean;
+    switchImpl: (desktopRef: object) => boolean;
+    focusImpl: (windowRef: object) => boolean;
     env: WorkspaceSendAdapterEnv;
 }
 
@@ -227,10 +231,14 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
         logs: [],
         geometries: [],
         desktops: [],
+        switches: [],
+        focuses: [],
         world: defaultWorld(refs),
         observeImpl: () => makeWorldObserved(state.world, refs),
         geometryImpl: () => true,
         desktopsImpl: () => true,
+        switchImpl: () => true,
+        focusImpl: () => true,
         env: null as unknown as WorkspaceSendAdapterEnv,
     };
     state.env = {
@@ -273,6 +281,14 @@ function mockEnv(refs: { a: object; b: object; t: object; desktop: object }): Mo
             }
             return ok;
         },
+        switchToTarget: (desktopRef) => {
+            state.switches.push(desktopRef);
+            return state.switchImpl(desktopRef);
+        },
+        focusWindow: (windowRef) => {
+            state.focuses.push(windowRef);
+            return state.focusImpl(windowRef);
+        },
     };
     return state;
 }
@@ -296,7 +312,7 @@ function plannedReply(correlation: string): string {
             { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
             { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
         ],
-        desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-b" },
+        desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
         preconditions: KNOWN_PRECONDITIONS,
         operation: {
             op: "move-tiled",
@@ -506,18 +522,88 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         }
     });
 
-    it("keeps the source focused after the send (no focus or desktop switch)", () => {
+    it("follows to the Rust-planned target and focuses the moved window after commit", () => {
         const refs = makeRefs();
         const mocks = mockEnv(refs);
         const adapter = new WorkspaceSendAdapter(mocks.env);
         adapter.enable({ owner: "owner-1", generation: "gen-1" });
         runLifecycle(mocks, adapter);
-        // Only frameGeometry writes plus the single desktops write occur.
+        // Only frameGeometry writes plus the single desktops write occur
+        // before the follow.
         assert.equal(mocks.geometries.length, 3);
         assert.equal(mocks.desktops.length, 1);
         for (const write of mocks.geometries) {
             assert.deepEqual(Object.keys(write.rect).sort(), ["h", "w", "x", "y"]);
         }
+        // Legacy follow: exactly one desktop switch to the planned target
+        // ref plus exactly one focus of the moved window ref.
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("rejects a planned reply whose desired focus is not the Rust target mover", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        const mismatch = JSON.parse(plannedReply(correlation)) as Record<string, unknown>;
+        mismatch["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-b" };
+        mocks.callbacks[1]?.(JSON.stringify(mismatch));
+        assert.equal(adapter.isEnabled, false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+    });
+
+    it("does not follow when the post-commit observation drifts from the plan", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        mocks.callbacks[2]?.(ackReply(correlation));
+        // Drift between the verify request and the committed follow check:
+        // the mover reports back in the source with a stale rect.
+        mocks.observeImpl = () =>
+            makeObserved(refs, {
+                sourceWindows: Object.freeze([
+                    Object.freeze({ id: "win-a", ref: refs.a, rect: Object.freeze(rect(0, 0, 100, 100)) }),
+                    Object.freeze({ id: "win-b", ref: refs.b, rect: Object.freeze(rect(100, 0, 100, 100)) }),
+                ]),
+            });
+        mocks.callbacks[3]?.(committedReply(correlation));
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow")), mocks.logs.join("\n"));
+    });
+
+    it("ignores a duplicate committed reply without a second follow", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        // A stale duplicate verify echo after the flight cleared is ignored.
+        mocks.callbacks[3]?.(committedReply("gen-1-w0"));
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
     });
 });
 
@@ -849,6 +935,18 @@ describe("cosmic send-to-workspace disable and stop divergence", () => {
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
     });
 
+    it("enables once at startup and stays fail-closed after terminal disable", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), false);
+        adapter.disable();
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), false, "no revival after terminal disable");
+        assert.equal(adapter.requestSend("ws-2"), false, "pending route stays fail-closed");
+    });
+
     it("entry stop() during a planned flight reports exactly one adapter-lost to the pinned owner", () => {
         const { handle, dbusCalls, callbacks, logs } = startEntryForPlannedFlight();
         assert.ok(handle !== null);
@@ -1046,5 +1144,134 @@ it("drives activation exactly like the bounded owner-pin sequence", () => {
         assert.ok(src.includes(WORKSPACE_SEND_DBUS_OBJECT));
         assert.ok(src.includes(WORKSPACE_SEND_DBUS_INTERFACE));
         assert.ok(src.includes(":N.M"));
+    });
+});
+
+describe("cosmic send-to-workspace review follow-ups", () => {
+    it("refuses an internally consistent plan whose mover differs from the snapshot before writes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        // Internally consistent: desired_focus names the operation leaf in the
+        // operation target domain, but the operation mover (win-b) differs
+        // from the captured snapshot mover (win-a).
+        const mismatched = JSON.parse(plannedReply(correlation)) as Record<string, unknown>;
+        const operation = mismatched["operation"] as Record<string, unknown>;
+        operation["window"] = "win-b";
+        operation["leaf"] = "leaf-win-b";
+        mismatched["desired_focus"] = { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-b" };
+        mocks.callbacks[1]?.(JSON.stringify(mismatched));
+        assert.equal(adapter.isEnabled, false);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=precondition-mismatch")), mocks.logs.join("\n"));
+        assert.equal(mocks.geometries.length, 0);
+        assert.equal(mocks.desktops.length, 0);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+    });
+
+    it("clears the flight after a committed follow so the next request completes", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        const firstCorrelation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        // Restore the native world to the pre-flight layout so the next
+        // request observes the same scope with the same harness.
+        for (const entry of mocks.world.windows) {
+            if (entry.id === "win-a") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(0, 0, 100, 100);
+            } else if (entry.id === "win-b") {
+                entry.workspace = "ws-1";
+                entry.rect = rect(100, 0, 100, 100);
+            } else if (entry.id === "win-t") {
+                entry.workspace = "ws-2";
+                entry.rect = rect(0, 0, 100, 100);
+            }
+        }
+        assert.equal(adapter.requestSend("ws-2"), true);
+        const base = 4;
+        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
+        mocks.callbacks[base]?.(":1.7");
+        const requestCall = mocks.dbusCalls[base + 1];
+        assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        assert.notEqual(correlation, firstCorrelation);
+        mocks.callbacks[base + 1]?.(plannedReply(correlation));
+        const ackCall = mocks.dbusCalls[base + 2];
+        assert.ok((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-ack");
+        mocks.callbacks[base + 2]?.(ackReply(correlation));
+        const verifyCall = mocks.dbusCalls[base + 3];
+        assert.ok((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
+        mocks.callbacks[base + 3]?.(committedReply(correlation));
+        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 2);
+    });
+
+    it("causes no desktop switch or focus when the ack reply is rejected", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        assert.equal(mocks.dbusCalls[2]?.method, WORKSPACE_SEND_METHOD);
+        mocks.callbacks[2]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "rejected",
+                kind: "policy-deny",
+            }),
+        );
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+    });
+
+    it("causes no desktop switch or focus when the verify reply diverges", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        mocks.callbacks[2]?.(ackReply(correlation));
+        const verifyCall = mocks.dbusCalls[3];
+        assert.ok((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
+        mocks.callbacks[3]?.(
+            JSON.stringify({
+                v: WORKSPACE_SEND_CONTRACT_VERSION,
+                correlation_id: correlation,
+                outcome: "diverged",
+                kind: "stale-revision",
+            }),
+        );
+        assert.equal(adapter.isEnabled, false);
+        assert.equal(adapter.isInFlight, false);
+        assert.deepEqual(mocks.switches, []);
+        assert.deepEqual(mocks.focuses, []);
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
     });
 });

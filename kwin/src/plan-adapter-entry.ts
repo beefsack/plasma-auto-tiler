@@ -32,6 +32,12 @@ import {
 import { PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
+import { WorkspaceNativeAdapter, workspaceShortcutCatalog } from "./workspace-native";
+import {
+    WorkspaceSendAdapter,
+    WorkspaceSendObserved,
+    workspaceFingerprint as workspaceSendFingerprint,
+} from "./workspace-send-adapter";
 
 export interface PlanEntryOverrides {
     readonly workspace?: unknown;
@@ -68,6 +74,7 @@ export interface PlanEntryOverrides {
         callback: () => void,
     ) => boolean;
     readonly readProfileFn?: () => unknown;
+    readonly readWorkspaceModeFn?: () => unknown;
 }
 
 export interface PlanEntryHandle {
@@ -78,6 +85,8 @@ export interface PlanEntryHandle {
     readonly requestFloat: () => void;
     readonly requestSticky: () => void;
     readonly requestMaximize: () => void;
+    readonly requestWorkspaceSelect: (index: unknown) => void;
+    readonly requestWorkspaceMove: (index: unknown) => void;
 }
 
 export interface PlanShortcutRow {
@@ -341,6 +350,328 @@ function readShortcutProfile(readProfileFn: (() => unknown) | undefined): string
         void error;
     }
     return "cosmic";
+}
+
+function readWorkspaceModeValue(readModeFn: (() => unknown) | undefined): unknown {
+    if (readModeFn !== undefined) {
+        try {
+            return readModeFn();
+        } catch (error) {
+            void error;
+            return "per-output-local";
+        }
+    }
+    try {
+        return readConfig("workspaceMode", "per-output-local");
+    } catch (error) {
+        void error;
+        return "per-output-local";
+    }
+}
+
+function readWorkAreaFor(
+    surface: Record<string, unknown>,
+    outputRef: object,
+    desktopRef: object,
+): { x: number; y: number; w: number; h: number } | null {
+    const areaFn = readProp(surface, "clientArea");
+    if (typeof areaFn !== "function") {
+        return null;
+    }
+    let area: unknown = undefined;
+    try {
+        area = Reflect.apply(areaFn as (...args: ReadonlyArray<never>) => unknown, surface, [5, outputRef, desktopRef]);
+    } catch (error) {
+        void error;
+        return null;
+    }
+    if (typeof area !== "object" || area === null) {
+        return null;
+    }
+    const record = area as Record<string, unknown>;
+    const bx = toQuantizedInt(record["x"]);
+    const by = toQuantizedInt(record["y"]);
+    const bwRaw = record["width"] !== undefined ? record["width"] : record["w"];
+    const bhRaw = record["height"] !== undefined ? record["height"] : record["h"];
+    const bw = toQuantizedInt(bwRaw);
+    const bh = toQuantizedInt(bhRaw);
+    if (bx === null || by === null || bw === null || bh === null) {
+        return null;
+    }
+    if (bw <= 0 || bh <= 0 || bw > 16384 || bh > 16384 || bx < -16384 || bx > 16384 || by < -16384 || by > 16384) {
+        return null;
+    }
+    return { x: bx, y: by, w: bw, h: bh };
+}
+
+// Production send observation for one target backing desktop. Mirrors the
+// established send transport observation: focused output source and target,
+// per-desktop work areas, and normal tiled windows on the focused output
+// whose membership is exactly one of the two observed desktops. Structural
+// send policy stays in WorkspaceSendAdapter and Rust.
+export function observeSendTarget(
+    liveWorkspace: unknown,
+    cache: Map<string, string>,
+    targetWorkspace: string,
+    floatingIds: ReadonlySet<string>,
+): WorkspaceSendObserved | null {
+    try {
+        if (typeof liveWorkspace !== "object" || liveWorkspace === null) {
+            return null;
+        }
+        const surface = liveWorkspace as Record<string, unknown>;
+        let active: unknown = undefined;
+        try {
+            active = Reflect.get(surface, "activeWindow");
+        } catch (error) {
+            void error;
+            return null;
+        }
+        const activeRef = typeof active === "object" && active !== null ? (active as object) : null;
+        const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+        if (screens === null || screens.length === 0) {
+            return null;
+        }
+        let outputRef: object;
+        if (activeRef !== null) {
+            const activeOutput = readProp(activeRef, "output");
+            if (typeof activeOutput !== "object" || activeOutput === null) {
+                return null;
+            }
+            outputRef = activeOutput as object;
+        } else {
+            const first = screens[0];
+            if (typeof first !== "object" || first === null) {
+                return null;
+            }
+            outputRef = first as object;
+        }
+        const outputNameRaw = readProp(outputRef, "name");
+        if (!isOpaqueId(outputNameRaw)) {
+            return null;
+        }
+        const sourceOutput = outputNameRaw as string;
+        const currentFn = readProp(surface, "currentDesktopForScreen");
+        if (typeof currentFn !== "function") {
+            return null;
+        }
+        let sourceDesktop: unknown = undefined;
+        try {
+            sourceDesktop = Reflect.apply(currentFn as (...args: ReadonlyArray<never>) => unknown, surface, [outputRef]);
+        } catch (error) {
+            void error;
+            return null;
+        }
+        if (typeof sourceDesktop !== "object" || sourceDesktop === null) {
+            return null;
+        }
+        const sourceDesktopRef = sourceDesktop as object;
+        const sourceIdRaw = readProp(sourceDesktopRef, "id");
+        if (!isOpaqueId(sourceIdRaw)) {
+            return null;
+        }
+        const sourceWorkspace = sourceIdRaw as string;
+        const desktops = decodeList(readProp(surface, "desktops"), MAX_DESKTOPS);
+        if (desktops === null || desktops.length === 0) {
+            return null;
+        }
+        let targetDesktopRef: object | null = null;
+        let targetExists = false;
+        for (const item of desktops) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const desktop = item as object;
+            if (readProp(desktop, "id") === targetWorkspace) {
+                targetDesktopRef = desktop;
+                targetExists = true;
+            }
+        }
+        const sourceBounds = readWorkAreaFor(surface, outputRef, sourceDesktopRef);
+        if (sourceBounds === null) {
+            return null;
+        }
+        let targetBounds: { x: number; y: number; w: number; h: number } | null = null;
+        if (targetDesktopRef !== null) {
+            targetBounds = readWorkAreaFor(surface, outputRef, targetDesktopRef);
+        }
+        if (targetDesktopRef !== null && targetBounds === null) {
+            return null;
+        }
+        if (targetBounds === null) {
+            targetBounds = { x: 0, y: 0, w: 1, h: 1 };
+        }
+        const lister = readProp(surface, "windowList");
+        if (typeof lister !== "function") {
+            return null;
+        }
+        let rawList: unknown = undefined;
+        try {
+            rawList = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+        } catch (error) {
+            void error;
+            return null;
+        }
+        const windows = decodeList(rawList, MAX_LIST);
+        if (windows === null) {
+            return null;
+        }
+        const sourceWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        const targetWindows: Array<{ id: string; ref: object; rect: { x: number; y: number; w: number; h: number } }> = [];
+        const seen = new Set<string>();
+        for (const item of windows) {
+            if (typeof item !== "object" || item === null) {
+                continue;
+            }
+            const ref = item as object;
+            if (readProp(ref, "normalWindow") !== true) {
+                continue;
+            }
+            const managed = readProp(ref, "managed");
+            if (managed !== undefined && managed !== true) {
+                continue;
+            }
+            if (readProp(ref, "minimized") === true) {
+                continue;
+            }
+            if (readProp(ref, "fullScreen") !== false) {
+                continue;
+            }
+            if (readProp(ref, "maximizeMode") !== 0) {
+                continue;
+            }
+            if (readProp(ref, "onAllDesktops") !== false) {
+                continue;
+            }
+            const output = readProp(ref, "output");
+            if (typeof output !== "object" || output === null) {
+                continue;
+            }
+            if (readProp(output as object, "name") !== sourceOutput) {
+                continue;
+            }
+            let native: string | null = null;
+            try {
+                native = normalizeNativeId(readProp(ref, "internalId"));
+            } catch (error) {
+                void error;
+                return null;
+            }
+            if (native === null) {
+                return null;
+            }
+            const id = internNativeId(cache, native);
+            if (floatingIds.has(id)) {
+                continue;
+            }
+            const membership = decodeList(readProp(ref, "desktops"), MAX_DESKTOPS);
+            if (membership === null) {
+                return null;
+            }
+            const memberIds = new Set<string>();
+            for (const member of membership) {
+                if (typeof member !== "object" || member === null) {
+                    return null;
+                }
+                const memberRaw = readProp(member as object, "id");
+                if (!isOpaqueId(memberRaw)) {
+                    return null;
+                }
+                memberIds.add(memberRaw as string);
+            }
+            const targetWorkspaceId =
+                targetDesktopRef !== null
+                    ? ((readProp(targetDesktopRef, "id") as string) ?? targetWorkspace)
+                    : targetWorkspace;
+            const onSource = memberIds.has(sourceWorkspace);
+            const onTarget = targetDesktopRef !== null && memberIds.has(targetWorkspaceId);
+            if (onSource === onTarget) {
+                continue;
+            }
+            if (seen.has(id)) {
+                return null;
+            }
+            seen.add(id);
+            const frame = readFrameRect(ref);
+            if (typeof frame === "string") {
+                return null;
+            }
+            if (onSource) {
+                sourceWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h } });
+            } else {
+                targetWindows.push({ id, ref, rect: { x: frame.x, y: frame.y, w: frame.w, h: frame.h } });
+            }
+        }
+        let focusedId = "";
+        let moverRef: object | null = null;
+        if (activeRef !== null) {
+            let activeNative: string | null = null;
+            try {
+                activeNative = normalizeNativeId(readProp(activeRef, "internalId"));
+            } catch (error) {
+                void error;
+                return null;
+            }
+            if (activeNative !== null) {
+                const activeId = internNativeId(cache, activeNative);
+                for (const entry of sourceWindows) {
+                    if (entry.id === activeId) {
+                        focusedId = entry.id;
+                        moverRef = entry.ref;
+                        break;
+                    }
+                }
+            }
+        }
+        const sourceSorted = sourceWindows.map((entry) => entry.id).sort();
+        const targetSorted = targetWindows.map((entry) => entry.id).sort();
+        const sourceFingerprint = String(workspaceSendFingerprint(sourceOutput, sourceWorkspace, sourceSorted));
+        const resolvedTargetWorkspaceId =
+            targetDesktopRef !== null
+                ? ((readProp(targetDesktopRef, "id") as string) ?? targetWorkspace)
+                : targetWorkspace;
+        const targetFingerprint = String(workspaceSendFingerprint(sourceOutput, resolvedTargetWorkspaceId, targetSorted));
+        return {
+            sourceOutput,
+            sourceWorkspace,
+            sourceBounds: Object.freeze({ x: sourceBounds.x, y: sourceBounds.y, w: sourceBounds.w, h: sourceBounds.h }),
+            targetOutput: sourceOutput,
+            targetWorkspace: resolvedTargetWorkspaceId,
+            targetBounds:
+                targetDesktopRef !== null
+                    ? Object.freeze({ x: targetBounds.x, y: targetBounds.y, w: targetBounds.w, h: targetBounds.h })
+                    : Object.freeze({ x: 0, y: 0, w: 1, h: 1 }),
+            focusedId,
+            sourceWindows: Object.freeze(
+                sourceWindows.map((entry) =>
+                    Object.freeze({
+                        id: entry.id,
+                        ref: entry.ref,
+                        rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                    }),
+                ),
+            ),
+            targetWindows: Object.freeze(
+                targetWindows.map((entry) =>
+                    Object.freeze({
+                        id: entry.id,
+                        ref: entry.ref,
+                        rect: Object.freeze({ x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h }),
+                    }),
+                ),
+            ),
+            activeRef,
+            moverRef,
+            targetDesktopRef,
+            targetExists,
+            desktopCount: desktops.length,
+            sourceFingerprint,
+            targetFingerprint,
+        };
+    } catch (error) {
+        void error;
+        return null;
+    }
 }
 
 function internNativeId(cache: Map<string, string>, native: string): string {
@@ -1056,10 +1387,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             void error;
         }
     };
+    // Entry-owned highlight refresh edge: set once the highlight bridge
+    // starts, invoked exactly once per successful geometry-plan boundary.
+    let highlightRefresh: (() => void) | null = null;
     const adapter = new PlanAdapter({
         callDbus,
         scheduleOnce,
         log,
+        onPlannedApplied: () => {
+            try {
+                highlightRefresh?.();
+            } catch (error) {
+                void error;
+            }
+        },
         observe: () => observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility),
         clearMaximize: (target) => {
             try {
@@ -1322,6 +1663,283 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 void inner;
             }
         }
+    }
+    // Production dynamic workspace route: the native adapter owns the
+    // project-owned backing-desktop mapping and lifecycle observation; the
+    // existing send adapter owns the sole structural same-output tiled move
+    // through Rust, then follows to the Rust-planned target desktop and
+    // focuses the moved window only after commit.
+    const workspaceNative = new WorkspaceNativeAdapter({
+        getWorkspace: () => liveWorkspace,
+        readWorkspaceMode: () => readWorkspaceModeValue(overrides.readWorkspaceModeFn),
+        log,
+    });
+    workspaceNative.enable();
+    const sendNativeIds = new Map<string, string>();
+    const workspaceSend = new WorkspaceSendAdapter({
+        callDbus,
+        scheduleOnce,
+        log,
+        observe: (targetWorkspace) => observeSendTarget(liveWorkspace, sendNativeIds, targetWorkspace, floatingIds),
+        setGeometry: (target, rect) => {
+            try {
+                Reflect.set(target, "frameGeometry", {
+                    x: rect.x,
+                    y: rect.y,
+                    width: rect.w,
+                    height: rect.h,
+                });
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        setDesktops: (target, refs) => {
+            try {
+                Reflect.set(target, "desktops", refs);
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        switchToTarget: (desktopRef) => {
+            try {
+                const surface = liveWorkspace as Record<string, unknown>;
+                const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+                if (screens === null || screens.length === 0) {
+                    return false;
+                }
+                let activeOutput: object | null = null;
+                try {
+                    const active = Reflect.get(surface, "activeWindow");
+                    if (typeof active === "object" && active !== null) {
+                        const output = readProp(active as object, "output");
+                        if (typeof output === "object" && output !== null) {
+                            activeOutput = output as object;
+                        }
+                    }
+                } catch (error) {
+                    void error;
+                }
+                if (activeOutput === null) {
+                    try {
+                        const screen = Reflect.get(surface, "activeScreen");
+                        if (typeof screen === "object" && screen !== null) {
+                            activeOutput = screen as object;
+                        }
+                    } catch (error) {
+                        void error;
+                    }
+                }
+                if (activeOutput === null) {
+                    const first = screens[0];
+                    if (typeof first !== "object" || first === null) {
+                        return false;
+                    }
+                    activeOutput = first as object;
+                }
+                const setter = readProp(surface, "setCurrentDesktopForScreen");
+                if (typeof setter !== "function") {
+                    return false;
+                }
+                // Shared mode shows one desktop everywhere, so follow every
+                // output; otherwise follow only the active output. Mapping
+                // itself stays owned by WorkspaceNativeAdapter and rebuilds on
+                // the next topology signal.
+                if (workspaceNative.getMode() === "shared") {
+                    for (const output of screens) {
+                        if (typeof output !== "object" || output === null) {
+                            return false;
+                        }
+                        Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, output]);
+                    }
+                    return true;
+                }
+                Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, activeOutput]);
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        focusWindow: (windowRef) => {
+            try {
+                (liveWorkspace as { activeWindow: unknown }).activeWindow = windowRef;
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+    });
+    // Terminal send semantics: the send adapter may enable once at startup.
+    // Thereafter a terminal disable (pending mismatch, owner loss, refusal,
+    // or reset correlation sequence) stays fail-closed. No normal workspace
+    // shortcut may restore it.
+    try {
+        workspaceSend.enable({ owner: overrides.owner, generation: overrides.generation });
+    } catch (error) {
+        void error;
+    }
+    const requestWorkspaceSelect = (index: unknown): void => {
+        try {
+            if (index === 0) {
+                workspaceNative.selectTrailingOrCreate();
+                return;
+            }
+            if (typeof index !== "number" || !Number.isInteger(index)) {
+                return;
+            }
+            workspaceNative.selectLogical(index);
+        } catch (error) {
+            void error;
+        }
+    };
+    const requestWorkspaceMove = (index: unknown): void => {
+        try {
+            if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 9) {
+                return;
+            }
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight) {
+                try {
+                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            const target =
+                index === 0 ? workspaceNative.resolveOrAppendMoveTarget() : workspaceNative.resolveMoveTarget(index);
+            if (target === null) {
+                return;
+            }
+            if (!workspaceSend.isEnabled || workspaceSend.isInFlight) {
+                try {
+                    log("plasma-auto-tiler:plan:busy-refused kind=workspace-move");
+                } catch (error) {
+                    void error;
+                }
+                return;
+            }
+            workspaceSend.requestSend(target);
+        } catch (error) {
+            void error;
+        }
+    };
+    for (const row of workspaceShortcutCatalog()) {
+        const action = row.action;
+        const text = row.text;
+        const sequence = row.sequence;
+        const kind = row.kind;
+        const index = row.index;
+        try {
+            const ok =
+                kind === "move"
+                    ? registerFn(action, text, sequence, () => requestWorkspaceMove(index))
+                    : registerFn(action, text, sequence, () => requestWorkspaceSelect(index));
+            if (ok !== true) {
+                try {
+                    log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+                } catch (error) {
+                    void error;
+                }
+            }
+        } catch (error) {
+            void error;
+            try {
+                log(`plasma-auto-tiler:plan:shortcut-failed action=${action} sequence=${sequence}`);
+            } catch (inner) {
+                void inner;
+            }
+        }
+    }
+    const workspaceDetaches: Array<() => void> = [];
+    const workspaceWindowDetaches = new Map<object, () => void>();
+    const trackWorkspaceDetach = (detach: (() => void) | null): void => {
+        if (detach !== null) {
+            workspaceDetaches.push(detach);
+        }
+    };
+    const trackWorkspaceWindowDetach = (ref: object, detach: (() => void) | null): void => {
+        if (detach === null || workspaceWindowDetaches.has(ref)) {
+            return;
+        }
+        workspaceWindowDetaches.set(ref, detach);
+        workspaceDetaches.push(detach);
+    };
+    const dropWorkspaceWindowDetach = (ref: object): void => {
+        const detach = workspaceWindowDetaches.get(ref);
+        if (detach === undefined) {
+            return;
+        }
+        workspaceWindowDetaches.delete(ref);
+        const at = workspaceDetaches.indexOf(detach);
+        if (at >= 0) {
+            workspaceDetaches.splice(at, 1);
+        }
+        try {
+            detach();
+        } catch (error) {
+            void error;
+        }
+    };
+    trackWorkspaceDetach(sub("desktopsChanged", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(sub("currentDesktopChanged", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(sub("screensChanged", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(sub("windowAdded", () => workspaceNative.handleTopologySignal()));
+    trackWorkspaceDetach(sub("windowRemoved", () => workspaceNative.handleTopologySignal()));
+    try {
+        const lister = surface["windowList"];
+        if (typeof lister === "function") {
+            let raw: unknown = undefined;
+            try {
+                raw = Reflect.apply(lister as (...args: ReadonlyArray<never>) => unknown, surface, []);
+            } catch (error) {
+                void error;
+                raw = undefined;
+            }
+            const list = decodeList(raw, MAX_LIST);
+            if (list !== null) {
+                const seenWindows = new Set<object>();
+                for (const item of list) {
+                    if (typeof item !== "object" || item === null || seenWindows.has(item as object)) {
+                        continue;
+                    }
+                    seenWindows.add(item as object);
+                    trackWorkspaceWindowDetach(
+                        item as object,
+                        connectSignal(readSignal(item as object, "desktopsChanged"), () =>
+                            workspaceNative.handleTopologySignal(),
+                        ),
+                    );
+                }
+            }
+            trackWorkspaceDetach(
+                connectSignal(readSignal(surface, "windowAdded"), (added) => {
+                    if (typeof added === "object" && added !== null) {
+                        trackWorkspaceWindowDetach(
+                            added as object,
+                            connectSignal(readSignal(added as object, "desktopsChanged"), () =>
+                                workspaceNative.handleTopologySignal(),
+                            ),
+                        );
+                    }
+                    workspaceNative.handleTopologySignal();
+                }),
+            );
+            trackWorkspaceDetach(
+                connectSignal(readSignal(surface, "windowRemoved"), (removed) => {
+                    if (typeof removed === "object" && removed !== null) {
+                        dropWorkspaceWindowDetach(removed as object);
+                    }
+                    workspaceNative.handleTopologySignal();
+                }),
+            );
+        }
+    } catch (error) {
+        void error;
     }
     // Slice 2 oracle route: preserve start rect plus move/resize classification
     // at Started, then on a non-cancelled LastVerdict route exactly one strict
@@ -1699,7 +2317,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                     generation: generationRaw,
                 });
                 if (highlight !== null) {
+                    // Single observational refresh after each successful
+                    // geometry-plan boundary, even when focus is unchanged.
+                    // Geometry writes emit no highlight lifecycle signal, so
+                    // this edge is the only post-plan refresh: no retries,
+                    // no polling, no geometry subscription.
+                    highlightRefresh = (): void => {
+                        try {
+                            highlight.refresh();
+                        } catch (error) {
+                            void error;
+                        }
+                    };
                     highlightStop = () => {
+                        highlightRefresh = null;
                         try {
                             highlight.stop();
                         } catch (error) {
@@ -1719,6 +2350,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             } catch (error) {
                 void error;
             }
+            try {
+                workspaceSend.disable();
+            } catch (error) {
+                void error;
+            }
+            try {
+                workspaceNative.disable();
+            } catch (error) {
+                void error;
+            }
+            for (const detach of workspaceDetaches.splice(0)) {
+                try { detach(); } catch (error) { void error; }
+            }
+            workspaceWindowDetaches.clear();
             for (const detach of oracleDetaches) {
                 try { detach(); } catch (error) { void error; }
             }
@@ -1767,6 +2412,20 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         requestMaximize: () => {
             try {
                 adapter.requestMaximize();
+            } catch (error) {
+                void error;
+            }
+        },
+        requestWorkspaceSelect: (index) => {
+            try {
+                requestWorkspaceSelect(index);
+            } catch (error) {
+                void error;
+            }
+        },
+        requestWorkspaceMove: (index) => {
+            try {
+                requestWorkspaceMove(index);
             } catch (error) {
                 void error;
             }

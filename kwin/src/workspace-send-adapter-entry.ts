@@ -15,7 +15,8 @@
 // Only normal windows are observed; every other classification is skipped
 // before the snapshot so it can never be sent. Native writes are direct
 // frameGeometry writes in the shared canonical order plus only the mover's
-// Window.desktops membership write; no focus change and no desktop switch.
+// Window.desktops membership write, then the legacy follow (target desktop
+// switch plus mover focus) only after the verified commit.
 //
 // The single D-Bus transport is org.plasmaautotiler.Planner DescribePlan; no
 // other method is invoked and same-UID authorization stays the Planner's own
@@ -564,6 +565,39 @@ export function startWorkspaceSendAdapterEntry(
         setDesktops: (target, refs) => {
             try {
                 Reflect.set(target, "desktops", refs);
+                return true;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        switchToTarget: (desktopRef) => {
+            try {
+                const surface = liveWorkspace as Record<string, unknown>;
+                const setter = readProp(surface, "setCurrentDesktopForScreen");
+                // Dev-only harnesses often lack per-screen setters; fall back
+                // to the shared currentDesktop write when present.
+                if (typeof setter === "function") {
+                    const screens = decodeList(readProp(surface, "screens"), MAX_LIST);
+                    const first = screens?.[0];
+                    if (typeof first === "object" && first !== null) {
+                        Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, first]);
+                        return true;
+                    }
+                }
+                if (Object.prototype.hasOwnProperty.call(surface, "currentDesktop")) {
+                    Reflect.set(surface, "currentDesktop", desktopRef);
+                    return true;
+                }
+                return false;
+            } catch (error) {
+                void error;
+                return false;
+            }
+        },
+        focusWindow: (windowRef) => {
+            try {
+                (liveWorkspace as { activeWindow: unknown }).activeWindow = windowRef;
                 return true;
             } catch (error) {
                 void error;

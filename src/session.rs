@@ -1605,12 +1605,11 @@ impl Session {
     /// Source: `cosmic-comp` `SendToWorkspace` calls `Shell::move_current`
     /// with no window id and moves only the focused element; `move_element`
     /// unmaps the source (recursive collapse) then maps the tiled element in
-    /// the target without selecting it as focus. The portable gate mirrors
-    /// [`Session::propose_move`]: unknown windows refuse as `UnknownWindow`,
-    /// exception windows or an unresolved focused leaf as `NotTiled`, and a
-    /// missing global focus or requested non-focused tile as `FocusMismatch`.
-    /// The source domain must equal the focused domain before mutation; no
-    /// source-side focus falls back through the source-domain focus stack.
+    /// the target. The portable gate mirrors [`Session::propose_move`]:
+    /// unknown windows refuse as `UnknownWindow`, exception windows or an
+    /// unresolved focused leaf as `NotTiled`, and a missing global focus or
+    /// requested non-focused tile as `FocusMismatch`. The source domain must
+    /// equal the focused domain before mutation.
     ///
     /// Target placement follows `map_to_tree` (`direction=None`): the
     /// remembered destination last-active leaf splits when still linked
@@ -1621,8 +1620,8 @@ impl Session {
     /// refuse as [`RefusalKind::Unchanged`], cross-output targets as
     /// [`RefusalKind::CrossDomainMismatch`], unknown targets as
     /// [`RefusalKind::UnknownDomain`]. The mover keeps its leaf identity with
-    /// a retargeted link; focus remains in the source domain when its stack has
-    /// a remaining tiled leaf, otherwise clears in this tiled-only model.
+    /// a retargeted link; legacy numbered sends follow the moved window, so
+    /// focus moves to the mover leaf in the target domain on commit.
     /// Plans commit only via acknowledge-then-[`Session::verify_lifecycle`]
     /// with complete source-plus-target geometry.
     #[allow(clippy::too_many_lines)]
@@ -1752,11 +1751,12 @@ impl Session {
                 workspace: target_key.workspace.clone(),
             },
         );
+        // Legacy numbered-send follow: the moved window becomes focused in
+        // the target domain on commit. Rust remains the structural authority;
+        // the adapter follows only this desired focus after an exact accepted
+        // ack plus a matching verified post-observation.
         let (desired_focus_domain, desired_focus_leaf) =
-            match self.focus_stack_fallback(&source_key, &desired_trees, &desired_windows) {
-                Some(next) => (Some(source_key.clone()), Some(next)),
-                None => (None, None),
-            };
+            (Some(target_key.clone()), Some(link.leaf.clone()));
         if !validate_topology(
             &self.domains,
             &desired_trees,

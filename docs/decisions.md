@@ -322,9 +322,25 @@ Historical implementation detail is recoverable in Git history.
   deadlock. Bounds validation remains mandatory for non-admission operations,
   where observed geometry is the client-drift input for the park policy and
   echo fence.
-- `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`.
-  The active model maintains one structurally trailing empty workspace per
-  relevant domain; `Meta+0` and `Meta+Shift+0` reuse it before creating one.
+- `workspaceMode` supports `per-output-local`, `global-unique`, and `shared`
+  through a session-local, project-owned KWin backing-desktop mapping. KWin's
+  global virtual-desktop pool is not a native COSMIC workspace-set mapping.
+  `per-output-local` and `global-unique` assign distinct backing desktops to
+  output domains; `shared` selects the same backing desktop on every output.
+  The adapter keeps one structurally trailing empty backing desktop per relevant
+  domain, reusing it for `Meta+0` and `Meta+Shift+0` before creating one. It
+  retires only session-owned, empty, non-current, non-visible desktops while
+  retaining at least two global desktops. Mapping and output identity are
+  session-local; hotplug/replug recovery remains unselected.
+- `Meta+1..9` select an existing 1-based logical workspace without creation.
+  `Meta+Shift+1..9` send only the focused tiled window to an existing
+  same-output workspace through the Rust `MoveToWorkspace` route. `0` reuses or
+  creates the trailing empty target. A send switches to that target and focuses
+  the moved window only after Rust's exact accepted acknowledgement and matching
+  verified post-observation; rejected, stale, mismatched, and duplicate echoes
+  do not follow. The standard US shifted aliases `Meta+!` through `Meta+)` are
+  registered alongside the digit sends; registration preserves foreign shortcut
+  records and does not establish physical delivery.
 
 ## Shortcuts
 

@@ -56,6 +56,37 @@
   A loaded effect has at least normal KWin effect dispatch cost; zero compositor
   cost and runtime acceptance are not claimed.
 
+## Held Refresh Incident
+
+- The named `NvUxKK` combined log and `lqQA8R` Planner log are the same Planner
+  conversation; `sBN2nR` is a separate later run. The first run proves the
+  retained route returned the nested right-side group at `g18` and the script
+  submitted its setter call, but not effect receipt or rendering.
+- Two static defects explained the missing held update: active-group resolution
+  compared the retained focus leaf with a valid current native focus without
+  first synchronizing focus, and completed geometry writes had no bridge edge
+  to re-query the highlight when focus was unchanged. The fullscreen
+  `window-out-of-bounds` snapshot rejection remains a separate fail-closed
+  suppression path.
+- The retained query now performs only guarded focus synchronization before
+  resolving its tree. The KWin bridge refreshes once after completed admit,
+  move, remove, or keyboard-resize geometry plans. It adds no retry, polling,
+  geometry subscription, timed fallback, or C++ policy.
+- `group-highlight:setter-submitted` replaces `group-highlight:applied`.
+  It means only that the fire-and-forget script setter call returned locally;
+  native endpoint receipt, D-Bus demarshalling, Meta visibility gating, and
+  rendering remain live-only evidence.
+
+## Incident Pickup
+
+1. For this Rust/TypeScript-only correction, cleanly stop the current developer
+   session with Ctrl-C, then run `just dev verbose`. No new logout is needed.
+2. Hold Meta while focusing either member of `H[W1,V[W2,W3]]`, then swap the
+   two right-side members. The group outline should remain/update only while
+   Meta is held; releasing Meta hides it. No timed flash is expected.
+3. Build before the next new Plasma session only if native artifacts have also
+   changed. This correction did not change native artifacts.
+
 ## User Pickup
 
 1. Run `devenv shell --impure -- just build` from the repository and confirm it
