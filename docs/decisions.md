@@ -473,10 +473,10 @@ Historical implementation detail is recoverable in Git history.
   may update or clear valid state but never start a timed flash. Fullscreen
   hides the group visual while the active border retains its existing
   fullscreen/state behavior (precedent `activeborderlogic.h:31-37`).
-- Held-before-first-public-signal source limitation / proposed handling (not
-  user-approved): minimal state and no polling. Last modifier state is unknown
-  until the first public `mouseChanged`; do not assume Meta held. The missed
-  held-before-first-signal edge is real and unresolved.
+- Held-before-first-public-signal source limitation: minimal state and no
+  polling. Last modifier state is unknown until the first public
+  `mouseChanged`; do not assume Meta held. The effect remains hidden for that
+  missed initial-held edge.
 - Renderer: a separate group outline coexists with the active border via the
   second `OutlinedBorderItem` above (multiple items technically coexist per
   `decorationitem.h:110`, `outlinedborderitem.cpp:49-98`). No simple supported
@@ -493,12 +493,23 @@ Historical implementation detail is recoverable in Git history.
   renders group backdrops through its compositor-owned `BackdropShader`
   render-element path (checkout/revision unverified; source-content comparison
   only, no parity claim).
-- Membership, rendering, and transport architecture remain proposed in
-  [the implementation brief](changes/active-group-highlight-design.md). The
-  existing drag oracle proves only a read-only parameterless effect-owned
-  D-Bus endpoint; a bounded writable script-to-effect endpoint with a QString
-  payload remains proposed/live-unverified and unaccepted. Scope is design
-  only: no implementation/live actions; autonomous mode remains off.
+- Active-group highlighting is statically delivered. Rust resolves the focused
+  leaf's immediate parent split group and recursively projected members from
+  its retained focused-domain tree; the script forwards only the engine union
+  bounds and bounded identity to the renderer. Rust also owns native-effect
+  payload parsing/validation, stream order, focus/visibility policy, and POD
+  state through a panic-contained byte/POD ABI. C++ is only the required
+  QObject/D-Bus boundary, native identity/signal observation, and automatic
+  outline/repaint shim. The active border remains while a second effect-owned
+  `OutlinedBorderItem` renders the temporary group outline.
+- The approved writable bridge is an effect-owned session D-Bus endpoint,
+  `org.plasmaautotiler.ActiveBorder` at
+  `/org/plasmaautotiler/ActiveBorder` with interface
+  `org.plasmaautotiler.ActiveBorder1`: bounded `SetGroupHighlight(QString)`
+  and `ClearGroupHighlight()`. It is not a `/Effects` method. Its source and
+  offline contract are verified; KWin Script argument demarshalling, service
+  ownership, modifier delivery, rendering, and performance remain
+  live-unverified. Autonomous mode remains off.
 
 ## Nested Placement Affordance
 

@@ -2,14 +2,13 @@
 
 Only meaningful pending or active work is listed.
 
-- P1 | Temporary active-group highlight | Passive modifier observation is
-  authorized for Meta-held visibility. Keep the active border visible alongside
-  a separate group outline; prefer Rust policy with a minimal native C++ shim.
-  No simple below-window backdrop route was established within current rendering
-  constraints. The bounded writable effect endpoint remains proposed and
-  live-unverified. One-second visibility is an alternative only if Meta-held
-  proves impractical. Implementation awaits user direction.
-  [brief](changes/active-group-highlight-design.md#material-unresolved-choice)
+- P1 | Temporary active-group highlight live gate | Rust engine/effect policy
+  and minimal native shim are implemented and offline-verified. Group outline
+  coexists with the active border while Meta is held. User-owned live evidence
+  remains for modifier delivery, effect endpoint ownership/demarshalling,
+  fullscreen suppression, rendering, and cost. Native build passed; new binaries
+  require the established session delivery and full logout/login.
+  [record](changes/archive/active-group-highlight-design.md#user-pickup)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or
   nested-test residue. Any recovery needs explicit user authorization and exact

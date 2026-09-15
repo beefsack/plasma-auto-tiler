@@ -50,6 +50,8 @@
           ./kwin/native-effect/activewindowborder.h
           ./kwin/native-effect/activewindowborder.cpp
           ./kwin/native-effect/activeborderlogic.h
+          ./kwin/native-effect/group_highlight_ffi.h
+          ./kwin/native-effect/group_highlight.rs
           ./kwin/native-effect/activeborderconfig_module.json
           ./kwin/native-effect/activeborderconfig_module.h
           ./kwin/native-effect/activeborderconfig_module.cpp

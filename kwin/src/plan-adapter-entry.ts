@@ -20,7 +20,16 @@
 import { DOMAIN_GAP, OUTER_DOMAIN_GAP } from "./domain-gap";
 import { deriveOracleEdge, startDragOraclePullEntry, DragOracleFinishContext, DragOracleVerdict } from "./drag-oracle-pull";
 import { normalizeNativeId } from "./native-id";
-import { PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
+import {
+    ActiveGroupObserved,
+    GROUP_HIGHLIGHT_CLEAR_METHOD,
+    GROUP_HIGHLIGHT_INTERFACE,
+    GROUP_HIGHLIGHT_OBJECT,
+    GROUP_HIGHLIGHT_SERVICE,
+    GROUP_HIGHLIGHT_SET_METHOD,
+    startActiveGroupHighlight,
+} from "./active-group-highlight";
+import { PLAN_INTERFACE, PLAN_METHOD, PLAN_OBJECT, PLAN_SERVICE, PlanAdapter, PlanDirection, PlanObserved, PlanResizeMode, planFingerprint } from "./plan-adapter";
 import { PLAN_SOURCE_REV } from "./source-rev";
 import { connectSignal, readSignal } from "./signal-capability";
 
@@ -40,6 +49,13 @@ export interface PlanEntryOverrides {
         method: string,
         payload: string,
         callback: (reply: unknown) => void,
+    ) => void;
+    readonly highlightCallDbus?: (
+        service: string,
+        path: string,
+        iface: string,
+        method: string,
+        ...args: ReadonlyArray<unknown>
     ) => void;
     readonly scheduleOnce?: (delayMs: number, callback: () => void) => () => void;
     readonly log?: (message: string) => void;
@@ -1526,6 +1542,176 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
         const oracleHandle = startDragOraclePullEntry(oracleOverrides);
         if (oracleHandle !== null) oracleStop = () => { try { oracleHandle.stop(); } catch (error) { void error; } };
     } catch (error) { void error; }
+    // Temporary active-group highlight bridge: asks the existing DescribePlan
+    // route with {"op":"active-group"} at startup and on focus/domain/tree
+    // lifecycle changes, validates the exact bounded reply shape and identity,
+    // and forwards engine-projected union bounds to the effect-owned
+    // SetGroupHighlight(QString)/ClearGroupHighlight() endpoint. No new
+    // transport, no topology derivation, no /Effects. Every script error,
+    // no-group, service loss, or lifecycle invalidation clears fail-closed.
+    let highlightStop: (() => void) | null = null;
+    try {
+        const ownerRaw = overrides.owner;
+        const generationRaw = overrides.generation;
+        if (typeof ownerRaw === "string" && typeof generationRaw === "string") {
+            let effectCall = overrides.highlightCallDbus;
+            if (effectCall === undefined) {
+                try {
+                    const native: unknown = callDBus;
+                    if (typeof native === "function") {
+                        const bound = native as (...args: ReadonlyArray<unknown>) => void;
+                        effectCall = (service, path, iface, method, ...args) => {
+                            bound(service, path, iface, method, ...args);
+                        };
+                    }
+                } catch (error) {
+                    void error;
+                }
+            }
+            if (effectCall !== undefined) {
+                const effect = effectCall;
+                const highlight = startActiveGroupHighlight({
+                    callDescribePlan: (payload, callback) => {
+                        callDbus(PLAN_SERVICE, PLAN_OBJECT, PLAN_INTERFACE, PLAN_METHOD, payload, callback);
+                    },
+                    setHighlight: (payload) => {
+                        effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_SET_METHOD, payload);
+                    },
+                    clearHighlight: () => {
+                        effect(GROUP_HIGHLIGHT_SERVICE, GROUP_HIGHLIGHT_OBJECT, GROUP_HIGHLIGHT_INTERFACE, GROUP_HIGHLIGHT_CLEAR_METHOD);
+                    },
+                    observe: (): ActiveGroupObserved | null => {
+                        let seen: PlanObserved | null = null;
+                        try {
+                            seen = observeNative(liveWorkspace, nativeIds, floatingIds, reportEligibility);
+                        } catch (error) {
+                            void error;
+                            return null;
+                        }
+                        if (seen === null) {
+                            return null;
+                        }
+                        try {
+                            return {
+                                domainOutput: seen.domainOutput,
+                                domainWorkspace: seen.domainWorkspace,
+                                domainBounds: {
+                                    x: seen.domainBounds.x,
+                                    y: seen.domainBounds.y,
+                                    w: seen.domainBounds.w,
+                                    h: seen.domainBounds.h,
+                                },
+                                domainGap: seen.domainGap,
+                                domainOuterGap: seen.domainOuterGap,
+                                focusedId: seen.focusedId,
+                                windows: seen.windows.map((entry) => ({
+                                    id: entry.id,
+                                    output: entry.output,
+                                    workspace: entry.workspace,
+                                    rect: { x: entry.rect.x, y: entry.rect.y, w: entry.rect.w, h: entry.rect.h },
+                                    // Script-only lifecycle validity; never
+                                    // serialized into the DescribePlan request.
+                                    fullscreen: entry.fullscreen,
+                                })),
+                            };
+                        } catch (error) {
+                            void error;
+                            return null;
+                        }
+                    },
+                    subscribe: (kind, handler) => {
+                        if (kind === "focus") {
+                            const detach = sub("windowActivated", handler);
+                            if (detach === null) {
+                                throw new Error("plan-entry-highlight-signal-failed");
+                            }
+                            return detach;
+                        }
+                        if (kind === "fullscreen") {
+                            // Best-effort per-window fullscreen state: uses the
+                            // existing documented fullScreenChanged seam. Never
+                            // fails enable; effect-side eligibility still hides
+                            // when the source is unavailable.
+                            try {
+                                const detach = subWindowFullscreen(handler);
+                                if (detach === null) {
+                                    return (): void => {};
+                                }
+                                return detach;
+                            } catch (error) {
+                                void error;
+                                return (): void => {};
+                            }
+                        }
+                        if (kind === "domain") {
+                            const first = sub("screensChanged", handler);
+                            const second = sub("currentDesktopChanged", handler);
+                            if (first === null || second === null) {
+                                if (first !== null) {
+                                    try {
+                                        first();
+                                    } catch (error) {
+                                        void error;
+                                    }
+                                }
+                                throw new Error("plan-entry-highlight-signal-failed");
+                            }
+                            return (): void => {
+                                try {
+                                    first();
+                                } catch (error) {
+                                    void error;
+                                }
+                                try {
+                                    second();
+                                } catch (error) {
+                                    void error;
+                                }
+                            };
+                        }
+                        const added = sub("windowAdded", handler);
+                        const removed = sub("windowRemoved", handler);
+                        if (added === null || removed === null) {
+                            if (added !== null) {
+                                try {
+                                    added();
+                                } catch (error) {
+                                    void error;
+                                }
+                            }
+                            throw new Error("plan-entry-highlight-signal-failed");
+                        }
+                        return (): void => {
+                            try {
+                                added();
+                            } catch (error) {
+                                void error;
+                            }
+                            try {
+                                removed();
+                            } catch (error) {
+                                void error;
+                            }
+                        };
+                    },
+                    log,
+                    owner: ownerRaw,
+                    generation: generationRaw,
+                });
+                if (highlight !== null) {
+                    highlightStop = () => {
+                        try {
+                            highlight.stop();
+                        } catch (error) {
+                            void error;
+                        }
+                    };
+                }
+            }
+        }
+    } catch (error) {
+        void error;
+    }
     return {
         stop: () => {
             try {
@@ -1538,6 +1724,9 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
             }
             if (oracleStop !== null) {
                 try { oracleStop(); } catch (error) { void error; }
+            }
+            if (highlightStop !== null) {
+                try { highlightStop(); } catch (error) { void error; }
             }
         },
         requestFocus: (direction) => {

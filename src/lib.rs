@@ -1,3 +1,4 @@
+pub mod active_group;
 pub mod contract;
 pub mod cosmic_v1;
 pub mod directional;

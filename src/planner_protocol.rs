@@ -325,6 +325,7 @@ const PLANNER_SNAPSHOT_DETAILS: &[&str] = &[
     "pointer-resize-op-invalid",
     "pointer-resize-window-invalid",
     "reconcile-op-invalid",
+    "active-group-op-invalid",
     "toggle-float-op-invalid",
     "toggle-float-window-invalid",
     "float-rect-invalid",
@@ -1394,6 +1395,7 @@ impl Planner {
             "pointer-resize" => self.evaluate_pointer_resize_retained(&ctx),
             "reconcile" => self.evaluate_reconcile_retained(&ctx),
             "toggle-float" => self.evaluate_toggle_float_retained(&ctx),
+            "active-group" => self.evaluate_active_group_retained(&ctx),
             _ => rejected(
                 valid_correlation_echo(&ctx.raw),
                 "unknown-value",
@@ -2388,6 +2390,53 @@ impl Planner {
         )
     }
 
+    /// Retained read-only active-group highlight query over the existing
+    /// `DescribePlan` transport. No mutation, no timer, no Meta state, no
+    /// polling/retry/fallback: resolves the current retained focused leaf's
+    /// immediate parent split-tree group in the requested focused domain,
+    /// recursively includes its descendants, and projects them with the engine
+    /// projector (never native/client rect topology). The carried
+    /// `revision` is never a staleness gate (read-only snapshot resolves
+    /// current retained state, so initial revision 0 and any lagging caller
+    /// revision still resolve); the authoritative `base_revision` is returned
+    /// for downstream identity ordering. Replies `active-group` with opaque
+    /// group/member identities, the projected union bounds, and the
+    /// owner/generation/correlation/base-revision identity; any
+    /// invalid/missing/non-tiled focus, unknown domain/tree, or root-leaf
+    /// focus replies `no-group`.
+    ///
+    /// Carried-window divergence safety (exact contract, no new topology
+    /// authority): carried `windows` rectangles/sets are never consulted for
+    /// membership or projection. Membership comes solely from the retained
+    /// split tree via [`crate::active_group::describe_active_group`],
+    /// projection from retained bounds/gap plus the engine projector. The
+    /// carried `focused_window` is bound to the retained focus leaf's window,
+    /// and the carried domain bounds/gap are bound to the retained domain, so
+    /// drifted rects, extra/missing carried entries, or lagging revisions
+    /// cannot corrupt the highlight: worst case is fail-closed `no-group`
+    /// via `focus-unmapped`/`domain-mismatch`/pending/diverged.
+    fn evaluate_active_group_retained(&mut self, ctx: &Validated) -> String {
+        let command: ActiveGroupCommand = match serde_json::from_value(ctx.request.command.clone())
+        {
+            Ok(command) => command,
+            Err(error) => {
+                let (kind, message) = classify_parse_error(&error);
+                return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+            }
+        };
+        if command.op != "active-group" {
+            return snapshot_invalid(
+                ctx.request.correlation_id.clone(),
+                MSG_OPAQUE_ID,
+                "active-group-op-invalid",
+            );
+        }
+        let Some(session) = self.sessions.get(&ctx.domain_key).cloned() else {
+            return no_group_reply(ctx, None, "no-session");
+        };
+        active_group_response(&session, ctx)
+    }
+
     /// Validate the standalone workspace-send target: optional `target_domain`
     /// plus `target_windows` against the source `domain`/`windows`. Refuses
     /// cross-output, same-workspace, absent/invalid focus, and malformed or
@@ -2904,6 +2953,7 @@ pub fn evaluate_plan_json(request_json: &str) -> String {
             let effective = session.pending_float_geometry(&window);
             float_planned_reply(&ctx.request.correlation_id, &plan, effective)
         }),
+        "active-group" => evaluate_active_group_stateless(&ctx),
         _ => rejected(
             valid_correlation_echo(&ctx.raw),
             "unknown-value",
@@ -3427,6 +3477,209 @@ struct PointerResizeCommand {
 #[serde(deny_unknown_fields)]
 struct ReconcileCommand {
     op: String,
+}
+
+/// Read-only active-group highlight query: no parameters beyond the shared
+/// observation envelope (domain/windows/focus) plus identity. Strict shape:
+/// extra fields reject via the established unknown-field path.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ActiveGroupCommand {
+    op: String,
+}
+
+/// Fixed `no-group` reasons (short lowercase-hyphenated ASCII, never echoes
+/// input). Covers invalid/missing/non-tiled focus, unknown domain/tree,
+/// root-leaf focus, projection failure, and pending/divergence.
+/// `stale-revision` is retained in this closed registry for contract
+/// compatibility but is no longer emitted: the read-only resolver returns the
+/// current retained snapshot regardless of the carried revision.
+const ACTIVE_GROUP_NO_GROUP_REASONS: &[&str] = &[
+    "no-session",
+    "diverged",
+    "pending",
+    "domain-mismatch",
+    "stale-revision",
+    "focus-mismatch",
+    "focus-unmapped",
+    "no-tree",
+    "no-parent-group",
+];
+
+fn no_group_reply(ctx: &Validated, base_revision: Option<u64>, reason: &'static str) -> String {
+    debug_assert!(ACTIVE_GROUP_NO_GROUP_REASONS.contains(&reason));
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: ctx.request.correlation_id.clone(),
+        outcome: "no-group",
+        kind: Some("no-group".to_owned()),
+        message: None,
+        base_revision,
+        detail: Some(serde_json::json!({
+            "kind": "no-group",
+            "reason": reason,
+            "owner": ctx.owner.as_str(),
+            "generation": ctx.generation.as_str(),
+        })),
+        desired_geometry: None,
+        desired_focus: None,
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Shared read-only group resolution over one authoritative session (retained
+/// or ephemeral): validates domain binding, focus mapping, and tree presence,
+/// then derives the focused leaf's immediate parent group through
+/// [`crate::active_group::describe_active_group`] using only retained
+/// bounds/gap plus engine projection. Always returns a bounded
+/// `active-group`/`no-group` reply; never mutates. The carried revision is
+/// intentionally not gated: this is a read-only current-state snapshot, so a
+/// lagging or initial-zero caller revision still resolves; freshness is
+/// carried in the returned `base_revision` for downstream ordering. The
+/// `stale-revision` reason token is retained in the closed reason registry
+/// for contract compatibility but is no longer emitted by this resolver.
+/// Carried windows are never topology sources (see retained-route docs).
+fn active_group_response(session: &Session, ctx: &Validated) -> String {
+    let base = session.accepted_revision();
+    if session.divergence().is_some() {
+        return no_group_reply(ctx, Some(base), "diverged");
+    }
+    if session.has_pending() || session.has_pending_desired() || session.has_drag() {
+        return no_group_reply(ctx, Some(base), "pending");
+    }
+    let Some(retained_domain) = session
+        .domains()
+        .iter()
+        .find(|domain| domain.key() == ctx.domain_key)
+        .cloned()
+    else {
+        return no_group_reply(ctx, Some(base), "domain-mismatch");
+    };
+    if retained_domain.bounds != ctx.domain.bounds || retained_domain.gap != ctx.domain.gap {
+        return no_group_reply(ctx, Some(base), "domain-mismatch");
+    }
+    let (focus_domain, focus_leaf) = session.focus();
+    let (Some(focus_domain), Some(focus_leaf)) = (focus_domain, focus_leaf) else {
+        return no_group_reply(ctx, Some(base), "focus-mismatch");
+    };
+    if focus_domain != ctx.domain_key {
+        return no_group_reply(ctx, Some(base), "focus-mismatch");
+    }
+    let snapshot = session.snapshot();
+    let Some(tree) = snapshot
+        .domains
+        .into_iter()
+        .find(|domain| {
+            domain.output == ctx.domain_key.output && domain.workspace == ctx.domain_key.workspace
+        })
+        .and_then(|domain| domain.tree)
+    else {
+        return no_group_reply(ctx, Some(base), "no-tree");
+    };
+    let leaf_to_window: std::collections::BTreeMap<NodeId, WindowId> = snapshot
+        .windows
+        .into_iter()
+        .filter(|link| {
+            link.output == ctx.domain_key.output && link.workspace == ctx.domain_key.workspace
+        })
+        .map(|link| (link.leaf, link.window))
+        .collect();
+    let focused_window = WindowId(ctx.request.focused_window.clone());
+    match leaf_to_window.get(&focus_leaf) {
+        Some(window) if *window == focused_window => {}
+        _ => return no_group_reply(ctx, Some(base), "focus-unmapped"),
+    }
+    let Some(group) = crate::active_group::describe_active_group(
+        &tree,
+        retained_domain.bounds,
+        retained_domain.gap,
+        &focus_leaf,
+        &leaf_to_window,
+    ) else {
+        return no_group_reply(ctx, Some(base), "no-parent-group");
+    };
+    if group.members.len() > PLAN_MAX_WINDOWS {
+        return no_group_reply(ctx, Some(base), "no-parent-group");
+    }
+    let members: Vec<serde_json::Value> = group
+        .members
+        .iter()
+        .map(|member| {
+            serde_json::json!({
+                "window": member.window.0,
+                "leaf": member.leaf.0,
+                "rect": {"x": member.rect.x, "y": member.rect.y, "w": member.rect.w, "h": member.rect.h},
+            })
+        })
+        .collect();
+    let geometry: Vec<GeometryReply> = group
+        .members
+        .iter()
+        .map(|member| GeometryReply {
+            window: member.window.0.clone(),
+            leaf: member.leaf.0.clone(),
+            output: ctx.domain_key.output.0.clone(),
+            workspace: ctx.domain_key.workspace.0.clone(),
+            rect: RectDto {
+                x: member.rect.x,
+                y: member.rect.y,
+                w: member.rect.w,
+                h: member.rect.h,
+            },
+        })
+        .collect();
+    serialize_bounded(&PlanReply {
+        v: PLAN_CONTRACT_VERSION,
+        correlation_id: ctx.request.correlation_id.clone(),
+        outcome: "active-group",
+        kind: Some("active-group".to_owned()),
+        message: None,
+        base_revision: Some(base),
+        detail: Some(serde_json::json!({
+            "kind": "active-group",
+            "owner": ctx.owner.as_str(),
+            "generation": ctx.generation.as_str(),
+            "domain_output": ctx.domain_key.output.0,
+            "domain_workspace": ctx.domain_key.workspace.0,
+            "group": group.group.0,
+            "focused_leaf": focus_leaf.0,
+            "focused_window": focused_window.0,
+            "members": members,
+            "bounds": {"x": group.bounds.x, "y": group.bounds.y, "w": group.bounds.w, "h": group.bounds.h},
+        })),
+        desired_geometry: Some(geometry),
+        desired_focus: Some(focus_reply(&ctx.domain_key, &focus_leaf)),
+        float_geometry: None,
+        preconditions: None,
+        operation: None,
+    })
+}
+
+/// Stateless active-group evaluation over an ephemeral rebuild (same
+/// validation and reply shapes as the retained route; only topology sourcing
+/// differs). Fail-closed `no-group` when no safe topology exists.
+fn evaluate_active_group_stateless(ctx: &Validated) -> String {
+    let command: ActiveGroupCommand = match serde_json::from_value(ctx.request.command.clone()) {
+        Ok(command) => command,
+        Err(error) => {
+            let (kind, message) = classify_parse_error(&error);
+            return rejected(valid_correlation_echo(&ctx.raw), kind, message);
+        }
+    };
+    if command.op != "active-group" {
+        return snapshot_invalid(
+            ctx.request.correlation_id.clone(),
+            MSG_OPAQUE_ID,
+            "active-group-op-invalid",
+        );
+    }
+    let (session, _) = match build_full_session(ctx) {
+        Ok(built) => built,
+        Err(_) => return no_group_reply(ctx, None, "no-parent-group"),
+    };
+    active_group_response(&session, ctx)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -4899,7 +5152,7 @@ mod tests {
             );
             assert!(seen.insert(*token), "duplicate token: {token}");
         }
-        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 42, "closed registry size");
+        assert_eq!(PLANNER_SNAPSHOT_DETAILS.len(), 43, "closed registry size");
     }
 
     fn geometry_by_window(
@@ -6048,5 +6301,340 @@ mod tests {
         )));
         assert_eq!(verify["outcome"], "diverged", "{verify}");
         assert_eq!(verify["kind"], "postcondition-mismatch", "{verify}");
+    }
+
+    fn active_group_request(
+        correlation: &str,
+        owner: &str,
+        generation: &str,
+        revision: u64,
+        focused: &str,
+        windows: &[(&str, i32, i32, i32, i32)],
+    ) -> String {
+        let entries: Vec<serde_json::Value> = windows
+            .iter()
+            .map(|(window, x, y, w, h)| {
+                serde_json::json!({
+                    "window": window,
+                    "output": "out-1",
+                    "workspace": "ws-1",
+                    "rect": {"x": x, "y": y, "w": w, "h": h},
+                })
+            })
+            .collect();
+        serde_json::json!({
+            "v": 1,
+            "correlation_id": correlation,
+            "owner": owner,
+            "generation": generation,
+            "revision": revision,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-1",
+                "workspace": "ws-1",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": focused,
+            "windows": entries,
+            "command": {"op": "active-group"},
+        })
+        .to_string()
+    }
+
+    fn seed_active_group_planner() -> Planner {
+        let mut planner = Planner::new();
+        for (correlation, focused, windows, command) in [
+            (
+                "ag-seed-1",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80)],
+                admit_body("win-1"),
+            ),
+            (
+                "ag-seed-2",
+                "win-1",
+                vec![("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+                admit_body("win-2"),
+            ),
+        ] {
+            let request =
+                retained_request(correlation, "owner-1", "gen-1", focused, &windows, command);
+            let reply = parse_reply(&planner.evaluate(&request));
+            assert_eq!(reply["outcome"], "planned", "{reply}");
+        }
+        assert_eq!(planner.retained_domains(), 1);
+        planner
+    }
+
+    #[test]
+    fn retained_active_group_returns_parent_members_and_engine_projection() {
+        let mut planner = seed_active_group_planner();
+        // Retained focus after the second admit is win-2 at base revision 2.
+        let baseline = parse_reply(&planner.evaluate(&retained_request(
+            "ag-rec-1",
+            "owner-1",
+            "gen-1",
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+            serde_json::json!({"op": "reconcile"}),
+        )));
+        assert_eq!(baseline["outcome"], "planned", "{baseline}");
+        let expected = geometry_by_window(&baseline);
+        // Carried client rectangles drift within bounds; the highlight must
+        // still report the retained engine allocation, never native topology.
+        let drifted = active_group_request(
+            "ag-1",
+            "owner-1",
+            "gen-1",
+            2,
+            "win-2",
+            &[("win-1", 0, 0, 10, 10), ("win-2", 1100, 700, 50, 50)],
+        );
+        let reply_text = planner.evaluate(&drifted);
+        assert!(reply_text.len() <= PLAN_MAX_REPLY_BYTES, "{reply_text}");
+        let reply = parse_reply(&reply_text);
+        assert_eq!(reply["outcome"], "active-group", "{reply}");
+        assert_eq!(reply["kind"], "active-group", "{reply}");
+        assert_eq!(reply["correlation_id"], "ag-1", "{reply}");
+        assert_eq!(reply["base_revision"], 2, "{reply}");
+        let detail = &reply["detail"];
+        assert_eq!(detail["kind"], "active-group", "{reply}");
+        assert_eq!(detail["owner"], "owner-1", "{reply}");
+        assert_eq!(detail["generation"], "gen-1", "{reply}");
+        assert_eq!(detail["domain_output"], "out-1", "{reply}");
+        assert_eq!(detail["domain_workspace"], "ws-1", "{reply}");
+        assert_eq!(detail["focused_window"], "win-2", "{reply}");
+        let group = detail["group"].as_str().expect("group id");
+        assert!(!group.is_empty(), "{reply}");
+        let members = detail["members"].as_array().expect("members");
+        assert_eq!(members.len(), 2, "{reply}");
+        let mut windows: Vec<&str> = members
+            .iter()
+            .map(|m| m["window"].as_str().expect("member window"))
+            .collect();
+        windows.sort();
+        assert_eq!(windows, vec!["win-1", "win-2"], "{reply}");
+        for member in members {
+            let window = member["window"].as_str().expect("window");
+            let rect = (
+                member["rect"]["x"].as_i64().unwrap() as i32,
+                member["rect"]["y"].as_i64().unwrap() as i32,
+                member["rect"]["w"].as_i64().unwrap() as i32,
+                member["rect"]["h"].as_i64().unwrap() as i32,
+            );
+            assert_eq!(rect, expected[window], "{reply} vs {baseline}");
+            assert!(
+                member["leaf"].as_str().is_some_and(|s| !s.is_empty()),
+                "{reply}"
+            );
+        }
+        let bounds = &detail["bounds"];
+        let (bx, by, bw, bh) = (
+            bounds["x"].as_i64().unwrap() as i32,
+            bounds["y"].as_i64().unwrap() as i32,
+            bounds["w"].as_i64().unwrap() as i32,
+            bounds["h"].as_i64().unwrap() as i32,
+        );
+        assert!(bw > 0 && bh > 0, "{reply}");
+        for member in members {
+            let rect = &member["rect"];
+            let (x, y, w, h) = (
+                rect["x"].as_i64().unwrap() as i32,
+                rect["y"].as_i64().unwrap() as i32,
+                rect["w"].as_i64().unwrap() as i32,
+                rect["h"].as_i64().unwrap() as i32,
+            );
+            assert!(x >= bx && y >= by, "{reply}");
+            assert!(x + w <= bx + bw && y + h <= by + bh, "{reply}");
+        }
+        let geometry = reply["desired_geometry"].as_array().expect("geometry");
+        assert_eq!(geometry.len(), 2, "{reply}");
+        assert!(reply["desired_focus"]["leaf"].as_str().is_some(), "{reply}");
+        assert_eq!(
+            reply["desired_focus"]["leaf"], detail["focused_leaf"],
+            "{reply}"
+        );
+    }
+
+    #[test]
+    fn retained_active_group_clears_for_non_group_focus() {
+        // Single tiled window is a root leaf: no parent group exists.
+        let mut planner = Planner::new();
+        let seed = retained_request(
+            "ag-solo-seed-1",
+            "owner-1",
+            "gen-1",
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+            admit_body("win-1"),
+        );
+        assert_eq!(parse_reply(&planner.evaluate(&seed))["outcome"], "planned");
+        let solo = active_group_request(
+            "ag-solo-1",
+            "owner-1",
+            "gen-1",
+            1,
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+        );
+        let cleared = parse_reply(&planner.evaluate(&solo));
+        assert_eq!(cleared["outcome"], "no-group", "{cleared}");
+        assert_eq!(cleared["kind"], "no-group", "{cleared}");
+        assert_eq!(cleared["correlation_id"], "ag-solo-1", "{cleared}");
+        assert_eq!(cleared["base_revision"], 1, "{cleared}");
+        assert_eq!(cleared["detail"]["reason"], "no-parent-group", "{cleared}");
+        assert_eq!(cleared["detail"]["generation"], "gen-1", "{cleared}");
+        assert!(cleared.get("desired_geometry").is_none(), "{cleared}");
+        // Unknown domain has no retained tree: clear without leaking state.
+        let unknown = serde_json::json!({
+            "v": 1,
+            "correlation_id": "ag-unknown-1",
+            "owner": "owner-1",
+            "generation": "gen-1",
+            "revision": 0,
+            "fingerprint": 7,
+            "domain": {
+                "output": "out-9",
+                "workspace": "ws-9",
+                "bounds": {"x": 0, "y": 0, "w": 1200, "h": 800},
+                "gap": 0,
+                "outer_gap": 0,
+            },
+            "focused_window": "win-1",
+            "windows": [{"window": "win-1", "output": "out-9", "workspace": "ws-9",
+                "rect": {"x": 0, "y": 0, "w": 100, "h": 80}}],
+            "command": {"op": "active-group"},
+        })
+        .to_string();
+        let missing = parse_reply(&planner.evaluate(&unknown));
+        assert_eq!(missing["outcome"], "no-group", "{missing}");
+        assert_eq!(missing["detail"]["reason"], "no-session", "{missing}");
+        assert_eq!(missing["correlation_id"], "ag-unknown-1", "{missing}");
+        // Op mismatch inside the handler binds the exact snapshot detail.
+        let mut ctx = validate_request(&active_group_request(
+            "ag-op-1",
+            "owner-1",
+            "gen-1",
+            1,
+            "win-1",
+            &[("win-1", 0, 0, 100, 80)],
+        ))
+        .expect("base valid");
+        ctx.request.command["op"] = serde_json::json!("bogus-op");
+        let text = planner.evaluate_active_group_retained(&ctx);
+        let op_reply = parse_reply(&text);
+        assert_eq!(op_reply["outcome"], "rejected", "{op_reply}");
+        assert_eq!(op_reply["kind"], "snapshot-invalid", "{op_reply}");
+        assert_eq!(op_reply["detail"], "active-group-op-invalid", "{op_reply}");
+        assert_eq!(op_reply["correlation_id"], "ag-op-1", "{op_reply}");
+        assert!(text.len() <= PLAN_MAX_REPLY_BYTES, "{op_reply}");
+    }
+
+    #[test]
+    fn retained_active_group_resolves_current_snapshot_without_revision_gate() {
+        let mut planner = seed_active_group_planner();
+        // Initial/lagging carried revision resolves current retained state
+        // instead of livelocking on stale-revision: revision 0 still yields
+        // the current base 2 snapshot with safe returned identity.
+        let initial = active_group_request(
+            "ag-initial-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+        );
+        let initial_reply = parse_reply(&planner.evaluate(&initial));
+        assert_eq!(initial_reply["outcome"], "active-group", "{initial_reply}");
+        assert_eq!(initial_reply["correlation_id"], "ag-initial-1", "{initial_reply}");
+        assert_eq!(initial_reply["base_revision"], 2, "{initial_reply}");
+        assert_eq!(initial_reply["detail"]["owner"], "owner-1", "{initial_reply}");
+        assert_eq!(initial_reply["detail"]["generation"], "gen-1", "{initial_reply}");
+        assert_eq!(initial_reply["detail"]["focused_window"], "win-2", "{initial_reply}");
+        // Fresh revision with the same observation resolves identically and
+        // echoes the exact identity binding.
+        let fresh = active_group_request(
+            "ag-fresh-1",
+            "owner-1",
+            "gen-1",
+            2,
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+        );
+        let fresh_reply = parse_reply(&planner.evaluate(&fresh));
+        assert_eq!(fresh_reply["outcome"], "active-group", "{fresh_reply}");
+        assert_eq!(fresh_reply["correlation_id"], "ag-fresh-1", "{fresh_reply}");
+        assert_eq!(fresh_reply["base_revision"], 2, "{fresh_reply}");
+        assert_eq!(
+            fresh_reply["detail"]["generation"], "gen-1",
+            "{fresh_reply}"
+        );
+        // Carried-window divergence is safe: drifted rects plus an extra
+        // carried-only window still resolve from retained topology with the
+        // retained focus binding, never from carried geometry.
+        let diverged = active_group_request(
+            "ag-diverged-1",
+            "owner-1",
+            "gen-1",
+            0,
+            "win-2",
+            &[
+                ("win-1", 5, 5, 10, 10),
+                ("win-2", 1100, 700, 20, 20),
+                ("win-9", 0, 0, 50, 50),
+            ],
+        );
+        let diverged_reply = parse_reply(&planner.evaluate(&diverged));
+        assert_eq!(diverged_reply["outcome"], "active-group", "{diverged_reply}");
+        assert_eq!(diverged_reply["base_revision"], 2, "{diverged_reply}");
+        assert_eq!(diverged_reply["detail"]["focused_window"], "win-2", "{diverged_reply}");
+        // Generation change (adapter restart) discards retained state instead
+        // of leaking the previous generation's group.
+        let rotated = active_group_request(
+            "ag-rot-1",
+            "owner-1",
+            "gen-2",
+            2,
+            "win-2",
+            &[("win-1", 0, 0, 100, 80), ("win-2", 200, 0, 100, 80)],
+        );
+        let rotated_reply = parse_reply(&planner.evaluate(&rotated));
+        assert_eq!(rotated_reply["outcome"], "no-group", "{rotated_reply}");
+        assert_eq!(
+            rotated_reply["detail"]["reason"], "no-session",
+            "{rotated_reply}"
+        );
+        assert_eq!(
+            rotated_reply["detail"]["generation"], "gen-2",
+            "{rotated_reply}"
+        );
+    }
+
+    #[test]
+    fn stateless_active_group_reports_ephemeral_membership() {
+        let request = plan_request(
+            "ag-stateless-1",
+            "win-1",
+            &["win-1", "win-2"],
+            serde_json::json!({"op": "active-group"}),
+        );
+        let reply = parse_reply(&evaluate_plan_json(&request));
+        assert_eq!(reply["outcome"], "active-group", "{reply}");
+        assert_eq!(
+            reply["detail"]["members"].as_array().map(Vec::len),
+            Some(2),
+            "{reply}"
+        );
+        let solo = plan_request(
+            "ag-stateless-2",
+            "win-1",
+            &["win-1"],
+            serde_json::json!({"op": "active-group"}),
+        );
+        let cleared = parse_reply(&evaluate_plan_json(&solo));
+        assert_eq!(cleared["outcome"], "no-group", "{cleared}");
+        assert_eq!(cleared["detail"]["reason"], "no-parent-group", "{cleared}");
     }
 }

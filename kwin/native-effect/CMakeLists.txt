@@ -34,14 +34,46 @@ ecm_setup_qtplugin_macro_names(
 set(config_SOURCES)
 kconfig_add_kcfg_files(config_SOURCES activeborderconfig.kcfgc)
 
+# Bare-rustc std-only staticlibs (group highlight policy plus the slice 1
+# drag oracle): no Cargo, no crates, no network. find_program/find_package
+# stay before both consumers so linkage never relies on transitive libs.
+find_program(RUSTC_PROGRAM rustc REQUIRED)
+# The Rust staticlibs reference pthread/dl (std thread internals, backtrace
+# symbolization). Link them explicitly and portably so the shared plugins
+# do not rely on transitive linkage.
+find_package(Threads REQUIRED)
+
+# Temporary active-group highlight policy: std-only Rust source compiled
+# hermetically by rustc invoked from CMake, reusing the drag-oracle
+# bare-rustc staticlib pattern.
+set(GROUP_HIGHLIGHT_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libgroup_highlight.a")
+add_custom_command(
+    OUTPUT "${GROUP_HIGHLIGHT_STATICLIB}"
+    COMMAND "${RUSTC_PROGRAM}"
+        --crate-type=staticlib
+        -O
+        --crate-name=group_highlight
+        "${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs"
+        -o "${GROUP_HIGHLIGHT_STATICLIB}"
+    DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs"
+    COMMENT "Compiling std-only group_highlight.rs with rustc"
+    VERBATIM
+)
+add_custom_target(plasma-auto-tiler-group-highlight-rs DEPENDS "${GROUP_HIGHLIGHT_STATICLIB}")
+
 kcoreaddons_add_plugin(plasma-auto-tiler-active-border
     INSTALL_NAMESPACE "kwin/effects/plugins"
     SOURCES
         activewindowborder.h
         activewindowborder.cpp
+        group_highlight_ffi.h
         ${config_SOURCES}
 )
+add_dependencies(plasma-auto-tiler-active-border plasma-auto-tiler-group-highlight-rs)
 target_link_libraries(plasma-auto-tiler-active-border PRIVATE
+    "${GROUP_HIGHLIGHT_STATICLIB}"
+    Threads::Threads
+    ${CMAKE_DL_LIBS}
     KWin::kwin
     KF6::ConfigCore
     KF6::ConfigGui
@@ -53,11 +85,6 @@ target_compile_options(plasma-auto-tiler-active-border PRIVATE -Wall -Wextra -We
 
 # Slice 1 drag/final-geometry oracle: std-only Rust source compiled hermetically
 # by rustc invoked from CMake. No Cargo, no crates, no network.
-find_program(RUSTC_PROGRAM rustc REQUIRED)
-# The Rust staticlib references pthread/dl (Mutex/LazyLock thread internals,
-# backtrace symbolization). Link them explicitly and portably so the shared
-# plugin does not rely on transitive linkage.
-find_package(Threads REQUIRED)
 set(DRAG_ORACLE_STATICLIB "${CMAKE_CURRENT_BINARY_DIR}/libdrag_oracle.a")
 add_custom_command(
     OUTPUT "${DRAG_ORACLE_STATICLIB}"
@@ -129,6 +156,22 @@ if(BUILD_TESTING)
 
     add_test(NAME native-effect-logic
         COMMAND plasma-auto-tiler-active-border-logic-test)
+
+    add_executable(plasma-auto-tiler-active-border-group-test
+        activebordergroup_test.cpp
+    )
+    add_dependencies(plasma-auto-tiler-active-border-group-test plasma-auto-tiler-group-highlight-rs)
+    target_link_libraries(plasma-auto-tiler-active-border-group-test PRIVATE
+        "${GROUP_HIGHLIGHT_STATICLIB}"
+        Threads::Threads
+        ${CMAKE_DL_LIBS}
+        Qt6::Core
+        Qt6::Gui
+    )
+    target_compile_options(plasma-auto-tiler-active-border-group-test PRIVATE -Wall -Wextra -Werror)
+
+    add_test(NAME native-effect-group-highlight
+        COMMAND plasma-auto-tiler-active-border-group-test)
 
     set(kcm_config_test_SOURCES
         activeborderconfig_module_test.cpp
@@ -268,6 +311,12 @@ if(BUILD_TESTING)
             -DSOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.cpp
             -DKCM_METADATA_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activeborderconfig_module.json
             -DKCM_SOURCE_FILE=${CMAKE_CURRENT_SOURCE_DIR}/activeborderconfig_module.cpp
+            -DGROUP_HEADER=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.h
+            -DGROUP_IMPL=${CMAKE_CURRENT_SOURCE_DIR}/activewindowborder.cpp
+            -DGROUP_LOGIC=${CMAKE_CURRENT_SOURCE_DIR}/activeborderlogic.h
+            -DGROUP_TEST=${CMAKE_CURRENT_SOURCE_DIR}/activebordergroup_test.cpp
+            -DGROUP_FFI=${CMAKE_CURRENT_SOURCE_DIR}/group_highlight_ffi.h
+            -DGROUP_RUST=${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs
             -DEXPECTED_PLUGIN_ID=plasma-auto-tiler-active-border
             -P ${CMAKE_CURRENT_SOURCE_DIR}/validate-metadata.cmake)
 
@@ -295,4 +344,20 @@ if(BUILD_TESTING)
     add_custom_target(plasma-auto-tiler-drag-oracle-test-bin ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test")
     add_test(NAME native-effect-drag-oracle-rs
         COMMAND "${CMAKE_CURRENT_BINARY_DIR}/drag_oracle_test")
+
+    # Targeted Rust group-highlight policy unit tests: rustc --test on the
+    # std-only source, mirroring the drag-oracle pattern.
+    add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/group_highlight_test"
+        COMMAND "${RUSTC_PROGRAM}"
+            --test
+            "${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs"
+            -o "${CMAKE_CURRENT_BINARY_DIR}/group_highlight_test"
+        DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/group_highlight.rs"
+        COMMENT "Building group highlight unit tests with rustc --test"
+        VERBATIM
+    )
+    add_custom_target(plasma-auto-tiler-group-highlight-test-bin ALL DEPENDS "${CMAKE_CURRENT_BINARY_DIR}/group_highlight_test")
+    add_test(NAME native-effect-group-highlight-rs
+        COMMAND "${CMAKE_CURRENT_BINARY_DIR}/group_highlight_test")
 endif()
