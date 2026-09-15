@@ -441,8 +441,27 @@ Historical implementation detail is recoverable in Git history.
   development authority fail closed. This selects no movement or geometry
   actuation.
 - Grouped/tabbed windows remain deferred pending compositor-owned KWin support
-  and a live multi-window Custom Tile stability proof. No group carrier,
-  controls, bindings, or shared active-border behavior is selected.
+  and a live multi-window Custom Tile stability proof. No tab or stack carrier,
+  controls, or bindings are selected.
+- Active-group highlighting is temporary only: it appears for about one second
+  after a relevant tiling opening, moving, or closing change. KWin Script
+  workspace exposes only cursor position (`src/scripting/workspace_wrapper.h:149`
+  / `.cpp:61,148`), so Script alone cannot observe Meta hold; the native public
+  `EffectsHandler::mouseChanged(...)`
+  (`/tmp/opencode/kwin/src/effect/effecthandler.h:914-916`, documented at
+  901-913) can passively observe modifier transitions without any
+  source-observed polling, grab, interception, filter/spy, or input consumption
+  (connections at `/tmp/opencode/kwin/src/effect/effecthandler.cpp:229-236`,
+  snapshot at 207-209; Qt Meta mapping in `/tmp/opencode/kwin/src/xkb.cpp:799-813`;
+  checkout KWin 6.7.3 per `/tmp/opencode/kwin/CMakeLists.txt:5`). Whether the
+  existing Native Active Border exclusion of "input" covers this public passive
+  subscription is explicitly undecided; grabs, interception, and private
+  InputRedirection spy/filter remain excluded. The Meta-held variant is
+  technically feasible only after that narrow governance/boundary choice and is
+  not approved as temporary-only. It does not trigger from focus, resize, or
+  every geometry signal; fullscreen remains suppressed. Detailed membership, rendering,
+  and transport architecture remain proposed in
+  [the implementation brief](changes/active-group-highlight-design.md).
 
 ## Nested Placement Affordance
 

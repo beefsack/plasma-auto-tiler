@@ -2,6 +2,14 @@
 
 Only meaningful pending or active work is listed.
 
+- P1 | Temporary active-group highlight | Immediate design priority: passive
+  Meta observation is source-feasible through the public native effect signal;
+  host behavior remains unverified. Resolve the narrow C++ input-boundary
+  interpretation, proposed writable effect endpoint, and temporary active-border
+  replacement versus an additional outline. Meta-held visibility is preferred;
+  approximately one second after opening/moving/closing tiling changes is the
+  fallback. Implementation awaits user direction.
+  [brief](changes/active-group-highlight-design.md#material-decision-required)
 - P1 | Preserved host residue | Do not search for, enumerate, inspect,
   heuristically identify, modify, or clean unidentified advisory, shadow, or
   nested-test residue. Any recovery needs explicit user authorization and exact
@@ -68,12 +76,6 @@ Only meaningful pending or active work is listed.
   immediate reconcile. Multi-output, more-than-three-window, non-horizontal,
   boundary, atomicity, and parity claims remain unproven.
   [decision](decisions.md#production-interactive-edge-drag)
-- P1 | Blocked: group highlighting decision | VISION.md makes group highlights
-  first-class, but `docs/decisions.md:358-360` selects no group carrier,
-  controls, bindings, or shared active-border behavior pending compositor-owned
-  KWin support and live multi-window Custom Tile stability. User decision is
-  required before implementation; group identity, transport, rendering target,
-  and membership semantics are ungrounded.
 - P2 | Three-window product decision | Decide whether Rust authority remains
   restricted to exactly three eligible windows.
 - P2 | Retryable bootstrap decision | Decide whether Rust may retry bootstrap

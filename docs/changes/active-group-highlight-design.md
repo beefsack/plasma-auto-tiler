@@ -1,325 +1,158 @@
 # Active Group Highlight Design
 
-## Goal
+## Outcome
 
-Select a design for the first-class group highlight required by `VISION.md:13-16`:
-show the active window's group as a native KWin effect overlay. This record is
-static-only. It defines the active window's group in the Rust engine and in the
-COSMIC source, decides the highlight lifetime, selects the script-to-effect
-transport direction, and proposes (does not apply) a `docs/decisions.md`
-replacement. No feature code changes.
+- User-approved lifetime: highlighting is temporary only. KWin Script workspace
+  exposes only cursor position (`src/scripting/workspace_wrapper.h:149` /
+  `.cpp:61,148`), with no modifier signal, so the preferred Meta-held lifetime
+  is not available through supported Script facilities alone. The native public
+  `EffectsHandler::mouseChanged(...)`
+  (`/tmp/opencode/kwin/src/effect/effecthandler.h:914-916`, documented at
+  901-913) can passively observe modifier transitions; it connects
+  InputRedirection modifier changes and emits at
+  `/tmp/opencode/kwin/src/effect/effecthandler.cpp:229-236`, with a
+  current-state snapshot at 207-209 and Qt Meta mapping in
+  `/tmp/opencode/kwin/src/xkb.cpp:799-813` (source checkout KWin 6.7.3 per
+  `/tmp/opencode/kwin/CMakeLists.txt:5`). The observed public signal carries no
+  source-observed requirement for polling, grabs, interception, filters/spies,
+  or consuming input. Whether the existing native-boundary exclusion of "input"
+  covers this public passive subscription is an undecided narrow
+  governance/boundary choice; grabs, interception, and private InputRedirection
+  spy/filter remain excluded with no silent expansion. Until that choice is
+  explicitly decided, use the selected approximately one-second highlight after
+  a relevant tiling opening, moving, or closing change. The Meta-held variant
+  is technically feasible only after that choice and is not approved as
+  temporary-only.
+- This is an implementation brief only. No feature, live KWin, D-Bus, Qt probe,
+  build, script lifecycle, configuration, or backlog change is authorized.
 
-## Scope And Non-Goals
+## Source Findings
 
-- In scope: group identity and membership, COSMIC indicator evidence, trigger
-  model, transport, transient-versus-persistent choice, effect-versus-script
-  alternatives, constraints, and ordered slicing.
-- Non-goals: no implementation, no live KWin/Plasma action, no D-Bus setter, no
-  script lifecycle, no Qt/QtDBus probe or live bus, no KWin fork, no edit to
-  `docs/decisions.md`, `docs/backlog.md`, or feature code. Group tabs/stacks
-  remain unselected (`docs/decisions.md:443-445`, `:461-462`).
+- KWin Script workspace exposes only cursor position
+  (`src/scripting/workspace_wrapper.h:149` / `.cpp:61,148`), with no key or
+  modifier signal in this source slice. This confirms Script-side absence for a
+  Meta-held lifetime, not a claim about native Effects availability.
+- The native public `EffectsHandler::mouseChanged(pos, oldpos, buttons,
+  oldbuttons, modifiers, oldmodifiers)`
+  (`/tmp/opencode/kwin/src/effect/effecthandler.h:914-916`, documented at
+  901-913 with `@since 4.7` and a stale `startMousePolling` reference) connects
+  InputRedirection modifier changes and emits at
+  `/tmp/opencode/kwin/src/effect/effecthandler.cpp:229-236`; the current
+  modifiers snapshot is available at 207-209, and Qt Meta mapping is in
+  `/tmp/opencode/kwin/src/xkb.cpp:799-813` (checkout KWin 6.7.3 per
+  `/tmp/opencode/kwin/CMakeLists.txt:5`). The public signal has no
+  source-observed requirement for polling, grabs, interception, filters/spies,
+  or consuming input; construction installs no such connections under
+  `NoCompositing` (`effecthandler.cpp:119-122`). It is a public passive Effects
+  subscription, not private input. Whether the existing
+  [Native Active Border](../decisions.md#native-active-border) exclusion of
+  "input" covers it is undecided; grabs, interception, and private
+  InputRedirection spy/filter stay excluded.
+- The engine stores one retained `Node` tree per domain and the focused domain
+  and leaf (`src/session.rs:615-618`). `direct_parent_of_leaf`
+  (`src/session.rs:4662-4679`) supplies the immediate `Node::Group`; recursive
+  members come from that subtree with `find_subtree` and `collect_leaves`
+  (`src/session.rs:4701-4716,5706-5721`). Group rectangles are derived from
+  engine projections/leaf geometry, not native state (`src/geometry.rs:1-33`,
+  `src/session.rs:402-422,5282-5358`).
+- The active-border effect owns exactly one `OutlinedBorderItem`
+  (`kwin/native-effect/activewindowborder.h:26-28`) and one active-window rect
+  (`activewindowborder.cpp:85-102`). The approved scene exception permits that
+  one automatic-lifetime item only. It already hides for absent, deleted,
+  minimized, or fullscreen windows (`activeborderlogic.h:31-37`).
+- The drag oracle proves only a parameterless effect-owned D-Bus read:
+  `Q_SCRIPTABLE QString LastVerdict()` plus `registerService`/`registerObject`
+  (`kwin/native-effect/dragoracle.cpp:14-35`) called by script `callDBus`
+  (`kwin/src/drag-oracle-pull.ts:163`). KWin Script can issue an argument call
+  by converting JavaScript values to `QVariant` and asynchronously calling the
+  session bus (`/tmp/opencode/kwin/src/scripting/scripting.cpp:301-352`), but
+  that does not prove an effect setter's payload demarshalling, authorization,
+  or live behavior.
 
-## Verified Facts
+## Approved Lifetime And Triggers
 
-### Rust Engine: The Active Window's Group
+- After an accepted/applied `admit`, `move`, or `remove` plan that changes the
+  focused domain's tiling, resolve the then-active immediate group and show it
+  for about one second. These are the opening, moving, and closing tiling
+  changes; `src/planner_protocol.rs:1381-1402` distinguishes them from
+  `focus`, `resize`, `pointer-resize`, `reconcile`, `toggle-float`, and
+  `send-to-workspace`.
+- A later qualifying change replaces the visible set and restarts its local,
+  one-shot visual expiry. A rejected, failed, stale, or non-changing plan never
+  displays or restarts it. Expiry sends one clear and is not a transport timeout,
+  retry, heartbeat, or polling loop.
+- While visible, clear rather than retarget on focus or focused-domain change.
+  Clear immediately on fullscreen, hidden/minimized, or deletion. Those
+  invalidations do not themselves start a new one-second lifetime. The current
+  effect observes fullscreen/minimized but not hidden/domain changes, so their
+  handling is required implementation work.
+- Fullscreen remains suppressed. The effect must retain no polling loop or
+  unsupported zero-cost claim: its loaded render path has residual per-frame
+  cost. This one-shot visual timer is distinct from prohibited transport
+  retries/timeouts.
+- Prospective Meta-held variant, pending only the narrow public-Effects
+  governance/boundary choice above: observe modifier transitions through the
+  effect `mouseChanged` signal; show only while Meta is held after a qualifying
+  accepted/applied tiling change; clear on Meta release and on the existing
+  fullscreen/minimize/hidden/deletion/focus-domain invalidations; read current
+  modifiers on effect setup for held-before-load without synthesizing a missed
+  press; a later qualifying change while held updates/replaces the group with
+  no one-second expiry started. No polling, retry, config fallback, or
+  transport claim is made. No focus/resize/general-geometry trigger expansion.
 
-- A group is not a first-class object. It is a `Node::Group { id, axis,
-  children, shares }` in an ordered N-ary split tree; a window is a
-  `Node::Leaf { id }` (`src/directional.rs:113-123`). Leaves and groups share one
-  `NodeId` namespace (`src/directional.rs:74-77`).
-- The session retains one optional tree per logical domain:
-  `trees: BTreeMap<DomainKey, Option<Node>>` (`src/session.rs:615`).
-- The active window is the session's focused leaf, held as
-  `focused_domain: Option<DomainKey>` plus `focused_leaf: Option<NodeId>`
-  (`src/session.rs:617-618`); `focused_window_for` resolves the leaf to a
-  `WindowId` (`src/session.rs:1904`).
-- Therefore the active window's group is the `Node::Group` ancestor of
-  `focused_leaf` inside `trees[focused_domain]`. There is no dedicated
-  "active group" accessor; group resolution is tree traversal. `find_group`
-  locates a group by id and returns its children, axis, and id
-  (`src/session.rs:4595`); `parent_of_group` returns a group's parent
-  (`src/session.rs:4682`).
-- Group geometry is computed for drag previews, not for a live highlight:
-  `GroupLayout { id, axis, rect, child_starts }` (`src/session.rs:5282-5287`),
-  built by `drag_group_layouts` (`src/session.rs:5289-5293`) and
-  `collect_group_layouts` (`src/session.rs:5295-5358`). `group_rep_window`
-  picks a representative member window (`src/session.rs:5363-5383`).
-  Pointer group membership uses `pointer_group_origin` (`src/session.rs:5875`)
-  and `collect_pointer_group_leaves` (`src/session.rs:5898`).
-- In the planner protocol the active window is the request's
-  `focused_window: String` (`src/planner_protocol.rs:193`). Replies carry
-  per-leaf `desired_geometry` and a `desired_focus` leaf
-  (`src/planner_protocol.rs:198-243`); no group identity is serialized. A
-  highlight set therefore must be derived engine-side and pushed separately.
+## Proposed Technical Design
 
-### COSMIC: Equivalent Tiling Tree And Indicators
+- Membership is an ordinary technical proposal, not a user-approved product
+  decision: from `trees[focused_domain]`, find `focused_leaf`'s immediate
+  `Node::Group` parent and recursively collect its leaf descendants. With no
+  parent or a stale domain/leaf, clear. The engine owns membership, geometry,
+  and intent; the adapter maps native identities; the effect renders only the
+  resolved rectangle.
+- Proposed payload: an effect-owned `Q_SCRIPTABLE`
+  `SetTemporaryGroupHighlight(QString payload)` and matching `Clear...`, using
+  one JSON string containing a generation/correlation, group bounding rectangle,
+  and expiry token. `QString` is the only directly source-grounded D-Bus payload
+  precedent here. This is proposed and live-unverified; opaque member identities
+  need not cross the boundary when the effect renders the engine-derived rect.
+- The existing drag-oracle endpoint establishes call direction only. A writable,
+  argument-carrying effect endpoint is a material transport/authorization
+  decision, not an approved extrapolation from the read-only oracle. Do not
+  substitute config writes or `reconfigureEffect` if transport fails; that route
+  is unapproved and its script callability is unproven.
+- A group bounding rectangle can reuse the sole existing item only by temporarily
+  replacing the normal active-window border for the highlight interval. Preserving
+  that border while drawing a separate group outline requires an additional
+  `OutlinedBorderItem`, which exceeds the current one-item scene exception.
 
-- The COSMIC equivalent group is `Data::Group { orientation, sizes,
-  last_geometry, alive, pill_indicator }` (`src/shell/layout/tiling/mod.rs:149-157`)
-  in a `Tree<Data>`. Group membership is tree containment; `new_group`
-  (`:177-191`), `add_window` (`:219-244`), `remove_window` (`:255-282`), and
-  `map_to_tree` (`:548`) edit it. A focused container is a
-  `KeyboardFocusTarget::Group(WindowGroup { .. })`
-  (`src/shell/layout/tiling/mod.rs:1288`, `:1885-1886`).
-- COSMIC DOES render a focus/active indicator. `IndicatorShader::focus_element`
-  expands the element rectangle outward by `thickness` and draws a border
-  (`src/backend/render/mod.rs:209-234`). Its colour is `active_window_hint`,
-  which is `theme.window_hint` or the accent colour
-  (`src/theme.rs:15-21`), gated by the `active_hint` config field
-  (`src/shell/mod.rs:283`, `:3807-3811`).
-- In the tiling render path the indicator is drawn only for the focused node
-  or the swap target (`src/shell/layout/tiling/mod.rs:5459-5462`). Group nodes
-  use thickness 4 and a `Key::Group` identity, windows use `indicator_thickness`
-  (`:5514-5535`). A focused `Data::Group` additionally gets a group backdrop
-  (`BackdropShader::element`, `:5483-5506`). The floating path
-  (`src/shell/layout/floating/mod.rs:1615-1617`) and the move grab
-  (`src/shell/grabs/moving.rs:142`) draw the same indicator.
-- COSMIC also has a transient drag-time `Usage::PotentialGroupIndicator`
-  (`src/backend/render/mod.rs:143`), used at
-  `src/shell/layout/tiling/mod.rs:4869`.
-- Direct statement: COSMIC does NOT render a persistent outline around the
-  active window's group of sibling members as a group-membership indicator.
-  It renders a focus indicator for the focused window, or for the focused
-  group node itself, plus a drag-time potential-group indicator. No
-  active-window-group membership outline exists in the pinned source.
+## Material Decision Required
 
-### KWin Native Effect And Transport
+- Recommendation: keep the one-item exception and temporarily replace the
+  active-window border during the approximately one-second group highlight. It
+  avoids extra scene items, tabs/stacks, all-group outlines, drag overrides,
+  and configuration expansion. One `OutlinedBorderItem` temporary replacement
+  versus a simultaneous extra group item remains a material renderer choice.
+- User choice remains required before implementation: a narrow explicit
+  governance interpretation/exception for passive public effects modifier
+  observation through `EffectsHandler::mouseChanged`, authorization of the
+  narrow writable script-to-effect endpoint (proposed, live-unverified), and
+  selection of the renderer option above. No private APIs or interception are
+  required for the prospective Meta-held variant.
 
-- The existing effect tracks exactly one window and renders exactly one
-  outline: `OutlinedBorderItem m_borderItem` and
-  `QPointer<EffectWindow> m_trackedWindow`
-  (`kwin/native-effect/activewindowborder.h:26-28`). It connects
-  `windowActivated` and `windowDeleted`
-  (`kwin/native-effect/activewindowborder.cpp:30-39`), tracks the active
-  window's frame/minimized/fullscreen changes (`:69-83`), and in `updateBorder`
-  reads `effects->activeWindow()` and sets one inner rect and one visibility
-  (`:85-102`). It has no group input and no multiple-outline path.
-- The outline hides when there is no window, or the window is deleted,
-  minimized, or fullscreen (`kwin/native-effect/activeborderlogic.h:31-37`).
-- The effect reads its colour/width/radius from config on construction and on
-  `reconfigure` (`kwin/native-effect/activewindowborder.cpp:17-22`, `:45-67`).
-  The native KCM triggers that by calling
-  `org.kde.KWin /Effects org.kde.kwin.Effects.reconfigureEffect`
-  (`kwin/native-effect/activeborderconfig_module.cpp:71-106`).
-- Proven script-to-effect transport already exists in the drag oracle: the
-  effect registers a session D-Bus service `org.plasmaautotiler.DragOracle` and
-  object `/org/plasmaautotiler/DragOracle` exporting scriptable contents
-  (`kwin/native-effect/dragoracle.cpp:31-39`), exposing a `Q_SCRIPTABLE`
-  `LastVerdict()` slot (`:14-26`). The KWin script calls it with `callDBus`
-  (`kwin/src/drag-oracle-pull.ts:163`). The direction is script calls effect;
-  `docs/decisions.md:42-44` records that the effect never pushes into the
-  script.
-- Direction conclusion: group-highlight push is the SAME direction as the
-  proven drag-oracle pull (script to effect), not a reversal. It is a new
-  method with arguments, not a read. It is UNVERIFIED as implemented: the
-  active-border effect registers no D-Bus object today, and no source proves a
-  script can call `reconfigureEffect` or pass a highlight set.
-- The existing native-effect investigation recommends keeping a minimal C++
-  shim and moving portable membership/intent to Rust, with a bounded
-  set-or-clear push from the engine to the effect
-  (`docs/changes/native-effect-rust-and-group-highlighting.md:5-7`,
-  `:100-123`). The exact identity encoding and transport remain ungrounded
-  (`:129-132`).
-- The grouped-windows record confirms no group carrier, controls, bindings, or
-  shared border behavior is selected and that a live multi-window Custom Tile
-  stability proof is required first for compositor grouping
-  (`docs/changes/grouped-windows.md:10-12`). It also records that a focused
-  group-outline static implementation was accepted but its live flash did not
-  appear after reload, so that static harness is not live evidence
-  (`docs/changes/grouped-windows.md:13-15`). The active-group outline chosen
-  here is an active-window-group highlight on top of the existing single-outline
-  effect, not compositor tab/stack grouping.
+## Limits And Evidence
 
-### Trigger Model And Plan Kinds
-
-- The planner dispatches ops at `src/planner_protocol.rs:1381-1402`:
-  `send-to-workspace` (`:1382`), then `admit` (`:1389`), `remove` (`:1390`),
-  `move` (`:1391`), `focus` (`:1392`), `resize` (`:1393`),
-  `pointer-resize` (`:1394`), `reconcile` (`:1395`), and `toggle-float`
-  (`:1396`).
-- The KWin script triggers those on `windowAdded` (`kwin/src/plan-adapter-entry.ts:751`,
-  `:1195`), `windowRemoved` (`:845`, `:1197`), `windowActivated` (`:1198`),
-  geometry via `moveResizedChanged` (`:745`, `:1131`), scope via
-  `screensChanged`/`currentDesktopChanged` (`:1138-1139`), fullscreen
-  (`:1163-1168`), maximize (`:1170-1184`), desktops/sticky (`:1186-1191`), and
-  shortcut rows (`:200-297`).
-- Current toggles: `SessionCommand::ToggleFloat` is the stateful intentional
-  float transition (`src/session.rs:268-271`), reached through the
-  `toggle-float` op (`src/planner_protocol.rs:1396`). Observed exception flags
-  are `floating`, `fullscreen`, `maximized`, `sticky`
-  (`src/session.rs:213-221`; flag predicate `src/session.rs:200`). The
-  controller registers float `Meta+G`, sticky `Meta+Shift+G`, and maximize
-  `Meta+M` with ops `float`/`sticky`/`maximize`
-  (`kwin/src/plan-adapter-entry.ts:278-297`); the durable behavior is recorded
-  at `docs/decisions.md:232-248` and `:287-294`.
-- A highlight set has a well-defined change trigger: the same
-  `windowActivated`/`windowAdded`/`windowRemoved`/geometry/scope signals the
-  adapter already subscribes to, plus the fullscreen and sticky subscriptions.
-
-## Design Decision: Persistent Active-Group Highlight
-
-- Selected: a persistent, configurable highlight of the active window's
-  immediate group. The effect shows one group outline while a group is active,
-  hides it on fullscreen/minimized/deleted using the existing predicate
-  (`kwin/native-effect/activeborderlogic.h:31-37`), and updates it on
-  focus/tree/scope change.
-- Justification:
-  - `VISION.md:13-16` makes group highlights first-class, not a drag-only
-    affordance.
-  - COSMIC's active hint is a persistent focus indicator gated by config
-    (`src/shell/mod.rs:283`, `:3807-3811`; `src/theme.rs:15-21`), not a
-    drag-only element. The drag-only `PotentialGroupIndicator`
-    (`src/backend/render/mod.rs:143`) is a separate, transient affordance.
-  - The active group has a stable, observable lifetime: it changes only on
-    focus, tree, or domain change, all already observed by the adapter
-    (`kwin/src/plan-adapter-entry.ts:1138-1198`).
-- This is a proposed product choice, not an applied decision. Applying it
-  requires the user to accept the proposed `docs/decisions.md` replacement
-  below.
-
-## Transport
-
-- Selected direction: script to effect, a bounded set-or-clear method on a
-  session D-Bus object the border effect registers, mirroring the drag oracle
-  (`kwin/native-effect/dragoracle.cpp:31-39`, `kwin/src/drag-oracle-pull.ts:163`).
-  The script resolves the active window's group engine-side and pushes opaque
-  native window identities plus the group outline rectangle.
-- Not selected: assuming the drag oracle reverses. Its proven direction is
-  already script to effect (`docs/decisions.md:42-44`); the new work is an
-  argument-carrying push, which is unproven.
-- Not selected as the primary route: script writes config and triggers
-  `reconfigureEffect`. The KCM uses that path
-  (`kwin/native-effect/activeborderconfig_module.cpp:71-106`) and the effect
-  rereads config on `reconfigure` (`kwin/native-effect/activewindowborder.cpp:45-50`),
-  but no source proves a KWin script can call it, and it couples highlight
-  data to configuration state. UNVERIFIED as a script route.
-- The engine stays the membership/intent owner; the effect owns only native
-  identity tracking and rendering, consistent with
-  `docs/changes/native-effect-rust-and-group-highlighting.md:113-123` and
-  `docs/decisions.md:32-36`.
-
-## Alternatives And Costs
-
-- Script-only: rejected. There is no KWin script overlay/border rendering path
-  in this repository; the only renderer is the C++ effect
-  (`docs/changes/native-effect-rust-and-group-highlighting.md:100-106`), and
-  the project limits C++ to public-API adapters/effects with one
-  `OutlinedBorderItem` scene exception (`docs/decisions.md:26-30`). A script
-  cannot draw the border.
-- Native effect, existing single outline extended: selected. Costs are the
-  documented ones: per-frame paint pass and `isActive()` virtual call
-  (`docs/changes/rust-first-edge-drag-route.md:35-41`), KWin ABI recompile
-  coupling (`docs/decisions.md:67-68`), and a logout/login after every effect
-  rebuild (`README.md:470`; `docs/changes/dev-command-unification.md:27-28`;
-  `docs/dev-loop.md:37`).
-- KWin fork: hard rejected (`docs/decisions.md:430-433`, `:575`).
-
-## Constraints
-
-- Fullscreen must not be overlaid: the effect hides on fullscreen
-  (`kwin/native-effect/activeborderlogic.h:31-37`), and fullscreen/gaming must
-  not be impacted (`VISION.md:41-48`).
-- Zero-impact target is aspirational; any loaded effect has nonzero per-frame
-  cost (`VISION.md:46-48`; `docs/changes/rust-first-edge-drag-route.md:35-41`).
-  The effect is `isActive()`-gated and must not add a polling loop; the
-  reliability record shows no adapter polling loop today
-  (`docs/changes/reliability-condition-investigation.md:146-164`).
-- User-owned live verification and every session boundary require user action
-  (`docs/decisions.md:151-159`; `docs/live-kwin-testing.md:12-14`).
-- Native effect iterations require logout/login; this record performs no live
-  action.
-
-## Proposed Decisions.md Replacement (Not Applied)
-
-- The backlog cites `docs/decisions.md:358-360` for the group decision
-  (`docs/backlog.md:71-76`). That reference is stale. The group decision is
-  currently `docs/decisions.md:443-445` (confirmed by `git blame`); at
-  `docs/backlog.md:71-76` authoring time it was at 358-360 in
-  `1c22308:docs/decisions.md`. No file was edited.
-- Current block (`docs/decisions.md:443-445`):
-  `Grouped/tabbed windows remain deferred pending compositor-owned KWin support`
-  `and a live multi-window Custom Tile stability proof. No group carrier,`
-  `controls, bindings, or shared active-border behavior is selected.`
-- Proposed replacement (for user approval only):
-
-```text
-- Grouped/tabbed windows remain deferred pending compositor-owned KWin support
-  and a live multi-window Custom Tile stability proof. No tab or stack carrier,
-  controls, or bindings are selected. Tabs and stacks remain unselected.
-- Active-group highlighting is selected as a persistent, configurable native
-  effect overlay for the active window's immediate split-tree group. The Rust
-  engine owns group membership and highlight intent; the KWin script pushes a
-  bounded set-or-clear of opaque native window identities and the group outline
-  to a session D-Bus method the effect registers, the same direction as the
-  proven drag-oracle pull. The overlay hides for fullscreen, minimized, or
-  deleted members and never reshapes window textures.
-```
-
-## Ordered Slicing
-
-1. Smallest useful first: persistent single-outline highlight of the active
-   window's immediate group. The script derives the group from the retained
-   session and pushes a set/clear to a new effect D-Bus method; the effect
-   renders one outline with the existing `OutlinedBorderItem` and hides it
-   under the existing fullscreen/minimized/deleted predicate. This validates
-   the riskiest transport (script-to-effect push with arguments) and the
-   rendering trigger, and is human-observable. Static tests only until a user
-   live gate.
-2. Transient drag override: during an active drag, highlight the target group
-   using the existing drag signals, matching COSMIC's drag-time potential-group
-   indicator (`src/backend/render/mod.rs:143`).
-3. Configurability: colour/width and enable/disable through the existing KCM and
-   `reconfigureEffect` path (`kwin/native-effect/activeborderconfig_module.cpp:71-106`).
-
-## Approvals And Resolved
-
-- User-approved: this docs-only design record, and committing and pushing only
-  this new `docs/changes` file to `origin/main`.
-- Resolved by this record: the Rust active-group definition; the COSMIC
-  equivalent and its absent active-group outline; the persistent lifetime
-  choice; the script-to-effect push direction; rejection of a KWin fork and of
-  a script-only renderer; the stale `docs/decisions.md:358-360` reference.
-- Pending user decision: accept the proposed `docs/decisions.md` replacement;
-  select the exact D-Bus payload/identity encoding; run the user-owned live
-  gates.
-
-## Biggest Risk
-
-- The script-to-effect push is unproven for arguments. The only proven
-  script-to-effect use is a parameterless pull (`kwin/src/drag-oracle-pull.ts:163`,
-  `kwin/native-effect/dragoracle.cpp:20-25`). If KWin scripting cannot reliably
-  call an argument-carrying method on an effect-owned object, the selected
-  transport fails and slice 1 must fall back to the config+`reconfigureEffect`
-  path, whose script-callability is UNVERIFIED. This risk is front-loaded by
-  making slice 1 a transport-validation slice.
-
-## Overruled Hypotheses
-
-- Transient-only highlight first: overruled. It would not satisfy the
-  first-class group highlight (`VISION.md:13-16`) and would duplicate COSMIC's
-  separate drag-time indicator (`src/backend/render/mod.rs:143`).
-- Assume the drag oracle must be reversed: overruled. Its direction is already
-  script to effect (`docs/decisions.md:42-44`).
-- Script-only rendering: overruled. No script rendering path exists; the effect
-  is the only renderer (`docs/changes/native-effect-rust-and-group-highlighting.md:100-106`).
-- Highlight the whole tree root or all groups: overruled. The requirement is the
-  active window's group; COSMIC outlines only the focused node/group
-  (`src/shell/layout/tiling/mod.rs:5459-5462`).
-
-## Limits
-
-- Static only. No live KWin/Plasma action, no D-Bus call or setter, no script
-  lifecycle, no Qt/QtDBus probe or live bus, no build.
-- The COSMIC checkout at `/tmp/opencode/cosmic-comp` has no Git metadata (only
-  `.git/info/exclude`), so the pinned commit
-  `81cd5fdbaa41c3973369ae85bccf829137836e20` is UNVERIFIED there. This matches
-  the existing record at `docs/decisions.md:249-256`. All COSMIC citations are
-  content-based against that checkout.
-- Exact native identity encoding, D-Bus payload, and whether a KWin script can
-  call `reconfigureEffect` are UNVERIFIED.
-- No live rendering, fullscreen, or performance result is claimed.
+- COSMIC content supports tree-contained groups and focused/group indicators,
+  but not this active-window-group membership outline
+  (`/tmp/opencode/cosmic-comp/src/shell/layout/tiling/mod.rs:5459-5535`). Its
+  supplied checkout revision remains unverified.
+- Grouped/tabbed compositor behavior, tabs, stacks, drag override, all-groups
+  outline, and configurability are out of scope. The previous static
+  group-outline flash is not live evidence
+  ([grouped-windows](grouped-windows.md#scope-and-dependencies)).
+- No rendering, performance, fullscreen, payload, D-Bus authorization, or
+  transport result is claimed without a separately authorized live gate.
 
 ## Next Action
 
-None. Applying the proposed `docs/decisions.md` replacement, implementing slice
-1, and any live gate require separate user authorization.
+User decides the narrow governance interpretation/exception for passive public
+effects modifier observation, the writable endpoint, and the renderer option;
+implementation remains unauthorized.
