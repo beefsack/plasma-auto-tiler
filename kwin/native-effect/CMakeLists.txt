@@ -214,6 +214,8 @@ if(BUILD_TESTING)
         COMMAND plasma-auto-tiler-active-border-kcm-config-test border)
     add_test(NAME native-effect-kcm-config-reload
         COMMAND plasma-auto-tiler-active-border-kcm-config-test config)
+    add_test(NAME native-effect-kcm-config-gaps
+        COMMAND plasma-auto-tiler-active-border-kcm-config-test gaps)
     set_tests_properties(
         native-effect-kcm-config-malformed
         native-effect-kcm-config-valid
@@ -222,6 +224,7 @@ if(BUILD_TESTING)
         native-effect-kcm-hotapply
         native-effect-kcm-border
         native-effect-kcm-config-reload
+        native-effect-kcm-config-gaps
         PROPERTIES ENVIRONMENT "QT_QPA_PLATFORM=offscreen"
     )
 

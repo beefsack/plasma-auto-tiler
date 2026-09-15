@@ -37,3 +37,13 @@
   mismatches rather than mutate topology.
 - Offline verification passed: `npm run typecheck`, `npm run build`, `npm test`
   (682 passing), and `cargo test --offline`.
+- Native offline verification passed in a fresh `BUILD_TESTING=ON` CMake build:
+  the QWidget KCM plugin compiled and its generated UI included both gap
+  spinboxes. `native-effect-kcm-config-gaps` passed under the existing poisoned
+  session-bus, temporary-config, offscreen harness. It verifies malformed and
+  out-of-range values normalize to 8, 0 and 64 round-trip through KConfig,
+  missing values remain unset until changed, and defaults persist 8 for both
+  settings.
+- The KCM states that only border changes apply immediately; other script
+  settings require a script reload or session restart. Gap changes have no
+  hot-apply claim.

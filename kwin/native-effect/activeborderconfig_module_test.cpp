@@ -14,6 +14,7 @@
 #include <QDBusMessage>
 #include <QDoubleSpinBox>
 #include <QMimeData>
+#include <QSpinBox>
 #include <QTemporaryDir>
 
 #include <cstdio>
@@ -42,6 +43,16 @@ KConfigGroup scriptGroup()
 QCheckBox *scriptCheckBox(KWin::ActiveBorderConfigModule &module)
 {
     return module.widget()->findChild<QCheckBox *>(QStringLiteral("dropOutlinePreviewCheckBox"));
+}
+
+QSpinBox *innerGapSpinBox(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QSpinBox *>(QStringLiteral("innerGapSpinBox"));
+}
+
+QSpinBox *outerGapSpinBox(KWin::ActiveBorderConfigModule &module)
+{
+    return module.widget()->findChild<QSpinBox *>(QStringLiteral("outerGapSpinBox"));
 }
 
 KConfigGroup borderGroup()
@@ -518,6 +529,142 @@ void missingValueKeepsTheDefaultWithoutCreatingAKey()
     CHECK(!group.readEntry(QStringLiteral("dropOutlinePreview"), false));
 }
 
+void gapContractNormalizesBoundsAndPersists()
+{
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("innerGap"), QStringLiteral("not-a-number"));
+        group.writeEntry(QStringLiteral("outerGap"), QStringLiteral("-5"));
+        group.sync();
+    }
+
+    {
+        SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+        QSpinBox *inner = innerGapSpinBox(module);
+        QSpinBox *outer = outerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        CHECK(outer != nullptr);
+        module.load();
+        if (inner) {
+            CHECK(inner->value() == 8);
+        }
+        if (outer) {
+            CHECK(outer->value() == 8);
+        }
+        module.save();
+        CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == 8);
+        CHECK(scriptGroup().readEntry(QStringLiteral("outerGap"), -1) == 8);
+    }
+
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("innerGap"), QStringLiteral("0"));
+        group.writeEntry(QStringLiteral("outerGap"), QStringLiteral("64"));
+        group.sync();
+    }
+
+    {
+        SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+        QSpinBox *inner = innerGapSpinBox(module);
+        QSpinBox *outer = outerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        CHECK(outer != nullptr);
+        module.load();
+        if (inner) {
+            CHECK(inner->value() == 0);
+        }
+        if (outer) {
+            CHECK(outer->value() == 64);
+        }
+        if (!inner || !outer) {
+            return;
+        }
+        inner->setValue(64);
+        outer->setValue(0);
+        module.save();
+        CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == 64);
+        CHECK(scriptGroup().readEntry(QStringLiteral("outerGap"), -1) == 0);
+    }
+
+    {
+        KWin::ActiveBorderConfigModule reloaded(nullptr, KPluginMetaData());
+        reloaded.load();
+        QSpinBox *inner = innerGapSpinBox(reloaded);
+        QSpinBox *outer = outerGapSpinBox(reloaded);
+        CHECK(inner != nullptr);
+        CHECK(outer != nullptr);
+        if (inner) {
+            CHECK(inner->value() == 64);
+        }
+        if (outer) {
+            CHECK(outer->value() == 0);
+        }
+    }
+
+    {
+        KConfigGroup group = scriptGroup();
+        group.writeEntry(QStringLiteral("innerGap"), QStringLiteral("65"));
+        group.writeEntry(QStringLiteral("outerGap"), QStringLiteral("100"));
+        group.sync();
+    }
+
+    {
+        KWin::ActiveBorderConfigModule module(nullptr, KPluginMetaData());
+        QSpinBox *inner = innerGapSpinBox(module);
+        QSpinBox *outer = outerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        CHECK(outer != nullptr);
+        module.load();
+        if (inner) {
+            CHECK(inner->value() == 8);
+        }
+        if (outer) {
+            CHECK(outer->value() == 8);
+        }
+    }
+
+    {
+        KConfigGroup group = scriptGroup();
+        group.deleteEntry(QStringLiteral("innerGap"));
+        group.deleteEntry(QStringLiteral("outerGap"));
+        group.sync();
+    }
+
+    {
+        SucceedingReconfigureModule module(nullptr, KPluginMetaData());
+        QSpinBox *inner = innerGapSpinBox(module);
+        QSpinBox *outer = outerGapSpinBox(module);
+        CHECK(inner != nullptr);
+        CHECK(outer != nullptr);
+        module.load();
+        if (inner) {
+            CHECK(inner->value() == 8);
+        }
+        if (outer) {
+            CHECK(outer->value() == 8);
+        }
+        if (!inner || !outer) {
+            return;
+        }
+        module.save();
+        CHECK(!scriptGroup().hasKey(QStringLiteral("innerGap")));
+        CHECK(!scriptGroup().hasKey(QStringLiteral("outerGap")));
+
+        inner->setValue(12);
+        outer->setValue(20);
+        module.save();
+        CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == 12);
+        CHECK(scriptGroup().readEntry(QStringLiteral("outerGap"), -1) == 20);
+
+        module.defaults();
+        CHECK(inner->value() == 8);
+        CHECK(outer->value() == 8);
+        module.save();
+        CHECK(scriptGroup().readEntry(QStringLiteral("innerGap"), -1) == 8);
+        CHECK(scriptGroup().readEntry(QStringLiteral("outerGap"), -1) == 8);
+    }
+}
+
 } // namespace
 
 int main(int argc, char **argv)
@@ -536,7 +683,7 @@ int main(int argc, char **argv)
     app.clipboard()->setMimeData(new QMimeData);
 
     if (argc != 2) {
-        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|border|config\n", argv[0]);
+        std::fprintf(stderr, "usage: %s malformed|valid|missing|dbus|hotapply|border|config|gaps\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -569,6 +716,8 @@ int main(int argc, char **argv)
         useThemeColorOnlyHotApplyRetry();
     } else if (scenario == QStringLiteral("config")) {
         effectConfigReloadReflectsStoredValues();
+    } else if (scenario == QStringLiteral("gaps")) {
+        gapContractNormalizesBoundsAndPersists();
     } else {
         std::fprintf(stderr, "unknown scenario: %s\n", argv[1]);
         return EXIT_FAILURE;
