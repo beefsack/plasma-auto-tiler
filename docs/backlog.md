@@ -6,9 +6,9 @@ Only meaningful pending or active work is listed.
   committed and passed desktop readback, but the user still saw blank workspace
   3 with the active border while the mover was on 2. Visible follow remains
   broken; current-map confirmation is insufficient evidence. Source/log review
-  has not established the cause. Add bounded correlated mapping/output/focus
-  diagnostics before another user-owned reproduction. Preserve committed sends
-  and later usability; border causation remains unconfirmed.
+  has not established the cause. Bounded correlated mapping/output/focus
+  diagnostics are available for the next user-owned reproduction. Preserve
+  committed sends and later usability; border causation remains unconfirmed.
   [record](changes/archive/workspace-send-visible-follow-boundary.md)
 - P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
   well-formed request rejection paths are reusable. Sent request/lost callback,
