@@ -2,14 +2,16 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send visible-follow failure | The latest first 3->2 send
-  committed and passed desktop readback, but the user still saw blank workspace
-  3 with the active border while the mover was on 2. Visible follow remains
-  broken; current-map confirmation is insufficient evidence. Source/log review
-  has not established the cause. Bounded correlated mapping/output/focus
-  diagnostics are available for the next user-owned reproduction. Preserve
-  committed sends and later usability; border causation remains unconfirmed.
-  [record](changes/archive/workspace-send-visible-follow-boundary.md)
+- P0 | Workspace-send visible-follow failure | WLS1RE's first 3->2 send moved
+  the window but timed out before acknowledgement/follow and disabled later
+  sends after a 15-second wait. The mover echo arrived; exact timeout settlement
+  did not complete. New timeout-settle diagnostics identify the failed predicate
+  and remaining geometry fences on the next user-owned reproduction. Earlier
+  committed/readback-confirmed visible failures remain unresolved too. Restore
+  reliable follow and availability without falsely committing uncertain state;
+  border causation remains unconfirmed.
+  [timeout record](changes/archive/workspace-send-timeout-observation.md)
+  [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
 - P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
   well-formed request rejection paths are reusable. Sent request/lost callback,
   malformed reply, request timeout, owner loss, and other transport ambiguity
