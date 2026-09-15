@@ -828,6 +828,140 @@ describe("plan/send P0 coordination through production wiring", () => {
         handle?.stop();
     });
 
+    it("follow confirms by stable desktop id when the getter returns a fresh wrapper", () => {
+        const world = makeWorld();
+        const ws1 = world.desktops[0] as FakeDesktop;
+        const ws2 = world.desktops[1] as FakeDesktop;
+        // KWin scripting may return a fresh wrapper object per
+        // currentDesktopForScreen read. Model a successful native switch that
+        // reports the same desktop id through a distinct object, which fails
+        // a JS wrapper-identity (`===`) check.
+        world.workspace["setCurrentDesktopForScreen"] = (desktop: unknown, output: unknown): void => {
+            const source = desktop as FakeDesktop;
+            const fresh: FakeDesktop = { id: source.id, x11DesktopNumber: source.x11DesktopNumber as number };
+            world.currentByOutput.set(output as never, fresh as never);
+            world.workspace["currentDesktop"] = fresh;
+        };
+        const winSignals = new Map<string, { desktops: FakeSignal; geometry: FakeSignal }>();
+        const mkWin = (id: string, desktop: FakeDesktop, x: number): FakeWindow => {
+            const d = fakeSignal();
+            const g = fakeSignal();
+            winSignals.set(id, { desktops: d, geometry: g });
+            const win = {
+                normalWindow: true,
+                managed: true,
+                minimized: false,
+                fullScreen: false,
+                maximizeMode: 0,
+                onAllDesktops: false,
+                internalId: id,
+                resourceClass: "test-app",
+                output: world.outputs[0] as FakeOutput,
+                desktops: [desktop],
+                frameGeometry: { x, y: 0, width: 100, height: 100 },
+                desktopsChanged: d.signal,
+                frameGeometryChanged: g.signal,
+                moveResizedChanged: fakeSignal().signal,
+                fullScreenChanged: fakeSignal().signal,
+                maximizedChanged: fakeSignal().signal,
+            } as unknown as FakeWindow;
+            world.wins.push(win);
+            return win;
+        };
+        const winA = mkWin("win-a", ws1, 0);
+        const winB = mkWin("win-b", ws1, 100);
+        mkWin("win-t", ws2, 0);
+        world.workspace["activeWindow"] = winA;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+        runDebounce(mocks);
+        const initialPlan = planCalls(mocks);
+        assert.equal(initialPlan.length, 1);
+        const initialCorrelation = (initialPlan[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
+        mocks.callbacks[initialPlan[0]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: initialCorrelation,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+            }),
+        );
+
+        handle?.requestWorkspaceMove(2);
+        const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
+        assert.ok(ownerIndex >= 0);
+        mocks.callbacks[ownerIndex]?.(":1.7");
+        const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
+        assert.equal(requests.length, 1);
+        const correlation = (requests[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
+        mocks.callbacks[requests[0]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: correlation,
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 0,
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                    { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
+                preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+                operation: {
+                    op: "move-tiled",
+                    window: "win-a",
+                    leaf: "leaf-win-a",
+                    source_output: "out-1",
+                    source_workspace: "ws-1",
+                    target_output: "out-1",
+                    target_workspace: "ws-2",
+                },
+            }),
+        );
+        for (const [, sigs] of winSignals) {
+            fire(sigs.desktops);
+        }
+        for (const [, sigs] of winSignals) {
+            fire(sigs.geometry);
+        }
+        const ackCalls = sendCalls(mocks).filter((c) => {
+            const cmd = c.payload["command"] as Record<string, unknown>;
+            return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
+        });
+        assert.equal(ackCalls.length, 1);
+        mocks.callbacks[ackCalls[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
+        );
+        const verifyCalls = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
+        assert.equal(verifyCalls.length, 1);
+        // Distinguish follow focus: move focus away before the verified commit.
+        world.workspace["activeWindow"] = winB;
+        mocks.callbacks[verifyCalls[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        );
+
+        const mover = world.wins.find((w) => w.internalId === "win-a") as FakeWindow;
+        const current = world.currentByOutput.get(world.outputs[0] as FakeOutput) as FakeDesktop;
+        assert.equal(current?.id, "ws-2");
+        assert.notEqual(current as unknown, ws2, "getter models a fresh wrapper object");
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=state-confirmed")),
+            `fresh-wrapper follow must state-confirm:\n${mocks.logs.join("\n")}`,
+        );
+        assert.ok(
+            !mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("event=follow") && l.includes("outcome=completed")),
+            `fresh-wrapper follow must never report completed:\n${mocks.logs.join("\n")}`,
+        );
+        assert.equal(world.workspace["activeWindow"], mover, "follow must focus the mover");
+
+        handle?.stop();
+    });
+
     it("send request while a real Plan flight is active busy-refuses without D-Bus or native send", () => {
         const world = makeWorld();
         const ws1 = world.desktops[0] as FakeDesktop;
