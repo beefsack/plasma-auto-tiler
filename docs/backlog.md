@@ -91,10 +91,12 @@ Only meaningful pending or active work is listed.
   near-layout fitting, ambiguity/fallback behavior, and exception eligibility
   remain unselected; implementation awaits the user's product decision.
   [proposal](changes/placement-aware-startup-adoption.md)
-- P2 | Pixel/share parity decision | Retain `Vec<u64>` shares unless a reproduced
-  N-ary/deep visual discrepancy or source-exact fixture justifies the cross-
-  contract pixel-authority migration. Source N-ary pixel rounding remains an
-  open portability gap.
+- P2 | Pixel/share parity decision | Exact-source ternary append allocates
+  [3,3,2] from an 8px binary group; the current equal-share projector gives
+  [2,2,4]. Both conserve width and return to [4,4] after removal. No visual
+  consequence or resize-cycle drift is established. Retain `Vec<u64>` shares;
+  source-exact mutation-time pixel authority remains an unselected migration.
+  [evidence](changes/archive/cosmic-workspace-and-geometry-investigation.md)
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin
   PID/start evidence.
@@ -106,9 +108,6 @@ Only meaningful pending or active work is listed.
   portable active-border calculations to Rust behind a narrow C ABI while C++
   retains KWin objects, factory, moc, signals, and rendering. The drag oracle
   proves this Rust-in-effect boundary. [investigation](changes/native-effect-rust-and-group-highlighting.md)
-- P2 | Rust-first drag-oracle bridge | Do not select a production effect-to-script
-  transport until a synchronous bridge is proven and the C++/moc shim is
-  authorized. [change](changes/rust-first-edge-drag-route.md)
 - P2 | Nested disposable actuation limits | The nested POC3 route is
   offline-proven/live-unproven: client lifetime, exact-three KWin scope, and
   same-unit containment are unproven. Do not add a project-owned client or
