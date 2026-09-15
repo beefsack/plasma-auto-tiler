@@ -96,6 +96,16 @@
   intermediate echo was rejected: it cannot affect the captured entry 1,
   which emitted no consumable echo and remained mismatched at timeout. No code
   or behavior changed.
+- The later exact authorized WwQ9G6 capture records `plan-1-w0` through
+  `plan-1-w18` as committed sends, each followed by `follow-settled`; its last
+  send, `plan-1-w19`, is planned at lines 720-721, has only intervening
+  `busy-refused` entries at lines 728-735, then reports pre-commit
+  `adapter-lost`/diverged at lines 738-739. It emits no `timeout-settle`
+  diagnostic. This is an ack-stage loss category, not the pJOooO
+  timeout-settlement `geometry-rect-mismatch`; it does not identify a native
+  cause, establish a reliability improvement, or attribute the user's visible
+  successes to any protocol change. The capture reports the default configured
+  gaps, `gap=8` and `outer_gap=8`, throughout.
 
 ## Product Decision
 
