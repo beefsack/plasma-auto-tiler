@@ -11,10 +11,10 @@
 - A fit produces the selected project policy, not a claim about the prior
   topology or COSMIC parity. Rust owns fitting and selection; KWin TS continues
   to send only the primitive normalized snapshot.
-- The fallback after genuine inference failure remains pending. Current
-  deterministic seed/reflow keeps the existing managed lifecycle but may reflow;
-  no-write/park preserves geometry but creates an unmanaged startup state and
-  requires separately selected lifecycle policy.
+- At INITIAL adoption, attempt one straightforward deterministic near-layout
+  fit. If it cannot produce a valid supported layout, use the existing normal
+  deterministic seed/reflow. This keeps the existing managed lifecycle; it
+  selects no park/unmanaged fallback or activation lifecycle.
 
 ## Current Behavior And Boundary
 
@@ -73,9 +73,10 @@
   flags but omits fullscreen/maximized/sticky from the Rust request, while Rust
   reconstructs them as false (`kwin/src/plan-adapter-entry.ts:1048-1058`,
   `kwin/src/plan-adapter.ts:1973-1979`,
-  `src/planner_protocol.rs:675-689`). An implementation must first reconcile
-  that wire/eligibility contract or exclude such windows before inference; this
-  proposal selects neither behavior.
+  `src/planner_protocol.rs:675-689`). Implementation must preserve the
+  approved exception behavior at the current eligibility or pure input
+  boundary. Whether it narrows the fitting input or carries the required
+  primitive state is ordinary integration work, not a new product behavior.
 
 ## Feasibility And Evidence
 
@@ -97,13 +98,15 @@
   (`docs/decisions.md:416-445`; `src/cosmic_v1.rs:50-198`). A fitted adoption
   policy is therefore a documented project policy, not claimed COSMIC parity.
 
-## Remaining Product Choices
+## Implementation Work Still Needed
 
-- Select the no-candidate fallback: current seed/reflow, or preserve geometry
-  by parking the domain until a separately selected activation path.
-- Select exception wire/eligibility behavior only if it materially differs:
-  reconcile the existing flags through the Rust request, or exclude those
-  windows before fitting.
+- Implement the selected INITIAL near-layout fit and use the existing normal
+  deterministic seed/reflow whenever it cannot produce a valid supported
+  layout.
+- Preserve the existing floating, sticky, fullscreen, maximize, and configured
+  gap behavior while connecting the fit to the current eligibility/pure input
+  boundary. This does not authorize transaction recovery, retained-tree
+  reconstruction, workspace work, or a new activation lifecycle.
 
 ## Backlog Maintenance Finding
 

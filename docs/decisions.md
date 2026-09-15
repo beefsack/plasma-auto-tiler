@@ -140,8 +140,13 @@ Historical implementation detail is recoverable in Git history.
   recognition nor historical-topology reconstruction, global optimization,
   exhaustive search, broad edge-case handling, retained-topology rewrite,
   uncertain-send recovery, general existing-window adoption, or default
-  promotion. The genuine-inference-failure fallback and any materially distinct
-  exception eligibility behavior remain unselected.
+  promotion. At INITIAL adoption, it attempts one straightforward deterministic
+  near-layout fit; if no valid supported layout results, it uses the existing
+  normal deterministic seed/reflow. It selects no park/unmanaged fallback or
+  activation lifecycle. Existing floating, sticky, fullscreen, maximize, and
+  configured-gap behavior remains authoritative; preserving it at the current
+  eligibility or pure input boundary is implementation work, not an unselected
+  product behavior.
 
 ## Live KWin/Plasma Boundary
 
