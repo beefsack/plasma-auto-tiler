@@ -86,10 +86,10 @@ Only meaningful pending or active work is listed.
   immediate reconcile. Multi-output, more-than-three-window, non-horizontal,
   boundary, atomicity, and parity claims remain unproven.
   [decision](decisions.md#production-interactive-edge-drag)
-- P2 | Placement-aware startup adoption decision | Source-reviewed design is
-  available for preserving existing tilings at startup. Exact recognition versus
-  near-layout fitting, ambiguity/fallback behavior, and exception eligibility
-  remain unselected; implementation awaits the user's product decision.
+- P2 | Placement-aware startup adoption decision | Simple best-effort near-layout
+  fitting is selected to reduce startup movement without exhaustive search or
+  special-case complexity. Fallback on genuine inference failure remains
+  unselected; preserve existing exception behavior unless explicitly changed.
   [proposal](changes/placement-aware-startup-adoption.md)
 - P2 | Pixel/share parity decision | Exact-source ternary append allocates
   [3,3,2] from an 8px binary group; the current equal-share projector gives
