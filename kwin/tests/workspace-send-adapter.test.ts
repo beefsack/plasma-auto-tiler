@@ -677,7 +677,8 @@ describe("cosmic send-to-workspace adapter lifecycle", () => {
         // ref plus exactly one focus of the moved window ref.
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
     });
@@ -828,7 +829,8 @@ describe("cosmic send-to-workspace refusal routes", () => {
         runLifecycle(mocks, adapter);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 1);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 1);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
         const afterFirst = {
             dbus: mocks.dbusCalls.length,
             timers: mocks.timers.length,
@@ -851,7 +853,8 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(mocks.switches.length, afterFirst.switches);
         assert.equal(mocks.focuses.length, afterFirst.focuses);
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 1);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 1);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
         for (const entry of mocks.world.windows) {
             if (entry.id === "win-a") {
                 entry.workspace = "ws-1";
@@ -878,7 +881,8 @@ describe("cosmic send-to-workspace refusal routes", () => {
         assert.equal(adapter.isInFlight, false);
         assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
     });
 
     it("keeps post-plan divergence terminal and disabled", () => {
@@ -1504,7 +1508,8 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         assert.deepEqual(mocks.focuses, [refs.a, refs.a]);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
     });
 
     it("causes no desktop switch or focus when the ack reply is rejected", () => {
@@ -1531,6 +1536,7 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         assert.deepEqual(mocks.switches, []);
         assert.deepEqual(mocks.focuses, []);
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
     });
 
     it("causes no desktop switch or focus when the verify reply diverges", () => {
@@ -1559,6 +1565,7 @@ describe("cosmic send-to-workspace review follow-ups", () => {
         assert.deepEqual(mocks.switches, []);
         assert.deepEqual(mocks.focuses, []);
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
     });
 });
 
@@ -1657,7 +1664,8 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
         assert.equal(seam.detachCount, 1);
@@ -1691,7 +1699,8 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         }
         assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop, refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a, refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 3);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 3);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
         assert.equal(seam.detachCount, 3);
         assert.equal(seam.geoDetachCount, 9);
     });
@@ -1781,7 +1790,8 @@ describe("cosmic send-to-workspace mover echo fence", () => {
             KNOWN_PRECONDITIONS,
         );
         harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
+        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
+        assert.ok(!harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
         harness.handle.stop();
     });
 
@@ -2044,7 +2054,8 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
         harness.callbacks[2]?.(ackReply(correlation));
         harness.callbacks[3]?.(committedReply(correlation));
-        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
+        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
+        assert.ok(!harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
         harness.handle.stop();
     });
 
@@ -2078,7 +2089,8 @@ describe("cosmic send-to-workspace frameGeometry fence P0", () => {
         assert.equal(new Set(correlations).size, 4, "each flight binds a distinct correlation");
         assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop, refs.desktop, refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a, refs.a, refs.a, refs.a]);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 4);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 4);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
     });
@@ -2253,7 +2265,8 @@ describe("cosmic send-to-workspace w3 synchronous fence", () => {
         assert.deepEqual(mocks.focuses, [refs.a]);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=acknowledged")), mocks.logs.join("\n"));
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
         assert.equal(seam.detachCount, 1, "mover detached");
         assert.equal(seam.geoDetachCount, 2, "both geometry fences detached");
@@ -2336,7 +2349,8 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.deepEqual(mocks.switches, [refs.desktop]);
         assert.deepEqual(mocks.focuses, [refs.a]);
         assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
-        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
         assert.equal(mocks.dbusCalls.some((c) => c.payload.includes("adapter-lost")), false);
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
@@ -2354,7 +2368,8 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         mocks.callbacks[base + 3]?.(committedReply(correlation2));
         assert.equal(adapter.isEnabled, true);
         assert.equal(adapter.isInFlight, false);
-        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length, 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
     });
 
     it("mismatched post-observation on timeout never commits", () => {
@@ -2384,6 +2399,7 @@ describe("cosmic send-to-workspace pre-ack timeout settlement", () => {
         assert.ok(mocks.logs.some((l) => l.includes("outcome=timeout")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
         assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), mocks.logs.join("\n"));
+        assert.ok(!mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
         const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
         assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.deepEqual(mocks.switches, []);

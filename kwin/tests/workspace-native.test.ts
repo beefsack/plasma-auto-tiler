@@ -1315,7 +1315,8 @@ describe("four-desktop terminal-run send with bounded fence", () => {
             JSON.stringify({ v: 1, correlation_id: correlation2, outcome: "committed", kind: "send-to-workspace", base_revision: 2 }),
         );
         assert.equal(world.currentByOutput.get(world.outputs[0] as never), ws3);
-        assert.ok(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length >= 2);
+        assert.ok(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")).length >= 2);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 0);
         handle?.stop();
     });
 });

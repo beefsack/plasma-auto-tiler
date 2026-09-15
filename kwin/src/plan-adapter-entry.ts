@@ -1806,15 +1806,8 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 // the next topology signal. The setter is void in KWin
                 // scripting (WorkspaceWrapper::setCurrentDesktopForScreen) and
                 // never reports success, so confirm with one immediate direct
-                // current-desktop read by stable desktop id (KWin may return a
-                // fresh wrapper object per read); a mismatch reports false
-                // with no retry so follow stays truthful while commit is
-                // preserved.
-                const targetIdRaw = readProp(desktopRef, "id");
-                if (!isOpaqueId(targetIdRaw)) {
-                    return false;
-                }
-                const targetId = targetIdRaw as string;
+                // current-desktop read; a mismatch reports false with no retry
+                // so follow stays truthful while commit is preserved.
                 const confirmCurrent = (output: object): boolean => {
                     try {
                         const getter = readProp(surface, "currentDesktopForScreen");
@@ -1826,10 +1819,7 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                             surface,
                             [output],
                         );
-                        if (typeof current !== "object" || current === null) {
-                            return false;
-                        }
-                        return readProp(current as object, "id") === targetId;
+                        return current === desktopRef;
                     } catch (error) {
                         void error;
                         return false;

@@ -2074,7 +2074,13 @@ export class WorkspaceSendAdapter {
         if (!focused) {
             return;
         }
-        this.diag("follow", correlation, revision, "follow", "completed");
+        // Truthful telemetry only: WorkspaceWrapper setCurrentDesktopForScreen
+        // is void and only updates the current-desktop map; visible switch,
+        // activation, effects, and scene updates are downstream with no
+        // composited/visible completion signal. state-confirmed means only
+        // the immediate native current-map readback plus mover focus were
+        // confirmed, never physical visible completion.
+        this.diag("follow", correlation, revision, "follow", "state-confirmed");
     }
 
     private failFlight(flight: number, correlation: string, outcome: string): void {
