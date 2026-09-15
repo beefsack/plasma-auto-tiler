@@ -125,11 +125,13 @@ Historical implementation detail is recoverable in Git history.
   records `result=rejected`. `EvaluateMove`, `DescribeAdvisoryPlan`, and
   `DescribeShadowProjection` retain their D-Bus error behavior.
 - `engineAuthorityMode=legacy` remains the only automatic-tiling mode. Rust is
-  development-only: it has no add/remove, placement, workspace, drag, or
-  existing-window adoption lifecycle, and selected commands require an already
-  stable tiled scope. KCM Apply persists the selection and queues an
-  unacknowledged KWin reconfigure request, so a user session restart is required
-  before relying on an authority change. Rust never falls back to Legacy.
+  opt-in development-only and never falls back to Legacy. Its approved lifecycle
+  is limited to ordered N-ary `cosmic_v1` admission/removal, same-output send,
+  restored backing-desktop/numbered workspace routes, and bounded
+  reconciliation. Placement-aware first-startup, general existing-window
+  adoption, and default promotion remain unselected. KCM Apply persists the
+  selection and queues an unacknowledged KWin reconfigure request,
+  so a user session restart is required before relying on an authority change.
 
 ## Live KWin/Plasma Boundary
 
@@ -138,9 +140,10 @@ Historical implementation detail is recoverable in Git history.
   restoration; if exact restoration cannot be verified, stop and leave the
   residue for user action.
 - The user grants standing authorization, until revoked, to read and mutate the
-  existing KWin session for project-scoped testing. Autonomous product work
-  remains off: this operational authorization does not select product,
-  security, or architecture changes. Every action remains bounded to exact
+  existing KWin session for project-scoped testing. Autonomous backlog
+  progression, including ordinary intended commits and pushes, is authorized; it
+  does not broaden the live/manual boundaries below or select material product,
+  security, or architecture decisions. Every action remains bounded to exact
   identified project resources with a recorded baseline and exact restoration;
   no broad cleanup, window closure, system path, dotfile, NixOS, Home Manager,
   sudo, session-boundary, irreversible, unrelated-host action, or preserved

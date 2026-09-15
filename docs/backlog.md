@@ -92,11 +92,11 @@ Only meaningful pending or active work is listed.
   after startup without weakening one-shot transaction fencing.
 - P2 | Bootstrap ordering decision | Decide whether lexical opaque-ID ordering
   is load-bearing or replaceable without changing `H[A,V[B,C]]` seeding.
-- P2 | Placement-aware startup adoption design | User observes dev restart
-  rearranging windows that already form a good or near-good tiling. Discuss
-  estimating a split tree and shares from existing window rectangles to minimize
-  movement on adoption, including ambiguity and imperfect layouts. Design only;
-  implementation and policy remain unselected.
+- P2 | Placement-aware startup adoption decision | Source-reviewed design is
+  available for preserving existing tilings at startup. Exact recognition versus
+  near-layout fitting, ambiguity/fallback behavior, and exception eligibility
+  remain unselected; implementation awaits the user's product decision.
+  [proposal](changes/placement-aware-startup-adoption.md)
 - P2 | Pixel/share parity decision | Retain `Vec<u64>` shares unless a reproduced
   N-ary/deep visual discrepancy or source-exact fixture justifies the cross-
   contract pixel-authority migration. Source N-ary pixel rounding remains an
