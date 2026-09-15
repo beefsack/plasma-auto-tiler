@@ -421,13 +421,47 @@ interface WorkspaceFollowFocus {
 // id, the flight stable target id plus request target output, the flight
 // target wrapper for diagnostic equality, and the requested logical ordinal
 // from the plan entry (0 permitted for the trailing target, -1 when absent).
-// Never logged in raw form and never used for follow decisions.
+// srcInSource/srcInTarget freeze the immutable dispatch-time source
+// membership (1 present, 0 absent, -1 unknown). Never logged in raw form and
+// never used for follow decisions.
 interface WorkspaceFollowDiagBasis {
     readonly moverId: string;
     readonly targetWorkspace: string;
     readonly targetOutput: string;
     readonly targetDesktopRef: object | null;
     readonly requestedOrdinal: number;
+    readonly srcInSource: number;
+    readonly srcInTarget: number;
+}
+
+// Immutable dispatch-time mover membership from the dispatch snapshot.
+// Returns 1/0 per scope, -1 when unreadable. Never throws and never logs raw
+// identifiers. Called once at dispatch; results are stored on the pending
+// flight and never rederived.
+function snapshotMoverFlags(
+    snapshot: WorkspaceSendSnapshot,
+    moverId: string,
+): { srcInSource: number; srcInTarget: number } {
+    try {
+        let inSource = 0;
+        let inTarget = 0;
+        for (const entry of snapshot.sourceWindows) {
+            if (entry.id === moverId) {
+                inSource = 1;
+                break;
+            }
+        }
+        for (const entry of snapshot.targetWindows) {
+            if (entry.id === moverId) {
+                inTarget = 1;
+                break;
+            }
+        }
+        return { srcInSource: inSource, srcInTarget: inTarget };
+    } catch (error) {
+        void error;
+        return { srcInSource: -1, srcInTarget: -1 };
+    }
 }
 
 interface WorkspacePlanned {
@@ -759,6 +793,10 @@ interface WorkspacePendingFlight {
     // trailing target, -1 when absent/invalid). Diagnostic only: never gates
     // request, commit, follow, or enablement.
     readonly requestedOrdinal: number;
+    // Immutable dispatch-time mover membership, computed once at dispatch
+    // from the dispatch snapshot and never rederived. Diagnostic only.
+    readonly srcInSource: number;
+    readonly srcInTarget: number;
     baseRevision: number;
     preconditions: readonly string[];
     operation: Record<string, unknown> | null;
@@ -921,6 +959,7 @@ export class WorkspaceSendAdapter {
         this.startFlight(
             correlation,
             snapshot,
+            observed,
             observed.targetWorkspace,
             observed.focusedId,
             observed.targetDesktopRef,
@@ -1143,6 +1182,7 @@ export class WorkspaceSendAdapter {
     private startFlight(
         correlation: string,
         snapshot: WorkspaceSendSnapshot,
+        observed: WorkspaceSendObserved,
         targetWorkspace: string,
         moverId: string,
         targetDesktopRef: object | null,
@@ -1152,6 +1192,7 @@ export class WorkspaceSendAdapter {
         this.inFlight = true;
         this.callbackSeen = false;
         this.clearEcho();
+        const flags = snapshotMoverFlags(snapshot, moverId);
         this.pending = {
             correlation,
             snapshot,
@@ -1161,6 +1202,8 @@ export class WorkspaceSendAdapter {
             requestPayload: payload,
             targetDesktopRef,
             requestedOrdinal,
+            srcInSource: flags.srcInSource,
+            srcInTarget: flags.srcInTarget,
             baseRevision: 0,
             preconditions: [],
             operation: null,
@@ -1168,6 +1211,25 @@ export class WorkspaceSendAdapter {
             verifiedObserved: null,
             acked: false,
         };
+        // True command-dispatch observation at the request boundary, using the
+        // original dispatch observation and revision 0. Best-effort only.
+        this.emitFollowDiag(
+            correlation,
+            0,
+            "send-dispatched",
+            observed,
+            {
+                moverId,
+                targetWorkspace: snapshot.targetWorkspace,
+                targetOutput: snapshot.targetOutput,
+                targetDesktopRef,
+                requestedOrdinal,
+                srcInSource: flags.srcInSource,
+                srcInTarget: flags.srcInTarget,
+            },
+            -1,
+            -1,
+        );
         this.pinnedOwner = null;
         this.activationStep = 1;
         this.token += 1;
@@ -1510,6 +1572,8 @@ export class WorkspaceSendAdapter {
                 this.failFlight(flight, correlation, "write-failed");
                 return;
             }
+            // Pre-write observation immediately before mover membership write.
+            this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
             if (!this.writeMoverDesktops(pending, fresh)) {
                 this.failFlight(flight, correlation, "write-failed");
                 return;
@@ -1586,6 +1650,8 @@ export class WorkspaceSendAdapter {
             this.failFlight(flight, correlation, "write-failed");
             return;
         }
+        // Pre-write observation immediately before mover membership write.
+        this.emitFollowDiag(correlation, planned.baseRevision, "send-pre-mover", fresh, this.diagBasisOf(pending), -1, -1);
         if (!this.writeMoverDesktops(pending, fresh)) {
             this.clearEcho();
             this.failFlight(flight, correlation, "write-failed");
@@ -1724,6 +1790,9 @@ export class WorkspaceSendAdapter {
             return;
         }
         pending.verifiedObserved = verified;
+        // Post-write observation: verified read shows the mover in target
+        // while the basis keeps the frozen dispatch source. Best-effort only.
+        this.emitFollowDiag(correlation, planned.baseRevision, "send-post-mover", verified, this.diagBasisOf(pending), -1, -1);
         const payload = this.buildAckPayload(verified, correlation, planned.baseRevision);
         if (payload === null || payload.length > WORKSPACE_SEND_MAX_REQUEST_BYTES) {
             this.failFlight(flight, correlation, "precondition-mismatch");
@@ -2070,17 +2139,10 @@ export class WorkspaceSendAdapter {
         this.inFlight = false;
         // Settled-observation basis for the later follow-settled line below.
         // Captured before teardown so the existing settlement edge stays
-        // correlated without a new subscription, timer, or poll.
+        // correlated without a new subscription, timer, or poll. Source
+        // membership stays frozen from the immutable dispatch snapshot.
         const settledBasis: WorkspaceFollowDiagBasis | null =
-            this.pending === null
-                ? null
-                : {
-                      moverId: this.pending.moverId,
-                      targetWorkspace: this.pending.targetWorkspace,
-                      targetOutput: this.pending.snapshot.targetOutput,
-                      targetDesktopRef: this.pending.targetDesktopRef,
-                      requestedOrdinal: this.pending.requestedOrdinal,
-                  };
+            this.pending === null ? null : this.diagBasisOf(this.pending);
         const settledSource: string | null = this.pending === null ? null : this.pending.snapshot.sourceWorkspace;
         this.pending = null;
         this.activationStep = 0;
@@ -2155,14 +2217,9 @@ export class WorkspaceSendAdapter {
         }
         // Flight-pinned diagnostic basis. The gates above stay the only
         // correctness checks (stable-id binding plus the existing ref gate);
-        // current wrapper equality below is diagnostic only.
-        const basis: WorkspaceFollowDiagBasis = {
-            moverId: pending.moverId,
-            targetWorkspace: pending.snapshot.targetWorkspace,
-            targetOutput: pending.snapshot.targetOutput,
-            targetDesktopRef: pending.targetDesktopRef,
-            requestedOrdinal: pending.requestedOrdinal,
-        };
+        // current wrapper equality below is diagnostic only. Source membership
+        // stays frozen from the immutable dispatch snapshot.
+        const basis: WorkspaceFollowDiagBasis = this.diagBasisOf(pending);
         // Before-setter observation: the pre-switch `fresh` binding above.
         this.emitFollowDiag(correlation, revision, "follow-pre", fresh, basis, -1, -1);
         let switched = false;
@@ -2231,6 +2288,20 @@ export class WorkspaceSendAdapter {
         this.diag("follow", correlation, revision, "follow", "state-confirmed");
     }
 
+    // Flight-pinned diagnostic basis using the dispatch-frozen source flags
+    // stored on the pending flight. Never rederives from live reads.
+    private diagBasisOf(pending: WorkspacePendingFlight): WorkspaceFollowDiagBasis {
+        return {
+            moverId: pending.moverId,
+            targetWorkspace: pending.snapshot.targetWorkspace,
+            targetOutput: pending.snapshot.targetOutput,
+            targetDesktopRef: pending.targetDesktopRef,
+            requestedOrdinal: pending.requestedOrdinal,
+            srcInSource: pending.srcInSource,
+            srcInTarget: pending.srcInTarget,
+        };
+    }
+
     // Best-effort redacted visible-follow observation. Emits one fixed
     // `route-diag component=cosmic-send stage=follow` line carrying only
     // session-local ordinals/counts plus 0/1/-1 equality flags (-1 unknown):
@@ -2243,11 +2314,16 @@ export class WorkspaceSendAdapter {
     // (selected output === request target output), desktops (live desktop
     // count), mover_in_target (mover by stable id present in live target
     // windows), active_is_mover (live active wrapper === live mover wrapper),
-    // switched/focused (native hook results, -1 when not yet invoked).
-    // Together the correlated pre/switched/focused/settled lines distinguish
-    // the requested logical target from the target native mapping (req/tgt),
-    // live current divergence (cur_*), selected output mismatch (out_*), and
-    // state reversal after focus (mover/active flags across lines). Raw
+    // src_in_src/src_in_tgt (mover present in the immutable dispatch snapshot
+    // source/target scopes, frozen at dispatch so later dynamic reads never
+    // overwrite the source view), switched/focused (native hook results, -1
+    // when not yet invoked).
+    // Together the correlated dispatch/pre/post plus pre/switched/focused/
+    // settled lines distinguish the requested target (req/tgt), live current
+    // divergence (cur_*), output mismatch (out_*), and state reversal after
+    // focus. The dispatch/pre pair (mover_in_target=0, src_in_src=1) and post
+    // line (mover_in_target=1, same frozen source) mark the membership
+    // transition. Raw
     // desktop ids, output identifiers, window native ids, object refs,
     // captions, app data, payload, and environment never enter logs. Wrapper
     // equality here is diagnostic only; existing follow gates stay unchanged.
@@ -2324,8 +2400,20 @@ export class WorkspaceSendAdapter {
             }
             const switchedFlag = switched === 0 || switched === 1 ? switched : -1;
             const focusedFlag = focused === 0 || focused === 1 ? focused : -1;
+            let srcInSrc = -1;
+            let srcInTgt = -1;
+            try {
+                if (basis !== null) {
+                    srcInSrc = basis.srcInSource === 0 || basis.srcInSource === 1 ? basis.srcInSource : -1;
+                    srcInTgt = basis.srcInTarget === 0 || basis.srcInTarget === 1 ? basis.srcInTarget : -1;
+                }
+            } catch (error) {
+                void error;
+                srcInSrc = -1;
+                srcInTgt = -1;
+            }
             this.env.log(
-                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=follow correlation=${correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${outcome} req_ord=${String(reqOrd)} tgt_ord=${String(tgtOrd)} tgt_num=${String(tgtNum)} cur_ord=${String(curOrd)} cur_num=${String(curNum)} cur_id_eq=${String(curIdEq)} cur_ref_eq=${String(curRefEq)} out_ord=${String(outOrd)} out_eq=${String(outEq)} desktops=${String(desktops)} mover_in_target=${String(moverInTarget)} active_is_mover=${String(activeIsMover)} switched=${String(switchedFlag)} focused=${String(focusedFlag)}`,
+                `${LOG_PREFIX} component=${WORKSPACE_SEND_COMPONENT} stage=follow correlation=${correlation} generation=${this.generation} revision=${String(revision)} event=${event} outcome=${outcome} req_ord=${String(reqOrd)} tgt_ord=${String(tgtOrd)} tgt_num=${String(tgtNum)} cur_ord=${String(curOrd)} cur_num=${String(curNum)} cur_id_eq=${String(curIdEq)} cur_ref_eq=${String(curRefEq)} out_ord=${String(outOrd)} out_eq=${String(outEq)} desktops=${String(desktops)} mover_in_target=${String(moverInTarget)} active_is_mover=${String(activeIsMover)} src_in_src=${String(srcInSrc)} src_in_tgt=${String(srcInTgt)} switched=${String(switchedFlag)} focused=${String(focusedFlag)}`,
             );
         } catch (error) {
             void error;

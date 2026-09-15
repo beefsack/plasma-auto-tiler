@@ -88,11 +88,27 @@
   `plan-send-coordination.test.ts` (5). They cover logical-ordinal handoff,
   current-target divergence, fresh-wrapper id-versus-reference evidence,
   post-focus reversal, and observation/log failure without behavior change.
+- The next diagnostic extension adds best-effort correlated observations at
+  `send-dispatched` (the real command-dispatch boundary, revision 0),
+  `send-pre-mover` (immediately before the only mover desktop-membership
+  write), and `send-post-mover` (the verified post-write observation before
+  ack). Existing plan/geometry echo, ack, verify, commit, and
+  follow-pre/switched/focused/settled lines remain their existing boundaries.
+  The new lines retain the existing redacted current/target/output and
+  mover/active fields and add `src_in_src`/`src_in_tgt`, immutable
+  dispatch-snapshot membership flags. They distinguish the first observed
+  target-current map from the mover membership write without claiming a
+  rendered desktop. No static source cause is firmly demonstrated.
+- Focused offline verification passes: `npm run typecheck` and the bundled
+  workspace-send adapter test (86 tests). They cover a
+  source-current to target-current ordering case, immutable source membership,
+  diagnostic log/observer failure without transaction behavior change, and
+  production-entry wiring. No live KWin or D-Bus action occurred.
 
 ## Next User Evidence
 
-- After one clean `just dev` restart, enable verbose diagnostics, select
-  workspace 3, open one terminal, and press `Meta+Shift+2` once. Preserve the
-  fresh `/tmp/dev.log` and report the visible workspace plus active-border
-  state. This is one user-owned physical reproduction, not a visible repair
-  claim.
+- After one clean foreground `just dev` restart with verbose diagnostics on
+  workspace 2, switch to workspace 3, open one terminal, and press
+  `Meta+Shift+2` once. Supply the fresh exact log path and the visible
+  workspace plus active-border state. This is one user-owned physical
+  reproduction, not a visible repair claim.

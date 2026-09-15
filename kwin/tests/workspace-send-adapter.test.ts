@@ -3174,3 +3174,234 @@ describe("cosmic send-to-workspace recovery payload and entry timing", () => {
         assert.ok(harness.logs.some((l) => l.includes("outcome=committed")), harness.logs.join("\n"));
     });
 });
+
+describe("cosmic send-to-workspace dispatch membership diagnostics", () => {
+    function flagOf(line: string, name: string): string {
+        const marker = `${name}=`;
+        const at = line.indexOf(marker);
+        assert.ok(at >= 0, `${name} missing in:\n${line}`);
+        const rest = line.slice(at + marker.length);
+        const end = rest.search(/[\s]/);
+        return end < 0 ? rest : rest.slice(0, end);
+    }
+
+    function lineFor(logs: string[], correlation: string, event: string): string {
+        const line = logs.find((l) => l.includes(`correlation=${correlation}`) && l.includes(`event=${event}`)) ?? "";
+        assert.ok(line.length > 0, `${event} missing for ${correlation}:\n${logs.join("\n")}`);
+        return line;
+    }
+
+    function indexFor(logs: string[], correlation: string, event: string): number {
+        const at = logs.findIndex((l) => l.includes(`correlation=${correlation}`) && l.includes(`event=${event}`));
+        assert.ok(at >= 0, `${event} missing for ${correlation}:\n${logs.join("\n")}`);
+        return at;
+    }
+
+    it("emits dispatch at the request boundary and proves source-to-target membership", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        mocks.observeImpl = () => ({
+            ...makeWorldObserved(mocks.world, refs),
+            targetOrdinal: 1,
+            targetNumber: 2,
+            outputOrdinal: 0,
+            currentOrdinal: 0,
+            currentNumber: 1,
+            currentIdEq: 0,
+            currentRefEq: 0,
+        });
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter, 2);
+        assert.equal(mocks.geometries.length, 3);
+        assert.equal(mocks.desktops.length, 1);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        const dispatched = lineFor(mocks.logs, correlation, "send-dispatched");
+        const preMover = lineFor(mocks.logs, correlation, "send-pre-mover");
+        const postMover = lineFor(mocks.logs, correlation, "send-post-mover");
+        // Dispatch uses the original request observation at revision 0.
+        assert.equal(flagOf(dispatched, "revision"), "0");
+        assert.equal(flagOf(dispatched, "outcome"), "observed");
+        for (const line of [dispatched, preMover]) {
+            assert.equal(flagOf(line, "mover_in_target"), "0");
+            assert.equal(flagOf(line, "src_in_src"), "1");
+            assert.equal(flagOf(line, "src_in_tgt"), "0");
+            assert.ok(line.includes("generation=gen-1"), line);
+            assert.ok(line.includes("req_ord=2"), line);
+        }
+        assert.equal(flagOf(postMover, "mover_in_target"), "1");
+        assert.equal(flagOf(postMover, "src_in_src"), "1");
+        assert.equal(flagOf(postMover, "src_in_tgt"), "0");
+        // Frozen dispatch source survives later dynamic reads.
+        assert.equal(flagOf(preMover, "src_in_src"), flagOf(postMover, "src_in_src"));
+        // Ordered: dispatch < pre-mover < post-mover < follow.
+        assert.ok(indexFor(mocks.logs, correlation, "send-dispatched") < indexFor(mocks.logs, correlation, "send-pre-mover"));
+        assert.ok(indexFor(mocks.logs, correlation, "send-pre-mover") < indexFor(mocks.logs, correlation, "send-post-mover"));
+        assert.ok(indexFor(mocks.logs, correlation, "send-post-mover") < indexFor(mocks.logs, correlation, "follow-pre"));
+        // No extra echo observations.
+        assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-mover-echo")));
+        assert.ok(!mocks.logs.some((l) => l.includes(`correlation=${correlation}`) && l.includes("send-geometry-echo")));
+        for (const line of [dispatched, preMover, postMover]) {
+            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+            }
+        }
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("orders source-current to target-current and shows the first observed change", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        let calls = 0;
+        mocks.observeImpl = () => {
+            calls += 1;
+            const live = makeWorldObserved(mocks.world, refs);
+            // Calls 1-5 cover dispatch through the pre-switch gate with live
+            // current on the source; call 6 onward (post-switch and later)
+            // sees live current on the target. Runtime may already be target;
+            // this covers the transitioning case only.
+            const current =
+                calls >= 6
+                    ? { currentOrdinal: 1, currentNumber: 2, currentIdEq: 1, currentRefEq: 1 }
+                    : { currentOrdinal: 0, currentNumber: 1, currentIdEq: 0, currentRefEq: 0 };
+            return {
+                ...live,
+                targetOrdinal: 1,
+                targetNumber: 2,
+                outputOrdinal: 0,
+                ...current,
+            };
+        };
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter, 2);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        const correlation = parsePayload(mocks.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        const dispatched = lineFor(mocks.logs, correlation, "send-dispatched");
+        const preMover = lineFor(mocks.logs, correlation, "send-pre-mover");
+        const postMover = lineFor(mocks.logs, correlation, "send-post-mover");
+        const pre = lineFor(mocks.logs, correlation, "follow-pre");
+        const switched = lineFor(mocks.logs, correlation, "follow-switched");
+        const focused = lineFor(mocks.logs, correlation, "follow-focused");
+        // Early lines carry native current/output fields while current is source.
+        for (const line of [dispatched, preMover, postMover, pre]) {
+            assert.equal(flagOf(line, "cur_id_eq"), "0", line);
+            assert.ok(line.includes("cur_ord=0") && line.includes("cur_num=1"), line);
+            assert.ok(line.includes("tgt_ord=1") && line.includes("tgt_num=2"), line);
+            assert.ok(line.includes("out_ord=0"), line);
+        }
+        // Membership moves before current does.
+        assert.equal(flagOf(postMover, "mover_in_target"), "1");
+        assert.equal(flagOf(pre, "mover_in_target"), "1");
+        // First target-current observation is the post-switch line.
+        assert.equal(flagOf(switched, "cur_id_eq"), "1");
+        assert.ok(switched.includes("cur_ord=1") && switched.includes("cur_num=2"), switched);
+        assert.equal(flagOf(focused, "cur_id_eq"), "1");
+        const order = ["send-dispatched", "send-pre-mover", "send-post-mover", "follow-pre", "follow-switched", "follow-focused", "follow-settled"].map(
+            (event) => indexFor(mocks.logs, correlation, event),
+        );
+        for (let i = 1; i < order.length; i += 1) {
+            assert.ok(order[i - 1]! < order[i]!, `out of order at ${String(i)}:\n${mocks.logs.join("\n")}`);
+        }
+        const firstTarget = mocks.logs.findIndex(
+            (l) => l.includes(`correlation=${correlation}`) && l.includes("stage=follow") && l.includes("cur_id_eq=1"),
+        );
+        assert.equal(firstTarget, indexFor(mocks.logs, correlation, "follow-switched"));
+    });
+
+    it("tolerates observer and log failures without changing behavior", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const liveObserve = mocks.observeImpl;
+        let calls = 0;
+        mocks.observeImpl = () => {
+            calls += 1;
+            // Post-switch and post-focus re-reads fail; dispatch, pre-write,
+            // verified, ack-verify, pre-switch, and settled reads still observe.
+            if (calls === 6 || calls === 7) {
+                return null;
+            }
+            return liveObserve();
+        };
+        const adapter = new WorkspaceSendAdapter({
+            ...mocks.env,
+            log: (message: string) => {
+                if (message.includes("event=send-dispatched") || message.includes("event=send-pre-mover") || message.includes("event=send-post-mover")) {
+                    throw new Error("log lost");
+                }
+                mocks.logs.push(message);
+            },
+        });
+        adapter.enable({ owner: "owner-1", generation: "gen-1" });
+        runLifecycle(mocks, adapter, 2);
+        assert.equal(mocks.geometries.length, 3);
+        assert.equal(mocks.desktops.length, 1);
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.ok(mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), mocks.logs.join("\n"));
+        for (const event of ["event=follow-switched", "event=follow-focused"]) {
+            const line = mocks.logs.find((l) => l.includes(event)) ?? "";
+            assert.ok(line.includes("outcome=unknown"), `${event} must report unknown:\n${line}`);
+        }
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+        // Fenced path emits nothing on echo callbacks.
+        const refs2 = makeRefs();
+        const mocks2 = mockEnv(refs2);
+        const seam = addEchoSeam(mocks2);
+        const adapter2 = new WorkspaceSendAdapter(mocks2.env);
+        assert.equal(adapter2.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter2.requestSend("ws-2", 2), true);
+        mocks2.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(mocks2.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        mocks2.callbacks[1]?.(plannedReply(correlation));
+        seam.fire();
+        seam.fireGeometry();
+        assert.ok(!mocks2.logs.some((l) => l.includes("send-mover-echo")), mocks2.logs.join("\n"));
+        assert.ok(!mocks2.logs.some((l) => l.includes("send-geometry-echo")), mocks2.logs.join("\n"));
+        const postMover = lineFor(mocks2.logs, correlation, "send-post-mover");
+        assert.equal(flagOf(postMover, "mover_in_target"), "1");
+        assert.equal(flagOf(postMover, "src_in_src"), "1");
+        mocks2.callbacks[2]?.(ackReply(correlation));
+        mocks2.callbacks[3]?.(committedReply(correlation));
+        assert.deepEqual(mocks2.switches, [refs2.desktop]);
+        assert.deepEqual(mocks2.focuses, [refs2.a]);
+    });
+
+    it("proves the transition through the production entry integration", () => {
+        const harness = startEntryForPlannedFlight();
+        assert.ok(harness.handle !== null);
+        assert.equal(harness.handle.requestSend("ws-2"), true);
+        harness.callbacks[0]?.(":1.7");
+        const correlation = parsePayload(harness.dbusCalls[1]?.payload ?? "{}")["correlation_id"] as string;
+        const dispatched = lineFor(harness.logs, correlation, "send-dispatched");
+        assert.equal(flagOf(dispatched, "revision"), "0");
+        assert.equal(flagOf(dispatched, "mover_in_target"), "0");
+        assert.equal(flagOf(dispatched, "src_in_src"), "1");
+        harness.callbacks[1]?.(plannedReply(correlation));
+        const preMover = lineFor(harness.logs, correlation, "send-pre-mover");
+        assert.equal(flagOf(preMover, "mover_in_target"), "0");
+        assert.equal(flagOf(preMover, "src_in_src"), "1");
+        harness.fireMoverEcho();
+        harness.fireGeometry();
+        assert.ok(!harness.logs.some((l) => l.includes("send-mover-echo")), harness.logs.join("\n"));
+        assert.ok(!harness.logs.some((l) => l.includes("send-geometry-echo")), harness.logs.join("\n"));
+        const postMover = lineFor(harness.logs, correlation, "send-post-mover");
+        assert.equal(flagOf(postMover, "mover_in_target"), "1");
+        assert.equal(flagOf(postMover, "src_in_src"), "1");
+        harness.callbacks[2]?.(ackReply(correlation));
+        harness.callbacks[3]?.(committedReply(correlation));
+        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=state-confirmed")), harness.logs.join("\n"));
+        for (const line of [dispatched, preMover, postMover]) {
+            for (const raw of ["win-a", "win-b", "win-t", "ws-1", "ws-2", "out-1", ":1.7", "owner-1"]) {
+                assert.ok(!line.includes(raw), `${raw} leaked in:\n${line}`);
+            }
+        }
+        harness.handle.stop();
+    });
+});
