@@ -86,12 +86,6 @@ Only meaningful pending or active work is listed.
   immediate reconcile. Multi-output, more-than-three-window, non-horizontal,
   boundary, atomicity, and parity claims remain unproven.
   [decision](decisions.md#production-interactive-edge-drag)
-- P2 | Three-window product decision | Decide whether Rust authority remains
-  restricted to exactly three eligible windows.
-- P2 | Retryable bootstrap decision | Decide whether Rust may retry bootstrap
-  after startup without weakening one-shot transaction fencing.
-- P2 | Bootstrap ordering decision | Decide whether lexical opaque-ID ordering
-  is load-bearing or replaceable without changing `H[A,V[B,C]]` seeding.
 - P2 | Placement-aware startup adoption decision | Source-reviewed design is
   available for preserving existing tilings at startup. Exact recognition versus
   near-layout fitting, ambiguity/fallback behavior, and exception eligibility
@@ -101,9 +95,6 @@ Only meaningful pending or active work is listed.
   N-ary/deep visual discrepancy or source-exact fixture justifies the cross-
   contract pixel-authority migration. Source N-ary pixel rounding remains an
   open portability gap.
-- P2 | Planner log default silence | The per-run Planner log is intentionally
-  empty unless `PLASMA_AUTO_TILER_PLANNER_VERBOSE=1`; default diagnostics are
-  KWin-journal-only. Use the opt-in capture when request/reply JSON is required.
 - P2 | KWin controller silent unload | Attribute a manual controller unload only
   with before/after `isScriptLoaded`, exact `Script<ID>` introspection, and KWin
   PID/start evidence.

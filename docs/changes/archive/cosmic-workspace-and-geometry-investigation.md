@@ -143,6 +143,32 @@ All examples omit gaps to isolate allocation.
   Therefore source evidence does not support a claim that pixel authority alone
   eliminates resize refusal or jitter.
 
+### Q2(d): Bounded Source Fixture
+
+- Exact source allocation boundary: at `pop-os/cosmic-comp`
+  `81cd5fdbaa41c3973369ae85bccf829137836e20`, `Data::new_group` creates an
+  even 8px width-axis pair `[4,4]`
+  ([177-191](https://github.com/pop-os/cosmic-comp/blob/81cd5fdbaa41c3973369ae85bccf829137836e20/src/shell/layout/tiling/mod.rs#L177-L191)).
+  `Data::add_window(2)` calculates `equal_sizing = 8 / 3 = 2`, scales both
+  survivors by `round(4 / 8 * 6) = 3`, and assigns the remaining 2px to the
+  appended child ([219-240](https://github.com/pop-os/cosmic-comp/blob/81cd5fdbaa41c3973369ae85bccf829137836e20/src/shell/layout/tiling/mod.rs#L219-L240)).
+  The source child-order allocation is therefore `[3,3,2]`.
+- The portable equal-share `H[A,B,C]` projector produces `[2,2,4]` for the
+  same 8px usable width: it reserves one pixel per child, floors the first two
+  remaining thirds, and gives the final child the remainder. The focused
+  `geometry::tests::equal_ternary_projection_has_portable_final_remainder`
+  fixture locks only that current portable result, its child order, its 8px
+  sibling sum, and zero gaps. It does not assert COSMIC parity.
+- Both allocations conserve the 8px usable domain and have zero sibling gap;
+  the portable-minus-source delta is `[-1,-1,+2]`. The arithmetic is exact in
+  this vector, so the source `f64` intermediate and the untraced odd
+  `new_group` remainder are not factors. Removing the appended child returns
+  both models to `[4,4]`, so this boundary shows no add/remove cycle drift.
+- This is an allocation-only source comparison with gaps set to zero. It does
+  not change the settled source default raw theme gaps `(outer, inner) = (0,8)`,
+  its effective 8px domain-edge margin, or the project's configurable default
+  `(outerGap, innerGap) = (8,8)`.
+
 ## Limits
 
 - No live KWin/Plasma behavior, native pager/overview behavior, hotplug order,

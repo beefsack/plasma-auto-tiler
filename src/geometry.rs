@@ -355,6 +355,58 @@ mod tests {
     }
 
     #[test]
+    fn equal_ternary_projection_has_portable_final_remainder() {
+        // Portable share contract, not a COSMIC pixel-parity claim.
+        let tree = group(
+            "root",
+            Axis::Horizontal,
+            vec![leaf("A"), leaf("B"), leaf("C")],
+            vec![1, 1, 1],
+        );
+        let bounds = Rect {
+            x: 0,
+            y: 0,
+            w: 8,
+            h: 8,
+        };
+        let out = project(&tree, bounds, 0).expect("valid projection");
+        assert_eq!(out.len(), 3);
+        assert_eq!(out[0].leaf, NodeId::from("A"));
+        assert_eq!(out[1].leaf, NodeId::from("B"));
+        assert_eq!(out[2].leaf, NodeId::from("C"));
+        assert_eq!(
+            out[0].rect,
+            Rect {
+                x: 0,
+                y: 0,
+                w: 2,
+                h: 8
+            }
+        );
+        assert_eq!(
+            out[1].rect,
+            Rect {
+                x: 2,
+                y: 0,
+                w: 2,
+                h: 8
+            }
+        );
+        assert_eq!(
+            out[2].rect,
+            Rect {
+                x: 4,
+                y: 0,
+                w: 4,
+                h: 8
+            }
+        );
+        assert_eq!(out[0].rect.w + out[1].rect.w + out[2].rect.w, 8);
+        assert_eq!(out[1].rect.x, out[0].rect.x + out[0].rect.w);
+        assert_eq!(out[2].rect.x, out[1].rect.x + out[1].rect.w);
+    }
+
+    #[test]
     fn rejects_misaligned_and_zero_shares() {
         let bounds = Rect {
             x: 0,
