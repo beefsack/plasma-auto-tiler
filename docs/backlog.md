@@ -2,18 +2,16 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Workspace-send visible-follow failure | WLS1RE's first 3->2 send moved
-  the window but timed out before acknowledgement/follow and disabled later
-  sends after a 15-second wait. The mover echo arrived; exact timeout settlement
-  did not complete. New timeout-settle diagnostics identify the failed predicate
-  and remaining geometry fences on the next user-owned reproduction. Earlier
-  committed/readback-confirmed visible failures remain unresolved too. Restore
-  reliable follow and availability without falsely committing uncertain state;
-  border causation remains unconfirmed.
+- P0 | Workspace-send visible-follow failure (parked by user) | pJOooO has two
+  completed sends, then w2 fails exact timeout settlement with
+  geometry-rect-mismatch at geometry index 1; that entry also retains its echo
+  fence. The native cause of the unfulfilled geometry remains unknown. Earlier
+  committed/readback-confirmed visible failures remain unresolved too. Resume
+  only when the user returns to this issue; border causation is unconfirmed.
   [timeout record](changes/archive/workspace-send-timeout-observation.md)
   [earlier record](changes/archive/workspace-send-visible-follow-boundary.md)
-- P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
-  well-formed request rejection paths are reusable. Sent request/lost callback,
+- P1 | Remaining workspace-send uncertainty recovery (parked with send issue) |
+  Proven pre-dispatch and well-formed request rejection paths are reusable. Sent request/lost callback,
   malformed reply, request timeout, owner loss, and other transport ambiguity
   can leave Rust pending; partial native mutation plus ack/verify timeout can
   also be uncertain. Selecting discard/reseed or another generation/protocol
