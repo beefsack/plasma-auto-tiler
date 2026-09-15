@@ -127,11 +127,21 @@ Historical implementation detail is recoverable in Git history.
 - `engineAuthorityMode=legacy` remains the only automatic-tiling mode. Rust is
   opt-in development-only and never falls back to Legacy. Its approved lifecycle
   is limited to ordered N-ary `cosmic_v1` admission/removal, same-output send,
-  restored backing-desktop/numbered workspace routes, and bounded
-  reconciliation. Placement-aware first-startup, general existing-window
-  adoption, and default promotion remain unselected. KCM Apply persists the
-  selection and queues an unacknowledged KWin reconfigure request,
+  restored backing-desktop/numbered workspace routes, bounded reconciliation,
+  and the selected initial first-startup fitting direction below. General
+  existing-window adoption and default promotion remain unselected. KCM Apply
+  persists the selection and queues an unacknowledged KWin reconfigure request,
   so a user session restart is required before relying on an authority change.
+- Approved 2026-09-16: when the first startup domain has no usable retained
+  session, Rust may use a versioned, best-effort near-layout fitting heuristic
+  to minimize unnecessary initial window movement. It must be simple,
+  comprehensible, and deterministic, with Rust retaining structural inference
+  and KWin TS retaining native observation. This selects neither exact
+  recognition nor historical-topology reconstruction, global optimization,
+  exhaustive search, broad edge-case handling, retained-topology rewrite,
+  uncertain-send recovery, general existing-window adoption, or default
+  promotion. The genuine-inference-failure fallback and any materially distinct
+  exception eligibility behavior remain unselected.
 
 ## Live KWin/Plasma Boundary
 

@@ -2,20 +2,19 @@
 
 ## Decision Proposal
 
-- Recommend a new, versioned Rust-owned first-startup adoption policy that
-  recognizes only a uniquely replayable exact layout before the current seed.
-  It is not selected or implementation-ready.
-- For a recognized layout, infer a deterministic ordered split tree and positive
-  shares, validate it with the existing projector, and emit its projection. Its
-  movement cost is zero by construction.
-- For no unique exact match, prefer the current deterministic seed as the
-  compatibility fallback. Its consequence is the currently observed reflow.
-  A no-write/park fallback preserves placement but creates a new unmanaged
-  startup state and lifecycle policy; it is the only materially different
-  fallback option.
-- Do not add a tolerance or near-layout fit in the first policy. It needs an
-  explicit error metric, allowed error, candidate tie-break, and fallback choice.
-  If selected later, it belongs in the versioned Rust policy rather than KWin TS.
+- Approved: the initial first-startup policy is a versioned Rust-owned,
+  best-effort near-layout fit. It uses one simple, comprehensible, deterministic
+  heuristic to reduce unnecessary movement when tiling first applies.
+- Exact recognition, historical-topology reconstruction, global optimization,
+  exhaustive search, and many special cases are not goals. The prior exact-only
+  recommendation is superseded.
+- A fit produces the selected project policy, not a claim about the prior
+  topology or COSMIC parity. Rust owns fitting and selection; KWin TS continues
+  to send only the primitive normalized snapshot.
+- The fallback after genuine inference failure remains pending. Current
+  deterministic seed/reflow keeps the existing managed lifecycle but may reflow;
+  no-write/park preserves geometry but creates an unmanaged startup state and
+  requires separately selected lifecycle policy.
 
 ## Current Behavior And Boundary
 
@@ -41,32 +40,22 @@
   at adapter startup and are not hot-reloaded, reseeded, or mutated in flight
   (`kwin/src/plan-adapter-entry.ts:1525-1531`; `kwin/src/domain-gap.ts:1-7`).
 
-## Recognition Strategy
+## Fitting Direction
 
 - Normalize the existing observation against the current domain work area,
   configured `outerGap` inset, and `innerGap`; these are KCM values with
   defaults `(8, 8)` and range `0..64`, not a hardcoded 8px rule
   (`kwin/src/domain-gap.ts:1-13,89-113`; `docs/decisions.md:446-452`).
-- Build only guillotine candidates: recursively partition the normalized
-  rectangles at a full-width horizontal or full-height vertical separation;
-  order children by their physical coordinate; allow each resulting group to be
-  N-ary and nested. Derive positive integer shares only when the existing
-  `project` function reproduces every rectangle exactly. It already enforces
-  containment, non-overlap, configured sibling gaps, ordered child allocation,
-  and integer rounding (`src/geometry.rs:108-165,167-269`).
-- Accept a candidate only if the selected inference grammar and share
-  canonicalization yield one topology. Otherwise report an adoption ambiguity
-  and take the selected fallback. Do not claim that an accepted normal form is
-  the prior tree: rectangles cannot reveal historical same-axis grouping,
-  shares with equivalent integer projections, sibling intent, or domain MRU.
-  For example, a flat horizontal three-leaf group and nested horizontal groups
-  can project to the same bands while later admissions behave differently.
-- A near-layout extension would generate the same bounded candidates, project
-  each using the current geometry code, and rank the projected-versus-observed
-  displacement under a selected metric. It must reject equal best scores and
-  overlapping/unrepresentable input. The metric, tolerance, share
-  canonicalization, and whether a small nonzero movement is acceptable are
-  product decisions, not facts recoverable from rectangles or COSMIC source.
+- Use one bounded deterministic heuristic within the existing Rust geometry
+  boundary to infer an ordered split tree and positive shares, then project the
+  fit. It should favor a reasonable low-movement initial result, not perfect
+  recognition.
+- A deterministic fit is sufficient; it need not be uniquely recoverable from
+  the observed rectangles. Rectangles cannot reveal historical same-axis
+  grouping, equivalent shares, sibling intent, or domain MRU.
+- Keep the heuristic straightforward and its technical mechanics ordinary
+  implementation detail under this direction. It must not become exhaustive
+  topology enumeration or a broad edge-case policy.
 
 ## Eligibility, Ambiguity, And Exceptions
 
@@ -74,11 +63,9 @@
   output and current desktop (including existing all-desktops handling), valid
   quantized frame rectangles, stable IDs, and an active member
   (`kwin/src/plan-adapter-entry.ts:888-1069`). Empty scopes remain disabled.
-- Do not infer from duplicate rectangles, overlap, out-of-bounds geometry,
-  missing full-span partitions, gap/inset exhaustion, or multiple candidate
-  trees. These are not evidence of a tiled arrangement. Integer rounding and
-  direct-geometry sequencing also mean an exact rectangle match is not proof
-  of historical topology.
+- Treat an observation that the simple heuristic cannot support as genuine
+  inference failure and use the selected fallback. Integer rounding and
+  direct-geometry sequencing mean a fit is not proof of historical topology.
 - Existing exception semantics remain authoritative: fullscreen and retained
   maximized members skip geometry writes; admission-time maximize clearing is
   an explicit KWin-native deviation; floating/sticky state is exceptional
@@ -96,31 +83,27 @@
   `u64` share per child (`src/directional.rs:107-123`); the observer and wire
   cap one request at 64 windows and one planner at 16 domains
   (`src/planner_protocol.rs:52-60`; `src/session.rs:99-101`). Current seeding
-  is `O(n log n)` ordering plus bounded sequential admission/projection. Exhaustive
-  enumeration of all trees, orders, and share vectors is exponential and is not
-  an acceptable adoption strategy. A recursive guillotine recognizer must use
-  the existing 64-window cap and a finite deterministic grammar, not search all
-  N-ary topologies.
-- Future implementation evidence: Rust unit/property cases for exact flat and
-  nested layouts, configured gaps and outer inset, integer-remainder shares,
-  stable candidate ordering, and zero-change projections; rejection vectors for
-  overlaps, ties, ambiguous grouping, floats/exceptions, bounds failures, and
-  no candidate; adapter payload contracts; and Stage 3 offline trace fixtures.
-  A live journey is not requested by this design.
+  is `O(n log n)` ordering plus bounded sequential admission/projection.
+  Exhaustive enumeration of trees, orders, or share vectors is not an acceptable
+  adoption strategy; the fit remains bounded by the existing 64-window cap and
+  a finite deterministic grammar.
+- Future implementation evidence should establish deterministic near-fitting,
+  low unnecessary startup movement, configured gaps/inset handling, genuine
+  inference failure, and the selected fallback. A live journey is not requested
+  by this design.
 - Independent source review found no COSMIC rectangle-to-tree inversion rule.
   COSMIC source parity covers forward focused-cell admission and N-ary share
   evolution, not recovering prior intent from placement
   (`docs/decisions.md:416-445`; `src/cosmic_v1.rs:50-198`). A fitted adoption
   policy is therefore a documented project policy, not claimed COSMIC parity.
 
-## Pending Product Choices
+## Remaining Product Choices
 
-- Select exact-only recognition or authorize a versioned near-layout policy.
-- If near layouts are selected: choose the error metric, tolerance, share/tree
-  canonicalization, tie disposition, and movement threshold.
 - Select the no-candidate fallback: current seed/reflow, or preserve geometry
   by parking the domain until a separately selected activation path.
-- Select the exception wire/eligibility resolution before implementation.
+- Select exception wire/eligibility behavior only if it materially differs:
+  reconcile the existing flags through the Rust request, or exclude those
+  windows before fitting.
 
 ## Backlog Maintenance Finding
 
