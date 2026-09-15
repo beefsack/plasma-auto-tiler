@@ -1803,7 +1803,28 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                 // Shared mode shows one desktop everywhere, so follow every
                 // output; otherwise follow only the active output. Mapping
                 // itself stays owned by WorkspaceNativeAdapter and rebuilds on
-                // the next topology signal.
+                // the next topology signal. The setter is void in KWin
+                // scripting (WorkspaceWrapper::setCurrentDesktopForScreen) and
+                // never reports success, so confirm with one immediate direct
+                // current-desktop read; a mismatch reports false with no retry
+                // so follow stays truthful while commit is preserved.
+                const confirmCurrent = (output: object): boolean => {
+                    try {
+                        const getter = readProp(surface, "currentDesktopForScreen");
+                        if (typeof getter !== "function") {
+                            return false;
+                        }
+                        const current = Reflect.apply(
+                            getter as (...args: ReadonlyArray<unknown>) => unknown,
+                            surface,
+                            [output],
+                        );
+                        return current === desktopRef;
+                    } catch (error) {
+                        void error;
+                        return false;
+                    }
+                };
                 if (workspaceNative.getMode() === "shared") {
                     for (const output of screens) {
                         if (typeof output !== "object" || output === null) {
@@ -1811,10 +1832,18 @@ export function startPlanAdapterEntry(overrides: PlanEntryOverrides = {}): PlanE
                         }
                         Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, output]);
                     }
+                    for (const output of screens) {
+                        if (typeof output !== "object" || output === null) {
+                            return false;
+                        }
+                        if (!confirmCurrent(output as object)) {
+                            return false;
+                        }
+                    }
                     return true;
                 }
                 Reflect.apply(setter as (...args: ReadonlyArray<unknown>) => unknown, surface, [desktopRef, activeOutput]);
-                return true;
+                return confirmCurrent(activeOutput);
             } catch (error) {
                 void error;
                 return false;

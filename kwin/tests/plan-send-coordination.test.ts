@@ -542,6 +542,271 @@ describe("plan/send P0 coordination through production wiring", () => {
         handle?.stop();
     });
 
+    it("F2A19Z first-send follow reports truthfully when the native switch does not take effect", () => {
+        const world = makeWorld();
+        const wsBoot = world.desktops[0] as FakeDesktop;
+        const wsNew = world.desktops[1] as FakeDesktop;
+        const winSignals = new Map<string, { desktops: FakeSignal; geometry: FakeSignal }>();
+        const mkWin = (id: string, desktop: FakeDesktop, x: number): FakeWindow => {
+            const output = world.outputs[0] as FakeOutput;
+            const d = fakeSignal();
+            const g = fakeSignal();
+            winSignals.set(id, { desktops: d, geometry: g });
+            const win = {
+                normalWindow: true,
+                managed: true,
+                minimized: false,
+                fullScreen: false,
+                maximizeMode: 0,
+                onAllDesktops: false,
+                internalId: id,
+                resourceClass: "test-app",
+                output,
+                desktops: [desktop],
+                frameGeometry: { x, y: 0, width: 100, height: 100 },
+                desktopsChanged: d.signal,
+                frameGeometryChanged: g.signal,
+                moveResizedChanged: fakeSignal().signal,
+                fullScreenChanged: fakeSignal().signal,
+                maximizedChanged: fakeSignal().signal,
+            } as unknown as FakeWindow;
+            world.wins.push(win);
+            return win;
+        };
+        // Boot domain ws-1 holds two tiled windows; ws-2 holds the new window.
+        const winA = mkWin("win-a", wsBoot, 0);
+        mkWin("win-b", wsBoot, 100);
+        const winNew = mkWin("win-t", wsNew, 0);
+        world.workspace["activeWindow"] = winA;
+        world.currentByOutput.set(world.outputs[0] as FakeOutput, wsBoot);
+        world.workspace["currentDesktop"] = wsBoot;
+
+        const { handle, mocks } = startEntry(world);
+        assert.ok(handle !== null);
+
+        // Settle the boot Plan admission.
+        runDebounce(mocks);
+        const bootPlan = planCalls(mocks);
+        assert.equal(bootPlan.length, 1);
+        const bootCorrelation = (bootPlan[0]?.payload as Record<string, unknown>)["correlation_id"] as string;
+        mocks.callbacks[bootPlan[0]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: bootCorrelation,
+                outcome: "planned",
+                desired_geometry: [
+                    { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                ],
+            }),
+        );
+
+        // New-window domain becomes current with the new window focused.
+        // F2A19Z equivalent: source is the new desktop, target is the boot desktop.
+        world.currentByOutput.set(world.outputs[0] as FakeOutput, wsNew);
+        world.workspace["currentDesktop"] = wsNew;
+        world.workspace["activeWindow"] = winNew;
+
+        // Sabotage the native switch so the setter never takes effect while the
+        // current-desktop getter keeps reporting the source. Production
+        // switchToTarget must confirm the postcondition instead of reporting
+        // success after assignment.
+        const workingSetter = world.workspace["setCurrentDesktopForScreen"] as (desktop: unknown, output: unknown) => void;
+        let switchAttempts = 0;
+        world.workspace["setCurrentDesktopForScreen"] = (): void => {
+            switchAttempts += 1;
+        };
+
+        // Send 3->2 equivalent: new desktop ws-2 back to boot desktop ws-1.
+        handle?.requestWorkspaceMove(1);
+        const ownerIndex = mocks.dbusCalls.findIndex((call) => call.method === "GetNameOwner");
+        assert.ok(ownerIndex >= 0, "send activation must resolve owner");
+        mocks.callbacks[ownerIndex]?.(":1.7");
+        const requests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
+        assert.equal(requests.length, 1, "exactly one send request");
+        const sendPayload = requests[0]?.payload as Record<string, unknown>;
+        const correlation = sendPayload["correlation_id"] as string;
+        assert.ok(correlation.length > 0);
+        assert.equal((sendPayload["command"] as Record<string, unknown>)["window"], "win-t");
+        assert.equal((sendPayload["domain"] as Record<string, unknown>)["workspace"], "ws-2");
+        assert.equal((sendPayload["target_domain"] as Record<string, unknown>)["workspace"], "ws-1");
+
+        const planned = JSON.stringify({
+            v: 1,
+            correlation_id: correlation,
+            outcome: "planned",
+            kind: "send-to-workspace",
+            base_revision: 0,
+            desired_geometry: [
+                { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-1", leaf: "leaf-win-t" },
+            preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+            operation: {
+                op: "move-tiled",
+                window: "win-t",
+                leaf: "leaf-win-t",
+                source_output: "out-1",
+                source_workspace: "ws-2",
+                target_output: "out-1",
+                target_workspace: "ws-1",
+            },
+        });
+        mocks.callbacks[requests[0]?.index as number]?.(planned);
+        const mover = world.wins.find((w) => w.internalId === "win-t") as FakeWindow;
+        assert.ok((mover.desktops as FakeDesktop[]).some((d) => d.id === "ws-1"), "mover membership write applied");
+        assert.equal(
+            sendCalls(mocks).filter((c) => {
+                const cmd = c.payload["command"] as Record<string, unknown>;
+                return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
+            }).length,
+            0,
+            "accepted ack must wait for echoes",
+        );
+        for (const [, sigs] of winSignals) {
+            fire(sigs.desktops);
+        }
+        for (const [, sigs] of winSignals) {
+            fire(sigs.geometry);
+        }
+        const ackCalls = sendCalls(mocks).filter((c) => {
+            const cmd = c.payload["command"] as Record<string, unknown>;
+            return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted";
+        });
+        assert.equal(ackCalls.length, 1, "accepted ack after echoes");
+        mocks.callbacks[ackCalls[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 0 }),
+        );
+        const verifyCalls = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace-verify");
+        assert.equal(verifyCalls.length, 1, "verify after ack");
+        mocks.callbacks[verifyCalls[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: correlation, outcome: "committed", kind: "send-to-workspace", base_revision: 1 }),
+        );
+
+        // Transaction committed, but the native switch never took effect.
+        assert.ok(mocks.logs.some((l) => l.includes("outcome=committed")), mocks.logs.join("\n"));
+        assert.equal(switchAttempts, 1, "follow must attempt exactly one native switch");
+        assert.equal(
+            world.currentByOutput.get(world.outputs[0] as FakeOutput),
+            wsNew,
+            "immediate observed current desktop stays on the source when the switch does not take effect",
+        );
+        assert.ok(
+            !mocks.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")),
+            `failed switch must never report follow completed:\n${mocks.logs.join("\n")}`,
+        );
+
+        // Commit is preserved and the instance stays usable: consume any
+        // onCommitted resync, restore the native switch, move to where the
+        // window now lives, then complete a later valid same-instance send.
+        runDebounce(mocks);
+        const pendingPlans = planCalls(mocks);
+        const lastPending = pendingPlans[pendingPlans.length - 1];
+        if (lastPending !== undefined && (lastPending.payload["correlation_id"] as string) !== bootCorrelation) {
+            const pendingCorrelation = lastPending.payload["correlation_id"] as string;
+            const pendingCommand = (lastPending.payload["command"] as Record<string, unknown>)["op"] as string;
+            if (pendingCommand === "admit" || pendingCommand === "reconcile") {
+                mocks.callbacks[lastPending.index]?.(
+                    JSON.stringify({
+                        v: 1,
+                        correlation_id: pendingCorrelation,
+                        outcome: "planned",
+                        desired_geometry: [
+                            { window: "win-a", leaf: "win-a-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                            { window: "win-b", leaf: "win-b-leaf", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                            { window: "win-t", leaf: "win-t-leaf", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                        ],
+                    }),
+                );
+                runDebounce(mocks);
+            }
+        }
+        world.workspace["setCurrentDesktopForScreen"] = workingSetter;
+        world.currentByOutput.set(world.outputs[0] as FakeOutput, wsBoot);
+        world.workspace["currentDesktop"] = wsBoot;
+        world.workspace["activeWindow"] = mover;
+
+        const dbusBeforeSecond = mocks.dbusCalls.length;
+        handle?.requestWorkspaceMove(2);
+        const secondOwner = findOwnerCall(mocks, dbusBeforeSecond);
+        assert.ok(secondOwner >= 0, "later valid same-instance send must activate");
+        mocks.callbacks[secondOwner]?.(":1.7");
+        const secondRequests = sendCalls(mocks).filter((c) => (c.payload["command"] as Record<string, unknown>)["op"] === "send-to-workspace");
+        assert.equal(secondRequests.length, 2, "second distinct send starts");
+        const secondPayload = secondRequests[1]?.payload as Record<string, unknown>;
+        const secondCorrelation = secondPayload["correlation_id"] as string;
+        assert.notEqual(secondCorrelation, correlation);
+        mocks.callbacks[secondRequests[1]?.index as number]?.(
+            JSON.stringify({
+                v: 1,
+                correlation_id: secondCorrelation,
+                outcome: "planned",
+                kind: "send-to-workspace",
+                base_revision: 1,
+                desired_geometry: [
+                    { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-1", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                    { window: "win-b", leaf: "leaf-win-b", output: "out-1", workspace: "ws-1", rect: { x: 600, y: 0, w: 600, h: 800 } },
+                    { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 1200, h: 800 } },
+                ],
+                desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-t" },
+                preconditions: ["window-observed", "desired-topology-valid", "adapter-must-verify-postconditions"],
+                operation: {
+                    op: "move-tiled",
+                    window: "win-t",
+                    leaf: "leaf-win-t",
+                    source_output: "out-1",
+                    source_workspace: "ws-1",
+                    target_output: "out-1",
+                    target_workspace: "ws-2",
+                },
+            }),
+        );
+        for (const [, sigs] of winSignals) {
+            fire(sigs.desktops);
+        }
+        for (const [, sigs] of winSignals) {
+            fire(sigs.geometry);
+        }
+        const secondAck = sendCalls(mocks).filter((c) => {
+            const p = c.payload as Record<string, unknown>;
+            const cmd = p["command"] as Record<string, unknown>;
+            return cmd["op"] === "send-to-workspace-ack" && cmd["ack_outcome"] === "accepted" && p["correlation_id"] === secondCorrelation;
+        });
+        assert.equal(secondAck.length, 1, "second accepted ack");
+        mocks.callbacks[secondAck[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: secondCorrelation, outcome: "acknowledged", kind: "send-to-workspace", base_revision: 1 }),
+        );
+        const secondVerify = mocks.dbusCalls
+            .map((call, index) => ({ call, index }))
+            .filter(({ call }) => {
+                try {
+                    const p = parsePayload(call.payload) as Record<string, unknown>;
+                    const cmd = p["command"] as Record<string, unknown>;
+                    return cmd["op"] === "send-to-workspace-verify" && p["correlation_id"] === secondCorrelation;
+                } catch {
+                    return false;
+                }
+            });
+        assert.equal(secondVerify.length, 1, "second verify");
+        mocks.callbacks[secondVerify[0]?.index as number]?.(
+            JSON.stringify({ v: 1, correlation_id: secondCorrelation, outcome: "committed", kind: "send-to-workspace", base_revision: 2 }),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${secondCorrelation}`) && l.includes("outcome=committed")),
+            mocks.logs.join("\n"),
+        );
+        assert.ok(
+            mocks.logs.some((l) => l.includes(`correlation=${secondCorrelation}`) && l.includes("event=follow") && l.includes("outcome=completed")),
+            mocks.logs.join("\n"),
+        );
+        assert.equal(world.currentByOutput.get(world.outputs[0] as FakeOutput), wsNew, "second follow reaches its target");
+        assert.equal(world.workspace["activeWindow"], mover, "second follow focuses the moved window");
+
+        handle?.stop();
+    });
+
     it("send request while a real Plan flight is active busy-refuses without D-Bus or native send", () => {
         const world = makeWorld();
         const ws1 = world.desktops[0] as FakeDesktop;

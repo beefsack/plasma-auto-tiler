@@ -94,3 +94,24 @@
   subsequent distinct send. It also covers Plan/send busy refusal in both
   directions, timeout terminal behavior, late callbacks, and same-target
   refusal. Physical rapid-send and same-target acceptance remain pending.
+
+## 2026-09-15 First-Send Follow Confirmation
+
+- The authorized `F2A19Z` trace has a distinct completion boundary from
+  `ZRzA7S`: `plan-1-w0` is planned at lines 52-58, acknowledged at 94-95,
+  committed at 96-97, and logs follow completed at 102-106. Its later Plan
+  resync observes the target domain at 98-101 and applies no geometry changes
+  at 107-111. It does not establish the user-visible desktop switch or a border
+  cause.
+- KWin's `setCurrentDesktopForScreen` scripting setter is void. Production
+  follow now reads `currentDesktopForScreen` once after the existing setter and
+  treats a missing, throwing, or mismatched direct read as an incomplete follow.
+  It does not retry, poll, rebind, rewrite native state, or alter the committed
+  Rust transaction; a later valid send remains usable.
+- The production-entry F2A19Z regression fails against the old unconditional
+  follow success, uses the full planned/ack/verify protocol shape and required
+  native echoes, keeps a sabotaged switch from logging completion, then proves a
+  distinct same-instance send commits, follows, and focuses. Focused TypeScript
+  and Rust workspace-send lifecycle checks pass. No live KWin, D-Bus, or Plasma
+  action occurred; first-send, rapid, and same-target physical acceptance remain
+  user-owned gates.

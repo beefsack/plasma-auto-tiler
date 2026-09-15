@@ -2,13 +2,14 @@
 
 Only meaningful pending or active work is listed.
 
-- P0 | Rapid workspace-send physical acceptance | ZRzA7S showed an accepted
-  3->2 send fenced native writes while Plan lifecycle re-admitted its mover,
-  advancing the shared target session before the send completed. The correction
-  pins the send source scope and excludes overlapping Plan/send flights; offline
-  production-entry regression passes. User must verify rapid 3->2->1 and a
-  same-target refusal followed by a distinct send, including follow/focus and
-  later usability.
+- P0 | Workspace-send physical acceptance | F2A19Z completed Rust ack/verify
+  but the KWin follow path previously reported success after its void desktop
+  setter without reading its result. It now confirms the native current desktop
+  once and keeps a failed follow truthful while preserving the committed send.
+  Offline production-entry and Rust lifecycle coverage pass. User must verify a
+  first 3->2 send, rapid 3->2->1 sends, and a same-target refusal followed by a
+  distinct send, including visible follow/focus and later usability. Border
+  causation remains unconfirmed.
   [record](changes/archive/workspace-send-rapid-lockup.md)
 - P1 | Remaining workspace-send uncertainty recovery | Proven pre-dispatch and
   well-formed request rejection paths are reusable. Sent request/lost callback,
