@@ -140,8 +140,6 @@ Only meaningful pending or active work is listed.
   initial release. [change](changes/shortcuts.md)
 - P2 | Multi-output workspace anti-oscillation | Verify trailing-empty behavior
   on a multi-output machine. [runbook](live-oscillation-verification.md)
-- P3 | `just dev` Ctrl-C exit | After clean `dev-off` teardown, Ctrl-C exits 130.
-  Cosmetic only.
 - P3 | Stale branches | Twelve stale branches, most at least 140 commits behind
   `main`, require explicit user authorization before deletion.
 - P3 | Other compositor validation | Validate bspwm, Hyprland, and COSMIC at
