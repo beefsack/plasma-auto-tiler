@@ -112,3 +112,41 @@
   `Meta+Shift+2` once. Supply the fresh exact log path and the visible
   workspace plus active-border state. This is one user-owned physical
   reproduction, not a visible repair claim.
+
+## Latest Exact-Log Review
+
+- The authorized `/run/user/1000/plasma-auto-tiler-dev.Aoekoz.log` does not
+  label which correlations were physically visible successes or failures, so it
+  cannot correlate the reported intermittent visible failure to a particular
+  flight. `plan-1-w0`, `plan-1-w1`, and `plan-1-w2` each reach the normal
+  post-mover, ack/verify, and follow-settled stages (lines 74-93, 110-131, and
+  143-162). This is protocol completion, not rendered-visibility proof.
+- `plan-1-w3` diverges after `send-dispatched` and `send-pre-mover` (lines
+  171 and 174): it has no post-mover, ack, verify, or follow stage. The only
+  later correlated production events are the request/plan at lines 169-170,
+  geometry consumption at line 173, and `busy-refused kind=workspace-move` at
+  lines 179-180. The earliest reliable difference is therefore an incomplete
+  mover-echo flight, not a demonstrated visible-follow reversal.
+- Combined Planner and KWin sinks have no timestamps and are grouped out of
+  causal order: Planner ack/verify/commit lines precede the KWin dispatch that
+  necessarily caused them for each completed flight. Cross-sink ordering and
+  unrelated interleavings cannot establish a race. Within the single correlated
+  KWin sequence, the missing post-mover stage is reliable. Intermittency alone
+  does not establish a race.
+- Current source defines the busy refusal as the in-flight fence. A workspace
+  send subscribes before its geometry and mover writes, consumes those echoes
+  independently, and cannot acknowledge until both are seen. The flight clears
+  only after commit or a defined terminal path. No source-defined ordering or
+  ownership defect explains the absent mover echo, so no speculative correction
+  or telemetry-only change was made.
+- The bounded unknown is whether the log ended before the flight's terminal
+  timeout or KWin withheld/coalesced the mover or remaining geometry echo. The
+  next useful user-owned observation is one labeled physical attempt, retaining
+  this exact-log capture through the terminal timeout, with the visible
+  workspace and active-border state recorded against its correlation. This adds
+  the missing outcome and terminal-state evidence rather than repeating the
+  prior unlabeled observation.
+- Offline checks on the unchanged source pass: `npm run typecheck` and the
+  bundled workspace-send adapter suite (86 tests). They confirm the modeled
+  fence and later same-instance sends, but cannot prove native signal delivery
+  or rendered visibility.
