@@ -173,7 +173,7 @@ export interface WorkspaceSendAdapterEnv {
     // synchronous post-write observe path.
     readonly subscribeMoverDesktops?: (moverRef: object, handler: () => void) => (() => void) | null;
     // Narrow geometry-change subscription seam for the bounded signal fence.
-    // Production entries bind this to each changed Window.moveResizedChanged
+    // Production entries bind this to each changed Window.frameGeometryChanged
     // public signal via the shared signal-capability helpers. One-shot per
     // window: detached after its echo and on every terminal path. Absent only
     // in legacy isolated tests, which retain the mover-only fence.

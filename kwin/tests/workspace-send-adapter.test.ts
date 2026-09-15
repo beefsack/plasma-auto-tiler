@@ -417,8 +417,10 @@ function parsePayload(payload: string): Record<string, unknown> {
 // Entry-level harness: a realistic read-only KWin surface whose writeable
 // frameGeometry/desktops are visible to the next observation, plus the
 // standalone entry handle. Drives a real planned flight for stop assertions.
-// Each window exposes connectable desktopsChanged plus moveResizedChanged
+// Each window exposes connectable desktopsChanged plus frameGeometryChanged
 // signals so the production fence seams can arm; fire helpers emit them.
+// A stale moveResizedChanged decoy is also exposed: per KWin source it only
+// mirrors interactive start/finish and must never settle the fence.
 interface EntryHarness {
     readonly handle: WorkspaceSendEntryHandle | null;
     readonly dbusCalls: DbusCall[];
@@ -429,6 +431,7 @@ interface EntryHarness {
     readonly winT: Record<string, unknown>;
     fireMoverEcho(): void;
     fireGeometry(): void;
+    fireOldGeometry(): void;
 }
 
 function makeDesktopSignal(): { signal: object; fire(): void } {
@@ -464,6 +467,9 @@ function startEntryForPlannedFlight(): EntryHarness {
     const geoA = makeDesktopSignal();
     const geoB = makeDesktopSignal();
     const geoT = makeDesktopSignal();
+    const oldA = makeDesktopSignal();
+    const oldB = makeDesktopSignal();
+    const oldT = makeDesktopSignal();
     const winA: Record<string, unknown> = {};
     const winB: Record<string, unknown> = {};
     const winT: Record<string, unknown> = {};
@@ -482,7 +488,8 @@ function startEntryForPlannedFlight(): EntryHarness {
         frameGeometry: frameA,
         desktops: [desktopRef],
         desktopsChanged: echoA.signal,
-        moveResizedChanged: geoA.signal,
+        frameGeometryChanged: geoA.signal,
+        moveResizedChanged: oldA.signal,
     });
     Object.assign(winB, {
         normalWindow: true,
@@ -496,7 +503,8 @@ function startEntryForPlannedFlight(): EntryHarness {
         frameGeometry: frameB,
         desktops: [desktopRef],
         desktopsChanged: echoB.signal,
-        moveResizedChanged: geoB.signal,
+        frameGeometryChanged: geoB.signal,
+        moveResizedChanged: oldB.signal,
     });
     Object.assign(winT, {
         normalWindow: true,
@@ -510,7 +518,8 @@ function startEntryForPlannedFlight(): EntryHarness {
         frameGeometry: frameT,
         desktops: [targetDesktopRef],
         desktopsChanged: echoT.signal,
-        moveResizedChanged: geoT.signal,
+        frameGeometryChanged: geoT.signal,
+        moveResizedChanged: oldT.signal,
     });
     const surface: Record<string, unknown> = {
         activeWindow: winA,
@@ -553,6 +562,11 @@ function startEntryForPlannedFlight(): EntryHarness {
             geoA.fire();
             geoB.fire();
             geoT.fire();
+        },
+        fireOldGeometry: () => {
+            oldA.fire();
+            oldB.fire();
+            oldT.fire();
         },
     };
 }
@@ -1763,5 +1777,229 @@ describe("cosmic send-to-workspace mover echo fence", () => {
         const lost = mocks.dbusCalls.filter((c) => c.payload.includes("adapter-lost"));
         assert.equal(lost.length, 1, JSON.stringify(mocks.dbusCalls, null, 2));
         assert.equal(parsePayload(lost[0]?.payload ?? "{}")["correlation_id"], correlation);
+    });
+});
+
+describe("cosmic send-to-workspace frameGeometry fence P0", () => {
+    function plannedReplyTwo(correlation: string): string {
+        return JSON.stringify({
+            v: WORKSPACE_SEND_CONTRACT_VERSION,
+            correlation_id: correlation,
+            outcome: "planned",
+            kind: "send-to-workspace",
+            base_revision: 0,
+            detail: { kind: "send-to-workspace", policy_version: 1, capability: "move-tiled" },
+            desired_geometry: [
+                { window: "win-a", leaf: "leaf-win-a", output: "out-1", workspace: "ws-2", rect: { x: 0, y: 0, w: 600, h: 800 } },
+                { window: "win-t", leaf: "leaf-win-t", output: "out-1", workspace: "ws-2", rect: { x: 600, y: 0, w: 600, h: 800 } },
+            ],
+            desired_focus: { domain_output: "out-1", domain_workspace: "ws-2", leaf: "leaf-win-a" },
+            preconditions: KNOWN_PRECONDITIONS,
+            operation: {
+                op: "move-tiled",
+                window: "win-a",
+                leaf: "leaf-win-a",
+                source_output: "out-1",
+                source_workspace: "ws-1",
+                target_output: "out-1",
+                target_workspace: "ws-2",
+            },
+        });
+    }
+
+    function setWorldWindows(mocks: Mocks, refs: { a: object; b: object; t: object; desktop: object }, mode: 2 | 3): void {
+        if (mode === 2) {
+            mocks.world.windows.length = 0;
+            mocks.world.windows.push(
+                { id: "win-a", ref: refs.a, rect: rect(0, 0, 100, 100), workspace: "ws-1" },
+                { id: "win-t", ref: refs.t, rect: rect(0, 0, 100, 100), workspace: "ws-2" },
+            );
+        } else {
+            mocks.world.windows.length = 0;
+            mocks.world.windows.push(
+                { id: "win-a", ref: refs.a, rect: rect(0, 0, 100, 100), workspace: "ws-1" },
+                { id: "win-b", ref: refs.b, rect: rect(100, 0, 100, 100), workspace: "ws-1" },
+                { id: "win-t", ref: refs.t, rect: rect(0, 0, 100, 100), workspace: "ws-2" },
+            );
+        }
+        (mocks.world as { activeId: string }).activeId = "win-a";
+        (mocks.world as { activeRef: object | null }).activeRef = refs.a;
+    }
+
+    function driveOneFlight(mocks: Mocks, seam: EchoSeam, base: number, mode: 2 | 3): string {
+        assert.equal(mocks.dbusCalls[base]?.method, WORKSPACE_SEND_GET_OWNER_METHOD);
+        mocks.callbacks[base]?.(":1.7");
+        const requestCall = mocks.dbusCalls[base + 1];
+        assert.equal(requestCall?.method, WORKSPACE_SEND_METHOD);
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[base + 1]?.(mode === 2 ? plannedReplyTwo(correlation) : plannedReply(correlation));
+        assert.equal(mocks.dbusCalls.length, base + 2, "ack waits for mover plus frame echoes");
+        seam.fire();
+        assert.equal(
+            mocks.dbusCalls.some(
+                (c) => c.payload.includes(`"${correlation}"`) && c.payload.includes("accepted"),
+            ) ||
+                mocks.dbusCalls.slice(base + 2).some((c) => c.payload.includes("accepted")),
+            false,
+            "mover echo alone must not ack while frame echoes are pending",
+        );
+        seam.fireGeometry();
+        const ackCall = mocks.dbusCalls[base + 2];
+        assert.equal(ackCall?.method, WORKSPACE_SEND_METHOD);
+        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
+        mocks.callbacks[base + 2]?.(ackReply(correlation));
+        const verifyCall = mocks.dbusCalls[base + 3];
+        assert.equal((parsePayload(verifyCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-verify");
+        mocks.callbacks[base + 3]?.(committedReply(correlation));
+        return correlation;
+    }
+
+    it("binds the workspace-send geometry fence to frameGeometryChanged only", () => {
+        const adapterSrc = readFileSync(join(kwinSrcDir(), "workspace-send-adapter.ts"), "utf8");
+        const entrySrc = readFileSync(join(kwinSrcDir(), "workspace-send-adapter-entry.ts"), "utf8");
+        const planEntrySrc = readFileSync(join(kwinSrcDir(), "plan-adapter-entry.ts"), "utf8");
+        const globals = readFileSync(join(kwinSrcDir(), "kwin-globals.d.ts"), "utf8");
+        assert.ok(entrySrc.includes('readSignal(windowRef, "frameGeometryChanged")'), "entry must bind frameGeometryChanged");
+        assert.ok(!entrySrc.includes('readSignal(windowRef, "moveResizedChanged")'), "entry must not bind moveResizedChanged");
+        assert.ok(planEntrySrc.includes('readSignal(windowRef, "frameGeometryChanged")'), "production entry must bind frameGeometryChanged");
+        assert.ok(!planEntrySrc.includes('readSignal(windowRef, "moveResizedChanged")'), "production entry must not bind moveResizedChanged");
+        assert.ok(adapterSrc.includes("Window.frameGeometryChanged"), "adapter seam doc must name frameGeometryChanged");
+        assert.ok(!adapterSrc.includes("Window.moveResizedChanged"), "adapter seam doc must not name moveResizedChanged");
+        assert.ok(globals.includes("frameGeometryChanged"), "globals must declare frameGeometryChanged");
+        assert.ok(globals.includes("Signal1<Rect>"), "frameGeometryChanged carries old geometry");
+        for (const name of ["workspace-send-adapter.ts", "workspace-send-adapter-entry.ts"]) {
+            const body = readFileSync(join(kwinSrcDir(), name), "utf8");
+            assert.ok(!body.includes("setTimeout"), name);
+            assert.ok(!body.includes("setInterval"), name);
+            assert.ok(!body.includes("waitFor"), name);
+            assert.ok(!body.includes("fallback"), name);
+            assert.ok(!body.includes("pollFor"), name);
+        }
+    });
+
+    it("old moveResizedChanged alone cannot settle a 2-window source; frame signal does", () => {
+        const harness = startEntryForPlannedFlight();
+        assert.ok(harness.handle !== null);
+        assert.equal(harness.handle.requestSend("ws-2"), true);
+        harness.callbacks[0]?.(":1.7");
+        const requestCall = harness.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        harness.callbacks[1]?.(plannedReply(correlation));
+        const hasAcceptedAck = (): boolean =>
+            harness.dbusCalls.some(
+                (c) => c.payload.includes("send-to-workspace-ack") && c.payload.includes("accepted"),
+            );
+        assert.equal(hasAcceptedAck(), false);
+        // Old interactive-only signal fires repeatedly: fence must not settle.
+        harness.fireOldGeometry();
+        harness.fireOldGeometry();
+        assert.equal(hasAcceptedAck(), false, "moveResizedChanged must never settle programmatic writes");
+        // Mover membership echo alone still holds the ack while frame waits remain.
+        harness.fireMoverEcho();
+        assert.equal(hasAcceptedAck(), false, "mover echo alone must not ack while frame echoes pending");
+        // Native-shaped frame echoes settle the exact 2-window source plus target.
+        harness.fireGeometry();
+        assert.equal(hasAcceptedAck(), true, "frameGeometryChanged must settle the fence");
+        const ackCall = harness.dbusCalls[2];
+        assert.equal((parsePayload(ackCall?.payload ?? "{}")["command"] as Record<string, unknown>)["op"], "send-to-workspace-ack");
+        harness.callbacks[2]?.(ackReply(correlation));
+        harness.callbacks[3]?.(committedReply(correlation));
+        assert.ok(harness.logs.some((l) => l.includes("event=follow") && l.includes("outcome=completed")), harness.logs.join("\n"));
+        harness.handle.stop();
+    });
+
+    it("same adapter completes 2->3->2->3 repeated flights with source survivor", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        const modes: Array<2 | 3> = [2, 3, 2, 3];
+        const correlations: string[] = [];
+        for (let move = 0; move < modes.length; move += 1) {
+            const mode = modes[move] as 2 | 3;
+            setWorldWindows(mocks, refs, mode);
+            assert.equal(adapter.requestSend("ws-2"), true);
+            const correlation = driveOneFlight(mocks, seam, move * 4, mode);
+            correlations.push(correlation);
+            assert.equal(adapter.isEnabled, true);
+            assert.equal(adapter.isInFlight, false);
+            if (mode === 3) {
+                const observed = makeWorldObserved(mocks.world, refs);
+                assert.ok(observed.sourceWindows.some((w) => w.id === "win-b"), "win-b survives in source");
+                assert.ok(observed.targetWindows.some((w) => w.id === "win-a"), "mover lands in target");
+            } else {
+                const observed = makeWorldObserved(mocks.world, refs);
+                assert.equal(observed.sourceWindows.length, 0, "single-mover flight leaves source empty");
+                assert.ok(observed.targetWindows.some((w) => w.id === "win-a"), "mover lands in populated destination");
+                assert.ok(observed.targetWindows.some((w) => w.id === "win-t"), "destination survivor retained");
+            }
+        }
+        assert.equal(new Set(correlations).size, 4, "each flight binds a distinct correlation");
+        assert.deepEqual(mocks.switches, [refs.desktop, refs.desktop, refs.desktop, refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a, refs.a, refs.a, refs.a]);
+        assert.equal(mocks.logs.filter((l) => l.includes("event=follow") && l.includes("outcome=completed")).length, 4);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("completes an empty-source single-mover flight with populated destination", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        setWorldWindows(mocks, refs, 2);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReplyTwo(correlation));
+        assert.equal(seam.geoHandlers.size, 2, "both changed windows subscribed");
+        seam.fire();
+        seam.fireGeometry();
+        mocks.callbacks[2]?.(ackReply(correlation));
+        mocks.callbacks[3]?.(committedReply(correlation));
+        const observed = makeWorldObserved(mocks.world, refs);
+        assert.equal(observed.sourceWindows.length, 0);
+        assert.deepEqual(
+            observed.targetWindows.map((w) => w.id).sort(),
+            ["win-a", "win-t"],
+        );
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
+    });
+
+    it("no duplicate ack or membership on extra frame signal after commit", () => {
+        const refs = makeRefs();
+        const mocks = mockEnv(refs);
+        const seam = addEchoSeam(mocks);
+        const adapter = new WorkspaceSendAdapter(mocks.env);
+        assert.equal(adapter.enable({ owner: "owner-1", generation: "gen-1" }), true);
+        assert.equal(adapter.requestSend("ws-2"), true);
+        mocks.callbacks[0]?.(":1.7");
+        const requestCall = mocks.dbusCalls[1];
+        const correlation = parsePayload(requestCall?.payload ?? "{}")["correlation_id"] as string;
+        mocks.callbacks[1]?.(plannedReply(correlation));
+        seam.fire();
+        seam.fireGeometry();
+        mocks.callbacks[2]?.(ackReply(correlation));
+        mocks.callbacks[3]?.(committedReply(correlation));
+        const calls = mocks.dbusCalls.length;
+        const memberships = mocks.desktops.length;
+        const detaches = seam.detachCount;
+        const geoDetaches = seam.geoDetachCount;
+        seam.fire();
+        seam.fireGeometry();
+        assert.equal(mocks.dbusCalls.length, calls, "extra frame echo must not re-ack");
+        assert.equal(mocks.desktops.length, memberships, "extra frame echo must not re-write membership");
+        assert.deepEqual(mocks.switches, [refs.desktop]);
+        assert.deepEqual(mocks.focuses, [refs.a]);
+        assert.equal(seam.detachCount, detaches);
+        assert.equal(seam.geoDetachCount, geoDetaches);
+        assert.equal(adapter.isEnabled, true);
+        assert.equal(adapter.isInFlight, false);
     });
 });

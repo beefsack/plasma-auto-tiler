@@ -9,7 +9,7 @@
 ## Scope
 
 - Fence the existing same-output tiled send transaction on the mover's public
-  `desktopsChanged` and each changed window's `moveResizedChanged` signals
+  `desktopsChanged` and each changed window's `frameGeometryChanged` signals
   before its accepted acknowledgement.
 - Collapse only safe extra desktops in the mapped literal terminal empty run,
   including preexisting terminal empties, while retaining its first desktop.
@@ -51,7 +51,7 @@
 ## Outcome And Evidence
 
 - The production Plan and standalone entries subscribe to mover
-  `desktopsChanged` and changed-window `moveResizedChanged`. Exact
+  `desktopsChanged` and changed-window `frameGeometryChanged`. Exact
   post-observation, acknowledgement, verify, and follow remain ordered.
 - Extra preexisting terminal empties can now retire only from the mapped
   native-order terminal run once every member is nonvisible and unoccupied;
@@ -59,3 +59,30 @@
   border evidence, and missing follow explains the reported source view.
 - Static verification passed. Live KWin behavior remains unverified; no desktop
   or session mutation occurred.
+
+## 2026-09-15 P0 Update
+
+- The exact `plC3QN` run rules out lone-window status as the sole cause. Its
+  two-window `plan-1-w0` send is planned at lines 28-29; membership is consumed
+  at line 32, one geometry wait is logged at line 34 and only one geometry echo
+  is consumed at line 38. No accepted acknowledgement, verify, commit, or
+  follow occurs before the adapter-lost acknowledgement at lines 42-43 and
+  timeout at line 44. Later observations show the planned source survivor and
+  moved target, so native writes did occur.
+- KWin source corrects the old fence premise: `src/window.h:476-491,1467-1510`
+  exposes writable `frameGeometry` with `frameGeometryChanged`, while
+  `src/window.cpp:71-72` wires `moveResizedChanged` only to interactive
+  start/finish. `src/window.cpp:3412-3420` routes a property write through
+  `moveResize`; `src/waylandwindow.cpp:220-250` emits
+  `frameGeometryChanged` when the actual frame changes. Both send entries now
+  fence changed geometry on that public frame signal, retaining exact
+  post-observation and terminal divergence behavior.
+- Static tests reproduce the old interactive-signal deadlock and settle only on
+  frame signals, cover same-adapter repeated `2->3->2->3` flights with source
+  survivor and empty-source cases, and reject duplicate echoes. The production
+  entry integration covers delayed `3->2->3`, follow/focus, populated target,
+  and terminal-empty retirement. No live acceptance is claimed.
+- Dynamic workspace lifecycle has partial user manual evidence of improvement;
+  no unrelated trailing-empty cleanup is reopened. User pickup: clean Rust/TS
+  teardown with Ctrl-C, then `just dev verbose` without logout; reproduce the
+  unchanged workspace 2 -> 3 -> 2 -> 3 send/follow sequence.

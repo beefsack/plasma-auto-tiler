@@ -67,7 +67,7 @@ interface FakeWindow {
     output: FakeOutput;
     desktops: FakeDesktop[];
     frameGeometry: { x: number; y: number; width: number; height: number };
-    moveResizedChanged: FakeSignal["signal"];
+    frameGeometryChanged: FakeSignal["signal"];
     fullScreenChanged: FakeSignal["signal"];
     maximizedChanged: FakeSignal["signal"];
     desktopsChanged: FakeSignal["signal"];
@@ -223,7 +223,7 @@ function addWindow(
         output,
         desktops: opts.onAllDesktops === true ? [] : [desktop],
         frameGeometry: { x: 0, y: 0, width: 100, height: 100 },
-        moveResizedChanged: geo.signal,
+        frameGeometryChanged: geo.signal,
         fullScreenChanged: fakeSignal().signal,
         maximizedChanged: fakeSignal().signal,
         desktopsChanged: echo.signal,
@@ -965,7 +965,7 @@ describe("workspace production entry routing and handoff", () => {
             output: out as never,
             desktops: [desktop as never],
             frameGeometry: { x: 0, y: 0, width: 600, height: 800 },
-            moveResizedChanged: fakeSignal().signal,
+            frameGeometryChanged: fakeSignal().signal,
             fullScreenChanged: fakeSignal().signal,
             maximizedChanged: fakeSignal().signal,
             desktopsChanged: sig.signal as never,
@@ -1092,7 +1092,7 @@ describe("four-desktop terminal-run send with bounded fence", () => {
                 enumerable: true,
                 configurable: true,
             },
-            moveResizedChanged: {
+            frameGeometryChanged: {
                 get: () => state.geoSig.signal,
                 enumerable: true,
                 configurable: true,

@@ -582,7 +582,7 @@ export function startWorkspaceSendAdapterEntry(
         },
         subscribeWindowGeometry: (windowRef, handler) => {
             try {
-                return connectSignal(readSignal(windowRef, "moveResizedChanged"), handler);
+                return connectSignal(readSignal(windowRef, "frameGeometryChanged"), handler);
             } catch (error) {
                 void error;
                 return null;

@@ -4114,15 +4114,15 @@ describe("plan adapter observational highlight refresh edge", () => {
     });
 });
 
-describe("plan entry workspace-send mover echo wiring", () => {
-    it("binds both send entries to the mover desktopsChanged signal via signal-capability helpers", () => {
+describe("plan entry workspace-send echo wiring", () => {
+    it("binds both send entries to native membership and frame geometry signals via signal-capability helpers", () => {
         const srcDir = kwinSrcDir();
         for (const name of ["plan-adapter-entry.ts", "workspace-send-adapter-entry.ts"]) {
             const body = readFileSync(join(srcDir, name), "utf8");
             assert.ok(body.includes("subscribeMoverDesktops"), name);
             assert.ok(body.includes("desktopsChanged"), name);
             assert.ok(body.includes("subscribeWindowGeometry"), name);
-            assert.ok(body.includes("moveResizedChanged"), name);
+            assert.ok(body.includes("frameGeometryChanged"), name);
             assert.ok(body.includes("connectSignal"), name);
             assert.ok(body.includes("readSignal"), name);
         }

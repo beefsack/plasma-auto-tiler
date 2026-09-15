@@ -187,6 +187,16 @@ interface Window {
     readonly interactiveMoveResizeStepped: Signal1<Rect>;
     readonly interactiveMoveResizeFinished: Signal;
     readonly moveResizedChanged: Signal;
+    // src/window.h at pinned v6.7.4 declares
+    //     Q_PROPERTY(KWin::RectF frameGeometry READ frameGeometry WRITE
+    //     moveResize NOTIFY frameGeometryChanged)
+    // with Q_SIGNALS `void frameGeometryChanged(const KWin::RectF &oldGeometry)`.
+    // Programmatic frameGeometry writes via moveResize emit this when actual
+    // geometry changes (src/waylandwindow.cpp); moveResizedChanged only mirrors
+    // interactive start/finish (src/window.cpp connects it to
+    // interactiveMoveResizeStarted/Finished). Geometry fences for programmatic
+    // writes must bind here.
+    readonly frameGeometryChanged: Signal1<Rect>;
     // Documented notify signal for the `fullScreen` property (KWin scripting
     // API -> KWin::Window -> Signals -> `fullScreenChanged()`). Attached via the
     // feature-detecting environment seam, never assumed present.
